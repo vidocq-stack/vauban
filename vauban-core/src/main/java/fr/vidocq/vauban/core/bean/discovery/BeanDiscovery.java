@@ -520,6 +520,8 @@ public final class BeanDiscovery {
                                 .filter(a -> !a.name().equals(OBSERVES) && !a.name().equals(OBSERVES_ASYNC))
                                 .toList());
                         var priority = extractPriority(method.annotations());
+                        // CDI spec: default observer priority is APPLICATION + 500 = 2500
+                        if (priority == 0) priority = jakarta.enterprise.inject.spi.ObserverMethod.DEFAULT_PRIORITY;
 
                         // Extract reception and transactionPhase from @Observes annotation
                         var reception = "ALWAYS";

@@ -79,6 +79,11 @@ public final class VaubanObserverMethod<T> implements ObserverMethod<T> {
     }
 
     @Override
+    public int getPriority() {
+        return descriptor.priority();
+    }
+
+    @Override
     public boolean isAsync() {
         return descriptor.async();
     }
