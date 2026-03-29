@@ -44,6 +44,7 @@ public final class BeanDiscovery {
     private static final DotName INTERCEPTOR = DotName.of("jakarta.interceptor.Interceptor");
     private static final DotName AROUND_INVOKE = DotName.of("jakarta.interceptor.AroundInvoke");
     private static final DotName INTERCEPTOR_BINDING = DotName.of("jakarta.interceptor.InterceptorBinding");
+    private static final DotName DISPOSES = DotName.of("jakarta.enterprise.inject.Disposes");
 
     private final VaubanIndex index;
 
@@ -382,6 +383,39 @@ public final class BeanDiscovery {
         }
 
         return List.copyOf(result);
+    }
+
+    /**
+     * Discovers all disposer methods in the index.
+     * A disposer method has exactly one parameter annotated with {@code @Disposes}.
+     */
+    public List<DisposerDescriptor> discoverDisposerMethods() {
+        var disposers = new ArrayList<DisposerDescriptor>();
+
+        for (var classInfo : index.getKnownClasses()) {
+            if (isVetoed(classInfo)) continue;
+            if (!hasBeanDefiningAnnotation(classInfo)) continue;
+
+            for (var method : classInfo.methods()) {
+                if (method.isConstructor() || method.isStatic()) continue;
+
+                for (int i = 0; i < method.parameters().size(); i++) {
+                    var param = method.parameters().get(i);
+                    if (hasAnnotation(param.annotations(), DISPOSES)) {
+                        // Qualifiers on the disposed parameter (excluding @Disposes)
+                        var qualifiers = computeQualifiers(param.annotations().stream()
+                                .filter(a -> !a.name().equals(DISPOSES))
+                                .toList());
+                        disposers.add(new DisposerDescriptor(
+                                classInfo.name(), method.name(), param.type(),
+                                qualifiers, i));
+                        break; // only one @Disposes per method
+                    }
+                }
+            }
+        }
+
+        return List.copyOf(disposers);
     }
 
     /**

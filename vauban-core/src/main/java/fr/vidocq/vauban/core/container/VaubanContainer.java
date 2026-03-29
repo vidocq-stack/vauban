@@ -4,6 +4,7 @@ import fr.vidocq.vauban.core.BeanFactory;
 import fr.vidocq.vauban.core.bean.discovery.BeanDiscovery;
 import fr.vidocq.vauban.core.bean.model.BeanDescriptor;
 import fr.vidocq.vauban.core.bean.model.BeanId;
+import fr.vidocq.vauban.core.bean.model.DisposerDescriptor;
 import fr.vidocq.vauban.core.bean.model.InjectionPointInfo;
 import fr.vidocq.vauban.core.bean.model.InterceptorDescriptor;
 import fr.vidocq.vauban.core.bean.model.ObserverDescriptor;
@@ -59,6 +60,7 @@ public final class VaubanContainer implements AutoCloseable {
     private VaubanContainer(VaubanIndex index, List<BeanDescriptor> descriptors,
                             List<ObserverDescriptor> observers,
                             List<InterceptorDescriptor> interceptorDescriptors,
+                            List<DisposerDescriptor> disposers,
                             Map<DotName, BeanFactory<?>> factories) {
         this.index = index;
         this.applicationContext = new ApplicationContext();
@@ -95,6 +97,9 @@ public final class VaubanContainer implements AutoCloseable {
         for (var bean : beans.values()) {
             bean.setInjector(instance -> injectFields(instance, bean.descriptor()));
         }
+
+        // Wire up disposer methods for producer beans
+        wireDisposers(descriptors, disposers);
 
         this.beanManager = new VaubanBeanManager(this, contexts, beans.values(), eventDispatcher, interceptorManager);
         this.running = true;
@@ -260,6 +265,78 @@ public final class VaubanContainer implements AutoCloseable {
                 }
             }
             clazz = clazz.getSuperclass();
+        }
+    }
+
+    private void wireDisposers(List<BeanDescriptor> descriptors, List<DisposerDescriptor> disposers) {
+        for (var descriptor : descriptors) {
+            if (descriptor.kind() != BeanDescriptor.BeanKind.PRODUCER_METHOD
+                    && descriptor.kind() != BeanDescriptor.BeanKind.PRODUCER_FIELD) {
+                continue;
+            }
+
+            var bean = beans.get(descriptor.id());
+            if (bean == null) continue;
+
+            // Find a matching disposer: same declaring class, matching disposed type and qualifiers
+            for (var disposer : disposers) {
+                if (!disposer.declaringClass().equals(descriptor.beanClass())) continue;
+
+                // Check if the disposed type matches any of the producer bean types
+                boolean typeMatches = descriptor.types().contains(disposer.disposedType());
+                if (!typeMatches) continue;
+
+                // Check qualifier match: disposer qualifiers must match producer qualifiers
+                boolean qualifiersMatch = descriptor.qualifiers().containsAll(disposer.qualifiers());
+                if (!qualifiersMatch) continue;
+
+                bean.setDestroyer(instance -> callDisposer(instance, disposer));
+                break;
+            }
+        }
+    }
+
+    private void callDisposer(Object producedInstance, DisposerDescriptor disposer) {
+        try {
+            var declaringClass = Class.forName(disposer.declaringClass().value());
+            var declaringInstance = select(declaringClass);
+
+            for (var method : declaringClass.getDeclaredMethods()) {
+                if (method.getName().equals(disposer.methodName())
+                        && method.getParameterCount() > disposer.parameterIndex()) {
+                    method.setAccessible(true);
+                    // Build args - the @Disposes param gets the produced instance, others are injection points
+                    var paramTypes = method.getParameterTypes();
+                    var args = new Object[method.getParameterCount()];
+                    args[disposer.parameterIndex()] = producedInstance;
+                    for (int i = 0; i < paramTypes.length; i++) {
+                        if (i == disposer.parameterIndex()) continue;
+                        try {
+                            if (paramTypes[i] == BeanManager.class) {
+                                args[i] = getBeanManager();
+                            } else if (paramTypes[i] == Event.class) {
+                                args[i] = new EventImpl<>(eventDispatcher);
+                            } else if (paramTypes[i] == Instance.class) {
+                                Class<?> instanceType = Object.class;
+                                var genericType = method.getGenericParameterTypes()[i];
+                                if (genericType instanceof ParameterizedType pt) {
+                                    var typeArg = pt.getActualTypeArguments()[0];
+                                    if (typeArg instanceof Class<?> c) instanceType = c;
+                                }
+                                args[i] = new InstanceImpl<>(this, instanceType);
+                            } else {
+                                args[i] = select(paramTypes[i]);
+                            }
+                        } catch (Exception e) {
+                            // Best effort for other params
+                        }
+                    }
+                    method.invoke(declaringInstance, args);
+                    return;
+                }
+            }
+        } catch (Exception e) {
+            // CDI spec: exceptions in disposer methods are suppressed
         }
     }
 
@@ -477,6 +554,7 @@ public final class VaubanContainer implements AutoCloseable {
             var descriptors = discovery.discoverBeans();
             var observers = discovery.discoverObservers();
             var interceptors = discovery.discoverInterceptors();
+            var disposers = discovery.discoverDisposerMethods();
 
             // Validate deployment — throw if there are errors
             var assignability = new AssignabilityRules(index);
@@ -492,7 +570,7 @@ public final class VaubanContainer implements AutoCloseable {
                 throw new jakarta.enterprise.inject.spi.DeploymentException(msg.toString());
             }
 
-            return new VaubanContainer(index, descriptors, observers, interceptors, factories);
+            return new VaubanContainer(index, descriptors, observers, interceptors, disposers, factories);
         }
     }
 }

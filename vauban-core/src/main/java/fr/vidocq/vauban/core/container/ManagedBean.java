@@ -27,6 +27,7 @@ public final class ManagedBean<T> implements Bean<T> {
     private final BeanFactory<T> factory;
     private final Class<T> beanClass;
     private Consumer<Object> injector;
+    private Consumer<Object> destroyer;
 
     @SuppressWarnings("unchecked")
     public ManagedBean(BeanDescriptor descriptor, BeanFactory<T> factory) {
@@ -47,6 +48,14 @@ public final class ManagedBean<T> implements Bean<T> {
         this.injector = injector;
     }
 
+    /**
+     * Sets the destroyer callback that will be called when the bean instance is destroyed.
+     * Used for disposer methods on producer beans.
+     */
+    public void setDestroyer(Consumer<Object> destroyer) {
+        this.destroyer = destroyer;
+    }
+
     @Override
     public T create(CreationalContext<T> creationalContext) {
         T instance = factory.create();
@@ -58,6 +67,14 @@ public final class ManagedBean<T> implements Bean<T> {
 
     @Override
     public void destroy(T instance, CreationalContext<T> creationalContext) {
+        // Call disposer method first (for producer beans)
+        if (destroyer != null && instance != null) {
+            try {
+                destroyer.accept(instance);
+            } catch (Exception e) {
+                // CDI spec: exceptions in disposer methods are suppressed
+            }
+        }
         callPreDestroy(instance);
         if (creationalContext != null) {
             creationalContext.release();
