@@ -4,6 +4,7 @@ module fr.vidocq.vauban.core {
     requires transitive jakarta.cdi.lang.model;
 
     exports fr.vidocq.vauban.core;
+    exports fr.vidocq.vauban.core.container;
     exports fr.vidocq.vauban.core.langmodel;
     exports fr.vidocq.vauban.core.langmodel.declarations;
     exports fr.vidocq.vauban.core.langmodel.types;
@@ -12,4 +13,5 @@ module fr.vidocq.vauban.core {
     exports fr.vidocq.vauban.core.bean.discovery;
     exports fr.vidocq.vauban.core.bean.resolution;
     exports fr.vidocq.vauban.core.bean.validation;
+    exports fr.vidocq.vauban.core.context;
 }
