@@ -16,7 +16,12 @@ public final class DependentContext implements Context {
     @Override
     public <T> T get(Contextual<T> contextual, CreationalContext<T> creationalContext) {
         if (creationalContext == null) return null;
-        return contextual.create(creationalContext);
+        T instance = contextual.create(creationalContext);
+        // Register the dependent instance for cleanup when the parent context releases
+        if (instance != null && creationalContext instanceof CreationalContextImpl<T> cci) {
+            cci.addDependentInstance(contextual, instance, creationalContext);
+        }
+        return instance;
     }
 
     @Override
