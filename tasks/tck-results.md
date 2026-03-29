@@ -6,9 +6,9 @@
 
 | Metrique | Valeur |
 |----------|--------|
-| Tests CDI Lite | 761 (non-skippes) |
-| **Passes** | **~330 (43.3%)** |
-| Echoues | ~431 |
+| Tests CDI Lite | ~769 (non-skippes) |
+| **Passes** | **~349 (45.4%)** |
+| Echoues | ~420 |
 | Erreurs | 0 |
 | Temps | ~5s |
 
@@ -17,20 +17,27 @@
 ```
 Debut     ██████░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░   ~12%
 Session 1 ██████████████████████████████████████░░░░░░  38.2% (+200)
-Session 2 ████████████████████████████████████████░░░░  40.7% (+19)
-Session 3 ██████████████████████████████████████████░░  43.3% (+20)
+Session 2 ████████████████████████████████████████████  45.4% (+58)
 ```
 
-## Changements Session 3
+## Changements Session 2
 
-- Observer qualifiers + event qualifier matching
-- Instance<T> qualifier-aware
-- QualifierUtils extraction
+- Observer qualifiers (getObservedQualifiers, event qualifier matching)
+- Instance<T> qualifier-aware (select/get/iterator)
+- QualifierUtils extraction de ManagedBean
 - ClassValidator : ~15 validations DefinitionException
-- DeploymentValidator : beans unproxyables
-- Validations par reflexion : raw Event/Instance, producer types, generic beans
-- VaubanTestEnricher : extraction qualifiers, resolution via BeanManager
+- Validations par reflexion (raw Event/Instance, producer types, generic beans)
+- VaubanTestEnricher : qualifiers, resolution via BeanManager
 - VaubanDeployableContainer : extraction JARs imbriques (WEB-INF/lib)
+- @Any qualifier fix dans computeQualifiers
+- isMatchingBean/Event : qualifier validation, @Default/@Any handling
+- Producer/observer exception unwrap (InvocationTargetException)
+- Observer reception/transactionPhase + priority
+- Observer method injection parameters (multi-param observers)
+- Package-level @Vetoed support
+- Reflection fallback pour scope/qualifier/stereotype detection
+- Custom scope recognition dans hasBeanDefiningAnnotation
+- Retrait validation circulaire deployment-time
 
 ## Commande
 ```bash
@@ -38,10 +45,3 @@ mvn install -DskipTests -q && mvn test -pl vauban-tck-runner -Ptck
 ```
 
 ## Tests propres Vauban : ~225 (tous verts)
-
-## Prochains quick wins identifies
-- Dynamic InjectionPoint (7 tests) — injection InjectionPoint dans beans
-- Event fires @Any (3 tests)
-- Instance destroy/handle (7 tests)
-- Producer field lifecycle (2 tests)
-- expected [true] but [false] (56 tests) — divers bugs de matching/resolution
