@@ -23,6 +23,15 @@ public final class ClassValidator {
     private static final DotName DISPOSES = DotName.of("jakarta.enterprise.inject.Disposes");
     private static final DotName NORMAL_SCOPE = DotName.of("jakarta.enterprise.context.NormalScope");
     private static final DotName SCOPE = DotName.of("jakarta.inject.Scope");
+    private static final DotName INTERCEPTOR_BINDING = DotName.of("jakarta.interceptor.InterceptorBinding");
+    private static final DotName STEREOTYPE = DotName.of("jakarta.enterprise.inject.Stereotype");
+
+    private static final Set<DotName> BUILT_IN_NORMAL_SCOPES = Set.of(
+            DotName.of("jakarta.enterprise.context.ApplicationScoped"),
+            DotName.of("jakarta.enterprise.context.RequestScoped"),
+            DotName.of("jakarta.enterprise.context.SessionScoped"),
+            DotName.of("jakarta.enterprise.context.ConversationScoped")
+    );
 
     private static final Set<DotName> BUILT_IN_SCOPES = Set.of(
             DotName.of("jakarta.enterprise.context.ApplicationScoped"),
@@ -71,6 +80,25 @@ public final class ClassValidator {
                     .count();
             if (scopeCount > 1) {
                 errors.add("Bean " + className + " has multiple scope annotations");
+            }
+
+            // Normal-scoped bean cannot be final (needs client proxy / subclass)
+            if (classInfo.isFinal() && hasNormalScope(classInfo, index)) {
+                errors.add("Normal-scoped bean " + className + " cannot be final");
+            }
+
+            // Intercepted bean cannot be final class or have final intercepted methods
+            if (hasInterceptorBindings(classInfo, index)) {
+                if (classInfo.isFinal()) {
+                    errors.add("Intercepted bean " + className + " cannot be final");
+                }
+                for (var method : classInfo.methods()) {
+                    if (!method.isConstructor() && !method.isStatic() && !method.isPrivate()
+                            && (method.accessFlags() & 0x0010) != 0) { // ACC_FINAL
+                        errors.add("Intercepted method " + method.name()
+                                + " in " + className + " cannot be final");
+                    }
+                }
             }
         }
 
@@ -222,5 +250,37 @@ public final class ClassValidator {
 
     private static boolean hasAnn(List<AnnotationInfo> annotations, DotName name) {
         return annotations.stream().anyMatch(a -> a.name().equals(name));
+    }
+
+    private static boolean hasNormalScope(ClassInfo classInfo, VaubanIndex index) {
+        return classInfo.annotations().stream()
+                .anyMatch(a -> isNormalScope(a.name(), index));
+    }
+
+    private static boolean isNormalScope(DotName name, VaubanIndex index) {
+        if (BUILT_IN_NORMAL_SCOPES.contains(name)) {
+            return true;
+        }
+        var annClass = index.getClassByName(name);
+        return annClass.isPresent() && annClass.get().hasAnnotation(NORMAL_SCOPE);
+    }
+
+    private static boolean isInterceptorBinding(DotName name, VaubanIndex index) {
+        var annClass = index.getClassByName(name);
+        return annClass.isPresent() && annClass.get().hasAnnotation(INTERCEPTOR_BINDING);
+    }
+
+    private static boolean hasInterceptorBindings(ClassInfo classInfo, VaubanIndex index) {
+        for (var ann : classInfo.annotations()) {
+            if (isInterceptorBinding(ann.name(), index)) return true;
+            // Check stereotypes for interceptor bindings
+            var annClass = index.getClassByName(ann.name());
+            if (annClass.isPresent() && annClass.get().hasAnnotation(STEREOTYPE)) {
+                for (var stereoAnn : annClass.get().annotations()) {
+                    if (isInterceptorBinding(stereoAnn.name(), index)) return true;
+                }
+            }
+        }
+        return false;
     }
 }
