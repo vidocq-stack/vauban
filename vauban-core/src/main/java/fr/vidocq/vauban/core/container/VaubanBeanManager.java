@@ -75,20 +75,13 @@ public final class VaubanBeanManager implements BeanManager {
         }
 
         for (var bean : beans) {
-            // Type matching
+            // Type matching (supports Class, ParameterizedType, etc.)
             boolean typeMatch = false;
-            if (beanType instanceof Class<?> clazz) {
-                for (var bt : bean.getTypes()) {
-                    if (bt instanceof Class<?> btClass && clazz.isAssignableFrom(btClass)) {
-                        typeMatch = true;
-                        break;
-                    } else if (bt.equals(beanType)) {
-                        typeMatch = true;
-                        break;
-                    }
+            for (var bt : bean.getTypes()) {
+                if (typesMatch(bt, beanType)) {
+                    typeMatch = true;
+                    break;
                 }
-            } else {
-                typeMatch = bean.getTypes().contains(beanType);
             }
 
             if (!typeMatch) continue;
@@ -440,18 +433,31 @@ public final class VaubanBeanManager implements BeanManager {
     @Override
     public boolean isMatchingBean(Set<Type> beanTypes, Set<Annotation> beanQualifiers,
                                   Type requiredType, Set<Annotation> requiredQualifiers) {
-        if (!beanTypes.contains(requiredType)) {
-            if (requiredType instanceof Class<?> reqClass) {
-                boolean typeMatch = beanTypes.stream().anyMatch(bt ->
-                        bt instanceof Class<?> btClass && reqClass.isAssignableFrom(btClass));
-                if (!typeMatch) return false;
-            } else {
-                return false;
+        if (requiredType == null) {
+            throw new IllegalArgumentException("Required type must not be null");
+        }
+        for (var q : requiredQualifiers) {
+            if (!isQualifier(q.annotationType())) {
+                throw new IllegalArgumentException("Not a qualifier: " + q.annotationType());
             }
         }
+
+        // Type matching
+        boolean typeMatch = false;
+        for (var bt : beanTypes) {
+            if (typesMatch(bt, requiredType)) {
+                typeMatch = true;
+                break;
+            }
+        }
+        if (!typeMatch) return false;
+
+        // Qualifier matching: every required qualifier must be present in bean's qualifiers
         for (var req : requiredQualifiers) {
             if (req.annotationType() == jakarta.enterprise.inject.Any.class) continue;
-            if (!beanQualifiers.contains(req)) return false;
+            boolean found = beanQualifiers.stream()
+                .anyMatch(bq -> bq.annotationType().equals(req.annotationType()));
+            if (!found) return false;
         }
         return true;
     }
@@ -459,12 +465,66 @@ public final class VaubanBeanManager implements BeanManager {
     @Override
     public boolean isMatchingEvent(Type specifiedType, Set<Annotation> specifiedQualifiers,
                                    Type observedEventType, Set<Annotation> observedEventQualifiers) {
-        if (specifiedType instanceof Class<?> specClass && observedEventType instanceof Class<?> obsClass) {
-            if (!obsClass.isAssignableFrom(specClass)) return false;
+        if (specifiedType == null || observedEventType == null) {
+            throw new IllegalArgumentException("Event types must not be null");
         }
+        for (var q : specifiedQualifiers) {
+            if (!isQualifier(q.annotationType())) {
+                throw new IllegalArgumentException("Not a qualifier: " + q.annotationType());
+            }
+        }
+        if (observedEventType instanceof java.lang.reflect.TypeVariable<?>) {
+            throw new IllegalArgumentException("Observed event type cannot be a type variable");
+        }
+
+        // Type matching: observed type must be assignable from specified type
+        // (i.e., the observer's type must be a supertype of the fired event type)
+        if (!typesMatch(specifiedType, observedEventType)) return false;
+
+        // Qualifier matching: every observed qualifier must be present in specified qualifiers
         for (var obs : observedEventQualifiers) {
-            if (!specifiedQualifiers.contains(obs)) return false;
+            boolean found = specifiedQualifiers.stream()
+                .anyMatch(sq -> sq.annotationType().equals(obs.annotationType()));
+            if (!found) return false;
         }
         return true;
+    }
+
+    /**
+     * Checks if a bean type is assignable to a required type,
+     * supporting Class, ParameterizedType, and raw/parameterized compatibility.
+     */
+    private static boolean typesMatch(Type beanType, Type requiredType) {
+        if (beanType.equals(requiredType)) return true;
+
+        if (requiredType instanceof Class<?> reqClass) {
+            if (beanType instanceof Class<?> btClass) {
+                return reqClass.isAssignableFrom(btClass);
+            }
+            if (beanType instanceof java.lang.reflect.ParameterizedType pt) {
+                return reqClass.isAssignableFrom((Class<?>) pt.getRawType());
+            }
+        }
+
+        if (requiredType instanceof java.lang.reflect.ParameterizedType reqPt) {
+            if (beanType instanceof java.lang.reflect.ParameterizedType beanPt) {
+                // Raw types must be assignable
+                if (!typesMatch(beanPt.getRawType(), reqPt.getRawType())) return false;
+                // Type arguments must match exactly (invariant)
+                var reqArgs = reqPt.getActualTypeArguments();
+                var beanArgs = beanPt.getActualTypeArguments();
+                if (reqArgs.length != beanArgs.length) return false;
+                for (int i = 0; i < reqArgs.length; i++) {
+                    if (!reqArgs[i].equals(beanArgs[i])) return false;
+                }
+                return true;
+            }
+            // Raw class matches parameterized type (unsafe but CDI allows)
+            if (beanType instanceof Class<?> btClass) {
+                return ((Class<?>) reqPt.getRawType()).isAssignableFrom(btClass);
+            }
+        }
+
+        return false;
     }
 }

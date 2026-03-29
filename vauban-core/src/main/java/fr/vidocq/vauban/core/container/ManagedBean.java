@@ -99,9 +99,30 @@ public final class ManagedBean<T> implements Bean<T> {
     private static void collectTypes(Class<?> clazz, Set<Type> types) {
         if (clazz == null || clazz == Object.class) return;
         types.add(clazz);
-        collectTypes(clazz.getSuperclass(), types);
-        for (var iface : clazz.getInterfaces()) {
-            collectTypes(iface, types);
+        // Add generic superclass (e.g., AbstractList<String>)
+        var genericSuper = clazz.getGenericSuperclass();
+        if (genericSuper != null && genericSuper != Object.class) {
+            if (genericSuper instanceof java.lang.reflect.ParameterizedType) {
+                types.add(genericSuper);
+            }
+            if (genericSuper instanceof Class<?> c) {
+                collectTypes(c, types);
+            } else if (genericSuper instanceof java.lang.reflect.ParameterizedType pt) {
+                collectTypes((Class<?>) pt.getRawType(), types);
+            }
+        } else {
+            collectTypes(clazz.getSuperclass(), types);
+        }
+        // Add generic interfaces (e.g., Comparable<Foo>)
+        for (var genericIface : clazz.getGenericInterfaces()) {
+            if (genericIface instanceof java.lang.reflect.ParameterizedType) {
+                types.add(genericIface);
+            }
+            if (genericIface instanceof Class<?> c) {
+                collectTypes(c, types);
+            } else if (genericIface instanceof java.lang.reflect.ParameterizedType pt) {
+                collectTypes((Class<?>) pt.getRawType(), types);
+            }
         }
     }
 
