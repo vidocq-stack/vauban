@@ -2,22 +2,21 @@
 
 ## Date : 2026-03-29
 
-## Resultats
+## Resultats (CDI Lite)
 
 | Metrique | Valeur |
 |----------|--------|
-| Tests non-skippes | ~1167 |
-| **Passes** | **~341 (29.2%)** |
-| Echoues | ~826 |
+| Tests CDI Lite | 761 (non-skippes) |
+| **Passes** | **~291 (38.2%)** |
+| Echoues | ~470 |
 | Erreurs | 0 |
-| Temps | ~4s |
+| Temps | ~3s |
 
 ## Progression
 
 ```
-Debut    ████░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░   6.8%
-Final    ████████████████████████████░░░░░░░░░░░░░░░░  29.2%
-         +250 tests, -400 failures, x4.3
+Debut     ██████░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░   ~12% (estimé)
+Final     ██████████████████████████████████████░░░░░░  38.2%
 ```
 
 ## Commande
@@ -26,3 +25,9 @@ mvn test -pl vauban-tck-runner -Ptck
 ```
 
 ## Tests propres Vauban : ~225 (tous verts)
+
+## Note
+- CDI Full exclus (groupe cdi-full) — sera dans vauban-full
+- Score varie de 38.0% a 38.6% entre runs (pollution etat inter-tests)
+- ~70 tests interceptors runtime non-supportes
+- ~25 tests invokers CDI 4.1 non-supportes
