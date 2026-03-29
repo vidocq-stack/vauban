@@ -31,20 +31,40 @@ public final class InstanceImpl<T> implements Instance<T> {
 
     @Override
     public Instance<T> select(Annotation... qualifiers) {
-        // Simplified: qualifiers not yet filtered
+        validateQualifiers(qualifiers);
         return this;
     }
 
     @Override
     public <U extends T> Instance<U> select(Class<U> subtype, Annotation... qualifiers) {
+        validateQualifiers(qualifiers);
         return new InstanceImpl<>(container, subtype);
     }
 
     @Override
     public <U extends T> Instance<U> select(TypeLiteral<U> subtype, Annotation... qualifiers) {
+        validateQualifiers(qualifiers);
         @SuppressWarnings("unchecked")
         var clazz = (Class<U>) subtype.getType();
         return new InstanceImpl<>(container, clazz);
+    }
+
+    private static void validateQualifiers(Annotation... qualifiers) {
+        if (qualifiers == null) return;
+        var seen = new java.util.HashSet<Class<?>>();
+        for (var q : qualifiers) {
+            if (!q.annotationType().isAnnotationPresent(jakarta.inject.Qualifier.class)
+                    && q.annotationType() != jakarta.enterprise.inject.Default.class
+                    && q.annotationType() != jakarta.enterprise.inject.Any.class
+                    && q.annotationType() != jakarta.inject.Named.class) {
+                throw new IllegalArgumentException(
+                        q.annotationType().getName() + " is not a qualifier");
+            }
+            if (!seen.add(q.annotationType())) {
+                throw new IllegalArgumentException(
+                        "Duplicate qualifier: " + q.annotationType().getName());
+            }
+        }
     }
 
     @Override
