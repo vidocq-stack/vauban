@@ -21,9 +21,14 @@ public class VaubanContexts implements Contexts<Context> {
 
     @Override
     public Context getRequestContext() {
-        var container = ContainerHolder.get();
+        var container = fr.vidocq.vauban.core.container.VaubanContainer.current();
         if (container != null) {
             return container.requestContext();
+        }
+        // Fallback to ContainerHolder
+        var holder = ContainerHolder.get();
+        if (holder != null) {
+            return holder.requestContext();
         }
         throw new IllegalStateException("No Vauban container is running");
     }
