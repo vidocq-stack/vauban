@@ -79,11 +79,13 @@
 - [x] Tests : 5 tests (injection, conteneur vide, single bean), 145 total
 - [ ] `@MockBean` : remplacement par mock - differe
 
-## Phase 8: TCK Runner
-- [ ] Adaptateur Arquillian
-- [ ] SPI TCK
-- [ ] Pipeline runtime codegen
-- [ ] Execution TCK Lite
+## Phase 8: TCK Runner ✅
+- [x] SPI TCK : VaubanBeans, VaubanContexts, VaubanContextuals, VaubanCreationalContexts
+- [x] Adaptateur Arquillian : VaubanDeployableContainer (squelette), VaubanContainerConfig, extension
+- [x] Configuration : profil -Ptck, cdiCoreMode=true, groupes exclus
+- [x] Tests infrastructure SPI (4 tests, 149 total)
+- [ ] Pipeline runtime codegen dans l'adaptateur Arquillian (deploy ShrinkWrap) - incremental
+- [ ] Execution TCK Lite effective - necesssite un adaptateur Arquillian complet
 
 ## Phase 9: Outillage modules
 - [ ] `vauban:index` - indexation dependances
