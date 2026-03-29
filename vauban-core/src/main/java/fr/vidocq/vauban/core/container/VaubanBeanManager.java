@@ -31,6 +31,7 @@ public final class VaubanBeanManager implements BeanManager {
     private final Collection<ManagedBean<?>> beans;
     private final EventDispatcher eventDispatcher;
     private final InterceptorManager interceptorManager;
+    private List<Bean<?>> builtInBeans;
 
     public VaubanBeanManager(VaubanContainer container,
                              Map<Class<? extends Annotation>, Context> contexts,
@@ -44,10 +45,35 @@ public final class VaubanBeanManager implements BeanManager {
         this.interceptorManager = interceptorManager;
     }
 
+    private List<Bean<?>> getBuiltInBeans() {
+        if (builtInBeans == null) {
+            builtInBeans = List.of(
+                new BuiltInBean<>(BeanManager.class,
+                    Set.of(BeanManager.class, jakarta.enterprise.inject.spi.BeanContainer.class, Object.class),
+                    () -> this),
+                new BuiltInBean<>(Event.class,
+                    Set.of(Event.class, Object.class),
+                    () -> getEvent()),
+                new BuiltInBean<>(Instance.class,
+                    Set.of(Instance.class, Object.class),
+                    () -> createInstance())
+            );
+        }
+        return builtInBeans;
+    }
+
     // --- Functional methods ---
 
     @Override
     public Object getReference(Bean<?> bean, Type beanType, CreationalContext<?> ctx) {
+        // Validate that beanType is actually a type of the bean
+        boolean valid = bean.getTypes().stream()
+            .anyMatch(bt -> typesMatch(bt, beanType));
+        if (!valid) {
+            throw new IllegalArgumentException(
+                "Type " + beanType + " is not a bean type of " + bean.getBeanClass());
+        }
+
         var scope = bean.getScope();
         var context = contexts.get(scope);
         if (context == null) {
@@ -71,6 +97,24 @@ public final class VaubanBeanManager implements BeanManager {
         } else {
             for (var q : qualifiers) {
                 requiredQualifiers.add(q.annotationType());
+            }
+        }
+
+        // Check built-in beans
+        for (var builtIn : getBuiltInBeans()) {
+            boolean typeMatch = false;
+            for (var bt : builtIn.getTypes()) {
+                if (typesMatch(bt, beanType)) {
+                    typeMatch = true;
+                    break;
+                }
+            }
+            if (typeMatch) {
+                // Built-in beans have @Default and @Any qualifiers
+                if (requiredQualifiers.contains(jakarta.enterprise.inject.Any.class) ||
+                    requiredQualifiers.contains(jakarta.enterprise.inject.Default.class)) {
+                    result.add(builtIn);
+                }
             }
         }
 
