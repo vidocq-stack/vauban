@@ -179,9 +179,22 @@ public final class BeanDiscovery {
         var id = BeanId.ofProducerMethod(declaringClass.name(), method.name());
         var types = computeProducerTypes(method.returnType());
         var qualifiers = computeQualifiers(method.annotations());
-        var scope = computeScopeFromAnnotations(method.annotations());
-        var isAlternative = hasAnnotation(method.annotations(), ALTERNATIVE);
+        var scope = computeScopeWithStereotypes(method.annotations());
+        var isAlternative = hasAnnotation(method.annotations(), ALTERNATIVE) ||
+                method.annotations().stream().anyMatch(a -> isStereotype(a.name()) &&
+                        index.getClassByName(a.name()).map(c -> c.hasAnnotation(ALTERNATIVE)).orElse(false));
         var priority = extractPriority(method.annotations());
+        if (priority == 0) {
+            for (var ann : method.annotations()) {
+                if (isStereotype(ann.name())) {
+                    var sc = index.getClassByName(ann.name());
+                    if (sc.isPresent()) {
+                        priority = extractPriority(sc.get().annotations());
+                        if (priority > 0) break;
+                    }
+                }
+            }
+        }
         var name = extractName(method.annotations(), deriveProducerMethodName(method.name()));
 
         // Producer method parameters are injection points
@@ -203,7 +216,7 @@ public final class BeanDiscovery {
         var id = BeanId.ofProducerField(declaringClass.name(), field.name());
         var types = computeProducerTypes(field.type());
         var qualifiers = computeQualifiers(field.annotations());
-        var scope = computeScopeFromAnnotations(field.annotations());
+        var scope = computeScopeWithStereotypes(field.annotations());
         var isAlternative = hasAnnotation(field.annotations(), ALTERNATIVE);
         var priority = extractPriority(field.annotations());
         var name = extractName(field.annotations(), null);
@@ -352,6 +365,28 @@ public final class BeanDiscovery {
             if (scope != null) return scope;
         }
         return ScopeInfo.DEPENDENT; // default
+    }
+
+    private ScopeInfo computeScopeWithStereotypes(List<AnnotationInfo> annotations) {
+        // 1. Explicit scope
+        for (var ann : annotations) {
+            var scope = mapScope(ann.name());
+            if (scope != null) return scope;
+        }
+        // 2. Scope from stereotype
+        for (var ann : annotations) {
+            if (isStereotype(ann.name())) {
+                var stereotypeClass = index.getClassByName(ann.name());
+                if (stereotypeClass.isPresent()) {
+                    var scope = computeScopeFromAnnotations(stereotypeClass.get().annotations());
+                    if (!scope.equals(ScopeInfo.DEPENDENT) ||
+                            stereotypeClass.get().annotations().stream().anyMatch(a -> mapScope(a.name()) != null)) {
+                        return scope;
+                    }
+                }
+            }
+        }
+        return ScopeInfo.DEPENDENT;
     }
 
     private ScopeInfo mapScope(DotName annotationName) {
