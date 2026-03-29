@@ -1,6 +1,11 @@
 module fr.vidocq.vauban.core {
     requires transitive fr.vidocq.vauban.api;
     requires fr.vidocq.vauban.indexer;
+    requires transitive jakarta.cdi.lang.model;
 
     exports fr.vidocq.vauban.core;
+    exports fr.vidocq.vauban.core.langmodel;
+    exports fr.vidocq.vauban.core.langmodel.declarations;
+    exports fr.vidocq.vauban.core.langmodel.types;
+    exports fr.vidocq.vauban.core.types;
 }
