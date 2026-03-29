@@ -1,6 +1,5 @@
 package fr.vidocq.vauban.tck;
 
-import fr.vidocq.vauban.indexer.IndexBuilder;
 import fr.vidocq.vauban.indexer.scanner.ClassFileScanner;
 import fr.vidocq.vauban.core.container.VaubanContainer;
 import org.jboss.arquillian.container.spi.client.container.DeployableContainer;
@@ -16,10 +15,12 @@ import java.io.InputStream;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.jar.JarInputStream;
 
 /**
  * Arquillian container adapter for Vauban.
- * Extracts classes from ShrinkWrap archives, scans them, and bootstraps a VaubanContainer.
+ * Extracts classes from ShrinkWrap archives (including nested JARs in WEB-INF/lib),
+ * scans them, and bootstraps a VaubanContainer.
  */
 public class VaubanDeployableContainer implements DeployableContainer<VaubanContainerConfig> {
 
@@ -39,34 +40,44 @@ public class VaubanDeployableContainer implements DeployableContainer<VaubanCont
             var classBytecodeMap = new LinkedHashMap<String, byte[]>();
             var classNames = new ArrayList<String>();
 
-            // Extract all .class files from the ShrinkWrap archive
             for (Map.Entry<ArchivePath, Node> entry : archive.getContent().entrySet()) {
                 var path = entry.getKey().get();
+                var node = entry.getValue();
+                var asset = node.getAsset();
+                if (asset == null) continue;
+
+                // Extract .class files directly in the archive
                 if (path.endsWith(".class") && !path.contains("module-info")) {
-                    var node = entry.getValue();
-                    var asset = node.getAsset();
-                    if (asset != null) {
-                        try (InputStream is = asset.openStream()) {
-                            var bytes = is.readAllBytes();
-                            try {
-                                var classInfo = ClassFileScanner.scan(bytes);
-                                var className = classInfo.name().value();
-                                classBytecodeMap.put(className, bytes);
-                                classNames.add(className);
-                            } catch (Exception e) {
-                                // Skip malformed class files
+                    extractClass(asset, classBytecodeMap, classNames);
+                }
+
+                // Extract .class files from nested JARs (WEB-INF/lib/*.jar)
+                if (path.endsWith(".jar") && path.contains("lib")) {
+                    try (var is = asset.openStream();
+                         var jarIs = new JarInputStream(is)) {
+                        var jarEntry = jarIs.getNextJarEntry();
+                        while (jarEntry != null) {
+                            if (jarEntry.getName().endsWith(".class")
+                                    && !jarEntry.getName().contains("module-info")) {
+                                var bytes = jarIs.readAllBytes();
+                                try {
+                                    var classInfo = ClassFileScanner.scan(bytes);
+                                    var className = classInfo.name().value();
+                                    classBytecodeMap.put(className, bytes);
+                                    classNames.add(className);
+                                } catch (Exception e) {
+                                    // Skip malformed class files
+                                }
                             }
+                            jarEntry = jarIs.getNextJarEntry();
                         }
                     }
                 }
             }
 
-            // Build a ClassLoader that can serve both loadClass and getResourceAsStream
-            // for the extracted bytecode
             var archiveClassLoader = new ByteArrayClassLoader(
                     Thread.currentThread().getContextClassLoader(), classBytecodeMap);
 
-            // Use VaubanContainer.Builder with the loaded classes
             var builder = VaubanContainer.builder();
             for (var className : classNames) {
                 try {
@@ -78,7 +89,6 @@ public class VaubanDeployableContainer implements DeployableContainer<VaubanCont
             }
 
             var container = builder.build();
-            // Activate request context for TCK tests (most tests expect it active)
             container.requestContext().activate();
             ContainerHolder.set(container);
 
@@ -91,6 +101,23 @@ public class VaubanDeployableContainer implements DeployableContainer<VaubanCont
         }
 
         return new ProtocolMetaData();
+    }
+
+    private void extractClass(org.jboss.shrinkwrap.api.asset.Asset asset,
+            Map<String, byte[]> classBytecodeMap, ArrayList<String> classNames) {
+        try (InputStream is = asset.openStream()) {
+            var bytes = is.readAllBytes();
+            try {
+                var classInfo = ClassFileScanner.scan(bytes);
+                var className = classInfo.name().value();
+                classBytecodeMap.put(className, bytes);
+                classNames.add(className);
+            } catch (Exception e) {
+                // Skip malformed class files
+            }
+        } catch (Exception e) {
+            // Skip unreadable assets
+        }
     }
 
     @Override
@@ -128,8 +155,6 @@ public class VaubanDeployableContainer implements DeployableContainer<VaubanCont
 
         @Override
         public InputStream getResourceAsStream(String name) {
-            // Serve .class resources from our bytecode map so that
-            // VaubanContainer.Builder can scan them via clazz.getClassLoader().getResourceAsStream()
             if (name.endsWith(".class")) {
                 var className = name.replace('/', '.').replace(".class", "");
                 var bytes = classes.get(className);
