@@ -40,13 +40,14 @@
 - [x] `DeploymentValidator` : non satisfaits, ambigus, cycles
 - [x] Tests TDD (25 tests, 122 total)
 
-## Phase 4: Generation de code
-- [ ] `ClientProxyGenerator` via `java.lang.classfile`
-- [ ] `InterceptorSubclassGenerator`
-- [ ] `DecoratorSubclassGenerator`
-- [ ] `BeanFactoryGenerator`
-- [ ] `ObserverInvokerGenerator`
-- [ ] Tests: generer, charger, executer
+## Phase 4: Generation de code ✅
+- [x] `BeanFactoryGenerator` : factory sans reflexion via Class-File API (new + bridge method)
+- [x] `ClientProxyGenerator` : proxy sous-classe avec Supplier delegate, dispatch primitifs/objets
+- [x] `GeneratedClass` record, `BeanFactory<T>` interface
+- [ ] `InterceptorSubclassGenerator` (differe, pas bloquant pour Phase 6)
+- [ ] `DecoratorSubclassGenerator` (differe)
+- [ ] `ObserverInvokerGenerator` (differe)
+- [x] Tests: generer, charger via ClassLoader, executer (8 tests, 130 total)
 
 ## Phase 5: Processeur APT
 - [ ] `VaubanProcessor` - processeur principal
