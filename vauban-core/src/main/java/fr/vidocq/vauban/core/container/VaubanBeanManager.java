@@ -604,6 +604,11 @@ public final class VaubanBeanManager implements BeanManager {
     private static boolean typesMatch(Type beanType, Type requiredType) {
         if (beanType.equals(requiredType)) return true;
 
+        // Primitive <-> wrapper matching
+        if (requiredType instanceof Class<?> reqClass && beanType instanceof Class<?> btClass) {
+            if (isPrimitiveWrapperMatch(reqClass, btClass)) return true;
+        }
+
         if (requiredType instanceof Class<?> reqClass) {
             if (beanType instanceof Class<?> btClass) {
                 return reqClass.isAssignableFrom(btClass);
@@ -633,5 +638,24 @@ public final class VaubanBeanManager implements BeanManager {
         }
 
         return false;
+    }
+
+    private static boolean isPrimitiveWrapperMatch(Class<?> a, Class<?> b) {
+        if (a.isPrimitive()) return b == primitiveToWrapper(a);
+        if (b.isPrimitive()) return a == primitiveToWrapper(b);
+        return false;
+    }
+
+    private static Class<?> primitiveToWrapper(Class<?> primitive) {
+        if (primitive == int.class) return Integer.class;
+        if (primitive == long.class) return Long.class;
+        if (primitive == double.class) return Double.class;
+        if (primitive == float.class) return Float.class;
+        if (primitive == boolean.class) return Boolean.class;
+        if (primitive == byte.class) return Byte.class;
+        if (primitive == char.class) return Character.class;
+        if (primitive == short.class) return Short.class;
+        if (primitive == void.class) return Void.class;
+        return primitive;
     }
 }

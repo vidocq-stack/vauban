@@ -120,17 +120,67 @@ public final class ManagedBean<T> implements Bean<T> {
     private Set<Type> getProducerTypes() {
         var types = new LinkedHashSet<Type>();
         for (var typeInfo : descriptor.types()) {
-            if (typeInfo instanceof fr.vidocq.vauban.indexer.model.TypeInfo.ClassType ct) {
-                try {
-                    var clazz = Class.forName(ct.name().value());
-                    collectTypes(clazz, types);
-                } catch (ClassNotFoundException e) {
-                    // skip
+            switch (typeInfo) {
+                case fr.vidocq.vauban.indexer.model.TypeInfo.ClassType ct -> {
+                    try {
+                        var clazz = Class.forName(ct.name().value());
+                        collectTypes(clazz, types);
+                    } catch (ClassNotFoundException e) {
+                        // skip
+                    }
                 }
+                case fr.vidocq.vauban.indexer.model.TypeInfo.ArrayType at -> {
+                    var arrayClass = resolveArrayClass(at);
+                    if (arrayClass != null) types.add(arrayClass);
+                }
+                case fr.vidocq.vauban.indexer.model.TypeInfo.PrimitiveType pt -> {
+                    types.add(primitiveClass(pt.kind()));
+                }
+                default -> {}
             }
         }
         types.add(Object.class);
         return types;
+    }
+
+    private static Class<?> resolveArrayClass(fr.vidocq.vauban.indexer.model.TypeInfo.ArrayType at) {
+        try {
+            var component = at.componentType();
+            String descriptor;
+            if (component instanceof fr.vidocq.vauban.indexer.model.TypeInfo.ClassType ct) {
+                descriptor = "[".repeat(at.dimensions()) + "L" + ct.name().value() + ";";
+            } else if (component instanceof fr.vidocq.vauban.indexer.model.TypeInfo.PrimitiveType pt) {
+                var primDescriptor = switch (pt.kind()) {
+                    case BOOLEAN -> "Z";
+                    case BYTE -> "B";
+                    case CHAR -> "C";
+                    case SHORT -> "S";
+                    case INT -> "I";
+                    case LONG -> "J";
+                    case FLOAT -> "F";
+                    case DOUBLE -> "D";
+                };
+                descriptor = "[".repeat(at.dimensions()) + primDescriptor;
+            } else {
+                return null;
+            }
+            return Class.forName(descriptor);
+        } catch (ClassNotFoundException e) {
+            return null;
+        }
+    }
+
+    private static Class<?> primitiveClass(fr.vidocq.vauban.indexer.model.TypeInfo.PrimitiveType.Kind kind) {
+        return switch (kind) {
+            case BOOLEAN -> boolean.class;
+            case BYTE -> byte.class;
+            case CHAR -> char.class;
+            case SHORT -> short.class;
+            case INT -> int.class;
+            case LONG -> long.class;
+            case FLOAT -> float.class;
+            case DOUBLE -> double.class;
+        };
     }
 
     private static void collectTypes(Class<?> clazz, Set<Type> types) {
@@ -236,6 +286,8 @@ public final class ManagedBean<T> implements Bean<T> {
         // Per Annotation.hashCode() contract: sum of (127 * memberName.hashCode() ^ memberValue.hashCode())
         int hash = 0;
         for (var m : annType.getDeclaredMethods()) {
+            // Skip @Nonbinding members
+            if (m.isAnnotationPresent(jakarta.enterprise.util.Nonbinding.class)) continue;
             var memberValue = members.get(m.getName());
             Object value;
             if (memberValue != null) {
@@ -254,6 +306,8 @@ public final class ManagedBean<T> implements Bean<T> {
             Map<String, AnnotationValue> members, Annotation other) {
         try {
             for (var m : annType.getDeclaredMethods()) {
+                // Skip @Nonbinding members
+                if (m.isAnnotationPresent(jakarta.enterprise.util.Nonbinding.class)) continue;
                 var memberValue = members.get(m.getName());
                 Object thisVal;
                 if (memberValue != null) {
