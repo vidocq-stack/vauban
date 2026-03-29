@@ -251,6 +251,153 @@ class BeanDiscoveryTest {
     }
 
     @Nested
+    @DisplayName("stereotypes")
+    class Stereotypes {
+
+        /**
+         * Creates a stereotype annotation class in the index.
+         * A stereotype is an annotation meta-annotated with @Stereotype.
+         */
+        static ClassInfo makeStereotypeAnnotation(String name, List<AnnotationInfo> metaAnnotations) {
+            return new ClassInfo(
+                    DotName.of(name), DotName.of("java.lang.Object"), List.of(),
+                    0x2601, // PUBLIC + INTERFACE + ANNOTATION + ABSTRACT
+                    List.of(), List.of(),
+                    metaAnnotations,
+                    ClassKind.ANNOTATION
+            );
+        }
+
+        static ClassInfo makeClassWithAnnotation(String name, String annotationName) {
+            return new ClassInfo(
+                    DotName.of(name), DotName.of("java.lang.Object"), List.of(),
+                    0x0001,
+                    List.of(),
+                    List.of(new MethodInfo("<init>", new TypeInfo.VoidType(), List.of(), List.of(), 0x0001, List.of())),
+                    List.of(new AnnotationInfo(DotName.of(annotationName), Map.of())),
+                    ClassKind.CLASS
+            );
+        }
+
+        static ClassInfo makeClassWithAnnotations(String name, List<AnnotationInfo> annotations) {
+            return new ClassInfo(
+                    DotName.of(name), DotName.of("java.lang.Object"), List.of(),
+                    0x0001,
+                    List.of(),
+                    List.of(new MethodInfo("<init>", new TypeInfo.VoidType(), List.of(), List.of(), 0x0001, List.of())),
+                    annotations,
+                    ClassKind.CLASS
+            );
+        }
+
+        @Test
+        @DisplayName("un stereotype est une bean-defining annotation")
+        void stereotypeIsBeanDefiningAnnotation() {
+            var builder = new IndexBuilder();
+            // Register the @Service stereotype annotation
+            builder.add(makeStereotypeAnnotation("com.example.Service", List.of(
+                    new AnnotationInfo(DotName.of("jakarta.enterprise.inject.Stereotype"), Map.of()),
+                    new AnnotationInfo(DotName.of("jakarta.enterprise.context.ApplicationScoped"), Map.of())
+            )));
+            // A class annotated only with @Service (no explicit scope)
+            builder.add(makeClassWithAnnotation("com.example.MyService", "com.example.Service"));
+            var discovery = new BeanDiscovery(builder.build());
+
+            var beans = discovery.discoverBeans();
+            assertEquals(1, beans.size());
+            assertEquals(DotName.of("com.example.MyService"), beans.getFirst().beanClass());
+        }
+
+        @Test
+        @DisplayName("le scope du stereotype est herite quand le bean n'a pas de scope explicite")
+        void stereotypeScopeIsInherited() {
+            var builder = new IndexBuilder();
+            builder.add(makeStereotypeAnnotation("com.example.Service", List.of(
+                    new AnnotationInfo(DotName.of("jakarta.enterprise.inject.Stereotype"), Map.of()),
+                    new AnnotationInfo(DotName.of("jakarta.enterprise.context.ApplicationScoped"), Map.of())
+            )));
+            builder.add(makeClassWithAnnotation("com.example.MyService", "com.example.Service"));
+            var discovery = new BeanDiscovery(builder.build());
+
+            var bean = discovery.discoverBeans().getFirst();
+            assertEquals(ScopeInfo.APPLICATION, bean.scope());
+        }
+
+        @Test
+        @DisplayName("un scope explicite sur le bean a priorite sur le stereotype")
+        void explicitScopeOverridesStereotype() {
+            var builder = new IndexBuilder();
+            builder.add(makeStereotypeAnnotation("com.example.Service", List.of(
+                    new AnnotationInfo(DotName.of("jakarta.enterprise.inject.Stereotype"), Map.of()),
+                    new AnnotationInfo(DotName.of("jakarta.enterprise.context.ApplicationScoped"), Map.of())
+            )));
+            builder.add(makeClassWithAnnotations("com.example.MyService", List.of(
+                    new AnnotationInfo(DotName.of("com.example.Service"), Map.of()),
+                    new AnnotationInfo(DotName.of("jakarta.enterprise.context.RequestScoped"), Map.of())
+            )));
+            var discovery = new BeanDiscovery(builder.build());
+
+            var bean = discovery.discoverBeans().getFirst();
+            assertEquals(ScopeInfo.REQUEST, bean.scope());
+        }
+
+        @Test
+        @DisplayName("@Named sur le stereotype rend le bean nomme")
+        void stereotypeNamedIsInherited() {
+            var builder = new IndexBuilder();
+            builder.add(makeStereotypeAnnotation("com.example.Service", List.of(
+                    new AnnotationInfo(DotName.of("jakarta.enterprise.inject.Stereotype"), Map.of()),
+                    new AnnotationInfo(DotName.of("jakarta.enterprise.context.ApplicationScoped"), Map.of()),
+                    new AnnotationInfo(DotName.of("jakarta.inject.Named"), Map.of())
+            )));
+            builder.add(makeClassWithAnnotation("com.example.MyService", "com.example.Service"));
+            var discovery = new BeanDiscovery(builder.build());
+
+            var bean = discovery.discoverBeans().getFirst();
+            assertEquals("myService", bean.name());
+        }
+
+        @Test
+        @DisplayName("les qualifiers du stereotype sont herites par le bean")
+        void stereotypeQualifiersAreInherited() {
+            var builder = new IndexBuilder();
+            // Create a custom qualifier annotation
+            builder.add(new ClassInfo(
+                    DotName.of("com.example.MyQualifier"), DotName.of("java.lang.Object"), List.of(),
+                    0x2601,
+                    List.of(), List.of(),
+                    List.of(new AnnotationInfo(DotName.of("jakarta.inject.Qualifier"), Map.of())),
+                    ClassKind.ANNOTATION
+            ));
+            builder.add(makeStereotypeAnnotation("com.example.Service", List.of(
+                    new AnnotationInfo(DotName.of("jakarta.enterprise.inject.Stereotype"), Map.of()),
+                    new AnnotationInfo(DotName.of("jakarta.enterprise.context.ApplicationScoped"), Map.of()),
+                    new AnnotationInfo(DotName.of("com.example.MyQualifier"), Map.of())
+            )));
+            builder.add(makeClassWithAnnotation("com.example.MyService", "com.example.Service"));
+            var discovery = new BeanDiscovery(builder.build());
+
+            var bean = discovery.discoverBeans().getFirst();
+            assertTrue(bean.qualifiers().stream()
+                    .anyMatch(q -> q.annotationName().equals(DotName.of("com.example.MyQualifier"))));
+        }
+
+        @Test
+        @DisplayName("un bean sans scope et stereotype sans scope a le scope Dependent")
+        void noScopeDefaultsToDependent() {
+            var builder = new IndexBuilder();
+            builder.add(makeStereotypeAnnotation("com.example.MyStereotype", List.of(
+                    new AnnotationInfo(DotName.of("jakarta.enterprise.inject.Stereotype"), Map.of())
+            )));
+            builder.add(makeClassWithAnnotation("com.example.MyService", "com.example.MyStereotype"));
+            var discovery = new BeanDiscovery(builder.build());
+
+            var bean = discovery.discoverBeans().getFirst();
+            assertEquals(ScopeInfo.DEPENDENT, bean.scope());
+        }
+    }
+
+    @Nested
     @DisplayName("producer methods")
     class ProducerMethods {
 

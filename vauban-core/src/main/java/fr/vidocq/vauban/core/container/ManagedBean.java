@@ -293,7 +293,14 @@ public final class ManagedBean<T> implements Bean<T> {
 
     @Override
     public Set<Class<? extends Annotation>> getStereotypes() {
-        return Set.of();
+        var result = new LinkedHashSet<Class<? extends Annotation>>();
+        for (var ann : beanClass.getAnnotations()) {
+            if (ann.annotationType().isAnnotationPresent(
+                    jakarta.enterprise.inject.Stereotype.class)) {
+                result.add(ann.annotationType());
+            }
+        }
+        return result;
     }
 
     @Override

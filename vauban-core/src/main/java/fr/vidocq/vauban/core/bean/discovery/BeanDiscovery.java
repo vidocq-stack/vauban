@@ -45,6 +45,7 @@ public final class BeanDiscovery {
     private static final DotName AROUND_INVOKE = DotName.of("jakarta.interceptor.AroundInvoke");
     private static final DotName INTERCEPTOR_BINDING = DotName.of("jakarta.interceptor.InterceptorBinding");
     private static final DotName DISPOSES = DotName.of("jakarta.enterprise.inject.Disposes");
+    private static final DotName STEREOTYPE = DotName.of("jakarta.enterprise.inject.Stereotype");
 
     private final VaubanIndex index;
 
@@ -116,19 +117,25 @@ public final class BeanDiscovery {
     private boolean hasBeanDefiningAnnotation(ClassInfo classInfo) {
         for (var annotation : classInfo.annotations()) {
             if (BEAN_DEFINING_ANNOTATIONS.contains(annotation.name())) return true;
+            if (isStereotype(annotation.name())) return true;
         }
         return false;
+    }
+
+    private boolean isStereotype(DotName annotationName) {
+        var annClass = index.getClassByName(annotationName);
+        return annClass.isPresent() && annClass.get().hasAnnotation(STEREOTYPE);
     }
 
     private BeanDescriptor buildManagedBean(ClassInfo classInfo) {
         var id = BeanId.of(classInfo.name());
         var types = computeBeanTypes(classInfo);
-        var qualifiers = computeQualifiers(classInfo.annotations());
+        var qualifiers = computeQualifiersWithStereotypes(classInfo);
         var scope = computeScope(classInfo);
         var isAlternative = classInfo.hasAnnotation(ALTERNATIVE);
         var priority = extractPriority(classInfo.annotations());
         var injectionPoints = discoverInjectionPoints(classInfo);
-        var name = extractName(classInfo.annotations(), decapitalize(classInfo.name().simpleName()));
+        var name = extractNameWithStereotypes(classInfo);
 
         return new BeanDescriptor(id, classInfo.name(), BeanDescriptor.BeanKind.MANAGED,
                 types, qualifiers, scope, isAlternative, priority, injectionPoints, name);
@@ -228,6 +235,42 @@ public final class BeanDiscovery {
         return qualifiers;
     }
 
+    Set<QualifierInstance> computeQualifiersWithStereotypes(ClassInfo classInfo) {
+        var allAnnotations = new ArrayList<>(classInfo.annotations());
+
+        // Add annotations from stereotypes
+        for (var ann : classInfo.annotations()) {
+            if (isStereotype(ann.name())) {
+                var stereotypeClass = index.getClassByName(ann.name());
+                if (stereotypeClass.isPresent()) {
+                    allAnnotations.addAll(stereotypeClass.get().annotations());
+                }
+            }
+        }
+
+        return computeQualifiers(allAnnotations);
+    }
+
+    private String extractNameWithStereotypes(ClassInfo classInfo) {
+        // Check bean itself first
+        var name = extractName(classInfo.annotations(), decapitalize(classInfo.name().simpleName()));
+        if (name != null) return name;
+
+        // Check stereotypes
+        for (var ann : classInfo.annotations()) {
+            if (isStereotype(ann.name())) {
+                var stereotypeClass = index.getClassByName(ann.name());
+                if (stereotypeClass.isPresent()) {
+                    var stereotypeName = extractName(stereotypeClass.get().annotations(),
+                            decapitalize(classInfo.name().simpleName()));
+                    if (stereotypeName != null) return stereotypeName;
+                }
+            }
+        }
+
+        return null;
+    }
+
     private boolean isQualifierAnnotation(DotName name) {
         // Built-in qualifiers
         if (name.equals(QualifierInstance.DEFAULT_NAME)
@@ -242,7 +285,31 @@ public final class BeanDiscovery {
     }
 
     ScopeInfo computeScope(ClassInfo classInfo) {
-        return computeScopeFromAnnotations(classInfo.annotations());
+        // 1. Explicit scope on the bean itself
+        var scope = computeScopeFromAnnotations(classInfo.annotations());
+        if (!scope.equals(ScopeInfo.DEPENDENT) || hasScopeAnnotation(classInfo.annotations())) {
+            return scope;
+        }
+
+        // 2. Check stereotypes for scope
+        for (var ann : classInfo.annotations()) {
+            if (isStereotype(ann.name())) {
+                var stereotypeClass = index.getClassByName(ann.name());
+                if (stereotypeClass.isPresent()) {
+                    var stereotypeScope = computeScopeFromAnnotations(stereotypeClass.get().annotations());
+                    if (!stereotypeScope.equals(ScopeInfo.DEPENDENT)
+                            || hasScopeAnnotation(stereotypeClass.get().annotations())) {
+                        return stereotypeScope;
+                    }
+                }
+            }
+        }
+
+        return ScopeInfo.DEPENDENT;
+    }
+
+    private boolean hasScopeAnnotation(List<AnnotationInfo> annotations) {
+        return annotations.stream().anyMatch(a -> mapScope(a.name()) != null);
     }
 
     ScopeInfo computeScopeFromAnnotations(List<AnnotationInfo> annotations) {
