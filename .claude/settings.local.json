@@ -23,7 +23,8 @@
       "Bash(done)",
       "Bash(ls /Users/yblazart/.sdkman/candidates/maven/*/bin/mvn)",
       "Bash(/Users/yblazart/.sdkman/candidates/maven/4.0.0-rc-5/bin/mvn compile:*)",
-      "Bash(/Users/yblazart/.sdkman/candidates/maven/4.0.0-rc-5/bin/mvn clean:*)"
+      "Bash(/Users/yblazart/.sdkman/candidates/maven/4.0.0-rc-5/bin/mvn clean:*)",
+      "Bash(mvn dependency:tree -pl vauban-processor)"
     ]
   }
 }

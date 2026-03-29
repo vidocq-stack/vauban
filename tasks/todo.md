@@ -49,11 +49,14 @@
 - [ ] `ObserverInvokerGenerator` (differe)
 - [x] Tests: generer, charger via ClassLoader, executer (8 tests, 130 total)
 
-## Phase 5: Processeur APT
-- [ ] `VaubanProcessor` - processeur principal
-- [ ] Pipeline BCE (5 phases)
-- [ ] `ExtensionLoader` via ServiceLoader
-- [ ] Tests avec `javax.tools.JavaCompiler`
+## Phase 5: Processeur APT ✅
+- [x] `VaubanProcessor` extends AbstractProcessor, pipeline complet
+- [x] `ElementScanner` : bridge TypeElement -> ClassInfo (APT -> indexer model)
+- [x] Pipeline : scan -> discovery -> validation -> codegen (factories + proxies)
+- [x] Enregistrement META-INF/services + provides dans module-info
+- [x] Tests avec `javax.tools.JavaCompiler` (compilation in-process, 3 tests)
+- [ ] Pipeline BCE complet (5 phases @Discovery etc.) - differe, structure en place
+- [ ] `ExtensionLoader` via ServiceLoader - differe
 
 ## Phase 6: Runtime conteneur
 - [ ] `VaubanContainer` implements `SeContainer`
