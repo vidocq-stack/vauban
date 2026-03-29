@@ -370,44 +370,50 @@ public final class VaubanBeanManager implements BeanManager {
 
     @Override
     public <X> ProducerFactory<X> getProducerFactory(AnnotatedField<? super X> field, Bean<X> declaringBean) {
-        throw new IllegalStateException("Not yet implemented");
+        if (field == null) throw new IllegalArgumentException("field must not be null");
+        throw new IllegalArgumentException("Producer factory not supported for: " + field);
     }
 
     @Override
     public <X> ProducerFactory<X> getProducerFactory(AnnotatedMethod<? super X> method, Bean<X> declaringBean) {
-        throw new IllegalStateException("Not yet implemented");
+        if (method == null) throw new IllegalArgumentException("method must not be null");
+        throw new IllegalArgumentException("Producer factory not supported for: " + method);
     }
 
     @Override
     public <T> BeanAttributes<T> createBeanAttributes(AnnotatedType<T> type) {
-        throw new IllegalStateException("Not yet implemented");
+        if (type == null) throw new IllegalArgumentException("type must not be null");
+        throw new IllegalArgumentException("createBeanAttributes not supported for: " + type);
     }
 
     @Override
     public BeanAttributes<?> createBeanAttributes(AnnotatedMember<?> type) {
-        throw new IllegalStateException("Not yet implemented");
+        if (type == null) throw new IllegalArgumentException("type must not be null");
+        throw new IllegalArgumentException("createBeanAttributes not supported for: " + type);
     }
 
     @Override
     public <T> Bean<T> createBean(BeanAttributes<T> attributes, Class<T> beanClass,
                                   InjectionTargetFactory<T> injectionTargetFactory) {
-        throw new IllegalStateException("Not yet implemented");
+        throw new IllegalArgumentException("createBean not yet supported");
     }
 
     @Override
     public <T, X> Bean<T> createBean(BeanAttributes<T> attributes, Class<X> beanClass,
                                      ProducerFactory<X> producerFactory) {
-        throw new IllegalStateException("Not yet implemented");
+        throw new IllegalArgumentException("createBean not yet supported");
     }
 
     @Override
     public InjectionPoint createInjectionPoint(AnnotatedField<?> field) {
-        throw new IllegalStateException("Not yet implemented");
+        if (field == null) throw new IllegalArgumentException("field must not be null");
+        throw new IllegalArgumentException("createInjectionPoint not supported for: " + field);
     }
 
     @Override
     public InjectionPoint createInjectionPoint(AnnotatedParameter<?> parameter) {
-        throw new IllegalStateException("Not yet implemented");
+        if (parameter == null) throw new IllegalArgumentException("parameter must not be null");
+        throw new IllegalArgumentException("createInjectionPoint not supported for: " + parameter);
     }
 
     @Override

@@ -127,7 +127,7 @@ public final class BeanDiscovery {
         var isAlternative = classInfo.hasAnnotation(ALTERNATIVE);
         var priority = extractPriority(classInfo.annotations());
         var injectionPoints = discoverInjectionPoints(classInfo);
-        var name = extractName(classInfo.annotations(), classInfo.name().simpleName());
+        var name = extractName(classInfo.annotations(), decapitalize(classInfo.name().simpleName()));
 
         return new BeanDescriptor(id, classInfo.name(), BeanDescriptor.BeanKind.MANAGED,
                 types, qualifiers, scope, isAlternative, priority, injectionPoints, name);
@@ -140,7 +140,7 @@ public final class BeanDiscovery {
         var scope = computeScopeFromAnnotations(method.annotations());
         var isAlternative = hasAnnotation(method.annotations(), ALTERNATIVE);
         var priority = extractPriority(method.annotations());
-        var name = extractName(method.annotations(), null);
+        var name = extractName(method.annotations(), deriveProducerMethodName(method.name()));
 
         // Producer method parameters are injection points
         var injectionPoints = new ArrayList<InjectionPointInfo>();
@@ -431,5 +431,32 @@ public final class BeanDiscovery {
 
     private static boolean hasAnnotation(List<AnnotationInfo> annotations, DotName name) {
         return annotations.stream().anyMatch(a -> a.name().equals(name));
+    }
+
+    /**
+     * Derives the default name for a producer method following CDI rules:
+     * "getFoo" -> "foo", "isFoo" -> "foo", "produceFoo" -> "produceFoo"
+     */
+    static String deriveProducerMethodName(String methodName) {
+        if (methodName.startsWith("get") && methodName.length() > 3 && Character.isUpperCase(methodName.charAt(3))) {
+            return decapitalize(methodName.substring(3));
+        }
+        if (methodName.startsWith("is") && methodName.length() > 2 && Character.isUpperCase(methodName.charAt(2))) {
+            return decapitalize(methodName.substring(2));
+        }
+        return methodName;
+    }
+
+    /**
+     * Decapitalizes a name following JavaBeans rules:
+     * "MyService" -> "myService", "URL" -> "URL" (multiple upper case left as-is).
+     */
+    static String decapitalize(String name) {
+        if (name == null || name.isEmpty()) return name;
+        // If first two chars are uppercase, don't decapitalize (e.g. "URL" stays "URL")
+        if (name.length() > 1 && Character.isUpperCase(name.charAt(0)) && Character.isUpperCase(name.charAt(1))) {
+            return name;
+        }
+        return Character.toLowerCase(name.charAt(0)) + name.substring(1);
     }
 }
