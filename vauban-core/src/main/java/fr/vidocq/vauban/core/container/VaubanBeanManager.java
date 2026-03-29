@@ -543,13 +543,19 @@ public final class VaubanBeanManager implements BeanManager {
         if (requiredType == null) {
             throw new IllegalArgumentException("Required type must not be null");
         }
+        // Validate all qualifiers
         for (var q : requiredQualifiers) {
             if (!isQualifier(q.annotationType())) {
                 throw new IllegalArgumentException("Not a qualifier: " + q.annotationType());
             }
         }
+        for (var q : beanQualifiers) {
+            if (!isQualifier(q.annotationType())) {
+                throw new IllegalArgumentException("Not a qualifier: " + q.annotationType());
+            }
+        }
 
-        // Type matching — only legal bean types (skip TypeVariable, wildcard)
+        // Type matching — required type must be in beanTypes (exact type equality or CDI assignability)
         boolean typeMatch = false;
         for (var bt : beanTypes) {
             if (bt instanceof java.lang.reflect.TypeVariable<?>) continue;
@@ -561,12 +567,20 @@ public final class VaubanBeanManager implements BeanManager {
         }
         if (!typeMatch) return false;
 
-        // Qualifier matching: every required qualifier must be present in bean's qualifiers
-        // Must compare with full equals() (including member values), not just annotationType
+        // CDI qualifier matching:
+        // - A bean with no qualifiers implicitly has @Default and @Any
+        // - @Any in required qualifiers matches everything
+        var effectiveBeanQualifiers = beanQualifiers.isEmpty()
+                ? Set.<Annotation>of(jakarta.enterprise.inject.Default.Literal.INSTANCE,
+                                     jakarta.enterprise.inject.Any.Literal.INSTANCE)
+                : beanQualifiers;
+
         for (var req : requiredQualifiers) {
             if (req.annotationType() == jakarta.enterprise.inject.Any.class) continue;
-            boolean found = beanQualifiers.stream()
-                .anyMatch(bq -> bq.equals(req) || req.equals(bq));
+            boolean found = effectiveBeanQualifiers.stream()
+                .anyMatch(bq -> bq.annotationType().equals(req.annotationType())
+                        && (bq.equals(req) || req.equals(bq)
+                            || bq.annotationType().getDeclaredMethods().length == 0));
             if (!found) return false;
         }
         return true;
@@ -586,17 +600,30 @@ public final class VaubanBeanManager implements BeanManager {
                 throw new IllegalArgumentException("Not a qualifier: " + q.annotationType());
             }
         }
+        for (var q : observedEventQualifiers) {
+            if (!isQualifier(q.annotationType())) {
+                throw new IllegalArgumentException("Not a qualifier: " + q.annotationType());
+            }
+        }
         if (observedEventType instanceof java.lang.reflect.TypeVariable<?>) {
             throw new IllegalArgumentException("Observed event type cannot be a type variable");
         }
 
         // Type matching: observed type must be assignable from specified type
-        // (i.e., the observer's type must be a supertype of the fired event type)
         if (!typesMatch(specifiedType, observedEventType)) return false;
 
-        // Qualifier matching: every observed qualifier must be present in specified qualifiers
+        // CDI event qualifier matching:
+        // - An event with no qualifiers implicitly has @Default and @Any
+        // - An observer with @Any matches all events
+        // - Every observed qualifier must be present in specified qualifiers
+        var effectiveSpecifiedQualifiers = specifiedQualifiers.isEmpty()
+                ? Set.<Annotation>of(jakarta.enterprise.inject.Default.Literal.INSTANCE,
+                                     jakarta.enterprise.inject.Any.Literal.INSTANCE)
+                : specifiedQualifiers;
+
         for (var obs : observedEventQualifiers) {
-            boolean found = specifiedQualifiers.stream()
+            if (obs.annotationType() == jakarta.enterprise.inject.Any.class) continue;
+            boolean found = effectiveSpecifiedQualifiers.stream()
                 .anyMatch(sq -> sq.annotationType().equals(obs.annotationType()));
             if (!found) return false;
         }

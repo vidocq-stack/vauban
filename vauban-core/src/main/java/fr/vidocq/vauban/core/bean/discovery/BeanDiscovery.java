@@ -266,13 +266,15 @@ public final class BeanDiscovery {
         for (var ann : annotations) {
             if (isQualifierAnnotation(ann.name())) {
                 qualifiers.add(QualifierInstance.from(ann));
-                if (!ann.name().equals(QualifierInstance.NAMED_NAME)) {
+                // @Named and @Any don't count as "explicit qualifiers" for @Default rule
+                if (!ann.name().equals(QualifierInstance.NAMED_NAME)
+                        && !ann.name().equals(QualifierInstance.ANY_NAME)) {
                     hasExplicitQualifier = true;
                 }
             }
         }
 
-        // CDI: if no qualifier other than @Named, add @Default
+        // CDI: if no qualifier other than @Named/@Any, add @Default
         if (!hasExplicitQualifier) {
             qualifiers.add(QualifierInstance.DEFAULT);
         }
