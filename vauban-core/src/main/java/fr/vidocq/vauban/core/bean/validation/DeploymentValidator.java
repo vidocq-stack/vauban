@@ -88,12 +88,26 @@ public final class DeploymentValidator {
             "jakarta.enterprise.inject.spi.InjectionPoint"
     );
 
+    private static final Set<String> METADATA_BUILT_IN_TYPES = Set.of(
+            "jakarta.enterprise.inject.spi.Bean",
+            "jakarta.enterprise.inject.spi.Interceptor",
+            "jakarta.enterprise.inject.spi.Decorator",
+            "jakarta.enterprise.inject.spi.EventMetadata"
+    );
+
     private static boolean isBuiltInType(InjectionPointInfo ip) {
         if (ip.requiredType() instanceof TypeInfo.ClassType ct) {
             return BUILT_IN_TYPES.contains(ct.name().value());
         }
         if (ip.requiredType() instanceof TypeInfo.ParameterizedType pt) {
-            return BUILT_IN_TYPES.contains(pt.rawType().value());
+            if (BUILT_IN_TYPES.contains(pt.rawType().value())) return true;
+            // Bean<T>, Interceptor<T>, etc. are built-in only when parameterized
+            // with a concrete type (not a TypeVariable)
+            if (METADATA_BUILT_IN_TYPES.contains(pt.rawType().value())) {
+                boolean hasTypeVariable = pt.typeArguments().stream()
+                        .anyMatch(t -> t instanceof TypeInfo.TypeVariable);
+                return !hasTypeVariable;
+            }
         }
         return false;
     }
