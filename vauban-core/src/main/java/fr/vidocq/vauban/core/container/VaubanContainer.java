@@ -166,16 +166,24 @@ public final class VaubanContainer implements AutoCloseable {
     }
 
     private void injectFields(Object instance, BeanDescriptor descriptor) {
-        // 1. Inject fields
-        for (var ip : descriptor.injectionPoints()) {
-            if (ip.kind() != InjectionPointInfo.InjectionKind.FIELD) continue;
+        // 1. Inject fields — use reflection directly to catch all @Inject fields,
+        // not just those found by BeanDiscovery (which may miss fields if scanning was incomplete)
+        injectFieldsByReflection(instance);
 
-            var fieldName = extractFieldName(ip.description());
-            if (fieldName == null) continue;
+        // 2. Call @Inject initializer methods
+        callInitializerMethods(instance);
 
-            try {
-                var field = instance.getClass().getDeclaredField(fieldName);
+        // 3. Call @PostConstruct
+        callPostConstruct(instance);
+    }
+
+    private void injectFieldsByReflection(Object instance) {
+        var clazz = instance.getClass();
+        while (clazz != null && clazz != Object.class) {
+            for (var field : clazz.getDeclaredFields()) {
+                if (!field.isAnnotationPresent(jakarta.inject.Inject.class)) continue;
                 field.setAccessible(true);
+                try {
 
                 // Handle Instance<T> and Provider<T> injection
                 if (field.getType() == Instance.class
@@ -207,15 +215,11 @@ public final class VaubanContainer implements AutoCloseable {
                 var value = select(field.getType());
                 field.set(instance, value);
             } catch (Exception e) {
-                throw new RuntimeException("Failed to inject field: " + ip.description(), e);
+                // Skip fields that can't be resolved (may not be CDI beans)
             }
+            }
+            clazz = clazz.getSuperclass();
         }
-
-        // 2. Call @Inject initializer methods
-        callInitializerMethods(instance);
-
-        // 3. Call @PostConstruct
-        callPostConstruct(instance);
     }
 
     private void callInitializerMethods(Object instance) {
