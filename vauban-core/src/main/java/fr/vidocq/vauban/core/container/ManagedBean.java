@@ -90,8 +90,28 @@ public final class ManagedBean<T> implements Bean<T> {
 
     @Override
     public Set<Type> getTypes() {
+        // For producer beans, derive types from the produced type, not the declaring class
+        if (descriptor.kind() != BeanDescriptor.BeanKind.MANAGED) {
+            return getProducerTypes();
+        }
         var types = new LinkedHashSet<Type>();
         collectTypes(beanClass, types);
+        types.add(Object.class);
+        return types;
+    }
+
+    private Set<Type> getProducerTypes() {
+        var types = new LinkedHashSet<Type>();
+        for (var typeInfo : descriptor.types()) {
+            if (typeInfo instanceof fr.vidocq.vauban.indexer.model.TypeInfo.ClassType ct) {
+                try {
+                    var clazz = Class.forName(ct.name().value());
+                    collectTypes(clazz, types);
+                } catch (ClassNotFoundException e) {
+                    // skip
+                }
+            }
+        }
         types.add(Object.class);
         return types;
     }
