@@ -186,29 +186,51 @@ public final class ManagedBean<T> implements Bean<T> {
     private static void collectTypes(Class<?> clazz, Set<Type> types) {
         if (clazz == null || clazz == Object.class) return;
         types.add(clazz);
-        // Add generic superclass (e.g., AbstractList<String>)
+        // Superclass
         var genericSuper = clazz.getGenericSuperclass();
         if (genericSuper != null && genericSuper != Object.class) {
-            if (genericSuper instanceof java.lang.reflect.ParameterizedType) {
-                types.add(genericSuper);
-            }
-            if (genericSuper instanceof Class<?> c) {
+            if (genericSuper instanceof java.lang.reflect.ParameterizedType pt) {
+                // Add the parameterized type, then recurse WITHOUT adding the raw type again
+                types.add(pt);
+                collectTypesSkipSelf((Class<?>) pt.getRawType(), types);
+            } else if (genericSuper instanceof Class<?> c) {
                 collectTypes(c, types);
-            } else if (genericSuper instanceof java.lang.reflect.ParameterizedType pt) {
-                collectTypes((Class<?>) pt.getRawType(), types);
             }
-        } else {
+        } else if (clazz.getSuperclass() != null) {
             collectTypes(clazz.getSuperclass(), types);
         }
-        // Add generic interfaces (e.g., Comparable<Foo>)
+        // Interfaces
         for (var genericIface : clazz.getGenericInterfaces()) {
-            if (genericIface instanceof java.lang.reflect.ParameterizedType) {
-                types.add(genericIface);
-            }
-            if (genericIface instanceof Class<?> c) {
+            if (genericIface instanceof java.lang.reflect.ParameterizedType pt) {
+                types.add(pt);
+                collectTypesSkipSelf((Class<?>) pt.getRawType(), types);
+            } else if (genericIface instanceof Class<?> c) {
                 collectTypes(c, types);
-            } else if (genericIface instanceof java.lang.reflect.ParameterizedType pt) {
-                collectTypes((Class<?>) pt.getRawType(), types);
+            }
+        }
+    }
+
+    private static void collectTypesSkipSelf(Class<?> clazz, Set<Type> types) {
+        // Recurse into superclass and interfaces WITHOUT adding clazz itself
+        // (because the ParameterizedType was already added by the caller)
+        if (clazz == null || clazz == Object.class) return;
+        var genericSuper = clazz.getGenericSuperclass();
+        if (genericSuper != null && genericSuper != Object.class) {
+            if (genericSuper instanceof java.lang.reflect.ParameterizedType pt) {
+                types.add(pt);
+                collectTypesSkipSelf((Class<?>) pt.getRawType(), types);
+            } else if (genericSuper instanceof Class<?> c) {
+                collectTypes(c, types);
+            }
+        } else if (clazz.getSuperclass() != null) {
+            collectTypes(clazz.getSuperclass(), types);
+        }
+        for (var genericIface : clazz.getGenericInterfaces()) {
+            if (genericIface instanceof java.lang.reflect.ParameterizedType pt) {
+                types.add(pt);
+                collectTypesSkipSelf((Class<?>) pt.getRawType(), types);
+            } else if (genericIface instanceof Class<?> c) {
+                collectTypes(c, types);
             }
         }
     }
