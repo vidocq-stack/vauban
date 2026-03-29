@@ -70,7 +70,7 @@ public final class VaubanContainer implements AutoCloseable {
         for (var descriptor : descriptors) {
             BeanFactory<?> factory;
             if (descriptor.kind() == BeanDescriptor.BeanKind.MANAGED) {
-                factory = factories.get(descriptor.beanClass());
+                factory = createManagedBeanFactory(descriptor, factories);
             } else if (descriptor.kind() == BeanDescriptor.BeanKind.PRODUCER_METHOD) {
                 factory = createProducerMethodFactory(descriptor);
             } else if (descriptor.kind() == BeanDescriptor.BeanKind.PRODUCER_FIELD) {
@@ -188,6 +188,67 @@ public final class VaubanContainer implements AutoCloseable {
         return dot >= 0 ? description.substring(dot + 1) : null;
     }
 
+    private BeanFactory<?> createManagedBeanFactory(BeanDescriptor descriptor,
+                                                     Map<DotName, BeanFactory<?>> factories) {
+        // Check if bean has @Inject constructor parameters
+        var ctorParams = descriptor.injectionPoints().stream()
+                .filter(ip -> ip.kind() == InjectionPointInfo.InjectionKind.CONSTRUCTOR_PARAMETER)
+                .toList();
+
+        if (ctorParams.isEmpty()) {
+            // No @Inject constructor — use the pre-registered factory (no-arg constructor)
+            return factories.get(descriptor.beanClass());
+        }
+
+        // Has @Inject constructor — create a factory that resolves parameters
+        return () -> {
+            try {
+                var beanClass = Class.forName(descriptor.beanClass().value());
+
+                // Find the @Inject constructor (the one with matching parameter count)
+                java.lang.reflect.Constructor<?> injectCtor = null;
+                for (var ctor : beanClass.getDeclaredConstructors()) {
+                    if (ctor.isAnnotationPresent(jakarta.inject.Inject.class)) {
+                        injectCtor = ctor;
+                        break;
+                    }
+                }
+
+                if (injectCtor == null) {
+                    // Fallback: try matching by parameter count
+                    for (var ctor : beanClass.getDeclaredConstructors()) {
+                        if (ctor.getParameterCount() == ctorParams.size()) {
+                            injectCtor = ctor;
+                            break;
+                        }
+                    }
+                }
+
+                if (injectCtor == null) {
+                    throw new RuntimeException("No @Inject constructor found for " + descriptor.beanClass());
+                }
+
+                // Resolve each constructor parameter
+                var paramTypes = injectCtor.getParameterTypes();
+                var args = new Object[paramTypes.length];
+                for (int i = 0; i < paramTypes.length; i++) {
+                    if (paramTypes[i] == Event.class) {
+                        args[i] = new EventImpl<>(eventDispatcher);
+                    } else {
+                        args[i] = select(paramTypes[i]);
+                    }
+                }
+
+                injectCtor.setAccessible(true);
+                return injectCtor.newInstance(args);
+            } catch (RuntimeException e) {
+                throw e;
+            } catch (Exception e) {
+                throw new RuntimeException("Failed to create bean with @Inject constructor: " + descriptor.beanClass(), e);
+            }
+        };
+    }
+
     private BeanFactory<?> createProducerMethodFactory(BeanDescriptor descriptor) {
         var methodName = extractProducerMethodName(descriptor.id());
         return () -> {
@@ -292,7 +353,8 @@ public final class VaubanContainer implements AutoCloseable {
                     throw new RuntimeException("Failed to scan class: " + clazz.getName(), e);
                 }
 
-                // Auto-register factory using reflection if none provided
+                // Auto-register factory — will be replaced with constructor-aware
+                // version after discovery if @Inject constructor is found
                 if (!factories.containsKey(DotName.of(clazz.getName()))) {
                     var beanClass2 = clazz;
                     factories.put(DotName.of(clazz.getName()), () -> {

@@ -55,6 +55,18 @@ class VaubanContainerTest {
         public String process(int id) { return repository.findById(id); }
     }
 
+    @ApplicationScoped
+    public static class CtorInjectedService {
+        private final Repository repository;
+
+        @Inject
+        public CtorInjectedService(Repository repository) {
+            this.repository = repository;
+        }
+
+        public String process(int id) { return repository.findById(id); }
+    }
+
     @Nested
     @DisplayName("bootstrap et shutdown")
     class Lifecycle {
@@ -170,14 +182,27 @@ class VaubanContainerTest {
     class Injection {
 
         @Test
-        @DisplayName("injecte les dependances @Inject entre beans")
-        void shouldInjectDependencies() {
+        @DisplayName("injecte les dependances @Inject fields")
+        void shouldInjectFieldDependencies() {
             try (var container = VaubanContainer.builder()
                     .addBeanClass(Service.class)
                     .addBeanClass(Repository.class)
                     .build()) {
                 var service = container.select(Service.class);
                 assertEquals("entity-1", service.process(1));
+            }
+        }
+
+        @Test
+        @DisplayName("injecte les dependances via constructeur @Inject")
+        void shouldInjectConstructorDependencies() {
+            try (var container = VaubanContainer.builder()
+                    .addBeanClass(CtorInjectedService.class)
+                    .addBeanClass(Repository.class)
+                    .build()) {
+                var service = container.select(CtorInjectedService.class);
+                assertNotNull(service);
+                assertEquals("entity-42", service.process(42));
             }
         }
     }
