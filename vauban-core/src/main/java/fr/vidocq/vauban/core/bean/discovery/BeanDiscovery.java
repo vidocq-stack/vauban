@@ -126,6 +126,8 @@ public final class BeanDiscovery {
         for (var annotation : classInfo.annotations()) {
             if (BEAN_DEFINING_ANNOTATIONS.contains(annotation.name())) return true;
             if (isStereotype(annotation.name())) return true;
+            // Custom scope annotation (has @NormalScope or @Scope)
+            if (mapScope(annotation.name()) != null) return true;
         }
         // CDI 4.0+: @Alternative with @Priority is a bean-defining combination
         if (classInfo.hasAnnotation(ALTERNATIVE) && classInfo.hasAnnotation(PRIORITY)) return true;
@@ -166,7 +168,16 @@ public final class BeanDiscovery {
 
     private boolean isStereotype(DotName annotationName) {
         var annClass = index.getClassByName(annotationName);
-        return annClass.isPresent() && annClass.get().hasAnnotation(STEREOTYPE);
+        if (annClass.isPresent()) {
+            return annClass.get().hasAnnotation(STEREOTYPE);
+        }
+        // Fallback: check via reflection
+        try {
+            var annType = Class.forName(annotationName.value());
+            return annType.isAnnotationPresent(jakarta.enterprise.inject.Stereotype.class);
+        } catch (ClassNotFoundException e) {
+            return false;
+        }
     }
 
     private BeanDescriptor buildManagedBean(ClassInfo classInfo) {
@@ -353,7 +364,16 @@ public final class BeanDiscovery {
 
         // Check the index for the annotation class having @Qualifier
         var annClass = index.getClassByName(name);
-        return annClass.isPresent() && annClass.get().hasAnnotation(DotName.of("jakarta.inject.Qualifier"));
+        if (annClass.isPresent()) {
+            return annClass.get().hasAnnotation(DotName.of("jakarta.inject.Qualifier"));
+        }
+        // Fallback: check via reflection
+        try {
+            var annType = Class.forName(name.value());
+            return annType.isAnnotationPresent(jakarta.inject.Qualifier.class);
+        } catch (ClassNotFoundException e) {
+            return false;
+        }
     }
 
     ScopeInfo computeScope(ClassInfo classInfo) {
@@ -429,6 +449,18 @@ public final class BeanDiscovery {
             if (annClass.get().hasAnnotation(DotName.of("jakarta.inject.Scope"))) {
                 return new ScopeInfo(annotationName, false);
             }
+        }
+        // Fallback: check via reflection if annotation is not in the index
+        try {
+            var annType = Class.forName(annotationName.value());
+            if (annType.isAnnotationPresent(jakarta.enterprise.context.NormalScope.class)) {
+                return new ScopeInfo(annotationName, true);
+            }
+            if (annType.isAnnotationPresent(jakarta.inject.Scope.class)) {
+                return new ScopeInfo(annotationName, false);
+            }
+        } catch (ClassNotFoundException e) {
+            // skip
         }
         return null;
     }
