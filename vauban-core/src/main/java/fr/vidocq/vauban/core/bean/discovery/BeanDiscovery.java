@@ -521,13 +521,32 @@ public final class BeanDiscovery {
                                 .toList());
                         var priority = extractPriority(method.annotations());
 
+                        // Extract reception and transactionPhase from @Observes annotation
+                        var reception = "ALWAYS";
+                        var transactionPhase = "IN_PROGRESS";
+                        var observesAnn = param.annotations().stream()
+                                .filter(a -> a.name().equals(OBSERVES) || a.name().equals(OBSERVES_ASYNC))
+                                .findFirst();
+                        if (observesAnn.isPresent()) {
+                            var recVal = observesAnn.get().member("notifyObserver");
+                            if (recVal instanceof fr.vidocq.vauban.indexer.model.AnnotationValue.EnumVal ev) {
+                                reception = ev.constantName();
+                            }
+                            var txVal = observesAnn.get().member("during");
+                            if (txVal instanceof fr.vidocq.vauban.indexer.model.AnnotationValue.EnumVal ev) {
+                                transactionPhase = ev.constantName();
+                            }
+                        }
+
                         result.add(new ObserverDescriptor(
                                 classInfo.name(),
                                 method.name(),
                                 param.type(),
                                 List.copyOf(qualifiers),
                                 isObservesAsync,
-                                priority
+                                priority,
+                                reception,
+                                transactionPhase
                         ));
                         break; // only one observed parameter per method
                     }

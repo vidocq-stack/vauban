@@ -61,12 +61,21 @@ public final class VaubanObserverMethod<T> implements ObserverMethod<T> {
 
     @Override
     public Reception getReception() {
-        return Reception.ALWAYS;
+        return switch (descriptor.reception()) {
+            case "IF_EXISTS" -> Reception.IF_EXISTS;
+            default -> Reception.ALWAYS;
+        };
     }
 
     @Override
     public TransactionPhase getTransactionPhase() {
-        return TransactionPhase.IN_PROGRESS;
+        return switch (descriptor.transactionPhase()) {
+            case "BEFORE_COMPLETION" -> TransactionPhase.BEFORE_COMPLETION;
+            case "AFTER_COMPLETION" -> TransactionPhase.AFTER_COMPLETION;
+            case "AFTER_FAILURE" -> TransactionPhase.AFTER_FAILURE;
+            case "AFTER_SUCCESS" -> TransactionPhase.AFTER_SUCCESS;
+            default -> TransactionPhase.IN_PROGRESS;
+        };
     }
 
     @Override
