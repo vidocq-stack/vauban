@@ -78,6 +78,8 @@ public class VaubanDeployableContainer implements DeployableContainer<VaubanCont
             }
 
             var container = builder.build();
+            // Activate request context for TCK tests (most tests expect it active)
+            container.requestContext().activate();
             ContainerHolder.set(container);
 
         } catch (Exception e) {
