@@ -324,7 +324,7 @@ public final class VaubanBeanManager implements BeanManager {
 
     @Override
     public Instance<Object> createInstance() {
-        throw new UnsupportedOperationException("Not yet implemented");
+        return new InstanceImpl<>(container, Object.class);
     }
 
     @Override

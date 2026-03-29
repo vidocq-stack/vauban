@@ -25,9 +25,12 @@ import fr.vidocq.vauban.indexer.scanner.ClassFileScanner;
 import jakarta.enterprise.context.spi.Context;
 import jakarta.enterprise.context.spi.Contextual;
 import jakarta.enterprise.event.Event;
+import jakarta.enterprise.inject.Instance;
+import jakarta.enterprise.inject.spi.BeanManager;
 
 import java.io.IOException;
 import java.lang.annotation.Annotation;
+import java.lang.reflect.ParameterizedType;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -168,6 +171,27 @@ public final class VaubanContainer implements AutoCloseable {
                 var field = instance.getClass().getDeclaredField(fieldName);
                 field.setAccessible(true);
 
+                // Handle Instance<T> and Provider<T> injection
+                if (field.getType() == Instance.class
+                        || field.getType() == jakarta.inject.Provider.class) {
+                    Class<?> instanceType = Object.class;
+                    var genericType = field.getGenericType();
+                    if (genericType instanceof ParameterizedType pt) {
+                        var typeArg = pt.getActualTypeArguments()[0];
+                        if (typeArg instanceof Class<?> c) {
+                            instanceType = c;
+                        }
+                    }
+                    field.set(instance, new InstanceImpl<>(this, instanceType));
+                    continue;
+                }
+
+                // Handle BeanManager injection
+                if (field.getType() == BeanManager.class) {
+                    field.set(instance, getBeanManager());
+                    continue;
+                }
+
                 // Handle Event<T> injection
                 if (field.getType() == Event.class) {
                     field.set(instance, new EventImpl<>(eventDispatcher));
@@ -230,9 +254,22 @@ public final class VaubanContainer implements AutoCloseable {
 
                 // Resolve each constructor parameter
                 var paramTypes = injectCtor.getParameterTypes();
+                var genericParamTypes = injectCtor.getGenericParameterTypes();
                 var args = new Object[paramTypes.length];
                 for (int i = 0; i < paramTypes.length; i++) {
-                    if (paramTypes[i] == Event.class) {
+                    if (paramTypes[i] == Instance.class
+                            || paramTypes[i] == jakarta.inject.Provider.class) {
+                        Class<?> instanceType = Object.class;
+                        if (genericParamTypes[i] instanceof ParameterizedType pt) {
+                            var typeArg = pt.getActualTypeArguments()[0];
+                            if (typeArg instanceof Class<?> c) {
+                                instanceType = c;
+                            }
+                        }
+                        args[i] = new InstanceImpl<>(this, instanceType);
+                    } else if (paramTypes[i] == BeanManager.class) {
+                        args[i] = getBeanManager();
+                    } else if (paramTypes[i] == Event.class) {
                         args[i] = new EventImpl<>(eventDispatcher);
                     } else {
                         args[i] = select(paramTypes[i]);
