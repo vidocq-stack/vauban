@@ -349,13 +349,13 @@ public final class VaubanBeanManager implements BeanManager {
     @Override
     @SuppressWarnings("deprecation")
     public ELResolver getELResolver() {
-        throw new UnsupportedOperationException("Not yet implemented");
+        throw new IllegalStateException("Not yet implemented");
     }
 
     @Override
     @SuppressWarnings("deprecation")
     public ExpressionFactory wrapExpressionFactory(ExpressionFactory expressionFactory) {
-        throw new UnsupportedOperationException("Not yet implemented");
+        throw new IllegalStateException("Not yet implemented");
     }
 
     @Override
@@ -365,59 +365,59 @@ public final class VaubanBeanManager implements BeanManager {
 
     @Override
     public <T> InjectionTargetFactory<T> getInjectionTargetFactory(AnnotatedType<T> annotatedType) {
-        throw new UnsupportedOperationException("Not yet implemented");
+        throw new IllegalStateException("Not yet implemented");
     }
 
     @Override
     public <X> ProducerFactory<X> getProducerFactory(AnnotatedField<? super X> field, Bean<X> declaringBean) {
-        throw new UnsupportedOperationException("Not yet implemented");
+        throw new IllegalStateException("Not yet implemented");
     }
 
     @Override
     public <X> ProducerFactory<X> getProducerFactory(AnnotatedMethod<? super X> method, Bean<X> declaringBean) {
-        throw new UnsupportedOperationException("Not yet implemented");
+        throw new IllegalStateException("Not yet implemented");
     }
 
     @Override
     public <T> BeanAttributes<T> createBeanAttributes(AnnotatedType<T> type) {
-        throw new UnsupportedOperationException("Not yet implemented");
+        throw new IllegalStateException("Not yet implemented");
     }
 
     @Override
     public BeanAttributes<?> createBeanAttributes(AnnotatedMember<?> type) {
-        throw new UnsupportedOperationException("Not yet implemented");
+        throw new IllegalStateException("Not yet implemented");
     }
 
     @Override
     public <T> Bean<T> createBean(BeanAttributes<T> attributes, Class<T> beanClass,
                                   InjectionTargetFactory<T> injectionTargetFactory) {
-        throw new UnsupportedOperationException("Not yet implemented");
+        throw new IllegalStateException("Not yet implemented");
     }
 
     @Override
     public <T, X> Bean<T> createBean(BeanAttributes<T> attributes, Class<X> beanClass,
                                      ProducerFactory<X> producerFactory) {
-        throw new UnsupportedOperationException("Not yet implemented");
+        throw new IllegalStateException("Not yet implemented");
     }
 
     @Override
     public InjectionPoint createInjectionPoint(AnnotatedField<?> field) {
-        throw new UnsupportedOperationException("Not yet implemented");
+        throw new IllegalStateException("Not yet implemented");
     }
 
     @Override
     public InjectionPoint createInjectionPoint(AnnotatedParameter<?> parameter) {
-        throw new UnsupportedOperationException("Not yet implemented");
+        throw new IllegalStateException("Not yet implemented");
     }
 
     @Override
     public <T extends Extension> T getExtension(Class<T> extensionClass) {
-        throw new UnsupportedOperationException("Not yet implemented");
+        throw new IllegalStateException("Not yet implemented");
     }
 
     @Override
     public <T> InterceptionFactory<T> createInterceptionFactory(CreationalContext<T> ctx, Class<T> clazz) {
-        throw new UnsupportedOperationException("Not yet implemented");
+        throw new IllegalStateException("Not yet implemented");
     }
 
     @Override
