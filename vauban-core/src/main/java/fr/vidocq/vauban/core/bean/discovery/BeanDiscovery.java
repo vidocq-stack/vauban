@@ -86,7 +86,15 @@ public final class BeanDiscovery {
     }
 
     private boolean isVetoed(ClassInfo classInfo) {
-        return classInfo.hasAnnotation(VETOED);
+        if (classInfo.hasAnnotation(VETOED)) return true;
+        // Check package-level @Vetoed via package-info class
+        var packageName = classInfo.name().packageName();
+        if (!packageName.isEmpty()) {
+            var packageInfoName = DotName.of(packageName + ".package-info");
+            var packageInfo = index.getClassByName(packageInfoName);
+            if (packageInfo.isPresent() && packageInfo.get().hasAnnotation(VETOED)) return true;
+        }
+        return false;
     }
 
     private boolean isBeanCandidate(ClassInfo classInfo) {
