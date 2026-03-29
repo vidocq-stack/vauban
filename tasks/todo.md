@@ -31,13 +31,14 @@
 - [x] `AssignabilityRules` (CDI 4.1 Section 2.4 : sous-typage, generiques, wildcards)
 - [x] Tests assignabilite CDI + lang model (33 tests)
 
-## Phase 3: Decouverte et resolution de beans
-- [ ] `BeanDiscovery` et finders (bean, producer, interceptor, decorator, observer)
-- [ ] `BeanResolver` - resolution typesafe
-- [ ] `QualifierMatcher`
-- [ ] `DependencyGraph` avec detection cycles
-- [ ] `DeploymentValidator`
-- [ ] Tests TDD complets
+## Phase 3: Decouverte et resolution de beans ✅
+- [x] Modele: BeanDescriptor, BeanId, ScopeInfo, QualifierInstance, InjectionPointInfo (records)
+- [x] `BeanDiscovery` : managed beans, producer methods/fields, @Inject, @Vetoed, scopes, qualifiers
+- [x] `BeanResolver` : resolution typesafe par type + qualifiers, alternatives @Priority
+- [x] `QualifierMatcher` : correspondance avec valeurs de membres
+- [x] `DependencyGraph` : DAG, detection cycles illegaux (@Dependent)
+- [x] `DeploymentValidator` : non satisfaits, ambigus, cycles
+- [x] Tests TDD (25 tests, 122 total)
 
 ## Phase 4: Generation de code
 - [ ] `ClientProxyGenerator` via `java.lang.classfile`
