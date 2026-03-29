@@ -70,10 +70,14 @@
 - [ ] `Instance<T>` programmatic lookup complet - differe
 - [ ] Beans built-in (BeanManager, Event, Instance) - differe
 
-## Phase 7: Integration JUnit 6
-- [ ] `@VaubanTest` + `VaubanExtension`
-- [ ] `@AddBeans`, `@MockBean`
-- [ ] Injection dans tests
+## Phase 7: Integration JUnit 6 ✅
+- [x] `@VaubanTest` meta-annotation + `VaubanExtension`
+- [x] `@AddBeans` : specifie les beans du test
+- [x] Injection `@Inject` dans les champs de test
+- [x] Lifecycle : bootstrap avant tests, shutdown apres
+- [x] Surefire `useModulePath=false` pour compatibilite JPMS/JUnit
+- [x] Tests : 5 tests (injection, conteneur vide, single bean), 145 total
+- [ ] `@MockBean` : remplacement par mock - differe
 
 ## Phase 8: TCK Runner
 - [ ] Adaptateur Arquillian

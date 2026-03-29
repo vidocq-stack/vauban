@@ -27,7 +27,8 @@
       "Bash(mvn dependency:tree -pl vauban-processor)",
       "Bash(mvn dependency:build-classpath -pl vauban-core -q)",
       "Bash(grep -v \"$\")",
-      "Bash(find /Users/yblazart/projects/perso/vidocq/vauban/vauban-core/src/test -name module-info*)"
+      "Bash(find /Users/yblazart/projects/perso/vidocq/vauban/vauban-core/src/test -name module-info*)",
+      "Bash(mvn dependency:tree -pl vauban-junit)"
     ]
   }
 }
