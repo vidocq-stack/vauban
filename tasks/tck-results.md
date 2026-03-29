@@ -6,62 +6,54 @@
 
 | Metrique | Valeur |
 |----------|--------|
-| Tests decouverts | 1826 |
-| Passes | ~133 (10.1% des non-skippes) |
-| Echoues | 1185 (64.9%) |
-| Skippes | 508 (27.8%) |
+| Tests total | 1914 |
+| **Passes** | **246 (20.7% des non-skippes)** |
+| Echoues | 945 |
+| Skippes | 723 |
 | Erreurs | 0 |
 | Temps | ~4s |
 
-## Progression
+## Progression complete
 
-| Etape | Failures | Passes (~) | Delta |
-|-------|----------|-----------|-------|
-| Adaptateur initial | 1228 | ~90 | baseline |
+| Etape | Failures | Passes | Delta |
+|-------|----------|--------|-------|
+| Baseline (adaptateur) | 1228 | ~90 | - |
 | + Events (@Observes) | 1202 | ~116 | +26 |
 | + Producers | 1205 | ~113 | -3 |
 | + Intercepteurs | 1200 | ~118 | +5 |
-| + Injection constructeur | 1200 | ~118 | +0 |
 | + Instance\<T\> | 1194 | ~124 | +6 |
-| + BeanManager enrichi | **1185** | **~133** | **+9** |
+| + BeanManager enrichi | 1185 | ~133 | +9 |
+| + Qualifiers/types/resolve | 1165 | ~153 | +20 |
+| + Validation deploiement | 1038 | ~162 | +127 |
+| + ClassValidator | 1036 | ~155 | -7 |
+| + Lifecycle (@PostConstruct) | 1030 | ~161 | +6 |
+| + ParameterizedType | 1027 | ~164 | +3 |
+| + TestEnricher + exceptions | 1003 | ~188 | +24 |
+| + @Named + stubs | 998 | ~193 | +5 |
+| + Built-in beans | 989 | ~202 | +9 |
+| + Producer bean types fix | 960 | ~231 | +29 |
+| + BM validations | 950 | ~241 | +10 |
+| + Disposers + reflection inject | **945** | **~246** | **+5** |
 
-**Total progression : 1228 -> 1185 = +43 tests passes**
+**Total : 1228 -> 945 = -283 failures, +156 tests passes**
 
 ## Commande
-
 ```bash
 mvn test -pl vauban-tck-runner -Ptck
 ```
 
-## Features implementees
+## Decomposition des 945 failures restantes
 
-- [x] Injection @Inject fields entre beans
-- [x] Injection @Inject constructeur avec resolution parametres
-- [x] BeanManager minimal (getBeans, resolve, getReference, getContext)
-- [x] Adaptateur Arquillian fonctionnel (deploy ShrinkWrap)
-- [x] Systeme d'evenements (Event<T>, @Observes, EventDispatcher)
-- [x] Producer methods et fields
-- [x] Intercepteurs (discovery, resolution, InvocationContext)
-- [x] Instance<T> programmatic lookup
-- [x] Injection Provider<T> et BeanManager
-
-## Tests propres Vauban
-
-| Module | Tests |
-|--------|-------|
-| vauban-indexer | 64 |
-| vauban-core | 95 |
-| vauban-junit | 5 |
-| vauban-processor | 11 |
-| vauban-tck-runner | 4 |
-| vauban-maven-plugin | 7 |
-| **Total** | **186** |
-
-## Causes principales des echecs restants
-
-1. **BeanManager incomplet** (~300+ tests) : createAnnotatedType, getInjectionTargetFactory, etc.
-2. **Pas d'interception runtime** (~200+ tests) : proxies intercepteurs non generes
-3. **Pas de decorateurs** (~100+ tests)
-4. **Pas de stereotypes complets** (~50+ tests)
-5. **Pas de specialisation** (~30+ tests)
-6. **Pas d'EL** (~30+ tests)
+| Categorie | ~ Tests | Note |
+|-----------|---------|------|
+| CDI Full (extensions, decorators, passivation) | ~350 | Hors scope CDI Lite |
+| Interceptors runtime (wrapping) | ~60 | Necessite codegen runtime |
+| Method Invokers (CDI 4.1) | ~25 | Feature non implementee |
+| Events avances (async, conditional, metadata) | ~40 | Enrichissement events |
+| Producers avances (disposal, lifecycle) | ~35 | Enrichissement producers |
+| Stereotypes | ~17 | Feature a implementer |
+| Dependent context lifecycle | ~19 | Tracking dependants |
+| Client proxies runtime | ~15 | Wrapping runtime |
+| InjectionPoint metadata | ~21 | Feature a implementer |
+| Scope/qualifier definition | ~23 | Heritage, stereotypes |
+| Autres (lookup, alternatives, etc.) | ~50 | Divers |
