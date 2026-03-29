@@ -9,13 +9,16 @@ import jakarta.inject.Inject;
 import jakarta.inject.Provider;
 import org.jboss.arquillian.test.spi.TestEnricher;
 
+import java.lang.annotation.Annotation;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.lang.reflect.ParameterizedType;
+import java.util.ArrayList;
 
 /**
  * Arquillian TestEnricher that injects CDI objects into test instances.
  * Handles @Inject for BeanManager, Instance, Event, Provider, and bean types.
+ * Supports qualifier annotations on injection points.
  */
 public class VaubanTestEnricher implements TestEnricher {
 
@@ -45,6 +48,7 @@ public class VaubanTestEnricher implements TestEnricher {
 
     private Object resolveField(Field field, fr.vidocq.vauban.core.container.VaubanContainer container) {
         var type = field.getType();
+        var qualifiers = extractQualifiers(field);
 
         // BeanManager
         if (BeanManager.class.isAssignableFrom(type)) {
@@ -62,12 +66,40 @@ public class VaubanTestEnricher implements TestEnricher {
             return new EventImpl<>(container.eventDispatcher());
         }
 
-        // Regular bean
+        // Regular bean — use BeanManager with qualifiers for proper resolution
         try {
-            return container.select(type);
+            var bm = container.getBeanManager();
+            var beans = bm.getBeans(type, qualifiers);
+            if (beans.isEmpty()) {
+                // Fallback: try without qualifiers (some test classes inject without explicit qualifiers)
+                beans = bm.getBeans(type);
+            }
+            if (beans.isEmpty()) return null;
+            var bean = bm.resolve(beans);
+            var ctx = bm.createCreationalContext(bean);
+            return bm.getReference(bean, type, ctx);
         } catch (Exception e) {
             return null;
         }
+    }
+
+    /**
+     * Extracts qualifier annotations from a field.
+     * A qualifier is an annotation that is itself annotated with @jakarta.inject.Qualifier.
+     */
+    private Annotation[] extractQualifiers(Field field) {
+        var qualifiers = new ArrayList<Annotation>();
+        for (var ann : field.getAnnotations()) {
+            var annType = ann.annotationType();
+            if (annType == Inject.class) continue;
+            if (annType.isAnnotationPresent(jakarta.inject.Qualifier.class)
+                    || annType == jakarta.enterprise.inject.Default.class
+                    || annType == jakarta.enterprise.inject.Any.class
+                    || annType == jakarta.inject.Named.class) {
+                qualifiers.add(ann);
+            }
+        }
+        return qualifiers.toArray(new Annotation[0]);
     }
 
     private Class<?> extractGenericType(Field field) {

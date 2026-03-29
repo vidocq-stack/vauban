@@ -215,10 +215,7 @@ public final class ClassValidator {
                         + " cannot be final");
             }
             // Raw Event/Instance injection — deferred until scanner supports generic signatures
-            // Producer field with type variable, wildcard, or invalid array
-            if (hasAnn(field.annotations(), PRODUCES)) {
-                validateProducerType(field.type(), className + "." + field.name(), errors);
-            }
+            // Producer field type validation — done via reflection in VaubanContainer.Builder
         }
 
         // Static observer/disposer methods — CDI 4.1 Lite allows static observers/disposers
@@ -320,7 +317,7 @@ public final class ClassValidator {
 
         // Producer method return type validation
         if (hasProduces) {
-            validateProducerType(method.returnType(), className + "." + method.name(), errors);
+            // Producer return type validation — done via reflection in VaubanContainer.Builder
         }
 
         // Disposer method that is also @Inject (initializer)

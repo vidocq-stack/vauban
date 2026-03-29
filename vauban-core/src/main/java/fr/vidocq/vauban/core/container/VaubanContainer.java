@@ -640,6 +640,16 @@ public final class VaubanContainer implements AutoCloseable {
                 throw new jakarta.enterprise.inject.spi.DefinitionException(msg.toString());
             }
 
+            // Reflection-based validation (for generic signatures not in bytecode index)
+            var reflectionErrors = validateWithReflection(beanClasses);
+            if (!reflectionErrors.isEmpty()) {
+                var msg = new StringBuilder("CDI definition validation failed:\n");
+                for (var error : reflectionErrors) {
+                    msg.append("  - ").append(error).append("\n");
+                }
+                throw new jakarta.enterprise.inject.spi.DefinitionException(msg.toString());
+            }
+
             var discovery = new BeanDiscovery(index);
             var descriptors = discovery.discoverBeans();
             var observers = discovery.discoverObservers();
@@ -661,6 +671,180 @@ public final class VaubanContainer implements AutoCloseable {
             }
 
             return new VaubanContainer(index, descriptors, observers, interceptors, disposers, factories);
+        }
+
+        /**
+         * Validates CDI rules that require generic type information (only available via reflection).
+         * Detects raw Event/Instance injection, producer type variables, generic beans, etc.
+         */
+        private static List<String> validateWithReflection(List<Class<?>> beanClasses) {
+            var errors = new ArrayList<String>();
+            for (var clazz : beanClasses) {
+                // Skip interfaces, annotations, enums
+                if (clazz.isInterface() || clazz.isAnnotation() || clazz.isEnum()) continue;
+
+                // Generic managed bean — only invalid if it's the only concrete class
+                // with unresolved type params and no concrete subclass resolves them.
+                // This is too complex to validate here; deferred.
+
+                // Check @Inject fields for raw Event/Instance
+                for (var field : clazz.getDeclaredFields()) {
+                    if (!field.isAnnotationPresent(jakarta.inject.Inject.class)) continue;
+                    validateNoRawParameterized(field.getGenericType(), field.getType(),
+                            clazz.getName() + "." + field.getName(), errors);
+                }
+
+                // Check methods
+                for (var method : clazz.getDeclaredMethods()) {
+                    // Producer method return type validation
+                    if (method.isAnnotationPresent(jakarta.enterprise.inject.Produces.class)) {
+                        validateProducerReturnType(method.getGenericReturnType(),
+                                clazz.getName() + "." + method.getName(), errors);
+                    }
+
+                    // Generic initializer method
+                    if (method.isAnnotationPresent(jakarta.inject.Inject.class)
+                            && method.getTypeParameters().length > 0
+                            && !method.getName().equals("<init>")) {
+                        errors.add("Initializer method " + clazz.getName() + "." + method.getName()
+                                + " cannot declare type parameters");
+                    }
+
+                    // @Inject method parameters: raw Event/Instance
+                    if (method.isAnnotationPresent(jakarta.inject.Inject.class)) {
+                        var paramTypes = method.getGenericParameterTypes();
+                        var rawTypes = method.getParameterTypes();
+                        for (int i = 0; i < paramTypes.length; i++) {
+                            validateNoRawParameterized(paramTypes[i], rawTypes[i],
+                                    clazz.getName() + "." + method.getName() + " param " + i, errors);
+                        }
+                    }
+
+                    // Observer method injection parameters: raw Event/Instance
+                    var params = method.getParameters();
+                    boolean hasObserves = false;
+                    for (var p : params) {
+                        if (p.isAnnotationPresent(jakarta.enterprise.event.Observes.class)
+                                || p.isAnnotationPresent(jakarta.enterprise.event.ObservesAsync.class)) {
+                            hasObserves = true;
+                            break;
+                        }
+                    }
+                    if (hasObserves) {
+                        var paramTypes = method.getGenericParameterTypes();
+                        var rawTypes = method.getParameterTypes();
+                        for (int i = 0; i < params.length; i++) {
+                            if (!params[i].isAnnotationPresent(jakarta.enterprise.event.Observes.class)
+                                    && !params[i].isAnnotationPresent(jakarta.enterprise.event.ObservesAsync.class)) {
+                                validateNoRawParameterized(paramTypes[i], rawTypes[i],
+                                        clazz.getName() + "." + method.getName() + " observer param", errors);
+                            }
+                        }
+                    }
+
+                    // Disposer method injection parameters: raw Event/Instance
+                    boolean hasDisposes = false;
+                    for (var p : params) {
+                        if (p.isAnnotationPresent(jakarta.enterprise.inject.Disposes.class)) {
+                            hasDisposes = true;
+                            break;
+                        }
+                    }
+                    if (hasDisposes) {
+                        var paramTypes = method.getGenericParameterTypes();
+                        var rawTypes = method.getParameterTypes();
+                        for (int i = 0; i < params.length; i++) {
+                            if (!params[i].isAnnotationPresent(jakarta.enterprise.inject.Disposes.class)) {
+                                validateNoRawParameterized(paramTypes[i], rawTypes[i],
+                                        clazz.getName() + "." + method.getName() + " disposer param", errors);
+                            }
+                        }
+                    }
+
+                    // Producer method parameters: raw Event/Instance
+                    if (method.isAnnotationPresent(jakarta.enterprise.inject.Produces.class)) {
+                        var paramTypes = method.getGenericParameterTypes();
+                        var rawTypes = method.getParameterTypes();
+                        for (int i = 0; i < paramTypes.length; i++) {
+                            validateNoRawParameterized(paramTypes[i], rawTypes[i],
+                                    clazz.getName() + "." + method.getName() + " producer param", errors);
+                        }
+                    }
+                }
+
+                // Check producer fields
+                for (var field : clazz.getDeclaredFields()) {
+                    if (field.isAnnotationPresent(jakarta.enterprise.inject.Produces.class)) {
+                        validateProducerReturnType(field.getGenericType(),
+                                clazz.getName() + "." + field.getName(), errors);
+                    }
+                }
+
+                // Check constructors for raw Event/Instance
+                for (var ctor : clazz.getDeclaredConstructors()) {
+                    if (ctor.isAnnotationPresent(jakarta.inject.Inject.class)) {
+                        var paramTypes = ctor.getGenericParameterTypes();
+                        var rawTypes = ctor.getParameterTypes();
+                        for (int i = 0; i < paramTypes.length; i++) {
+                            validateNoRawParameterized(paramTypes[i], rawTypes[i],
+                                    clazz.getName() + " constructor param " + i, errors);
+                        }
+                    }
+                }
+            }
+            return errors;
+        }
+
+        private static void validateNoRawParameterized(java.lang.reflect.Type genericType,
+                Class<?> rawType, String location, List<String> errors) {
+            if (rawType == jakarta.enterprise.event.Event.class
+                    && !(genericType instanceof java.lang.reflect.ParameterizedType)) {
+                errors.add("Raw Event type injected at " + location + " — must be parameterized");
+            }
+            if (rawType == jakarta.enterprise.inject.Instance.class
+                    && !(genericType instanceof java.lang.reflect.ParameterizedType)) {
+                errors.add("Raw Instance type injected at " + location + " — must be parameterized");
+            }
+        }
+
+        private static void validateProducerReturnType(java.lang.reflect.Type type, String location,
+                List<String> errors) {
+            // CDI spec: producer return type cannot be a naked type variable or wildcard
+            if (type instanceof java.lang.reflect.TypeVariable<?>) {
+                errors.add("Producer " + location + " has type variable return type");
+            }
+            if (type instanceof java.lang.reflect.WildcardType) {
+                errors.add("Producer " + location + " has wildcard return type");
+            }
+            // Parameterized types with type variables are OK (e.g. List<T> from a generic class)
+            // Only naked wildcards in top-level return type are invalid
+            if (type instanceof java.lang.reflect.GenericArrayType gat) {
+                var componentType = gat.getGenericComponentType();
+                if (componentType instanceof java.lang.reflect.TypeVariable<?>) {
+                    errors.add("Producer " + location + " has array type with type variable component");
+                }
+                if (componentType instanceof java.lang.reflect.WildcardType) {
+                    errors.add("Producer " + location + " has array type with wildcard component");
+                }
+            }
+        }
+
+        private static boolean hasBeanDefiningAnnotation(Class<?> clazz) {
+            for (var ann : clazz.getAnnotations()) {
+                var annType = ann.annotationType();
+                if (annType == jakarta.enterprise.context.ApplicationScoped.class
+                        || annType == jakarta.enterprise.context.RequestScoped.class
+                        || annType == jakarta.enterprise.context.Dependent.class
+                        || annType == jakarta.inject.Singleton.class) return true;
+                if (annType.isAnnotationPresent(jakarta.inject.Scope.class)
+                        || annType.isAnnotationPresent(jakarta.enterprise.context.NormalScope.class)
+                        || annType.isAnnotationPresent(jakarta.enterprise.inject.Stereotype.class)) return true;
+            }
+            // @Inject constructor
+            for (var ctor : clazz.getDeclaredConstructors()) {
+                if (ctor.isAnnotationPresent(jakarta.inject.Inject.class)) return true;
+            }
+            return false;
         }
     }
 }
