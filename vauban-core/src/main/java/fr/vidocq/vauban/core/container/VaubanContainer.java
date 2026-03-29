@@ -5,8 +5,10 @@ import fr.vidocq.vauban.core.bean.discovery.BeanDiscovery;
 import fr.vidocq.vauban.core.bean.model.BeanDescriptor;
 import fr.vidocq.vauban.core.bean.model.BeanId;
 import fr.vidocq.vauban.core.bean.model.InjectionPointInfo;
+import fr.vidocq.vauban.core.bean.model.InterceptorDescriptor;
 import fr.vidocq.vauban.core.bean.model.ObserverDescriptor;
 import fr.vidocq.vauban.core.bean.model.QualifierInstance;
+import fr.vidocq.vauban.core.interceptor.InterceptorManager;
 import fr.vidocq.vauban.core.context.ApplicationContext;
 import fr.vidocq.vauban.core.context.CreationalContextImpl;
 import fr.vidocq.vauban.core.context.DependentContext;
@@ -47,11 +49,13 @@ public final class VaubanContainer implements AutoCloseable {
     private final BeanResolver resolver;
     private final VaubanIndex index;
     private final EventDispatcher eventDispatcher;
+    private final InterceptorManager interceptorManager;
     private final VaubanBeanManager beanManager;
     private volatile boolean running;
 
     private VaubanContainer(VaubanIndex index, List<BeanDescriptor> descriptors,
                             List<ObserverDescriptor> observers,
+                            List<InterceptorDescriptor> interceptorDescriptors,
                             Map<DotName, BeanFactory<?>> factories) {
         this.index = index;
         this.applicationContext = new ApplicationContext();
@@ -82,13 +86,14 @@ public final class VaubanContainer implements AutoCloseable {
         var assignability = new AssignabilityRules(index);
         this.resolver = new BeanResolver(descriptors, assignability);
         this.eventDispatcher = new EventDispatcher(observers, this);
+        this.interceptorManager = new InterceptorManager(interceptorDescriptors);
 
         // Wire up field injection on each bean
         for (var bean : beans.values()) {
             bean.setInjector(instance -> injectFields(instance, bean.descriptor()));
         }
 
-        this.beanManager = new VaubanBeanManager(this, contexts, beans.values(), eventDispatcher);
+        this.beanManager = new VaubanBeanManager(this, contexts, beans.values(), eventDispatcher, interceptorManager);
         this.running = true;
     }
 
@@ -146,6 +151,10 @@ public final class VaubanContainer implements AutoCloseable {
 
     public EventDispatcher eventDispatcher() {
         return eventDispatcher;
+    }
+
+    public InterceptorManager interceptorManager() {
+        return interceptorManager;
     }
 
     private void injectFields(Object instance, BeanDescriptor descriptor) {
@@ -300,8 +309,9 @@ public final class VaubanContainer implements AutoCloseable {
             var discovery = new BeanDiscovery(index);
             var descriptors = discovery.discoverBeans();
             var observers = discovery.discoverObservers();
+            var interceptors = discovery.discoverInterceptors();
 
-            return new VaubanContainer(index, descriptors, observers, factories);
+            return new VaubanContainer(index, descriptors, observers, interceptors, factories);
         }
     }
 }

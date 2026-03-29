@@ -1,9 +1,12 @@
 package fr.vidocq.vauban.core.container;
 
+import fr.vidocq.vauban.core.bean.model.InterceptorDescriptor;
 import fr.vidocq.vauban.core.context.CreationalContextImpl;
 import fr.vidocq.vauban.core.event.EventDispatcher;
 import fr.vidocq.vauban.core.event.EventImpl;
 import fr.vidocq.vauban.core.event.VaubanObserverMethod;
+import fr.vidocq.vauban.core.interceptor.InterceptorManager;
+import fr.vidocq.vauban.indexer.model.DotName;
 import jakarta.el.ELResolver;
 import jakarta.el.ExpressionFactory;
 import jakarta.enterprise.context.spi.Context;
@@ -27,15 +30,18 @@ public final class VaubanBeanManager implements BeanManager {
     private final Map<Class<? extends Annotation>, Context> contexts;
     private final Collection<ManagedBean<?>> beans;
     private final EventDispatcher eventDispatcher;
+    private final InterceptorManager interceptorManager;
 
     public VaubanBeanManager(VaubanContainer container,
                              Map<Class<? extends Annotation>, Context> contexts,
                              Collection<ManagedBean<?>> beans,
-                             EventDispatcher eventDispatcher) {
+                             EventDispatcher eventDispatcher,
+                             InterceptorManager interceptorManager) {
         this.container = container;
         this.contexts = contexts;
         this.beans = List.copyOf(beans);
         this.eventDispatcher = eventDispatcher;
+        this.interceptorManager = interceptorManager;
     }
 
     // --- Functional methods ---
@@ -183,8 +189,23 @@ public final class VaubanBeanManager implements BeanManager {
     }
 
     @Override
+    @SuppressWarnings({"unchecked", "rawtypes"})
     public List<Interceptor<?>> resolveInterceptors(InterceptionType type, Annotation... interceptorBindings) {
-        return List.of();
+        if (interceptorBindings == null || interceptorBindings.length == 0) {
+            throw new IllegalArgumentException("At least one interceptor binding must be specified");
+        }
+
+        var bindingNames = new LinkedHashSet<DotName>();
+        for (var binding : interceptorBindings) {
+            bindingNames.add(DotName.of(binding.annotationType().getName()));
+        }
+
+        var descriptors = interceptorManager.resolveInterceptors(bindingNames);
+        var result = new ArrayList<Interceptor<?>>();
+        for (var descriptor : descriptors) {
+            result.add(new VaubanInterceptor(descriptor));
+        }
+        return result;
     }
 
     @Override

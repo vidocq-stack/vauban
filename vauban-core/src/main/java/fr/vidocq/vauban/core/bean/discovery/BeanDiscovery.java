@@ -5,6 +5,7 @@ import fr.vidocq.vauban.indexer.VaubanIndex;
 import fr.vidocq.vauban.indexer.model.*;
 
 import java.util.*;
+import java.util.Comparator;
 
 /**
  * Main orchestrator for CDI bean discovery.
@@ -40,6 +41,9 @@ public final class BeanDiscovery {
     private static final DotName NAMED = DotName.of("jakarta.inject.Named");
     private static final DotName OBSERVES = DotName.of("jakarta.enterprise.event.Observes");
     private static final DotName OBSERVES_ASYNC = DotName.of("jakarta.enterprise.event.ObservesAsync");
+    private static final DotName INTERCEPTOR = DotName.of("jakarta.interceptor.Interceptor");
+    private static final DotName AROUND_INVOKE = DotName.of("jakarta.interceptor.AroundInvoke");
+    private static final DotName INTERCEPTOR_BINDING = DotName.of("jakarta.interceptor.InterceptorBinding");
 
     private final VaubanIndex index;
 
@@ -378,6 +382,51 @@ public final class BeanDiscovery {
         }
 
         return List.copyOf(result);
+    }
+
+    /**
+     * Discovers all interceptors in the index.
+     * An interceptor is a class annotated with {@code @jakarta.interceptor.Interceptor}.
+     */
+    public List<InterceptorDescriptor> discoverInterceptors() {
+        var interceptors = new ArrayList<InterceptorDescriptor>();
+
+        for (var classInfo : index.getKnownClasses()) {
+            if (!classInfo.hasAnnotation(INTERCEPTOR)) continue;
+
+            // Find bindings: annotations on the class whose annotation type is @InterceptorBinding
+            var bindings = new LinkedHashSet<DotName>();
+            for (var ann : classInfo.annotations()) {
+                if (isInterceptorBinding(ann.name())) {
+                    bindings.add(ann.name());
+                }
+            }
+
+            // Find @AroundInvoke method
+            String aroundInvoke = null;
+            for (var method : classInfo.methods()) {
+                if (hasAnnotation(method.annotations(), AROUND_INVOKE)) {
+                    aroundInvoke = method.name();
+                    break;
+                }
+            }
+
+            var priority = extractPriority(classInfo.annotations());
+            interceptors.add(new InterceptorDescriptor(classInfo.name(), bindings, aroundInvoke, priority));
+        }
+
+        // Sort by priority
+        interceptors.sort(Comparator.comparingInt(InterceptorDescriptor::priority));
+        return interceptors;
+    }
+
+    /**
+     * Checks if the given annotation name is an interceptor binding
+     * (i.e., it is itself annotated with {@code @InterceptorBinding} in the index).
+     */
+    public boolean isInterceptorBinding(DotName annotationName) {
+        var annClass = index.getClassByName(annotationName);
+        return annClass.isPresent() && annClass.get().hasAnnotation(INTERCEPTOR_BINDING);
     }
 
     private static boolean hasAnnotation(List<AnnotationInfo> annotations, DotName name) {
