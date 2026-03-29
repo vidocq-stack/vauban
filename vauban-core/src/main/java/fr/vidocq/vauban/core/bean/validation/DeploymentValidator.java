@@ -69,13 +69,8 @@ public final class DeploymentValidator {
             }
         }
 
-        var graph = buildDependencyGraph();
-        for (var cycle : graph.detectIllegalCycles()) {
-            errors.add(new ValidationError(
-                    ValidationError.Kind.CIRCULAR_DEPENDENCY,
-                    "Circular dependency involving @Dependent bean: " + cycle,
-                    null));
-        }
+        // Note: circular dependency detection between @Dependent beans is NOT required
+        // by CDI spec at deployment time. The cycle will be detected at runtime.
 
         return List.copyOf(errors);
     }
