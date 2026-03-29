@@ -7,8 +7,8 @@
 | Metrique | Valeur |
 |----------|--------|
 | Tests decouverts | 1826 |
-| Passes | ~124 (9.4% des non-skippes) |
-| Echoues | 1194 (65.4%) |
+| Passes | ~133 (10.1% des non-skippes) |
+| Echoues | 1185 (64.9%) |
 | Skippes | 508 (27.8%) |
 | Erreurs | 0 |
 | Temps | ~4s |
@@ -22,9 +22,10 @@
 | + Producers | 1205 | ~113 | -3 |
 | + Intercepteurs | 1200 | ~118 | +5 |
 | + Injection constructeur | 1200 | ~118 | +0 |
-| + Instance\<T\> | **1194** | **~124** | **+6** |
+| + Instance\<T\> | 1194 | ~124 | +6 |
+| + BeanManager enrichi | **1185** | **~133** | **+9** |
 
-**Total progression : 1228 -> 1194 = +34 tests passes**
+**Total progression : 1228 -> 1185 = +43 tests passes**
 
 ## Commande
 

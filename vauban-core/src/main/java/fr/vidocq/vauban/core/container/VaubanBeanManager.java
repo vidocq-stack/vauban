@@ -63,9 +63,64 @@ public final class VaubanBeanManager implements BeanManager {
     @Override
     public Set<Bean<?>> getBeans(Type beanType, Annotation... qualifiers) {
         var result = new LinkedHashSet<Bean<?>>();
+
+        // Determine required qualifiers: if none specified, CDI uses @Default
+        Set<Class<? extends Annotation>> requiredQualifiers = new LinkedHashSet<>();
+        if (qualifiers == null || qualifiers.length == 0) {
+            requiredQualifiers.add(jakarta.enterprise.inject.Default.class);
+        } else {
+            for (var q : qualifiers) {
+                requiredQualifiers.add(q.annotationType());
+            }
+        }
+
         for (var bean : beans) {
+            // Type matching
+            boolean typeMatch = false;
             if (beanType instanceof Class<?> clazz) {
-                if (clazz.isAssignableFrom(bean.getBeanClass())) {
+                for (var bt : bean.getTypes()) {
+                    if (bt instanceof Class<?> btClass && clazz.isAssignableFrom(btClass)) {
+                        typeMatch = true;
+                        break;
+                    } else if (bt.equals(beanType)) {
+                        typeMatch = true;
+                        break;
+                    }
+                }
+            } else {
+                typeMatch = bean.getTypes().contains(beanType);
+            }
+
+            if (!typeMatch) continue;
+
+            // Qualifier matching: @Any matches everything
+            if (requiredQualifiers.contains(jakarta.enterprise.inject.Any.class)) {
+                result.add(bean);
+                continue;
+            }
+
+            // Check if bean has all required qualifiers
+            if (bean instanceof ManagedBean<?> mb) {
+                boolean qualifiersMatch = true;
+                for (var reqQual : requiredQualifiers) {
+                    var reqName = DotName.of(reqQual.getName());
+                    boolean found = mb.descriptor().qualifiers().stream()
+                        .anyMatch(q -> q.annotationName().equals(reqName));
+                    if (!found) {
+                        qualifiersMatch = false;
+                        break;
+                    }
+                }
+                if (qualifiersMatch) {
+                    result.add(bean);
+                }
+            } else {
+                // Non-ManagedBean: fall back to getQualifiers()
+                var beanQualTypes = new LinkedHashSet<Class<? extends Annotation>>();
+                for (var bq : bean.getQualifiers()) {
+                    beanQualTypes.add(bq.annotationType());
+                }
+                if (beanQualTypes.containsAll(requiredQualifiers)) {
                     result.add(bean);
                 }
             }
@@ -88,7 +143,31 @@ public final class VaubanBeanManager implements BeanManager {
     public <X> Bean<? extends X> resolve(Set<Bean<? extends X>> beans) {
         if (beans == null || beans.isEmpty()) return null;
         if (beans.size() == 1) return beans.iterator().next();
-        return beans.iterator().next();
+
+        // Try to resolve using alternatives with @Priority
+        Bean<? extends X> best = null;
+        int bestPriority = -1;
+        boolean hasAlternative = false;
+
+        for (var bean : beans) {
+            if (bean.isAlternative()) {
+                hasAlternative = true;
+                int priority = 0;
+                if (bean instanceof ManagedBean<?> mb) {
+                    priority = mb.descriptor().priority();
+                }
+                if (priority > bestPriority) {
+                    bestPriority = priority;
+                    best = bean;
+                }
+            }
+        }
+
+        if (hasAlternative && best != null) return best;
+
+        // Still ambiguous — CDI spec requires AmbiguousResolutionException
+        throw new jakarta.enterprise.inject.AmbiguousResolutionException(
+            "Ambiguous dependency: " + beans.size() + " beans match");
     }
 
     @Override
