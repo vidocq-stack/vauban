@@ -8,4 +8,8 @@ module fr.vidocq.vauban.core {
     exports fr.vidocq.vauban.core.langmodel.declarations;
     exports fr.vidocq.vauban.core.langmodel.types;
     exports fr.vidocq.vauban.core.types;
+    exports fr.vidocq.vauban.core.bean.model;
+    exports fr.vidocq.vauban.core.bean.discovery;
+    exports fr.vidocq.vauban.core.bean.resolution;
+    exports fr.vidocq.vauban.core.bean.validation;
 }
