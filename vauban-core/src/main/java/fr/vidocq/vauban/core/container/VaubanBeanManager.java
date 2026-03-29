@@ -164,17 +164,40 @@ public final class VaubanBeanManager implements BeanManager {
 
     @Override
     public Object getInjectableReference(InjectionPoint ij, CreationalContext<?> ctx) {
-        throw new UnsupportedOperationException("Not yet implemented");
+        var beans = getBeans(ij.getType(), ij.getQualifiers().toArray(new Annotation[0]));
+        if (beans.isEmpty()) {
+            throw new jakarta.enterprise.inject.UnsatisfiedResolutionException(
+                    "No bean for injection point: " + ij);
+        }
+        var bean = resolve(beans);
+        return getReference(bean, ij.getType(), ctx);
     }
 
     @Override
     public Bean<?> getPassivationCapableBean(String id) {
-        throw new UnsupportedOperationException("Not yet implemented");
+        for (var bean : beans) {
+            if (bean instanceof ManagedBean<?> mb && id.equals(mb.descriptor().id().value())) {
+                return bean;
+            }
+        }
+        return null;
     }
 
     @Override
     public void validate(InjectionPoint injectionPoint) {
-        throw new UnsupportedOperationException("Not yet implemented");
+        var beans = getBeans(injectionPoint.getType(),
+                injectionPoint.getQualifiers().toArray(new Annotation[0]));
+        if (beans.isEmpty()) {
+            throw new jakarta.enterprise.inject.UnsatisfiedResolutionException(
+                    "Unsatisfied: " + injectionPoint);
+        }
+        if (beans.size() > 1) {
+            var resolved = resolve(beans);
+            if (resolved == null) {
+                throw new jakarta.enterprise.inject.AmbiguousResolutionException(
+                        "Ambiguous: " + injectionPoint);
+            }
+        }
     }
 
     @Override
@@ -215,12 +238,20 @@ public final class VaubanBeanManager implements BeanManager {
 
     @Override
     public Set<Annotation> getInterceptorBindingDefinition(Class<? extends Annotation> bindingType) {
-        throw new UnsupportedOperationException("Not yet implemented");
+        var result = new LinkedHashSet<Annotation>();
+        for (var ann : bindingType.getAnnotations()) {
+            result.add(ann);
+        }
+        return result;
     }
 
     @Override
     public Set<Annotation> getStereotypeDefinition(Class<? extends Annotation> stereotype) {
-        throw new UnsupportedOperationException("Not yet implemented");
+        var result = new LinkedHashSet<Annotation>();
+        for (var ann : stereotype.getAnnotations()) {
+            result.add(ann);
+        }
+        return result;
     }
 
     @Override
@@ -257,7 +288,7 @@ public final class VaubanBeanManager implements BeanManager {
 
     @Override
     public <T> AnnotatedType<T> createAnnotatedType(Class<T> type) {
-        throw new UnsupportedOperationException("Not yet implemented");
+        return new VaubanAnnotatedType<>(type);
     }
 
     @Override
@@ -330,12 +361,31 @@ public final class VaubanBeanManager implements BeanManager {
     @Override
     public boolean isMatchingBean(Set<Type> beanTypes, Set<Annotation> beanQualifiers,
                                   Type requiredType, Set<Annotation> requiredQualifiers) {
-        throw new UnsupportedOperationException("Not yet implemented");
+        if (!beanTypes.contains(requiredType)) {
+            if (requiredType instanceof Class<?> reqClass) {
+                boolean typeMatch = beanTypes.stream().anyMatch(bt ->
+                        bt instanceof Class<?> btClass && reqClass.isAssignableFrom(btClass));
+                if (!typeMatch) return false;
+            } else {
+                return false;
+            }
+        }
+        for (var req : requiredQualifiers) {
+            if (req.annotationType() == jakarta.enterprise.inject.Any.class) continue;
+            if (!beanQualifiers.contains(req)) return false;
+        }
+        return true;
     }
 
     @Override
     public boolean isMatchingEvent(Type specifiedType, Set<Annotation> specifiedQualifiers,
                                    Type observedEventType, Set<Annotation> observedEventQualifiers) {
-        throw new UnsupportedOperationException("Not yet implemented");
+        if (specifiedType instanceof Class<?> specClass && observedEventType instanceof Class<?> obsClass) {
+            if (!obsClass.isAssignableFrom(specClass)) return false;
+        }
+        for (var obs : observedEventQualifiers) {
+            if (!specifiedQualifiers.contains(obs)) return false;
+        }
+        return true;
     }
 }
