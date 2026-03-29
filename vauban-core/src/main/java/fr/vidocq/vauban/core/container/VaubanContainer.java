@@ -3,6 +3,7 @@ package fr.vidocq.vauban.core.container;
 import fr.vidocq.vauban.core.BeanFactory;
 import fr.vidocq.vauban.core.bean.discovery.BeanDiscovery;
 import fr.vidocq.vauban.core.bean.model.BeanDescriptor;
+import fr.vidocq.vauban.core.bean.model.BeanId;
 import fr.vidocq.vauban.core.bean.model.InjectionPointInfo;
 import fr.vidocq.vauban.core.bean.model.ObserverDescriptor;
 import fr.vidocq.vauban.core.bean.model.QualifierInstance;
@@ -38,7 +39,7 @@ import java.util.concurrent.ConcurrentHashMap;
  */
 public final class VaubanContainer implements AutoCloseable {
 
-    private final Map<DotName, ManagedBean<?>> beans = new LinkedHashMap<>();
+    private final Map<BeanId, ManagedBean<?>> beans = new LinkedHashMap<>();
     private final Map<Class<? extends Annotation>, Context> contexts = new ConcurrentHashMap<>();
     private final ApplicationContext applicationContext;
     private final RequestContext requestContext;
@@ -63,9 +64,18 @@ public final class VaubanContainer implements AutoCloseable {
         contexts.put(jakarta.inject.Singleton.class, applicationContext);
 
         for (var descriptor : descriptors) {
-            var factory = factories.get(descriptor.beanClass());
+            BeanFactory<?> factory;
+            if (descriptor.kind() == BeanDescriptor.BeanKind.MANAGED) {
+                factory = factories.get(descriptor.beanClass());
+            } else if (descriptor.kind() == BeanDescriptor.BeanKind.PRODUCER_METHOD) {
+                factory = createProducerMethodFactory(descriptor);
+            } else if (descriptor.kind() == BeanDescriptor.BeanKind.PRODUCER_FIELD) {
+                factory = createProducerFieldFactory(descriptor);
+            } else {
+                continue;
+            }
             if (factory != null) {
-                beans.put(descriptor.beanClass(), new ManagedBean<>(descriptor, factory));
+                beans.put(descriptor.id(), new ManagedBean<>(descriptor, factory));
             }
         }
 
@@ -99,10 +109,10 @@ public final class VaubanContainer implements AutoCloseable {
         }
 
         var descriptor = resolved.getFirst();
-        var bean = (ManagedBean<T>) beans.get(descriptor.beanClass());
+        var bean = (ManagedBean<T>) beans.get(descriptor.id());
         if (bean == null) {
             throw new jakarta.enterprise.inject.UnsatisfiedResolutionException(
-                    "No factory registered for bean: " + descriptor.beanClass());
+                    "No factory registered for bean: " + descriptor.id());
         }
 
         return getContextualInstance(bean);
@@ -167,6 +177,59 @@ public final class VaubanContainer implements AutoCloseable {
         // "field ClassName.fieldName" -> "fieldName"
         int dot = description.lastIndexOf('.');
         return dot >= 0 ? description.substring(dot + 1) : null;
+    }
+
+    private BeanFactory<?> createProducerMethodFactory(BeanDescriptor descriptor) {
+        var methodName = extractProducerMethodName(descriptor.id());
+        return () -> {
+            try {
+                var declaringClass = Class.forName(descriptor.beanClass().value());
+                var declaringInstance = select(declaringClass);
+
+                for (var method : declaringClass.getDeclaredMethods()) {
+                    if (method.getName().equals(methodName)) {
+                        method.setAccessible(true);
+                        if (method.getParameterCount() == 0) {
+                            return method.invoke(declaringInstance);
+                        }
+                    }
+                }
+                throw new RuntimeException("Producer method not found: " + methodName + " in " + descriptor.beanClass());
+            } catch (RuntimeException e) {
+                throw e;
+            } catch (Exception e) {
+                throw new RuntimeException("Failed to invoke producer method: " + descriptor.id(), e);
+            }
+        };
+    }
+
+    private BeanFactory<?> createProducerFieldFactory(BeanDescriptor descriptor) {
+        var fieldName = extractProducerFieldName(descriptor.id());
+        return () -> {
+            try {
+                var declaringClass = Class.forName(descriptor.beanClass().value());
+                var declaringInstance = select(declaringClass);
+                var field = declaringClass.getDeclaredField(fieldName);
+                field.setAccessible(true);
+                return field.get(declaringInstance);
+            } catch (RuntimeException e) {
+                throw e;
+            } catch (Exception e) {
+                throw new RuntimeException("Failed to read producer field: " + descriptor.id(), e);
+            }
+        };
+    }
+
+    private static String extractProducerMethodName(BeanId id) {
+        var value = id.value();
+        int hash = value.lastIndexOf('#');
+        return hash >= 0 ? value.substring(hash + 1) : value;
+    }
+
+    private static String extractProducerFieldName(BeanId id) {
+        var value = id.value();
+        int dot = value.lastIndexOf('.');
+        return dot >= 0 ? value.substring(dot + 1) : value;
     }
 
     @Override

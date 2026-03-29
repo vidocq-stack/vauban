@@ -1,5 +1,6 @@
 package fr.vidocq.vauban.core.container;
 
+import jakarta.enterprise.inject.Produces;
 import jakarta.inject.Inject;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
@@ -177,6 +178,74 @@ class VaubanContainerTest {
                     .build()) {
                 var service = container.select(Service.class);
                 assertEquals("entity-1", service.process(1));
+            }
+        }
+    }
+
+    // --- Producer test beans ---
+
+    public static class DataSource {
+        public final String url;
+        public DataSource(String url) { this.url = url; }
+    }
+
+    @ApplicationScoped
+    public static class ProducerConfig {
+        @Produces
+        @ApplicationScoped
+        public DataSource createDataSource() {
+            return new DataSource("jdbc:vauban:test");
+        }
+    }
+
+    public static class AppInfo {
+        public final String name;
+        public AppInfo(String name) { this.name = name; }
+    }
+
+    @ApplicationScoped
+    public static class FieldProducerConfig {
+        @Produces
+        public AppInfo appInfo = new AppInfo("Vauban");
+    }
+
+    @Nested
+    @DisplayName("producer beans")
+    class ProducerBeans {
+
+        @Test
+        @DisplayName("producer method cree un bean")
+        void shouldCreateBeanFromProducerMethod() {
+            try (var container = VaubanContainer.builder()
+                    .addBeanClass(ProducerConfig.class)
+                    .build()) {
+                var ds = container.select(DataSource.class);
+                assertNotNull(ds);
+                assertEquals("jdbc:vauban:test", ds.url);
+            }
+        }
+
+        @Test
+        @DisplayName("producer method retourne la meme instance en @ApplicationScoped")
+        void shouldReturnSameInstanceForApplicationScopedProducer() {
+            try (var container = VaubanContainer.builder()
+                    .addBeanClass(ProducerConfig.class)
+                    .build()) {
+                var ds1 = container.select(DataSource.class);
+                var ds2 = container.select(DataSource.class);
+                assertSame(ds1, ds2);
+            }
+        }
+
+        @Test
+        @DisplayName("producer field cree un bean")
+        void shouldCreateBeanFromProducerField() {
+            try (var container = VaubanContainer.builder()
+                    .addBeanClass(FieldProducerConfig.class)
+                    .build()) {
+                var info = container.select(AppInfo.class);
+                assertNotNull(info);
+                assertEquals("Vauban", info.name);
             }
         }
     }
