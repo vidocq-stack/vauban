@@ -30,6 +30,7 @@ class VaubanExtensionTest {
 
     // --- Tests ---
 
+    @SuppressWarnings("CdiManagedBeanInconsistencyInspection")
     @Nested
     @DisplayName("@VaubanTest avec @AddBeans et @Inject")
     @VaubanTest
@@ -70,6 +71,7 @@ class VaubanExtensionTest {
         }
     }
 
+    @SuppressWarnings("CdiManagedBeanInconsistencyInspection")
     @Nested
     @DisplayName("@VaubanTest avec un seul bean")
     @VaubanTest

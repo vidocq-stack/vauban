@@ -3,6 +3,7 @@ package fr.vidocq.vauban.core.container;
 import fr.vidocq.vauban.core.BeanFactory;
 import fr.vidocq.vauban.core.bean.discovery.BeanDiscovery;
 import fr.vidocq.vauban.core.bean.model.BeanDescriptor;
+import fr.vidocq.vauban.core.bean.model.InjectionPointInfo;
 import fr.vidocq.vauban.core.bean.model.QualifierInstance;
 import fr.vidocq.vauban.core.context.ApplicationContext;
 import fr.vidocq.vauban.core.context.CreationalContextImpl;
@@ -40,6 +41,7 @@ public final class VaubanContainer implements AutoCloseable {
     private final DependentContext dependentContext;
     private final BeanResolver resolver;
     private final VaubanIndex index;
+    private final VaubanBeanManager beanManager;
     private volatile boolean running;
 
     private VaubanContainer(VaubanIndex index, List<BeanDescriptor> descriptors,
@@ -63,6 +65,13 @@ public final class VaubanContainer implements AutoCloseable {
 
         var assignability = new AssignabilityRules(index);
         this.resolver = new BeanResolver(descriptors, assignability);
+
+        // Wire up field injection on each bean
+        for (var bean : beans.values()) {
+            bean.setInjector(instance -> injectFields(instance, bean.descriptor()));
+        }
+
+        this.beanManager = new VaubanBeanManager(this, contexts, beans.values());
         this.running = true;
     }
 
@@ -108,6 +117,38 @@ public final class VaubanContainer implements AutoCloseable {
 
     public RequestContext requestContext() {
         return requestContext;
+    }
+
+    public VaubanBeanManager getBeanManager() {
+        return beanManager;
+    }
+
+    Map<Class<? extends Annotation>, Context> contexts() {
+        return contexts;
+    }
+
+    private void injectFields(Object instance, BeanDescriptor descriptor) {
+        for (var ip : descriptor.injectionPoints()) {
+            if (ip.kind() != InjectionPointInfo.InjectionKind.FIELD) continue;
+
+            var fieldName = extractFieldName(ip.description());
+            if (fieldName == null) continue;
+
+            try {
+                var field = instance.getClass().getDeclaredField(fieldName);
+                field.setAccessible(true);
+                var value = select(field.getType());
+                field.set(instance, value);
+            } catch (Exception e) {
+                throw new RuntimeException("Failed to inject field: " + ip.description(), e);
+            }
+        }
+    }
+
+    private static String extractFieldName(String description) {
+        // "field ClassName.fieldName" -> "fieldName"
+        int dot = description.lastIndexOf('.');
+        return dot >= 0 ? description.substring(dot + 1) : null;
     }
 
     @Override

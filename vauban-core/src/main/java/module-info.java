@@ -2,6 +2,7 @@ module fr.vidocq.vauban.core {
     requires transitive fr.vidocq.vauban.api;
     requires fr.vidocq.vauban.indexer;
     requires transitive jakarta.cdi.lang.model;
+    requires jakarta.el;
 
     exports fr.vidocq.vauban.core;
     exports fr.vidocq.vauban.core.container;

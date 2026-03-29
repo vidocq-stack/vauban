@@ -12,6 +12,7 @@ import java.lang.annotation.Annotation;
 import java.lang.reflect.Type;
 import java.util.Objects;
 import java.util.Set;
+import java.util.function.Consumer;
 
 /**
  * CDI Bean implementation backed by a BeanDescriptor and a BeanFactory.
@@ -21,6 +22,7 @@ public final class ManagedBean<T> implements Bean<T> {
     private final BeanDescriptor descriptor;
     private final BeanFactory<T> factory;
     private final Class<T> beanClass;
+    private Consumer<Object> injector;
 
     @SuppressWarnings("unchecked")
     public ManagedBean(BeanDescriptor descriptor, BeanFactory<T> factory) {
@@ -33,9 +35,21 @@ public final class ManagedBean<T> implements Bean<T> {
         }
     }
 
+    /**
+     * Sets the injector callback that will be called after instance creation
+     * to resolve and inject @Inject fields.
+     */
+    public void setInjector(Consumer<Object> injector) {
+        this.injector = injector;
+    }
+
     @Override
     public T create(CreationalContext<T> creationalContext) {
-        return factory.create();
+        T instance = factory.create();
+        if (injector != null) {
+            injector.accept(instance);
+        }
+        return instance;
     }
 
     @Override

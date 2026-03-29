@@ -21,8 +21,11 @@ public class VaubanContexts implements Contexts<Context> {
 
     @Override
     public Context getRequestContext() {
-        // This would need access to the current container
-        throw new UnsupportedOperationException("Not yet implemented");
+        var container = ContainerHolder.get();
+        if (container != null) {
+            return container.requestContext();
+        }
+        throw new IllegalStateException("No Vauban container is running");
     }
 
     @Override

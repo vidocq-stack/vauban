@@ -84,10 +84,19 @@
 - [x] Adaptateur Arquillian : VaubanDeployableContainer (squelette), VaubanContainerConfig, extension
 - [x] Configuration : profil -Ptck, cdiCoreMode=true, groupes exclus
 - [x] Tests infrastructure SPI (4 tests, 149 total)
-- [ ] Pipeline runtime codegen dans l'adaptateur Arquillian (deploy ShrinkWrap) - incremental
-- [ ] Execution TCK Lite effective - necesssite un adaptateur Arquillian complet
+- [x] VaubanDeployableContainer fonctionnel : extraction .class ShrinkWrap, ByteArrayClassLoader, bootstrap VaubanContainer
+- [x] ContainerHolder : bridge main/test scope pour BeanManager access
+- [x] VaubanTestEnricher : injection @Inject BeanManager dans tests TCK
+- [x] VaubanContexts.getRequestContext() connecte au conteneur actif
+- [x] Profil TCK : surefire-testng provider, dependenciesToScan, testFailureIgnore
+- [x] META-INF/cdi-tck.properties + libraryDirectory
+- [x] Execution TCK effective : 1826 tests, 91 passes, 1227 failures, 508 skipped (5s)
 
-## Phase 9: Outillage modules
-- [ ] `vauban:index` - indexation dependances
-- [ ] `vauban:module-analyze` - analyse JPMS
-- [ ] `vauban:module-fix` - generation module-info
+## Phase 9: Outillage modules ✅
+- [x] `ModuleAnalyzer` : analyse JARs (explicit/automatic/unnamed), lit module-info via Class-File API
+- [x] `ModuleReport` : rapport lisible [OK]/[WARN]/[ERROR], resume, split packages
+- [x] Detection split packages entre JARs
+- [x] Derivation noms de modules automatiques (regles JDK)
+- [x] Tests : 7 tests, 156 total
+- [ ] Goals Maven (`vauban:index`, `vauban:module-analyze`) - differe (maven-plugin-plugin incompatible JDK 25)
+- [ ] `vauban:module-fix` - generation module-info pour modules automatiques - differe

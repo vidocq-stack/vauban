@@ -1,5 +1,6 @@
 package fr.vidocq.vauban.core.container;
 
+import jakarta.inject.Inject;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
@@ -40,6 +41,17 @@ class VaubanContainerTest {
     @RequestScoped
     public static class RequestBean {
         public String value = "request";
+    }
+
+    @ApplicationScoped
+    public static class Repository {
+        public String findById(int id) { return "entity-" + id; }
+    }
+
+    @ApplicationScoped
+    public static class Service {
+        @Inject Repository repository;
+        public String process(int id) { return repository.findById(id); }
     }
 
     @Nested
@@ -148,6 +160,49 @@ class VaubanContainerTest {
                     .build()) {
                 assertThrows(jakarta.enterprise.inject.UnsatisfiedResolutionException.class,
                         () -> container.select(String.class));
+            }
+        }
+    }
+
+    @Nested
+    @DisplayName("injection entre beans")
+    class Injection {
+
+        @Test
+        @DisplayName("injecte les dependances @Inject entre beans")
+        void shouldInjectDependencies() {
+            try (var container = VaubanContainer.builder()
+                    .addBeanClass(Service.class)
+                    .addBeanClass(Repository.class)
+                    .build()) {
+                var service = container.select(Service.class);
+                assertEquals("entity-1", service.process(1));
+            }
+        }
+    }
+
+    @Nested
+    @DisplayName("BeanManager")
+    class BeanManagerTest {
+
+        @Test
+        @DisplayName("fournit un BeanManager fonctionnel")
+        void shouldProvideBeanManager() {
+            try (var container = VaubanContainer.builder()
+                    .addBeanClass(AppService.class)
+                    .build()) {
+                var bm = container.getBeanManager();
+                assertNotNull(bm);
+
+                var beans = bm.getBeans(AppService.class);
+                assertFalse(beans.isEmpty());
+
+                var bean = bm.resolve(beans);
+                assertNotNull(bean);
+
+                var ctx = bm.createCreationalContext(null);
+                var ref = bm.getReference(bean, AppService.class, ctx);
+                assertInstanceOf(AppService.class, ref);
             }
         }
     }
