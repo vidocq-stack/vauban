@@ -158,28 +158,19 @@ public final class VaubanBeanManager implements BeanManager {
                 continue;
             }
 
-            // Check if bean has all required qualifiers
-            if (bean instanceof ManagedBean<?> mb) {
+            // Check if bean has all required qualifiers via bean.getQualifiers()
+            {
+                var beanQualifiers = bean.getQualifiers();
                 boolean qualifiersMatch = true;
-                for (var reqQual : requiredQualifiers) {
-                    var reqName = DotName.of(reqQual.getName());
-                    boolean found = mb.descriptor().qualifiers().stream()
-                        .anyMatch(q -> q.annotationName().equals(reqName));
+                for (var reqQualClass : requiredQualifiers) {
+                    boolean found = beanQualifiers.stream()
+                        .anyMatch(bq -> bq.annotationType().equals(reqQualClass));
                     if (!found) {
                         qualifiersMatch = false;
                         break;
                     }
                 }
                 if (qualifiersMatch) {
-                    result.add(bean);
-                }
-            } else {
-                // Non-ManagedBean: fall back to getQualifiers()
-                var beanQualTypes = new LinkedHashSet<Class<? extends Annotation>>();
-                for (var bq : bean.getQualifiers()) {
-                    beanQualTypes.add(bq.annotationType());
-                }
-                if (beanQualTypes.containsAll(requiredQualifiers)) {
                     result.add(bean);
                 }
             }
