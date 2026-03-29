@@ -6,54 +6,42 @@
 
 | Metrique | Valeur |
 |----------|--------|
-| Tests total | 1914 |
-| **Passes** | **246 (20.7% des non-skippes)** |
-| Echoues | 945 |
-| Skippes | 723 |
+| Tests total | 1912 |
+| **Passes** | **277 (23.3% des non-skippes)** |
+| Echoues | 914 |
+| Skippes | 721 |
 | Erreurs | 0 |
 | Temps | ~4s |
 
-## Progression complete
+## Progression depuis le debut
 
-| Etape | Failures | Passes | Delta |
+| Etape | Failures | Passes | Cumul |
 |-------|----------|--------|-------|
-| Baseline (adaptateur) | 1228 | ~90 | - |
-| + Events (@Observes) | 1202 | ~116 | +26 |
-| + Producers | 1205 | ~113 | -3 |
-| + Intercepteurs | 1200 | ~118 | +5 |
-| + Instance\<T\> | 1194 | ~124 | +6 |
-| + BeanManager enrichi | 1185 | ~133 | +9 |
-| + Qualifiers/types/resolve | 1165 | ~153 | +20 |
-| + Validation deploiement | 1038 | ~162 | +127 |
-| + ClassValidator | 1036 | ~155 | -7 |
-| + Lifecycle (@PostConstruct) | 1030 | ~161 | +6 |
-| + ParameterizedType | 1027 | ~164 | +3 |
-| + TestEnricher + exceptions | 1003 | ~188 | +24 |
-| + @Named + stubs | 998 | ~193 | +5 |
-| + Built-in beans | 989 | ~202 | +9 |
-| + Producer bean types fix | 960 | ~231 | +29 |
-| + BM validations | 950 | ~241 | +10 |
-| + Disposers + reflection inject | **945** | **~246** | **+5** |
+| Baseline (adaptateur seul) | 1228 | ~90 | - |
+| + Events, Producers, Intercepteurs | 1200 | ~118 | +28 |
+| + Instance, BeanManager | 1165 | ~153 | +63 |
+| + Validation deploiement | 1038 | ~162 | +72 |
+| + Lifecycle, Enricher, Qualifiers | 989 | ~202 | +112 |
+| + Built-in beans, Producer types | 950 | ~241 | +151 |
+| + Stereotypes, Event valid, Alt/Stereo | 913 | ~278 | +188 |
+| **+ Instance valid, Literals** | **914** | **~277** | **+187** |
 
-**Total : 1228 -> 945 = -283 failures, +156 tests passes**
+**Total : 1228 -> 914 = -314 failures**
 
 ## Commande
 ```bash
 mvn test -pl vauban-tck-runner -Ptck
 ```
 
-## Decomposition des 945 failures restantes
+## Tests propres Vauban : ~215 (tous verts)
 
-| Categorie | ~ Tests | Note |
-|-----------|---------|------|
-| CDI Full (extensions, decorators, passivation) | ~350 | Hors scope CDI Lite |
-| Interceptors runtime (wrapping) | ~60 | Necessite codegen runtime |
-| Method Invokers (CDI 4.1) | ~25 | Feature non implementee |
-| Events avances (async, conditional, metadata) | ~40 | Enrichissement events |
-| Producers avances (disposal, lifecycle) | ~35 | Enrichissement producers |
-| Stereotypes | ~17 | Feature a implementer |
-| Dependent context lifecycle | ~19 | Tracking dependants |
-| Client proxies runtime | ~15 | Wrapping runtime |
-| InjectionPoint metadata | ~21 | Feature a implementer |
-| Scope/qualifier definition | ~23 | Heritage, stereotypes |
-| Autres (lookup, alternatives, etc.) | ~50 | Divers |
+## Pour atteindre 25% (~298 passes)
+- InjectionPoint metadata (~21 tests)
+- Client proxy runtime pour normal-scoped (~5 tests)
+- Qualifier inheritance (@Inherited) (~3 tests)
+- Fine-tuning getBeans() pour edge cases
+
+## Pour atteindre 30% (~358 passes)
+- Interceptor runtime wrapping (~60 tests)
+- Dependent context lifecycle tracking (~13 tests)
+- Advanced event handling (async, conditional) (~20 tests)
