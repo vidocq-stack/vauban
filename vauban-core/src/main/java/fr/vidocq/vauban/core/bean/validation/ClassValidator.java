@@ -82,6 +82,30 @@ public final class ClassValidator {
             // are not valid beans (this is checked elsewhere)
         }
 
+        // Conditional observer on @Dependent bean
+        for (var method : classInfo.methods()) {
+            for (var param : method.parameters()) {
+                if (hasAnn(param.annotations(), OBSERVES)) {
+                    // Check Reception.IF_EXISTS on @Observes — not allowed for @Dependent
+                    var observesAnn = param.annotations().stream()
+                            .filter(a -> a.name().equals(OBSERVES)).findFirst();
+                    if (observesAnn.isPresent()) {
+                        var reception = observesAnn.get().member("notifyObserver");
+                        if (reception instanceof fr.vidocq.vauban.indexer.model.AnnotationValue.EnumVal ev
+                                && "IF_EXISTS".equals(ev.constantName())) {
+                            // Check if bean is @Dependent
+                            boolean isDependent = classInfo.hasAnnotation(
+                                    DotName.of("jakarta.enterprise.context.Dependent"))
+                                    || !hasBeanDefiningAnnotation(classInfo, index);
+                            if (isDependent) {
+                                errors.add("Conditional observer on @Dependent bean " + className);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         // Validate each method
         for (var method : classInfo.methods()) {
             validateMethod(method, className, errors);
