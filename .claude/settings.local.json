@@ -24,7 +24,10 @@
       "Bash(ls /Users/yblazart/.sdkman/candidates/maven/*/bin/mvn)",
       "Bash(/Users/yblazart/.sdkman/candidates/maven/4.0.0-rc-5/bin/mvn compile:*)",
       "Bash(/Users/yblazart/.sdkman/candidates/maven/4.0.0-rc-5/bin/mvn clean:*)",
-      "Bash(mvn dependency:tree -pl vauban-processor)"
+      "Bash(mvn dependency:tree -pl vauban-processor)",
+      "Bash(mvn dependency:build-classpath -pl vauban-core -q)",
+      "Bash(grep -v \"$\")",
+      "Bash(find /Users/yblazart/projects/perso/vidocq/vauban/vauban-core/src/test -name module-info*)"
     ]
   }
 }

@@ -58,13 +58,17 @@
 - [ ] Pipeline BCE complet (5 phases @Discovery etc.) - differe, structure en place
 - [ ] `ExtensionLoader` via ServiceLoader - differe
 
-## Phase 6: Runtime conteneur
-- [ ] `VaubanContainer` implements `SeContainer`
-- [ ] Contextes: Application, Request, Dependent (impls classiques, sans preview)
-- [ ] Systeme d'evenements
-- [ ] `Instance<T>` programmatic lookup
-- [ ] Beans built-in
-- [ ] Bootstrap depuis composants generes
+## Phase 6: Runtime conteneur ✅
+- [x] `VaubanContainer` avec Builder, select(Class<T>), AutoCloseable
+- [x] `ApplicationContext` : ConcurrentHashMap, thread-safe, singleton par bean
+- [x] `RequestContext` : ThreadLocal, activate/deactivate, ContextNotActiveException
+- [x] `DependentContext` : nouvelle instance a chaque injection
+- [x] `ManagedBean<T>` implements Bean<T>, wrape BeanDescriptor + BeanFactory
+- [x] `CreationalContextImpl<T>`
+- [x] Tests : 7 tests lifecycle/scopes/factory/erreurs, 140 total
+- [ ] Systeme d'evenements (Event<T>, @Observes) - differe
+- [ ] `Instance<T>` programmatic lookup complet - differe
+- [ ] Beans built-in (BeanManager, Event, Instance) - differe
 
 ## Phase 7: Integration JUnit 6
 - [ ] `@VaubanTest` + `VaubanExtension`
