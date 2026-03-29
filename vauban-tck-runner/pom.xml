@@ -13,10 +13,135 @@
     <name>Vauban :: TCK Runner</name>
     <description>CDI TCK 4.1 runner for Vauban</description>
 
+    <properties>
+        <cdi.tck.version>4.1.0</cdi.tck.version>
+        <arquillian.version>1.8.0.Final</arquillian.version>
+        <testng.version>7.9.0</testng.version>
+    </properties>
+
+    <dependencyManagement>
+        <dependencies>
+            <dependency>
+                <groupId>org.jboss.arquillian</groupId>
+                <artifactId>arquillian-bom</artifactId>
+                <version>${arquillian.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+        </dependencies>
+    </dependencyManagement>
+
     <dependencies>
+        <!-- Vauban -->
         <dependency>
             <groupId>fr.vidocq.vauban</groupId>
             <artifactId>vauban-core</artifactId>
         </dependency>
+        <dependency>
+            <groupId>fr.vidocq.vauban</groupId>
+            <artifactId>vauban-indexer</artifactId>
+        </dependency>
+
+        <!-- CDI TCK SPI -->
+        <dependency>
+            <groupId>jakarta.enterprise</groupId>
+            <artifactId>cdi-tck-api</artifactId>
+            <version>${cdi.tck.version}</version>
+        </dependency>
+
+        <!-- CDI TCK Core Tests -->
+        <dependency>
+            <groupId>jakarta.enterprise</groupId>
+            <artifactId>cdi-tck-core-impl</artifactId>
+            <version>${cdi.tck.version}</version>
+            <scope>test</scope>
+        </dependency>
+
+        <!-- CDI TCK Lang Model Tests -->
+        <dependency>
+            <groupId>jakarta.enterprise</groupId>
+            <artifactId>cdi-tck-lang-model</artifactId>
+            <version>${cdi.tck.version}</version>
+            <scope>test</scope>
+        </dependency>
+
+        <!-- Arquillian TestNG -->
+        <dependency>
+            <groupId>org.jboss.arquillian.testng</groupId>
+            <artifactId>arquillian-testng-container</artifactId>
+            <scope>test</scope>
+        </dependency>
+
+        <!-- TestNG -->
+        <dependency>
+            <groupId>org.testng</groupId>
+            <artifactId>testng</artifactId>
+            <version>${testng.version}</version>
+            <scope>test</scope>
+        </dependency>
+
+        <!-- JUnit Jupiter -->
+        <dependency>
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter</artifactId>
+            <scope>test</scope>
+        </dependency>
+
+        <!-- ShrinkWrap -->
+        <dependency>
+            <groupId>org.jboss.shrinkwrap</groupId>
+            <artifactId>shrinkwrap-api</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.jboss.shrinkwrap</groupId>
+            <artifactId>shrinkwrap-impl-base</artifactId>
+            <scope>test</scope>
+        </dependency>
     </dependencies>
+
+    <build>
+        <plugins>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <configuration>
+                    <useModulePath>false</useModulePath>
+                    <!-- Only run our own infrastructure tests by default -->
+                    <includes>
+                        <include>**/*Test.java</include>
+                    </includes>
+                    <!-- Exclude TCK tests (TestNG-based, from dependencies) -->
+                    <dependenciesToScan combine.self="override"/>
+                </configuration>
+            </plugin>
+        </plugins>
+    </build>
+
+    <profiles>
+        <profile>
+            <id>tck</id>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-surefire-plugin</artifactId>
+                        <configuration>
+                            <skip>false</skip>
+                            <useModulePath>false</useModulePath>
+                            <enableAssertions>true</enableAssertions>
+                            <systemPropertyVariables>
+                                <org.jboss.cdi.tck.cdiCoreMode>true</org.jboss.cdi.tck.cdiCoreMode>
+                                <org.jboss.cdi.tck.spi.Beans>fr.vidocq.vauban.tck.VaubanBeans</org.jboss.cdi.tck.spi.Beans>
+                                <org.jboss.cdi.tck.spi.Contexts>fr.vidocq.vauban.tck.VaubanContexts</org.jboss.cdi.tck.spi.Contexts>
+                                <org.jboss.cdi.tck.spi.Contextuals>fr.vidocq.vauban.tck.VaubanContextuals</org.jboss.cdi.tck.spi.Contextuals>
+                                <org.jboss.cdi.tck.spi.CreationalContexts>fr.vidocq.vauban.tck.VaubanCreationalContexts</org.jboss.cdi.tck.spi.CreationalContexts>
+                            </systemPropertyVariables>
+                            <excludedGroups>integration,javaee-full,se</excludedGroups>
+                        </configuration>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
+    </profiles>
 </project>
