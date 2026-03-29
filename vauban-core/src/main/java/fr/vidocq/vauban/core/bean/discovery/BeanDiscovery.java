@@ -547,14 +547,59 @@ public final class BeanDiscovery {
             if (isVetoed(classInfo)) continue;
             if (!hasBeanDefiningAnnotation(classInfo)) continue;
 
-            for (var method : classInfo.methods()) {
-                if (method.isConstructor() || method.isStatic()) continue;
+            // Check declared methods in the index
+            discoverObserversFromMethods(classInfo, classInfo.methods(), result);
 
-                for (var param : method.parameters()) {
-                    boolean isObserves = hasAnnotation(param.annotations(), OBSERVES);
-                    boolean isObservesAsync = hasAnnotation(param.annotations(), OBSERVES_ASYNC);
+            // Check inherited methods via reflection (not in bytecode index)
+            try {
+                var clazz = Class.forName(classInfo.name().value());
+                for (var method : clazz.getMethods()) {
+                    if (method.getDeclaringClass() == clazz) continue; // already handled above
+                    if (java.lang.reflect.Modifier.isStatic(method.getModifiers())) continue;
+                    for (var param : method.getParameters()) {
+                        if (param.isAnnotationPresent(jakarta.enterprise.event.Observes.class)
+                                || param.isAnnotationPresent(jakarta.enterprise.event.ObservesAsync.class)) {
+                            boolean async = param.isAnnotationPresent(jakarta.enterprise.event.ObservesAsync.class);
 
-                    if (isObserves || isObservesAsync) {
+                            var reception = "ALWAYS";
+                            var transactionPhase = "IN_PROGRESS";
+                            var observesAnn = param.getAnnotation(jakarta.enterprise.event.Observes.class);
+                            if (observesAnn != null) {
+                                reception = observesAnn.notifyObserver().name();
+                                transactionPhase = observesAnn.during().name();
+                            }
+
+                            var priority = jakarta.enterprise.inject.spi.ObserverMethod.DEFAULT_PRIORITY;
+                            if (method.isAnnotationPresent(jakarta.annotation.Priority.class)) {
+                                priority = method.getAnnotation(jakarta.annotation.Priority.class).value();
+                            }
+
+                            var eventType = new TypeInfo.ClassType(DotName.of(param.getType().getName()));
+                            result.add(new ObserverDescriptor(
+                                    classInfo.name(), method.getName(), eventType,
+                                    List.of(), async, priority, reception, transactionPhase));
+                            break;
+                        }
+                    }
+                }
+            } catch (ClassNotFoundException e) {
+                // skip
+            }
+        }
+
+        return List.copyOf(result);
+    }
+
+    private void discoverObserversFromMethods(ClassInfo classInfo, List<MethodInfo> methods,
+            List<ObserverDescriptor> result) {
+        for (var method : methods) {
+            if (method.isConstructor() || method.isStatic()) continue;
+
+            for (var param : method.parameters()) {
+                boolean isObserves = hasAnnotation(param.annotations(), OBSERVES);
+                boolean isObservesAsync = hasAnnotation(param.annotations(), OBSERVES_ASYNC);
+
+                if (isObserves || isObservesAsync) {
                         // Qualifiers on the observed parameter (excluding @Observes/@ObservesAsync)
                         var qualifiers = computeObserverQualifiers(param.annotations().stream()
                                 .filter(a -> !a.name().equals(OBSERVES) && !a.name().equals(OBSERVES_ASYNC))
@@ -591,17 +636,15 @@ public final class BeanDiscovery {
                                 transactionPhase
                         ));
                         break; // only one observed parameter per method
-                    }
                 }
             }
         }
-
-        return List.copyOf(result);
     }
 
     /**
      * Discovers all disposer methods in the index.
      * A disposer method has exactly one parameter annotated with {@code @Disposes}.
+
      */
     public List<DisposerDescriptor> discoverDisposerMethods() {
         var disposers = new ArrayList<DisposerDescriptor>();
