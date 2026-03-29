@@ -64,6 +64,24 @@ public final class ClassValidator {
             errors.add("Bean " + className + " has multiple @Inject constructors");
         }
 
+        // Too many scopes on a bean with bean-defining annotation
+        if (hasBeanDefiningAnnotation(classInfo, index)) {
+            long scopeCount = classInfo.annotations().stream()
+                    .filter(a -> isScopeAnnotation(a.name(), index))
+                    .count();
+            if (scopeCount > 1) {
+                errors.add("Bean " + className + " has multiple scope annotations");
+            }
+        }
+
+        // Generic bean class (has type parameters) cannot be a managed bean
+        // unless it's a concrete subclass that resolves all type params
+        if (classInfo.isAbstract() && hasBeanDefiningAnnotation(classInfo, index)
+                && !classInfo.isInterface()) {
+            // Abstract classes with bean-defining annotations but no concrete subclass
+            // are not valid beans (this is checked elsewhere)
+        }
+
         // Validate each method
         for (var method : classInfo.methods()) {
             validateMethod(method, className, errors);
@@ -155,6 +173,17 @@ public final class ClassValidator {
                         + " cannot be both @Observes and @Disposes");
             }
         }
+    }
+
+    private static boolean hasBeanDefiningAnnotation(ClassInfo classInfo, VaubanIndex index) {
+        for (var ann : classInfo.annotations()) {
+            if (BUILT_IN_SCOPES.contains(ann.name())) return true;
+            if (isScopeAnnotation(ann.name(), index)) return true;
+            var annClass = index.getClassByName(ann.name());
+            if (annClass.isPresent() && annClass.get().hasAnnotation(
+                    DotName.of("jakarta.enterprise.inject.Stereotype"))) return true;
+        }
+        return false;
     }
 
     private static boolean isScopeAnnotation(DotName name, VaubanIndex index) {

@@ -260,17 +260,14 @@ class ClassValidatorTest {
     class MultipleScopes {
 
         @Test
-        @DisplayName("multiple scopes not validated at class level (deferred)")
-        void multipleScopesNotValidatedHere() {
-            // Multiple scope validation is complex (stereotypes, inheritance)
-            // and was removed to avoid false positives in the TCK.
+        @DisplayName("should reject bean with two scope annotations")
+        void rejectsMultipleScopes() {
             var classInfo = new ClassInfo(DotName.of("com.example.MultiScope"), DotName.of("java.lang.Object"),
                     List.of(), 0x0001, List.of(), List.of(),
                     List.of(ann(APP_SCOPED), ann(REQUEST_SCOPED)), ClassKind.CLASS);
 
             var errors = ClassValidator.validate(buildIndex(classInfo));
-            // No error expected — rule removed
-            assertTrue(errors.isEmpty());
+            assertTrue(errors.stream().anyMatch(e -> e.contains("multiple scope")));
         }
 
         @Test
