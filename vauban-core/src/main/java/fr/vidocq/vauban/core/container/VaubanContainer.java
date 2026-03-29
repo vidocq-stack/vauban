@@ -625,11 +625,11 @@ public final class VaubanContainer implements AutoCloseable {
             // Validate class-level CDI rules (before bean discovery)
             var classErrors = fr.vidocq.vauban.core.bean.validation.ClassValidator.validate(index);
             if (!classErrors.isEmpty()) {
-                var msg = new StringBuilder("CDI class validation failed:\n");
+                var msg = new StringBuilder("CDI definition validation failed:\n");
                 for (var error : classErrors) {
                     msg.append("  - ").append(error).append("\n");
                 }
-                throw new jakarta.enterprise.inject.spi.DeploymentException(msg.toString());
+                throw new jakarta.enterprise.inject.spi.DefinitionException(msg.toString());
             }
 
             var discovery = new BeanDiscovery(index);
