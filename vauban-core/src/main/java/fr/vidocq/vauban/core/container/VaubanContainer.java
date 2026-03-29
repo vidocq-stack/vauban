@@ -4,11 +4,14 @@ import fr.vidocq.vauban.core.BeanFactory;
 import fr.vidocq.vauban.core.bean.discovery.BeanDiscovery;
 import fr.vidocq.vauban.core.bean.model.BeanDescriptor;
 import fr.vidocq.vauban.core.bean.model.InjectionPointInfo;
+import fr.vidocq.vauban.core.bean.model.ObserverDescriptor;
 import fr.vidocq.vauban.core.bean.model.QualifierInstance;
 import fr.vidocq.vauban.core.context.ApplicationContext;
 import fr.vidocq.vauban.core.context.CreationalContextImpl;
 import fr.vidocq.vauban.core.context.DependentContext;
 import fr.vidocq.vauban.core.context.RequestContext;
+import fr.vidocq.vauban.core.event.EventDispatcher;
+import fr.vidocq.vauban.core.event.EventImpl;
 import fr.vidocq.vauban.core.bean.resolution.BeanResolver;
 import fr.vidocq.vauban.core.types.AssignabilityRules;
 import fr.vidocq.vauban.indexer.IndexBuilder;
@@ -18,6 +21,7 @@ import fr.vidocq.vauban.indexer.model.TypeInfo;
 import fr.vidocq.vauban.indexer.scanner.ClassFileScanner;
 import jakarta.enterprise.context.spi.Context;
 import jakarta.enterprise.context.spi.Contextual;
+import jakarta.enterprise.event.Event;
 
 import java.io.IOException;
 import java.lang.annotation.Annotation;
@@ -41,10 +45,12 @@ public final class VaubanContainer implements AutoCloseable {
     private final DependentContext dependentContext;
     private final BeanResolver resolver;
     private final VaubanIndex index;
+    private final EventDispatcher eventDispatcher;
     private final VaubanBeanManager beanManager;
     private volatile boolean running;
 
     private VaubanContainer(VaubanIndex index, List<BeanDescriptor> descriptors,
+                            List<ObserverDescriptor> observers,
                             Map<DotName, BeanFactory<?>> factories) {
         this.index = index;
         this.applicationContext = new ApplicationContext();
@@ -65,13 +71,14 @@ public final class VaubanContainer implements AutoCloseable {
 
         var assignability = new AssignabilityRules(index);
         this.resolver = new BeanResolver(descriptors, assignability);
+        this.eventDispatcher = new EventDispatcher(observers, this);
 
         // Wire up field injection on each bean
         for (var bean : beans.values()) {
             bean.setInjector(instance -> injectFields(instance, bean.descriptor()));
         }
 
-        this.beanManager = new VaubanBeanManager(this, contexts, beans.values());
+        this.beanManager = new VaubanBeanManager(this, contexts, beans.values(), eventDispatcher);
         this.running = true;
     }
 
@@ -127,6 +134,10 @@ public final class VaubanContainer implements AutoCloseable {
         return contexts;
     }
 
+    public EventDispatcher eventDispatcher() {
+        return eventDispatcher;
+    }
+
     private void injectFields(Object instance, BeanDescriptor descriptor) {
         for (var ip : descriptor.injectionPoints()) {
             if (ip.kind() != InjectionPointInfo.InjectionKind.FIELD) continue;
@@ -137,6 +148,13 @@ public final class VaubanContainer implements AutoCloseable {
             try {
                 var field = instance.getClass().getDeclaredField(fieldName);
                 field.setAccessible(true);
+
+                // Handle Event<T> injection
+                if (field.getType() == Event.class) {
+                    field.set(instance, new EventImpl<>(eventDispatcher));
+                    continue;
+                }
+
                 var value = select(field.getType());
                 field.set(instance, value);
             } catch (Exception e) {
@@ -218,8 +236,9 @@ public final class VaubanContainer implements AutoCloseable {
             var index = indexBuilder.build();
             var discovery = new BeanDiscovery(index);
             var descriptors = discovery.discoverBeans();
+            var observers = discovery.discoverObservers();
 
-            return new VaubanContainer(index, descriptors, factories);
+            return new VaubanContainer(index, descriptors, observers, factories);
         }
     }
 }

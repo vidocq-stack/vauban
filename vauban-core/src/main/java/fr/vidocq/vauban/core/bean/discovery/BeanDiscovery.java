@@ -38,6 +38,8 @@ public final class BeanDiscovery {
     private static final DotName ALTERNATIVE = DotName.of("jakarta.enterprise.inject.Alternative");
     private static final DotName PRIORITY = DotName.of("jakarta.annotation.Priority");
     private static final DotName NAMED = DotName.of("jakarta.inject.Named");
+    private static final DotName OBSERVES = DotName.of("jakarta.enterprise.event.Observes");
+    private static final DotName OBSERVES_ASYNC = DotName.of("jakarta.enterprise.event.ObservesAsync");
 
     private final VaubanIndex index;
 
@@ -334,6 +336,48 @@ public final class BeanDiscovery {
             }
         }
         return null;
+    }
+
+    /**
+     * Discovers all observer methods in the index.
+     * An observer method has a parameter annotated with {@code @Observes} or {@code @ObservesAsync}.
+     */
+    public List<ObserverDescriptor> discoverObservers() {
+        var result = new ArrayList<ObserverDescriptor>();
+
+        for (var classInfo : index.getKnownClasses()) {
+            if (isVetoed(classInfo)) continue;
+            if (!hasBeanDefiningAnnotation(classInfo)) continue;
+
+            for (var method : classInfo.methods()) {
+                if (method.isConstructor() || method.isStatic()) continue;
+
+                for (var param : method.parameters()) {
+                    boolean isObserves = hasAnnotation(param.annotations(), OBSERVES);
+                    boolean isObservesAsync = hasAnnotation(param.annotations(), OBSERVES_ASYNC);
+
+                    if (isObserves || isObservesAsync) {
+                        // Qualifiers on the observed parameter (excluding @Observes/@ObservesAsync)
+                        var qualifiers = computeQualifiers(param.annotations().stream()
+                                .filter(a -> !a.name().equals(OBSERVES) && !a.name().equals(OBSERVES_ASYNC))
+                                .toList());
+                        var priority = extractPriority(method.annotations());
+
+                        result.add(new ObserverDescriptor(
+                                classInfo.name(),
+                                method.name(),
+                                param.type(),
+                                List.copyOf(qualifiers),
+                                isObservesAsync,
+                                priority
+                        ));
+                        break; // only one observed parameter per method
+                    }
+                }
+            }
+        }
+
+        return List.copyOf(result);
     }
 
     private static boolean hasAnnotation(List<AnnotationInfo> annotations, DotName name) {

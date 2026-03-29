@@ -39,3 +39,7 @@
 ## 10. Conflits de noms CDI lang model vs indexer model
 **Contexte**: Phase 2 - Les interfaces CDI (`ClassInfo`, `FieldInfo`, `MethodInfo`, `AnnotationInfo`) ont les memes noms simples que nos records indexer.
 **Regle**: Dans les implementations du lang model, utiliser des FQN ou des imports precis. Ne jamais importer en wildcard les deux packages. Prefixer `jakarta.enterprise.lang.model.declarations.ClassInfo` et `fr.vidocq.vauban.indexer.model.ClassInfo` explicitement.
+
+## 11. Ne pas supposer l'origine des commits
+**Contexte**: Les commits "Missing file to commit" etaient de l'utilisateur, pas des agents.
+**Regle**: Ne pas faire d'hypotheses sur qui a fait un commit. Verifier avec l'utilisateur avant de consolider/rebase.

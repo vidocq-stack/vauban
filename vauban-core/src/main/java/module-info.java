@@ -15,4 +15,5 @@ module fr.vidocq.vauban.core {
     exports fr.vidocq.vauban.core.bean.resolution;
     exports fr.vidocq.vauban.core.bean.validation;
     exports fr.vidocq.vauban.core.context;
+    exports fr.vidocq.vauban.core.event;
 }

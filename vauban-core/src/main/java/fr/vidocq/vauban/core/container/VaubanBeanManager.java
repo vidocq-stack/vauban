@@ -1,6 +1,9 @@
 package fr.vidocq.vauban.core.container;
 
 import fr.vidocq.vauban.core.context.CreationalContextImpl;
+import fr.vidocq.vauban.core.event.EventDispatcher;
+import fr.vidocq.vauban.core.event.EventImpl;
+import fr.vidocq.vauban.core.event.VaubanObserverMethod;
 import jakarta.el.ELResolver;
 import jakarta.el.ExpressionFactory;
 import jakarta.enterprise.context.spi.Context;
@@ -23,13 +26,16 @@ public final class VaubanBeanManager implements BeanManager {
     private final VaubanContainer container;
     private final Map<Class<? extends Annotation>, Context> contexts;
     private final Collection<ManagedBean<?>> beans;
+    private final EventDispatcher eventDispatcher;
 
     public VaubanBeanManager(VaubanContainer container,
                              Map<Class<? extends Annotation>, Context> contexts,
-                             Collection<ManagedBean<?>> beans) {
+                             Collection<ManagedBean<?>> beans,
+                             EventDispatcher eventDispatcher) {
         this.container = container;
         this.contexts = contexts;
         this.beans = List.copyOf(beans);
+        this.eventDispatcher = eventDispatcher;
     }
 
     // --- Functional methods ---
@@ -166,8 +172,14 @@ public final class VaubanBeanManager implements BeanManager {
     }
 
     @Override
+    @SuppressWarnings({"unchecked", "rawtypes"})
     public <T> Set<ObserverMethod<? super T>> resolveObserverMethods(T event, Annotation... qualifiers) {
-        return Set.of();
+        var matching = eventDispatcher.findMatchingObservers(event.getClass(), false);
+        var result = new LinkedHashSet<ObserverMethod<? super T>>();
+        for (var descriptor : matching) {
+            result.add(new VaubanObserverMethod(descriptor, eventDispatcher));
+        }
+        return result;
     }
 
     @Override
@@ -286,7 +298,7 @@ public final class VaubanBeanManager implements BeanManager {
 
     @Override
     public Event<Object> getEvent() {
-        throw new UnsupportedOperationException("Not yet implemented");
+        return new EventImpl<>(eventDispatcher);
     }
 
     @Override
