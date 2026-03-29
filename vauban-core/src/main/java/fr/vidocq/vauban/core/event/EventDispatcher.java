@@ -127,7 +127,26 @@ public final class EventDispatcher {
             var method = findMethod(beanClass, observer.methodName(), event.getClass());
             if (method != null) {
                 method.setAccessible(true);
-                method.invoke(beanInstance, event);
+                if (method.getParameterCount() == 1) {
+                    method.invoke(beanInstance, event);
+                } else {
+                    // Resolve additional parameters as injection points
+                    var paramTypes = method.getParameterTypes();
+                    var args = new Object[paramTypes.length];
+                    // Find which parameter is the event (annotated with @Observes/@ObservesAsync)
+                    var params = method.getParameters();
+                    for (int i = 0; i < params.length; i++) {
+                        if (params[i].isAnnotationPresent(jakarta.enterprise.event.Observes.class)
+                                || params[i].isAnnotationPresent(jakarta.enterprise.event.ObservesAsync.class)) {
+                            args[i] = event;
+                        } else {
+                            // Resolve as CDI injection point
+                            args[i] = container.resolveParameter(paramTypes[i],
+                                    method.getGenericParameterTypes()[i]);
+                        }
+                    }
+                    method.invoke(beanInstance, args);
+                }
             }
         } catch (java.lang.reflect.InvocationTargetException e) {
             // CDI spec: observer RuntimeExceptions propagate directly

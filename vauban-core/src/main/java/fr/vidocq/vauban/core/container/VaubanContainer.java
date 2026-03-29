@@ -510,7 +510,7 @@ public final class VaubanContainer implements AutoCloseable {
         };
     }
 
-    private Object resolveParameter(Class<?> paramType, java.lang.reflect.Type genericType) {
+    public Object resolveParameter(Class<?> paramType, java.lang.reflect.Type genericType) {
         if (paramType == Event.class) {
             return new EventImpl<>(eventDispatcher);
         }
