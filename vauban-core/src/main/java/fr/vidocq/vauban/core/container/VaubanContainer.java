@@ -459,11 +459,14 @@ public final class VaubanContainer implements AutoCloseable {
 
                 injectCtor.setAccessible(true);
                 return injectCtor.newInstance(args);
+            } catch (java.lang.reflect.InvocationTargetException e) {
+                var cause = e.getCause();
+                if (cause instanceof RuntimeException re) throw re;
+                throw new jakarta.enterprise.inject.CreationException(cause);
             } catch (RuntimeException e) {
                 throw e;
             } catch (Exception e) {
-                throw new jakarta.enterprise.inject.CreationException(
-                        "Failed to create bean with @Inject constructor: " + descriptor.beanClass(), e);
+                throw new jakarta.enterprise.inject.CreationException(e);
             }
         };
     }
@@ -612,9 +615,14 @@ public final class VaubanContainer implements AutoCloseable {
                             var ctor = beanClass2.getDeclaredConstructor();
                             ctor.setAccessible(true);
                             return ctor.newInstance();
+                        } catch (java.lang.reflect.InvocationTargetException e) {
+                            var cause = e.getCause();
+                            if (cause instanceof RuntimeException re) throw re;
+                            throw new jakarta.enterprise.inject.CreationException(cause);
+                        } catch (RuntimeException e) {
+                            throw e;
                         } catch (Exception e) {
-                            throw new jakarta.enterprise.inject.CreationException(
-                                    "Failed to create: " + beanClass2.getName(), e);
+                            throw new jakarta.enterprise.inject.CreationException(e);
                         }
                     });
                 }
