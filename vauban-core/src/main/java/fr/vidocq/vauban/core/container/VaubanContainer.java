@@ -161,6 +161,7 @@ public final class VaubanContainer implements AutoCloseable {
     }
 
     private void injectFields(Object instance, BeanDescriptor descriptor) {
+        // 1. Inject fields
         for (var ip : descriptor.injectionPoints()) {
             if (ip.kind() != InjectionPointInfo.InjectionKind.FIELD) continue;
 
@@ -203,6 +204,62 @@ public final class VaubanContainer implements AutoCloseable {
             } catch (Exception e) {
                 throw new RuntimeException("Failed to inject field: " + ip.description(), e);
             }
+        }
+
+        // 2. Call @Inject initializer methods
+        callInitializerMethods(instance);
+
+        // 3. Call @PostConstruct
+        callPostConstruct(instance);
+    }
+
+    private void callInitializerMethods(Object instance) {
+        for (var method : instance.getClass().getDeclaredMethods()) {
+            if (method.isAnnotationPresent(jakarta.inject.Inject.class)) {
+                method.setAccessible(true);
+                try {
+                    var paramTypes = method.getParameterTypes();
+                    var args = new Object[paramTypes.length];
+                    for (int i = 0; i < paramTypes.length; i++) {
+                        if (paramTypes[i] == Event.class) {
+                            args[i] = new EventImpl<>(eventDispatcher);
+                        } else if (paramTypes[i] == Instance.class) {
+                            Class<?> instanceType = Object.class;
+                            var genericType = method.getGenericParameterTypes()[i];
+                            if (genericType instanceof ParameterizedType pt) {
+                                var typeArg = pt.getActualTypeArguments()[0];
+                                if (typeArg instanceof Class<?> c) instanceType = c;
+                            }
+                            args[i] = new InstanceImpl<>(this, instanceType);
+                        } else if (paramTypes[i] == BeanManager.class) {
+                            args[i] = getBeanManager();
+                        } else {
+                            args[i] = select(paramTypes[i]);
+                        }
+                    }
+                    method.invoke(instance, args);
+                } catch (Exception e) {
+                    throw new RuntimeException("Failed to call initializer method: " + method.getName(), e);
+                }
+            }
+        }
+    }
+
+    private void callPostConstruct(Object instance) {
+        var clazz = instance.getClass();
+        while (clazz != null && clazz != Object.class) {
+            for (var method : clazz.getDeclaredMethods()) {
+                if (method.isAnnotationPresent(jakarta.annotation.PostConstruct.class)) {
+                    method.setAccessible(true);
+                    try {
+                        method.invoke(instance);
+                    } catch (Exception e) {
+                        throw new RuntimeException("@PostConstruct failed: " + method, e);
+                    }
+                    return; // Only call the first (most specific) @PostConstruct
+                }
+            }
+            clazz = clazz.getSuperclass();
         }
     }
 

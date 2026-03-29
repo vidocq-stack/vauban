@@ -19,10 +19,18 @@ public final class ApplicationContext implements AlterableContext {
     @Override
     @SuppressWarnings("unchecked")
     public <T> T get(Contextual<T> contextual, CreationalContext<T> creationalContext) {
-        return (T) instances.computeIfAbsent(contextual, k -> {
-            if (creationalContext == null) return null;
-            return contextual.create(creationalContext);
-        });
+        // Avoid computeIfAbsent to prevent ConcurrentHashMap "Recursive update"
+        // when bean creation triggers lookup of another bean (e.g., producer methods).
+        var existing = instances.get(contextual);
+        if (existing != null) {
+            return (T) existing;
+        }
+        if (creationalContext == null) {
+            return null;
+        }
+        var instance = contextual.create(creationalContext);
+        var previous = instances.putIfAbsent(contextual, instance);
+        return (T) (previous != null ? previous : instance);
     }
 
     @Override

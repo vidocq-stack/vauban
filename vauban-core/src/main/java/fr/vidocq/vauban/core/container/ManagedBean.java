@@ -58,8 +58,28 @@ public final class ManagedBean<T> implements Bean<T> {
 
     @Override
     public void destroy(T instance, CreationalContext<T> creationalContext) {
+        callPreDestroy(instance);
         if (creationalContext != null) {
             creationalContext.release();
+        }
+    }
+
+    private void callPreDestroy(Object instance) {
+        if (instance == null) return;
+        var clazz = instance.getClass();
+        while (clazz != null && clazz != Object.class) {
+            for (var method : clazz.getDeclaredMethods()) {
+                if (method.isAnnotationPresent(jakarta.annotation.PreDestroy.class)) {
+                    method.setAccessible(true);
+                    try {
+                        method.invoke(instance);
+                    } catch (Exception e) {
+                        // CDI spec says exceptions in @PreDestroy are caught, not propagated
+                    }
+                    return;
+                }
+            }
+            clazz = clazz.getSuperclass();
         }
     }
 

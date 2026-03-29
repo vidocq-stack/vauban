@@ -207,6 +207,69 @@ class VaubanContainerTest {
         }
     }
 
+    // --- Lifecycle test beans ---
+
+    @ApplicationScoped
+    public static class LifecycleBean {
+        public boolean postConstructCalled;
+        public boolean preDestroyCalled;
+
+        @jakarta.annotation.PostConstruct
+        public void init() { postConstructCalled = true; }
+
+        @jakarta.annotation.PreDestroy
+        public void cleanup() { preDestroyCalled = true; }
+    }
+
+    @ApplicationScoped
+    public static class InitMethodBean {
+        public Repository repo;
+
+        @Inject
+        public void setRepo(Repository repo) { this.repo = repo; }
+    }
+
+    @Nested
+    @DisplayName("lifecycle callbacks")
+    class LifecycleCallbacks {
+
+        @Test
+        @DisplayName("appelle @PostConstruct apres creation")
+        void shouldCallPostConstruct() {
+            try (var container = VaubanContainer.builder()
+                    .addBeanClass(LifecycleBean.class)
+                    .build()) {
+                var bean = container.select(LifecycleBean.class);
+                assertTrue(bean.postConstructCalled);
+            }
+        }
+
+        @Test
+        @DisplayName("appelle @PreDestroy a la fermeture du conteneur")
+        void shouldCallPreDestroy() {
+            LifecycleBean bean;
+            try (var container = VaubanContainer.builder()
+                    .addBeanClass(LifecycleBean.class)
+                    .build()) {
+                bean = container.select(LifecycleBean.class);
+                assertFalse(bean.preDestroyCalled);
+            }
+            assertTrue(bean.preDestroyCalled);
+        }
+
+        @Test
+        @DisplayName("appelle les methodes @Inject initialisatrices")
+        void shouldCallInitializerMethods() {
+            try (var container = VaubanContainer.builder()
+                    .addBeanClass(InitMethodBean.class)
+                    .addBeanClass(Repository.class)
+                    .build()) {
+                var bean = container.select(InitMethodBean.class);
+                assertNotNull(bean.repo);
+            }
+        }
+    }
+
     // --- Producer test beans ---
 
     public static class DataSource {
