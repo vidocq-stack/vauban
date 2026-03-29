@@ -546,9 +546,11 @@ public final class VaubanBeanManager implements BeanManager {
             }
         }
 
-        // Type matching
+        // Type matching — only legal bean types (skip TypeVariable, wildcard)
         boolean typeMatch = false;
         for (var bt : beanTypes) {
+            if (bt instanceof java.lang.reflect.TypeVariable<?>) continue;
+            if (bt instanceof java.lang.reflect.WildcardType) continue;
             if (typesMatch(bt, requiredType)) {
                 typeMatch = true;
                 break;
@@ -557,10 +559,11 @@ public final class VaubanBeanManager implements BeanManager {
         if (!typeMatch) return false;
 
         // Qualifier matching: every required qualifier must be present in bean's qualifiers
+        // Must compare with full equals() (including member values), not just annotationType
         for (var req : requiredQualifiers) {
             if (req.annotationType() == jakarta.enterprise.inject.Any.class) continue;
             boolean found = beanQualifiers.stream()
-                .anyMatch(bq -> bq.annotationType().equals(req.annotationType()));
+                .anyMatch(bq -> bq.equals(req) || req.equals(bq));
             if (!found) return false;
         }
         return true;
