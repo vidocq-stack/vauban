@@ -17,4 +17,7 @@ module fr.vidocq.vauban.core {
     exports fr.vidocq.vauban.core.context;
     exports fr.vidocq.vauban.core.event;
     exports fr.vidocq.vauban.core.interceptor;
+
+    provides jakarta.enterprise.inject.spi.CDIProvider
+            with fr.vidocq.vauban.core.container.VaubanCDIProvider;
 }

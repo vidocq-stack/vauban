@@ -91,9 +91,12 @@ public class VaubanDeployableContainer implements DeployableContainer<VaubanCont
 
     @Override
     public void undeploy(Archive<?> archive) throws DeploymentException {
-        var container = ContainerHolder.get();
-        if (container != null) {
-            container.close();
+        try {
+            var container = ContainerHolder.get();
+            if (container != null) {
+                container.close();
+            }
+        } finally {
             ContainerHolder.clear();
         }
     }

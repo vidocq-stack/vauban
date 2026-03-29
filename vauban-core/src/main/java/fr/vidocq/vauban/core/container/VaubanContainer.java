@@ -52,6 +52,15 @@ public final class VaubanContainer implements AutoCloseable {
      * that triggered the creation. The dependent bean can then @Inject InjectionPoint
      * to discover where it was injected.
      */
+    private static volatile VaubanContainer currentInstance;
+
+    /**
+     * Returns the currently running container instance, or {@code null} if none.
+     */
+    public static VaubanContainer current() {
+        return currentInstance;
+    }
+
     private static final ThreadLocal<InjectionPoint> currentInjectionPoint = new ThreadLocal<>();
 
     /**
@@ -119,6 +128,7 @@ public final class VaubanContainer implements AutoCloseable {
 
         this.beanManager = new VaubanBeanManager(this, contexts, beans.values(), eventDispatcher, interceptorManager);
         this.running = true;
+        currentInstance = this;
     }
 
     /**
@@ -540,6 +550,9 @@ public final class VaubanContainer implements AutoCloseable {
     public void close() {
         if (!running) return;
         running = false;
+        if (currentInstance == this) {
+            currentInstance = null;
+        }
         requestContext.deactivate();
         applicationContext.deactivate();
     }
