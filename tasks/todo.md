@@ -1,17 +1,17 @@
 # Vauban - Plan de travail
 
-## Phase 0: Bootstrap projet
-- [ ] POM parent Maven 4 multi-module (model 4.1.0, `--release 25`, sans preview)
-- [ ] Module `vauban-indexer` avec `module-info.java`
-- [ ] Module `vauban-api` avec `module-info.java`
-- [ ] Module `vauban-core` avec `module-info.java`
-- [ ] Module `vauban-processor` avec `module-info.java`
-- [ ] Module `vauban-maven-plugin`
-- [ ] Module `vauban-junit` avec `module-info.java`
-- [ ] Module `vauban-tck-runner`
-- [ ] Module `vauban-test-suite`
-- [ ] Test smoke JUnit 6 dans `vauban-indexer`
-- [ ] `mvn clean verify` passe
+## Phase 0: Bootstrap projet ✅
+- [x] POM parent Maven 4 multi-module (model 4.1.0, `--release 25`, sans preview)
+- [x] Module `vauban-indexer` avec `module-info.java`
+- [x] Module `vauban-api` avec `module-info.java`
+- [x] Module `vauban-core` avec `module-info.java`
+- [x] Module `vauban-processor` avec `module-info.java`
+- [x] Module `vauban-maven-plugin` (jar pour l'instant, maven-plugin-plugin incompatible JDK 25)
+- [x] Module `vauban-junit` avec `module-info.java`
+- [x] Module `vauban-tck-runner`
+- [x] Module `vauban-test-suite`
+- [x] Test smoke JUnit 6 dans `vauban-indexer` (4 tests: JUnit 6, Class-File API, records, sealed)
+- [x] `mvn clean verify` passe (9/9 modules, 1.3s)
 
 ## Phase 1: Indexeur de classes
 - [ ] Modele: `DotName`, `ClassInfo`, `MethodInfo`, `FieldInfo`, `ParameterInfo` (records)

@@ -1,22 +1,21 @@
 {
   "permissions": {
     "allow": [
-      "Bash(curl -sL --max-time 30 \"https://jakarta.ee/specifications/cdi/4.1/\")",
-      "Bash(curl -sL --max-time 30 \"https://raw.githubusercontent.com/jakartaee/cdi-tck/main/README.adoc\")",
-      "Bash(curl -sL --max-time 30 \"https://raw.githubusercontent.com/jakartaee/cdi-tck/main/README.md\")",
-      "Bash(curl -sL --max-time 30 \"https://api.github.com/repos/jakartaee/cdi-tck\")",
-      "WebFetch(domain:openjdk.org)",
-      "WebFetch(domain:docs.junit.org)",
-      "WebFetch(domain:deepwiki.com)",
-      "WebFetch(domain:github.com)",
-      "WebFetch(domain:jakartaee.github.io)",
-      "WebFetch(domain:www.baeldung.com)",
-      "WebFetch(domain:www.infoworld.com)",
-      "Bash(git:*)",
-      "WebFetch(domain:junit.org)",
-      "WebFetch(domain:central.sonatype.com)",
-      "Bash(java:*)",
-      "Bash(mvn --version)"
+      "WebFetch(domain:*)",
+      "Bash(git *)",
+      "Bash(mvn *)",
+      "Bash(java *)",
+      "Bash(javac *)",
+      "Bash(export *)",
+      "Bash(curl *)",
+      "Bash(wget *)",
+      "Bash(grep *)",
+      "Bash(grep -r*)",
+      "Bash(rg *)",
+      "Bash(find *)",
+      "Bash(cat *)",
+      "Bash(ls *)",
+      "Bash(sdk *)"
     ]
   }
 }

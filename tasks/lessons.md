@@ -7,3 +7,19 @@
 ## 2. Maven 4 RC est acceptable
 **Contexte**: L'utilisateur veut Maven 4.0.0-rc-5, pas Maven 3.9.
 **Regle**: Utiliser les features Maven 4 (POM model 4.1.0, decouverte auto sous-projets, nouveau lifecycle). Ne pas proposer de downgrade vers Maven 3.
+
+## 3. maven-plugin-plugin incompatible JDK 25
+**Contexte**: Phase 0 - le plugin-plugin 3.15.1 ne supporte pas class file version 69 (JDK 25).
+**Regle**: Le module vauban-maven-plugin reste en packaging `jar` jusqu'a ce que maven-plugin-tools supporte JDK 25. Ne pas utiliser `<packaging>maven-plugin</packaging>` ni les annotations `@Mojo`.
+
+## 4. Les sealed interfaces/classes locales sont interdites en Java
+**Contexte**: Phase 0 - erreur de compilation dans SmokeTest avec sealed interface locale.
+**Regle**: Toujours declarer les sealed types comme membres de classe (nested) ou top-level, jamais locaux dans une methode.
+
+## 5. Packages vides avec module-info exports
+**Contexte**: Phase 0 - erreur "package is empty or does not exist" quand un module exporte un package qui ne contient que package-info.java.
+**Regle**: Chaque package exporte dans module-info.java doit contenir au moins une classe concrete (pas juste package-info.java).
+
+## 6. Shell Claude Code et SDKMAN
+**Contexte**: Le shell de Claude Code ne charge pas automatiquement le .sdkmanrc.
+**Regle**: Toujours prefixer les commandes Maven avec `export MAVEN_HOME=~/.sdkman/candidates/maven/4.0.0-rc-5 && export PATH="$MAVEN_HOME/bin:$PATH" &&` pour garantir Maven 4.
