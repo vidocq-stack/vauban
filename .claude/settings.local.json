@@ -1,21 +1,9 @@
 {
   "permissions": {
     "allow": [
+      "Bash(*)",
       "WebFetch(domain:*)",
-      "Bash(git *)",
-      "Bash(mvn *)",
-      "Bash(java *)",
-      "Bash(javac *)",
-      "Bash(export *)",
-      "Bash(curl *)",
-      "Bash(wget *)",
-      "Bash(grep *)",
-      "Bash(grep -r*)",
-      "Bash(rg *)",
-      "Bash(find *)",
-      "Bash(cat *)",
-      "Bash(ls *)",
-      "Bash(sdk *)"
+      "Bash(mvn test:*)"
     ]
   }
 }

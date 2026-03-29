@@ -23,3 +23,15 @@
 ## 6. Shell Claude Code et SDKMAN
 **Contexte**: Le shell de Claude Code ne charge pas automatiquement le .sdkmanrc.
 **Regle**: Toujours prefixer les commandes Maven avec `export MAVEN_HOME=~/.sdkman/candidates/maven/4.0.0-rc-5 && export PATH="$MAVEN_HOME/bin:$PATH" &&` pour garantir Maven 4.
+
+## 7. Conflit de noms AnnotationValue entre model et JDK
+**Contexte**: Phase 1 - `fr.vidocq.vauban.indexer.model.AnnotationValue` et `java.lang.classfile.AnnotationValue` ont le meme nom simple.
+**Regle**: Dans `ClassFileScanner`, utiliser des FQN pour les references a `java.lang.classfile.AnnotationValue` et ses sous-types. Ne pas utiliser d'import wildcard pour les deux packages.
+
+## 8. API Class-File JDK 25 : symbol vs raw
+**Contexte**: Phase 1 - `FieldModel.fieldType()` retourne `Utf8Entry` (raw), `fieldTypeSymbol()` retourne `ClassDesc` (type). Idem pour `MethodModel`.
+**Regle**: Toujours utiliser les methodes `*Symbol()` (`fieldTypeSymbol()`, `methodTypeSymbol()`) pour obtenir les types symboliques.
+
+## 9. Les agents custom .claude/agents/ ne sont pas des subagent_type
+**Contexte**: Phase 1 - `subagent_type: "tdd-writer"` echoue avec "Agent type not found".
+**Regle**: Les agents custom sont invoques differemment (via @mention ou directive). Pour les sous-agents, utiliser `general-purpose` avec les instructions de l'agent dans le prompt.

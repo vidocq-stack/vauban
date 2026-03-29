@@ -13,15 +13,15 @@
 - [x] Test smoke JUnit 6 dans `vauban-indexer` (4 tests: JUnit 6, Class-File API, records, sealed)
 - [x] `mvn clean verify` passe (9/9 modules, 1.3s)
 
-## Phase 1: Indexeur de classes
-- [ ] Modele: `DotName`, `ClassInfo`, `MethodInfo`, `FieldInfo`, `ParameterInfo` (records)
-- [ ] Modele: `AnnotationInfo`, `AnnotationValue` (sealed), `TypeInfo` (sealed), `Modifier`
-- [ ] `ClassFileScanner` - parse .class via `java.lang.classfile`
-- [ ] `JarScanner` - scan JARs
-- [ ] `DirectoryScanner` - scan repertoires
-- [ ] `IndexBuilder` + `VaubanIndex` - construction et requetes
-- [ ] Serialisation binaire (`IndexWriter` / `IndexReader`)
-- [ ] Tests TDD complets
+## Phase 1: Indexeur de classes ✅
+- [x] Modele: `DotName`, `ClassInfo`, `MethodInfo`, `FieldInfo`, `ParameterInfo` (records)
+- [x] Modele: `AnnotationInfo`, `AnnotationValue` (sealed 13 variants), `TypeInfo` (sealed 7 variants)
+- [x] `ClassFileScanner` - parse .class via `java.lang.classfile` (classes, interfaces, enums, records, annotations)
+- [x] `JarScanner` - scan JARs
+- [ ] `DirectoryScanner` - scan repertoires (differe, pas bloquant)
+- [x] `IndexBuilder` + `VaubanIndex` - construction et requetes
+- [ ] Serialisation binaire (`IndexWriter` / `IndexReader`) (differe, pas bloquant)
+- [x] Tests TDD complets (64 tests)
 
 ## Phase 2: CDI Language Model
 - [ ] Implementation `jakarta.enterprise.lang.model.declarations.*`
