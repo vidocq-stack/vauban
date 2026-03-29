@@ -23,11 +23,13 @@
 - [ ] Serialisation binaire (`IndexWriter` / `IndexReader`) (differe, pas bloquant)
 - [x] Tests TDD complets (64 tests)
 
-## Phase 2: CDI Language Model
-- [ ] Implementation `jakarta.enterprise.lang.model.declarations.*`
-- [ ] Implementation `jakarta.enterprise.lang.model.types.*`
-- [ ] `TypeResolver` et `AssignabilityRules`
-- [ ] Tests assignabilite CDI
+## Phase 2: CDI Language Model ✅
+- [x] Implementation `jakarta.enterprise.lang.model.declarations.*` (ClassInfo, MethodInfo, FieldInfo, ParameterInfo, PackageInfo)
+- [x] Implementation `jakarta.enterprise.lang.model.types.*` (7 types + TypeMapper)
+- [x] VaubanAnnotationInfo + VaubanAnnotationMember (bridge annotations)
+- [x] IndexLookup (bridge entre VaubanIndex et lang model)
+- [x] `AssignabilityRules` (CDI 4.1 Section 2.4 : sous-typage, generiques, wildcards)
+- [x] Tests assignabilite CDI + lang model (33 tests)
 
 ## Phase 3: Decouverte et resolution de beans
 - [ ] `BeanDiscovery` et finders (bean, producer, interceptor, decorator, observer)

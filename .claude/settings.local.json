@@ -3,7 +3,27 @@
     "allow": [
       "Bash(*)",
       "WebFetch(domain:*)",
-      "Bash(mvn test:*)"
+      "Bash(mvn test:*)",
+      "Bash(curl -s https://raw.githubusercontent.com/jakartaee/cdi/master/api/src/main/java/jakarta/enterprise/lang/model/AnnotationTarget.java)",
+      "Bash(curl:*)",
+      "Bash(gh api:*)",
+      "Bash(BASE=\"https://raw.githubusercontent.com/jakartaee/cdi/4.1/lang-model/src/main/java/jakarta/enterprise/lang/model\")",
+      "Bash(BASE=\"https://raw.githubusercontent.com/jakartaee/cdi/4.1/lang-model/src/main/java/jakarta/enterprise/lang/model/declarations\")",
+      "Bash(BASE=\"https://raw.githubusercontent.com/jakartaee/cdi/4.1/lang-model/src/main/java/jakarta/enterprise/lang/model/types\")",
+      "Bash(mvn dependency:resolve -pl vauban-core)",
+      "Bash(find /Users/yblazart/projects/perso/vidocq/vauban -path */jakarta/enterprise/lang/model -type d)",
+      "Bash(find /Users/yblazart/projects/perso/vidocq/vauban -name *.jar -path *jakarta*cdi*)",
+      "Bash(jar tf:*)",
+      "Bash(grep -E \"\\\\.class$\")",
+      "Bash(find /Users/yblazart/.m2/repository/jakarta/enterprise -name *.jar)",
+      "Bash(xargs -I{} jar tf {})",
+      "Bash(while read:*)",
+      "Bash(do jar:*)",
+      "Bash(echo \"  -> $jar\")",
+      "Bash(done)",
+      "Bash(ls /Users/yblazart/.sdkman/candidates/maven/*/bin/mvn)",
+      "Bash(/Users/yblazart/.sdkman/candidates/maven/4.0.0-rc-5/bin/mvn compile:*)",
+      "Bash(/Users/yblazart/.sdkman/candidates/maven/4.0.0-rc-5/bin/mvn clean:*)"
     ]
   }
 }

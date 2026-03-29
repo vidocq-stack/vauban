@@ -35,3 +35,7 @@
 ## 9. Les agents custom .claude/agents/ ne sont pas des subagent_type
 **Contexte**: Phase 1 - `subagent_type: "tdd-writer"` echoue avec "Agent type not found".
 **Regle**: Les agents custom sont invoques differemment (via @mention ou directive). Pour les sous-agents, utiliser `general-purpose` avec les instructions de l'agent dans le prompt.
+
+## 10. Conflits de noms CDI lang model vs indexer model
+**Contexte**: Phase 2 - Les interfaces CDI (`ClassInfo`, `FieldInfo`, `MethodInfo`, `AnnotationInfo`) ont les memes noms simples que nos records indexer.
+**Regle**: Dans les implementations du lang model, utiliser des FQN ou des imports precis. Ne jamais importer en wildcard les deux packages. Prefixer `jakarta.enterprise.lang.model.declarations.ClassInfo` et `fr.vidocq.vauban.indexer.model.ClassInfo` explicitement.
