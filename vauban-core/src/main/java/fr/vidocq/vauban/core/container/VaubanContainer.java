@@ -495,6 +495,12 @@ public final class VaubanContainer implements AutoCloseable {
                     }
                 }
                 throw new RuntimeException("Producer method not found: " + methodName + " in " + descriptor.beanClass());
+            } catch (java.lang.reflect.InvocationTargetException e) {
+                // Unwrap the target exception — CDI spec says producer exceptions propagate as-is
+                var cause = e.getCause();
+                if (cause instanceof RuntimeException re) throw re;
+                if (cause instanceof Error err) throw err;
+                throw new jakarta.enterprise.inject.CreationException(cause);
             } catch (RuntimeException e) {
                 throw e;
             } catch (Exception e) {

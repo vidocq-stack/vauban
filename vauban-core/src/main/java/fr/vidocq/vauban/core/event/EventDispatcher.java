@@ -129,7 +129,17 @@ public final class EventDispatcher {
                 method.setAccessible(true);
                 method.invoke(beanInstance, event);
             }
+        } catch (java.lang.reflect.InvocationTargetException e) {
+            // CDI spec: observer RuntimeExceptions propagate directly
+            var cause = e.getCause();
+            if (cause instanceof RuntimeException re) throw re;
+            if (cause instanceof Error err) throw err;
+            throw new jakarta.enterprise.event.ObserverException(
+                    "Failed to invoke observer: " + observer.declaringClass().value()
+                            + "." + observer.methodName(), cause);
         } catch (jakarta.enterprise.event.ObserverException e) {
+            throw e;
+        } catch (RuntimeException e) {
             throw e;
         } catch (Exception e) {
             throw new jakarta.enterprise.event.ObserverException(
