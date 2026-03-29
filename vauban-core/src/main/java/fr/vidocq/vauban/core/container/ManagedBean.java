@@ -167,15 +167,33 @@ public final class ManagedBean<T> implements Bean<T> {
     public Set<Annotation> getQualifiers() {
         var result = new LinkedHashSet<Annotation>();
         for (var qi : descriptor.qualifiers()) {
-            try {
-                @SuppressWarnings("unchecked")
-                var annClass = (Class<? extends Annotation>) Class.forName(qi.annotationName().value());
-                var ann = createAnnotationInstance(annClass, qi.members());
-                if (ann != null) {
-                    result.add(ann);
+            // Use CDI Literal instances for built-in qualifiers (correct equals/hashCode)
+            var annName = qi.annotationName().value();
+            switch (annName) {
+                case "jakarta.enterprise.inject.Default" -> result.add(jakarta.enterprise.inject.Default.Literal.INSTANCE);
+                case "jakarta.enterprise.inject.Any" -> result.add(jakarta.enterprise.inject.Any.Literal.INSTANCE);
+                case "jakarta.inject.Named" -> {
+                    // @Named doesn't have a Literal inner class, use proxy
+                    var members = new java.util.LinkedHashMap<>(qi.members());
+                    // Fill in default name if empty
+                    var nameVal = members.get("value");
+                    if ((nameVal == null || (nameVal instanceof fr.vidocq.vauban.indexer.model.AnnotationValue.StringVal sv && sv.value().isEmpty()))
+                            && descriptor.name() != null) {
+                        members.put("value", new fr.vidocq.vauban.indexer.model.AnnotationValue.StringVal(descriptor.name()));
+                    }
+                    var ann = createAnnotationInstance(jakarta.inject.Named.class, members);
+                    if (ann != null) result.add(ann);
                 }
-            } catch (ClassNotFoundException e) {
-                // skip unresolvable qualifier
+                default -> {
+                    try {
+                        @SuppressWarnings("unchecked")
+                        var annClass = (Class<? extends Annotation>) Class.forName(annName);
+                        var ann = createAnnotationInstance(annClass, qi.members());
+                        if (ann != null) result.add(ann);
+                    } catch (ClassNotFoundException e) {
+                        // skip
+                    }
+                }
             }
         }
         return result;
