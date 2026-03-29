@@ -352,7 +352,15 @@ public final class VaubanBeanManager implements BeanManager {
         var matching = eventDispatcher.findMatchingObservers(event.getClass(), false);
         var result = new LinkedHashSet<ObserverMethod<? super T>>();
         for (var descriptor : matching) {
-            result.add(new VaubanObserverMethod(descriptor, eventDispatcher));
+            // Find the declaring bean
+            Bean<?> declaringBean = null;
+            for (var bean : beans) {
+                if (bean.getBeanClass().getName().equals(descriptor.declaringClass().value())) {
+                    declaringBean = bean;
+                    break;
+                }
+            }
+            result.add(new VaubanObserverMethod(descriptor, eventDispatcher, declaringBean));
         }
         return result;
     }

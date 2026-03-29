@@ -4,6 +4,7 @@ import fr.vidocq.vauban.core.bean.model.ObserverDescriptor;
 import fr.vidocq.vauban.indexer.model.TypeInfo;
 import jakarta.enterprise.event.Reception;
 import jakarta.enterprise.event.TransactionPhase;
+import jakarta.enterprise.inject.spi.Bean;
 import jakarta.enterprise.inject.spi.EventContext;
 import jakarta.enterprise.inject.spi.ObserverMethod;
 
@@ -18,10 +19,12 @@ public final class VaubanObserverMethod<T> implements ObserverMethod<T> {
 
     private final ObserverDescriptor descriptor;
     private final EventDispatcher dispatcher;
+    private final Bean<?> declaringBean;
 
-    public VaubanObserverMethod(ObserverDescriptor descriptor, EventDispatcher dispatcher) {
+    public VaubanObserverMethod(ObserverDescriptor descriptor, EventDispatcher dispatcher, Bean<?> declaringBean) {
         this.descriptor = descriptor;
         this.dispatcher = dispatcher;
+        this.declaringBean = declaringBean;
     }
 
     @Override
@@ -31,6 +34,11 @@ public final class VaubanObserverMethod<T> implements ObserverMethod<T> {
         } catch (ClassNotFoundException e) {
             return Object.class;
         }
+    }
+
+    @Override
+    public Bean<?> getDeclaringBean() {
+        return declaringBean;
     }
 
     @Override
