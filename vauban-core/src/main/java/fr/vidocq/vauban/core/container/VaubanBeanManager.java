@@ -88,6 +88,25 @@ public final class VaubanBeanManager implements BeanManager {
 
     @Override
     public Set<Bean<?>> getBeans(Type beanType, Annotation... qualifiers) {
+        // Validate: type variable not allowed
+        if (beanType instanceof java.lang.reflect.TypeVariable<?>) {
+            throw new IllegalArgumentException("TypeVariable is not a legal bean type");
+        }
+        // Validate: all qualifiers must be qualifier annotations, no duplicates
+        if (qualifiers != null) {
+            var seen = new HashSet<Class<?>>();
+            for (var q : qualifiers) {
+                if (!isQualifier(q.annotationType())) {
+                    throw new IllegalArgumentException(
+                        q.annotationType().getName() + " is not a qualifier");
+                }
+                if (!seen.add(q.annotationType())) {
+                    throw new IllegalArgumentException(
+                        "Duplicate qualifier: " + q.annotationType().getName());
+                }
+            }
+        }
+
         var result = new LinkedHashSet<Bean<?>>();
 
         // Determine required qualifiers: if none specified, CDI uses @Default
@@ -319,6 +338,23 @@ public final class VaubanBeanManager implements BeanManager {
     @Override
     @SuppressWarnings({"unchecked", "rawtypes"})
     public <T> Set<ObserverMethod<? super T>> resolveObserverMethods(T event, Annotation... qualifiers) {
+        if (event == null) {
+            throw new IllegalArgumentException("Event must not be null");
+        }
+        // Validate qualifiers
+        if (qualifiers != null) {
+            var seen = new HashSet<Class<?>>();
+            for (var q : qualifiers) {
+                if (!isQualifier(q.annotationType())) {
+                    throw new IllegalArgumentException(
+                        q.annotationType().getName() + " is not a qualifier");
+                }
+                if (!seen.add(q.annotationType())) {
+                    throw new IllegalArgumentException(
+                        "Duplicate qualifier: " + q.annotationType().getName());
+                }
+            }
+        }
         var matching = eventDispatcher.findMatchingObservers(event.getClass(), false);
         var result = new LinkedHashSet<ObserverMethod<? super T>>();
         for (var descriptor : matching) {
@@ -332,6 +368,18 @@ public final class VaubanBeanManager implements BeanManager {
     public List<Interceptor<?>> resolveInterceptors(InterceptionType type, Annotation... interceptorBindings) {
         if (interceptorBindings == null || interceptorBindings.length == 0) {
             throw new IllegalArgumentException("At least one interceptor binding must be specified");
+        }
+        // Validate: all must be interceptor bindings, no duplicates
+        var seenBindings = new HashSet<Class<?>>();
+        for (var binding : interceptorBindings) {
+            if (!isInterceptorBinding(binding.annotationType())) {
+                throw new IllegalArgumentException(
+                    binding.annotationType().getName() + " is not an interceptor binding");
+            }
+            if (!seenBindings.add(binding.annotationType())) {
+                throw new IllegalArgumentException(
+                    "Duplicate interceptor binding: " + binding.annotationType().getName());
+            }
         }
 
         var bindingNames = new LinkedHashSet<DotName>();
@@ -483,6 +531,9 @@ public final class VaubanBeanManager implements BeanManager {
     @Override
     public boolean isMatchingBean(Set<Type> beanTypes, Set<Annotation> beanQualifiers,
                                   Type requiredType, Set<Annotation> requiredQualifiers) {
+        if (beanTypes == null || beanQualifiers == null || requiredQualifiers == null) {
+            throw new IllegalArgumentException("Arguments must not be null");
+        }
         if (requiredType == null) {
             throw new IllegalArgumentException("Required type must not be null");
         }
@@ -515,6 +566,9 @@ public final class VaubanBeanManager implements BeanManager {
     @Override
     public boolean isMatchingEvent(Type specifiedType, Set<Annotation> specifiedQualifiers,
                                    Type observedEventType, Set<Annotation> observedEventQualifiers) {
+        if (specifiedQualifiers == null || observedEventQualifiers == null) {
+            throw new IllegalArgumentException("Qualifiers must not be null");
+        }
         if (specifiedType == null || observedEventType == null) {
             throw new IllegalArgumentException("Event types must not be null");
         }
