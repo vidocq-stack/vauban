@@ -51,6 +51,24 @@ public final class DeploymentValidator {
             }
         }
 
+        // Unproxyable beans with normal scope
+        for (var bean : beans) {
+            if (bean.scope().isNormal() && bean.kind() == BeanDescriptor.BeanKind.MANAGED) {
+                try {
+                    var clazz = Class.forName(bean.beanClass().value());
+                    if (java.lang.reflect.Modifier.isFinal(clazz.getModifiers())) {
+                        errors.add(new ValidationError(
+                                ValidationError.Kind.UNPROXYABLE_BEAN,
+                                "Normal-scoped bean " + bean.beanClass()
+                                        + " cannot be final (unproxyable)",
+                                bean));
+                    }
+                } catch (ClassNotFoundException e) {
+                    // skip
+                }
+            }
+        }
+
         var graph = buildDependencyGraph();
         for (var cycle : graph.detectIllegalCycles()) {
             errors.add(new ValidationError(
@@ -100,7 +118,8 @@ public final class DeploymentValidator {
         public enum Kind {
             UNSATISFIED_DEPENDENCY,
             AMBIGUOUS_DEPENDENCY,
-            CIRCULAR_DEPENDENCY
+            CIRCULAR_DEPENDENCY,
+            UNPROXYABLE_BEAN
         }
     }
 }

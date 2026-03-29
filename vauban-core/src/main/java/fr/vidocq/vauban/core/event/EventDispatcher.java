@@ -1,9 +1,12 @@
 package fr.vidocq.vauban.core.event;
 
 import fr.vidocq.vauban.core.bean.model.ObserverDescriptor;
+import fr.vidocq.vauban.core.bean.model.QualifierInstance;
 import fr.vidocq.vauban.core.container.VaubanContainer;
+import fr.vidocq.vauban.indexer.model.DotName;
 import fr.vidocq.vauban.indexer.model.TypeInfo;
 
+import java.lang.annotation.Annotation;
 import java.lang.reflect.Method;
 import java.util.*;
 import java.util.concurrent.CompletableFuture;
@@ -25,9 +28,10 @@ public final class EventDispatcher {
     /**
      * Fire a synchronous event to all matching observers.
      */
-    public <T> void fire(T event, java.lang.annotation.Annotation... qualifiers) {
+    public <T> void fire(T event, Annotation... qualifiers) {
         var eventType = event.getClass();
-        var matching = findMatchingObservers(eventType, false);
+        var qualifierInstances = toQualifierInstances(qualifiers);
+        var matching = findMatchingObservers(eventType, false, qualifierInstances);
 
         // Sort by priority
         matching.sort(Comparator.comparingInt(ObserverDescriptor::priority));
@@ -40,9 +44,10 @@ public final class EventDispatcher {
     /**
      * Fire an asynchronous event.
      */
-    public <T> CompletionStage<T> fireAsync(T event) {
+    public <T> CompletionStage<T> fireAsync(T event, Annotation... qualifiers) {
         return CompletableFuture.supplyAsync(() -> {
-            var matching = findMatchingObservers(event.getClass(), true);
+            var qualifierInstances = toQualifierInstances(qualifiers);
+            var matching = findMatchingObservers(event.getClass(), true, qualifierInstances);
             matching.sort(Comparator.comparingInt(ObserverDescriptor::priority));
             for (var observer : matching) {
                 invokeObserver(observer, event);
@@ -52,9 +57,12 @@ public final class EventDispatcher {
     }
 
     /**
-     * Find observers matching a given event type.
+     * Find observers matching a given event type and qualifiers.
+     * CDI rule: an observer matches if ALL its observed qualifiers are present
+     * in the event qualifiers. An observer with no qualifiers matches all events.
      */
-    public List<ObserverDescriptor> findMatchingObservers(Class<?> eventType, boolean asyncOnly) {
+    public List<ObserverDescriptor> findMatchingObservers(Class<?> eventType, boolean asyncOnly,
+            Set<DotName> eventQualifiers) {
         var result = new ArrayList<ObserverDescriptor>();
         for (var observer : observers) {
             if (asyncOnly && !observer.async()) continue;
@@ -65,7 +73,10 @@ public final class EventDispatcher {
                 try {
                     var observedClass = Class.forName(ct.name().value());
                     if (observedClass.isAssignableFrom(eventType)) {
-                        result.add(observer);
+                        // Match qualifiers: observer qualifiers must be subset of event qualifiers
+                        if (observerQualifiersMatch(observer.qualifiers(), eventQualifiers)) {
+                            result.add(observer);
+                        }
                     }
                 } catch (ClassNotFoundException e) {
                     // skip unresolvable types
@@ -76,10 +87,36 @@ public final class EventDispatcher {
     }
 
     /**
+     * Check if all observer qualifiers are present in the event qualifiers.
+     * An observer with no qualifiers matches any event.
+     */
+    private boolean observerQualifiersMatch(List<QualifierInstance> observerQualifiers,
+            Set<DotName> eventQualifiers) {
+        if (observerQualifiers.isEmpty()) return true;
+        for (var oq : observerQualifiers) {
+            // Skip @Any — it matches everything
+            if (oq.isAny()) continue;
+            if (!eventQualifiers.contains(oq.annotationName())) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /**
      * Returns all registered observer descriptors.
      */
     public List<ObserverDescriptor> observers() {
         return observers;
+    }
+
+    private static Set<DotName> toQualifierInstances(Annotation... qualifiers) {
+        if (qualifiers == null || qualifiers.length == 0) return Set.of();
+        var result = new LinkedHashSet<DotName>();
+        for (var q : qualifiers) {
+            result.add(DotName.of(q.annotationType().getName()));
+        }
+        return result;
     }
 
     private void invokeObserver(ObserverDescriptor observer, Object event) {

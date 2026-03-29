@@ -6,6 +6,7 @@ import jakarta.enterprise.util.TypeLiteral;
 
 import java.lang.annotation.Annotation;
 import java.lang.reflect.TypeVariable;
+import java.util.Arrays;
 import java.util.HashSet;
 import java.util.concurrent.CompletionStage;
 
@@ -15,9 +16,15 @@ import java.util.concurrent.CompletionStage;
 public final class EventImpl<T> implements Event<T> {
 
     private final EventDispatcher dispatcher;
+    private final Annotation[] qualifiers;
 
     public EventImpl(EventDispatcher dispatcher) {
+        this(dispatcher, new Annotation[0]);
+    }
+
+    private EventImpl(EventDispatcher dispatcher, Annotation[] qualifiers) {
         this.dispatcher = dispatcher;
+        this.qualifiers = qualifiers;
     }
 
     @Override
@@ -25,14 +32,7 @@ public final class EventImpl<T> implements Event<T> {
         if (event == null) {
             throw new IllegalArgumentException("Event object must not be null");
         }
-        // Check for unresolvable type variable
-        if (event.getClass().getTypeParameters().length > 0) {
-            for (var tp : event.getClass().getTypeParameters()) {
-                // Type variables on the event class itself are OK
-                // Only reject if the event TYPE (not class) is a TypeVariable
-            }
-        }
-        dispatcher.fire(event);
+        dispatcher.fire(event, qualifiers);
     }
 
     @Override
@@ -41,7 +41,7 @@ public final class EventImpl<T> implements Event<T> {
             throw new IllegalArgumentException("Event object must not be null");
         }
         @SuppressWarnings("unchecked")
-        var stage = (CompletionStage<U>) dispatcher.fireAsync(event);
+        var stage = (CompletionStage<U>) dispatcher.fireAsync(event, qualifiers);
         return stage;
     }
 
@@ -51,36 +51,39 @@ public final class EventImpl<T> implements Event<T> {
     }
 
     @Override
-    public Event<T> select(Annotation... qualifiers) {
-        validateQualifiers(qualifiers);
-        return this;
+    public Event<T> select(Annotation... newQualifiers) {
+        validateQualifiers(newQualifiers);
+        return new EventImpl<>(dispatcher, combineQualifiers(this.qualifiers, newQualifiers));
     }
 
     @Override
-    public <U extends T> Event<U> select(Class<U> subtype, Annotation... qualifiers) {
-        validateQualifiers(qualifiers);
+    public <U extends T> Event<U> select(Class<U> subtype, Annotation... newQualifiers) {
+        validateQualifiers(newQualifiers);
         if (subtype == null) {
             throw new IllegalArgumentException("Subtype must not be null");
         }
-        @SuppressWarnings("unchecked")
-        var result = (Event<U>) new EventImpl<>(dispatcher);
-        return result;
+        return new EventImpl<>(dispatcher, combineQualifiers(this.qualifiers, newQualifiers));
     }
 
     @Override
-    public <U extends T> Event<U> select(TypeLiteral<U> subtype, Annotation... qualifiers) {
-        validateQualifiers(qualifiers);
+    public <U extends T> Event<U> select(TypeLiteral<U> subtype, Annotation... newQualifiers) {
+        validateQualifiers(newQualifiers);
         if (subtype == null) {
             throw new IllegalArgumentException("Subtype must not be null");
         }
-        // Check for TypeVariable
         var type = subtype.getType();
         if (type instanceof TypeVariable<?>) {
             throw new IllegalArgumentException("TypeVariable is not a legal event type");
         }
-        @SuppressWarnings("unchecked")
-        var result = (Event<U>) new EventImpl<>(dispatcher);
-        return result;
+        return new EventImpl<>(dispatcher, combineQualifiers(this.qualifiers, newQualifiers));
+    }
+
+    private static Annotation[] combineQualifiers(Annotation[] existing, Annotation[] additional) {
+        if (additional == null || additional.length == 0) return existing;
+        if (existing.length == 0) return additional;
+        var combined = Arrays.copyOf(existing, existing.length + additional.length);
+        System.arraycopy(additional, 0, combined, existing.length, additional.length);
+        return combined;
     }
 
     private static void validateQualifiers(Annotation... qualifiers) {

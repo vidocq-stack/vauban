@@ -82,6 +82,10 @@ public class VaubanDeployableContainer implements DeployableContainer<VaubanCont
             container.requestContext().activate();
             ContainerHolder.set(container);
 
+        } catch (jakarta.enterprise.inject.spi.DefinitionException e) {
+            throw new DeploymentException("CDI DefinitionException: " + e.getMessage(), e);
+        } catch (jakarta.enterprise.inject.spi.DeploymentException e) {
+            throw new DeploymentException("CDI DeploymentException: " + e.getMessage(), e);
         } catch (Exception e) {
             throw new DeploymentException("Failed to deploy archive: " + archive.getName(), e);
         }

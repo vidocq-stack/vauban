@@ -282,6 +282,21 @@ public final class BeanDiscovery {
         return qualifiers;
     }
 
+    /**
+     * Computes qualifiers for observer methods — only explicit qualifiers,
+     * no automatic @Default/@Any (CDI spec: an observer with no qualifiers
+     * observes all events of that type regardless of qualifiers).
+     */
+    Set<QualifierInstance> computeObserverQualifiers(List<AnnotationInfo> annotations) {
+        var qualifiers = new LinkedHashSet<QualifierInstance>();
+        for (var ann : annotations) {
+            if (isQualifierAnnotation(ann.name())) {
+                qualifiers.add(QualifierInstance.from(ann));
+            }
+        }
+        return qualifiers;
+    }
+
     Set<QualifierInstance> computeQualifiersWithStereotypes(ClassInfo classInfo) {
         var allAnnotations = new ArrayList<>(classInfo.annotations());
 
@@ -499,7 +514,7 @@ public final class BeanDiscovery {
 
                     if (isObserves || isObservesAsync) {
                         // Qualifiers on the observed parameter (excluding @Observes/@ObservesAsync)
-                        var qualifiers = computeQualifiers(param.annotations().stream()
+                        var qualifiers = computeObserverQualifiers(param.annotations().stream()
                                 .filter(a -> !a.name().equals(OBSERVES) && !a.name().equals(OBSERVES_ASYNC))
                                 .toList());
                         var priority = extractPriority(method.annotations());

@@ -6,7 +6,10 @@ import jakarta.enterprise.util.TypeLiteral;
 
 import java.lang.annotation.Annotation;
 import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.HashSet;
 import java.util.Iterator;
+import java.util.Set;
 import java.util.stream.Stream;
 import java.util.stream.StreamSupport;
 
@@ -18,40 +21,65 @@ public final class InstanceImpl<T> implements Instance<T> {
 
     private final VaubanContainer container;
     private final Class<T> type;
+    private final Annotation[] qualifiers;
 
     public InstanceImpl(VaubanContainer container, Class<T> type) {
+        this(container, type, new Annotation[0]);
+    }
+
+    private InstanceImpl(VaubanContainer container, Class<T> type, Annotation[] qualifiers) {
         this.container = container;
         this.type = type;
+        this.qualifiers = qualifiers;
     }
 
     @Override
     public T get() {
-        return container.select(type);
+        var bm = container.getBeanManager();
+        var beans = bm.getBeans(type, qualifiers);
+        if (beans.isEmpty()) {
+            throw new jakarta.enterprise.inject.UnsatisfiedResolutionException(
+                    "No bean found for type: " + type.getName() + " with qualifiers: " + Arrays.toString(qualifiers));
+        }
+        @SuppressWarnings("unchecked")
+        var bean = (Bean<T>) bm.resolve(beans);
+        var ctx = bm.createCreationalContext(bean);
+        @SuppressWarnings("unchecked")
+        var ref = (T) bm.getReference(bean, type, ctx);
+        return ref;
     }
 
     @Override
-    public Instance<T> select(Annotation... qualifiers) {
-        validateQualifiers(qualifiers);
-        return this;
+    public Instance<T> select(Annotation... newQualifiers) {
+        validateQualifiers(newQualifiers);
+        return new InstanceImpl<>(container, type, combineQualifiers(this.qualifiers, newQualifiers));
     }
 
     @Override
-    public <U extends T> Instance<U> select(Class<U> subtype, Annotation... qualifiers) {
-        validateQualifiers(qualifiers);
-        return new InstanceImpl<>(container, subtype);
+    public <U extends T> Instance<U> select(Class<U> subtype, Annotation... newQualifiers) {
+        validateQualifiers(newQualifiers);
+        return new InstanceImpl<>(container, subtype, combineQualifiers(this.qualifiers, newQualifiers));
     }
 
     @Override
-    public <U extends T> Instance<U> select(TypeLiteral<U> subtype, Annotation... qualifiers) {
-        validateQualifiers(qualifiers);
+    public <U extends T> Instance<U> select(TypeLiteral<U> subtype, Annotation... newQualifiers) {
+        validateQualifiers(newQualifiers);
         @SuppressWarnings("unchecked")
         var clazz = (Class<U>) subtype.getType();
-        return new InstanceImpl<>(container, clazz);
+        return new InstanceImpl<>(container, clazz, combineQualifiers(this.qualifiers, newQualifiers));
+    }
+
+    private static Annotation[] combineQualifiers(Annotation[] existing, Annotation[] additional) {
+        if (additional == null || additional.length == 0) return existing;
+        if (existing.length == 0) return additional;
+        var combined = Arrays.copyOf(existing, existing.length + additional.length);
+        System.arraycopy(additional, 0, combined, existing.length, additional.length);
+        return combined;
     }
 
     private static void validateQualifiers(Annotation... qualifiers) {
         if (qualifiers == null) return;
-        var seen = new java.util.HashSet<Class<?>>();
+        var seen = new HashSet<Class<?>>();
         for (var q : qualifiers) {
             if (!q.annotationType().isAnnotationPresent(jakarta.inject.Qualifier.class)
                     && q.annotationType() != jakarta.enterprise.inject.Default.class
@@ -95,7 +123,7 @@ public final class InstanceImpl<T> implements Instance<T> {
     @Override
     public Handle<T> getHandle() {
         var bm = container.getBeanManager();
-        var beans = bm.getBeans(type);
+        var beans = bm.getBeans(type, qualifiers);
         if (beans.isEmpty()) {
             throw new jakarta.enterprise.inject.UnsatisfiedResolutionException(
                     "No bean found for type: " + type.getName());
@@ -111,7 +139,7 @@ public final class InstanceImpl<T> implements Instance<T> {
     @Override
     public Iterable<? extends Handle<T>> handles() {
         var bm = container.getBeanManager();
-        var beans = bm.getBeans(type);
+        var beans = bm.getBeans(type, qualifiers);
         var result = new ArrayList<Handle<T>>();
         for (var b : beans) {
             @SuppressWarnings("unchecked")
@@ -133,7 +161,7 @@ public final class InstanceImpl<T> implements Instance<T> {
     @Override
     public Iterator<T> iterator() {
         var bm = container.getBeanManager();
-        var beans = bm.getBeans(type);
+        var beans = bm.getBeans(type, qualifiers);
         var instances = new ArrayList<T>();
         for (var b : beans) {
             @SuppressWarnings("unchecked")
@@ -147,7 +175,7 @@ public final class InstanceImpl<T> implements Instance<T> {
     }
 
     private int resolveCount() {
-        return container.getBeanManager().getBeans(type).size();
+        return container.getBeanManager().getBeans(type, qualifiers).size();
     }
 
     /**

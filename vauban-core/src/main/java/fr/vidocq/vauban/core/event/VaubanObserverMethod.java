@@ -1,6 +1,7 @@
 package fr.vidocq.vauban.core.event;
 
 import fr.vidocq.vauban.core.bean.model.ObserverDescriptor;
+import fr.vidocq.vauban.core.container.QualifierUtils;
 import fr.vidocq.vauban.indexer.model.TypeInfo;
 import jakarta.enterprise.event.Reception;
 import jakarta.enterprise.event.TransactionPhase;
@@ -55,7 +56,7 @@ public final class VaubanObserverMethod<T> implements ObserverMethod<T> {
 
     @Override
     public Set<Annotation> getObservedQualifiers() {
-        return Set.of();
+        return QualifierUtils.toAnnotations(new java.util.LinkedHashSet<>(descriptor.qualifiers()), null);
     }
 
     @Override

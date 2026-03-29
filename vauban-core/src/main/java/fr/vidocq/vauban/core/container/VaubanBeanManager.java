@@ -349,7 +349,11 @@ public final class VaubanBeanManager implements BeanManager {
                 }
             }
         }
-        var matching = eventDispatcher.findMatchingObservers(event.getClass(), false);
+        var eventQualifiers = new java.util.LinkedHashSet<fr.vidocq.vauban.indexer.model.DotName>();
+        for (var q : qualifiers) {
+            eventQualifiers.add(fr.vidocq.vauban.indexer.model.DotName.of(q.annotationType().getName()));
+        }
+        var matching = eventDispatcher.findMatchingObservers(event.getClass(), false, eventQualifiers);
         var result = new LinkedHashSet<ObserverMethod<? super T>>();
         for (var descriptor : matching) {
             // Find the declaring bean
