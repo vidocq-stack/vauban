@@ -28,6 +28,7 @@ import jakarta.enterprise.context.spi.Contextual;
 import jakarta.enterprise.event.Event;
 import jakarta.enterprise.inject.Instance;
 import jakarta.enterprise.inject.spi.BeanManager;
+import jakarta.enterprise.inject.spi.InjectionPoint;
 
 import java.io.IOException;
 import java.lang.annotation.Annotation;
@@ -44,6 +45,21 @@ import java.util.concurrent.ConcurrentHashMap;
  * Minimal SE container supporting bootstrap, lookup, contexts, and shutdown.
  */
 public final class VaubanContainer implements AutoCloseable {
+
+    /**
+     * ThreadLocal tracking the current injection point. When a @Dependent bean is being
+     * created as a dependency, this holds the InjectionPoint of the field/parameter
+     * that triggered the creation. The dependent bean can then @Inject InjectionPoint
+     * to discover where it was injected.
+     */
+    private static final ThreadLocal<InjectionPoint> currentInjectionPoint = new ThreadLocal<>();
+
+    /**
+     * Returns the current injection point (used by built-in InjectionPoint bean).
+     */
+    static InjectionPoint getCurrentInjectionPoint() {
+        return currentInjectionPoint.get();
+    }
 
     private final Map<BeanId, ManagedBean<?>> beans = new LinkedHashMap<>();
     private final Map<Class<? extends Annotation>, Context> contexts = new ConcurrentHashMap<>();
@@ -185,6 +201,13 @@ public final class VaubanContainer implements AutoCloseable {
                 field.setAccessible(true);
                 try {
 
+                // Handle InjectionPoint injection — the dependent bean receives the
+                // InjectionPoint that describes WHERE it was injected (set by the caller)
+                if (field.getType() == InjectionPoint.class) {
+                    field.set(instance, currentInjectionPoint.get());
+                    continue;
+                }
+
                 // Handle Instance<T> and Provider<T> injection
                 if (field.getType() == Instance.class
                         || field.getType() == jakarta.inject.Provider.class) {
@@ -212,14 +235,37 @@ public final class VaubanContainer implements AutoCloseable {
                     continue;
                 }
 
-                var value = select(field.getType());
-                field.set(instance, value);
+                // Set the current InjectionPoint before resolving the dependency.
+                // This allows @Dependent beans to @Inject InjectionPoint and discover
+                // where they were injected.
+                var previousIp = currentInjectionPoint.get();
+                var bean = findBeanForInstance(instance);
+                currentInjectionPoint.set(new VaubanInjectionPoint(field, bean));
+                try {
+                    var value = select(field.getType());
+                    field.set(instance, value);
+                } finally {
+                    currentInjectionPoint.set(previousIp);
+                }
             } catch (Exception e) {
                 // Skip fields that can't be resolved (may not be CDI beans)
             }
             }
             clazz = clazz.getSuperclass();
         }
+    }
+
+    /**
+     * Find the ManagedBean corresponding to the given instance's class.
+     */
+    private ManagedBean<?> findBeanForInstance(Object instance) {
+        var instanceClass = instance.getClass();
+        for (var bean : beans.values()) {
+            if (bean.getBeanClass() == instanceClass) {
+                return bean;
+            }
+        }
+        return null;
     }
 
     private void callInitializerMethods(Object instance) {

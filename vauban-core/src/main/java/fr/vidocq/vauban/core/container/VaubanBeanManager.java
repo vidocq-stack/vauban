@@ -56,7 +56,10 @@ public final class VaubanBeanManager implements BeanManager {
                     () -> getEvent()),
                 new BuiltInBean<>(Instance.class,
                     Set.of(Instance.class, Object.class),
-                    () -> createInstance())
+                    () -> createInstance()),
+                new BuiltInBean<>(InjectionPoint.class,
+                    Set.of(InjectionPoint.class, Object.class),
+                    VaubanContainer::getCurrentInjectionPoint)
             );
         }
         return builtInBeans;
