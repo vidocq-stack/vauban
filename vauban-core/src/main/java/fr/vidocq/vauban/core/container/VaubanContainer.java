@@ -593,7 +593,9 @@ public final class VaubanContainer implements AutoCloseable {
                     var beanClass2 = clazz;
                     factories.put(DotName.of(clazz.getName()), () -> {
                         try {
-                            return beanClass2.getDeclaredConstructor().newInstance();
+                            var ctor = beanClass2.getDeclaredConstructor();
+                            ctor.setAccessible(true);
+                            return ctor.newInstance();
                         } catch (Exception e) {
                             throw new RuntimeException("Failed to create: " + beanClass2.getName(), e);
                         }
