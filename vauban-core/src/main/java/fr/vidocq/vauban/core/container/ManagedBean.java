@@ -59,7 +59,14 @@ public final class ManagedBean<T> implements Bean<T> {
     @Override
     public T create(CreationalContext<T> creationalContext) {
         T instance = factory.create();
-        if (injector != null) {
+        // CDI spec: producer returning null for non-Dependent scope -> IllegalProductException
+        if (instance == null && descriptor.kind() != BeanDescriptor.BeanKind.MANAGED) {
+            if (descriptor.scope().isNormal()) {
+                throw new jakarta.enterprise.inject.IllegalProductException(
+                        "Producer " + descriptor.id() + " returned null for normal-scoped bean");
+            }
+        }
+        if (instance != null && injector != null) {
             injector.accept(instance);
         }
         return instance;
