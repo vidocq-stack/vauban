@@ -2,41 +2,8 @@
   "permissions": {
     "allow": [
       "Bash(*)",
-      "WebFetch(domain:*)",
-      "Bash(mvn test:*)",
-      "Bash(curl -s https://raw.githubusercontent.com/jakartaee/cdi/master/api/src/main/java/jakarta/enterprise/lang/model/AnnotationTarget.java)",
-      "Bash(curl:*)",
-      "Bash(gh api:*)",
-      "Bash(BASE=\"https://raw.githubusercontent.com/jakartaee/cdi/4.1/lang-model/src/main/java/jakarta/enterprise/lang/model\")",
-      "Bash(BASE=\"https://raw.githubusercontent.com/jakartaee/cdi/4.1/lang-model/src/main/java/jakarta/enterprise/lang/model/declarations\")",
-      "Bash(BASE=\"https://raw.githubusercontent.com/jakartaee/cdi/4.1/lang-model/src/main/java/jakarta/enterprise/lang/model/types\")",
-      "Bash(mvn dependency:resolve -pl vauban-core)",
-      "Bash(find /Users/yblazart/projects/perso/vidocq/vauban -path */jakarta/enterprise/lang/model -type d)",
-      "Bash(find /Users/yblazart/projects/perso/vidocq/vauban -name *.jar -path *jakarta*cdi*)",
-      "Bash(jar tf:*)",
-      "Bash(grep -E \"\\\\.class$\")",
-      "Bash(find /Users/yblazart/.m2/repository/jakarta/enterprise -name *.jar)",
-      "Bash(xargs -I{} jar tf {})",
-      "Bash(while read:*)",
-      "Bash(do jar:*)",
-      "Bash(echo \"  -> $jar\")",
-      "Bash(done)",
-      "Bash(ls /Users/yblazart/.sdkman/candidates/maven/*/bin/mvn)",
-      "Bash(/Users/yblazart/.sdkman/candidates/maven/4.0.0-rc-5/bin/mvn compile:*)",
-      "Bash(/Users/yblazart/.sdkman/candidates/maven/4.0.0-rc-5/bin/mvn clean:*)",
-      "Bash(mvn dependency:tree -pl vauban-processor)",
-      "Bash(mvn dependency:build-classpath -pl vauban-core -q)",
-      "Bash(grep -v \"$\")",
-      "Bash(find /Users/yblazart/projects/perso/vidocq/vauban/vauban-core/src/test -name module-info*)",
-      "Bash(mvn dependency:tree -pl vauban-junit)",
-      "Bash(mvn dependency:resolve -pl vauban-tck-runner)",
-      "Read(//private/tmp/**)",
-      "Bash(javap -p -cp ~/.m2/repository/jakarta/enterprise/cdi-tck-api/4.1.0/cdi-tck-api-4.1.0.jar org.jboss.cdi.tck.spi.Beans)",
-      "Bash(javap -p -cp ~/.m2/repository/jakarta/enterprise/cdi-tck-api/4.1.0/cdi-tck-api-4.1.0.jar org.jboss.cdi.tck.spi.Contexts)",
-      "Bash(javap -p -cp ~/.m2/repository/jakarta/enterprise/cdi-tck-api/4.1.0/cdi-tck-api-4.1.0.jar org.jboss.cdi.tck.spi.Contextuals org.jboss.cdi.tck.spi.Contextuals$Inspectable)",
-      "Bash(javap -p -cp ~/.m2/repository/jakarta/enterprise/cdi-tck-api/4.1.0/cdi-tck-api-4.1.0.jar org.jboss.cdi.tck.spi.CreationalContexts org.jboss.cdi.tck.spi.CreationalContexts$Inspectable)",
-      "Bash(javap -p -cp ~/.m2/repository/org/jboss/arquillian/container/arquillian-container-spi/1.8.0.Final/arquillian-container-spi-1.8.0.Final.jar org.jboss.arquillian.container.spi.client.container.DeployableContainer)",
-      "Bash(javap -p -cp ~/.m2/repository/org/jboss/arquillian/container/arquillian-container-spi/1.8.0.Final/arquillian-container-spi-1.8.0.Final.jar org.jboss.arquillian.container.spi.client.container.ContainerConfiguration)"
+      "Read(*)",
+      "WebFetch(domain:*)"
     ]
   }
 }
