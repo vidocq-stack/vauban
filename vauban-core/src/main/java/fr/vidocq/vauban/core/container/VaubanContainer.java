@@ -462,7 +462,8 @@ public final class VaubanContainer implements AutoCloseable {
             } catch (RuntimeException e) {
                 throw e;
             } catch (Exception e) {
-                throw new RuntimeException("Failed to create bean with @Inject constructor: " + descriptor.beanClass(), e);
+                throw new jakarta.enterprise.inject.CreationException(
+                        "Failed to create bean with @Inject constructor: " + descriptor.beanClass(), e);
             }
         };
     }
@@ -494,7 +495,8 @@ public final class VaubanContainer implements AutoCloseable {
             } catch (RuntimeException e) {
                 throw e;
             } catch (Exception e) {
-                throw new RuntimeException("Failed to invoke producer method: " + descriptor.id(), e);
+                throw new jakarta.enterprise.inject.CreationException(
+                        "Failed to invoke producer method: " + descriptor.id(), e);
             }
         };
     }
@@ -529,7 +531,8 @@ public final class VaubanContainer implements AutoCloseable {
             } catch (RuntimeException e) {
                 throw e;
             } catch (Exception e) {
-                throw new RuntimeException("Failed to read producer field: " + descriptor.id(), e);
+                throw new jakarta.enterprise.inject.CreationException(
+                        "Failed to read producer field: " + descriptor.id(), e);
             }
         };
     }
@@ -610,7 +613,8 @@ public final class VaubanContainer implements AutoCloseable {
                             ctor.setAccessible(true);
                             return ctor.newInstance();
                         } catch (Exception e) {
-                            throw new RuntimeException("Failed to create: " + beanClass2.getName(), e);
+                            throw new jakarta.enterprise.inject.CreationException(
+                                    "Failed to create: " + beanClass2.getName(), e);
                         }
                     });
                 }
