@@ -228,23 +228,10 @@ public final class VaubanContainer implements AutoCloseable {
                 method.setAccessible(true);
                 try {
                     var paramTypes = method.getParameterTypes();
+                    var genericParamTypes = method.getGenericParameterTypes();
                     var args = new Object[paramTypes.length];
                     for (int i = 0; i < paramTypes.length; i++) {
-                        if (paramTypes[i] == Event.class) {
-                            args[i] = new EventImpl<>(eventDispatcher);
-                        } else if (paramTypes[i] == Instance.class) {
-                            Class<?> instanceType = Object.class;
-                            var genericType = method.getGenericParameterTypes()[i];
-                            if (genericType instanceof ParameterizedType pt) {
-                                var typeArg = pt.getActualTypeArguments()[0];
-                                if (typeArg instanceof Class<?> c) instanceType = c;
-                            }
-                            args[i] = new InstanceImpl<>(this, instanceType);
-                        } else if (paramTypes[i] == BeanManager.class) {
-                            args[i] = getBeanManager();
-                        } else {
-                            args[i] = select(paramTypes[i]);
-                        }
+                        args[i] = resolveParameter(paramTypes[i], genericParamTypes[i]);
                     }
                     method.invoke(instance, args);
                 } catch (Exception e) {
@@ -437,6 +424,14 @@ public final class VaubanContainer implements AutoCloseable {
                         if (method.getParameterCount() == 0) {
                             return method.invoke(declaringInstance);
                         }
+                        // Resolve parameters as injection points
+                        var paramTypes = method.getParameterTypes();
+                        var genericParamTypes = method.getGenericParameterTypes();
+                        var args = new Object[paramTypes.length];
+                        for (int i = 0; i < paramTypes.length; i++) {
+                            args[i] = resolveParameter(paramTypes[i], genericParamTypes[i]);
+                        }
+                        return method.invoke(declaringInstance, args);
                     }
                 }
                 throw new RuntimeException("Producer method not found: " + methodName + " in " + descriptor.beanClass());
@@ -446,6 +441,24 @@ public final class VaubanContainer implements AutoCloseable {
                 throw new RuntimeException("Failed to invoke producer method: " + descriptor.id(), e);
             }
         };
+    }
+
+    private Object resolveParameter(Class<?> paramType, java.lang.reflect.Type genericType) {
+        if (paramType == Event.class) {
+            return new EventImpl<>(eventDispatcher);
+        }
+        if (paramType == Instance.class || paramType == jakarta.inject.Provider.class) {
+            Class<?> instanceType = Object.class;
+            if (genericType instanceof ParameterizedType pt && pt.getActualTypeArguments().length > 0) {
+                var typeArg = pt.getActualTypeArguments()[0];
+                if (typeArg instanceof Class<?> c) instanceType = c;
+            }
+            return new InstanceImpl<>(this, instanceType);
+        }
+        if (paramType == BeanManager.class) {
+            return getBeanManager();
+        }
+        return select(paramType);
     }
 
     private BeanFactory<?> createProducerFieldFactory(BeanDescriptor descriptor) {

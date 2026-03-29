@@ -122,6 +122,34 @@ public final class BeanDiscovery {
         return false;
     }
 
+    private boolean isAlternativeWithStereotypes(ClassInfo classInfo) {
+        if (classInfo.hasAnnotation(ALTERNATIVE)) return true;
+        for (var ann : classInfo.annotations()) {
+            if (isStereotype(ann.name())) {
+                var stereotypeClass = index.getClassByName(ann.name());
+                if (stereotypeClass.isPresent() && stereotypeClass.get().hasAnnotation(ALTERNATIVE)) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    private int extractPriorityWithStereotypes(ClassInfo classInfo) {
+        int priority = extractPriority(classInfo.annotations());
+        if (priority > 0) return priority;
+        for (var ann : classInfo.annotations()) {
+            if (isStereotype(ann.name())) {
+                var stereotypeClass = index.getClassByName(ann.name());
+                if (stereotypeClass.isPresent()) {
+                    int stereotypePriority = extractPriority(stereotypeClass.get().annotations());
+                    if (stereotypePriority > 0) return stereotypePriority;
+                }
+            }
+        }
+        return 0;
+    }
+
     private boolean isStereotype(DotName annotationName) {
         var annClass = index.getClassByName(annotationName);
         return annClass.isPresent() && annClass.get().hasAnnotation(STEREOTYPE);
@@ -132,8 +160,8 @@ public final class BeanDiscovery {
         var types = computeBeanTypes(classInfo);
         var qualifiers = computeQualifiersWithStereotypes(classInfo);
         var scope = computeScope(classInfo);
-        var isAlternative = classInfo.hasAnnotation(ALTERNATIVE);
-        var priority = extractPriority(classInfo.annotations());
+        var isAlternative = isAlternativeWithStereotypes(classInfo);
+        var priority = extractPriorityWithStereotypes(classInfo);
         var injectionPoints = discoverInjectionPoints(classInfo);
         var name = extractNameWithStereotypes(classInfo);
 
