@@ -2,28 +2,27 @@
 
 ## Date : 2026-03-29
 
-## Resultats actuels
+## Resultats
 
 | Metrique | Valeur |
 |----------|--------|
-| Tests non-skippes | 1171 |
-| **Passes** | **~340 (29.0%)** |
-| Echoues | ~832 |
-| Skippes | ~709 |
+| Tests non-skippes | ~1167 |
+| **Passes** | **~341 (29.2%)** |
+| Echoues | ~826 |
 | Erreurs | 0 |
 | Temps | ~4s |
 
-## Progression totale
+## Progression
 
 ```
-Debut    ████░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░   6.8%  (90)
-Mi-chemin████████████████░░░░░░░░░░░░░░░░░░░░░░░░░░  20.2% (241)
-Final    ██████████████████████████░░░░░░░░░░░░░░░░░░  29.0% (~340)
+Debut    ████░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░   6.8%
+Final    ████████████████████████████░░░░░░░░░░░░░░░░  29.2%
+         +250 tests, -400 failures, x4.3
 ```
-
-**De 90 a ~340 passes (+250), de 1228 a ~832 failures (-396)**
 
 ## Commande
 ```bash
 mvn test -pl vauban-tck-runner -Ptck
 ```
+
+## Tests propres Vauban : ~225 (tous verts)
