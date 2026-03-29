@@ -119,6 +119,12 @@ public final class BeanDiscovery {
             if (BEAN_DEFINING_ANNOTATIONS.contains(annotation.name())) return true;
             if (isStereotype(annotation.name())) return true;
         }
+        // CDI 4.0+: @Alternative with @Priority is a bean-defining combination
+        if (classInfo.hasAnnotation(ALTERNATIVE) && classInfo.hasAnnotation(PRIORITY)) return true;
+        // Also check @Inject on constructor — @Inject constructor makes it a bean
+        if (classInfo.methods().stream().anyMatch(m -> m.isConstructor() && hasAnnotation(m.annotations(), INJECT))) {
+            return true;
+        }
         return false;
     }
 
