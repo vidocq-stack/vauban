@@ -330,11 +330,31 @@ public final class VaubanContainer implements AutoCloseable {
                 if (!disposer.declaringClass().equals(descriptor.beanClass())) continue;
 
                 // Check if the disposed type matches any of the producer bean types
-                boolean typeMatches = descriptor.types().contains(disposer.disposedType());
+                boolean typeMatches = false;
+                for (var bt : descriptor.types()) {
+                    if (bt.equals(disposer.disposedType())) {
+                        typeMatches = true;
+                        break;
+                    }
+                    // Also check by raw class name match for ClassType
+                    if (bt instanceof TypeInfo.ClassType btCt
+                            && disposer.disposedType() instanceof TypeInfo.ClassType dCt
+                            && btCt.name().equals(dCt.name())) {
+                        typeMatches = true;
+                        break;
+                    }
+                }
                 if (!typeMatches) continue;
 
-                // Check qualifier match: disposer qualifiers must match producer qualifiers
-                boolean qualifiersMatch = descriptor.qualifiers().containsAll(disposer.qualifiers());
+                // Check qualifier match: disposer qualifiers must be subset of producer qualifiers
+                // CDI spec: disposer qualifiers without @Default/@Any must match
+                var disposerQuals = disposer.qualifiers().stream()
+                        .filter(q -> !q.isDefault() && !q.isAny())
+                        .collect(java.util.stream.Collectors.toSet());
+                var producerQuals = descriptor.qualifiers().stream()
+                        .filter(q -> !q.isDefault() && !q.isAny())
+                        .collect(java.util.stream.Collectors.toSet());
+                boolean qualifiersMatch = producerQuals.containsAll(disposerQuals);
                 if (!qualifiersMatch) continue;
 
                 bean.setDestroyer(instance -> callDisposer(instance, disposer));

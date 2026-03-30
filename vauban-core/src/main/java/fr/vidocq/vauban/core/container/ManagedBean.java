@@ -80,9 +80,8 @@ public final class ManagedBean<T> implements Bean<T> {
             }
         }
         callPreDestroy(instance);
-        if (creationalContext != null) {
-            creationalContext.release();
-        }
+        // Note: don't call creationalContext.release() here — it's the caller's responsibility
+        // (calling release() here would cause infinite recursion when destroy is triggered by release)
     }
 
     private void callPreDestroy(Object instance) {

@@ -131,21 +131,36 @@ public final class EventDispatcher {
                     method.invoke(beanInstance, event);
                 } else {
                     // Resolve additional parameters as injection points
+                    // Use a CreationalContext to track @Dependent instances for cleanup
+                    var bm = container.getBeanManager();
+                    var ctx = new fr.vidocq.vauban.core.context.CreationalContextImpl<>();
                     var paramTypes = method.getParameterTypes();
                     var args = new Object[paramTypes.length];
-                    // Find which parameter is the event (annotated with @Observes/@ObservesAsync)
                     var params = method.getParameters();
                     for (int i = 0; i < params.length; i++) {
                         if (params[i].isAnnotationPresent(jakarta.enterprise.event.Observes.class)
                                 || params[i].isAnnotationPresent(jakarta.enterprise.event.ObservesAsync.class)) {
                             args[i] = event;
                         } else {
-                            // Resolve as CDI injection point
-                            args[i] = container.resolveParameter(paramTypes[i],
-                                    method.getGenericParameterTypes()[i]);
+                            // Resolve via BeanManager for proper dependent tracking
+                            var beans = bm.getBeans(paramTypes[i]);
+                            if (!beans.isEmpty()) {
+                                var bean = bm.resolve(beans);
+                                var ref = bm.getReference(bean, paramTypes[i], ctx);
+                                args[i] = ref;
+                            } else {
+                                args[i] = container.resolveParameter(paramTypes[i],
+                                        method.getGenericParameterTypes()[i]);
+                            }
                         }
                     }
-                    method.invoke(beanInstance, args);
+                    try {
+                        method.invoke(beanInstance, args);
+                    } finally {
+                        // CDI spec: @Dependent instances injected into observer methods
+                        // are destroyed after the observer invocation completes
+                        ctx.release();
+                    }
                 }
             }
         } catch (java.lang.reflect.InvocationTargetException e) {
