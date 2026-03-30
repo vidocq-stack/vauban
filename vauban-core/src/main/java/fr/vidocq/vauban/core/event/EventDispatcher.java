@@ -160,7 +160,9 @@ public final class EventDispatcher {
                                     return java.util.Set.of();
                                 }
                                 @Override public jakarta.enterprise.inject.spi.InjectionPoint getInjectionPoint() {
-                                    return null;
+                                    // Minimal InjectionPoint — the point where the event was fired
+                                    return new fr.vidocq.vauban.core.container.VaubanInjectionPoint(
+                                            eventObj.getClass(), java.util.Set.of(), null);
                                 }
                                 @Override public java.lang.reflect.Type getType() {
                                     return eventObj.getClass();
