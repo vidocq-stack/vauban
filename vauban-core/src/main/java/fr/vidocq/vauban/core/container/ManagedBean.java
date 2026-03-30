@@ -186,6 +186,19 @@ public final class ManagedBean<T> implements Bean<T> {
         };
     }
 
+    private static boolean containsUnresolvedTypeVariable(Type type) {
+        if (type instanceof java.lang.reflect.TypeVariable<?>) return true;
+        if (type instanceof java.lang.reflect.ParameterizedType pt) {
+            for (var arg : pt.getActualTypeArguments()) {
+                if (containsUnresolvedTypeVariable(arg)) return true;
+            }
+        }
+        if (type instanceof java.lang.reflect.GenericArrayType gat) {
+            return containsUnresolvedTypeVariable(gat.getGenericComponentType());
+        }
+        return false;
+    }
+
     private static void collectTypes(Class<?> clazz, Set<Type> types) {
         if (clazz == null || clazz == Object.class) return;
         types.add(clazz);

@@ -127,9 +127,12 @@ public final class EventImpl<T> implements Event<T> {
                 throw new IllegalArgumentException(
                         q.annotationType().getName() + " does not have @Retention(RUNTIME)");
             }
+            // Allow duplicate qualifier types if the annotation is @Repeatable
             if (!seen.add(q.annotationType())) {
-                throw new IllegalArgumentException(
-                        "Duplicate qualifier: " + q.annotationType().getName());
+                if (!q.annotationType().isAnnotationPresent(java.lang.annotation.Repeatable.class)) {
+                    throw new IllegalArgumentException(
+                            "Duplicate qualifier: " + q.annotationType().getName());
+                }
             }
         }
     }
