@@ -77,6 +77,14 @@ public final class VaubanBeanManager implements BeanManager {
                 "Type " + beanType + " is not a bean type of " + bean.getBeanClass());
         }
 
+        // For normal-scoped beans, return client proxy via container
+        if (bean instanceof ManagedBean<?> mb
+                && mb.descriptor().scope().isNormal()
+                && mb.descriptor().kind() == fr.vidocq.vauban.core.bean.model.BeanDescriptor.BeanKind.MANAGED
+                && !java.lang.reflect.Modifier.isFinal(bean.getBeanClass().getModifiers())) {
+            return container.getOrCreateProxyForBean(mb);
+        }
+
         var scope = bean.getScope();
         var context = contexts.get(scope);
         if (context == null) {

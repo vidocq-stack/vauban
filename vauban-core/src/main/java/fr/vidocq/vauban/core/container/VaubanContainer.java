@@ -235,6 +235,14 @@ public final class VaubanContainer implements AutoCloseable {
         });
     }
 
+    /**
+     * Public accessor for proxy creation — used by VaubanBeanManager.getReference().
+     */
+    @SuppressWarnings("unchecked")
+    <T> T getOrCreateProxyForBean(ManagedBean<T> bean) {
+        return getOrCreateProxy(bean);
+    }
+
     public boolean isRunning() {
         return running;
     }
