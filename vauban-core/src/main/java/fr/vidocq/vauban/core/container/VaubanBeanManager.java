@@ -583,13 +583,17 @@ public final class VaubanBeanManager implements BeanManager {
 
         // CDI qualifier matching:
         // - A bean with no qualifiers implicitly has @Default and @Any
+        // - Required qualifiers empty = @Default implied
         // - @Any in required qualifiers matches everything
         var effectiveBeanQualifiers = beanQualifiers.isEmpty()
                 ? Set.<Annotation>of(jakarta.enterprise.inject.Default.Literal.INSTANCE,
                                      jakarta.enterprise.inject.Any.Literal.INSTANCE)
                 : beanQualifiers;
+        var effectiveRequired = requiredQualifiers.isEmpty()
+                ? Set.<Annotation>of(jakarta.enterprise.inject.Default.Literal.INSTANCE)
+                : requiredQualifiers;
 
-        for (var req : requiredQualifiers) {
+        for (var req : effectiveRequired) {
             if (req.annotationType() == jakarta.enterprise.inject.Any.class) continue;
             boolean found = effectiveBeanQualifiers.stream()
                 .anyMatch(bq -> bq.annotationType().equals(req.annotationType())
