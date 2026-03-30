@@ -473,7 +473,7 @@ public final class VaubanContainer implements AutoCloseable {
                     } else if (paramTypes[i] == Event.class) {
                         args[i] = new EventImpl<>(eventDispatcher);
                     } else {
-                        args[i] = select(paramTypes[i]);
+                        args[i] = resolveParameter(paramTypes[i], genericParamTypes[i]);
                     }
                 }
 
