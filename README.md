@@ -175,14 +175,24 @@ vauban/
 
 ### Validation TCK
 
-Le conteneur est valide contre le [CDI TCK 4.1](https://github.com/jakartaee/cdi-tck) officiel :
+Le conteneur est valide contre le [CDI TCK 4.1](https://github.com/jakartaee/cdi-tck) officiel.
+Vauban cible **CDI Lite** (le profil standard pour les environnements non-EE).
 
 ```
-CDI Lite : 385/769 tests (50%)
+CDI Lite TCK :  385/769 tests (50%)
+CDI Full TCK :  non cible (futur module vauban-full)
 ```
+
+| Profil | Scope | Status |
+|--------|-------|--------|
+| **CDI Lite** | Managed beans, injection, events, producers, stereotypes, alternatives | **50% TCK** |
+| **CDI Full** | + Portable Extensions, decorators, conversation scope, EL | Futur (`vauban-full`) |
+
+Les 50% restants du TCK Lite sont principalement : intercepteurs runtime (~70 tests),
+matching de types parametres (~30), client proxies (~15), Build Compatible Extensions (~10).
 
 ```bash
-# Lancer le TCK
+# Lancer le TCK Lite
 mvn install -DskipTests -q && mvn test -pl vauban-tck-runner -Ptck
 ```
 
@@ -245,8 +255,12 @@ Managed beans, field/constructor/method injection, qualifiers, producers, dispos
 ### TCK Validation
 
 ```
-CDI Lite: 385/769 tests (50%)
+CDI Lite TCK:  385/769 tests (50%)
+CDI Full TCK:  not targeted (future vauban-full module)
 ```
+
+Remaining 50% of CDI Lite: runtime interceptors (~70), parameterized type matching (~30),
+client proxies (~15), Build Compatible Extensions (~10).
 
 ### License
 
