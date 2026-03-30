@@ -373,13 +373,25 @@ public final class VaubanContainer implements AutoCloseable {
                                        Map<DotName, BeanFactory<?>> factories) {
         for (var descriptor : descriptors) {
             if (descriptor.kind() != BeanDescriptor.BeanKind.MANAGED) continue;
-            if (descriptor.interceptorBindings().isEmpty()) continue;
 
             var bean = beans.get(descriptor.id());
             if (bean == null) continue;
 
             Class<?> beanClass = null;
-            var bindings = descriptor.interceptorBindings();
+            Set<DotName> bindings = new java.util.LinkedHashSet<>(descriptor.interceptorBindings());
+
+            // Also check via reflection (bindings may not be in bytecode index)
+            if (bindings.isEmpty()) {
+                try {
+                    var cls = Class.forName(descriptor.beanClass().value());
+                    for (var ann : cls.getAnnotations()) {
+                        if (ann.annotationType().isAnnotationPresent(jakarta.interceptor.InterceptorBinding.class)) {
+                            bindings.add(DotName.of(ann.annotationType().getName()));
+                        }
+                    }
+                } catch (ClassNotFoundException ex) { /* skip */ }
+                if (bindings.isEmpty()) continue;
+            }
             try {
                 beanClass = Class.forName(descriptor.beanClass().value());
 
