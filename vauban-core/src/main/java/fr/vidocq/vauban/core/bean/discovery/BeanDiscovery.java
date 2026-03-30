@@ -34,6 +34,7 @@ public final class BeanDiscovery {
     }
 
     private static final DotName VETOED = DotName.of("jakarta.enterprise.inject.Vetoed");
+    private static final DotName TYPED = DotName.of("jakarta.enterprise.inject.Typed");
     private static final DotName PRODUCES = DotName.of("jakarta.enterprise.inject.Produces");
     private static final DotName INJECT = DotName.of("jakarta.inject.Inject");
     private static final DotName ALTERNATIVE = DotName.of("jakarta.enterprise.inject.Alternative");
@@ -196,7 +197,7 @@ public final class BeanDiscovery {
 
     private BeanDescriptor buildProducerMethodBean(ClassInfo declaringClass, MethodInfo method) {
         var id = BeanId.ofProducerMethod(declaringClass.name(), method.name());
-        var types = computeProducerTypes(method.returnType());
+        var types = computeProducerTypesWithTyped(method.returnType(), method.annotations());
         var qualifiers = computeQualifiers(method.annotations());
         var scope = computeScopeWithStereotypes(method.annotations());
         var isAlternative = hasAnnotation(method.annotations(), ALTERNATIVE) ||
@@ -233,7 +234,7 @@ public final class BeanDiscovery {
 
     private BeanDescriptor buildProducerFieldBean(ClassInfo declaringClass, FieldInfo field) {
         var id = BeanId.ofProducerField(declaringClass.name(), field.name());
-        var types = computeProducerTypes(field.type());
+        var types = computeProducerTypesWithTyped(field.type(), field.annotations());
         var qualifiers = computeQualifiers(field.annotations());
         var scope = computeScopeWithStereotypes(field.annotations());
         var isAlternative = hasAnnotation(field.annotations(), ALTERNATIVE);
@@ -248,6 +249,25 @@ public final class BeanDiscovery {
      * Bean types = the class itself + all supertypes + all interfaces + Object.
      */
     Set<TypeInfo> computeBeanTypes(ClassInfo classInfo) {
+        // CDI spec: @Typed restricts the bean types to the specified types + Object
+        var typedAnn = classInfo.annotations().stream()
+                .filter(a -> a.name().equals(TYPED))
+                .findFirst();
+        if (typedAnn.isPresent()) {
+            var restrictedTypes = new LinkedHashSet<TypeInfo>();
+            var value = typedAnn.get().member("value");
+            if (value instanceof fr.vidocq.vauban.indexer.model.AnnotationValue.ArrayVal av) {
+                for (var v : av.values()) {
+                    if (v instanceof fr.vidocq.vauban.indexer.model.AnnotationValue.ClassVal cv) {
+                        restrictedTypes.add(new TypeInfo.ClassType(cv.className()));
+                    }
+                }
+            } else if (value instanceof fr.vidocq.vauban.indexer.model.AnnotationValue.ClassVal cv) {
+                restrictedTypes.add(new TypeInfo.ClassType(cv.className()));
+            }
+            restrictedTypes.add(new TypeInfo.ClassType(DotName.of("java.lang.Object")));
+            return restrictedTypes;
+        }
         var types = new LinkedHashSet<TypeInfo>();
         collectBeanTypes(classInfo.name(), types);
         types.add(new TypeInfo.ClassType(DotName.of("java.lang.Object")));
@@ -276,6 +296,28 @@ public final class BeanDiscovery {
         }
         types.add(new TypeInfo.ClassType(DotName.of("java.lang.Object")));
         return types;
+    }
+
+    Set<TypeInfo> computeProducerTypesWithTyped(TypeInfo producerType, List<AnnotationInfo> annotations) {
+        var typedAnn = annotations.stream()
+                .filter(a -> a.name().equals(TYPED))
+                .findFirst();
+        if (typedAnn.isPresent()) {
+            var restrictedTypes = new LinkedHashSet<TypeInfo>();
+            var value = typedAnn.get().member("value");
+            if (value instanceof fr.vidocq.vauban.indexer.model.AnnotationValue.ArrayVal av) {
+                for (var v : av.values()) {
+                    if (v instanceof fr.vidocq.vauban.indexer.model.AnnotationValue.ClassVal cv) {
+                        restrictedTypes.add(new TypeInfo.ClassType(cv.className()));
+                    }
+                }
+            } else if (value instanceof fr.vidocq.vauban.indexer.model.AnnotationValue.ClassVal cv) {
+                restrictedTypes.add(new TypeInfo.ClassType(cv.className()));
+            }
+            restrictedTypes.add(new TypeInfo.ClassType(DotName.of("java.lang.Object")));
+            return restrictedTypes;
+        }
+        return computeProducerTypes(producerType);
     }
 
     Set<QualifierInstance> computeQualifiers(List<AnnotationInfo> annotations) {
