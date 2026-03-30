@@ -7,8 +7,8 @@
 | Metrique | Valeur |
 |----------|--------|
 | Tests CDI Lite | ~769 (non-skippes) |
-| **Passes** | **~354 (46.0%)** |
-| Echoues | ~415 |
+| **Passes** | **~362 (47.0%)** |
+| Echoues | ~407 |
 | Erreurs | 0 |
 | Temps | ~5s |
 
@@ -17,13 +17,10 @@
 ```
 Debut     ██████░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░   ~12%
 Session 1 ██████████████████████████████████████░░░░░░  38.2% (+200)
-Session 2 ██████████████████████████████████████████░░  45.4% (+58)
-Session 3 ████████████████████████████████████████████  46.0% (+9)
+Session 2 ████████████████████████████████████████████  47.0% (+71)
 ```
 
 ## Commande
 ```bash
 mvn install -DskipTests -q && mvn test -pl vauban-tck-runner -Ptck
 ```
-
-## Tests propres Vauban : ~225 (tous verts)
