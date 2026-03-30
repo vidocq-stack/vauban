@@ -7,8 +7,8 @@
 | Metrique | Valeur |
 |----------|--------|
 | Tests CDI Lite | ~769 (non-skippes) |
-| **Passes** | **~393 (51.1%)** |
-| Echoues | ~376 |
+| **Passes** | **~403 (52.4%)** |
+| Echoues | ~366 |
 | Erreurs | 0 |
 | Temps | ~5s |
 
@@ -17,14 +17,8 @@
 ```
 Debut     ██████░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░   ~12%
 Session 1 ██████████████████████████████████████░░░░░░  38.2% (+200)
-Session 2 █████████████████████████████████████████████████ 51.1% (+102)
+Session 2 ████████████████████████████████████████████████████ 52.4% (+112)
 ```
-
-## Fonctionnalites implementees cette session
-- Intercepteurs runtime via Class-File API (@AroundInvoke)
-- Client proxies runtime via Class-File API (fondation)
-- @Repeatable qualifiers
-- EventMetadata/InjectionPoint dans resolveParameter
 
 ## Commande
 ```bash
