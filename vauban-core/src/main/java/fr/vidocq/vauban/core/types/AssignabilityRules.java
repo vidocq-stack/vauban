@@ -29,9 +29,34 @@ public final class AssignabilityRules {
      * Checks if {@code beanType} is assignable to {@code requiredType}
      * following CDI assignability rules.
      */
+    private static final java.util.Map<String, DotName> PRIMITIVE_TO_WRAPPER = java.util.Map.of(
+            "BOOLEAN", DotName.of("java.lang.Boolean"),
+            "BYTE", DotName.of("java.lang.Byte"),
+            "CHAR", DotName.of("java.lang.Character"),
+            "SHORT", DotName.of("java.lang.Short"),
+            "INT", DotName.of("java.lang.Integer"),
+            "LONG", DotName.of("java.lang.Long"),
+            "FLOAT", DotName.of("java.lang.Float"),
+            "DOUBLE", DotName.of("java.lang.Double")
+    );
+
     public boolean isAssignable(TypeInfo beanType, TypeInfo requiredType) {
         // Same type
         if (beanType.equals(requiredType)) return true;
+
+        // CDI spec: primitive types and their wrappers are considered identical
+        if (requiredType instanceof PrimitiveType rp) {
+            var wrapperName = PRIMITIVE_TO_WRAPPER.get(rp.kind().name());
+            if (wrapperName != null) {
+                if (beanType instanceof ClassType bc && bc.name().equals(wrapperName)) return true;
+            }
+        }
+        if (beanType instanceof PrimitiveType bp) {
+            var wrapperName = PRIMITIVE_TO_WRAPPER.get(bp.kind().name());
+            if (wrapperName != null) {
+                if (requiredType instanceof ClassType rc && rc.name().equals(wrapperName)) return true;
+            }
+        }
 
         return switch (requiredType) {
             case ClassType req -> isAssignableToClass(beanType, req);
