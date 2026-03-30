@@ -135,8 +135,12 @@ public final class VaubanBeanManager implements BeanManager {
                 }
             }
             if (typeMatch) {
-                // Built-in beans have @Default and @Any qualifiers
-                if (requiredQualifiers.contains(jakarta.enterprise.inject.Any.class) ||
+                // CDI spec: Event<T> and Instance<T> are available with any qualifier
+                // Other built-in beans match @Default and @Any only
+                var builtInClass = builtIn.getBeanClass();
+                if (builtInClass == Event.class || builtInClass == Instance.class) {
+                    result.add(builtIn);
+                } else if (requiredQualifiers.contains(jakarta.enterprise.inject.Any.class) ||
                     requiredQualifiers.contains(jakarta.enterprise.inject.Default.class)) {
                     result.add(builtIn);
                 }
