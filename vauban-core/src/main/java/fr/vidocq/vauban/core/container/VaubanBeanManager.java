@@ -622,8 +622,11 @@ public final class VaubanBeanManager implements BeanManager {
                 throw new IllegalArgumentException("Not a qualifier: " + q.annotationType());
             }
         }
-        if (observedEventType instanceof java.lang.reflect.TypeVariable<?>) {
-            throw new IllegalArgumentException("Observed event type cannot be a type variable");
+        if (containsTypeVariable(specifiedType)) {
+            throw new IllegalArgumentException("Specified event type cannot contain a type variable");
+        }
+        if (containsTypeVariable(observedEventType)) {
+            throw new IllegalArgumentException("Observed event type cannot contain a type variable");
         }
 
         // Type matching: observed type must be assignable from specified type
@@ -693,6 +696,23 @@ public final class VaubanBeanManager implements BeanManager {
     private static boolean isPrimitiveWrapperMatch(Class<?> a, Class<?> b) {
         if (a.isPrimitive()) return b == primitiveToWrapper(a);
         if (b.isPrimitive()) return a == primitiveToWrapper(b);
+        return false;
+    }
+
+    private static boolean containsTypeVariable(Type type) {
+        if (type instanceof java.lang.reflect.TypeVariable<?>) return true;
+        if (type instanceof java.lang.reflect.ParameterizedType pt) {
+            for (var arg : pt.getActualTypeArguments()) {
+                if (containsTypeVariable(arg)) return true;
+            }
+        }
+        if (type instanceof java.lang.reflect.GenericArrayType gat) {
+            return containsTypeVariable(gat.getGenericComponentType());
+        }
+        if (type instanceof java.lang.reflect.WildcardType wt) {
+            for (var b : wt.getUpperBounds()) if (containsTypeVariable(b)) return true;
+            for (var b : wt.getLowerBounds()) if (containsTypeVariable(b)) return true;
+        }
         return false;
     }
 
