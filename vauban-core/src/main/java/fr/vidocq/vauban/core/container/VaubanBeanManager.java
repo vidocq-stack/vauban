@@ -380,7 +380,10 @@ public final class VaubanBeanManager implements BeanManager {
             }
             result.add(new VaubanObserverMethod(descriptor, eventDispatcher, declaringBean));
         }
-        return result;
+        // CDI spec: resolveObserverMethods returns observers ordered by priority
+        var sorted = new java.util.ArrayList<>(result);
+        sorted.sort(Comparator.comparingInt(om -> ((ObserverMethod<?>) om).getPriority()));
+        return new LinkedHashSet<>(sorted);
     }
 
     @Override
