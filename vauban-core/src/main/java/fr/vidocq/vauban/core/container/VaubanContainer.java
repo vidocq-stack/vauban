@@ -121,6 +121,7 @@ public final class VaubanContainer implements AutoCloseable {
         // Wrap intercepted beans with generated subclasses
         wrapInterceptedBeans(descriptors, factories);
 
+
         // Wire up field injection on each bean
         for (var bean : beans.values()) {
             bean.setInjector(instance -> injectFields(instance, bean.descriptor()));
@@ -394,6 +395,9 @@ public final class VaubanContainer implements AutoCloseable {
             }
             try {
                 beanClass = Class.forName(descriptor.beanClass().value());
+
+                // Set the ClassLoader for interceptor class loading
+                interceptorManager.setClassLoader(beanClass.getClassLoader());
 
                 // Check if there are matching interceptors
                 var chain = interceptorManager.resolveChain(bindings);

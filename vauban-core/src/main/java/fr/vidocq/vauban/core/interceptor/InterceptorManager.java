@@ -72,10 +72,23 @@ public final class InterceptorManager {
         return bindings;
     }
 
+    /**
+     * Set a ClassLoader to use for loading interceptor classes.
+     * Required when beans are loaded by a custom ClassLoader (e.g., TCK).
+     */
+    public void setClassLoader(ClassLoader classLoader) {
+        this.classLoader = classLoader;
+    }
+
+    private ClassLoader classLoader;
+
     private Object getOrCreateInstance(InterceptorDescriptor descriptor) {
         return interceptorInstances.computeIfAbsent(descriptor.interceptorClass(), name -> {
             try {
-                var clazz = Class.forName(name.value());
+                var cl = classLoader != null ? classLoader
+                        : Thread.currentThread().getContextClassLoader();
+                var clazz = cl != null ? Class.forName(name.value(), true, cl)
+                                       : Class.forName(name.value());
                 return clazz.getDeclaredConstructor().newInstance();
             } catch (Exception e) {
                 throw new RuntimeException("Failed to create interceptor: " + name, e);
