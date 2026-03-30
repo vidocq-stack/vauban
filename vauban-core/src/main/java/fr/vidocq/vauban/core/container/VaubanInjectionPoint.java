@@ -31,7 +31,7 @@ public final class VaubanInjectionPoint implements InjectionPoint {
         this.qualifiers = extractQualifiers(field);
         this.bean = bean;
         this.member = field;
-        this.annotated = null;
+        this.annotated = new SimpleAnnotatedField(field);
     }
 
     /**
@@ -100,5 +100,50 @@ public final class VaubanInjectionPoint implements InjectionPoint {
     @Override
     public String toString() {
         return "VaubanInjectionPoint{type=" + type + ", member=" + member + "}";
+    }
+
+    /**
+     * Minimal Annotated implementation for injection point metadata.
+     */
+    private static final class SimpleAnnotatedField implements jakarta.enterprise.inject.spi.AnnotatedField<Object> {
+        private final Field field;
+
+        SimpleAnnotatedField(Field field) {
+            this.field = field;
+        }
+
+        @Override public Field getJavaMember() { return field; }
+        @Override public boolean isStatic() { return Modifier.isStatic(field.getModifiers()); }
+        @Override public Type getBaseType() { return field.getGenericType(); }
+
+        @Override
+        public Set<Type> getTypeClosure() {
+            var types = new java.util.LinkedHashSet<Type>();
+            types.add(field.getGenericType());
+            types.add(Object.class);
+            return types;
+        }
+
+        @Override
+        @SuppressWarnings("unchecked")
+        public <T extends Annotation> T getAnnotation(Class<T> annotationType) {
+            return field.getAnnotation(annotationType);
+        }
+
+        @Override
+        public Set<Annotation> getAnnotations() {
+            return Set.of(field.getAnnotations());
+        }
+
+        @Override
+        public boolean isAnnotationPresent(Class<? extends Annotation> annotationType) {
+            return field.isAnnotationPresent(annotationType);
+        }
+
+        @Override
+        @SuppressWarnings("unchecked")
+        public jakarta.enterprise.inject.spi.AnnotatedType<Object> getDeclaringType() {
+            return null; // Not yet implemented
+        }
     }
 }
