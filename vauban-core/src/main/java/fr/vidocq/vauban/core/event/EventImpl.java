@@ -121,6 +121,12 @@ public final class EventImpl<T> implements Event<T> {
                 throw new IllegalArgumentException(
                         q.annotationType().getName() + " is not a qualifier");
             }
+            // CDI spec: qualifier must have @Retention(RUNTIME)
+            var retention = q.annotationType().getAnnotation(java.lang.annotation.Retention.class);
+            if (retention == null || retention.value() != java.lang.annotation.RetentionPolicy.RUNTIME) {
+                throw new IllegalArgumentException(
+                        q.annotationType().getName() + " does not have @Retention(RUNTIME)");
+            }
             if (!seen.add(q.annotationType())) {
                 throw new IllegalArgumentException(
                         "Duplicate qualifier: " + q.annotationType().getName());
