@@ -31,6 +31,9 @@ public final class DeploymentValidator {
         for (var bean : beans) {
             for (var ip : bean.injectionPoints()) {
                 if (isBuiltInType(ip)) continue;
+                // Skip parameterized type validation — our bytecode index doesn't
+                // track generic type arguments, so resolution would be incorrect
+                if (ip.requiredType() instanceof TypeInfo.ParameterizedType) continue;
                 var result = resolver.resolveInjectionPoint(ip);
                 switch (result.status()) {
                     case UNSATISFIED -> errors.add(new ValidationError(
