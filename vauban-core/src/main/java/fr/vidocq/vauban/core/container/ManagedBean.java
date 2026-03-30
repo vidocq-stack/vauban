@@ -272,25 +272,62 @@ public final class ManagedBean<T> implements Bean<T> {
 
     @Override
     public Set<InjectionPoint> getInjectionPoints() {
+        // Use reflection to get accurate generic types for injection points
         var result = new LinkedHashSet<InjectionPoint>();
-        for (var ip : descriptor.injectionPoints()) {
-            // Convert InjectionPointInfo to a CDI InjectionPoint
-            java.lang.reflect.Type type;
-            try {
-                if (ip.requiredType() instanceof fr.vidocq.vauban.indexer.model.TypeInfo.ClassType ct) {
-                    type = Class.forName(ct.name().value());
-                } else if (ip.requiredType() instanceof fr.vidocq.vauban.indexer.model.TypeInfo.ParameterizedType pt) {
-                    type = Class.forName(pt.rawType().value());
-                } else {
-                    continue;
+        try {
+            // Scan fields
+            Class<?> cls = beanClass;
+            while (cls != null && cls != Object.class) {
+                for (var field : cls.getDeclaredFields()) {
+                    if (field.isAnnotationPresent(jakarta.inject.Inject.class)) {
+                        result.add(new VaubanInjectionPoint(field, this));
+                    }
                 }
-            } catch (ClassNotFoundException e) {
-                continue;
+                cls = cls.getSuperclass();
             }
-            var qualifiers = QualifierUtils.toAnnotations(ip.qualifiers(), null);
-            result.add(new VaubanInjectionPoint(type, qualifiers, this));
+            // Scan @Inject constructor
+            for (var ctor : beanClass.getDeclaredConstructors()) {
+                if (ctor.isAnnotationPresent(jakarta.inject.Inject.class)) {
+                    var paramTypes = ctor.getGenericParameterTypes();
+                    var params = ctor.getParameters();
+                    for (int i = 0; i < params.length; i++) {
+                        var qualifiers = extractParamQualifiers(params[i]);
+                        result.add(new VaubanInjectionPoint(paramTypes[i], qualifiers, this));
+                    }
+                }
+            }
+            // Scan @Inject initializer methods
+            for (var method : beanClass.getDeclaredMethods()) {
+                if (method.isAnnotationPresent(jakarta.inject.Inject.class)) {
+                    var paramTypes = method.getGenericParameterTypes();
+                    var params = method.getParameters();
+                    for (int i = 0; i < params.length; i++) {
+                        var qualifiers = extractParamQualifiers(params[i]);
+                        result.add(new VaubanInjectionPoint(paramTypes[i], qualifiers, this));
+                    }
+                }
+            }
+        } catch (Exception e) {
+            // Fallback to empty set
         }
         return result;
+    }
+
+    private static Set<java.lang.annotation.Annotation> extractParamQualifiers(java.lang.reflect.Parameter param) {
+        var qualifiers = new LinkedHashSet<java.lang.annotation.Annotation>();
+        for (var ann : param.getAnnotations()) {
+            if (ann.annotationType().isAnnotationPresent(jakarta.inject.Qualifier.class)
+                    || ann.annotationType() == jakarta.enterprise.inject.Default.class
+                    || ann.annotationType() == jakarta.enterprise.inject.Any.class
+                    || ann.annotationType() == jakarta.inject.Named.class) {
+                qualifiers.add(ann);
+            }
+        }
+        if (qualifiers.isEmpty()) {
+            qualifiers.add(jakarta.enterprise.inject.Default.Literal.INSTANCE);
+        }
+        qualifiers.add(jakarta.enterprise.inject.Any.Literal.INSTANCE);
+        return qualifiers;
     }
 
     public BeanDescriptor descriptor() {
