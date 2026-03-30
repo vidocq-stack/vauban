@@ -213,12 +213,16 @@ class VaubanContainerTest {
     public static class LifecycleBean {
         public boolean postConstructCalled;
         public boolean preDestroyCalled;
+        public static boolean preDestroyCalledStatic;
 
         @jakarta.annotation.PostConstruct
         public void init() { postConstructCalled = true; }
 
         @jakarta.annotation.PreDestroy
-        public void cleanup() { preDestroyCalled = true; }
+        public void cleanup() { preDestroyCalled = true; preDestroyCalledStatic = true; }
+
+        public boolean isPostConstructCalled() { return postConstructCalled; }
+        public boolean isPreDestroyCalled() { return preDestroyCalled; }
     }
 
     @ApplicationScoped
@@ -227,6 +231,8 @@ class VaubanContainerTest {
 
         @Inject
         public void setRepo(Repository repo) { this.repo = repo; }
+
+        public Repository getRepo() { return repo; }
     }
 
     @Nested
@@ -240,21 +246,23 @@ class VaubanContainerTest {
                     .addBeanClass(LifecycleBean.class)
                     .build()) {
                 var bean = container.select(LifecycleBean.class);
-                assertTrue(bean.postConstructCalled);
+                assertTrue(bean.isPostConstructCalled());
             }
         }
 
         @Test
         @DisplayName("appelle @PreDestroy a la fermeture du conteneur")
         void shouldCallPreDestroy() {
-            LifecycleBean bean;
+            // Use a static flag to verify @PreDestroy was called
+            // (proxy becomes invalid after container close)
+            LifecycleBean.preDestroyCalledStatic = false;
             try (var container = VaubanContainer.builder()
                     .addBeanClass(LifecycleBean.class)
                     .build()) {
-                bean = container.select(LifecycleBean.class);
-                assertFalse(bean.preDestroyCalled);
+                var bean = container.select(LifecycleBean.class);
+                assertFalse(LifecycleBean.preDestroyCalledStatic);
             }
-            assertTrue(bean.preDestroyCalled);
+            assertTrue(LifecycleBean.preDestroyCalledStatic);
         }
 
         @Test
@@ -265,7 +273,7 @@ class VaubanContainerTest {
                     .addBeanClass(Repository.class)
                     .build()) {
                 var bean = container.select(InitMethodBean.class);
-                assertNotNull(bean.repo);
+                assertNotNull(bean.getRepo());
             }
         }
     }

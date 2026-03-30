@@ -174,8 +174,7 @@ public final class VaubanContainer implements AutoCloseable {
         // tests that access fields directly on the bean instance
         if (bean.descriptor().scope().isNormal()
                 && bean.descriptor().kind() == fr.vidocq.vauban.core.bean.model.BeanDescriptor.BeanKind.MANAGED
-                && !Modifier.isFinal(bean.getBeanClass().getModifiers())
-                && bean.getBeanClass().getClassLoader() != VaubanContainer.class.getClassLoader()) {
+                && !Modifier.isFinal(bean.getBeanClass().getModifiers())) {
             return getOrCreateProxy(bean);
         }
         return context.get((Contextual<T>) bean, new CreationalContextImpl<>());

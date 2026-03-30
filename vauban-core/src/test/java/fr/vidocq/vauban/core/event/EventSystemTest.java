@@ -30,6 +30,8 @@ class EventSystemTest {
         public void onOrderCreated(@Observes OrderCreated event) {
             lastOrderId = event.orderId;
         }
+
+        public String getLastOrderId() { return lastOrderId; }
     }
 
     // Producer bean that fires events
@@ -50,6 +52,8 @@ class EventSystemTest {
         public void onOrder(@Observes OrderCreated event) {
             audited = true;
         }
+
+        public boolean isAudited() { return audited; }
     }
 
     @Test
@@ -65,7 +69,7 @@ class EventSystemTest {
 
             service.createOrder("ORD-001");
 
-            assertEquals("ORD-001", listener.lastOrderId);
+            assertEquals("ORD-001", listener.getLastOrderId());
         }
     }
 
@@ -97,7 +101,7 @@ class EventSystemTest {
             service.createOrder("ORD-003");
 
             assertEquals("ORD-003", orderListener.lastOrderId);
-            assertTrue(auditListener.audited);
+            assertTrue(auditListener.isAudited());
         }
     }
 }
