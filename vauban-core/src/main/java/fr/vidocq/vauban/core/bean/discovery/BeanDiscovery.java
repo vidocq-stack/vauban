@@ -239,7 +239,7 @@ public final class BeanDiscovery {
         var scope = computeScopeWithStereotypes(field.annotations());
         var isAlternative = hasAnnotation(field.annotations(), ALTERNATIVE);
         var priority = extractPriority(field.annotations());
-        var name = extractName(field.annotations(), null);
+        var name = extractName(field.annotations(), field.name());
 
         return new BeanDescriptor(id, declaringClass.name(), BeanDescriptor.BeanKind.PRODUCER_FIELD,
                 types, qualifiers, scope, isAlternative, priority, List.of(), name);
