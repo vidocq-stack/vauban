@@ -118,6 +118,9 @@ public final class VaubanContainer implements AutoCloseable {
         this.eventDispatcher = new EventDispatcher(observers, this);
         this.interceptorManager = new InterceptorManager(interceptorDescriptors);
 
+        // Wrap intercepted beans with generated subclasses
+        wrapInterceptedBeans(descriptors, factories);
+
         // Wire up field injection on each bean
         for (var bean : beans.values()) {
             bean.setInjector(instance -> injectFields(instance, bean.descriptor()));
@@ -359,6 +362,63 @@ public final class VaubanContainer implements AutoCloseable {
                 }
             }
             clazz = clazz.getSuperclass();
+        }
+    }
+
+    /**
+     * For beans with interceptor bindings, generate an intercepted subclass
+     * and replace the factory so instances are intercepted at runtime.
+     */
+    private void wrapInterceptedBeans(List<BeanDescriptor> descriptors,
+                                       Map<DotName, BeanFactory<?>> factories) {
+        for (var descriptor : descriptors) {
+            if (descriptor.kind() != BeanDescriptor.BeanKind.MANAGED) continue;
+            if (descriptor.interceptorBindings().isEmpty()) continue;
+
+            var bean = beans.get(descriptor.id());
+            if (bean == null) continue;
+
+            try {
+                var beanClass = Class.forName(descriptor.beanClass().value());
+                var bindings = descriptor.interceptorBindings();
+
+                // Check if there are matching interceptors
+                var chain = interceptorManager.resolveChain(bindings);
+                if (chain.isEmpty()) continue;
+
+                // Generate the intercepted subclass
+                var generated = fr.vidocq.vauban.core.interceptor.InterceptorSubclassGenerator
+                        .generate(beanClass, bindings);
+
+                // Load the generated class
+                var lookup = java.lang.invoke.MethodHandles.privateLookupIn(beanClass,
+                        java.lang.invoke.MethodHandles.lookup());
+                var interceptedClass = lookup.defineClass(generated.bytecode());
+
+                // Replace the factory
+                var mgr = this.interceptorManager;
+                var bds = bindings;
+                BeanFactory<?> interceptedFactory = () -> {
+                    try {
+                        var instance = interceptedClass.getDeclaredConstructor().newInstance();
+                        // Initialize the interceptor fields
+                        var initMethod = interceptedClass.getMethod("$$init",
+                                fr.vidocq.vauban.core.interceptor.InterceptorManager.class,
+                                java.util.Set.class);
+                        initMethod.invoke(instance, mgr, bds);
+                        return instance;
+                    } catch (Exception e) {
+                        throw new jakarta.enterprise.inject.CreationException(
+                                "Failed to create intercepted bean: " + interceptedClass.getName(), e);
+                    }
+                };
+
+                // Update the bean with the new factory
+                beans.put(descriptor.id(), new ManagedBean<>(descriptor, interceptedFactory));
+            } catch (Exception e) {
+                // If interception setup fails, keep the original factory
+                
+            }
         }
     }
 

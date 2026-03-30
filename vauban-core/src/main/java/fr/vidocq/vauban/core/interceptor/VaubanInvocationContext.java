@@ -20,13 +20,28 @@ public final class VaubanInvocationContext implements InvocationContext {
     private final List<InterceptorInvocation> chain;
     private int currentIndex = -1;
     private final Map<String, Object> contextData = new HashMap<>();
+    private final TargetInvoker targetInvoker;
+
+    /**
+     * Functional interface for the final target invocation (to support super calls).
+     */
+    @FunctionalInterface
+    public interface TargetInvoker {
+        Object invoke(Object target, Object[] params) throws Exception;
+    }
 
     public VaubanInvocationContext(Object target, Method method, Object[] parameters,
                                    List<InterceptorInvocation> chain) {
+        this(target, method, parameters, chain, null);
+    }
+
+    public VaubanInvocationContext(Object target, Method method, Object[] parameters,
+                                   List<InterceptorInvocation> chain, TargetInvoker targetInvoker) {
         this.target = target;
         this.method = method;
         this.parameters = parameters != null ? parameters.clone() : new Object[0];
         this.chain = chain;
+        this.targetInvoker = targetInvoker;
     }
 
     @Override
@@ -73,6 +88,9 @@ public final class VaubanInvocationContext implements InvocationContext {
             return invocation.invoke(this);
         } else {
             // End of chain — call the actual method
+            if (targetInvoker != null) {
+                return targetInvoker.invoke(target, parameters);
+            }
             return method.invoke(target, parameters);
         }
     }

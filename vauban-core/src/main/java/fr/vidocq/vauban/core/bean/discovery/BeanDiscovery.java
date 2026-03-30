@@ -190,10 +190,52 @@ public final class BeanDiscovery {
         var priority = extractPriorityWithStereotypes(classInfo);
         var injectionPoints = discoverInjectionPoints(classInfo);
         var name = extractNameWithStereotypes(classInfo);
+        var interceptorBindings = extractInterceptorBindings(classInfo);
 
         return new BeanDescriptor(id, classInfo.name(), BeanDescriptor.BeanKind.MANAGED,
-                types, qualifiers, scope, isAlternative, priority, injectionPoints, name);
+                types, qualifiers, scope, isAlternative, priority, injectionPoints, name,
+                interceptorBindings);
     }
+
+    /**
+     * Extract interceptor bindings from a class and its stereotypes.
+     * An interceptor binding is an annotation that is itself annotated with @InterceptorBinding.
+     */
+    private Set<DotName> extractInterceptorBindings(ClassInfo classInfo) {
+        var bindings = new java.util.LinkedHashSet<DotName>();
+        // Direct bindings on the class
+        for (var ann : classInfo.annotations()) {
+            if (isInterceptorBinding(ann.name())) {
+                bindings.add(ann.name());
+            }
+            // Bindings from stereotypes
+            if (isStereotype(ann.name())) {
+                var stereo = index.getClassByName(ann.name());
+                if (stereo.isPresent()) {
+                    for (var sa : stereo.get().annotations()) {
+                        if (isInterceptorBinding(sa.name())) {
+                            bindings.add(sa.name());
+                        }
+                    }
+                }
+            }
+        }
+        // Fallback: check via reflection for bindings not in the index
+        try {
+            var clazz = Class.forName(classInfo.name().value());
+            for (var ann : clazz.getAnnotations()) {
+                var annName = DotName.of(ann.annotationType().getName());
+                if (ann.annotationType().isAnnotationPresent(jakarta.interceptor.InterceptorBinding.class)) {
+                    bindings.add(annName);
+                }
+            }
+        } catch (ClassNotFoundException e) {
+            // skip
+        }
+        return bindings;
+    }
+
+    // isInterceptorBinding is defined below (line ~926)
 
     private BeanDescriptor buildProducerMethodBean(ClassInfo declaringClass, MethodInfo method) {
         var id = BeanId.ofProducerMethod(declaringClass.name(), method.name());
@@ -872,7 +914,16 @@ public final class BeanDiscovery {
      */
     public boolean isInterceptorBinding(DotName annotationName) {
         var annClass = index.getClassByName(annotationName);
-        return annClass.isPresent() && annClass.get().hasAnnotation(INTERCEPTOR_BINDING);
+        if (annClass.isPresent()) {
+            return annClass.get().hasAnnotation(INTERCEPTOR_BINDING);
+        }
+        // Fallback: check via reflection
+        try {
+            var annType = Class.forName(annotationName.value());
+            return annType.isAnnotationPresent(jakarta.interceptor.InterceptorBinding.class);
+        } catch (ClassNotFoundException e) {
+            return false;
+        }
     }
 
     private static boolean hasAnnotation(List<AnnotationInfo> annotations, DotName name) {
