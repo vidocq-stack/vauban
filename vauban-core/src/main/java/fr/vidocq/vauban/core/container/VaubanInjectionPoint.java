@@ -25,16 +25,24 @@ public final class VaubanInjectionPoint implements InjectionPoint {
 
     /**
      * Creates an InjectionPoint for a field injection.
-     *
-     * @param field the field where injection occurs
-     * @param bean  the bean that declares the injection point (the bean being injected INTO)
      */
     public VaubanInjectionPoint(Field field, Bean<?> bean) {
         this.type = field.getGenericType();
         this.qualifiers = extractQualifiers(field);
         this.bean = bean;
         this.member = field;
-        this.annotated = null; // Annotated support not yet needed for TCK
+        this.annotated = null;
+    }
+
+    /**
+     * Creates an InjectionPoint from type and qualifier metadata.
+     */
+    public VaubanInjectionPoint(Type type, Set<Annotation> qualifiers, Bean<?> bean) {
+        this.type = type;
+        this.qualifiers = Set.copyOf(qualifiers);
+        this.bean = bean;
+        this.member = null;
+        this.annotated = null;
     }
 
     @Override

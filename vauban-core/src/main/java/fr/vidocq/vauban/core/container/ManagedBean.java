@@ -272,7 +272,25 @@ public final class ManagedBean<T> implements Bean<T> {
 
     @Override
     public Set<InjectionPoint> getInjectionPoints() {
-        return Set.of();
+        var result = new LinkedHashSet<InjectionPoint>();
+        for (var ip : descriptor.injectionPoints()) {
+            // Convert InjectionPointInfo to a CDI InjectionPoint
+            java.lang.reflect.Type type;
+            try {
+                if (ip.requiredType() instanceof fr.vidocq.vauban.indexer.model.TypeInfo.ClassType ct) {
+                    type = Class.forName(ct.name().value());
+                } else if (ip.requiredType() instanceof fr.vidocq.vauban.indexer.model.TypeInfo.ParameterizedType pt) {
+                    type = Class.forName(pt.rawType().value());
+                } else {
+                    continue;
+                }
+            } catch (ClassNotFoundException e) {
+                continue;
+            }
+            var qualifiers = QualifierUtils.toAnnotations(ip.qualifiers(), null);
+            result.add(new VaubanInjectionPoint(type, qualifiers, this));
+        }
+        return result;
     }
 
     public BeanDescriptor descriptor() {
