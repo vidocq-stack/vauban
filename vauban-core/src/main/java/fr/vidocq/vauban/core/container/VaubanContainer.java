@@ -548,6 +548,19 @@ public final class VaubanContainer implements AutoCloseable {
         };
     }
 
+    @SuppressWarnings("unchecked")
+    private static <T> Class<T> primitiveToWrapper(Class<T> type) {
+        if (type == boolean.class) return (Class<T>) Boolean.class;
+        if (type == byte.class) return (Class<T>) Byte.class;
+        if (type == char.class) return (Class<T>) Character.class;
+        if (type == short.class) return (Class<T>) Short.class;
+        if (type == int.class) return (Class<T>) Integer.class;
+        if (type == long.class) return (Class<T>) Long.class;
+        if (type == float.class) return (Class<T>) Float.class;
+        if (type == double.class) return (Class<T>) Double.class;
+        return type;
+    }
+
     private static java.lang.annotation.Annotation[] extractFieldQualifiers(java.lang.reflect.Field field) {
         var qualifiers = new java.util.ArrayList<java.lang.annotation.Annotation>();
         for (var ann : field.getAnnotations()) {
