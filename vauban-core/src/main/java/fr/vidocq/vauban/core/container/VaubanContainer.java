@@ -413,12 +413,14 @@ public final class VaubanContainer implements AutoCloseable {
     private void callDisposer(Object producedInstance, DisposerDescriptor disposer) {
         try {
             var declaringClass = Class.forName(disposer.declaringClass().value());
-            var declaringInstance = select(declaringClass);
 
             for (var method : declaringClass.getDeclaredMethods()) {
                 if (method.getName().equals(disposer.methodName())
                         && method.getParameterCount() > disposer.parameterIndex()) {
                     method.setAccessible(true);
+                    // For static disposer methods, no declaring instance needed
+                    var declaringInstance = java.lang.reflect.Modifier.isStatic(method.getModifiers())
+                            ? null : select(declaringClass);
                     // Build args - the @Disposes param gets the produced instance, others are injection points
                     var paramTypes = method.getParameterTypes();
                     var args = new Object[method.getParameterCount()];
