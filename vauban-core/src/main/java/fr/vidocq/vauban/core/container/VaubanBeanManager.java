@@ -113,12 +113,15 @@ public final class VaubanBeanManager implements BeanManager {
         var result = new LinkedHashSet<Bean<?>>();
 
         // Determine required qualifiers: if none specified, CDI uses @Default
+        Set<Annotation> requiredQualifierAnnotations = new LinkedHashSet<>();
         Set<Class<? extends Annotation>> requiredQualifiers = new LinkedHashSet<>();
         if (qualifiers == null || qualifiers.length == 0) {
             requiredQualifiers.add(jakarta.enterprise.inject.Default.class);
+            requiredQualifierAnnotations.add(jakarta.enterprise.inject.Default.Literal.INSTANCE);
         } else {
             for (var q : qualifiers) {
                 requiredQualifiers.add(q.annotationType());
+                requiredQualifierAnnotations.add(q);
             }
         }
 
@@ -159,12 +162,13 @@ public final class VaubanBeanManager implements BeanManager {
             }
 
             // Check if bean has all required qualifiers via bean.getQualifiers()
+            // CDI spec: qualifier matching considers member values (except @Nonbinding)
             {
                 var beanQualifiers = bean.getQualifiers();
                 boolean qualifiersMatch = true;
-                for (var reqQualClass : requiredQualifiers) {
+                for (var reqAnn : requiredQualifierAnnotations) {
                     boolean found = beanQualifiers.stream()
-                        .anyMatch(bq -> bq.annotationType().equals(reqQualClass));
+                        .anyMatch(bq -> qualifierEquals(bq, reqAnn));
                     if (!found) {
                         qualifiersMatch = false;
                         break;
@@ -690,5 +694,28 @@ public final class VaubanBeanManager implements BeanManager {
         if (primitive == short.class) return Short.class;
         if (primitive == void.class) return Void.class;
         return primitive;
+    }
+
+    /**
+     * CDI qualifier matching: two qualifiers are equal if they have the same type
+     * and all non-@Nonbinding members have the same values.
+     */
+    private static boolean qualifierEquals(Annotation a, Annotation b) {
+        if (!a.annotationType().equals(b.annotationType())) return false;
+        // If annotation has no members, type equality is sufficient
+        var methods = a.annotationType().getDeclaredMethods();
+        if (methods.length == 0) return true;
+        // Compare all non-@Nonbinding members
+        try {
+            for (var method : methods) {
+                if (method.isAnnotationPresent(jakarta.enterprise.util.Nonbinding.class)) continue;
+                var valA = method.invoke(a);
+                var valB = method.invoke(b);
+                if (!java.util.Objects.deepEquals(valA, valB)) return false;
+            }
+        } catch (Exception e) {
+            return a.equals(b);
+        }
+        return true;
     }
 }
