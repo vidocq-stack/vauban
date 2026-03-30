@@ -11,8 +11,8 @@ import org.jboss.cdi.tck.spi.Beans;
 public class VaubanBeans implements Beans {
     @Override
     public boolean isProxy(Object instance) {
-        // Check if the instance's class name ends with _ClientProxy
-        return instance != null && instance.getClass().getName().endsWith("_ClientProxy");
+        // Check if the instance's class name contains _ClientProxy (with optional counter suffix)
+        return instance != null && instance.getClass().getName().contains("_ClientProxy");
     }
 
     @Override

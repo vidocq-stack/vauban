@@ -24,6 +24,9 @@ public final class RuntimeClientProxyGenerator {
     private static final ClassDesc CD_Supplier = ClassDesc.of("java.util.function.Supplier");
     private static final ClassDesc CD_Object = ConstantDescs.CD_Object;
 
+    private static final java.util.concurrent.atomic.AtomicLong PROXY_COUNTER =
+            new java.util.concurrent.atomic.AtomicLong();
+
     private RuntimeClientProxyGenerator() {}
 
     /**
@@ -33,7 +36,7 @@ public final class RuntimeClientProxyGenerator {
      * @return the generated class name and bytecode
      */
     public static GeneratedProxy generate(Class<?> beanClass) {
-        String proxyClassName = beanClass.getName() + "_ClientProxy";
+        String proxyClassName = beanClass.getName() + "_ClientProxy" + PROXY_COUNTER.incrementAndGet();
         ClassDesc proxyCD = ClassDesc.of(proxyClassName);
         ClassDesc beanCD = ClassDesc.of(beanClass.getName());
 
