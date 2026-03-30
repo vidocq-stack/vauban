@@ -244,7 +244,8 @@ public final class BeanDiscovery {
         var scope = computeScopeWithStereotypes(method.annotations());
         var isAlternative = hasAnnotation(method.annotations(), ALTERNATIVE) ||
                 method.annotations().stream().anyMatch(a -> isStereotype(a.name()) &&
-                        index.getClassByName(a.name()).map(c -> c.hasAnnotation(ALTERNATIVE)).orElse(false));
+                        index.getClassByName(a.name()).map(c -> c.hasAnnotation(ALTERNATIVE)).orElse(false))
+                || isAlternativeWithStereotypes(declaringClass);
         var priority = extractPriority(method.annotations());
         if (priority == 0) {
             for (var ann : method.annotations()) {
@@ -256,6 +257,10 @@ public final class BeanDiscovery {
                     }
                 }
             }
+        }
+        // Fallback to declaring class priority
+        if (priority == 0) {
+            priority = extractPriorityWithStereotypes(declaringClass);
         }
         var name = extractName(method.annotations(), deriveProducerMethodName(method.name()));
 
