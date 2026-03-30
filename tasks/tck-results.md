@@ -20,6 +20,8 @@ Session 1 ███████████████████████�
 Session 2 ██████████████████████████████████████████████ 50.8% (+100)
 ```
 
+## Intercepteurs runtime via Class-File API operationnels (@AroundInvoke)
+
 ## Commande
 ```bash
 mvn install -DskipTests -q && mvn test -pl vauban-tck-runner -Ptck
