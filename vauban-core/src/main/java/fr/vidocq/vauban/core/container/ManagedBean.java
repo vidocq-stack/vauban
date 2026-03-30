@@ -11,6 +11,7 @@ import jakarta.enterprise.inject.spi.InjectionPoint;
 import java.lang.annotation.Annotation;
 import java.lang.reflect.Type;
 import java.util.LinkedHashSet;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.function.Consumer;
@@ -200,55 +201,129 @@ public final class ManagedBean<T> implements Bean<T> {
     }
 
     private static void collectTypes(Class<?> clazz, Set<Type> types) {
+        collectTypesWithMapping(clazz, types, Map.of());
+    }
+
+    private static void collectTypesWithMapping(Class<?> clazz, Set<Type> types,
+            Map<java.lang.reflect.TypeVariable<?>, Type> typeMapping) {
         if (clazz == null || clazz == Object.class) return;
         types.add(clazz);
         // Superclass
         var genericSuper = clazz.getGenericSuperclass();
         if (genericSuper != null && genericSuper != Object.class) {
             if (genericSuper instanceof java.lang.reflect.ParameterizedType pt) {
-                // Add the parameterized type, then recurse WITHOUT adding the raw type again
-                types.add(pt);
-                collectTypesSkipSelf((Class<?>) pt.getRawType(), types);
+                // Resolve type arguments using the current mapping
+                var resolved = resolveParameterizedType(pt, typeMapping);
+                types.add(resolved);
+                // Build new mapping for the raw type's type parameters
+                var rawClass = (Class<?>) pt.getRawType();
+                var newMapping = buildTypeMapping(rawClass, resolved);
+                collectTypesWithMappingSkipSelf(rawClass, types, newMapping);
             } else if (genericSuper instanceof Class<?> c) {
-                collectTypes(c, types);
+                collectTypesWithMapping(c, types, typeMapping);
             }
         } else if (clazz.getSuperclass() != null) {
-            collectTypes(clazz.getSuperclass(), types);
+            collectTypesWithMapping(clazz.getSuperclass(), types, typeMapping);
         }
         // Interfaces
         for (var genericIface : clazz.getGenericInterfaces()) {
             if (genericIface instanceof java.lang.reflect.ParameterizedType pt) {
-                types.add(pt);
-                collectTypesSkipSelf((Class<?>) pt.getRawType(), types);
+                var resolved = resolveParameterizedType(pt, typeMapping);
+                types.add(resolved);
+                var rawClass = (Class<?>) pt.getRawType();
+                var newMapping = buildTypeMapping(rawClass, resolved);
+                collectTypesWithMappingSkipSelf(rawClass, types, newMapping);
             } else if (genericIface instanceof Class<?> c) {
-                collectTypes(c, types);
+                collectTypesWithMapping(c, types, typeMapping);
             }
         }
     }
 
-    private static void collectTypesSkipSelf(Class<?> clazz, Set<Type> types) {
-        // Recurse into superclass and interfaces WITHOUT adding clazz itself
-        // (because the ParameterizedType was already added by the caller)
+    private static void collectTypesWithMappingSkipSelf(Class<?> clazz, Set<Type> types,
+            Map<java.lang.reflect.TypeVariable<?>, Type> typeMapping) {
         if (clazz == null || clazz == Object.class) return;
         var genericSuper = clazz.getGenericSuperclass();
         if (genericSuper != null && genericSuper != Object.class) {
             if (genericSuper instanceof java.lang.reflect.ParameterizedType pt) {
-                types.add(pt);
-                collectTypesSkipSelf((Class<?>) pt.getRawType(), types);
+                var resolved = resolveParameterizedType(pt, typeMapping);
+                types.add(resolved);
+                var rawClass = (Class<?>) pt.getRawType();
+                var newMapping = buildTypeMapping(rawClass, resolved);
+                collectTypesWithMappingSkipSelf(rawClass, types, newMapping);
             } else if (genericSuper instanceof Class<?> c) {
-                collectTypes(c, types);
+                collectTypesWithMapping(c, types, typeMapping);
             }
         } else if (clazz.getSuperclass() != null) {
-            collectTypes(clazz.getSuperclass(), types);
+            collectTypesWithMapping(clazz.getSuperclass(), types, typeMapping);
         }
         for (var genericIface : clazz.getGenericInterfaces()) {
             if (genericIface instanceof java.lang.reflect.ParameterizedType pt) {
-                types.add(pt);
-                collectTypesSkipSelf((Class<?>) pt.getRawType(), types);
+                var resolved = resolveParameterizedType(pt, typeMapping);
+                types.add(resolved);
+                var rawClass = (Class<?>) pt.getRawType();
+                var newMapping = buildTypeMapping(rawClass, resolved);
+                collectTypesWithMappingSkipSelf(rawClass, types, newMapping);
             } else if (genericIface instanceof Class<?> c) {
-                collectTypes(c, types);
+                collectTypesWithMapping(c, types, typeMapping);
             }
         }
+    }
+
+    /**
+     * Resolve a ParameterizedType by substituting TypeVariables using the given mapping.
+     */
+    private static java.lang.reflect.ParameterizedType resolveParameterizedType(
+            java.lang.reflect.ParameterizedType pt,
+            Map<java.lang.reflect.TypeVariable<?>, Type> mapping) {
+        var args = pt.getActualTypeArguments();
+        var resolved = new Type[args.length];
+        boolean changed = false;
+        for (int i = 0; i < args.length; i++) {
+            if (args[i] instanceof java.lang.reflect.TypeVariable<?> tv && mapping.containsKey(tv)) {
+                resolved[i] = mapping.get(tv);
+                changed = true;
+            } else {
+                resolved[i] = args[i];
+            }
+        }
+        if (!changed) return pt;
+        // Create a new ParameterizedType with resolved arguments
+        var rawType = pt.getRawType();
+        var owner = pt.getOwnerType();
+        final Type[] finalResolved = resolved;
+        return new java.lang.reflect.ParameterizedType() {
+            @Override public Type[] getActualTypeArguments() { return finalResolved.clone(); }
+            @Override public Type getRawType() { return rawType; }
+            @Override public Type getOwnerType() { return owner; }
+            @Override public boolean equals(Object o) {
+                if (!(o instanceof java.lang.reflect.ParameterizedType other)) return false;
+                return rawType.equals(other.getRawType())
+                        && java.util.Arrays.equals(finalResolved, other.getActualTypeArguments());
+            }
+            @Override public int hashCode() {
+                return java.util.Arrays.hashCode(finalResolved) ^ rawType.hashCode();
+            }
+            @Override public String toString() {
+                return rawType.getTypeName() + "<" +
+                        java.util.Arrays.stream(finalResolved).map(Type::getTypeName)
+                                .collect(java.util.stream.Collectors.joining(", ")) + ">";
+            }
+        };
+    }
+
+    /**
+     * Build a mapping from TypeVariables to their actual type arguments.
+     */
+    private static Map<java.lang.reflect.TypeVariable<?>, Type> buildTypeMapping(
+            Class<?> rawClass, java.lang.reflect.ParameterizedType paramType) {
+        var typeParams = rawClass.getTypeParameters();
+        var typeArgs = paramType.getActualTypeArguments();
+        if (typeParams.length != typeArgs.length) return Map.of();
+        var mapping = new java.util.HashMap<java.lang.reflect.TypeVariable<?>, Type>();
+        for (int i = 0; i < typeParams.length; i++) {
+            mapping.put(typeParams[i], typeArgs[i]);
+        }
+        return mapping;
     }
 
     @Override
