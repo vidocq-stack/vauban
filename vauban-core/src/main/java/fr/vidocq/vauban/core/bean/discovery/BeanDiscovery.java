@@ -389,6 +389,16 @@ public final class BeanDiscovery {
                     var stereotypeName = extractName(stereotypeClass.get().annotations(),
                             decapitalize(classInfo.name().simpleName()));
                     if (stereotypeName != null) return stereotypeName;
+                } else {
+                    // Fallback: check via reflection if stereotype has @Named
+                    try {
+                        var annType = Class.forName(ann.name().value());
+                        if (annType.isAnnotationPresent(jakarta.inject.Named.class)) {
+                            return decapitalize(classInfo.name().simpleName());
+                        }
+                    } catch (ClassNotFoundException e) {
+                        // skip
+                    }
                 }
             }
         }
