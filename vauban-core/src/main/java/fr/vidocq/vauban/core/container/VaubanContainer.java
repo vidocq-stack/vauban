@@ -303,9 +303,24 @@ public final class VaubanContainer implements AutoCloseable {
                 try {
                     var paramTypes = method.getParameterTypes();
                     var genericParamTypes = method.getGenericParameterTypes();
+                    var params = method.getParameters();
                     var args = new Object[paramTypes.length];
                     for (int i = 0; i < paramTypes.length; i++) {
-                        args[i] = resolveParameter(paramTypes[i], genericParamTypes[i]);
+                        // Extract qualifiers from parameter annotations
+                        var paramQuals = extractParamQualifiers(params[i]);
+                        if (paramQuals.length > 0) {
+                            var bm = getBeanManager();
+                            var beans2 = bm.getBeans(paramTypes[i], paramQuals);
+                            if (!beans2.isEmpty()) {
+                                var resolved = bm.resolve(beans2);
+                                var ctx = bm.createCreationalContext(resolved);
+                                args[i] = bm.getReference(resolved, paramTypes[i], ctx);
+                            } else {
+                                args[i] = resolveParameter(paramTypes[i], genericParamTypes[i]);
+                            }
+                        } else {
+                            args[i] = resolveParameter(paramTypes[i], genericParamTypes[i]);
+                        }
                     }
                     method.invoke(instance, args);
                 } catch (Exception e) {
@@ -313,6 +328,20 @@ public final class VaubanContainer implements AutoCloseable {
                 }
             }
         }
+    }
+
+    private static java.lang.annotation.Annotation[] extractParamQualifiers(java.lang.reflect.Parameter param) {
+        var quals = new java.util.ArrayList<java.lang.annotation.Annotation>();
+        for (var ann : param.getAnnotations()) {
+            if (ann.annotationType() == jakarta.inject.Inject.class) continue;
+            if (ann.annotationType().isAnnotationPresent(jakarta.inject.Qualifier.class)
+                    || ann.annotationType() == jakarta.enterprise.inject.Default.class
+                    || ann.annotationType() == jakarta.enterprise.inject.Any.class
+                    || ann.annotationType() == jakarta.inject.Named.class) {
+                quals.add(ann);
+            }
+        }
+        return quals.toArray(new java.lang.annotation.Annotation[0]);
     }
 
     private void callPostConstruct(Object instance) {
@@ -474,6 +503,7 @@ public final class VaubanContainer implements AutoCloseable {
                 // Resolve each constructor parameter
                 var paramTypes = injectCtor.getParameterTypes();
                 var genericParamTypes = injectCtor.getGenericParameterTypes();
+                var ctorParamsRefl = injectCtor.getParameters();
                 var args = new Object[paramTypes.length];
                 for (int i = 0; i < paramTypes.length; i++) {
                     if (paramTypes[i] == Instance.class
@@ -486,12 +516,27 @@ public final class VaubanContainer implements AutoCloseable {
                             }
                         }
                         args[i] = new InstanceImpl<>(this, instanceType);
-                    } else if (paramTypes[i] == BeanManager.class) {
+                    } else if (BeanManager.class.isAssignableFrom(paramTypes[i])
+                            || paramTypes[i] == jakarta.enterprise.inject.spi.BeanContainer.class) {
                         args[i] = getBeanManager();
                     } else if (paramTypes[i] == Event.class) {
                         args[i] = new EventImpl<>(eventDispatcher);
                     } else {
-                        args[i] = resolveParameter(paramTypes[i], genericParamTypes[i]);
+                        // Try with qualifiers first
+                        var pQuals = extractParamQualifiers(ctorParamsRefl[i]);
+                        if (pQuals.length > 0) {
+                            var bm = getBeanManager();
+                            var beans2 = bm.getBeans(paramTypes[i], pQuals);
+                            if (!beans2.isEmpty()) {
+                                var resolved = bm.resolve(beans2);
+                                var ctx = bm.createCreationalContext(resolved);
+                                args[i] = bm.getReference(resolved, paramTypes[i], ctx);
+                            } else {
+                                args[i] = resolveParameter(paramTypes[i], genericParamTypes[i]);
+                            }
+                        } else {
+                            args[i] = resolveParameter(paramTypes[i], genericParamTypes[i]);
+                        }
                     }
                 }
 
