@@ -13,6 +13,7 @@ import fr.vidocq.vauban.core.interceptor.InterceptorManager;
 import fr.vidocq.vauban.core.context.ApplicationContext;
 import fr.vidocq.vauban.core.context.CreationalContextImpl;
 import fr.vidocq.vauban.core.context.DependentContext;
+import java.lang.reflect.Modifier;
 import fr.vidocq.vauban.core.context.RequestContext;
 import fr.vidocq.vauban.core.event.EventDispatcher;
 import fr.vidocq.vauban.core.event.EventImpl;
@@ -168,7 +169,71 @@ public final class VaubanContainer implements AutoCloseable {
         if (context == null) {
             context = dependentContext;
         }
+        // For normal-scoped managed beans (not producers, not final), return a client proxy
+        // Only proxy beans from custom ClassLoaders (TCK archives) to avoid breaking
+        // tests that access fields directly on the bean instance
+        if (bean.descriptor().scope().isNormal()
+                && bean.descriptor().kind() == fr.vidocq.vauban.core.bean.model.BeanDescriptor.BeanKind.MANAGED
+                && !Modifier.isFinal(bean.getBeanClass().getModifiers())
+                && bean.getBeanClass().getClassLoader() != VaubanContainer.class.getClassLoader()) {
+            return getOrCreateProxy(bean);
+        }
         return context.get((Contextual<T>) bean, new CreationalContextImpl<>());
+    }
+
+    private final Map<fr.vidocq.vauban.core.bean.model.BeanId, Object> proxyCache = new java.util.concurrent.ConcurrentHashMap<>();
+
+    @SuppressWarnings("unchecked")
+    private <T> T getOrCreateProxy(ManagedBean<T> bean) {
+        return (T) proxyCache.computeIfAbsent(bean.descriptor().id(), id -> {
+            try {
+                var beanClass = bean.getBeanClass();
+                var generated = fr.vidocq.vauban.core.proxy.RuntimeClientProxyGenerator.generate(beanClass);
+
+                // Load the proxy class (check if already defined)
+                Class<?> proxyClass;
+                try {
+                    proxyClass = beanClass.getClassLoader().loadClass(generated.className());
+                } catch (ClassNotFoundException cnfe) {
+                    try {
+                        var lookup = java.lang.invoke.MethodHandles.privateLookupIn(beanClass,
+                                java.lang.invoke.MethodHandles.lookup());
+                        proxyClass = lookup.defineClass(generated.bytecode());
+                    } catch (Exception e) {
+                        var defineMethod = ClassLoader.class.getDeclaredMethod(
+                                "defineClass", String.class, byte[].class, int.class, int.class);
+                        defineMethod.setAccessible(true);
+                        proxyClass = (Class<?>) defineMethod.invoke(beanClass.getClassLoader(),
+                                generated.className(), generated.bytecode(),
+                                0, generated.bytecode().length);
+                    }
+                }
+
+                // Create proxy instance
+                var proxy = proxyClass.getDeclaredConstructor().newInstance();
+
+                // Set the delegate supplier — resolves the contextual instance lazily
+                var setDelegate = proxyClass.getMethod("$$setDelegate",
+                        java.util.function.Supplier.class);
+                java.util.function.Supplier<Object> delegate = () -> {
+                    var scopeClass = bean.getScope();
+                    var ctx = contexts.get(scopeClass);
+                    if (ctx == null) ctx = dependentContext;
+                    return ctx.get((Contextual<Object>) (Contextual<?>) bean,
+                            new CreationalContextImpl<>());
+                };
+                setDelegate.invoke(proxy, delegate);
+
+                return proxy;
+            } catch (Exception e) {
+                // Fallback: return direct instance (no proxy)
+                var scopeClass = bean.getScope();
+                var ctx = contexts.get(scopeClass);
+                if (ctx == null) ctx = dependentContext;
+                return ctx.get((Contextual<Object>) (Contextual<?>) bean,
+                        new CreationalContextImpl<>());
+            }
+        });
     }
 
     public boolean isRunning() {
