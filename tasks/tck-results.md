@@ -20,6 +20,13 @@ Session 1 ███████████████████████�
 Session 2 ████████████████████████████████████████████████████ 52.5% (+113)
 ```
 
+## Fonctionnalites majeures
+- Intercepteurs runtime (Class-File API @AroundInvoke)
+- Client proxies runtime (Class-File API, normal-scoped beans)
+- TypeVariable resolution dans la hierarchie generique
+- EventMetadata injection dans les observer methods
+- @Repeatable qualifiers
+
 ## Commande
 ```bash
 mvn install -DskipTests -q && mvn test -pl vauban-tck-runner -Ptck
