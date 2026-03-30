@@ -50,8 +50,9 @@ public class VaubanTestEnricher implements TestEnricher {
         var type = field.getType();
         var qualifiers = extractQualifiers(field);
 
-        // BeanManager
-        if (BeanManager.class.isAssignableFrom(type)) {
+        // BeanManager / BeanContainer
+        if (BeanManager.class.isAssignableFrom(type)
+                || type == jakarta.enterprise.inject.spi.BeanContainer.class) {
             return container.getBeanManager();
         }
 

@@ -236,7 +236,8 @@ public final class VaubanContainer implements AutoCloseable {
                 }
 
                 // Handle BeanManager / BeanContainer injection
-                if (BeanManager.class.isAssignableFrom(field.getType())) {
+                if (BeanManager.class.isAssignableFrom(field.getType())
+                        || field.getType() == jakarta.enterprise.inject.spi.BeanContainer.class) {
                     field.set(instance, getBeanManager());
                     continue;
                 }
@@ -573,7 +574,8 @@ public final class VaubanContainer implements AutoCloseable {
             }
             return new InstanceImpl<>(this, instanceType);
         }
-        if (BeanManager.class.isAssignableFrom(paramType)) {
+        if (BeanManager.class.isAssignableFrom(paramType)
+                || paramType == jakarta.enterprise.inject.spi.BeanContainer.class) {
             return getBeanManager();
         }
         return select(paramType);
