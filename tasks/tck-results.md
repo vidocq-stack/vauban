@@ -7,8 +7,8 @@
 | Metrique | Valeur |
 |----------|--------|
 | Tests CDI Lite | ~769 (non-skippes) |
-| **Passes** | **~391 (50.8%)** |
-| Echoues | ~378 |
+| **Passes** | **~393 (51.1%)** |
+| Echoues | ~376 |
 | Erreurs | 0 |
 | Temps | ~5s |
 
@@ -17,10 +17,8 @@
 ```
 Debut     ██████░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░   ~12%
 Session 1 ██████████████████████████████████████░░░░░░  38.2% (+200)
-Session 2 ██████████████████████████████████████████████ 50.8% (+100)
+Session 2 █████████████████████████████████████████████████ 51.1% (+102)
 ```
-
-## Intercepteurs runtime via Class-File API operationnels (@AroundInvoke)
 
 ## Commande
 ```bash
