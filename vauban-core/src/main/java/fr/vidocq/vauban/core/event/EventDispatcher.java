@@ -152,6 +152,20 @@ public final class EventDispatcher {
                         if (params[i].isAnnotationPresent(jakarta.enterprise.event.Observes.class)
                                 || params[i].isAnnotationPresent(jakarta.enterprise.event.ObservesAsync.class)) {
                             args[i] = event;
+                        } else if (paramTypes[i] == jakarta.enterprise.inject.spi.EventMetadata.class) {
+                            // CDI spec: EventMetadata injection in observer methods
+                            final Object eventObj = event;
+                            args[i] = new jakarta.enterprise.inject.spi.EventMetadata() {
+                                @Override public java.util.Set<java.lang.annotation.Annotation> getQualifiers() {
+                                    return java.util.Set.of();
+                                }
+                                @Override public jakarta.enterprise.inject.spi.InjectionPoint getInjectionPoint() {
+                                    return null;
+                                }
+                                @Override public java.lang.reflect.Type getType() {
+                                    return eventObj.getClass();
+                                }
+                            };
                         } else {
                             // Resolve via BeanManager for proper dependent tracking
                             var beans = bm.getBeans(paramTypes[i]);
