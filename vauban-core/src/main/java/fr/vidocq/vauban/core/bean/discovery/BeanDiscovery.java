@@ -525,6 +525,17 @@ public final class BeanDiscovery {
                             || hasScopeAnnotation(stereotypeClass.get().annotations())) {
                         return stereotypeScope;
                     }
+                } else {
+                    // Fallback: check stereotype scope via reflection
+                    try {
+                        var annType = Class.forName(ann.name().value());
+                        for (var metaAnn : annType.getAnnotations()) {
+                            var reflScope = mapScope(DotName.of(metaAnn.annotationType().getName()));
+                            if (reflScope != null) return reflScope;
+                        }
+                    } catch (ClassNotFoundException e) {
+                        // skip
+                    }
                 }
             }
         }
@@ -559,6 +570,17 @@ public final class BeanDiscovery {
                     if (!scope.equals(ScopeInfo.DEPENDENT) ||
                             stereotypeClass.get().annotations().stream().anyMatch(a -> mapScope(a.name()) != null)) {
                         return scope;
+                    }
+                } else {
+                    // Fallback: check stereotype scope via reflection
+                    try {
+                        var annType = Class.forName(ann.name().value());
+                        for (var metaAnn : annType.getAnnotations()) {
+                            var scope = mapScope(DotName.of(metaAnn.annotationType().getName()));
+                            if (scope != null) return scope;
+                        }
+                    } catch (ClassNotFoundException e) {
+                        // skip
                     }
                 }
             }
