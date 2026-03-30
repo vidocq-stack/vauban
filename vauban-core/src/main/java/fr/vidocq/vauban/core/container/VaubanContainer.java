@@ -251,10 +251,25 @@ public final class VaubanContainer implements AutoCloseable {
                 // This allows @Dependent beans to @Inject InjectionPoint and discover
                 // where they were injected.
                 var previousIp = currentInjectionPoint.get();
-                var bean = findBeanForInstance(instance);
-                currentInjectionPoint.set(new VaubanInjectionPoint(field, bean));
+                var ownerBean = findBeanForInstance(instance);
+                currentInjectionPoint.set(new VaubanInjectionPoint(field, ownerBean));
                 try {
-                    var value = select(field.getType());
+                    // Resolve with field qualifiers for proper matching
+                    var fieldQuals = extractFieldQualifiers(field);
+                    Object value;
+                    if (fieldQuals.length > 0) {
+                        var bm = getBeanManager();
+                        var beans = bm.getBeans(field.getType(), fieldQuals);
+                        if (beans.isEmpty()) {
+                            value = select(field.getType());
+                        } else {
+                            var resolved = bm.resolve(beans);
+                            var ctx = bm.createCreationalContext(resolved);
+                            value = bm.getReference(resolved, field.getType(), ctx);
+                        }
+                    } else {
+                        value = select(field.getType());
+                    }
                     field.set(instance, value);
                 } finally {
                     currentInjectionPoint.set(previousIp);
