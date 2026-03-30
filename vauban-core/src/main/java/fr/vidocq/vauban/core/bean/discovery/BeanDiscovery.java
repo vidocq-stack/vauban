@@ -270,6 +270,13 @@ public final class BeanDiscovery {
         }
         var types = new LinkedHashSet<TypeInfo>();
         collectBeanTypes(classInfo.name(), types);
+        // Enrich with parameterized supertypes via reflection
+        try {
+            var clazz = Class.forName(classInfo.name().value());
+            collectParameterizedSupertypes(clazz, types);
+        } catch (ClassNotFoundException e) {
+            // skip
+        }
         types.add(new TypeInfo.ClassType(DotName.of("java.lang.Object")));
         return types;
     }
@@ -286,6 +293,62 @@ public final class BeanDiscovery {
         for (var iface : info.interfaces()) {
             collectBeanTypes(iface, types);
         }
+    }
+
+    /**
+     * Add parameterized supertypes to the bean types set via reflection.
+     * E.g., for IntegerStringDao extends Dao&lt;Integer, String&gt;,
+     * adds ParameterizedType("Dao", [ClassType("Integer"), ClassType("String")]).
+     */
+    private static void collectParameterizedSupertypes(Class<?> clazz, Set<TypeInfo> types) {
+        if (clazz == null || clazz == Object.class) return;
+        // Check generic superclass
+        var genericSuper = clazz.getGenericSuperclass();
+        if (genericSuper instanceof java.lang.reflect.ParameterizedType pt) {
+            var typeInfo = reflectTypeToTypeInfo(pt);
+            if (typeInfo != null) types.add(typeInfo);
+            collectParameterizedSupertypes((Class<?>) pt.getRawType(), types);
+        } else if (genericSuper instanceof Class<?> c) {
+            collectParameterizedSupertypes(c, types);
+        }
+        // Check generic interfaces
+        for (var gi : clazz.getGenericInterfaces()) {
+            if (gi instanceof java.lang.reflect.ParameterizedType pt) {
+                var typeInfo = reflectTypeToTypeInfo(pt);
+                if (typeInfo != null) types.add(typeInfo);
+                collectParameterizedSupertypes((Class<?>) pt.getRawType(), types);
+            } else if (gi instanceof Class<?> c) {
+                collectParameterizedSupertypes(c, types);
+            }
+        }
+    }
+
+    /**
+     * Convert a Java reflection ParameterizedType to our TypeInfo model.
+     */
+    static TypeInfo reflectTypeToTypeInfo(java.lang.reflect.Type type) {
+        if (type instanceof Class<?> c) {
+            return new TypeInfo.ClassType(DotName.of(c.getName()));
+        }
+        if (type instanceof java.lang.reflect.ParameterizedType pt) {
+            var rawType = DotName.of(((Class<?>) pt.getRawType()).getName());
+            var args = new java.util.ArrayList<TypeInfo>();
+            for (var arg : pt.getActualTypeArguments()) {
+                var argInfo = reflectTypeToTypeInfo(arg);
+                if (argInfo != null) args.add(argInfo);
+            }
+            if (args.isEmpty()) return new TypeInfo.ClassType(rawType);
+            return new TypeInfo.ParameterizedType(rawType, args);
+        }
+        if (type instanceof java.lang.reflect.TypeVariable<?> tv) {
+            return new TypeInfo.TypeVariable(tv.getName(), List.of());
+        }
+        if (type instanceof java.lang.reflect.WildcardType wt) {
+            TypeInfo upper = wt.getUpperBounds().length > 0 ? reflectTypeToTypeInfo(wt.getUpperBounds()[0]) : null;
+            TypeInfo lower = wt.getLowerBounds().length > 0 ? reflectTypeToTypeInfo(wt.getLowerBounds()[0]) : null;
+            return new TypeInfo.WildcardType(upper, lower);
+        }
+        return null;
     }
 
     Set<TypeInfo> computeProducerTypes(TypeInfo producerType) {
