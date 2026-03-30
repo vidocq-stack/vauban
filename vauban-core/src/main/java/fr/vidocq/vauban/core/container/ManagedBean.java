@@ -58,9 +58,9 @@ public final class ManagedBean<T> implements Bean<T> {
         T instance = factory.create();
         // CDI spec: producer returning null for non-Dependent scope -> IllegalProductException
         if (instance == null && descriptor.kind() != BeanDescriptor.BeanKind.MANAGED) {
-            if (descriptor.scope().isNormal()) {
+            if (!descriptor.scope().equals(fr.vidocq.vauban.core.bean.model.ScopeInfo.DEPENDENT)) {
                 throw new jakarta.enterprise.inject.IllegalProductException(
-                        "Producer " + descriptor.id() + " returned null for normal-scoped bean");
+                        "Producer " + descriptor.id() + " returned null for non-@Dependent bean");
             }
         }
         if (instance != null && injector != null) {

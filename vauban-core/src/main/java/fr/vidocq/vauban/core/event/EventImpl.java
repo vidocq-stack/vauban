@@ -72,10 +72,31 @@ public final class EventImpl<T> implements Event<T> {
             throw new IllegalArgumentException("Subtype must not be null");
         }
         var type = subtype.getType();
-        if (type instanceof TypeVariable<?>) {
+        if (containsTypeVariable(type)) {
             throw new IllegalArgumentException("TypeVariable is not a legal event type");
         }
         return new EventImpl<>(dispatcher, combineQualifiers(this.qualifiers, newQualifiers));
+    }
+
+    private static boolean containsTypeVariable(java.lang.reflect.Type type) {
+        if (type instanceof TypeVariable<?>) return true;
+        if (type instanceof java.lang.reflect.ParameterizedType pt) {
+            for (var arg : pt.getActualTypeArguments()) {
+                if (containsTypeVariable(arg)) return true;
+            }
+        }
+        if (type instanceof java.lang.reflect.GenericArrayType gat) {
+            return containsTypeVariable(gat.getGenericComponentType());
+        }
+        if (type instanceof java.lang.reflect.WildcardType wt) {
+            for (var bound : wt.getUpperBounds()) {
+                if (containsTypeVariable(bound)) return true;
+            }
+            for (var bound : wt.getLowerBounds()) {
+                if (containsTypeVariable(bound)) return true;
+            }
+        }
+        return false;
     }
 
     private static Annotation[] combineQualifiers(Annotation[] existing, Annotation[] additional) {
