@@ -7,8 +7,8 @@
 | Metrique | Valeur |
 |----------|--------|
 | Tests CDI Lite | ~769 (non-skippes) |
-| **Passes** | **~349 (45.4%)** |
-| Echoues | ~420 |
+| **Passes** | **~352 (45.8%)** |
+| Echoues | ~417 |
 | Erreurs | 0 |
 | Temps | ~5s |
 
@@ -17,27 +17,8 @@
 ```
 Debut     ██████░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░   ~12%
 Session 1 ██████████████████████████████████████░░░░░░  38.2% (+200)
-Session 2 ████████████████████████████████████████████  45.4% (+58)
+Session 2 ████████████████████████████████████████████  45.8% (+61)
 ```
-
-## Changements Session 2
-
-- Observer qualifiers (getObservedQualifiers, event qualifier matching)
-- Instance<T> qualifier-aware (select/get/iterator)
-- QualifierUtils extraction de ManagedBean
-- ClassValidator : ~15 validations DefinitionException
-- Validations par reflexion (raw Event/Instance, producer types, generic beans)
-- VaubanTestEnricher : qualifiers, resolution via BeanManager
-- VaubanDeployableContainer : extraction JARs imbriques (WEB-INF/lib)
-- @Any qualifier fix dans computeQualifiers
-- isMatchingBean/Event : qualifier validation, @Default/@Any handling
-- Producer/observer exception unwrap (InvocationTargetException)
-- Observer reception/transactionPhase + priority
-- Observer method injection parameters (multi-param observers)
-- Package-level @Vetoed support
-- Reflection fallback pour scope/qualifier/stereotype detection
-- Custom scope recognition dans hasBeanDefiningAnnotation
-- Retrait validation circulaire deployment-time
 
 ## Commande
 ```bash
