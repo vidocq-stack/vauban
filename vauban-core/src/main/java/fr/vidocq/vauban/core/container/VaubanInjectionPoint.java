@@ -38,10 +38,17 @@ public final class VaubanInjectionPoint implements InjectionPoint {
      * Creates an InjectionPoint from type and qualifier metadata.
      */
     public VaubanInjectionPoint(Type type, Set<Annotation> qualifiers, Bean<?> bean) {
+        this(type, qualifiers, bean, null);
+    }
+
+    /**
+     * Creates an InjectionPoint with member (constructor or method).
+     */
+    public VaubanInjectionPoint(Type type, Set<Annotation> qualifiers, Bean<?> bean, Member member) {
         this.type = type;
         this.qualifiers = Set.copyOf(qualifiers);
         this.bean = bean;
-        this.member = null;
+        this.member = member;
         this.annotated = null;
     }
 
