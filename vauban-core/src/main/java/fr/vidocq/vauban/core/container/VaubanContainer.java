@@ -229,7 +229,9 @@ public final class VaubanContainer implements AutoCloseable {
                             instanceType = c;
                         }
                     }
-                    field.set(instance, new InstanceImpl<>(this, instanceType));
+                    // Pass field qualifiers to Instance for proper resolution
+                    var fieldQualifiers = extractFieldQualifiers(field);
+                    field.set(instance, new InstanceImpl<>(this, instanceType).select(fieldQualifiers));
                     continue;
                 }
 
@@ -528,6 +530,20 @@ public final class VaubanContainer implements AutoCloseable {
                         "Failed to invoke producer method: " + descriptor.id(), e);
             }
         };
+    }
+
+    private static java.lang.annotation.Annotation[] extractFieldQualifiers(java.lang.reflect.Field field) {
+        var qualifiers = new java.util.ArrayList<java.lang.annotation.Annotation>();
+        for (var ann : field.getAnnotations()) {
+            if (ann.annotationType() == jakarta.inject.Inject.class) continue;
+            if (ann.annotationType().isAnnotationPresent(jakarta.inject.Qualifier.class)
+                    || ann.annotationType() == jakarta.enterprise.inject.Default.class
+                    || ann.annotationType() == jakarta.enterprise.inject.Any.class
+                    || ann.annotationType() == jakarta.inject.Named.class) {
+                qualifiers.add(ann);
+            }
+        }
+        return qualifiers.toArray(new java.lang.annotation.Annotation[0]);
     }
 
     public Object resolveParameter(Class<?> paramType, java.lang.reflect.Type genericType) {
