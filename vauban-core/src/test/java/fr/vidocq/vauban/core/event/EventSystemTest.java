@@ -100,7 +100,7 @@ class EventSystemTest {
 
             service.createOrder("ORD-003");
 
-            assertEquals("ORD-003", orderListener.lastOrderId);
+            assertEquals("ORD-003", orderListener.getLastOrderId());
             assertTrue(auditListener.isAudited());
         }
     }

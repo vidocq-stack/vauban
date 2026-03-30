@@ -8,7 +8,10 @@ import java.lang.annotation.Annotation;
 import java.util.concurrent.ConcurrentHashMap;
 
 public final class ApplicationContext implements AlterableContext {
-    private final ConcurrentHashMap<Contextual<?>, Object> instances = new ConcurrentHashMap<>();
+
+    private record ContextualInstance(Object instance, CreationalContext<?> ctx) {}
+
+    private final ConcurrentHashMap<Contextual<?>, ContextualInstance> instances = new ConcurrentHashMap<>();
     private volatile boolean active = true;
 
     @Override
@@ -19,24 +22,24 @@ public final class ApplicationContext implements AlterableContext {
     @Override
     @SuppressWarnings("unchecked")
     public <T> T get(Contextual<T> contextual, CreationalContext<T> creationalContext) {
-        // Avoid computeIfAbsent to prevent ConcurrentHashMap "Recursive update"
-        // when bean creation triggers lookup of another bean (e.g., producer methods).
         var existing = instances.get(contextual);
         if (existing != null) {
-            return (T) existing;
+            return (T) existing.instance();
         }
         if (creationalContext == null) {
             return null;
         }
         var instance = contextual.create(creationalContext);
-        var previous = instances.putIfAbsent(contextual, instance);
-        return (T) (previous != null ? previous : instance);
+        var ci = new ContextualInstance(instance, creationalContext);
+        var previous = instances.putIfAbsent(contextual, ci);
+        return (T) (previous != null ? previous.instance() : instance);
     }
 
     @Override
     @SuppressWarnings("unchecked")
     public <T> T get(Contextual<T> contextual) {
-        return (T) instances.get(contextual);
+        var ci = instances.get(contextual);
+        return ci != null ? (T) ci.instance() : null;
     }
 
     @Override
@@ -47,15 +50,15 @@ public final class ApplicationContext implements AlterableContext {
     @Override
     @SuppressWarnings("unchecked")
     public void destroy(Contextual<?> contextual) {
-        var instance = instances.remove(contextual);
-        if (instance != null) {
-            ((Contextual<Object>) contextual).destroy(instance, new CreationalContextImpl<>());
+        var ci = instances.remove(contextual);
+        if (ci != null) {
+            ((Contextual<Object>) contextual).destroy(ci.instance(), (CreationalContext<Object>) ci.ctx());
+            ci.ctx().release();
         }
     }
 
     public void deactivate() {
         active = false;
-        // Destroy all instances
         for (var entry : instances.entrySet()) {
             destroy(entry.getKey());
         }

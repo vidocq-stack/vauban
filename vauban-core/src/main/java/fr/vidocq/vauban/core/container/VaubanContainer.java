@@ -134,6 +134,15 @@ public final class VaubanContainer implements AutoCloseable {
         this.beanManager = new VaubanBeanManager(this, contexts, beans.values(), eventDispatcher, interceptorManager);
         this.running = true;
         currentInstance = this;
+
+        // CDI lifecycle events: fire @Initialized(ApplicationScoped.class) and @Startup
+        try {
+            eventDispatcher.fire(new Object(),
+                    jakarta.enterprise.context.Initialized.Literal.of(jakarta.enterprise.context.ApplicationScoped.class));
+        } catch (Exception e) { /* suppress */ }
+        try {
+            eventDispatcher.fire(new jakarta.enterprise.event.Startup());
+        } catch (Exception e) { /* suppress */ }
     }
 
     /**
@@ -261,6 +270,43 @@ public final class VaubanContainer implements AutoCloseable {
 
     public EventDispatcher eventDispatcher() {
         return eventDispatcher;
+    }
+
+    /**
+     * Look up a bean by its declaring class (exact match on beanClass).
+     * Unlike select(), this avoids type resolution and AmbiguousResolutionException.
+     * Returns the REAL instance (not proxy) — needed for observer/disposer invocation
+     * where fields are accessed directly on the instance.
+     */
+    @SuppressWarnings("unchecked")
+    public Object selectByBeanClass(Class<?> beanClass) {
+        var dotName = DotName.of(beanClass.getName());
+        for (var bean : beans.values()) {
+            if (bean.descriptor().beanClass().equals(dotName)) {
+                return getDirectInstance((ManagedBean<Object>) (ManagedBean<?>) bean);
+            }
+        }
+        // Fallback: exact class match (for intercepted subclasses where getBeanClass differs from dotName)
+        for (var bean : beans.values()) {
+            if (bean.getBeanClass() == beanClass) {
+                return getDirectInstance((ManagedBean<Object>) (ManagedBean<?>) bean);
+            }
+        }
+        throw new jakarta.enterprise.inject.UnsatisfiedResolutionException(
+                "No bean found for class: " + beanClass.getName());
+    }
+
+    /**
+     * Get the direct contextual instance (no proxy) from the appropriate context.
+     */
+    @SuppressWarnings("unchecked")
+    private <T> T getDirectInstance(ManagedBean<T> bean) {
+        var scopeClass = bean.getScope();
+        var context = contexts.get(scopeClass);
+        if (context == null) {
+            context = dependentContext;
+        }
+        return context.get((jakarta.enterprise.context.spi.Contextual<T>) bean, new CreationalContextImpl<>());
     }
 
     public InterceptorManager interceptorManager() {
@@ -596,7 +642,7 @@ public final class VaubanContainer implements AutoCloseable {
                     method.setAccessible(true);
                     // For static disposer methods, no declaring instance needed
                     var declaringInstance = java.lang.reflect.Modifier.isStatic(method.getModifiers())
-                            ? null : select(declaringClass);
+                            ? null : selectByBeanClass(declaringClass);
                     // Build args - the @Disposes param gets the produced instance, others are injection points
                     var paramTypes = method.getParameterTypes();
                     var args = new Object[method.getParameterCount()];
@@ -858,11 +904,26 @@ public final class VaubanContainer implements AutoCloseable {
     public void close() {
         if (!running) return;
         running = false;
+
+        // CDI lifecycle events: fire @Shutdown and @BeforeDestroyed/@Destroyed
+        try {
+            eventDispatcher.fire(new jakarta.enterprise.event.Shutdown());
+        } catch (Exception e) { /* suppress */ }
+        try {
+            eventDispatcher.fire(new Object(),
+                    jakarta.enterprise.context.BeforeDestroyed.Literal.of(jakarta.enterprise.context.ApplicationScoped.class));
+        } catch (Exception e) { /* suppress */ }
+
         if (currentInstance == this) {
             currentInstance = null;
         }
         requestContext.deactivate();
         applicationContext.deactivate();
+
+        try {
+            eventDispatcher.fire(new Object(),
+                    jakarta.enterprise.context.Destroyed.Literal.of(jakarta.enterprise.context.ApplicationScoped.class));
+        } catch (Exception e) { /* suppress */ }
     }
 
     /**
@@ -932,47 +993,58 @@ public final class VaubanContainer implements AutoCloseable {
 
             var index = indexBuilder.build();
 
+            // Set TCCL to the bean class's ClassLoader so BeanDiscovery can
+            // resolve inherited annotations via reflection on TCK archive classes
+            var previousCl = Thread.currentThread().getContextClassLoader();
+            if (!beanClasses.isEmpty()) {
+                Thread.currentThread().setContextClassLoader(beanClasses.getFirst().getClassLoader());
+            }
+
             // Validate class-level CDI rules (before bean discovery)
-            var classErrors = fr.vidocq.vauban.core.bean.validation.ClassValidator.validate(index);
-            if (!classErrors.isEmpty()) {
-                var msg = new StringBuilder("CDI definition validation failed:\n");
-                for (var error : classErrors) {
-                    msg.append("  - ").append(error).append("\n");
+            try {
+                var classErrors = fr.vidocq.vauban.core.bean.validation.ClassValidator.validate(index);
+                if (!classErrors.isEmpty()) {
+                    var msg = new StringBuilder("CDI definition validation failed:\n");
+                    for (var error : classErrors) {
+                        msg.append("  - ").append(error).append("\n");
+                    }
+                    throw new jakarta.enterprise.inject.spi.DefinitionException(msg.toString());
                 }
-                throw new jakarta.enterprise.inject.spi.DefinitionException(msg.toString());
-            }
 
-            // Reflection-based validation (for generic signatures not in bytecode index)
-            var reflectionErrors = validateWithReflection(beanClasses);
-            if (!reflectionErrors.isEmpty()) {
-                var msg = new StringBuilder("CDI definition validation failed:\n");
-                for (var error : reflectionErrors) {
-                    msg.append("  - ").append(error).append("\n");
+                // Reflection-based validation (for generic signatures not in bytecode index)
+                var reflectionErrors = validateWithReflection(beanClasses);
+                if (!reflectionErrors.isEmpty()) {
+                    var msg = new StringBuilder("CDI definition validation failed:\n");
+                    for (var error : reflectionErrors) {
+                        msg.append("  - ").append(error).append("\n");
+                    }
+                    throw new jakarta.enterprise.inject.spi.DefinitionException(msg.toString());
                 }
-                throw new jakarta.enterprise.inject.spi.DefinitionException(msg.toString());
-            }
 
-            var discovery = new BeanDiscovery(index);
-            var descriptors = discovery.discoverBeans();
-            var observers = discovery.discoverObservers();
-            var interceptors = discovery.discoverInterceptors();
-            var disposers = discovery.discoverDisposerMethods();
+                var discovery = new BeanDiscovery(index);
+                var descriptors = discovery.discoverBeans();
+                var observers = discovery.discoverObservers();
+                var interceptors = discovery.discoverInterceptors();
+                var disposers = discovery.discoverDisposerMethods();
 
-            // Validate deployment — throw if there are errors
-            var assignability = new AssignabilityRules(index);
-            var tempResolver = new BeanResolver(descriptors, assignability);
-            var validator = new fr.vidocq.vauban.core.bean.validation.DeploymentValidator(
-                    descriptors, tempResolver);
-            var errors = validator.validate();
-            if (!errors.isEmpty()) {
-                var msg = new StringBuilder("CDI deployment validation failed:\n");
-                for (var error : errors) {
-                    msg.append("  - ").append(error.message()).append("\n");
+                // Validate deployment — throw if there are errors
+                var assignability = new AssignabilityRules(index);
+                var tempResolver = new BeanResolver(descriptors, assignability);
+                var validator = new fr.vidocq.vauban.core.bean.validation.DeploymentValidator(
+                        descriptors, tempResolver);
+                var errors = validator.validate();
+                if (!errors.isEmpty()) {
+                    var msg = new StringBuilder("CDI deployment validation failed:\n");
+                    for (var error : errors) {
+                        msg.append("  - ").append(error.message()).append("\n");
+                    }
+                    throw new jakarta.enterprise.inject.spi.DeploymentException(msg.toString());
                 }
-                throw new jakarta.enterprise.inject.spi.DeploymentException(msg.toString());
-            }
 
-            return new VaubanContainer(index, descriptors, observers, interceptors, disposers, factories);
+                return new VaubanContainer(index, descriptors, observers, interceptors, disposers, factories);
+            } finally {
+                Thread.currentThread().setContextClassLoader(previousCl);
+            }
         }
 
         /**

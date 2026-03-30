@@ -260,6 +260,8 @@ class VaubanContainerTest {
                     .addBeanClass(LifecycleBean.class)
                     .build()) {
                 var bean = container.select(LifecycleBean.class);
+                // Force proxy to create the real instance by calling a method
+                bean.isPostConstructCalled();
                 assertFalse(LifecycleBean.preDestroyCalledStatic);
             }
             assertTrue(LifecycleBean.preDestroyCalledStatic);

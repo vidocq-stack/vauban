@@ -136,14 +136,26 @@ public final class BeanDiscovery {
         if (classInfo.methods().stream().anyMatch(m -> m.isConstructor() && hasAnnotation(m.annotations(), INJECT))) {
             return true;
         }
+        // Check @Inherited annotations from superclasses via reflection
+        for (var ann : getInheritedAnnotations(classInfo)) {
+            var annName = DotName.of(ann.annotationType().getName());
+            if (BEAN_DEFINING_ANNOTATIONS.contains(annName)) return true;
+            if (isStereotype(annName)) return true;
+            if (mapScope(annName) != null) return true;
+        }
         return false;
     }
 
     private boolean isAlternativeWithStereotypes(ClassInfo classInfo) {
         if (classInfo.hasAnnotation(ALTERNATIVE)) return true;
-        for (var ann : classInfo.annotations()) {
-            if (isStereotype(ann.name())) {
-                var stereotypeClass = index.getClassByName(ann.name());
+        // Check inherited @Alternative
+        for (var ann : getInheritedAnnotations(classInfo)) {
+            if (DotName.of(ann.annotationType().getName()).equals(ALTERNATIVE)) return true;
+        }
+        var allAnnotationNames = getAllAnnotationNames(classInfo);
+        for (var annName : allAnnotationNames) {
+            if (isStereotype(annName)) {
+                var stereotypeClass = index.getClassByName(annName);
                 if (stereotypeClass.isPresent() && stereotypeClass.get().hasAnnotation(ALTERNATIVE)) {
                     return true;
                 }
@@ -155,9 +167,10 @@ public final class BeanDiscovery {
     private int extractPriorityWithStereotypes(ClassInfo classInfo) {
         int priority = extractPriority(classInfo.annotations());
         if (priority > 0) return priority;
-        for (var ann : classInfo.annotations()) {
-            if (isStereotype(ann.name())) {
-                var stereotypeClass = index.getClassByName(ann.name());
+        var allAnnotationNames = getAllAnnotationNames(classInfo);
+        for (var annName : allAnnotationNames) {
+            if (isStereotype(annName)) {
+                var stereotypeClass = index.getClassByName(annName);
                 if (stereotypeClass.isPresent()) {
                     int stereotypePriority = extractPriority(stereotypeClass.get().annotations());
                     if (stereotypePriority > 0) return stereotypePriority;
@@ -262,7 +275,8 @@ public final class BeanDiscovery {
         if (priority == 0) {
             priority = extractPriorityWithStereotypes(declaringClass);
         }
-        var name = extractName(method.annotations(), deriveProducerMethodName(method.name()));
+        var name = extractNameWithStereotypesFromAnnotations(method.annotations(),
+                deriveProducerMethodName(method.name()));
 
         // Producer method parameters are injection points
         var injectionPoints = new ArrayList<InjectionPointInfo>();
@@ -286,7 +300,7 @@ public final class BeanDiscovery {
         var scope = computeScopeWithStereotypes(field.annotations());
         var isAlternative = hasAnnotation(field.annotations(), ALTERNATIVE);
         var priority = extractPriority(field.annotations());
-        var name = extractName(field.annotations(), field.name());
+        var name = extractNameWithStereotypesFromAnnotations(field.annotations(), field.name());
 
         return new BeanDescriptor(id, declaringClass.name(), BeanDescriptor.BeanKind.PRODUCER_FIELD,
                 types, qualifiers, scope, isAlternative, priority, List.of(), name);
@@ -490,10 +504,16 @@ public final class BeanDiscovery {
     Set<QualifierInstance> computeQualifiersWithStereotypes(ClassInfo classInfo) {
         var allAnnotations = new ArrayList<>(classInfo.annotations());
 
-        // Add annotations from stereotypes
-        for (var ann : classInfo.annotations()) {
-            if (isStereotype(ann.name())) {
-                var stereotypeClass = index.getClassByName(ann.name());
+        // Add inherited annotations from superclasses
+        for (var ann : getInheritedAnnotations(classInfo)) {
+            allAnnotations.add(toAnnotationInfo(ann));
+        }
+
+        // Add annotations from stereotypes (direct + inherited)
+        var allAnnotationNames = getAllAnnotationNames(classInfo);
+        for (var annName : allAnnotationNames) {
+            if (isStereotype(annName)) {
+                var stereotypeClass = index.getClassByName(annName);
                 if (stereotypeClass.isPresent()) {
                     allAnnotations.addAll(stereotypeClass.get().annotations());
                 }
@@ -504,14 +524,22 @@ public final class BeanDiscovery {
     }
 
     private String extractNameWithStereotypes(ClassInfo classInfo) {
-        // Check bean itself first
+        // Check bean itself first (direct + inherited annotations)
         var name = extractName(classInfo.annotations(), decapitalize(classInfo.name().simpleName()));
         if (name != null) return name;
+        // Check inherited @Named
+        for (var ann : getInheritedAnnotations(classInfo)) {
+            if (ann.annotationType() == jakarta.inject.Named.class) {
+                var named = (jakarta.inject.Named) ann;
+                return named.value().isEmpty() ? decapitalize(classInfo.name().simpleName()) : named.value();
+            }
+        }
 
-        // Check stereotypes
-        for (var ann : classInfo.annotations()) {
-            if (isStereotype(ann.name())) {
-                var stereotypeClass = index.getClassByName(ann.name());
+        // Check stereotypes (direct + inherited)
+        var allAnnotationNames = getAllAnnotationNames(classInfo);
+        for (var annName : allAnnotationNames) {
+            if (isStereotype(annName)) {
+                var stereotypeClass = index.getClassByName(annName);
                 if (stereotypeClass.isPresent()) {
                     var stereotypeName = extractName(stereotypeClass.get().annotations(),
                             decapitalize(classInfo.name().simpleName()));
@@ -519,7 +547,7 @@ public final class BeanDiscovery {
                 } else {
                     // Fallback: check via reflection if stereotype has @Named
                     try {
-                        var annType = Class.forName(ann.name().value());
+                        var annType = Class.forName(annName.value());
                         if (annType.isAnnotationPresent(jakarta.inject.Named.class)) {
                             return decapitalize(classInfo.name().simpleName());
                         }
@@ -531,6 +559,45 @@ public final class BeanDiscovery {
         }
 
         return null;
+    }
+
+    /**
+     * Returns annotations inherited from superclasses (those NOT declared directly on classInfo).
+     * Uses Java reflection — Class.getAnnotations() handles @Inherited automatically per JLS.
+     */
+    private List<java.lang.annotation.Annotation> getInheritedAnnotations(ClassInfo classInfo) {
+        try {
+            // Use TCCL first (TCK sets this to its custom ClassLoader), fallback to system
+            var cl = Thread.currentThread().getContextClassLoader();
+            Class<?> cls;
+            try {
+                cls = Class.forName(classInfo.name().value(), false, cl);
+            } catch (ClassNotFoundException e1) {
+                cls = Class.forName(classInfo.name().value());
+            }
+            var declared = cls.getDeclaredAnnotations();
+            var all = cls.getAnnotations();
+            var declaredNames = new HashSet<Class<?>>();
+            for (var d : declared) {
+                declaredNames.add(d.annotationType());
+            }
+            var inherited = new ArrayList<java.lang.annotation.Annotation>();
+            for (var a : all) {
+                if (!declaredNames.contains(a.annotationType())) {
+                    inherited.add(a);
+                }
+            }
+            return inherited;
+        } catch (ClassNotFoundException e) {
+            return List.of();
+        }
+    }
+
+    /**
+     * Converts a java.lang.annotation.Annotation to an AnnotationInfo for indexer compatibility.
+     */
+    private AnnotationInfo toAnnotationInfo(java.lang.annotation.Annotation ann) {
+        return new AnnotationInfo(DotName.of(ann.annotationType().getName()), Map.of());
     }
 
     private boolean isQualifierAnnotation(DotName name) {
@@ -562,10 +629,11 @@ public final class BeanDiscovery {
             return scope;
         }
 
-        // 2. Check stereotypes for scope
-        for (var ann : classInfo.annotations()) {
-            if (isStereotype(ann.name())) {
-                var stereotypeClass = index.getClassByName(ann.name());
+        // 2. Check stereotypes for scope (direct + inherited)
+        var allAnnotationNames = getAllAnnotationNames(classInfo);
+        for (var annName : allAnnotationNames) {
+            if (isStereotype(annName)) {
+                var stereotypeClass = index.getClassByName(annName);
                 if (stereotypeClass.isPresent()) {
                     var stereotypeScope = computeScopeFromAnnotations(stereotypeClass.get().annotations());
                     if (!stereotypeScope.equals(ScopeInfo.DEPENDENT)
@@ -575,7 +643,7 @@ public final class BeanDiscovery {
                 } else {
                     // Fallback: check stereotype scope via reflection
                     try {
-                        var annType = Class.forName(ann.name().value());
+                        var annType = Class.forName(annName.value());
                         for (var metaAnn : annType.getAnnotations()) {
                             var reflScope = mapScope(DotName.of(metaAnn.annotationType().getName()));
                             if (reflScope != null) return reflScope;
@@ -587,7 +655,28 @@ public final class BeanDiscovery {
             }
         }
 
+        // 3. Check @Inherited scope annotations from superclasses
+        for (var ann : getInheritedAnnotations(classInfo)) {
+            var annName = DotName.of(ann.annotationType().getName());
+            var inheritedScope = mapScope(annName);
+            if (inheritedScope != null) return inheritedScope;
+        }
+
         return ScopeInfo.DEPENDENT;
+    }
+
+    /**
+     * Returns all annotation DotNames on a class: direct + inherited via @Inherited.
+     */
+    private Set<DotName> getAllAnnotationNames(ClassInfo classInfo) {
+        var names = new LinkedHashSet<DotName>();
+        for (var ann : classInfo.annotations()) {
+            names.add(ann.name());
+        }
+        for (var ann : getInheritedAnnotations(classInfo)) {
+            names.add(DotName.of(ann.annotationType().getName()));
+        }
+        return names;
     }
 
     private boolean hasScopeAnnotation(List<AnnotationInfo> annotations) {
@@ -722,6 +811,33 @@ public final class BeanDiscovery {
             }
         }
         return 0;
+    }
+
+    /**
+     * Extract name from annotations, checking stereotypes for @Named.
+     * Used for producer methods and fields.
+     */
+    private String extractNameWithStereotypesFromAnnotations(List<AnnotationInfo> annotations, String defaultName) {
+        var name = extractName(annotations, defaultName);
+        if (name != null) return name;
+        // Check stereotypes on the producer for @Named
+        for (var ann : annotations) {
+            if (isStereotype(ann.name())) {
+                var stereotypeClass = index.getClassByName(ann.name());
+                if (stereotypeClass.isPresent()) {
+                    var stereotypeName = extractName(stereotypeClass.get().annotations(), defaultName);
+                    if (stereotypeName != null) return stereotypeName;
+                } else {
+                    try {
+                        var annType = Class.forName(ann.name().value());
+                        if (annType.isAnnotationPresent(jakarta.inject.Named.class)) {
+                            return defaultName;
+                        }
+                    } catch (ClassNotFoundException e) { /* skip */ }
+                }
+            }
+        }
+        return null;
     }
 
     private String extractName(List<AnnotationInfo> annotations, String defaultName) {

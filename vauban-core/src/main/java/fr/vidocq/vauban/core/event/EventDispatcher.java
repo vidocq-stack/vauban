@@ -37,7 +37,7 @@ public final class EventDispatcher {
         matching.sort(Comparator.comparingInt(ObserverDescriptor::priority));
 
         for (var observer : matching) {
-            invokeObserver(observer, event);
+            invokeObserver(observer, event, qualifiers);
         }
     }
 
@@ -50,7 +50,7 @@ public final class EventDispatcher {
             var matching = findMatchingObservers(event.getClass(), true, qualifierInstances);
             matching.sort(Comparator.comparingInt(ObserverDescriptor::priority));
             for (var observer : matching) {
-                invokeObserver(observer, event);
+                invokeObserver(observer, event, qualifiers);
             }
             return event;
         });
@@ -113,7 +113,7 @@ public final class EventDispatcher {
         return result;
     }
 
-    private void invokeObserver(ObserverDescriptor observer, Object event) {
+    private void invokeObserver(ObserverDescriptor observer, Object event, Annotation... eventQualifiers) {
         try {
             var beanClass = Class.forName(observer.declaringClass().value());
 
@@ -133,7 +133,7 @@ public final class EventDispatcher {
                 }
             }
 
-            var beanInstance = container.select(beanClass);
+            var beanInstance = container.selectByBeanClass(beanClass);
 
             var method = findMethod(beanClass, observer.methodName(), event.getClass());
             if (method != null) {
@@ -155,14 +155,18 @@ public final class EventDispatcher {
                         } else if (paramTypes[i] == jakarta.enterprise.inject.spi.EventMetadata.class) {
                             // CDI spec: EventMetadata injection in observer methods
                             final Object eventObj = event;
+                            final java.util.Set<java.lang.annotation.Annotation> metaQualifiers =
+                                    eventQualifiers != null && eventQualifiers.length > 0
+                                            ? java.util.Set.copyOf(java.util.Arrays.asList(eventQualifiers))
+                                            : java.util.Set.of();
                             args[i] = new jakarta.enterprise.inject.spi.EventMetadata() {
                                 @Override public java.util.Set<java.lang.annotation.Annotation> getQualifiers() {
-                                    return java.util.Set.of();
+                                    return metaQualifiers;
                                 }
                                 @Override public jakarta.enterprise.inject.spi.InjectionPoint getInjectionPoint() {
                                     // Minimal InjectionPoint — the point where the event was fired
                                     return new fr.vidocq.vauban.core.container.VaubanInjectionPoint(
-                                            eventObj.getClass(), java.util.Set.of(), null);
+                                            eventObj.getClass(), metaQualifiers, null);
                                 }
                                 @Override public java.lang.reflect.Type getType() {
                                     return eventObj.getClass();
@@ -228,12 +232,28 @@ public final class EventDispatcher {
     }
 
     private Method findMethod(Class<?> clazz, String name, Class<?> eventType) {
-        for (var method : clazz.getDeclaredMethods()) {
-            if (method.getName().equals(name) && method.getParameterCount() >= 1) {
-                if (method.getParameterTypes()[0].isAssignableFrom(eventType)) {
-                    return method;
+        // Search the class hierarchy (inherited observer methods)
+        var current = clazz;
+        while (current != null && current != Object.class) {
+            for (var method : current.getDeclaredMethods()) {
+                if (method.getName().equals(name) && method.getParameterCount() >= 1) {
+                    // Find the @Observes/@ObservesAsync parameter
+                    var params = method.getParameters();
+                    for (var param : params) {
+                        if (param.isAnnotationPresent(jakarta.enterprise.event.Observes.class)
+                                || param.isAnnotationPresent(jakarta.enterprise.event.ObservesAsync.class)) {
+                            if (param.getType().isAssignableFrom(eventType)) {
+                                return method;
+                            }
+                        }
+                    }
+                    // Fallback: check first parameter
+                    if (method.getParameterTypes()[0].isAssignableFrom(eventType)) {
+                        return method;
+                    }
                 }
             }
+            current = current.getSuperclass();
         }
         return null;
     }
