@@ -742,6 +742,13 @@ public final class VaubanContainer implements AutoCloseable {
                 || paramType == jakarta.enterprise.inject.spi.BeanContainer.class) {
             return getBeanManager();
         }
+        if (paramType == jakarta.enterprise.inject.spi.EventMetadata.class) {
+            // EventMetadata is only meaningful within observer methods — return null for now
+            return null;
+        }
+        if (paramType == jakarta.enterprise.inject.spi.InjectionPoint.class) {
+            return currentInjectionPoint.get();
+        }
         return select(paramType);
     }
 
