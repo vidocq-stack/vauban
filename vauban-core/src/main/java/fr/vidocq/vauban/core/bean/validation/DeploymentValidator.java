@@ -83,6 +83,7 @@ public final class DeploymentValidator {
             "jakarta.enterprise.inject.Instance",
             "jakarta.inject.Provider",
             "jakarta.enterprise.inject.spi.BeanManager",
+            "jakarta.enterprise.inject.spi.BeanContainer",
             "jakarta.enterprise.inject.spi.InjectionPoint"
     );
 

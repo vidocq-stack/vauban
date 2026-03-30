@@ -233,8 +233,8 @@ public final class VaubanContainer implements AutoCloseable {
                     continue;
                 }
 
-                // Handle BeanManager injection
-                if (field.getType() == BeanManager.class) {
+                // Handle BeanManager / BeanContainer injection
+                if (BeanManager.class.isAssignableFrom(field.getType())) {
                     field.set(instance, getBeanManager());
                     continue;
                 }
@@ -542,7 +542,7 @@ public final class VaubanContainer implements AutoCloseable {
             }
             return new InstanceImpl<>(this, instanceType);
         }
-        if (paramType == BeanManager.class) {
+        if (BeanManager.class.isAssignableFrom(paramType)) {
             return getBeanManager();
         }
         return select(paramType);
