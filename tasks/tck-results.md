@@ -7,8 +7,8 @@
 | Metrique | Valeur |
 |----------|--------|
 | Tests CDI Lite | ~769 (non-skippes) |
-| **Passes** | **~377 (49.0%)** |
-| Echoues | ~392 |
+| **Passes** | **~378 (49.1%)** |
+| Echoues | ~391 |
 | Erreurs | 0 |
 | Temps | ~5s |
 
@@ -17,10 +17,10 @@
 ```
 Debut     ██████░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░   ~12%
 Session 1 ██████████████████████████████████████░░░░░░  38.2% (+200)
-Session 2 ████████████████████████████████████████████  49.0% (+86)
+Session 2 ████████████████████████████████████████████  49.1% (+87)
 ```
 
-## Pour atteindre 50% : 7 tests de plus (384 passes)
+## Pour atteindre 50% : 6 tests de plus (384 passes)
 
 ## Commande
 ```bash
