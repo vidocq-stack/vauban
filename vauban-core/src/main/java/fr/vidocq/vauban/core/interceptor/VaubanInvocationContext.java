@@ -7,6 +7,7 @@ import java.lang.reflect.Method;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * Vauban implementation of {@link InvocationContext}.
@@ -21,6 +22,7 @@ public final class VaubanInvocationContext implements InvocationContext {
     private int currentIndex = -1;
     private final Map<String, Object> contextData = new HashMap<>();
     private final TargetInvoker targetInvoker;
+    private Set<java.lang.annotation.Annotation> interceptorBindings;
 
     /**
      * Functional interface for the final target invocation (to support super calls).
@@ -56,6 +58,16 @@ public final class VaubanInvocationContext implements InvocationContext {
 
     @Override
     public Method getMethod() {
+        // If method is a $$super$ bridge, return the original method
+        if (method != null && method.getName().startsWith("$$super$")) {
+            var originalName = method.getName().substring("$$super$".length());
+            try {
+                return method.getDeclaringClass().getSuperclass()
+                        .getDeclaredMethod(originalName, method.getParameterTypes());
+            } catch (NoSuchMethodException e) {
+                // fallback
+            }
+        }
         return method;
     }
 
@@ -77,6 +89,31 @@ public final class VaubanInvocationContext implements InvocationContext {
     @Override
     public Map<String, Object> getContextData() {
         return contextData;
+    }
+
+    @Override
+    public Set<java.lang.annotation.Annotation> getInterceptorBindings() {
+        if (interceptorBindings != null) return interceptorBindings;
+        // Derive from target class annotations
+        if (target != null) {
+            var bindings = new java.util.LinkedHashSet<java.lang.annotation.Annotation>();
+            for (var ann : target.getClass().getSuperclass().getAnnotations()) {
+                if (ann.annotationType().isAnnotationPresent(jakarta.interceptor.InterceptorBinding.class)) {
+                    bindings.add(ann);
+                }
+            }
+            // Also check method-level bindings
+            if (method != null) {
+                for (var ann : method.getAnnotations()) {
+                    if (ann.annotationType().isAnnotationPresent(jakarta.interceptor.InterceptorBinding.class)) {
+                        bindings.add(ann);
+                    }
+                }
+            }
+            interceptorBindings = bindings;
+            return bindings;
+        }
+        return Set.of();
     }
 
     @Override
