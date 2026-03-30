@@ -34,11 +34,30 @@ public final class QualifierMatcher {
 
     static boolean qualifierEquals(QualifierInstance a, QualifierInstance b) {
         if (!a.annotationName().equals(b.annotationName())) return false;
-        // All members must match
-        if (a.members().size() != b.members().size()) return false;
+        // Compare only non-@Nonbinding members
+        // First, determine which members are @Nonbinding via reflection
+        java.util.Set<String> nonBindingMembers;
+        try {
+            var annClass = Class.forName(a.annotationName().value());
+            nonBindingMembers = new java.util.HashSet<>();
+            for (var method : annClass.getDeclaredMethods()) {
+                if (method.isAnnotationPresent(jakarta.enterprise.util.Nonbinding.class)) {
+                    nonBindingMembers.add(method.getName());
+                }
+            }
+        } catch (ClassNotFoundException e) {
+            nonBindingMembers = java.util.Set.of();
+        }
+
+        // Compare binding members only
         for (var entry : a.members().entrySet()) {
+            if (nonBindingMembers.contains(entry.getKey())) continue;
             var otherVal = b.members().get(entry.getKey());
             if (otherVal == null || !entry.getValue().equals(otherVal)) return false;
+        }
+        for (var entry : b.members().entrySet()) {
+            if (nonBindingMembers.contains(entry.getKey())) continue;
+            if (!a.members().containsKey(entry.getKey())) return false;
         }
         return true;
     }
