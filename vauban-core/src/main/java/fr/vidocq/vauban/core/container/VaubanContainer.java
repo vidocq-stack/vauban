@@ -378,9 +378,10 @@ public final class VaubanContainer implements AutoCloseable {
             var bean = beans.get(descriptor.id());
             if (bean == null) continue;
 
+            Class<?> beanClass = null;
+            var bindings = descriptor.interceptorBindings();
             try {
-                var beanClass = Class.forName(descriptor.beanClass().value());
-                var bindings = descriptor.interceptorBindings();
+                beanClass = Class.forName(descriptor.beanClass().value());
 
                 // Check if there are matching interceptors
                 var chain = interceptorManager.resolveChain(bindings);
@@ -416,8 +417,35 @@ public final class VaubanContainer implements AutoCloseable {
                 // Update the bean with the new factory
                 beans.put(descriptor.id(), new ManagedBean<>(descriptor, interceptedFactory));
             } catch (Exception e) {
-                // If interception setup fails, keep the original factory
-                
+                // MethodHandles.privateLookupIn may fail for custom classloaders
+                // Fallback: define class via bean's classloader directly
+                try {
+                    var generated2 = fr.vidocq.vauban.core.interceptor.InterceptorSubclassGenerator
+                            .generate(beanClass, bindings);
+                    var defineMethod = ClassLoader.class.getDeclaredMethod(
+                            "defineClass", String.class, byte[].class, int.class, int.class);
+                    defineMethod.setAccessible(true);
+                    var interceptedClass2 = (Class<?>) defineMethod.invoke(
+                            beanClass.getClassLoader(),
+                            generated2.className(), generated2.bytecode(),
+                            0, generated2.bytecode().length);
+                    var mgr2 = this.interceptorManager;
+                    var bds2 = bindings;
+                    BeanFactory<?> f2 = () -> {
+                        try {
+                            var inst = interceptedClass2.getDeclaredConstructor().newInstance();
+                            interceptedClass2.getMethod("$$init",
+                                    fr.vidocq.vauban.core.interceptor.InterceptorManager.class,
+                                    java.util.Set.class).invoke(inst, mgr2, bds2);
+                            return inst;
+                        } catch (Exception ex) {
+                            throw new jakarta.enterprise.inject.CreationException(ex);
+                        }
+                    };
+                    beans.put(descriptor.id(), new ManagedBean<>(descriptor, f2));
+                } catch (Exception e2) {
+                    // truly give up — keep original factory
+                }
             }
         }
     }
