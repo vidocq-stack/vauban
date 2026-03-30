@@ -122,6 +122,23 @@ public final class EventDispatcher {
     private void invokeObserver(ObserverDescriptor observer, Object event) {
         try {
             var beanClass = Class.forName(observer.declaringClass().value());
+
+            // CDI spec: IF_EXISTS — only notify if a bean instance already exists in the context
+            if ("IF_EXISTS".equals(observer.reception())) {
+                var bm = container.getBeanManager();
+                var beans = bm.getBeans(beanClass);
+                if (!beans.isEmpty()) {
+                    var bean = bm.resolve(beans);
+                    if (bean != null) {
+                        var scope = bean.getScope();
+                        var ctx = bm.getContext(scope);
+                        // Check if instance exists WITHOUT creating it
+                        var existing = ctx.get((jakarta.enterprise.context.spi.Contextual<?>) bean);
+                        if (existing == null) return; // no instance exists, skip
+                    }
+                }
+            }
+
             var beanInstance = container.select(beanClass);
 
             var method = findMethod(beanClass, observer.methodName(), event.getClass());
