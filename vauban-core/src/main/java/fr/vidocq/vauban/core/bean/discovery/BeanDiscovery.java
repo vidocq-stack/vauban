@@ -254,16 +254,33 @@ public final class BeanDiscovery {
                 .filter(a -> a.name().equals(TYPED))
                 .findFirst();
         if (typedAnn.isPresent()) {
-            var restrictedTypes = new LinkedHashSet<TypeInfo>();
+            var restrictedRawTypes = new LinkedHashSet<DotName>();
             var value = typedAnn.get().member("value");
             if (value instanceof fr.vidocq.vauban.indexer.model.AnnotationValue.ArrayVal av) {
                 for (var v : av.values()) {
                     if (v instanceof fr.vidocq.vauban.indexer.model.AnnotationValue.ClassVal cv) {
-                        restrictedTypes.add(new TypeInfo.ClassType(cv.className()));
+                        restrictedRawTypes.add(cv.className());
                     }
                 }
             } else if (value instanceof fr.vidocq.vauban.indexer.model.AnnotationValue.ClassVal cv) {
-                restrictedTypes.add(new TypeInfo.ClassType(cv.className()));
+                restrictedRawTypes.add(cv.className());
+            }
+            // Build restricted types — use parameterized versions when available
+            var allParamTypes = new LinkedHashSet<TypeInfo>();
+            try {
+                collectParameterizedSupertypes(Class.forName(classInfo.name().value()), allParamTypes);
+            } catch (ClassNotFoundException e) { /* skip */ }
+            var restrictedTypes = new LinkedHashSet<TypeInfo>();
+            for (var rawName : restrictedRawTypes) {
+                boolean found = false;
+                for (var t : allParamTypes) {
+                    if (t instanceof TypeInfo.ParameterizedType pt && pt.rawType().equals(rawName)) {
+                        restrictedTypes.add(pt);
+                        found = true;
+                        break;
+                    }
+                }
+                if (!found) restrictedTypes.add(new TypeInfo.ClassType(rawName));
             }
             restrictedTypes.add(new TypeInfo.ClassType(DotName.of("java.lang.Object")));
             return restrictedTypes;
