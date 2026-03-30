@@ -69,17 +69,11 @@ public final class EventDispatcher {
             if (!asyncOnly && observer.async()) continue;
 
             // Match event type
-            if (observer.eventType() instanceof TypeInfo.ClassType ct) {
-                try {
-                    var observedClass = Class.forName(ct.name().value());
-                    if (observedClass.isAssignableFrom(eventType)) {
-                        // Match qualifiers: observer qualifiers must be subset of event qualifiers
-                        if (observerQualifiersMatch(observer.qualifiers(), eventQualifiers)) {
-                            result.add(observer);
-                        }
-                    }
-                } catch (ClassNotFoundException e) {
-                    // skip unresolvable types
+            Class<?> observedClass = resolveObservedType(observer.eventType());
+            if (observedClass != null && observedClass.isAssignableFrom(eventType)) {
+                // Match qualifiers: observer qualifiers must be subset of event qualifiers
+                if (observerQualifiersMatch(observer.qualifiers(), eventQualifiers)) {
+                    result.add(observer);
                 }
             }
         }
@@ -196,6 +190,24 @@ public final class EventDispatcher {
             throw new jakarta.enterprise.event.ObserverException(
                     "Failed to invoke observer: " + observer.declaringClass().value()
                             + "." + observer.methodName(), e);
+        }
+    }
+
+    private static Class<?> resolveObservedType(TypeInfo typeInfo) {
+        try {
+            return switch (typeInfo) {
+                case TypeInfo.ClassType ct -> Class.forName(ct.name().value());
+                case TypeInfo.ParameterizedType pt -> Class.forName(pt.rawType().value());
+                case TypeInfo.ArrayType at -> {
+                    var component = resolveObservedType(at.componentType());
+                    yield component != null
+                            ? java.lang.reflect.Array.newInstance(component, 0).getClass()
+                            : null;
+                }
+                default -> null;
+            };
+        } catch (ClassNotFoundException e) {
+            return null;
         }
     }
 
