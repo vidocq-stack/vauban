@@ -877,10 +877,7 @@ public final class BeanDiscovery {
      */
     static String decapitalize(String name) {
         if (name == null || name.isEmpty()) return name;
-        // If first two chars are uppercase, don't decapitalize (e.g. "URL" stays "URL")
-        if (name.length() > 1 && Character.isUpperCase(name.charAt(0)) && Character.isUpperCase(name.charAt(1))) {
-            return name;
-        }
+        // CDI spec: default bean name is the unqualified class name with first char lowercased
         return Character.toLowerCase(name.charAt(0)) + name.substring(1);
     }
 }

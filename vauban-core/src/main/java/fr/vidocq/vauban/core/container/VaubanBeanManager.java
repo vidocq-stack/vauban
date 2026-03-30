@@ -589,11 +589,7 @@ public final class VaubanBeanManager implements BeanManager {
                 ? Set.<Annotation>of(jakarta.enterprise.inject.Default.Literal.INSTANCE,
                                      jakarta.enterprise.inject.Any.Literal.INSTANCE)
                 : beanQualifiers;
-        var effectiveRequired = requiredQualifiers.isEmpty()
-                ? Set.<Annotation>of(jakarta.enterprise.inject.Default.Literal.INSTANCE)
-                : requiredQualifiers;
-
-        for (var req : effectiveRequired) {
+        for (var req : requiredQualifiers) {
             if (req.annotationType() == jakarta.enterprise.inject.Any.class) continue;
             boolean found = effectiveBeanQualifiers.stream()
                 .anyMatch(bq -> bq.annotationType().equals(req.annotationType())
