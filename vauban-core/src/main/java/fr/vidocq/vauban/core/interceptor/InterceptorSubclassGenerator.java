@@ -85,10 +85,25 @@ public final class InterceptorSubclassGenerator {
                     });
 
             // Override each interceptable method + generate $$super$ bridge
+            // Include declared AND inherited methods (for inherited interceptor bindings)
+            var interceptedMethods = new java.util.LinkedHashSet<String>();
             for (var method : beanClass.getDeclaredMethods()) {
                 if (shouldIntercept(method)) {
                     generateSuperBridge(clb, subclassCD, beanCD, method);
                     generateInterceptedMethod(clb, subclassCD, beanCD, method);
+                    interceptedMethods.add(method.getName() + java.util.Arrays.toString(method.getParameterTypes()));
+                }
+            }
+            // Also intercept inherited public methods (from superclasses)
+            for (var method : beanClass.getMethods()) {
+                if (method.getDeclaringClass() == beanClass) continue; // already handled
+                if (method.getDeclaringClass() == Object.class) continue;
+                var key = method.getName() + java.util.Arrays.toString(method.getParameterTypes());
+                if (interceptedMethods.contains(key)) continue; // already intercepted
+                if (shouldIntercept(method)) {
+                    generateSuperBridge(clb, subclassCD, beanCD, method);
+                    generateInterceptedMethod(clb, subclassCD, beanCD, method);
+                    interceptedMethods.add(key);
                 }
             }
         });
