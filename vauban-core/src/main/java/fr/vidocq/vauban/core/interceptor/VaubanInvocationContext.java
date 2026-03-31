@@ -83,7 +83,45 @@ public final class VaubanInvocationContext implements InvocationContext {
 
     @Override
     public void setParameters(Object[] params) {
+        if (method != null) {
+            // Validate parameter count
+            var originalMethod = getMethod();
+            if (originalMethod != null) {
+                var expectedTypes = originalMethod.getParameterTypes();
+                if (params.length != expectedTypes.length) {
+                    throw new IllegalArgumentException(
+                            "Wrong number of parameters: expected " + expectedTypes.length + " but got " + params.length);
+                }
+                // Validate parameter types
+                for (int i = 0; i < params.length; i++) {
+                    if (params[i] != null && !isAssignableTo(params[i].getClass(), expectedTypes[i])) {
+                        throw new IllegalArgumentException(
+                                "Parameter " + i + " type mismatch: expected " + expectedTypes[i].getName()
+                                        + " but got " + params[i].getClass().getName());
+                    }
+                }
+            }
+        }
         this.parameters = params.clone();
+    }
+
+    private static boolean isAssignableTo(Class<?> from, Class<?> to) {
+        if (to.isAssignableFrom(from)) return true;
+        // Handle primitive/wrapper conversion
+        if (to.isPrimitive()) {
+            return switch (to.getName()) {
+                case "int" -> from == Integer.class;
+                case "long" -> from == Long.class;
+                case "double" -> from == Double.class;
+                case "float" -> from == Float.class;
+                case "boolean" -> from == Boolean.class;
+                case "byte" -> from == Byte.class;
+                case "char" -> from == Character.class;
+                case "short" -> from == Short.class;
+                default -> false;
+            };
+        }
+        return false;
     }
 
     @Override
@@ -137,7 +175,14 @@ public final class VaubanInvocationContext implements InvocationContext {
      */
     public record InterceptorInvocation(Object interceptorInstance, Method aroundInvokeMethod) {
         public Object invoke(InvocationContext ctx) throws Exception {
-            return aroundInvokeMethod.invoke(interceptorInstance, ctx);
+            try {
+                return aroundInvokeMethod.invoke(interceptorInstance, ctx);
+            } catch (java.lang.reflect.InvocationTargetException e) {
+                var cause = e.getCause();
+                if (cause instanceof Exception ex) throw ex;
+                if (cause instanceof Error err) throw err;
+                throw e;
+            }
         }
     }
 }
