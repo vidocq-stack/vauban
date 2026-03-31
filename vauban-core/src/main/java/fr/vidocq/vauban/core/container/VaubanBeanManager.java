@@ -167,18 +167,23 @@ public final class VaubanBeanManager implements BeanManager {
 
             if (!typeMatch) continue;
 
-            // Qualifier matching: @Any matches everything
-            if (requiredQualifiers.contains(jakarta.enterprise.inject.Any.class)) {
+            // Qualifier matching: @Any alone matches everything
+            // But @Any + other qualifiers must still check the other qualifiers
+            if (requiredQualifiers.contains(jakarta.enterprise.inject.Any.class)
+                    && requiredQualifiers.size() == 1) {
                 result.add(bean);
                 continue;
             }
 
             // Check if bean has all required qualifiers via bean.getQualifiers()
             // CDI spec: qualifier matching considers member values (except @Nonbinding)
+            // @Any in the required set always matches — skip it in the comparison
             {
                 var beanQualifiers = bean.getQualifiers();
                 boolean qualifiersMatch = true;
                 for (var reqAnn : requiredQualifierAnnotations) {
+                    // @Any always matches — all beans implicitly have @Any
+                    if (reqAnn.annotationType() == jakarta.enterprise.inject.Any.class) continue;
                     boolean found = beanQualifiers.stream()
                         .anyMatch(bq -> qualifierEquals(bq, reqAnn));
                     if (!found) {

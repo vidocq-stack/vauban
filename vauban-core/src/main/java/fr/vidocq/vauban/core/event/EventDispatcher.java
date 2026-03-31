@@ -71,6 +71,10 @@ public final class EventDispatcher {
             // Match event type
             Class<?> observedClass = resolveObservedType(observer.eventType());
             if (observedClass != null && observedClass.isAssignableFrom(eventType)) {
+                // CDI spec: if observer has parameterized event type, check type arguments
+                if (observer.eventType() instanceof TypeInfo.ParameterizedType pt) {
+                    if (!matchesParameterizedObserver(pt, eventType)) continue;
+                }
                 // Match qualifiers: observer qualifiers must be subset of event qualifiers
                 if (observerQualifiersMatch(observer.qualifiers(), eventQualifiers)) {
                     result.add(observer);
@@ -78,6 +82,77 @@ public final class EventDispatcher {
             }
         }
         return result;
+    }
+
+    /**
+     * Check if the event's actual type matches a parameterized observer type.
+     * CDI spec: type arguments of the event type must be assignable to the observer's type arguments.
+     */
+    private boolean matchesParameterizedObserver(TypeInfo.ParameterizedType observerType, Class<?> eventClass) {
+        try {
+            var cl = container.classLoader();
+            var rawObserved = Class.forName(observerType.rawType().value(), true, cl);
+
+            // Find the actual type arguments of eventClass for rawObserved
+            var eventGenericType = findParameterizedSupertype(eventClass, rawObserved);
+            if (eventGenericType == null) {
+                // eventClass implements rawObserved but we can't find the parameterized version
+                // Raw type assignability — accept (CDI spec: raw types are assignable)
+                return true;
+            }
+
+            var eventTypeArgs = eventGenericType.getActualTypeArguments();
+            var observerTypeArgs = observerType.typeArguments();
+            if (eventTypeArgs.length != observerTypeArgs.size()) return true; // fallback
+
+            for (int i = 0; i < eventTypeArgs.length; i++) {
+                var eventArg = eventTypeArgs[i];
+                var observerArg = observerTypeArgs.get(i);
+
+                if (observerArg instanceof TypeInfo.ClassType ct) {
+                    // Observer expects a specific type — event must have exactly that type
+                    var expectedClass = Class.forName(ct.name().value(), true, cl);
+                    if (eventArg instanceof Class<?> ec) {
+                        if (!expectedClass.equals(ec)) return false;
+                    } else {
+                        return false; // event has wildcard/type variable, observer wants concrete
+                    }
+                }
+                // TypeVariable in observer = matches anything (CDI spec)
+                // Wildcard in observer = check bounds (simplified: accept)
+            }
+            return true;
+        } catch (Exception e) {
+            return true; // fallback: accept on error
+        }
+    }
+
+    /**
+     * Find the ParameterizedType in eventClass's hierarchy that matches rawTarget.
+     */
+    private static java.lang.reflect.ParameterizedType findParameterizedSupertype(
+            Class<?> clazz, Class<?> rawTarget) {
+        if (clazz == null || clazz == Object.class) return null;
+
+        // Check superclass
+        var genericSuper = clazz.getGenericSuperclass();
+        if (genericSuper instanceof java.lang.reflect.ParameterizedType pt) {
+            if (pt.getRawType() == rawTarget) return pt;
+        }
+        // Check interfaces
+        for (var iface : clazz.getGenericInterfaces()) {
+            if (iface instanceof java.lang.reflect.ParameterizedType pt) {
+                if (pt.getRawType() == rawTarget) return pt;
+            }
+        }
+        // Recurse
+        var fromSuper = findParameterizedSupertype(clazz.getSuperclass(), rawTarget);
+        if (fromSuper != null) return fromSuper;
+        for (var iface : clazz.getInterfaces()) {
+            var fromIface = findParameterizedSupertype(iface, rawTarget);
+            if (fromIface != null) return fromIface;
+        }
+        return null;
     }
 
     /**
