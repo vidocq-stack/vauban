@@ -532,6 +532,12 @@ public final class VaubanContainer implements AutoCloseable {
             try {
                 beanClass = loadClass(descriptor.beanClass().value());
 
+                // CDI spec: intercepted bean cannot be final
+                if (java.lang.reflect.Modifier.isFinal(beanClass.getModifiers())) {
+                    throw new jakarta.enterprise.inject.spi.DefinitionException(
+                            "Bean class " + beanClass.getName() + " with interceptor bindings must not be final");
+                }
+
                 // Set the ClassLoader for interceptor class loading
                 interceptorManager.setClassLoader(beanClass.getClassLoader());
 
@@ -568,6 +574,13 @@ public final class VaubanContainer implements AutoCloseable {
 
                 // Update the bean with the new factory
                 beans.put(descriptor.id(), new ManagedBean<>(descriptor, interceptedFactory, classLoader));
+            } catch (jakarta.enterprise.inject.spi.DefinitionException de) {
+                throw de; // Propagate DefinitionException (e.g. final class)
+            } catch (LinkageError le) {
+                // Duplicate class definition or final class → DefinitionException
+                throw new jakarta.enterprise.inject.spi.DefinitionException(
+                        "Cannot create interceptor subclass for " + descriptor.beanClass().value()
+                                + ": " + le.getMessage(), le);
             } catch (Exception e) {
                 // MethodHandles.privateLookupIn may fail for custom classloaders
                 // Fallback: define class via bean's classloader directly
@@ -595,6 +608,9 @@ public final class VaubanContainer implements AutoCloseable {
                         }
                     };
                     beans.put(descriptor.id(), new ManagedBean<>(descriptor, f2, classLoader));
+                } catch (LinkageError le2) {
+                    throw new jakarta.enterprise.inject.spi.DefinitionException(
+                            "Cannot create interceptor subclass: " + le2.getMessage(), le2);
                 } catch (Exception e2) {
                     // truly give up — keep original factory
                 }
