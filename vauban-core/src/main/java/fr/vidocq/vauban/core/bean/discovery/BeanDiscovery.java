@@ -613,9 +613,10 @@ public final class BeanDiscovery {
         if (annClass.isPresent()) {
             return annClass.get().hasAnnotation(DotName.of("jakarta.inject.Qualifier"));
         }
-        // Fallback: check via reflection
+        // Fallback: check via reflection with TCCL
         try {
-            var annType = Class.forName(name.value());
+            var cl = Thread.currentThread().getContextClassLoader();
+            var annType = cl != null ? Class.forName(name.value(), false, cl) : Class.forName(name.value());
             return annType.isAnnotationPresent(jakarta.inject.Qualifier.class);
         } catch (ClassNotFoundException e) {
             return false;
@@ -892,9 +893,20 @@ public final class BeanDiscovery {
                             }
 
                             var eventType = new TypeInfo.ClassType(DotName.of(param.getType().getName()));
+                            // Collect qualifier annotations from the parameter
+                            var qualifiers = new ArrayList<QualifierInstance>();
+                            for (var ann : param.getAnnotations()) {
+                                if (ann.annotationType() == jakarta.enterprise.event.Observes.class
+                                        || ann.annotationType() == jakarta.enterprise.event.ObservesAsync.class)
+                                    continue;
+                                if (isQualifierAnnotation(DotName.of(ann.annotationType().getName()))) {
+                                    qualifiers.add(QualifierInstance.from(
+                                            new AnnotationInfo(DotName.of(ann.annotationType().getName()), Map.of())));
+                                }
+                            }
                             result.add(new ObserverDescriptor(
                                     classInfo.name(), method.getName(), eventType,
-                                    List.of(), async, priority, reception, transactionPhase));
+                                    qualifiers, async, priority, reception, transactionPhase));
                             break;
                         }
                     }
