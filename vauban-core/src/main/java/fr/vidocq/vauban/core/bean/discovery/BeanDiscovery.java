@@ -1033,10 +1033,15 @@ public final class BeanDiscovery {
                             }
                         }
 
+                        // Try to get the parameterized type via reflection
+                        var eventType = resolveObserverParamType(
+                                classInfo.name().value(), method.name(),
+                                method.parameters().indexOf(param), param.type());
+
                         result.add(new ObserverDescriptor(
                                 classInfo.name(),
                                 method.name(),
-                                param.type(),
+                                eventType,
                                 List.copyOf(qualifiers),
                                 isObservesAsync,
                                 priority,
@@ -1047,6 +1052,60 @@ public final class BeanDiscovery {
                 }
             }
         }
+    }
+
+    /**
+     * Resolve the observer parameter type to a ParameterizedType via reflection if possible.
+     */
+    private TypeInfo resolveObserverParamType(String className, String methodName, int paramIndex, TypeInfo fallback) {
+        try {
+            var cl = Thread.currentThread().getContextClassLoader();
+            var clazz = cl != null ? Class.forName(className, false, cl)
+                    : Class.forName(className);
+            for (var m : clazz.getDeclaredMethods()) {
+                if (m.getName().equals(methodName)) {
+                    var genericParamTypes = m.getGenericParameterTypes();
+                    if (paramIndex < genericParamTypes.length) {
+                        var genericType = genericParamTypes[paramIndex];
+                        if (genericType instanceof java.lang.reflect.ParameterizedType pt) {
+                            var rawTypeName = ((Class<?>) pt.getRawType()).getName();
+                            var typeArgs = new ArrayList<TypeInfo>();
+                            for (var arg : pt.getActualTypeArguments()) {
+                                if (arg instanceof Class<?> c) {
+                                    typeArgs.add(new TypeInfo.ClassType(DotName.of(c.getName())));
+                                } else if (arg instanceof java.lang.reflect.WildcardType wt) {
+                                    var upper = wt.getUpperBounds().length > 0 && wt.getUpperBounds()[0] != Object.class
+                                            ? typeInfoFromReflect(wt.getUpperBounds()[0]) : null;
+                                    var lower = wt.getLowerBounds().length > 0
+                                            ? typeInfoFromReflect(wt.getLowerBounds()[0]) : null;
+                                    typeArgs.add(new TypeInfo.WildcardType(upper, lower));
+                                } else if (arg instanceof java.lang.reflect.TypeVariable<?> tv) {
+                                    typeArgs.add(new TypeInfo.TypeVariable(tv.getName(), List.of()));
+                                } else {
+                                    typeArgs.add(new TypeInfo.ClassType(DotName.of(arg.getTypeName())));
+                                }
+                            }
+                            return new TypeInfo.ParameterizedType(DotName.of(rawTypeName), typeArgs);
+                        }
+                    }
+                    break;
+                }
+            }
+        } catch (Exception e) { /* fallback */ }
+        return fallback;
+    }
+
+    private TypeInfo typeInfoFromReflect(java.lang.reflect.Type type) {
+        if (type instanceof Class<?> c) return new TypeInfo.ClassType(DotName.of(c.getName()));
+        if (type instanceof java.lang.reflect.ParameterizedType pt) {
+            var rawTypeName = ((Class<?>) pt.getRawType()).getName();
+            var args = new ArrayList<TypeInfo>();
+            for (var arg : pt.getActualTypeArguments()) {
+                args.add(typeInfoFromReflect(arg));
+            }
+            return new TypeInfo.ParameterizedType(DotName.of(rawTypeName), args);
+        }
+        return new TypeInfo.ClassType(DotName.of(type.getTypeName()));
     }
 
     /**
