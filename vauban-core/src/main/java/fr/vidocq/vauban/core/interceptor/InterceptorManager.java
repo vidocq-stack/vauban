@@ -30,6 +30,7 @@ public final class InterceptorManager {
      */
     public List<VaubanInvocationContext.InterceptorInvocation> resolveChainForMethod(
             Set<DotName> classBindings, java.lang.reflect.Method method) {
+        // resolveChainForMethod called
         var allBindings = new java.util.LinkedHashSet<>(classBindings);
         var beanAnnotations = new java.util.ArrayList<java.lang.annotation.Annotation>();
 

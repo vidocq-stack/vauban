@@ -602,7 +602,8 @@ public final class VaubanContainer implements AutoCloseable {
                         }
                     }
                 } catch (ClassNotFoundException ex) { /* skip */ }
-                if (bindings.isEmpty()) continue;
+                // Don't skip if bindings are empty — method-level bindings checked below
+                if (bindings.isEmpty() && !interceptorManager.hasInterceptors()) continue;
             }
             try {
                 beanClass = loadClass(descriptor.beanClass().value());
