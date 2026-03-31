@@ -47,7 +47,13 @@ public final class EventImpl<T> implements Event<T> {
 
     @Override
     public <U extends T> CompletionStage<U> fireAsync(U event, NotificationOptions options) {
-        return fireAsync(event);
+        if (event == null) {
+            throw new IllegalArgumentException("Event object must not be null");
+        }
+        var executor = options != null ? options.getExecutor() : null;
+        @SuppressWarnings("unchecked")
+        var stage = (CompletionStage<U>) dispatcher.fireAsync(event, executor, qualifiers);
+        return stage;
     }
 
     @Override

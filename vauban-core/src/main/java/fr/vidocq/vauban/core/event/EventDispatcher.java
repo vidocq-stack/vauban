@@ -45,7 +45,15 @@ public final class EventDispatcher {
      * Fire an asynchronous event.
      */
     public <T> CompletionStage<T> fireAsync(T event, Annotation... qualifiers) {
-        return CompletableFuture.supplyAsync(() -> {
+        return fireAsync(event, null, qualifiers);
+    }
+
+    /**
+     * Fire an asynchronous event with an optional custom executor.
+     */
+    public <T> CompletionStage<T> fireAsync(T event, java.util.concurrent.Executor executor,
+            Annotation... qualifiers) {
+        java.util.function.Supplier<T> task = () -> {
             var qualifierInstances = toQualifierInstances(qualifiers);
             var matching = findMatchingObservers(event.getClass(), true, qualifierInstances);
             matching.sort(Comparator.comparingInt(ObserverDescriptor::priority));
@@ -53,7 +61,10 @@ public final class EventDispatcher {
                 invokeObserver(observer, event, qualifiers);
             }
             return event;
-        });
+        };
+        return executor != null
+                ? CompletableFuture.supplyAsync(task, executor)
+                : CompletableFuture.supplyAsync(task);
     }
 
     /**
