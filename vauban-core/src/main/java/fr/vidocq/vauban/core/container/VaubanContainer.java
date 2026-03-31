@@ -1218,9 +1218,48 @@ public final class VaubanContainer implements AutoCloseable {
                 // Skip interfaces, annotations, enums
                 if (clazz.isInterface() || clazz.isAnnotation() || clazz.isEnum()) continue;
 
-                // Generic managed bean — only invalid if it's the only concrete class
-                // with unresolved type params and no concrete subclass resolves them.
-                // This is too complex to validate here; deferred.
+                // CDI spec: @Typed values must be legal bean types (supertypes of the bean class)
+                if (clazz.isAnnotationPresent(jakarta.enterprise.inject.Typed.class)) {
+                    var typed = clazz.getAnnotation(jakarta.enterprise.inject.Typed.class);
+                    for (var t : typed.value()) {
+                        if (!t.isAssignableFrom(clazz)) {
+                            errors.add("@Typed value " + t.getName() + " on " + clazz.getName()
+                                    + " is not a legal bean type (not a supertype)");
+                        }
+                    }
+                }
+
+                // CDI spec: @Typed on producer methods/fields — values must be legal
+                for (var method : clazz.getDeclaredMethods()) {
+                    if (method.isAnnotationPresent(jakarta.enterprise.inject.Produces.class)
+                            && method.isAnnotationPresent(jakarta.enterprise.inject.Typed.class)) {
+                        var typed = method.getAnnotation(jakarta.enterprise.inject.Typed.class);
+                        var returnType = method.getReturnType();
+                        for (var t : typed.value()) {
+                            if (!t.isAssignableFrom(returnType) && t != Object.class) {
+                                errors.add("@Typed value " + t.getName() + " on producer method "
+                                        + clazz.getName() + "." + method.getName()
+                                        + " is not a legal bean type");
+                            }
+                        }
+                    }
+                }
+                for (var field : clazz.getDeclaredFields()) {
+                    if (field.isAnnotationPresent(jakarta.enterprise.inject.Produces.class)
+                            && field.isAnnotationPresent(jakarta.enterprise.inject.Typed.class)) {
+                        var typed = field.getAnnotation(jakarta.enterprise.inject.Typed.class);
+                        var fieldType = field.getType();
+                        for (var t : typed.value()) {
+                            if (!t.isAssignableFrom(fieldType) && t != Object.class) {
+                                errors.add("@Typed value " + t.getName() + " on producer field "
+                                        + clazz.getName() + "." + field.getName()
+                                        + " is not a legal bean type");
+                            }
+                        }
+                    }
+                }
+
+                // Generic managed bean — deferred
 
                 // Check @Inject fields for raw Event/Instance
                 for (var field : clazz.getDeclaredFields()) {
