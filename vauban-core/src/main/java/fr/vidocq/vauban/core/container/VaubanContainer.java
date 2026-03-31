@@ -1229,6 +1229,24 @@ public final class VaubanContainer implements AutoCloseable {
                     }
                 }
 
+                // CDI spec: a managed bean with type parameters and a non-@Dependent scope
+                // is a DefinitionException (CDI 4.1 Section 3.1)
+                if (hasBeanDefiningAnnotation(clazz) && clazz.getTypeParameters().length > 0) {
+                    boolean isNonDependent = false;
+                    for (var ann : clazz.getAnnotations()) {
+                        var annType = ann.annotationType();
+                        if (annType.isAnnotationPresent(jakarta.enterprise.context.NormalScope.class)
+                                || annType == jakarta.inject.Singleton.class) {
+                            isNonDependent = true;
+                            break;
+                        }
+                    }
+                    if (isNonDependent) {
+                        errors.add("Managed bean " + clazz.getName()
+                                + " has type parameters and is not @Dependent");
+                    }
+                }
+
                 // CDI spec: @Named without value on non-field injection points
                 if (hasBeanDefiningAnnotation(clazz)) {
                     for (var method : clazz.getDeclaredMethods()) {
