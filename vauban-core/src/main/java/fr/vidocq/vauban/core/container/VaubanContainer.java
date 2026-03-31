@@ -1229,6 +1229,32 @@ public final class VaubanContainer implements AutoCloseable {
                     }
                 }
 
+                // CDI spec: @Named without value on non-field injection points
+                if (hasBeanDefiningAnnotation(clazz)) {
+                    for (var method : clazz.getDeclaredMethods()) {
+                        if (method.isAnnotationPresent(jakarta.inject.Inject.class)) {
+                            for (var param : method.getParameters()) {
+                                var named = param.getAnnotation(jakarta.inject.Named.class);
+                                if (named != null && named.value().isEmpty()) {
+                                    errors.add("@Named without value on initializer parameter: "
+                                            + clazz.getName() + "." + method.getName());
+                                }
+                            }
+                        }
+                    }
+                    for (var ctor : clazz.getDeclaredConstructors()) {
+                        if (ctor.isAnnotationPresent(jakarta.inject.Inject.class)) {
+                            for (var param : ctor.getParameters()) {
+                                var named = param.getAnnotation(jakarta.inject.Named.class);
+                                if (named != null && named.value().isEmpty()) {
+                                    errors.add("@Named without value on constructor parameter: "
+                                            + clazz.getName());
+                                }
+                            }
+                        }
+                    }
+                }
+
                 // CDI spec: normal-scoped beans must not have non-static public fields
                 // This is a DefinitionException (not DeploymentException)
                 if (hasBeanDefiningAnnotation(clazz)) {
