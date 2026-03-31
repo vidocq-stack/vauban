@@ -72,8 +72,30 @@ public final class DeploymentValidator {
             }
         }
 
-        // Note: circular dependency detection between @Dependent beans is NOT required
-        // by CDI spec at deployment time. The cycle will be detected at runtime.
+        // CDI spec: Duplicate bean names (two non-alternative beans with the same EL name)
+        var nameMap = new java.util.HashMap<String, List<BeanDescriptor>>();
+        for (var bean : beans) {
+            if (bean.name() != null) {
+                nameMap.computeIfAbsent(bean.name(), k -> new ArrayList<>()).add(bean);
+            }
+        }
+        for (var entry : nameMap.entrySet()) {
+            var beansWithName = entry.getValue();
+            if (beansWithName.size() > 1) {
+                // CDI spec: ambiguous EL name is only an error if there are non-alternative beans
+                // or multiple enabled alternatives with the same priority
+                var nonAlternatives = beansWithName.stream()
+                        .filter(b -> !b.isAlternative())
+                        .toList();
+                if (nonAlternatives.size() > 1) {
+                    errors.add(new ValidationError(
+                            ValidationError.Kind.AMBIGUOUS_DEPENDENCY,
+                            "Duplicate bean name '" + entry.getKey() + "' on non-alternative beans: "
+                                    + nonAlternatives.stream().map(b -> b.beanClass().value()).toList(),
+                            nonAlternatives.getFirst()));
+                }
+            }
+        }
 
         return List.copyOf(errors);
     }
