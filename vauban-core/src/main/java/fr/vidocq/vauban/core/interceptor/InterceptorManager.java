@@ -30,6 +30,7 @@ public final class InterceptorManager {
      */
     public List<VaubanInvocationContext.InterceptorInvocation> resolveChainForMethod(
             Set<DotName> classBindings, java.lang.reflect.Method method) {
+        // resolveChainForMethod traces removed
         var allBindings = new java.util.LinkedHashSet<>(classBindings);
         if (method != null) {
             // Resolve the original method name (strip $$super$ prefix)

@@ -40,7 +40,7 @@ public final class VaubanBeanManager implements BeanManager {
                              InterceptorManager interceptorManager) {
         this.container = container;
         this.contexts = contexts;
-        this.beans = List.copyOf(beans);
+        this.beans = new ArrayList<>(beans);
         this.eventDispatcher = eventDispatcher;
         this.interceptorManager = interceptorManager;
     }

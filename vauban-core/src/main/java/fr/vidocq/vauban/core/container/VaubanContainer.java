@@ -593,9 +593,20 @@ public final class VaubanContainer implements AutoCloseable {
                 // Set the ClassLoader for interceptor class loading
                 interceptorManager.setClassLoader(beanClass.getClassLoader());
 
-                // Check if there are matching interceptors
+                // Check if there are matching interceptors (class-level OR method-level)
                 var chain = interceptorManager.resolveChain(bindings);
-                if (chain.isEmpty()) continue;
+                if (chain.isEmpty()) {
+                    // Also check method-level bindings
+                    boolean hasMethodLevelInterceptors = false;
+                    for (var m : beanClass.getDeclaredMethods()) {
+                        var methodChain = interceptorManager.resolveChainForMethod(bindings, m);
+                        if (!methodChain.isEmpty()) {
+                            hasMethodLevelInterceptors = true;
+                            break;
+                        }
+                    }
+                    if (!hasMethodLevelInterceptors) continue;
+                }
 
                 // Generate the intercepted subclass
                 var generated = fr.vidocq.vauban.core.interceptor.InterceptorSubclassGenerator
@@ -636,6 +647,7 @@ public final class VaubanContainer implements AutoCloseable {
                         "Cannot create interceptor subclass for " + descriptor.beanClass().value()
                                 + ": " + le.getMessage(), le);
             } catch (Exception e) {
+                // Primary interception failed — try fallback
                 // MethodHandles.privateLookupIn may fail for custom classloaders
                 // Fallback: define class via bean's classloader directly
                 try {
@@ -668,7 +680,7 @@ public final class VaubanContainer implements AutoCloseable {
                     throw new jakarta.enterprise.inject.spi.DefinitionException(
                             "Cannot create interceptor subclass: " + le2.getMessage(), le2);
                 } catch (Exception e2) {
-                    // Fallback failed — keep original factory
+                    System.err.println("[VAUBAN-DBG] Fallback interception also failed for " + descriptor.beanClass() + ": " + e2);
                 }
             }
         }
