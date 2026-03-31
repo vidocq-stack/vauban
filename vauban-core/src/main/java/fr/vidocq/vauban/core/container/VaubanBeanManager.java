@@ -99,6 +99,10 @@ public final class VaubanBeanManager implements BeanManager {
 
     @Override
     public Set<Bean<?>> getBeans(Type beanType, Annotation... qualifiers) {
+        // CDI spec: primitive types and wrappers are identical
+        if (beanType instanceof Class<?> c && c.isPrimitive()) {
+            beanType = primitiveToWrapper(c);
+        }
         // Validate: type variable not allowed
         if (beanType instanceof java.lang.reflect.TypeVariable<?>) {
             throw new IllegalArgumentException("TypeVariable is not a legal bean type");

@@ -153,7 +153,9 @@ public final class VaubanContainer implements AutoCloseable {
      */
     @SuppressWarnings("unchecked")
     public <T> T select(Class<T> type) {
-        var typeInfo = new TypeInfo.ClassType(DotName.of(type.getName()));
+        // CDI spec: primitive types and their wrappers are considered identical
+        var lookupType = type.isPrimitive() ? wrapPrimitive(type) : type;
+        var typeInfo = new TypeInfo.ClassType(DotName.of(lookupType.getName()));
         var resolved = resolver.resolve(typeInfo, Set.of(QualifierInstance.DEFAULT));
         if (resolved.isEmpty()) {
             throw new jakarta.enterprise.inject.UnsatisfiedResolutionException(
@@ -274,6 +276,18 @@ public final class VaubanContainer implements AutoCloseable {
      */
     Class<?> loadClass(String name) throws ClassNotFoundException {
         return Class.forName(name, true, classLoader);
+    }
+
+    private static Class<?> wrapPrimitive(Class<?> p) {
+        if (p == int.class) return Integer.class;
+        if (p == long.class) return Long.class;
+        if (p == double.class) return Double.class;
+        if (p == float.class) return Float.class;
+        if (p == boolean.class) return Boolean.class;
+        if (p == byte.class) return Byte.class;
+        if (p == char.class) return Character.class;
+        if (p == short.class) return Short.class;
+        return p;
     }
 
     public boolean isRunning() {
@@ -417,7 +431,10 @@ public final class VaubanContainer implements AutoCloseable {
                     } else {
                         value = select(field.getType());
                     }
-                    field.set(instance, value);
+                    // CDI spec: don't set null on primitive fields
+                    if (value != null || !field.getType().isPrimitive()) {
+                        field.set(instance, value);
+                    }
                 } finally {
                     currentInjectionPoint.set(previousIp);
                 }
