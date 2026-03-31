@@ -1519,8 +1519,34 @@ public final class VaubanContainer implements AutoCloseable {
                         }
                     }
                 }
+                // CDI spec: stereotypes must not declare conflicting priorities (direct or transitive)
+                if (hasBeanDefiningAnnotation(clazz)) {
+                    var priorities = new java.util.LinkedHashSet<Integer>();
+                    collectStereotypePriorities(clazz, priorities, new java.util.HashSet<>());
+                    if (priorities.size() > 1) {
+                        errors.add("Bean " + clazz.getName()
+                                + " has conflicting stereotype priorities: " + priorities);
+                    }
+                }
             }
             return errors;
+        }
+
+        private static void collectStereotypePriorities(Class<?> clazz,
+                Set<Integer> priorities, Set<Class<?>> visited) {
+            for (var ann : clazz.getAnnotations()) {
+                var annType = ann.annotationType();
+                if (annType.isAnnotationPresent(jakarta.enterprise.inject.Stereotype.class)) {
+                    if (!visited.add(annType)) continue;
+                    // Check if stereotype has @Priority
+                    var priority = annType.getAnnotation(jakarta.annotation.Priority.class);
+                    if (priority != null) {
+                        priorities.add(priority.value());
+                    }
+                    // Check transitive stereotypes
+                    collectStereotypePriorities(annType, priorities, visited);
+                }
+            }
         }
 
         private static void validateNoRawParameterized(java.lang.reflect.Type genericType,
