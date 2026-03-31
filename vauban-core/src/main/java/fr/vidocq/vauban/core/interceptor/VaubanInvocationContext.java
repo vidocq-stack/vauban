@@ -84,6 +84,13 @@ public final class VaubanInvocationContext implements InvocationContext {
         this.constructor = constructor;
     }
 
+    /**
+     * Set the interceptor bindings explicitly (for AroundConstruct/lifecycle where target is null).
+     */
+    public void setInterceptorBindings(Set<java.lang.annotation.Annotation> bindings) {
+        this.interceptorBindings = bindings;
+    }
+
     @Override
     public Object[] getParameters() {
         return parameters.clone();
@@ -142,24 +149,60 @@ public final class VaubanInvocationContext implements InvocationContext {
         if (interceptorBindings != null) return interceptorBindings;
         // Derive from target class annotations
         if (target != null) {
-            var bindings = new java.util.LinkedHashSet<java.lang.annotation.Annotation>();
-            for (var ann : target.getClass().getSuperclass().getAnnotations()) {
-                if (ann.annotationType().isAnnotationPresent(jakarta.interceptor.InterceptorBinding.class)) {
-                    bindings.add(ann);
+            var beanClass = target.getClass();
+            if (beanClass.getName().contains("$$Intercepted") || beanClass.getName().contains("$$Proxy")) {
+                beanClass = beanClass.getSuperclass();
+            }
+            // Class-level bindings (indexed by annotation type for override logic)
+            var bindingsByType = new java.util.LinkedHashMap<Class<? extends java.lang.annotation.Annotation>,
+                    java.lang.annotation.Annotation>();
+            for (var ann : beanClass.getAnnotations()) {
+                if (isInterceptorBinding(ann)) {
+                    bindingsByType.put(ann.annotationType(), ann);
                 }
             }
-            // Also check method-level bindings
-            if (method != null) {
-                for (var ann : method.getAnnotations()) {
-                    if (ann.annotationType().isAnnotationPresent(jakarta.interceptor.InterceptorBinding.class)) {
-                        bindings.add(ann);
+            // Method-level bindings override class-level of the same type
+            var resolvedMethod = getMethod();
+            if (resolvedMethod != null) {
+                var methodBindingTypes = new java.util.HashSet<Class<? extends java.lang.annotation.Annotation>>();
+                for (var ann : resolvedMethod.getAnnotations()) {
+                    if (isInterceptorBinding(ann)) {
+                        methodBindingTypes.add(ann.annotationType());
+                        bindingsByType.put(ann.annotationType(), ann);
                     }
                 }
+                // Remove class-level bindings that are overridden by method-level of same type
+                // (already handled by put above — method replaces class)
             }
-            interceptorBindings = bindings;
-            return bindings;
+            // Transitively resolve meta-bindings
+            var result = new java.util.LinkedHashSet<java.lang.annotation.Annotation>(bindingsByType.values());
+            addTransitiveBindings(result);
+            interceptorBindings = result;
+            return result;
         }
         return Set.of();
+    }
+
+    private static boolean isInterceptorBinding(java.lang.annotation.Annotation ann) {
+        return ann.annotationType().isAnnotationPresent(jakarta.interceptor.InterceptorBinding.class);
+    }
+
+    private static void addTransitiveBindings(Set<java.lang.annotation.Annotation> bindings) {
+        var toAdd = new java.util.LinkedHashSet<java.lang.annotation.Annotation>();
+        for (var ann : bindings) {
+            collectTransitive(ann.annotationType(), toAdd, bindings);
+        }
+        bindings.addAll(toAdd);
+    }
+
+    private static void collectTransitive(Class<? extends java.lang.annotation.Annotation> annType,
+            Set<java.lang.annotation.Annotation> toAdd, Set<java.lang.annotation.Annotation> existing) {
+        for (var meta : annType.getAnnotations()) {
+            if (isInterceptorBinding(meta) && !existing.contains(meta) && !toAdd.contains(meta)) {
+                toAdd.add(meta);
+                collectTransitive(meta.annotationType(), toAdd, existing);
+            }
+        }
     }
 
     @Override

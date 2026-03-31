@@ -530,6 +530,8 @@ public final class VaubanContainer implements AutoCloseable {
             var lifecycleChain = interceptorManager.resolveLifecycleChain(
                     beanBindings, jakarta.annotation.PostConstruct.class);
             if (!lifecycleChain.isEmpty()) {
+                // Collect binding annotations for InvocationContext.getInterceptorBindings()
+                var bindingAnnotations = collectBindingAnnotations(instance);
                 // Invoke lifecycle interceptors through InvocationContext
                 final var pcMethod = postConstructMethod;
                 var ctx = new fr.vidocq.vauban.core.interceptor.VaubanInvocationContext(
@@ -538,6 +540,7 @@ public final class VaubanContainer implements AutoCloseable {
                             if (pcMethod != null) pcMethod.invoke(target);
                             return null;
                         });
+                ctx.setInterceptorBindings(bindingAnnotations);
                 try {
                     ctx.proceed();
                 } catch (RuntimeException e) {
@@ -560,6 +563,31 @@ public final class VaubanContainer implements AutoCloseable {
     }
 
     /**
+     * Collect transitive interceptor binding annotations from meta-annotations.
+     */
+    private static void collectTransitiveBindings(Set<java.lang.annotation.Annotation> annotations,
+            Set<DotName> dotNames) {
+        var toAdd = new java.util.LinkedHashSet<java.lang.annotation.Annotation>();
+        for (var ann : annotations) {
+            collectTransitiveMeta(ann.annotationType(), toAdd, annotations, dotNames);
+        }
+        annotations.addAll(toAdd);
+    }
+
+    private static void collectTransitiveMeta(Class<? extends java.lang.annotation.Annotation> annType,
+            Set<java.lang.annotation.Annotation> toAdd,
+            Set<java.lang.annotation.Annotation> existing, Set<DotName> dotNames) {
+        for (var meta : annType.getAnnotations()) {
+            if (meta.annotationType().isAnnotationPresent(jakarta.interceptor.InterceptorBinding.class)
+                    && !existing.contains(meta) && !toAdd.contains(meta)) {
+                toAdd.add(meta);
+                dotNames.add(DotName.of(meta.annotationType().getName()));
+                collectTransitiveMeta(meta.annotationType(), toAdd, existing, dotNames);
+            }
+        }
+    }
+
+    /**
      * Find interceptor bindings on a bean instance (from its class or superclass).
      */
     private Set<DotName> findInterceptorBindings(Object instance) {
@@ -575,6 +603,23 @@ public final class VaubanContainer implements AutoCloseable {
             }
         }
         return bindings;
+    }
+
+    private Set<java.lang.annotation.Annotation> collectBindingAnnotations(Object instance) {
+        var clazz = instance.getClass();
+        if (clazz.getName().contains("$$Intercepted") || clazz.getName().contains("$$Proxy")) {
+            clazz = clazz.getSuperclass();
+        }
+        var annotations = new java.util.LinkedHashSet<java.lang.annotation.Annotation>();
+        var dotNames = new java.util.LinkedHashSet<DotName>();
+        for (var ann : clazz.getAnnotations()) {
+            if (ann.annotationType().isAnnotationPresent(jakarta.interceptor.InterceptorBinding.class)) {
+                annotations.add(ann);
+                dotNames.add(DotName.of(ann.annotationType().getName()));
+            }
+        }
+        collectTransitiveBindings(annotations, dotNames);
+        return annotations;
     }
 
     /**
@@ -913,16 +958,21 @@ public final class VaubanContainer implements AutoCloseable {
 
                 // Check for @AroundConstruct interceptors
                 var ctorBindings = new java.util.LinkedHashSet<DotName>();
+                var ctorBindingAnnotations = new java.util.LinkedHashSet<java.lang.annotation.Annotation>();
                 for (var ann : beanClass.getAnnotations()) {
                     if (ann.annotationType().isAnnotationPresent(jakarta.interceptor.InterceptorBinding.class)) {
                         ctorBindings.add(DotName.of(ann.annotationType().getName()));
+                        ctorBindingAnnotations.add(ann);
                     }
                 }
                 for (var ann : injectCtor.getAnnotations()) {
                     if (ann.annotationType().isAnnotationPresent(jakarta.interceptor.InterceptorBinding.class)) {
                         ctorBindings.add(DotName.of(ann.annotationType().getName()));
+                        ctorBindingAnnotations.add(ann);
                     }
                 }
+                // Transitively resolve meta-bindings
+                collectTransitiveBindings(ctorBindingAnnotations, ctorBindings);
                 if (!ctorBindings.isEmpty() && interceptorManager.hasInterceptors()) {
                     interceptorManager.setClassLoader(beanClass.getClassLoader());
                     var aroundConstructChain = interceptorManager.resolveLifecycleChain(
@@ -937,6 +987,7 @@ public final class VaubanContainer implements AutoCloseable {
                                     return ctor.newInstance(params);
                                 });
                         ctx.setConstructor(injectCtor);
+                        ctx.setInterceptorBindings(ctorBindingAnnotations);
                         return ctx.proceed();
                     }
                 }

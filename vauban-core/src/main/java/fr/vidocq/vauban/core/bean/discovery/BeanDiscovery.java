@@ -313,8 +313,39 @@ public final class BeanDiscovery {
         var types = computeProducerTypesWithTyped(field.type(), field.annotations());
         var qualifiers = computeQualifiers(field.annotations());
         var scope = computeScopeWithStereotypes(field.annotations());
-        var isAlternative = hasAnnotation(field.annotations(), ALTERNATIVE);
+        var isAlternative = hasAnnotation(field.annotations(), ALTERNATIVE) ||
+                field.annotations().stream().anyMatch(a -> isStereotype(a.name()) &&
+                        index.getClassByName(a.name()).map(c -> c.hasAnnotation(ALTERNATIVE)).orElse(false))
+                || isAlternativeWithStereotypes(declaringClass);
         var priority = extractPriority(field.annotations());
+        // Fallback: check @Priority via reflection on the producer field
+        if (priority == 0) {
+            try {
+                var cl = Thread.currentThread().getContextClassLoader();
+                var clazz = cl != null ? Class.forName(declaringClass.name().value(), false, cl)
+                        : Class.forName(declaringClass.name().value());
+                var f = clazz.getDeclaredField(field.name());
+                if (f.isAnnotationPresent(jakarta.annotation.Priority.class)) {
+                    priority = f.getAnnotation(jakarta.annotation.Priority.class).value();
+                }
+            } catch (Exception e) { /* skip */ }
+        }
+        // Fallback: stereotypes on field
+        if (priority == 0) {
+            for (var ann : field.annotations()) {
+                if (isStereotype(ann.name())) {
+                    var sc = index.getClassByName(ann.name());
+                    if (sc.isPresent()) {
+                        priority = extractPriority(sc.get().annotations());
+                        if (priority > 0) break;
+                    }
+                }
+            }
+        }
+        // Fallback to declaring class priority
+        if (priority == 0) {
+            priority = extractPriorityWithStereotypes(declaringClass);
+        }
         var name = extractNameWithStereotypesFromAnnotations(field.annotations(), field.name());
 
         return new BeanDescriptor(id, declaringClass.name(), BeanDescriptor.BeanKind.PRODUCER_FIELD,
