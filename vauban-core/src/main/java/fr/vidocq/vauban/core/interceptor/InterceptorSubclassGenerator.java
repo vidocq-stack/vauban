@@ -129,6 +129,8 @@ public final class InterceptorSubclassGenerator {
         if (method.isSynthetic()) return false;
         if (method.isBridge()) return false;
         if (method.getName().startsWith("$$")) return false;
+        // CDI spec: @Inject initializer methods are NOT intercepted
+        if (method.isAnnotationPresent(jakarta.inject.Inject.class)) return false;
         return true;
     }
 
