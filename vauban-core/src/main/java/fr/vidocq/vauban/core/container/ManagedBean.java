@@ -412,7 +412,48 @@ public final class ManagedBean<T> implements Bean<T> {
     }
 
     private static void collectTypes(Class<?> clazz, Set<Type> types) {
-        collectTypesWithMapping(clazz, types, Map.of());
+        if (clazz == null || clazz == Object.class) return;
+        // CDI spec: for generic bean class, add parameterized type with own type variables
+        var typeParams = clazz.getTypeParameters();
+        if (typeParams.length > 0) {
+            types.add(new ResolvedParameterizedType(clazz, typeParams));
+        } else {
+            types.add(clazz);
+        }
+        // Collect supertypes (skip self)
+        collectTypesFromSupers(clazz, types, Map.of());
+    }
+
+    private static void collectTypesFromSupers(Class<?> clazz, Set<Type> types,
+            Map<java.lang.reflect.TypeVariable<?>, Type> typeMapping) {
+        if (clazz == null || clazz == Object.class) return;
+        // Superclass
+        var genericSuper = clazz.getGenericSuperclass();
+        if (genericSuper != null && genericSuper != Object.class) {
+            if (genericSuper instanceof java.lang.reflect.ParameterizedType pt) {
+                var resolved = resolveParameterizedType(pt, typeMapping);
+                types.add(resolved);
+                var rawClass = (Class<?>) pt.getRawType();
+                var newMapping = buildTypeMapping(rawClass, resolved);
+                collectTypesFromSupers(rawClass, types, newMapping);
+            } else if (genericSuper instanceof Class<?> c) {
+                collectTypesWithMapping(c, types, typeMapping);
+            }
+        } else if (clazz.getSuperclass() != null) {
+            collectTypesWithMapping(clazz.getSuperclass(), types, typeMapping);
+        }
+        // Interfaces
+        for (var genericIface : clazz.getGenericInterfaces()) {
+            if (genericIface instanceof java.lang.reflect.ParameterizedType pt) {
+                var resolved = resolveParameterizedType(pt, typeMapping);
+                types.add(resolved);
+                var rawClass = (Class<?>) pt.getRawType();
+                var newMapping = buildTypeMapping(rawClass, resolved);
+                collectTypesFromSupers(rawClass, types, newMapping);
+            } else if (genericIface instanceof Class<?> c) {
+                collectTypesWithMapping(c, types, typeMapping);
+            }
+        }
     }
 
     private static void collectTypesWithMapping(Class<?> clazz, Set<Type> types,
@@ -641,6 +682,29 @@ public final class ManagedBean<T> implements Bean<T> {
             return clazz;
         } catch (ClassNotFoundException e) {
             return jakarta.enterprise.context.Dependent.class;
+        }
+    }
+
+    /**
+     * A simple ParameterizedType implementation for generic bean types.
+     */
+    private record ResolvedParameterizedType(Class<?> rawClass, Type[] typeArgs)
+            implements java.lang.reflect.ParameterizedType {
+        @Override public Type[] getActualTypeArguments() { return typeArgs.clone(); }
+        @Override public Type getRawType() { return rawClass; }
+        @Override public Type getOwnerType() { return rawClass.getEnclosingClass(); }
+        @Override public boolean equals(Object o) {
+            if (!(o instanceof java.lang.reflect.ParameterizedType other)) return false;
+            return rawClass.equals(other.getRawType())
+                    && java.util.Arrays.equals(typeArgs, other.getActualTypeArguments());
+        }
+        @Override public int hashCode() {
+            return java.util.Arrays.hashCode(typeArgs) ^ rawClass.hashCode();
+        }
+        @Override public String toString() {
+            return rawClass.getTypeName() + "<" +
+                    java.util.Arrays.stream(typeArgs).map(Type::getTypeName)
+                            .collect(java.util.stream.Collectors.joining(", ")) + ">";
         }
     }
 }
