@@ -115,7 +115,7 @@ public final class EventDispatcher {
 
     private void invokeObserver(ObserverDescriptor observer, Object event, Annotation... eventQualifiers) {
         try {
-            var beanClass = Class.forName(observer.declaringClass().value());
+            var beanClass = Class.forName(observer.declaringClass().value(), true, container.classLoader());
 
             // CDI spec: IF_EXISTS — only notify if a bean instance already exists in the context
             if ("IF_EXISTS".equals(observer.reception())) {
@@ -213,11 +213,12 @@ public final class EventDispatcher {
         }
     }
 
-    private static Class<?> resolveObservedType(TypeInfo typeInfo) {
+    private Class<?> resolveObservedType(TypeInfo typeInfo) {
         try {
+            var cl = container.classLoader();
             return switch (typeInfo) {
-                case TypeInfo.ClassType ct -> Class.forName(ct.name().value());
-                case TypeInfo.ParameterizedType pt -> Class.forName(pt.rawType().value());
+                case TypeInfo.ClassType ct -> Class.forName(ct.name().value(), true, cl);
+                case TypeInfo.ParameterizedType pt -> Class.forName(pt.rawType().value(), true, cl);
                 case TypeInfo.ArrayType at -> {
                     var component = resolveObservedType(at.componentType());
                     yield component != null

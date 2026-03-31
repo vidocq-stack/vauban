@@ -21,17 +21,20 @@ public final class VaubanObserverMethod<T> implements ObserverMethod<T> {
     private final ObserverDescriptor descriptor;
     private final EventDispatcher dispatcher;
     private final Bean<?> declaringBean;
+    private final ClassLoader classLoader;
 
-    public VaubanObserverMethod(ObserverDescriptor descriptor, EventDispatcher dispatcher, Bean<?> declaringBean) {
+    public VaubanObserverMethod(ObserverDescriptor descriptor, EventDispatcher dispatcher,
+            Bean<?> declaringBean, ClassLoader classLoader) {
         this.descriptor = descriptor;
         this.dispatcher = dispatcher;
         this.declaringBean = declaringBean;
+        this.classLoader = classLoader;
     }
 
     @Override
     public Class<?> getBeanClass() {
         try {
-            return Class.forName(descriptor.declaringClass().value());
+            return Class.forName(descriptor.declaringClass().value(), true, classLoader);
         } catch (ClassNotFoundException e) {
             return Object.class;
         }
@@ -46,7 +49,7 @@ public final class VaubanObserverMethod<T> implements ObserverMethod<T> {
     public Type getObservedType() {
         if (descriptor.eventType() instanceof TypeInfo.ClassType ct) {
             try {
-                return Class.forName(ct.name().value());
+                return Class.forName(ct.name().value(), true, classLoader);
             } catch (ClassNotFoundException e) {
                 return Object.class;
             }
@@ -56,7 +59,7 @@ public final class VaubanObserverMethod<T> implements ObserverMethod<T> {
 
     @Override
     public Set<Annotation> getObservedQualifiers() {
-        return QualifierUtils.toAnnotations(new java.util.LinkedHashSet<>(descriptor.qualifiers()), null);
+        return QualifierUtils.toAnnotations(new java.util.LinkedHashSet<>(descriptor.qualifiers()), null, classLoader);
     }
 
     @Override

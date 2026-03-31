@@ -19,24 +19,29 @@ public final class QualifierUtils {
 
     /**
      * Converts a set of {@link QualifierInstance} to runtime {@link Annotation} instances.
-     * Uses CDI Literal instances for built-in qualifiers (@Default, @Any, @Named).
-     *
-     * @param qualifiers the qualifier descriptors
-     * @param beanName   the bean name (used for @Named value), may be null
      */
     public static Set<Annotation> toAnnotations(Set<QualifierInstance> qualifiers, String beanName) {
+        return toAnnotations(qualifiers, beanName, null);
+    }
+
+    public static Set<Annotation> toAnnotations(Set<QualifierInstance> qualifiers, String beanName,
+            ClassLoader cl) {
         var result = new LinkedHashSet<Annotation>();
         for (var qi : qualifiers) {
-            var ann = toAnnotation(qi, beanName);
+            var ann = toAnnotation(qi, beanName, cl);
             if (ann != null) result.add(ann);
         }
         return result;
     }
 
+    public static Annotation toAnnotation(QualifierInstance qi, String beanName) {
+        return toAnnotation(qi, beanName, null);
+    }
+
     /**
      * Converts a single {@link QualifierInstance} to a runtime {@link Annotation}.
      */
-    public static Annotation toAnnotation(QualifierInstance qi, String beanName) {
+    public static Annotation toAnnotation(QualifierInstance qi, String beanName, ClassLoader cl) {
         var annName = qi.annotationName().value();
         return switch (annName) {
             case "jakarta.enterprise.inject.Default" -> jakarta.enterprise.inject.Default.Literal.INSTANCE;
@@ -48,13 +53,14 @@ public final class QualifierUtils {
                         && beanName != null) {
                     members.put("value", new AnnotationValue.StringVal(beanName));
                 }
-                yield createAnnotationInstance(jakarta.inject.Named.class, members);
+                yield createAnnotationInstance(jakarta.inject.Named.class, members, cl);
             }
             default -> {
                 try {
                     @SuppressWarnings("unchecked")
-                    var annClass = (Class<? extends Annotation>) Class.forName(annName);
-                    yield createAnnotationInstance(annClass, qi.members());
+                    var annClass = (Class<? extends Annotation>) (cl != null
+                            ? Class.forName(annName, true, cl) : Class.forName(annName));
+                    yield createAnnotationInstance(annClass, qi.members(), cl);
                 } catch (ClassNotFoundException e) {
                     yield null;
                 }
@@ -65,6 +71,12 @@ public final class QualifierUtils {
     @SuppressWarnings("unchecked")
     public static Annotation createAnnotationInstance(Class<? extends Annotation> annType,
             Map<String, AnnotationValue> members) {
+        return createAnnotationInstance(annType, members, null);
+    }
+
+    @SuppressWarnings("unchecked")
+    public static Annotation createAnnotationInstance(Class<? extends Annotation> annType,
+            Map<String, AnnotationValue> members, ClassLoader cl) {
         return (Annotation) java.lang.reflect.Proxy.newProxyInstance(
             annType.getClassLoader(),
             new Class<?>[]{annType},
@@ -72,11 +84,11 @@ public final class QualifierUtils {
                 var methodName = method.getName();
                 return switch (methodName) {
                     case "annotationType" -> annType;
-                    case "hashCode" -> computeAnnotationHashCode(annType, members);
+                    case "hashCode" -> computeAnnotationHashCode(annType, members, cl);
                     case "equals" -> {
                         if (args[0] instanceof Annotation other) {
                             yield annType.equals(other.annotationType())
-                                && membersEqual(annType, members, other);
+                                && membersEqual(annType, members, other, cl);
                         }
                         yield false;
                     }
@@ -84,7 +96,7 @@ public final class QualifierUtils {
                     default -> {
                         var memberValue = members.get(methodName);
                         if (memberValue != null) {
-                            yield convertAnnotationValue(memberValue);
+                            yield convertAnnotationValue(memberValue, cl);
                         }
                         var defaultValue = method.getDefaultValue();
                         if (defaultValue != null) yield defaultValue;
@@ -95,14 +107,14 @@ public final class QualifierUtils {
     }
 
     static int computeAnnotationHashCode(Class<? extends Annotation> annType,
-            Map<String, AnnotationValue> members) {
+            Map<String, AnnotationValue> members, ClassLoader cl) {
         int hash = 0;
         for (var m : annType.getDeclaredMethods()) {
             if (m.isAnnotationPresent(jakarta.enterprise.util.Nonbinding.class)) continue;
             var memberValue = members.get(m.getName());
             Object value;
             if (memberValue != null) {
-                value = convertAnnotationValue(memberValue);
+                value = convertAnnotationValue(memberValue, cl);
             } else {
                 value = m.getDefaultValue();
             }
@@ -114,14 +126,14 @@ public final class QualifierUtils {
     }
 
     static boolean membersEqual(Class<? extends Annotation> annType,
-            Map<String, AnnotationValue> members, Annotation other) {
+            Map<String, AnnotationValue> members, Annotation other, ClassLoader cl) {
         try {
             for (var m : annType.getDeclaredMethods()) {
                 if (m.isAnnotationPresent(jakarta.enterprise.util.Nonbinding.class)) continue;
                 var memberValue = members.get(m.getName());
                 Object thisVal;
                 if (memberValue != null) {
-                    thisVal = convertAnnotationValue(memberValue);
+                    thisVal = convertAnnotationValue(memberValue, cl);
                 } else {
                     thisVal = m.getDefaultValue();
                 }
@@ -134,7 +146,7 @@ public final class QualifierUtils {
         }
     }
 
-    static Object convertAnnotationValue(AnnotationValue value) {
+    static Object convertAnnotationValue(AnnotationValue value, ClassLoader cl) {
         return switch (value) {
             case AnnotationValue.StringVal v -> v.value();
             case AnnotationValue.IntVal v -> v.value();
@@ -146,19 +158,23 @@ public final class QualifierUtils {
             case AnnotationValue.CharVal v -> v.value();
             case AnnotationValue.ShortVal v -> v.value();
             case AnnotationValue.ClassVal v -> {
-                try { yield Class.forName(v.className().value()); }
-                catch (ClassNotFoundException e) { yield Object.class; }
+                try {
+                    yield cl != null ? Class.forName(v.className().value(), true, cl)
+                            : Class.forName(v.className().value());
+                } catch (ClassNotFoundException e) { yield Object.class; }
             }
             case AnnotationValue.EnumVal v -> {
                 try {
                     @SuppressWarnings({"unchecked", "rawtypes"})
-                    var enumVal = Enum.valueOf((Class) Class.forName(v.enumType().value()), v.constantName());
+                    var enumVal = Enum.valueOf((Class) (cl != null
+                            ? Class.forName(v.enumType().value(), true, cl)
+                            : Class.forName(v.enumType().value())), v.constantName());
                     yield enumVal;
                 } catch (Exception e) { yield null; }
             }
             case AnnotationValue.AnnotationVal v -> null;
             case AnnotationValue.ArrayVal v -> v.values().stream()
-                    .map(QualifierUtils::convertAnnotationValue)
+                    .map(av -> convertAnnotationValue(av, cl))
                     .toArray();
         };
     }

@@ -386,7 +386,7 @@ public final class VaubanBeanManager implements BeanManager {
                     break;
                 }
             }
-            result.add(new VaubanObserverMethod(descriptor, eventDispatcher, declaringBean));
+            result.add(new VaubanObserverMethod(descriptor, eventDispatcher, declaringBean, container.classLoader()));
         }
         // CDI spec: resolveObserverMethods returns observers ordered by priority
         var sorted = new java.util.ArrayList<>(result);

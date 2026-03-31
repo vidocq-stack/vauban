@@ -81,14 +81,17 @@ public final class VaubanContainer implements AutoCloseable {
     private final EventDispatcher eventDispatcher;
     private final InterceptorManager interceptorManager;
     private final VaubanBeanManager beanManager;
+    private final ClassLoader classLoader;
     private volatile boolean running;
 
     private VaubanContainer(VaubanIndex index, List<BeanDescriptor> descriptors,
                             List<ObserverDescriptor> observers,
                             List<InterceptorDescriptor> interceptorDescriptors,
                             List<DisposerDescriptor> disposers,
-                            Map<DotName, BeanFactory<?>> factories) {
+                            Map<DotName, BeanFactory<?>> factories,
+                            ClassLoader classLoader) {
         this.index = index;
+        this.classLoader = classLoader;
         this.applicationContext = new ApplicationContext();
         this.requestContext = new RequestContext();
         this.dependentContext = new DependentContext();
@@ -110,7 +113,7 @@ public final class VaubanContainer implements AutoCloseable {
                 continue;
             }
             if (factory != null) {
-                beans.put(descriptor.id(), new ManagedBean<>(descriptor, factory));
+                beans.put(descriptor.id(), new ManagedBean<>(descriptor, factory, classLoader));
             }
         }
 
@@ -250,6 +253,21 @@ public final class VaubanContainer implements AutoCloseable {
     @SuppressWarnings("unchecked")
     <T> T getOrCreateProxyForBean(ManagedBean<T> bean) {
         return getOrCreateProxy(bean);
+    }
+
+    /**
+     * Returns the ClassLoader used for loading bean classes.
+     */
+    public ClassLoader classLoader() {
+        return classLoader;
+    }
+
+    /**
+     * Load a class using this container's ClassLoader.
+     * Prevents inter-test pollution from JVM class cache.
+     */
+    Class<?> loadClass(String name) throws ClassNotFoundException {
+        return Class.forName(name, true, classLoader);
     }
 
     public boolean isRunning() {
@@ -502,7 +520,7 @@ public final class VaubanContainer implements AutoCloseable {
             // Also check via reflection (bindings may not be in bytecode index)
             if (bindings.isEmpty()) {
                 try {
-                    var cls = Class.forName(descriptor.beanClass().value());
+                    var cls = loadClass(descriptor.beanClass().value());
                     for (var ann : cls.getAnnotations()) {
                         if (ann.annotationType().isAnnotationPresent(jakarta.interceptor.InterceptorBinding.class)) {
                             bindings.add(DotName.of(ann.annotationType().getName()));
@@ -512,7 +530,7 @@ public final class VaubanContainer implements AutoCloseable {
                 if (bindings.isEmpty()) continue;
             }
             try {
-                beanClass = Class.forName(descriptor.beanClass().value());
+                beanClass = loadClass(descriptor.beanClass().value());
 
                 // Set the ClassLoader for interceptor class loading
                 interceptorManager.setClassLoader(beanClass.getClassLoader());
@@ -549,7 +567,7 @@ public final class VaubanContainer implements AutoCloseable {
                 };
 
                 // Update the bean with the new factory
-                beans.put(descriptor.id(), new ManagedBean<>(descriptor, interceptedFactory));
+                beans.put(descriptor.id(), new ManagedBean<>(descriptor, interceptedFactory, classLoader));
             } catch (Exception e) {
                 // MethodHandles.privateLookupIn may fail for custom classloaders
                 // Fallback: define class via bean's classloader directly
@@ -576,7 +594,7 @@ public final class VaubanContainer implements AutoCloseable {
                             throw new jakarta.enterprise.inject.CreationException(ex);
                         }
                     };
-                    beans.put(descriptor.id(), new ManagedBean<>(descriptor, f2));
+                    beans.put(descriptor.id(), new ManagedBean<>(descriptor, f2, classLoader));
                 } catch (Exception e2) {
                     // truly give up — keep original factory
                 }
@@ -634,7 +652,7 @@ public final class VaubanContainer implements AutoCloseable {
 
     private void callDisposer(Object producedInstance, DisposerDescriptor disposer) {
         try {
-            var declaringClass = Class.forName(disposer.declaringClass().value());
+            var declaringClass = loadClass(disposer.declaringClass().value());
 
             for (var method : declaringClass.getDeclaredMethods()) {
                 if (method.getName().equals(disposer.methodName())
@@ -699,7 +717,7 @@ public final class VaubanContainer implements AutoCloseable {
         // Has @Inject constructor — create a factory that resolves parameters
         return () -> {
             try {
-                var beanClass = Class.forName(descriptor.beanClass().value());
+                var beanClass = loadClass(descriptor.beanClass().value());
 
                 // Find the @Inject constructor (the one with matching parameter count)
                 java.lang.reflect.Constructor<?> injectCtor = null;
@@ -782,7 +800,7 @@ public final class VaubanContainer implements AutoCloseable {
         var methodName = extractProducerMethodName(descriptor.id());
         return () -> {
             try {
-                var declaringClass = Class.forName(descriptor.beanClass().value());
+                var declaringClass = loadClass(descriptor.beanClass().value());
                 var declaringInstance = select(declaringClass);
 
                 for (var method : declaringClass.getDeclaredMethods()) {
@@ -874,7 +892,7 @@ public final class VaubanContainer implements AutoCloseable {
         var fieldName = extractProducerFieldName(descriptor.id());
         return () -> {
             try {
-                var declaringClass = Class.forName(descriptor.beanClass().value());
+                var declaringClass = loadClass(descriptor.beanClass().value());
                 var declaringInstance = select(declaringClass);
                 var field = declaringClass.getDeclaredField(fieldName);
                 field.setAccessible(true);
@@ -1041,7 +1059,10 @@ public final class VaubanContainer implements AutoCloseable {
                     throw new jakarta.enterprise.inject.spi.DeploymentException(msg.toString());
                 }
 
-                return new VaubanContainer(index, descriptors, observers, interceptors, disposers, factories);
+                var beanClassLoader = beanClasses.isEmpty()
+                        ? Thread.currentThread().getContextClassLoader()
+                        : beanClasses.getFirst().getClassLoader();
+                return new VaubanContainer(index, descriptors, observers, interceptors, disposers, factories, beanClassLoader);
             } finally {
                 Thread.currentThread().setContextClassLoader(previousCl);
             }

@@ -24,15 +24,17 @@ public final class ManagedBean<T> implements Bean<T> {
     private final BeanDescriptor descriptor;
     private final BeanFactory<T> factory;
     private final Class<T> beanClass;
+    private final ClassLoader classLoader;
     private Consumer<Object> injector;
     private Consumer<Object> destroyer;
 
     @SuppressWarnings("unchecked")
-    public ManagedBean(BeanDescriptor descriptor, BeanFactory<T> factory) {
+    public ManagedBean(BeanDescriptor descriptor, BeanFactory<T> factory, ClassLoader classLoader) {
         this.descriptor = Objects.requireNonNull(descriptor);
         this.factory = Objects.requireNonNull(factory);
+        this.classLoader = Objects.requireNonNull(classLoader);
         try {
-            this.beanClass = (Class<T>) Class.forName(descriptor.beanClass().value());
+            this.beanClass = (Class<T>) Class.forName(descriptor.beanClass().value(), true, classLoader);
         } catch (ClassNotFoundException e) {
             throw new IllegalArgumentException("Bean class not found: " + descriptor.beanClass(), e);
         }
@@ -127,14 +129,14 @@ public final class ManagedBean<T> implements Bean<T> {
             switch (typeInfo) {
                 case fr.vidocq.vauban.indexer.model.TypeInfo.ClassType ct -> {
                     try {
-                        var clazz = Class.forName(ct.name().value());
+                        var clazz = Class.forName(ct.name().value(), true, classLoader);
                         collectTypes(clazz, types);
                     } catch (ClassNotFoundException e) {
                         // skip
                     }
                 }
                 case fr.vidocq.vauban.indexer.model.TypeInfo.ArrayType at -> {
-                    var arrayClass = resolveArrayClass(at);
+                    var arrayClass = resolveArrayClass(at, classLoader);
                     if (arrayClass != null) types.add(arrayClass);
                 }
                 case fr.vidocq.vauban.indexer.model.TypeInfo.PrimitiveType pt -> {
@@ -147,12 +149,12 @@ public final class ManagedBean<T> implements Bean<T> {
         return types;
     }
 
-    private static Class<?> resolveArrayClass(fr.vidocq.vauban.indexer.model.TypeInfo.ArrayType at) {
+    private static Class<?> resolveArrayClass(fr.vidocq.vauban.indexer.model.TypeInfo.ArrayType at, ClassLoader cl) {
         try {
             var component = at.componentType();
-            String descriptor;
+            String desc;
             if (component instanceof fr.vidocq.vauban.indexer.model.TypeInfo.ClassType ct) {
-                descriptor = "[".repeat(at.dimensions()) + "L" + ct.name().value() + ";";
+                desc = "[".repeat(at.dimensions()) + "L" + ct.name().value() + ";";
             } else if (component instanceof fr.vidocq.vauban.indexer.model.TypeInfo.PrimitiveType pt) {
                 var primDescriptor = switch (pt.kind()) {
                     case BOOLEAN -> "Z";
@@ -164,11 +166,11 @@ public final class ManagedBean<T> implements Bean<T> {
                     case FLOAT -> "F";
                     case DOUBLE -> "D";
                 };
-                descriptor = "[".repeat(at.dimensions()) + primDescriptor;
+                desc = "[".repeat(at.dimensions()) + primDescriptor;
             } else {
                 return null;
             }
-            return Class.forName(descriptor);
+            return Class.forName(desc, true, cl);
         } catch (ClassNotFoundException e) {
             return null;
         }
@@ -328,7 +330,7 @@ public final class ManagedBean<T> implements Bean<T> {
 
     @Override
     public Set<Annotation> getQualifiers() {
-        return QualifierUtils.toAnnotations(descriptor.qualifiers(), descriptor.name());
+        return QualifierUtils.toAnnotations(descriptor.qualifiers(), descriptor.name(), classLoader);
     }
 
     @Override
