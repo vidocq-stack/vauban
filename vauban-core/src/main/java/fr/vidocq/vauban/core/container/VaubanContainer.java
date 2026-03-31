@@ -226,11 +226,17 @@ public final class VaubanContainer implements AutoCloseable {
                 // Set the delegate supplier — resolves the contextual instance lazily
                 var setDelegate = proxyClass.getMethod("$$setDelegate",
                         java.util.function.Supplier.class);
+                // Use the bean's ID to resolve the current ManagedBean at runtime
+                // (may change after wrapInterceptedBeans replaces it)
+                var beanId = bean.descriptor().id();
                 java.util.function.Supplier<Object> delegate = () -> {
-                    var scopeClass = bean.getScope();
+                    var currentBean = beans.get(beanId);
+                    if (currentBean == null) currentBean = bean;
+                    var scopeClass = currentBean.getScope();
                     var ctx = contexts.get(scopeClass);
                     if (ctx == null) ctx = dependentContext;
-                    return ctx.get((Contextual<Object>) (Contextual<?>) bean,
+                    // Delegate resolves bean from context
+                    return ctx.get((Contextual<Object>) (Contextual<?>) currentBean,
                             new CreationalContextImpl<>());
                 };
                 setDelegate.invoke(proxy, delegate);
