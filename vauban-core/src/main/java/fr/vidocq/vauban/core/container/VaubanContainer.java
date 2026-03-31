@@ -1229,6 +1229,30 @@ public final class VaubanContainer implements AutoCloseable {
                     }
                 }
 
+                // CDI spec: normal-scoped beans must not have non-static public fields
+                // This is a DefinitionException (not DeploymentException)
+                if (hasBeanDefiningAnnotation(clazz)) {
+                    boolean isNormalScoped = false;
+                    for (var ann : clazz.getAnnotations()) {
+                        if (ann.annotationType().isAnnotationPresent(
+                                jakarta.enterprise.context.NormalScope.class)) {
+                            isNormalScoped = true;
+                            break;
+                        }
+                    }
+                    if (isNormalScoped) {
+                        for (var field : clazz.getDeclaredFields()) {
+                            if (java.lang.reflect.Modifier.isPublic(field.getModifiers())
+                                    && !java.lang.reflect.Modifier.isStatic(field.getModifiers())
+                                    && !field.isAnnotationPresent(jakarta.enterprise.inject.Produces.class)) {
+                                errors.add("Normal-scoped bean " + clazz.getName()
+                                        + " has non-static public field '" + field.getName() + "'");
+                                break;
+                            }
+                        }
+                    }
+                }
+
                 // CDI spec: @Typed values must be legal bean types (supertypes of the bean class)
                 if (clazz.isAnnotationPresent(jakarta.enterprise.inject.Typed.class)) {
                     var typed = clazz.getAnnotation(jakarta.enterprise.inject.Typed.class);
