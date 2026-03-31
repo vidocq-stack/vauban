@@ -959,7 +959,7 @@ public final class VaubanContainer implements AutoCloseable {
         return () -> {
             try {
                 var declaringClass = loadClass(descriptor.beanClass().value());
-                var declaringInstance = select(declaringClass);
+                var declaringInstance = selectByBeanClass(declaringClass);
 
                 for (var method : declaringClass.getDeclaredMethods()) {
                     if (method.getName().equals(methodName)) {
@@ -1051,7 +1051,7 @@ public final class VaubanContainer implements AutoCloseable {
         return () -> {
             try {
                 var declaringClass = loadClass(descriptor.beanClass().value());
-                var declaringInstance = select(declaringClass);
+                var declaringInstance = selectByBeanClass(declaringClass);
                 var field = declaringClass.getDeclaredField(fieldName);
                 field.setAccessible(true);
                 return field.get(declaringInstance);
