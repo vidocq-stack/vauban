@@ -702,14 +702,41 @@ public final class BeanDiscovery {
             }
         }
 
-        // 3. Check @Inherited scope annotations from superclasses
-        for (var ann : getInheritedAnnotations(classInfo)) {
-            var annName = DotName.of(ann.annotationType().getName());
-            var inheritedScope = mapScope(annName);
-            if (inheritedScope != null) return inheritedScope;
+        // 3. Check @Inherited scope from superclasses, respecting blocking
+        // CDI spec: intermediate class with any scope annotation blocks further inheritance
+        try {
+            var cl = Thread.currentThread().getContextClassLoader();
+            var cls = cl != null ? Class.forName(classInfo.name().value(), false, cl)
+                    : Class.forName(classInfo.name().value());
+            var parent = cls.getSuperclass();
+            while (parent != null && parent != Object.class) {
+                for (var ann : parent.getDeclaredAnnotations()) {
+                    if (isScopeAnnotation(ann.annotationType())) {
+                        if (ann.annotationType().isAnnotationPresent(java.lang.annotation.Inherited.class)) {
+                            var inheritedScope = mapScope(DotName.of(ann.annotationType().getName()));
+                            if (inheritedScope != null) return inheritedScope;
+                        }
+                        // Non-@Inherited scope blocks further inheritance
+                        return ScopeInfo.DEPENDENT;
+                    }
+                }
+                parent = parent.getSuperclass();
+            }
+        } catch (ClassNotFoundException e) {
+            // Fallback to old approach
+            for (var ann : getInheritedAnnotations(classInfo)) {
+                var annName = DotName.of(ann.annotationType().getName());
+                var inheritedScope = mapScope(annName);
+                if (inheritedScope != null) return inheritedScope;
+            }
         }
 
         return ScopeInfo.DEPENDENT;
+    }
+
+    private static boolean isScopeAnnotation(Class<? extends java.lang.annotation.Annotation> annType) {
+        return annType.isAnnotationPresent(jakarta.inject.Scope.class)
+                || annType.isAnnotationPresent(jakarta.enterprise.context.NormalScope.class);
     }
 
     /**
