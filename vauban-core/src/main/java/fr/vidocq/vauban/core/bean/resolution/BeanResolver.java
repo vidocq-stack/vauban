@@ -80,14 +80,19 @@ public final class BeanResolver {
      * Non-alternative beans are included unless an alternative overrides them.
      */
     private List<BeanDescriptor> applyAlternativeSelection(List<BeanDescriptor> candidates) {
-        if (candidates.size() <= 1) return candidates;
+        // CDI spec: @Alternative without @Priority is NOT enabled — filter out
+        var enabled = candidates.stream()
+                .filter(b -> !b.isAlternative() || b.priority() > 0)
+                .toList();
 
-        var alternatives = candidates.stream()
+        if (enabled.size() <= 1) return new ArrayList<>(enabled);
+
+        var alternatives = enabled.stream()
                 .filter(BeanDescriptor::isAlternative)
                 .filter(b -> b.priority() > 0)
                 .toList();
 
-        if (alternatives.isEmpty()) return candidates;
+        if (alternatives.isEmpty()) return new ArrayList<>(enabled);
 
         // Find max priority
         int maxPriority = alternatives.stream()
@@ -97,7 +102,7 @@ public final class BeanResolver {
         // Return only highest priority alternatives
         return alternatives.stream()
                 .filter(b -> b.priority() == maxPriority)
-                .toList();
+                .collect(java.util.stream.Collectors.toList());
     }
 
     /**
