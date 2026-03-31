@@ -598,7 +598,7 @@ public final class VaubanContainer implements AutoCloseable {
                 if (chain.isEmpty()) {
                     // Also check method-level bindings
                     boolean hasMethodLevelInterceptors = false;
-                    for (var m : beanClass.getDeclaredMethods()) {
+                    for (var m : beanClass.getMethods()) {
                         var methodChain = interceptorManager.resolveChainForMethod(bindings, m);
                         if (!methodChain.isEmpty()) {
                             hasMethodLevelInterceptors = true;
