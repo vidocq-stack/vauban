@@ -167,13 +167,13 @@ public final class ManagedBean<T> implements Bean<T> {
         if (descriptor.kind() != BeanDescriptor.BeanKind.MANAGED) {
             return getProducerTypes();
         }
-        // Check if @Typed restricts the bean types
-        if (hasTypedRestriction()) {
-            return getTypedTypes();
-        }
         var types = new LinkedHashSet<Type>();
         collectTypes(beanClass, types);
         types.add(Object.class);
+        // Check if @Typed restricts the bean types
+        if (hasTypedRestriction()) {
+            return filterByTyped(types);
+        }
         return types;
     }
 
@@ -185,40 +185,76 @@ public final class ManagedBean<T> implements Bean<T> {
     }
 
     /**
-     * Get types restricted by @Typed annotation.
+     * Filter unrestricted type set by @Typed annotation.
+     * CDI 4.1 Section 2.2.2: @Typed restricts bean types to only the specified types + Object.
+     * For generic types, we keep the parameterized version from the hierarchy.
      */
-    private Set<Type> getTypedTypes() {
+    private Set<Type> filterByTyped(Set<Type> unrestrictedTypes) {
         var typed = beanClass.getAnnotation(jakarta.enterprise.inject.Typed.class);
-        var types = new LinkedHashSet<Type>();
-        for (var t : typed.value()) {
-            types.add(t);
+        var allowedRawTypes = new java.util.HashSet<Class<?>>(java.util.Arrays.asList(typed.value()));
+        var result = new LinkedHashSet<Type>();
+        for (var t : unrestrictedTypes) {
+            if (t == Object.class) {
+                result.add(t);
+                continue;
+            }
+            Class<?> raw = rawTypeOf(t);
+            if (raw != null && allowedRawTypes.contains(raw)) {
+                result.add(t);
+            }
         }
-        types.add(Object.class);
-        return types;
+        return result;
+    }
+
+    private static Class<?> rawTypeOf(Type type) {
+        if (type instanceof Class<?> c) return c;
+        if (type instanceof java.lang.reflect.ParameterizedType pt) return (Class<?>) pt.getRawType();
+        return null;
     }
 
     private Set<Type> getProducerTypes() {
-        // Resolve descriptor types to Java Types
-        // descriptor.types() already includes all supertypes (from BeanDiscovery)
-        // AND respects @Typed restrictions
+        // For @Typed producers, use reflection to get the correct parameterized types
+        if (hasProducerTypedRestriction()) {
+            var typedClasses = getProducerTypedClasses();
+            Type producerGenericType = resolveProducerGenericType();
+            if (typedClasses != null && producerGenericType != null) {
+                // Build full type hierarchy from the produced type
+                var allTypes = new LinkedHashSet<Type>();
+                if (producerGenericType instanceof java.lang.reflect.ParameterizedType pt) {
+                    allTypes.add(pt);
+                    var rawClass = (Class<?>) pt.getRawType();
+                    collectTypes(rawClass, allTypes);
+                } else if (producerGenericType instanceof Class<?> c) {
+                    collectTypes(c, allTypes);
+                }
+                allTypes.add(Object.class);
+                // Filter by @Typed raw classes
+                var filtered = new LinkedHashSet<Type>();
+                for (var t : allTypes) {
+                    if (t == Object.class) { filtered.add(t); continue; }
+                    Class<?> raw = rawTypeOf(t);
+                    if (raw != null && typedClasses.contains(raw)) {
+                        filtered.add(t);
+                    }
+                }
+                return filtered;
+            }
+        }
+
+        // Standard path: resolve descriptor types to Java Types
         var types = new LinkedHashSet<Type>();
         for (var typeInfo : descriptor.types()) {
             switch (typeInfo) {
                 case fr.vidocq.vauban.indexer.model.TypeInfo.ClassType ct -> {
                     try {
                         types.add(Class.forName(ct.name().value(), true, classLoader));
-                    } catch (ClassNotFoundException e) {
-                        // skip
-                    }
+                    } catch (ClassNotFoundException e) { /* skip */ }
                 }
                 case fr.vidocq.vauban.indexer.model.TypeInfo.ParameterizedType pt -> {
-                    // Resolve parameterized type from the class hierarchy
                     try {
                         var rawClass = Class.forName(pt.rawType().value(), true, classLoader);
-                        types.add(rawClass); // Add raw class as type
-                    } catch (ClassNotFoundException e) {
-                        // skip
-                    }
+                        types.add(rawClass);
+                    } catch (ClassNotFoundException e) { /* skip */ }
                 }
                 case fr.vidocq.vauban.indexer.model.TypeInfo.ArrayType at -> {
                     var arrayClass = resolveArrayClass(at, classLoader);
@@ -232,6 +268,94 @@ public final class ManagedBean<T> implements Bean<T> {
         }
         types.add(Object.class);
         return types;
+    }
+
+    private Type resolveProducerGenericType() {
+        try {
+            String idValue = descriptor.id().value();
+            if (descriptor.kind() == BeanDescriptor.BeanKind.PRODUCER_METHOD) {
+                int hashIdx = idValue.indexOf('#');
+                if (hashIdx < 0) return null;
+                String declaringClassName = idValue.substring(0, hashIdx);
+                String methodName = idValue.substring(hashIdx + 1);
+                Class<?> declaringClass = Class.forName(declaringClassName, true, classLoader);
+                for (var m : declaringClass.getDeclaredMethods()) {
+                    if (m.getName().equals(methodName)
+                            && m.isAnnotationPresent(jakarta.enterprise.inject.Produces.class)) {
+                        return m.getGenericReturnType();
+                    }
+                }
+            } else if (descriptor.kind() == BeanDescriptor.BeanKind.PRODUCER_FIELD) {
+                int dotIdx = idValue.lastIndexOf('.');
+                if (dotIdx < 0) return null;
+                String declaringClassName = idValue.substring(0, dotIdx);
+                String fieldName = idValue.substring(dotIdx + 1);
+                Class<?> declaringClass = Class.forName(declaringClassName, true, classLoader);
+                return declaringClass.getDeclaredField(fieldName).getGenericType();
+            }
+        } catch (Exception e) { /* skip - fallback to descriptor */ }
+        return null;
+    }
+
+    private boolean hasProducerTypedRestriction() {
+        try {
+            String idValue = descriptor.id().value();
+            if (descriptor.kind() == BeanDescriptor.BeanKind.PRODUCER_METHOD) {
+                int hashIdx = idValue.indexOf('#');
+                if (hashIdx < 0) return false;
+                String declaringClassName = idValue.substring(0, hashIdx);
+                String methodName = idValue.substring(hashIdx + 1);
+                Class<?> declaringClass = Class.forName(declaringClassName, true, classLoader);
+                for (var m : declaringClass.getDeclaredMethods()) {
+                    if (m.getName().equals(methodName)
+                            && m.isAnnotationPresent(jakarta.enterprise.inject.Produces.class)) {
+                        return m.isAnnotationPresent(jakarta.enterprise.inject.Typed.class);
+                    }
+                }
+            } else if (descriptor.kind() == BeanDescriptor.BeanKind.PRODUCER_FIELD) {
+                int dotIdx = idValue.lastIndexOf('.');
+                if (dotIdx < 0) return false;
+                String declaringClassName = idValue.substring(0, dotIdx);
+                String fieldName = idValue.substring(dotIdx + 1);
+                Class<?> declaringClass = Class.forName(declaringClassName, true, classLoader);
+                return declaringClass.getDeclaredField(fieldName)
+                        .isAnnotationPresent(jakarta.enterprise.inject.Typed.class);
+            }
+        } catch (Exception e) { /* skip */ }
+        return false;
+    }
+
+    private Set<Class<?>> getProducerTypedClasses() {
+        try {
+            jakarta.enterprise.inject.Typed typed = null;
+            String idValue = descriptor.id().value();
+            if (descriptor.kind() == BeanDescriptor.BeanKind.PRODUCER_METHOD) {
+                int hashIdx = idValue.indexOf('#');
+                if (hashIdx < 0) return null;
+                String declaringClassName = idValue.substring(0, hashIdx);
+                String methodName = idValue.substring(hashIdx + 1);
+                Class<?> declaringClass = Class.forName(declaringClassName, true, classLoader);
+                for (var m : declaringClass.getDeclaredMethods()) {
+                    if (m.getName().equals(methodName)
+                            && m.isAnnotationPresent(jakarta.enterprise.inject.Produces.class)) {
+                        typed = m.getAnnotation(jakarta.enterprise.inject.Typed.class);
+                        break;
+                    }
+                }
+            } else if (descriptor.kind() == BeanDescriptor.BeanKind.PRODUCER_FIELD) {
+                int dotIdx = idValue.lastIndexOf('.');
+                if (dotIdx < 0) return null;
+                String declaringClassName = idValue.substring(0, dotIdx);
+                String fieldName = idValue.substring(dotIdx + 1);
+                Class<?> declaringClass = Class.forName(declaringClassName, true, classLoader);
+                typed = declaringClass.getDeclaredField(fieldName)
+                        .getAnnotation(jakarta.enterprise.inject.Typed.class);
+            }
+            if (typed != null) {
+                return Set.of(typed.value());
+            }
+        } catch (Exception e) { /* skip */ }
+        return null;
     }
 
     private static Class<?> resolveArrayClass(fr.vidocq.vauban.indexer.model.TypeInfo.ArrayType at, ClassLoader cl) {

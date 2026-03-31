@@ -689,8 +689,8 @@ public final class VaubanBeanManager implements BeanManager {
             throw new IllegalArgumentException("Observed event type cannot contain a type variable");
         }
 
-        // Type matching: observed type must be assignable from specified type
-        if (!typesMatch(specifiedType, observedEventType)) return false;
+        // Event type matching uses assignability (CDI spec: event type is assignable to observed type)
+        if (!eventTypesMatch(specifiedType, observedEventType)) return false;
 
         // CDI event qualifier matching:
         // - An event with no qualifiers implicitly has @Default and @Any
@@ -722,19 +722,21 @@ public final class VaubanBeanManager implements BeanManager {
             if (isPrimitiveWrapperMatch(reqClass, btClass)) return true;
         }
 
+        // CDI 4.1 Section 5.2.5: raw types must be identical
         if (requiredType instanceof Class<?> reqClass) {
             if (beanType instanceof Class<?> btClass) {
-                return reqClass.isAssignableFrom(btClass);
+                return reqClass == btClass;
             }
+            // Raw required type matches parameterized bean type if raw types are identical
             if (beanType instanceof java.lang.reflect.ParameterizedType pt) {
-                return reqClass.isAssignableFrom((Class<?>) pt.getRawType());
+                return reqClass == pt.getRawType();
             }
         }
 
         if (requiredType instanceof java.lang.reflect.ParameterizedType reqPt) {
             if (beanType instanceof java.lang.reflect.ParameterizedType beanPt) {
-                // Raw types must be assignable
-                if (!typesMatch(beanPt.getRawType(), reqPt.getRawType())) return false;
+                // Raw types must be identical
+                if (beanPt.getRawType() != reqPt.getRawType()) return false;
                 // Type arguments must match exactly (invariant)
                 var reqArgs = reqPt.getActualTypeArguments();
                 var beanArgs = beanPt.getActualTypeArguments();
@@ -744,12 +746,38 @@ public final class VaubanBeanManager implements BeanManager {
                 }
                 return true;
             }
-            // Raw class matches parameterized type (unsafe but CDI allows)
+            // Raw bean type matches parameterized required type via assignability
             if (beanType instanceof Class<?> btClass) {
                 return ((Class<?>) reqPt.getRawType()).isAssignableFrom(btClass);
             }
         }
 
+        return false;
+    }
+
+    /**
+     * Event type matching uses assignability (CDI spec: fired event type must be assignable to observed type).
+     */
+    private static boolean eventTypesMatch(Type eventType, Type observedType) {
+        if (eventType.equals(observedType)) return true;
+        if (observedType instanceof Class<?> obsClass && eventType instanceof Class<?> evtClass) {
+            return obsClass.isAssignableFrom(evtClass);
+        }
+        if (observedType instanceof java.lang.reflect.ParameterizedType obsPt) {
+            if (eventType instanceof java.lang.reflect.ParameterizedType evtPt) {
+                if (!eventTypesMatch(evtPt.getRawType(), obsPt.getRawType())) return false;
+                var obsArgs = obsPt.getActualTypeArguments();
+                var evtArgs = evtPt.getActualTypeArguments();
+                if (obsArgs.length != evtArgs.length) return false;
+                for (int i = 0; i < obsArgs.length; i++) {
+                    if (!obsArgs[i].equals(evtArgs[i])) return false;
+                }
+                return true;
+            }
+            if (eventType instanceof Class<?> evtClass) {
+                return ((Class<?>) obsPt.getRawType()).isAssignableFrom(evtClass);
+            }
+        }
         return false;
     }
 
