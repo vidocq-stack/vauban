@@ -117,20 +117,55 @@ public final class ManagedBean<T> implements Bean<T> {
         if (descriptor.kind() != BeanDescriptor.BeanKind.MANAGED) {
             return getProducerTypes();
         }
+        // Check if @Typed restricts the bean types
+        if (hasTypedRestriction()) {
+            return getTypedTypes();
+        }
         var types = new LinkedHashSet<Type>();
         collectTypes(beanClass, types);
         types.add(Object.class);
         return types;
     }
 
+    /**
+     * Check if the bean has @Typed restriction.
+     */
+    private boolean hasTypedRestriction() {
+        return beanClass.isAnnotationPresent(jakarta.enterprise.inject.Typed.class);
+    }
+
+    /**
+     * Get types restricted by @Typed annotation.
+     */
+    private Set<Type> getTypedTypes() {
+        var typed = beanClass.getAnnotation(jakarta.enterprise.inject.Typed.class);
+        var types = new LinkedHashSet<Type>();
+        for (var t : typed.value()) {
+            types.add(t);
+        }
+        types.add(Object.class);
+        return types;
+    }
+
     private Set<Type> getProducerTypes() {
+        // Resolve descriptor types to Java Types
+        // descriptor.types() already includes all supertypes (from BeanDiscovery)
+        // AND respects @Typed restrictions
         var types = new LinkedHashSet<Type>();
         for (var typeInfo : descriptor.types()) {
             switch (typeInfo) {
                 case fr.vidocq.vauban.indexer.model.TypeInfo.ClassType ct -> {
                     try {
-                        var clazz = Class.forName(ct.name().value(), true, classLoader);
-                        collectTypes(clazz, types);
+                        types.add(Class.forName(ct.name().value(), true, classLoader));
+                    } catch (ClassNotFoundException e) {
+                        // skip
+                    }
+                }
+                case fr.vidocq.vauban.indexer.model.TypeInfo.ParameterizedType pt -> {
+                    // Resolve parameterized type from the class hierarchy
+                    try {
+                        var rawClass = Class.forName(pt.rawType().value(), true, classLoader);
+                        types.add(rawClass); // Add raw class as type
                     } catch (ClassNotFoundException e) {
                         // skip
                     }
