@@ -114,6 +114,74 @@ public class VaubanTestEnricher implements TestEnricher {
 
     @Override
     public Object[] resolve(Method method) {
-        return new Object[method.getParameterCount()];
+        var container = ContainerHolder.get();
+        if (container == null) {
+            return new Object[method.getParameterCount()];
+        }
+        var paramTypes = method.getParameterTypes();
+        var genericParamTypes = method.getGenericParameterTypes();
+        var params = method.getParameters();
+        var args = new Object[paramTypes.length];
+        var bm = container.getBeanManager();
+
+        for (int i = 0; i < paramTypes.length; i++) {
+            try {
+                var type = paramTypes[i];
+
+                // BeanManager / BeanContainer
+                if (BeanManager.class.isAssignableFrom(type)
+                        || type == jakarta.enterprise.inject.spi.BeanContainer.class) {
+                    args[i] = bm;
+                    continue;
+                }
+
+                // Instance<T> or Provider<T>
+                if (type == Instance.class || type == Provider.class) {
+                    Class<?> instanceType = Object.class;
+                    if (genericParamTypes[i] instanceof ParameterizedType pt) {
+                        var typeArg = pt.getActualTypeArguments()[0];
+                        if (typeArg instanceof Class<?> c) instanceType = c;
+                    }
+                    args[i] = new InstanceImpl<>(container, instanceType);
+                    continue;
+                }
+
+                // Event<T>
+                if (type == Event.class) {
+                    args[i] = new EventImpl<>(container.eventDispatcher());
+                    continue;
+                }
+
+                // Regular bean — resolve with qualifiers
+                var qualifiers = extractParamQualifiers(params[i]);
+                var beans = bm.getBeans(type, qualifiers);
+                if (beans.isEmpty() && qualifiers.length > 0) {
+                    beans = bm.getBeans(type);
+                }
+                if (!beans.isEmpty()) {
+                    var bean = bm.resolve(beans);
+                    var ctx = bm.createCreationalContext(bean);
+                    args[i] = bm.getReference(bean, type, ctx);
+                }
+            } catch (Exception e) {
+                // Leave null if resolution fails
+            }
+        }
+        return args;
+    }
+
+    private Annotation[] extractParamQualifiers(java.lang.reflect.Parameter param) {
+        var qualifiers = new ArrayList<Annotation>();
+        for (var ann : param.getAnnotations()) {
+            var annType = ann.annotationType();
+            if (annType == Inject.class) continue;
+            if (annType.isAnnotationPresent(jakarta.inject.Qualifier.class)
+                    || annType == jakarta.enterprise.inject.Default.class
+                    || annType == jakarta.enterprise.inject.Any.class
+                    || annType == jakarta.inject.Named.class) {
+                qualifiers.add(ann);
+            }
+        }
+        return qualifiers.toArray(new Annotation[0]);
     }
 }
