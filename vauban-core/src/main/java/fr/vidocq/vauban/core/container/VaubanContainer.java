@@ -1528,6 +1528,16 @@ public final class VaubanContainer implements AutoCloseable {
                                 + " has conflicting stereotype priorities: " + priorities);
                     }
                 }
+                // CDI spec: if stereotypes declare conflicting scopes and bean has no explicit scope,
+                // it's a DefinitionException
+                if (hasBeanDefiningAnnotation(clazz) && !hasExplicitScope(clazz)) {
+                    var scopes = new java.util.LinkedHashSet<Class<?>>();
+                    collectStereotypeScopes(clazz, scopes, new java.util.HashSet<>());
+                    if (scopes.size() > 1) {
+                        errors.add("Bean " + clazz.getName()
+                                + " has conflicting stereotype scopes: " + scopes);
+                    }
+                }
             }
             return errors;
         }
@@ -1545,6 +1555,36 @@ public final class VaubanContainer implements AutoCloseable {
                     }
                     // Check transitive stereotypes
                     collectStereotypePriorities(annType, priorities, visited);
+                }
+            }
+        }
+
+        private static boolean hasExplicitScope(Class<?> clazz) {
+            for (var ann : clazz.getDeclaredAnnotations()) {
+                var annType = ann.annotationType();
+                if (annType.isAnnotationPresent(jakarta.enterprise.context.NormalScope.class)
+                        || annType.isAnnotationPresent(jakarta.inject.Scope.class)) {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        private static void collectStereotypeScopes(Class<?> clazz,
+                Set<Class<?>> scopes, Set<Class<?>> visited) {
+            for (var ann : clazz.getAnnotations()) {
+                var annType = ann.annotationType();
+                if (annType.isAnnotationPresent(jakarta.enterprise.inject.Stereotype.class)) {
+                    if (!visited.add(annType)) continue;
+                    // Check if stereotype has a scope
+                    for (var metaAnn : annType.getAnnotations()) {
+                        if (metaAnn.annotationType().isAnnotationPresent(jakarta.enterprise.context.NormalScope.class)
+                                || metaAnn.annotationType().isAnnotationPresent(jakarta.inject.Scope.class)) {
+                            scopes.add(metaAnn.annotationType());
+                        }
+                    }
+                    // Check transitive stereotypes
+                    collectStereotypeScopes(annType, scopes, visited);
                 }
             }
         }
