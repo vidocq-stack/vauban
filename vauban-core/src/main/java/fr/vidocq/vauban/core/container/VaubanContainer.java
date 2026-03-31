@@ -485,21 +485,73 @@ public final class VaubanContainer implements AutoCloseable {
     }
 
     private void callPostConstruct(Object instance) {
+        // Find @PostConstruct method
+        java.lang.reflect.Method postConstructMethod = null;
         var clazz = instance.getClass();
         while (clazz != null && clazz != Object.class) {
             for (var method : clazz.getDeclaredMethods()) {
                 if (method.isAnnotationPresent(jakarta.annotation.PostConstruct.class)) {
                     method.setAccessible(true);
-                    try {
-                        method.invoke(instance);
-                    } catch (Exception e) {
-                        throw new RuntimeException("@PostConstruct failed: " + method, e);
-                    }
-                    return; // Only call the first (most specific) @PostConstruct
+                    postConstructMethod = method;
+                    break;
                 }
             }
+            if (postConstructMethod != null) break;
             clazz = clazz.getSuperclass();
         }
+
+        // Check for lifecycle interceptors on the bean
+        var beanBindings = findInterceptorBindings(instance);
+        if (!beanBindings.isEmpty() && interceptorManager.hasInterceptors()) {
+            interceptorManager.setClassLoader(instance.getClass().getClassLoader());
+            var lifecycleChain = interceptorManager.resolveLifecycleChain(
+                    beanBindings, jakarta.annotation.PostConstruct.class);
+            if (!lifecycleChain.isEmpty()) {
+                // Invoke lifecycle interceptors through InvocationContext
+                final var pcMethod = postConstructMethod;
+                var ctx = new fr.vidocq.vauban.core.interceptor.VaubanInvocationContext(
+                        instance, null, new Object[0], lifecycleChain,
+                        (target, params) -> {
+                            if (pcMethod != null) pcMethod.invoke(target);
+                            return null;
+                        });
+                try {
+                    ctx.proceed();
+                } catch (RuntimeException e) {
+                    throw e;
+                } catch (Exception e) {
+                    throw new RuntimeException("Lifecycle interceptor failed", e);
+                }
+                return;
+            }
+        }
+
+        // No interceptors — call @PostConstruct directly
+        if (postConstructMethod != null) {
+            try {
+                postConstructMethod.invoke(instance);
+            } catch (Exception e) {
+                throw new RuntimeException("@PostConstruct failed: " + postConstructMethod, e);
+            }
+        }
+    }
+
+    /**
+     * Find interceptor bindings on a bean instance (from its class or superclass).
+     */
+    private Set<DotName> findInterceptorBindings(Object instance) {
+        var bindings = new java.util.LinkedHashSet<DotName>();
+        // Check the original bean class (superclass of intercepted subclass)
+        var clazz = instance.getClass();
+        if (clazz.getName().contains("$$Intercepted")) {
+            clazz = clazz.getSuperclass();
+        }
+        for (var ann : clazz.getAnnotations()) {
+            if (ann.annotationType().isAnnotationPresent(jakarta.interceptor.InterceptorBinding.class)) {
+                bindings.add(DotName.of(ann.annotationType().getName()));
+            }
+        }
+        return bindings;
     }
 
     /**

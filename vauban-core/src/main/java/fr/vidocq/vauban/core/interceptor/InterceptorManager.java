@@ -46,6 +46,26 @@ public final class InterceptorManager {
     }
 
     /**
+     * Find interceptors for lifecycle callbacks (@PostConstruct/@PreDestroy).
+     */
+    public List<VaubanInvocationContext.InterceptorInvocation> resolveLifecycleChain(
+            Set<DotName> methodBindings, Class<? extends java.lang.annotation.Annotation> lifecycleAnnotation) {
+        var chain = new ArrayList<VaubanInvocationContext.InterceptorInvocation>();
+
+        for (var descriptor : interceptors) {
+            if (methodBindings.containsAll(descriptor.bindings()) && !descriptor.bindings().isEmpty()) {
+                var instance = getOrCreateInstance(descriptor);
+                var lifecycleMethod = findAnnotatedMethod(instance.getClass(), lifecycleAnnotation);
+                if (lifecycleMethod != null) {
+                    chain.add(new VaubanInvocationContext.InterceptorInvocation(instance, lifecycleMethod));
+                }
+            }
+        }
+
+        return chain;
+    }
+
+    /**
      * Resolve interceptor descriptors matching the given bindings.
      */
     public List<InterceptorDescriptor> resolveInterceptors(Set<DotName> bindings) {
@@ -97,12 +117,35 @@ public final class InterceptorManager {
     }
 
     private Method findAroundInvokeMethod(Class<?> clazz, String methodName) {
-        if (methodName == null) return null;
-        for (var method : clazz.getDeclaredMethods()) {
-            if (method.getName().equals(methodName)) {
-                method.setAccessible(true);
-                return method;
+        if (methodName == null) {
+            // Fallback: search for any @AroundInvoke method in the class hierarchy
+            return findAnnotatedMethod(clazz, jakarta.interceptor.AroundInvoke.class);
+        }
+        // Search by name in class hierarchy
+        var current = clazz;
+        while (current != null && current != Object.class) {
+            for (var method : current.getDeclaredMethods()) {
+                if (method.getName().equals(methodName)) {
+                    method.setAccessible(true);
+                    return method;
+                }
             }
+            current = current.getSuperclass();
+        }
+        // Still not found — try by @AroundInvoke annotation
+        return findAnnotatedMethod(clazz, jakarta.interceptor.AroundInvoke.class);
+    }
+
+    private Method findAnnotatedMethod(Class<?> clazz, Class<? extends java.lang.annotation.Annotation> annotation) {
+        var current = clazz;
+        while (current != null && current != Object.class) {
+            for (var method : current.getDeclaredMethods()) {
+                if (method.isAnnotationPresent(annotation)) {
+                    method.setAccessible(true);
+                    return method;
+                }
+            }
+            current = current.getSuperclass();
         }
         return null;
     }
