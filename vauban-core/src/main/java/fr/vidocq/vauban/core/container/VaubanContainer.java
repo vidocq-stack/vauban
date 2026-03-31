@@ -593,19 +593,38 @@ public final class VaubanContainer implements AutoCloseable {
                 // Set the ClassLoader for interceptor class loading
                 interceptorManager.setClassLoader(beanClass.getClassLoader());
 
-                // Check if there are matching interceptors (class-level OR method-level)
+                // Check if there are matching interceptors (class, method, or constructor level)
                 var chain = interceptorManager.resolveChain(bindings);
                 if (chain.isEmpty()) {
-                    // Also check method-level bindings
-                    boolean hasMethodLevelInterceptors = false;
+                    boolean hasInterceptors = false;
+                    // Check method-level bindings
                     for (var m : beanClass.getMethods()) {
-                        var methodChain = interceptorManager.resolveChainForMethod(bindings, m);
-                        if (!methodChain.isEmpty()) {
-                            hasMethodLevelInterceptors = true;
+                        if (!interceptorManager.resolveChainForMethod(bindings, m).isEmpty()) {
+                            hasInterceptors = true;
                             break;
                         }
                     }
-                    if (!hasMethodLevelInterceptors) continue;
+                    // Check constructor-level bindings (for @AroundConstruct)
+                    if (!hasInterceptors) {
+                        for (var ctor : beanClass.getDeclaredConstructors()) {
+                            var ctorBindings = new java.util.LinkedHashSet<>(bindings);
+                            for (var ann : ctor.getAnnotations()) {
+                                if (ann.annotationType().isAnnotationPresent(
+                                        jakarta.interceptor.InterceptorBinding.class)) {
+                                    ctorBindings.add(DotName.of(ann.annotationType().getName()));
+                                }
+                            }
+                            if (!ctorBindings.equals(bindings)) {
+                                var ctorChain = interceptorManager.resolveLifecycleChain(
+                                        ctorBindings, jakarta.interceptor.AroundConstruct.class);
+                                if (!ctorChain.isEmpty()) {
+                                    hasInterceptors = true;
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                    if (!hasInterceptors) continue;
                 }
 
                 // Generate the intercepted subclass
@@ -867,6 +886,37 @@ public final class VaubanContainer implements AutoCloseable {
                 }
 
                 injectCtor.setAccessible(true);
+
+                // Check for @AroundConstruct interceptors
+                var ctorBindings = new java.util.LinkedHashSet<DotName>();
+                for (var ann : beanClass.getAnnotations()) {
+                    if (ann.annotationType().isAnnotationPresent(jakarta.interceptor.InterceptorBinding.class)) {
+                        ctorBindings.add(DotName.of(ann.annotationType().getName()));
+                    }
+                }
+                for (var ann : injectCtor.getAnnotations()) {
+                    if (ann.annotationType().isAnnotationPresent(jakarta.interceptor.InterceptorBinding.class)) {
+                        ctorBindings.add(DotName.of(ann.annotationType().getName()));
+                    }
+                }
+                if (!ctorBindings.isEmpty() && interceptorManager.hasInterceptors()) {
+                    interceptorManager.setClassLoader(beanClass.getClassLoader());
+                    var aroundConstructChain = interceptorManager.resolveLifecycleChain(
+                            ctorBindings, jakarta.interceptor.AroundConstruct.class);
+                    if (!aroundConstructChain.isEmpty()) {
+                        final var ctor = injectCtor;
+                        final var ctorArgs = args;
+                        var ctx = new fr.vidocq.vauban.core.interceptor.VaubanInvocationContext(
+                                null, null, ctorArgs, aroundConstructChain,
+                                (target, params) -> {
+                                    ctor.setAccessible(true);
+                                    return ctor.newInstance(params);
+                                });
+                        ctx.setConstructor(injectCtor);
+                        return ctx.proceed();
+                    }
+                }
+
                 return injectCtor.newInstance(args);
             } catch (java.lang.reflect.InvocationTargetException e) {
                 var cause = e.getCause();

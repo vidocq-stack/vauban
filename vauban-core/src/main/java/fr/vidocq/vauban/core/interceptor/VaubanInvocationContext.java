@@ -15,7 +15,7 @@ import java.util.Set;
  */
 public final class VaubanInvocationContext implements InvocationContext {
 
-    private final Object target;
+    private Object target;
     private final Method method;
     private Object[] parameters;
     private final List<InterceptorInvocation> chain;
@@ -23,6 +23,7 @@ public final class VaubanInvocationContext implements InvocationContext {
     private final Map<String, Object> contextData = new HashMap<>();
     private final TargetInvoker targetInvoker;
     private Set<java.lang.annotation.Annotation> interceptorBindings;
+    private Constructor<?> constructor;
 
     /**
      * Functional interface for the final target invocation (to support super calls).
@@ -73,7 +74,14 @@ public final class VaubanInvocationContext implements InvocationContext {
 
     @Override
     public Constructor<?> getConstructor() {
-        return null;
+        return constructor;
+    }
+
+    /**
+     * Set the constructor for @AroundConstruct interception.
+     */
+    public void setConstructor(Constructor<?> constructor) {
+        this.constructor = constructor;
     }
 
     @Override
@@ -162,11 +170,21 @@ public final class VaubanInvocationContext implements InvocationContext {
             var invocation = chain.get(currentIndex);
             return invocation.invoke(this);
         } else {
-            // End of chain — call the actual method
+            // End of chain — call the actual method/constructor
             if (targetInvoker != null) {
-                return targetInvoker.invoke(target, parameters);
+                var result = targetInvoker.invoke(target, parameters);
+                // For @AroundConstruct: set target to the newly created instance
+                // CDI spec: proceed() returns null for lifecycle callbacks
+                if (constructor != null && result != null && target == null) {
+                    target = result;
+                    return null;
+                }
+                return result;
             }
-            return method.invoke(target, parameters);
+            if (method != null) {
+                return method.invoke(target, parameters);
+            }
+            return null;
         }
     }
 
