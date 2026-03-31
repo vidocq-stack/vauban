@@ -556,12 +556,17 @@ public final class BeanDiscovery {
         }
 
         // Add annotations from stereotypes (direct + inherited)
+        // CDI spec: @Named from stereotype gives name but is NOT added as qualifier
         var allAnnotationNames = getAllAnnotationNames(classInfo);
         for (var annName : allAnnotationNames) {
             if (isStereotype(annName)) {
                 var stereotypeClass = index.getClassByName(annName);
                 if (stereotypeClass.isPresent()) {
-                    allAnnotations.addAll(stereotypeClass.get().annotations());
+                    for (var sa : stereotypeClass.get().annotations()) {
+                        if (!sa.name().equals(NAMED)) {
+                            allAnnotations.add(sa);
+                        }
+                    }
                 }
             }
         }
