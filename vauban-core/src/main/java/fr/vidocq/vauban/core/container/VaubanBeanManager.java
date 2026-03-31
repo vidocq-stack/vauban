@@ -392,7 +392,9 @@ public final class VaubanBeanManager implements BeanManager {
         for (var q : qualifiers) {
             eventQualifiers.add(fr.vidocq.vauban.indexer.model.DotName.of(q.annotationType().getName()));
         }
-        var matching = eventDispatcher.findMatchingObservers(event.getClass(), false, eventQualifiers);
+        // CDI spec: resolveObserverMethods returns both sync and async observers
+        var matching = new java.util.ArrayList<>(eventDispatcher.findMatchingObservers(event.getClass(), false, eventQualifiers));
+        matching.addAll(eventDispatcher.findMatchingObservers(event.getClass(), true, eventQualifiers));
         var result = new LinkedHashSet<ObserverMethod<? super T>>();
         for (var descriptor : matching) {
             // Find the declaring bean
