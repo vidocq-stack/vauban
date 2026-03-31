@@ -1011,13 +1011,53 @@ public final class BeanDiscovery {
                 }
             }
 
-            // Find @AroundInvoke method
+            // Fallback: also find bindings via reflection (for annotations not in index)
+            try {
+                var cl = Thread.currentThread().getContextClassLoader();
+                var clazz = cl != null ? Class.forName(classInfo.name().value(), false, cl)
+                        : Class.forName(classInfo.name().value());
+                for (var ann : clazz.getAnnotations()) {
+                    if (ann.annotationType().isAnnotationPresent(jakarta.interceptor.InterceptorBinding.class)) {
+                        bindings.add(DotName.of(ann.annotationType().getName()));
+                    }
+                }
+            } catch (ClassNotFoundException e) { /* skip */ }
+
+            // Find @AroundInvoke method (from index + reflection fallback)
             String aroundInvoke = null;
             for (var method : classInfo.methods()) {
                 if (hasAnnotation(method.annotations(), AROUND_INVOKE)) {
                     aroundInvoke = method.name();
                     break;
                 }
+            }
+            // Reflection fallback for @AroundInvoke
+            if (aroundInvoke == null) {
+                try {
+                    var cl = Thread.currentThread().getContextClassLoader();
+                    var clazz = cl != null ? Class.forName(classInfo.name().value(), false, cl)
+                            : Class.forName(classInfo.name().value());
+                    for (var m : clazz.getDeclaredMethods()) {
+                        if (m.isAnnotationPresent(jakarta.interceptor.AroundInvoke.class)) {
+                            aroundInvoke = m.getName();
+                            break;
+                        }
+                    }
+                    // Also check superclass
+                    if (aroundInvoke == null) {
+                        var superClass = clazz.getSuperclass();
+                        while (superClass != null && superClass != Object.class) {
+                            for (var m : superClass.getDeclaredMethods()) {
+                                if (m.isAnnotationPresent(jakarta.interceptor.AroundInvoke.class)) {
+                                    aroundInvoke = m.getName();
+                                    break;
+                                }
+                            }
+                            if (aroundInvoke != null) break;
+                            superClass = superClass.getSuperclass();
+                        }
+                    }
+                } catch (ClassNotFoundException e) { /* skip */ }
             }
 
             var priority = extractPriority(classInfo.annotations());
@@ -1036,12 +1076,31 @@ public final class BeanDiscovery {
     public boolean isInterceptorBinding(DotName annotationName) {
         var annClass = index.getClassByName(annotationName);
         if (annClass.isPresent()) {
-            return annClass.get().hasAnnotation(INTERCEPTOR_BINDING);
+            // Check direct @InterceptorBinding
+            if (annClass.get().hasAnnotation(INTERCEPTOR_BINDING)) return true;
+            // CDI spec: transitive interceptor bindings — check meta-annotations
+            for (var metaAnn : annClass.get().annotations()) {
+                if (metaAnn.name().equals(INTERCEPTOR_BINDING)) return true;
+                // Check if a meta-annotation is itself an interceptor binding (transitive)
+                var metaClass = index.getClassByName(metaAnn.name());
+                if (metaClass.isPresent() && metaClass.get().hasAnnotation(INTERCEPTOR_BINDING)) {
+                    return true;
+                }
+            }
         }
-        // Fallback: check via reflection
+        // Fallback: check via reflection with TCCL
         try {
-            var annType = Class.forName(annotationName.value());
-            return annType.isAnnotationPresent(jakarta.interceptor.InterceptorBinding.class);
+            var cl = Thread.currentThread().getContextClassLoader();
+            var annType = cl != null ? Class.forName(annotationName.value(), false, cl)
+                    : Class.forName(annotationName.value());
+            if (annType.isAnnotationPresent(jakarta.interceptor.InterceptorBinding.class)) return true;
+            // Check transitive bindings via reflection
+            for (var metaAnn : annType.getAnnotations()) {
+                if (metaAnn.annotationType().isAnnotationPresent(jakarta.interceptor.InterceptorBinding.class)) {
+                    return true;
+                }
+            }
+            return false;
         } catch (ClassNotFoundException e) {
             return false;
         }

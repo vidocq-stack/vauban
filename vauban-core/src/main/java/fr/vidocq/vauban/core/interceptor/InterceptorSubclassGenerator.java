@@ -200,13 +200,14 @@ public final class InterceptorSubclassGenerator {
                     int aSlot = mSlot + 1;
                     cob.astore(aSlot);
 
-                    // Resolve chain
+                    // Resolve chain (with method-level bindings)
                     cob.aload(0);
                     cob.getfield(subclassCD, "$$manager", CD_InterceptorManager);
                     cob.aload(0);
                     cob.getfield(subclassCD, "$$bindings", CD_Set);
-                    cob.invokevirtual(CD_InterceptorManager, "resolveChain",
-                            MethodTypeDesc.of(CD_List, CD_Set));
+                    cob.aload(mSlot); // pass the $$super$ Method for binding resolution
+                    cob.invokevirtual(CD_InterceptorManager, "resolveChainForMethod",
+                            MethodTypeDesc.of(CD_List, CD_Set, CD_Method));
                     int cSlot = aSlot + 1;
                     cob.astore(cSlot);
 

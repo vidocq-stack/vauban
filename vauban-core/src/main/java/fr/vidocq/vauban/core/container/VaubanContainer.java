@@ -668,7 +668,7 @@ public final class VaubanContainer implements AutoCloseable {
                     throw new jakarta.enterprise.inject.spi.DefinitionException(
                             "Cannot create interceptor subclass: " + le2.getMessage(), le2);
                 } catch (Exception e2) {
-                    // truly give up — keep original factory
+                    // Fallback failed — keep original factory
                 }
             }
         }

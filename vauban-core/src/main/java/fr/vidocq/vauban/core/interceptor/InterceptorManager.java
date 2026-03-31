@@ -26,6 +26,42 @@ public final class InterceptorManager {
 
     /**
      * Find interceptors that apply to a bean method based on binding annotations.
+     * Combines class-level and method-level bindings.
+     */
+    public List<VaubanInvocationContext.InterceptorInvocation> resolveChainForMethod(
+            Set<DotName> classBindings, java.lang.reflect.Method method) {
+        var allBindings = new java.util.LinkedHashSet<>(classBindings);
+        if (method != null) {
+            // Resolve the original method name (strip $$super$ prefix)
+            var methodName = method.getName();
+            if (methodName.startsWith("$$super$")) {
+                methodName = methodName.substring("$$super$".length());
+            }
+            // Find bindings on the original method in the bean class hierarchy
+            var beanClass = method.getDeclaringClass();
+            if (beanClass.getName().contains("$$Intercepted")) {
+                beanClass = beanClass.getSuperclass();
+            }
+            var current = beanClass;
+            while (current != null && current != Object.class) {
+                try {
+                    var originalMethod = current.getDeclaredMethod(methodName, method.getParameterTypes());
+                    for (var ann : originalMethod.getAnnotations()) {
+                        if (ann.annotationType().isAnnotationPresent(jakarta.interceptor.InterceptorBinding.class)) {
+                            allBindings.add(DotName.of(ann.annotationType().getName()));
+                        }
+                    }
+                    break;
+                } catch (NoSuchMethodException e) {
+                    current = current.getSuperclass();
+                }
+            }
+        }
+        return resolveChain(allBindings);
+    }
+
+    /**
+     * Find interceptors that apply to a bean method based on binding annotations.
      */
     public List<VaubanInvocationContext.InterceptorInvocation> resolveChain(
             Set<DotName> methodBindings) {
@@ -34,6 +70,7 @@ public final class InterceptorManager {
         for (var descriptor : interceptors) {
             // An interceptor matches if all its bindings are present on the target
             if (methodBindings.containsAll(descriptor.bindings()) && !descriptor.bindings().isEmpty()) {
+                // Interceptor matches
                 var instance = getOrCreateInstance(descriptor);
                 var aroundInvoke = findAroundInvokeMethod(instance.getClass(), descriptor.aroundInvokeMethod());
                 if (aroundInvoke != null) {
