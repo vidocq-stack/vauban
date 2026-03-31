@@ -66,6 +66,40 @@ public final class DeploymentValidator {
                                         + " cannot be final (unproxyable)",
                                 bean));
                     }
+                    // CDI spec: normal-scoped beans cannot have final methods
+                    // (except private, static, or methods from Object)
+                    for (var method : clazz.getDeclaredMethods()) {
+                        if (java.lang.reflect.Modifier.isFinal(method.getModifiers())
+                                && !java.lang.reflect.Modifier.isPrivate(method.getModifiers())
+                                && !java.lang.reflect.Modifier.isStatic(method.getModifiers())) {
+                            errors.add(new ValidationError(
+                                    ValidationError.Kind.UNPROXYABLE_BEAN,
+                                    "Normal-scoped bean " + bean.beanClass()
+                                            + " has final method " + method.getName()
+                                            + " (unproxyable)",
+                                    bean));
+                            break; // one error per bean is enough
+                        }
+                    }
+                    // Also check: bean must have a non-private no-arg constructor
+                    // (or no explicit constructor) to be proxyable
+                    boolean hasNoArgCtor = false;
+                    boolean hasAnyCtor = false;
+                    for (var ctor : clazz.getDeclaredConstructors()) {
+                        hasAnyCtor = true;
+                        if (ctor.getParameterCount() == 0
+                                && !java.lang.reflect.Modifier.isPrivate(ctor.getModifiers())) {
+                            hasNoArgCtor = true;
+                            break;
+                        }
+                    }
+                    if (hasAnyCtor && !hasNoArgCtor) {
+                        errors.add(new ValidationError(
+                                ValidationError.Kind.UNPROXYABLE_BEAN,
+                                "Normal-scoped bean " + bean.beanClass()
+                                        + " has no non-private no-arg constructor (unproxyable)",
+                                bean));
+                    }
                 } catch (ClassNotFoundException e) {
                     // skip
                 }
