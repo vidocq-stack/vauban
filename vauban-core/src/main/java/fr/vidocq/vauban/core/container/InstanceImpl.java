@@ -116,8 +116,23 @@ public final class InstanceImpl<T> implements Instance<T> {
     }
 
     @Override
+    @SuppressWarnings("unchecked")
     public void destroy(T instance) {
-        // No-op for now — dependent context cleanup not yet implemented
+        if (instance == null) return;
+        var bm = container.getBeanManager();
+        var beans = bm.getBeans(type, qualifiers);
+        if (beans.isEmpty()) return;
+        var bean = (Bean<T>) bm.resolve(beans);
+        // For normal-scoped beans, use AlterableContext.destroy()
+        var scope = bean.getScope();
+        try {
+            var ctx = bm.getContext(scope);
+            if (ctx instanceof jakarta.enterprise.context.spi.AlterableContext ac) {
+                ac.destroy((jakarta.enterprise.context.spi.Contextual<?>) bean);
+            }
+        } catch (Exception e) {
+            // Best effort — context may not be active
+        }
     }
 
     @Override
@@ -133,7 +148,7 @@ public final class InstanceImpl<T> implements Instance<T> {
         var ctx = bm.createCreationalContext(bean);
         @SuppressWarnings("unchecked")
         var ref = (T) bm.getReference(bean, type, ctx);
-        return new HandleImpl<>(ref, bean);
+        return new HandleImpl<>(ref, bean, container);
     }
 
     @Override
@@ -147,7 +162,7 @@ public final class InstanceImpl<T> implements Instance<T> {
             var ctx = bm.createCreationalContext(bean);
             @SuppressWarnings("unchecked")
             var ref = (T) bm.getReference(bean, type, ctx);
-            result.add(new HandleImpl<>(ref, bean));
+            result.add(new HandleImpl<>(ref, bean, container));
         }
         return result;
     }
@@ -181,7 +196,16 @@ public final class InstanceImpl<T> implements Instance<T> {
     /**
      * Implementation of {@link Handle} wrapping a bean instance and its metadata.
      */
-    private record HandleImpl<T>(T instance, Bean<T> bean) implements Handle<T> {
+    private static final class HandleImpl<T> implements Handle<T> {
+        private final T instance;
+        private final Bean<T> bean;
+        private final VaubanContainer container;
+
+        HandleImpl(T instance, Bean<T> bean, VaubanContainer container) {
+            this.instance = instance;
+            this.bean = bean;
+            this.container = container;
+        }
 
         @Override
         public T get() {
@@ -194,8 +218,17 @@ public final class InstanceImpl<T> implements Instance<T> {
         }
 
         @Override
+        @SuppressWarnings("unchecked")
         public void destroy() {
-            // No-op for now
+            try {
+                var bm = container.getBeanManager();
+                var ctx = bm.getContext(bean.getScope());
+                if (ctx instanceof jakarta.enterprise.context.spi.AlterableContext ac) {
+                    ac.destroy((jakarta.enterprise.context.spi.Contextual<?>) bean);
+                }
+            } catch (Exception e) {
+                // Best effort
+            }
         }
 
         @Override
