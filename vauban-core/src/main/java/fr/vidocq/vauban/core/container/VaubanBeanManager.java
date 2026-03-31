@@ -585,15 +585,44 @@ public final class VaubanBeanManager implements BeanManager {
             }
         }
 
-        // Type matching — required type must be in beanTypes (exact type equality or CDI assignability)
+        // Type matching — required type must be assignable from at least one of the beanTypes
+        // CDI spec: isMatchingBean checks if requiredType is assignable from a bean type
         boolean typeMatch = false;
         for (var bt : beanTypes) {
             if (bt instanceof java.lang.reflect.TypeVariable<?>) continue;
             if (bt instanceof java.lang.reflect.WildcardType) continue;
-            if (typesMatch(bt, requiredType)) {
+            if (bt.equals(requiredType)) {
                 typeMatch = true;
                 break;
             }
+            if (bt instanceof Class<?> btClass && requiredType instanceof Class<?> reqClass) {
+                // CDI assignability: requiredType must be assignable FROM beanType
+                // But ONLY consider bean types explicitly listed, plus Object
+                if (btClass == reqClass || isPrimitiveWrapperMatch(btClass, reqClass)) {
+                    typeMatch = true;
+                    break;
+                }
+            }
+            // Parameterized type matching
+            if (bt instanceof java.lang.reflect.ParameterizedType beanPt
+                    && requiredType instanceof java.lang.reflect.ParameterizedType reqPt) {
+                if (typesMatch(beanPt, reqPt)) {
+                    typeMatch = true;
+                    break;
+                }
+            }
+            // Raw type requested, parameterized bean type
+            if (requiredType instanceof Class<?> reqClass
+                    && bt instanceof java.lang.reflect.ParameterizedType beanPt) {
+                if (reqClass == beanPt.getRawType()) {
+                    typeMatch = true;
+                    break;
+                }
+            }
+        }
+        // Object always matches any bean type (implicit supertype)
+        if (!typeMatch && requiredType == Object.class && !beanTypes.isEmpty()) {
+            typeMatch = true;
         }
         if (!typeMatch) return false;
 
