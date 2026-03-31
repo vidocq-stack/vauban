@@ -260,6 +260,21 @@ public final class BeanDiscovery {
                         index.getClassByName(a.name()).map(c -> c.hasAnnotation(ALTERNATIVE)).orElse(false))
                 || isAlternativeWithStereotypes(declaringClass);
         var priority = extractPriority(method.annotations());
+        // Fallback: check @Priority via reflection on the producer method
+        if (priority == 0) {
+            try {
+                var cl = Thread.currentThread().getContextClassLoader();
+                var clazz = cl != null ? Class.forName(declaringClass.name().value(), false, cl)
+                        : Class.forName(declaringClass.name().value());
+                for (var m : clazz.getDeclaredMethods()) {
+                    if (m.getName().equals(method.name())
+                            && m.isAnnotationPresent(jakarta.annotation.Priority.class)) {
+                        priority = m.getAnnotation(jakarta.annotation.Priority.class).value();
+                        break;
+                    }
+                }
+            } catch (ClassNotFoundException e) { /* skip */ }
+        }
         if (priority == 0) {
             for (var ann : method.annotations()) {
                 if (isStereotype(ann.name())) {
