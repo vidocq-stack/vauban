@@ -1087,8 +1087,21 @@ public final class BeanDiscovery {
                 } catch (ClassNotFoundException e) { /* skip */ }
             }
 
+            // Collect actual binding annotations for member comparison
+            var bindingAnnotations = new ArrayList<java.lang.annotation.Annotation>();
+            try {
+                var cl = Thread.currentThread().getContextClassLoader();
+                var clazz2 = cl != null ? Class.forName(classInfo.name().value(), false, cl)
+                        : Class.forName(classInfo.name().value());
+                for (var ann : clazz2.getAnnotations()) {
+                    if (ann.annotationType().isAnnotationPresent(jakarta.interceptor.InterceptorBinding.class)) {
+                        bindingAnnotations.add(ann);
+                    }
+                }
+            } catch (ClassNotFoundException e) { /* skip */ }
+
             var priority = extractPriority(classInfo.annotations());
-            interceptors.add(new InterceptorDescriptor(classInfo.name(), bindings, aroundInvoke, priority));
+            interceptors.add(new InterceptorDescriptor(classInfo.name(), bindings, aroundInvoke, priority, bindingAnnotations));
         }
 
         // Sort by priority

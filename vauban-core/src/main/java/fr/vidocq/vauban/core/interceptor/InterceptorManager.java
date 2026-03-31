@@ -30,19 +30,27 @@ public final class InterceptorManager {
      */
     public List<VaubanInvocationContext.InterceptorInvocation> resolveChainForMethod(
             Set<DotName> classBindings, java.lang.reflect.Method method) {
-        // resolveChainForMethod traces removed
         var allBindings = new java.util.LinkedHashSet<>(classBindings);
+        var beanAnnotations = new java.util.ArrayList<java.lang.annotation.Annotation>();
+
+        // Collect class-level binding annotations
         if (method != null) {
+            var beanClass = method.getDeclaringClass();
+            if (beanClass.getName().contains("$$Intercepted")) {
+                beanClass = beanClass.getSuperclass();
+            }
+            for (var ann : beanClass.getAnnotations()) {
+                if (ann.annotationType().isAnnotationPresent(jakarta.interceptor.InterceptorBinding.class)) {
+                    beanAnnotations.add(ann);
+                }
+            }
+
             // Resolve the original method name (strip $$super$ prefix)
             var methodName = method.getName();
             if (methodName.startsWith("$$super$")) {
                 methodName = methodName.substring("$$super$".length());
             }
             // Find bindings on the original method in the bean class hierarchy
-            var beanClass = method.getDeclaringClass();
-            if (beanClass.getName().contains("$$Intercepted")) {
-                beanClass = beanClass.getSuperclass();
-            }
             var current = beanClass;
             while (current != null && current != Object.class) {
                 try {
@@ -50,6 +58,7 @@ public final class InterceptorManager {
                     for (var ann : originalMethod.getAnnotations()) {
                         if (ann.annotationType().isAnnotationPresent(jakarta.interceptor.InterceptorBinding.class)) {
                             allBindings.add(DotName.of(ann.annotationType().getName()));
+                            beanAnnotations.add(ann);
                         }
                     }
                     break;
@@ -58,7 +67,7 @@ public final class InterceptorManager {
                 }
             }
         }
-        return resolveChain(allBindings);
+        return resolveChain(allBindings, beanAnnotations);
     }
 
     /**
@@ -66,12 +75,25 @@ public final class InterceptorManager {
      */
     public List<VaubanInvocationContext.InterceptorInvocation> resolveChain(
             Set<DotName> methodBindings) {
+        return resolveChain(methodBindings, List.of());
+    }
+
+    /**
+     * Find interceptors with member value comparison.
+     */
+    public List<VaubanInvocationContext.InterceptorInvocation> resolveChain(
+            Set<DotName> methodBindings, List<java.lang.annotation.Annotation> beanAnnotations) {
         var chain = new ArrayList<VaubanInvocationContext.InterceptorInvocation>();
 
         for (var descriptor : interceptors) {
             // An interceptor matches if all its bindings are present on the target
             if (methodBindings.containsAll(descriptor.bindings()) && !descriptor.bindings().isEmpty()) {
-                // Interceptor matches
+                // Check binding member values if both sides have annotation instances
+                if (!descriptor.bindingAnnotations().isEmpty() && !beanAnnotations.isEmpty()) {
+                    if (!bindingMembersMatch(descriptor.bindingAnnotations(), beanAnnotations)) {
+                        continue;
+                    }
+                }
                 var instance = getOrCreateInstance(descriptor);
                 var aroundInvoke = findAroundInvokeMethod(instance.getClass(), descriptor.aroundInvokeMethod());
                 if (aroundInvoke != null) {
@@ -81,6 +103,38 @@ public final class InterceptorManager {
         }
 
         return chain;
+    }
+
+    /**
+     * CDI spec: interceptor binding member values must match, except @Nonbinding members.
+     */
+    private boolean bindingMembersMatch(List<java.lang.annotation.Annotation> interceptorBindings,
+            List<java.lang.annotation.Annotation> beanBindings) {
+        for (var interceptorBinding : interceptorBindings) {
+            var matchingBeanBinding = beanBindings.stream()
+                    .filter(b -> b.annotationType() == interceptorBinding.annotationType())
+                    .findFirst();
+            if (matchingBeanBinding.isEmpty()) continue; // DotName match handles presence
+            // Compare binding member values (excluding @Nonbinding)
+            if (!annotationMembersEqual(interceptorBinding, matchingBeanBinding.get())) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private boolean annotationMembersEqual(java.lang.annotation.Annotation a, java.lang.annotation.Annotation b) {
+        for (var method : a.annotationType().getDeclaredMethods()) {
+            if (method.isAnnotationPresent(jakarta.enterprise.util.Nonbinding.class)) continue;
+            try {
+                var va = method.invoke(a);
+                var vb = method.invoke(b);
+                if (!java.util.Objects.deepEquals(va, vb)) return false;
+            } catch (Exception e) {
+                return false;
+            }
+        }
+        return true;
     }
 
     /**
