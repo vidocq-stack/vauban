@@ -57,8 +57,21 @@ public final class EventDispatcher {
             var qualifierInstances = toQualifierInstances(qualifiers);
             var matching = findMatchingObservers(event.getClass(), true, qualifierInstances);
             matching.sort(Comparator.comparingInt(ObserverDescriptor::priority));
+            // CDI spec: invoke ALL observers, collect exceptions
+            var exceptions = new java.util.ArrayList<Throwable>();
             for (var observer : matching) {
-                invokeObserver(observer, event, qualifiers);
+                try {
+                    invokeObserver(observer, event, qualifiers);
+                } catch (Exception e) {
+                    exceptions.add(e);
+                }
+            }
+            if (!exceptions.isEmpty()) {
+                var ce = new java.util.concurrent.CompletionException(exceptions.getFirst());
+                for (int i = 1; i < exceptions.size(); i++) {
+                    ce.addSuppressed(exceptions.get(i));
+                }
+                throw ce;
             }
             return event;
         };
