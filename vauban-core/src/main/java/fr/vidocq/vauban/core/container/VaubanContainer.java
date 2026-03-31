@@ -1218,6 +1218,17 @@ public final class VaubanContainer implements AutoCloseable {
                 // Skip interfaces, annotations, enums
                 if (clazz.isInterface() || clazz.isAnnotation() || clazz.isEnum()) continue;
 
+                // CDI spec: stereotype with @Named must have empty value
+                for (var ann : clazz.getAnnotations()) {
+                    if (ann.annotationType().isAnnotationPresent(jakarta.enterprise.inject.Stereotype.class)) {
+                        var named = ann.annotationType().getAnnotation(jakarta.inject.Named.class);
+                        if (named != null && !named.value().isEmpty()) {
+                            errors.add("Stereotype " + ann.annotationType().getName()
+                                    + " has @Named with non-empty value '" + named.value() + "'");
+                        }
+                    }
+                }
+
                 // CDI spec: @Typed values must be legal bean types (supertypes of the bean class)
                 if (clazz.isAnnotationPresent(jakarta.enterprise.inject.Typed.class)) {
                     var typed = clazz.getAnnotation(jakarta.enterprise.inject.Typed.class);
