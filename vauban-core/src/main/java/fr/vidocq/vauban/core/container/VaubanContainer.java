@@ -1095,6 +1095,9 @@ public final class VaubanContainer implements AutoCloseable {
                     if (method.isAnnotationPresent(jakarta.enterprise.inject.Produces.class)) {
                         validateProducerReturnType(method.getGenericReturnType(),
                                 clazz.getName() + "." + method.getName(), errors);
+                        // Multiple scope annotations on producer method
+                        validateNoMultipleScopes(method.getAnnotations(),
+                                "Producer method " + clazz.getName() + "." + method.getName(), errors);
                     }
 
                     // Generic initializer method
@@ -1172,6 +1175,9 @@ public final class VaubanContainer implements AutoCloseable {
                     if (field.isAnnotationPresent(jakarta.enterprise.inject.Produces.class)) {
                         validateProducerReturnType(field.getGenericType(),
                                 clazz.getName() + "." + field.getName(), errors);
+                        // Multiple scope annotations on producer field
+                        validateNoMultipleScopes(field.getAnnotations(),
+                                "Producer field " + clazz.getName() + "." + field.getName(), errors);
                     }
                 }
 
@@ -1211,8 +1217,15 @@ public final class VaubanContainer implements AutoCloseable {
             if (type instanceof java.lang.reflect.WildcardType) {
                 errors.add("Producer " + location + " has wildcard return type");
             }
-            // Parameterized types with type variables are OK (e.g. List<T> from a generic class)
-            // Only naked wildcards in top-level return type are invalid
+            // CDI spec: parameterized type with wildcard type arguments
+            if (type instanceof java.lang.reflect.ParameterizedType pt) {
+                for (var arg : pt.getActualTypeArguments()) {
+                    if (arg instanceof java.lang.reflect.WildcardType) {
+                        errors.add("Producer " + location + " has parameterized type with wildcard argument");
+                        break;
+                    }
+                }
+            }
             if (type instanceof java.lang.reflect.GenericArrayType gat) {
                 var componentType = gat.getGenericComponentType();
                 if (componentType instanceof java.lang.reflect.TypeVariable<?>) {
@@ -1221,6 +1234,30 @@ public final class VaubanContainer implements AutoCloseable {
                 if (componentType instanceof java.lang.reflect.WildcardType) {
                     errors.add("Producer " + location + " has array type with wildcard component");
                 }
+                // Array of parameterized type with wildcards
+                if (componentType instanceof java.lang.reflect.ParameterizedType cpt) {
+                    for (var arg : cpt.getActualTypeArguments()) {
+                        if (arg instanceof java.lang.reflect.WildcardType) {
+                            errors.add("Producer " + location + " has array of parameterized type with wildcard");
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+
+        private static void validateNoMultipleScopes(java.lang.annotation.Annotation[] annotations,
+                String location, List<String> errors) {
+            int scopeCount = 0;
+            for (var ann : annotations) {
+                var annType = ann.annotationType();
+                if (annType.isAnnotationPresent(jakarta.inject.Scope.class)
+                        || annType.isAnnotationPresent(jakarta.enterprise.context.NormalScope.class)) {
+                    scopeCount++;
+                }
+            }
+            if (scopeCount > 1) {
+                errors.add(location + " has multiple scope annotations");
             }
         }
 
