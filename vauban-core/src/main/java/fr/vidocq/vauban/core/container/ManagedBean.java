@@ -27,6 +27,7 @@ public final class ManagedBean<T> implements Bean<T> {
     private final ClassLoader classLoader;
     private Consumer<Object> injector;
     private Consumer<Object> destroyer;
+    private fr.vidocq.vauban.core.interceptor.InterceptorManager interceptorManager;
 
     @SuppressWarnings("unchecked")
     public ManagedBean(BeanDescriptor descriptor, BeanFactory<T> factory, ClassLoader classLoader) {
@@ -54,6 +55,10 @@ public final class ManagedBean<T> implements Bean<T> {
      */
     public void setDestroyer(Consumer<Object> destroyer) {
         this.destroyer = destroyer;
+    }
+
+    public void setInterceptorManager(fr.vidocq.vauban.core.interceptor.InterceptorManager interceptorManager) {
+        this.interceptorManager = interceptorManager;
     }
 
     @Override
@@ -89,21 +94,66 @@ public final class ManagedBean<T> implements Bean<T> {
 
     private void callPreDestroy(Object instance) {
         if (instance == null) return;
+        // Find @PreDestroy method
+        java.lang.reflect.Method preDestroyMethod = null;
         var clazz = instance.getClass();
         while (clazz != null && clazz != Object.class) {
             for (var method : clazz.getDeclaredMethods()) {
                 if (method.isAnnotationPresent(jakarta.annotation.PreDestroy.class)) {
                     method.setAccessible(true);
+                    preDestroyMethod = method;
+                    break;
+                }
+            }
+            if (preDestroyMethod != null) break;
+            clazz = clazz.getSuperclass();
+        }
+
+        // Check for lifecycle interceptors
+        if (interceptorManager != null && interceptorManager.hasInterceptors()) {
+            var bindings = findInterceptorBindings(instance);
+            if (!bindings.isEmpty()) {
+                interceptorManager.setClassLoader(instance.getClass().getClassLoader());
+                var chain = interceptorManager.resolveLifecycleChain(
+                        bindings, jakarta.annotation.PreDestroy.class);
+                if (!chain.isEmpty()) {
+                    final var pdMethod = preDestroyMethod;
+                    var ctx = new fr.vidocq.vauban.core.interceptor.VaubanInvocationContext(
+                            instance, null, new Object[0], chain,
+                            (target, params) -> {
+                                if (pdMethod != null) pdMethod.invoke(target);
+                                return null;
+                            });
                     try {
-                        method.invoke(instance);
+                        ctx.proceed();
                     } catch (Exception e) {
-                        // CDI spec says exceptions in @PreDestroy are caught, not propagated
+                        // CDI spec: suppress PreDestroy exceptions
                     }
                     return;
                 }
             }
-            clazz = clazz.getSuperclass();
         }
+
+        // No interceptors — call directly
+        if (preDestroyMethod != null) {
+            try {
+                preDestroyMethod.invoke(instance);
+            } catch (Exception e) {
+                // CDI spec says exceptions in @PreDestroy are caught, not propagated
+            }
+        }
+    }
+
+    private Set<fr.vidocq.vauban.indexer.model.DotName> findInterceptorBindings(Object instance) {
+        var bindings = new java.util.LinkedHashSet<fr.vidocq.vauban.indexer.model.DotName>();
+        var clazz = instance.getClass();
+        if (clazz.getName().contains("$$Intercepted")) clazz = clazz.getSuperclass();
+        for (var ann : clazz.getAnnotations()) {
+            if (ann.annotationType().isAnnotationPresent(jakarta.interceptor.InterceptorBinding.class)) {
+                bindings.add(fr.vidocq.vauban.indexer.model.DotName.of(ann.annotationType().getName()));
+            }
+        }
+        return bindings;
     }
 
     @Override

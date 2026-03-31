@@ -625,7 +625,9 @@ public final class VaubanContainer implements AutoCloseable {
                 };
 
                 // Update the bean with the new factory
-                beans.put(descriptor.id(), new ManagedBean<>(descriptor, interceptedFactory, classLoader));
+                var interceptedBean = new ManagedBean<>(descriptor, interceptedFactory, classLoader);
+                interceptedBean.setInterceptorManager(this.interceptorManager);
+                beans.put(descriptor.id(), interceptedBean);
             } catch (jakarta.enterprise.inject.spi.DefinitionException de) {
                 throw de; // Propagate DefinitionException (e.g. final class)
             } catch (LinkageError le) {
@@ -659,7 +661,9 @@ public final class VaubanContainer implements AutoCloseable {
                             throw new jakarta.enterprise.inject.CreationException(ex);
                         }
                     };
-                    beans.put(descriptor.id(), new ManagedBean<>(descriptor, f2, classLoader));
+                    var ib2 = new ManagedBean<>(descriptor, f2, classLoader);
+                    ib2.setInterceptorManager(this.interceptorManager);
+                    beans.put(descriptor.id(), ib2);
                 } catch (LinkageError le2) {
                     throw new jakarta.enterprise.inject.spi.DefinitionException(
                             "Cannot create interceptor subclass: " + le2.getMessage(), le2);
