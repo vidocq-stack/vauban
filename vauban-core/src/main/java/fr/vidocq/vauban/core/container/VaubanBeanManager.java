@@ -211,6 +211,14 @@ public final class VaubanBeanManager implements BeanManager {
                 result.add(bean);
             }
         }
+        // CDI spec: if an enabled alternative with @Priority exists,
+        // non-alternatives with the same name are eliminated
+        if (result.size() > 1) {
+            boolean hasAlternative = result.stream().anyMatch(Bean::isAlternative);
+            if (hasAlternative) {
+                result.removeIf(b -> !b.isAlternative());
+            }
+        }
         return result;
     }
 
