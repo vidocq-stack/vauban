@@ -1161,7 +1161,9 @@ public final class VaubanContainer implements AutoCloseable {
                                     });
                             ctx.setConstructor(finalCtor);
                             ctx.setInterceptorBindings(ctorBindingAnnotations);
-                            return ctx.proceed();
+                            ctx.proceed();
+                            // CDI spec: around-construct chain returns null, instance is in context.getTarget()
+                            return ctx.getTarget();
                         }
                     }
 

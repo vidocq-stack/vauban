@@ -243,12 +243,10 @@ public final class VaubanInvocationContext implements InvocationContext {
                 if (targetInvoker != null) {
                     var result = targetInvoker.invoke(target, parameters);
                     // For @AroundConstruct: the result is the newly created instance
-                    if (constructor != null && result != null && target == null) {
+                    if (constructor != null && result != null) {
                         target = result;
-                        // CDI spec: proceed() returns null for @AroundConstruct
-                        return null;
                     }
-                    return result;
+                    return constructor != null ? null : result;
                 }
                 if (method != null) {
                     return method.invoke(target, parameters);

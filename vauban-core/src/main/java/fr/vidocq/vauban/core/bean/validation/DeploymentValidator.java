@@ -74,7 +74,7 @@ public final class DeploymentValidator {
                         var clazz = Class.forName(bean.beanClass().value());
                         if (java.lang.reflect.Modifier.isFinal(clazz.getModifiers())) {
                             errors.add(new ValidationError(
-                                    ValidationError.Kind.UNPROXYABLE_BEAN,
+                                    ValidationError.Kind.DEFINITION_ERROR,
                                     "Normal-scoped bean " + bean.beanClass()
                                             + " cannot be final (unproxyable)",
                                     bean));
@@ -86,7 +86,7 @@ public final class DeploymentValidator {
                                     && !java.lang.reflect.Modifier.isPrivate(method.getModifiers())
                                     && !java.lang.reflect.Modifier.isStatic(method.getModifiers())) {
                                 errors.add(new ValidationError(
-                                        ValidationError.Kind.UNPROXYABLE_BEAN,
+                                        ValidationError.Kind.DEFINITION_ERROR,
                                         "Normal-scoped bean " + bean.beanClass()
                                                 + " has final method " + method.getName()
                                                 + " (unproxyable)",
@@ -108,7 +108,7 @@ public final class DeploymentValidator {
                         }
                         if (hasAnyCtor && !hasNoArgCtor) {
                             errors.add(new ValidationError(
-                                    ValidationError.Kind.UNPROXYABLE_BEAN,
+                                    ValidationError.Kind.DEFINITION_ERROR,
                                     "Normal-scoped bean " + bean.beanClass()
                                             + " has no non-private no-arg constructor (unproxyable)",
                                     bean));
@@ -201,12 +201,12 @@ public final class DeploymentValidator {
     private void validateProxyableType(TypeInfo type, BeanDescriptor bean, List<ValidationError> errors, BeanDescriptor contextBean) {
         if (type instanceof TypeInfo.PrimitiveType) {
             errors.add(new ValidationError(
-                    ValidationError.Kind.UNPROXYABLE_BEAN,
+                    ValidationError.Kind.DEFINITION_ERROR,
                     "Normal-scoped bean " + bean.beanClass() + " cannot have primitive type " + type,
                     contextBean));
         } else if (type instanceof TypeInfo.ArrayType) {
             errors.add(new ValidationError(
-                    ValidationError.Kind.UNPROXYABLE_BEAN,
+                    ValidationError.Kind.DEFINITION_ERROR,
                     "Normal-scoped bean " + bean.beanClass() + " cannot have array type " + type,
                     contextBean));
         }
