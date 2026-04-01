@@ -541,8 +541,9 @@ public final class VaubanContainer implements AutoCloseable {
         var beanBindings = findInterceptorBindings(instance);
         if (!beanBindings.isEmpty() && interceptorManager.hasInterceptors()) {
             interceptorManager.setClassLoader(instance.getClass().getClassLoader());
+            var bindingAnns = new java.util.ArrayList<java.lang.annotation.Annotation>(collectBindingAnnotations(instance));
             var lifecycleChain = interceptorManager.resolveLifecycleChain(
-                    beanBindings, jakarta.annotation.PostConstruct.class);
+                    beanBindings, jakarta.annotation.PostConstruct.class, bindingAnns);
             if (!lifecycleChain.isEmpty()) {
                 // Collect binding annotations for InvocationContext.getInterceptorBindings()
                 var bindingAnnotations = collectBindingAnnotations(instance);
@@ -1053,7 +1054,7 @@ public final class VaubanContainer implements AutoCloseable {
                 if (!ctorBindings.isEmpty() && interceptorManager.hasInterceptors()) {
                     interceptorManager.setClassLoader(beanClass.getClassLoader());
                     var aroundConstructChain = interceptorManager.resolveLifecycleChain(
-                            ctorBindings, jakarta.interceptor.AroundConstruct.class);
+                            ctorBindings, jakarta.interceptor.AroundConstruct.class, new java.util.ArrayList<>(ctorBindingAnnotations));
                     if (!aroundConstructChain.isEmpty()) {
                         final var ctor = injectCtor;
                         final var ctorArgs = args;

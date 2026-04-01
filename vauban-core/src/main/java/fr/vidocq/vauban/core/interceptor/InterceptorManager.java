@@ -164,10 +164,22 @@ public final class InterceptorManager {
      */
     public List<VaubanInvocationContext.InterceptorInvocation> resolveLifecycleChain(
             Set<DotName> methodBindings, Class<? extends java.lang.annotation.Annotation> lifecycleAnnotation) {
+        return resolveLifecycleChain(methodBindings, lifecycleAnnotation, List.of());
+    }
+
+    public List<VaubanInvocationContext.InterceptorInvocation> resolveLifecycleChain(
+            Set<DotName> methodBindings, Class<? extends java.lang.annotation.Annotation> lifecycleAnnotation,
+            List<java.lang.annotation.Annotation> beanAnnotations) {
         var chain = new ArrayList<VaubanInvocationContext.InterceptorInvocation>();
 
         for (var descriptor : interceptors) {
             if (methodBindings.containsAll(descriptor.bindings()) && !descriptor.bindings().isEmpty()) {
+                // Check binding member values if available
+                if (!descriptor.bindingAnnotations().isEmpty() && !beanAnnotations.isEmpty()) {
+                    if (!bindingMembersMatch(descriptor.bindingAnnotations(), beanAnnotations)) {
+                        continue;
+                    }
+                }
                 var instance = getOrCreateInstance(descriptor);
                 var lifecycleMethod = findAnnotatedMethod(instance.getClass(), lifecycleAnnotation);
                 if (lifecycleMethod != null) {
