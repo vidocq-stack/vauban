@@ -1642,6 +1642,26 @@ public final class VaubanContainer implements AutoCloseable {
                                 + " has conflicting stereotype scopes: " + scopes);
                     }
                 }
+                // CDI spec: stereotypes must not declare same interceptor binding with different values
+                if (hasBeanDefiningAnnotation(clazz)) {
+                    var bindingsByType = new java.util.HashMap<Class<?>, java.lang.annotation.Annotation>();
+                    boolean conflict = false;
+                    for (var ann : clazz.getAnnotations()) {
+                        if (ann.annotationType().isAnnotationPresent(jakarta.enterprise.inject.Stereotype.class)) {
+                            for (var metaAnn : ann.annotationType().getAnnotations()) {
+                                if (metaAnn.annotationType().isAnnotationPresent(jakarta.interceptor.InterceptorBinding.class)) {
+                                    var prev = bindingsByType.put(metaAnn.annotationType(), metaAnn);
+                                    if (prev != null && !prev.equals(metaAnn)) {
+                                        errors.add("Bean " + clazz.getName()
+                                                + " has conflicting interceptor binding values for "
+                                                + metaAnn.annotationType().getSimpleName());
+                                        conflict = true;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
             }
             return errors;
         }
