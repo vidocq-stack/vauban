@@ -366,36 +366,21 @@ public final class BeanDiscovery {
      */
     private Set<DotName> extractInterceptorBindings(ClassInfo classInfo) {
         var bindings = new java.util.LinkedHashSet<DotName>();
-        // Direct bindings on the class
-        for (var ann : classInfo.annotations()) {
-            if (isInterceptorBinding(ann.name())) {
-                bindings.add(ann.name());
-            }
-            // Bindings from stereotypes
-            if (isStereotype(ann.name())) {
-                var stereo = index.getClassByName(ann.name());
-                if (stereo.isPresent()) {
-                    for (var sa : stereo.get().annotations()) {
-                        if (isInterceptorBinding(sa.name())) {
-                            bindings.add(sa.name());
-                        }
-                    }
-                }
-            }
-        }
+        collectBindingsRecursively(classInfo.annotations(), bindings, new java.util.HashSet<>());
+
         // Bindings from superclasses (inherited bindings)
         var superClass = classInfo.superName();
         var objectName = DotName.of("java.lang.Object");
         while (superClass != null && !superClass.equals(objectName)) {
             var superInfo = index.getClassByName(superClass);
             if (superInfo.isPresent()) {
-                for (var ann : superInfo.get().annotations()) {
-                    if (isInterceptorBinding(ann.name())) {
-                        // Check if the binding annotation itself is @Inherited
-                        var bindingClass = index.getClassByName(ann.name());
-                        if (bindingClass.isPresent() && bindingClass.get().hasAnnotation(DotName.of(java.lang.annotation.Inherited.class.getName()))) {
-                            bindings.add(ann.name());
-                        }
+                var superBindings = new java.util.LinkedHashSet<DotName>();
+                collectBindingsRecursively(superInfo.get().annotations(), superBindings, new java.util.HashSet<>());
+                for (var binding : superBindings) {
+                    // Check if the binding annotation itself is @Inherited
+                    var bindingClass = index.getClassByName(binding);
+                    if (bindingClass.isPresent() && bindingClass.get().hasAnnotation(DotName.of(java.lang.annotation.Inherited.class.getName()))) {
+                        bindings.add(binding);
                     }
                 }
                 superClass = superInfo.get().superName();
@@ -403,19 +388,27 @@ public final class BeanDiscovery {
                 break;
             }
         }
-        // Fallback: check via reflection for bindings not in the index
-        try {
-            var clazz = Class.forName(classInfo.name().value());
-            for (var ann : clazz.getAnnotations()) {
-                var annName = DotName.of(ann.annotationType().getName());
-                if (ann.annotationType().isAnnotationPresent(jakarta.interceptor.InterceptorBinding.class)) {
-                    bindings.add(annName);
+        return bindings;
+    }
+
+    private void collectBindingsRecursively(List<fr.vidocq.vauban.indexer.model.AnnotationInfo> annotations, Set<DotName> bindings, Set<DotName> visited) {
+        for (var ann : annotations) {
+            if (!visited.add(ann.name())) continue;
+
+            if (isInterceptorBinding(ann.name())) {
+                bindings.add(ann.name());
+                // Transitively collect meta-bindings
+                var bindingClass = index.getClassByName(ann.name());
+                if (bindingClass.isPresent()) {
+                    collectBindingsRecursively(bindingClass.get().annotations(), bindings, visited);
+                }
+            } else if (isStereotype(ann.name())) {
+                var stereoClass = index.getClassByName(ann.name());
+                if (stereoClass.isPresent()) {
+                    collectBindingsRecursively(stereoClass.get().annotations(), bindings, visited);
                 }
             }
-        } catch (ClassNotFoundException e) {
-            // skip
         }
-        return bindings;
     }
 
     // isInterceptorBinding is defined below (line ~926)

@@ -48,22 +48,16 @@ public final class BeanResolver {
         var matching = new ArrayList<fr.vidocq.vauban.core.bean.model.InterceptorDescriptor>();
 
         for (var interceptor : interceptors) {
-            // CDI spec: An interceptor matches if all its bindings are present in the bean's bindings
+            // CDI spec: An interceptor matches if ALL its bindings are present in the bean's bindings
             // "The set of interceptor bindings of the interceptor must be a subset of the interceptor bindings of the bean"
-            boolean allInterceptorBindingsPresentOnBean = true;
-            for (var binding : interceptor.bindings()) {
-                if (!bindings.contains(binding)) {
-                    allInterceptorBindingsPresentOnBean = false;
-                    break;
-                }
-            }
-            if (allInterceptorBindingsPresentOnBean && !interceptor.bindings().isEmpty()) {
+            if (bindings.containsAll(interceptor.bindings()) && !interceptor.bindings().isEmpty()) {
                 matching.add(interceptor);
             }
         }
 
-        // Sort by priority (CDI spec: higher priority first)
-        matching.sort(java.util.Comparator.comparingInt(fr.vidocq.vauban.core.bean.model.InterceptorDescriptor::priority).reversed());
+        // Sort by priority (CDI spec 9.5.2)
+        matching.sort(java.util.Comparator.comparingInt(fr.vidocq.vauban.core.bean.model.InterceptorDescriptor::priority)
+                .thenComparing(d -> d.interceptorClass().toString(), java.util.Comparator.reverseOrder()));
         return matching;
     }
 

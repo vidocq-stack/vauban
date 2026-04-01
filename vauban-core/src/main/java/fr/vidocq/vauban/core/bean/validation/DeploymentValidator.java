@@ -35,7 +35,7 @@ public final class DeploymentValidator {
             // CDI spec: Interceptors themselves are not intercepted
             if (bean.kind() == BeanDescriptor.BeanKind.MANAGED) {
                 try {
-                    var clazz = Class.forName(bean.beanClass().value());
+                    var clazz = Class.forName(bean.beanClass().value(), false, Thread.currentThread().getContextClassLoader());
                     if (clazz.isAnnotationPresent(jakarta.interceptor.Interceptor.class)) continue;
                 } catch (Exception e) { /* ignore */ }
             }
