@@ -146,6 +146,8 @@ public final class InterceptorSubclassGenerator {
         if (method.getName().startsWith("$$")) return false;
         // CDI spec: @Inject initializer methods are NOT intercepted
         if (method.isAnnotationPresent(jakarta.inject.Inject.class)) return false;
+        // Target class interceptor methods (@AroundInvoke etc.) are not business methods
+        if (method.isAnnotationPresent(jakarta.interceptor.AroundInvoke.class)) return false;
         return true;
     }
 
@@ -217,14 +219,15 @@ public final class InterceptorSubclassGenerator {
                     int aSlot = mSlot + 1;
                     cob.astore(aSlot);
 
-                    // Resolve chain (with method-level bindings)
+                    // Resolve chain (with method-level bindings + target class @AroundInvoke)
                     cob.aload(0);
                     cob.getfield(subclassCD, "$$manager", CD_InterceptorManager);
                     cob.aload(0);
                     cob.getfield(subclassCD, "$$bindings", CD_Set);
                     cob.aload(mSlot); // pass the $$super$ Method for binding resolution
+                    cob.aload(0);     // pass this for target class @AroundInvoke
                     cob.invokevirtual(CD_InterceptorManager, "resolveChainForMethod",
-                            MethodTypeDesc.of(CD_List, CD_Set, CD_Method));
+                            MethodTypeDesc.of(CD_List, CD_Set, CD_Method, CD_Object));
                     int cSlot = aSlot + 1;
                     cob.astore(cSlot);
 

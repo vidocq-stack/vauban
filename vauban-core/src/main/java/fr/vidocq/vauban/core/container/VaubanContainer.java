@@ -647,8 +647,27 @@ public final class VaubanContainer implements AutoCloseable {
                         }
                     }
                 } catch (ClassNotFoundException ex) { /* skip */ }
-                // Don't skip if bindings are empty — method-level bindings checked below
-                if (bindings.isEmpty() && !interceptorManager.hasInterceptors()) continue;
+                // Don't skip if bindings are empty — method-level bindings or
+                // target class @AroundInvoke checked below
+                if (bindings.isEmpty() && !interceptorManager.hasInterceptors()) {
+                    // Still check for target class @AroundInvoke methods
+                    boolean hasTargetAroundInvoke = false;
+                    try {
+                        var cls2 = loadClass(descriptor.beanClass().value());
+                        var cur = cls2;
+                        while (cur != null && cur != Object.class) {
+                            for (var m : cur.getDeclaredMethods()) {
+                                if (m.isAnnotationPresent(jakarta.interceptor.AroundInvoke.class)) {
+                                    hasTargetAroundInvoke = true;
+                                    break;
+                                }
+                            }
+                            if (hasTargetAroundInvoke) break;
+                            cur = cur.getSuperclass();
+                        }
+                    } catch (ClassNotFoundException ex2) { /* skip */ }
+                    if (!hasTargetAroundInvoke) continue;
+                }
             }
             try {
                 beanClass = loadClass(descriptor.beanClass().value());
@@ -671,6 +690,20 @@ public final class VaubanContainer implements AutoCloseable {
                         if (!interceptorManager.resolveChainForMethod(bindings, m).isEmpty()) {
                             hasInterceptors = true;
                             break;
+                        }
+                    }
+                    // Check target class @AroundInvoke methods
+                    if (!hasInterceptors) {
+                        var current = beanClass;
+                        while (current != null && current != Object.class) {
+                            for (var m : current.getDeclaredMethods()) {
+                                if (m.isAnnotationPresent(jakarta.interceptor.AroundInvoke.class)) {
+                                    hasInterceptors = true;
+                                    break;
+                                }
+                            }
+                            if (hasInterceptors) break;
+                            current = current.getSuperclass();
                         }
                     }
                     // Check constructor-level bindings (for @AroundConstruct)

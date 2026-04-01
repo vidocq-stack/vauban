@@ -30,13 +30,24 @@ public final class InterceptorManager {
      */
     public List<VaubanInvocationContext.InterceptorInvocation> resolveChainForMethod(
             Set<DotName> classBindings, java.lang.reflect.Method method) {
-        // resolveChainForMethod called
+        return resolveChainForMethod(classBindings, method, null);
+    }
+
+    /**
+     * Resolve the interceptor chain for a method, including target class @AroundInvoke methods.
+     *
+     * @param classBindings class-level interceptor bindings
+     * @param method the target method (or $$super$ bridge)
+     * @param target the bean instance (for target class @AroundInvoke); may be null
+     */
+    public List<VaubanInvocationContext.InterceptorInvocation> resolveChainForMethod(
+            Set<DotName> classBindings, java.lang.reflect.Method method, Object target) {
         var allBindings = new java.util.LinkedHashSet<>(classBindings);
         var beanAnnotations = new java.util.ArrayList<java.lang.annotation.Annotation>();
 
-        // Collect class-level binding annotations
+        Class<?> beanClass = null;
         if (method != null) {
-            var beanClass = method.getDeclaringClass();
+            beanClass = method.getDeclaringClass();
             if (beanClass.getName().contains("$$Intercepted")) {
                 beanClass = beanClass.getSuperclass();
             }
@@ -46,12 +57,10 @@ public final class InterceptorManager {
                 }
             }
 
-            // Resolve the original method name (strip $$super$ prefix)
             var methodName = method.getName();
             if (methodName.startsWith("$$super$")) {
                 methodName = methodName.substring("$$super$".length());
             }
-            // Find bindings on the original method in the bean class hierarchy
             var current = beanClass;
             while (current != null && current != Object.class) {
                 try {
@@ -68,7 +77,19 @@ public final class InterceptorManager {
                 }
             }
         }
-        return resolveChain(allBindings, beanAnnotations);
+        var chain = resolveChain(allBindings, beanAnnotations);
+
+        // CDI spec: target class @AroundInvoke methods are invoked last, after external interceptors
+        if (target != null && beanClass != null) {
+            var targetAroundInvoke = findAnnotatedMethod(beanClass, jakarta.interceptor.AroundInvoke.class);
+            if (targetAroundInvoke != null) {
+                var result = new ArrayList<>(chain);
+                result.add(new VaubanInvocationContext.InterceptorInvocation(target, targetAroundInvoke));
+                return result;
+            }
+        }
+
+        return chain;
     }
 
     /**
