@@ -45,7 +45,7 @@ public final class InterceptorSubclassGenerator {
      * @param bindings the interceptor bindings on this bean
      * @return the generated class name and bytecode
      */
-    public static GeneratedInterceptedClass generate(Class<?> beanClass, Set<DotName> bindings) {
+    public static GeneratedInterceptedClass generate(Class<?> beanClass, Set<DotName> bindings, Set<DotName> constructorBindings) {
         String beanClassName = beanClass.getName();
         String subclassName = beanClassName + "$$Intercepted";
 
@@ -59,6 +59,7 @@ public final class InterceptorSubclassGenerator {
             // Fields
             clb.withField("$$manager", CD_InterceptorManager, ClassFile.ACC_PRIVATE);
             clb.withField("$$bindings", CD_Set, ClassFile.ACC_PRIVATE);
+            clb.withField("$$constructorBindings", CD_Set, ClassFile.ACC_PRIVATE);
             clb.withField("$$context", CD_CreationalContext, ClassFile.ACC_PRIVATE);
 
             // Constructors: for each non-private constructor in super class, generate one here
@@ -85,10 +86,10 @@ public final class InterceptorSubclassGenerator {
                         });
             }
 
-            // Setter: public void $$init(InterceptorManager, Set<DotName>, CreationalContext)
+            // Setter: public void $$init(InterceptorManager, Set<DotName>, Set<DotName>, CreationalContext)
             clb.withMethodBody(
                     "$$init",
-                    MethodTypeDesc.of(ConstantDescs.CD_void, CD_InterceptorManager, CD_Set, CD_CreationalContext),
+                    MethodTypeDesc.of(ConstantDescs.CD_void, CD_InterceptorManager, CD_Set, CD_Set, CD_CreationalContext),
                     ClassFile.ACC_PUBLIC,
                     cob -> {
                         cob.aload(0);
@@ -99,7 +100,13 @@ public final class InterceptorSubclassGenerator {
                         cob.putfield(subclassCD, "$$bindings", CD_Set);
                         cob.aload(0);
                         cob.aload(3);
+                        cob.putfield(subclassCD, "$$constructorBindings", CD_Set);
+                        cob.aload(0);
+                        cob.aload(4);
                         cob.putfield(subclassCD, "$$context", CD_CreationalContext);
+                        
+                        // If there are @PostConstruct methods, call them via interceptor manager?
+                        // Actually lifecycle methods are handled by VaubanContainer separately.
                         cob.return_();
                     });
 

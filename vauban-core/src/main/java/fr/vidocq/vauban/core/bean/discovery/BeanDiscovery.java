@@ -316,10 +316,38 @@ public final class BeanDiscovery {
         var injectionPoints = discoverInjectionPoints(classInfo);
         var name = extractNameWithStereotypes(classInfo);
         var interceptorBindings = extractInterceptorBindings(classInfo);
+        var constructorBindings = extractConstructorBindings(classInfo);
 
         return new BeanDescriptor(id, classInfo.name(), BeanDescriptor.BeanKind.MANAGED,
                 types, qualifiers, scope, isAlternative, priority, injectionPoints, name,
-                interceptorBindings);
+                interceptorBindings, constructorBindings);
+    }
+
+    private Set<DotName> extractConstructorBindings(ClassInfo classInfo) {
+        var bindings = new java.util.LinkedHashSet<DotName>();
+        // @Inject constructor
+        var injectConstructor = classInfo.methods().stream()
+                .filter(m -> m.isConstructor() && hasAnnotation(m.annotations(), INJECT))
+                .findFirst();
+
+        // CDI 2.0+: if no @Inject constructor, and exactly one constructor, use it
+        if (injectConstructor.isEmpty()) {
+            var allConstructors = classInfo.methods().stream()
+                    .filter(MethodInfo::isConstructor)
+                    .toList();
+            if (allConstructors.size() == 1) {
+                injectConstructor = Optional.of(allConstructors.get(0));
+            }
+        }
+
+        if (injectConstructor.isPresent()) {
+            for (var ann : injectConstructor.get().annotations()) {
+                if (isInterceptorBinding(ann.name())) {
+                    bindings.add(ann.name());
+                }
+            }
+        }
+        return bindings;
     }
 
     /**
@@ -353,6 +381,26 @@ public final class BeanDiscovery {
                         }
                     }
                 }
+            }
+        }
+        // Bindings from superclasses (inherited bindings)
+        var superClass = classInfo.superName();
+        var objectName = DotName.of("java.lang.Object");
+        while (superClass != null && !superClass.equals(objectName)) {
+            var superInfo = index.getClassByName(superClass);
+            if (superInfo.isPresent()) {
+                for (var ann : superInfo.get().annotations()) {
+                    if (isInterceptorBinding(ann.name())) {
+                        // Check if the binding annotation itself is @Inherited
+                        var bindingClass = index.getClassByName(ann.name());
+                        if (bindingClass.isPresent() && bindingClass.get().hasAnnotation(DotName.of(java.lang.annotation.Inherited.class.getName()))) {
+                            bindings.add(ann.name());
+                        }
+                    }
+                }
+                superClass = superInfo.get().superName();
+            } else {
+                break;
             }
         }
         // Fallback: check via reflection for bindings not in the index

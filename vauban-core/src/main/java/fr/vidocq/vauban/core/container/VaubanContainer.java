@@ -933,7 +933,7 @@ public final class VaubanContainer implements AutoCloseable {
 
                 // Generate the intercepted subclass
                 var generated = fr.vidocq.vauban.core.interceptor.InterceptorSubclassGenerator
-                        .generate(beanClass, bindings);
+                        .generate(beanClass, bindings, descriptor.constructorBindings());
 
                 try {
                     var lookup = java.lang.invoke.MethodHandles.privateLookupIn(beanClass,
@@ -1024,8 +1024,9 @@ public final class VaubanContainer implements AutoCloseable {
                         var initMethod = finalInterceptedClass.getMethod("$$init",
                                 fr.vidocq.vauban.core.interceptor.InterceptorManager.class,
                                 java.util.Set.class,
+                                java.util.Set.class,
                                 jakarta.enterprise.context.spi.CreationalContext.class);
-                        initMethod.invoke(instance, mgr, bds, creationalCtx);
+                        initMethod.invoke(instance, mgr, bds, descriptor.constructorBindings(), creationalCtx);
                         return instance;
                     } catch (Exception e) {
                         throw new jakarta.enterprise.inject.CreationException(e);
@@ -1049,7 +1050,7 @@ public final class VaubanContainer implements AutoCloseable {
                     // MethodHandles.privateLookupIn may fail for custom classloaders
                     // Fallback: define class via bean's classloader directly
                     var generated2 = fr.vidocq.vauban.core.interceptor.InterceptorSubclassGenerator
-                            .generate(beanClass, bindings);
+                            .generate(beanClass, bindings, descriptor.constructorBindings());
                     
                     Class<?> interceptedClass2;
                     try {
@@ -1090,7 +1091,7 @@ public final class VaubanContainer implements AutoCloseable {
                     public Object create(jakarta.enterprise.context.spi.CreationalContext<Object> ctx) {
                         try {
                             var ctor = finalInterceptedClass.getDeclaredConstructor();
-                            var constructChain2 = mgr2.resolveAroundConstructChain(bds2, ctor, (Class<?>) finalBeanClass2, (jakarta.enterprise.context.spi.CreationalContext<?>) ctx);
+                            var constructChain2 = mgr2.resolveChainForConstructor(bds2, descriptor.constructorBindings(), ctor, ctx);
                             if (!constructChain2.isEmpty()) {
                                 final Object[] box2 = new Object[1];
                                 var originalCtor2 = finalBeanClass2.getDeclaredConstructors()[0];
@@ -1121,7 +1122,8 @@ public final class VaubanContainer implements AutoCloseable {
                                 finalInterceptedClass.getMethod("$$init",
                                         fr.vidocq.vauban.core.interceptor.InterceptorManager.class,
                                         java.util.Set.class,
-                                        jakarta.enterprise.context.spi.CreationalContext.class).invoke(inst, mgr2, bds2, ctx);
+                                        java.util.Set.class,
+                                        jakarta.enterprise.context.spi.CreationalContext.class).invoke(inst, mgr2, bds2, descriptor.constructorBindings(), ctx);
                                 return inst;
                             } else {
                         // Resolve which constructor to use
@@ -1132,7 +1134,8 @@ public final class VaubanContainer implements AutoCloseable {
                                 finalInterceptedClass.getMethod("$$init",
                                         fr.vidocq.vauban.core.interceptor.InterceptorManager.class,
                                         java.util.Set.class,
-                                        jakarta.enterprise.context.spi.CreationalContext.class).invoke(inst, mgr2, bds2, ctx);
+                                        java.util.Set.class,
+                                        jakarta.enterprise.context.spi.CreationalContext.class).invoke(inst, mgr2, bds2, descriptor.constructorBindings(), ctx);
                                 return inst;
                             }
                         } catch (Exception ex) {

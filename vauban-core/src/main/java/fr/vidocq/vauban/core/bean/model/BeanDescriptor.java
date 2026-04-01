@@ -20,7 +20,8 @@ public record BeanDescriptor(
         int priority,                      // @Priority value, 0 if not set
         List<InjectionPointInfo> injectionPoints,
         String name,                       // @Named value, null if not named
-        Set<DotName> interceptorBindings   // interceptor bindings on this bean
+        Set<DotName> interceptorBindings,   // interceptor bindings on this bean class
+        Set<DotName> constructorBindings   // interceptor bindings on the bean constructor
 ) {
 
     public enum BeanKind {
@@ -32,6 +33,7 @@ public record BeanDescriptor(
         qualifiers = Set.copyOf(qualifiers);
         injectionPoints = List.copyOf(injectionPoints);
         interceptorBindings = interceptorBindings != null ? Set.copyOf(interceptorBindings) : Set.of();
+        constructorBindings = constructorBindings != null ? Set.copyOf(constructorBindings) : Set.of();
     }
 
     /**
@@ -42,6 +44,17 @@ public record BeanDescriptor(
             boolean isAlternative, int priority, List<InjectionPointInfo> injectionPoints,
             String name) {
         this(id, beanClass, kind, types, qualifiers, scope, isAlternative, priority,
-                injectionPoints, name, Set.of());
+                injectionPoints, name, Set.of(), Set.of());
+    }
+
+    /**
+     * Backward-compatible constructor with interceptorBindings but without constructorBindings.
+     */
+    public BeanDescriptor(BeanId id, DotName beanClass, BeanKind kind,
+            Set<TypeInfo> types, Set<QualifierInstance> qualifiers, ScopeInfo scope,
+            boolean isAlternative, int priority, List<InjectionPointInfo> injectionPoints,
+            String name, Set<DotName> interceptorBindings) {
+        this(id, beanClass, kind, types, qualifiers, scope, isAlternative, priority,
+                injectionPoints, name, interceptorBindings, Set.of());
     }
 }

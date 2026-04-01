@@ -115,7 +115,13 @@ public final class VaubanInvocationContext implements InvocationContext {
                 }
                 // Validate parameter types
                 for (int i = 0; i < params.length; i++) {
-                    if (params[i] != null && !isAssignableTo(params[i].getClass(), expectedTypes[i])) {
+                    if (params[i] == null) {
+                        if (expectedTypes[i].isPrimitive()) {
+                            throw new IllegalArgumentException("Cannot set null for primitive parameter " + i + " of type " + expectedTypes[i].getName());
+                        }
+                        continue;
+                    }
+                    if (!isAssignableTo(params[i].getClass(), expectedTypes[i])) {
                         throw new IllegalArgumentException(
                                 "Parameter " + i + " type mismatch: expected " + expectedTypes[i].getName()
                                         + " but got " + params[i].getClass().getName());
@@ -130,7 +136,13 @@ public final class VaubanInvocationContext implements InvocationContext {
             }
             // Validate parameter types
             for (int i = 0; i < params.length; i++) {
-                if (params[i] != null && !isAssignableTo(params[i].getClass(), expectedTypes[i])) {
+                if (params[i] == null) {
+                    if (expectedTypes[i].isPrimitive()) {
+                        throw new IllegalArgumentException("Cannot set null for primitive parameter " + i + " of type " + expectedTypes[i].getName());
+                    }
+                    continue;
+                }
+                if (!isAssignableTo(params[i].getClass(), expectedTypes[i])) {
                     throw new IllegalArgumentException(
                             "Parameter " + i + " type mismatch: expected " + expectedTypes[i].getName()
                                     + " but got " + params[i].getClass().getName());
