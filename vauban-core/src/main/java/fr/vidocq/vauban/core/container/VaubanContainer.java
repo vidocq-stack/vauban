@@ -948,6 +948,7 @@ public final class VaubanContainer implements AutoCloseable {
                     // Replace the factory
                     var mgr = this.interceptorManager;
                     var bds = bindings;
+                    var ctorBds = descriptor.constructorBindings();
                     var originalFactory = beans.get(descriptor.id()).factory();
 
                     final var finalBeanClass = beanClass;
@@ -965,60 +966,116 @@ public final class VaubanContainer implements AutoCloseable {
 
                 private Object create(fr.vidocq.vauban.core.interceptor.VaubanInvocationContext constructCtx, jakarta.enterprise.context.spi.CreationalContext<Object> creationalCtx) {
                     try {
-                        // Resolve AroundConstruct chain for the class
-                        var constructChain = mgr.resolveAroundConstructChain(bds, (java.lang.reflect.Constructor<?>) null, (Class<?>) finalBeanClass, (jakarta.enterprise.context.spi.CreationalContext<?>) creationalCtx);
-                        if (!constructChain.isEmpty() && constructCtx == null) {
-                            // First time: run the chain
-                            final Object[] box = new Object[1];
-                            // CDI spec: getConstructor() must return the constructor of the bean class, not the intercepted one
-                            var originalCtor = finalBeanClass.getDeclaredConstructors()[0];
-                            // Match constructor by parameter count if possible (better for TCK)
-                            if (descriptor.kind() == fr.vidocq.vauban.core.bean.model.BeanDescriptor.BeanKind.MANAGED && descriptor.beanClass().value().equals(finalBeanClass.getName())) {
-                                // For classes, we might have multiple constructors
-                                // But usually CDI only picks one. For now let's use the first non-private one.
+                        // Find the original bean constructor to resolve its bindings
+                        var ctors = finalInterceptedClass.getDeclaredConstructors();
+                        java.lang.reflect.Constructor<?> targetCtor = null;
+                        Object[] finalArgs = constructCtx != null ? constructCtx.getParameters() : null;
+
+                        if (finalArgs != null) {
+                            for (var c : finalBeanClass.getDeclaredConstructors()) {
+                                if (c.getParameterCount() == finalArgs.length) {
+                                    targetCtor = c;
+                                    break;
+                                }
+                            }
+                        }
+                        if (targetCtor == null) {
+                            // Find the CDI-selected constructor (the one that would be used by VaubanContainer)
+                            var ctorParams = descriptor.injectionPoints().stream()
+                                    .filter(ip -> ip.kind() == fr.vidocq.vauban.core.bean.model.InjectionPointInfo.InjectionKind.CONSTRUCTOR_PARAMETER)
+                                    .toList();
+                            for (var c : finalBeanClass.getDeclaredConstructors()) {
+                                if (c.isAnnotationPresent(jakarta.inject.Inject.class)) {
+                                    targetCtor = c;
+                                    break;
+                                }
+                            }
+                            if (targetCtor == null) {
                                 for (var c : finalBeanClass.getDeclaredConstructors()) {
-                                    if (!java.lang.reflect.Modifier.isPrivate(c.getModifiers())) {
-                                        originalCtor = c;
+                                    if (c.getParameterCount() == ctorParams.size()) {
+                                        targetCtor = c;
                                         break;
                                     }
                                 }
                             }
+                        }
+                        if (targetCtor == null) targetCtor = finalBeanClass.getDeclaredConstructors()[0];
+
+                        // Resolve full binding set for this constructor
+                        var bindingAnnotationsByType = new java.util.LinkedHashMap<Class<?>, java.lang.annotation.Annotation>();
+                        for (var ann : finalBeanClass.getAnnotations()) {
+                             if (ann.annotationType().isAnnotationPresent(jakarta.interceptor.InterceptorBinding.class)) {
+                                 bindingAnnotationsByType.put(ann.annotationType(), ann);
+                             }
+                        }
+                        for (var ann : targetCtor.getAnnotations()) {
+                            if (ann.annotationType().isAnnotationPresent(jakarta.interceptor.InterceptorBinding.class)) {
+                                bindingAnnotationsByType.put(ann.annotationType(), ann);
+                            }
+                        }
+                        
+                        var bindingAnnotations = new java.util.LinkedHashSet<java.lang.annotation.Annotation>(bindingAnnotationsByType.values());
+                        var fullBindings = new java.util.LinkedHashSet<DotName>();
+                        for (var ann : bindingAnnotations) {
+                            fullBindings.add(DotName.of(ann.annotationType().getName()));
+                        }
+                        collectTransitiveBindings(bindingAnnotations, fullBindings);
+
+                        // Resolve AroundConstruct chain
+                        var constructChain = mgr.resolveChainForConstructor(bds, ctorBds, targetCtor, (jakarta.enterprise.context.spi.CreationalContext<?>) creationalCtx);
+                        
+                        if (!constructChain.isEmpty() && constructCtx == null) {
+                            // First time: run the chain
+                            final Object[] box = new Object[1];
+                            final java.lang.reflect.Constructor<?> finalTargetCtor = targetCtor;
                             
+                            // Resolve arguments for the constructor if not already resolved
+                            if (finalArgs == null) {
+                                var pTypes = finalTargetCtor.getParameterTypes();
+                                var gpTypes = finalTargetCtor.getGenericParameterTypes();
+                                var cParams = finalTargetCtor.getParameters();
+                                finalArgs = new Object[pTypes.length];
+                                for (int i = 0; i < pTypes.length; i++) {
+                                    var pQuals = extractParamQualifiers(cParams[i]);
+                                    finalArgs[i] = resolveParameter(pTypes[i], gpTypes[i], creationalCtx, pQuals, finalTargetCtor);
+                                }
+                            }
+
                             var ctx = new fr.vidocq.vauban.core.interceptor.VaubanInvocationContext(
-                                    null, null, originalCtor, new Object[originalCtor.getParameterCount()], constructChain,
+                                    null, null, finalTargetCtor, finalArgs, constructChain,
                                     (target, params) -> {
                                         var instance = create((fr.vidocq.vauban.core.interceptor.VaubanInvocationContext) fr.vidocq.vauban.core.interceptor.VaubanInvocationContext.dummy(params), (jakarta.enterprise.context.spi.CreationalContext<Object>) (Object) creationalCtx);
                                         box[0] = instance;
                                         return instance;
                                     });
+                            ctx.setInterceptorBindings(bindingAnnotations);
                             ctx.proceed();
                             return box[0];
                         }
 
-                        // Resolve which constructor to use
-                        var ctors = finalInterceptedClass.getDeclaredConstructors();
-                        var ctor = ctors[0];
-                        Object[] finalArgs = constructCtx != null ? constructCtx.getParameters() : new Object[0];
-                        
-                        // Find matching constructor by param count
-                        boolean found = false;
-                        for (var c : ctors) {
+                        // Actually instantiate the subclass
+                        if (finalArgs == null) {
+                            var pTypes = targetCtor.getParameterTypes();
+                            var gpTypes = targetCtor.getGenericParameterTypes();
+                            var cParams = targetCtor.getParameters();
+                            finalArgs = new Object[pTypes.length];
+                            for (int i = 0; i < pTypes.length; i++) {
+                                var pQuals = extractParamQualifiers(cParams[i]);
+                                finalArgs[i] = resolveParameter(pTypes[i], gpTypes[i], creationalCtx, pQuals, targetCtor);
+                            }
+                        }
+
+                        java.lang.reflect.Constructor<?> subclassCtor = null;
+                        for (var c : finalInterceptedClass.getDeclaredConstructors()) {
                             if (c.getParameterCount() == finalArgs.length) {
-                                ctor = c;
-                                found = true;
+                                subclassCtor = c;
                                 break;
                             }
                         }
+                        if (subclassCtor == null) subclassCtor = finalInterceptedClass.getDeclaredConstructors()[0];
                         
-                        if (!found && finalArgs.length == 0 && ctors.length > 0) {
-                             // TCK might be using a class where we generated a 1-arg constructor but it expects 0-arg
-                             // Or vice versa. Let's be flexible.
-                             ctor = ctors[0];
-                             finalArgs = new Object[ctor.getParameterCount()];
-                        }
-                        
-                        ctor.setAccessible(true);
-                        var instance = ctor.newInstance(finalArgs);
+                        subclassCtor.setAccessible(true);
+                        var instance = subclassCtor.newInstance(finalArgs);
                         
                         // Initialize interceptor fields
                         var initMethod = finalInterceptedClass.getMethod("$$init",
@@ -1327,42 +1384,6 @@ public final class VaubanContainer implements AutoCloseable {
                     // If we have an interception context, let it handle the instantiation
                     if (constructCtx != null) {
                         return finalCtor.newInstance(finalArgs);
-                    }
-
-                    // Check for @AroundConstruct interceptors
-                    var ctorBindings = new java.util.LinkedHashSet<DotName>();
-                    var ctorBindingAnnotations = new java.util.LinkedHashSet<java.lang.annotation.Annotation>();
-                    for (var ann : beanClass.getAnnotations()) {
-                        if (ann.annotationType().isAnnotationPresent(jakarta.interceptor.InterceptorBinding.class)) {
-                            ctorBindings.add(DotName.of(ann.annotationType().getName()));
-                            ctorBindingAnnotations.add(ann);
-                        }
-                    }
-                    for (var ann : finalCtor.getAnnotations()) {
-                        if (ann.annotationType().isAnnotationPresent(jakarta.interceptor.InterceptorBinding.class)) {
-                            ctorBindings.add(DotName.of(ann.annotationType().getName()));
-                            ctorBindingAnnotations.add(ann);
-                        }
-                    }
-                    // Transitively resolve meta-bindings
-                    collectTransitiveBindings(ctorBindingAnnotations, ctorBindings);
-                    if (!ctorBindings.isEmpty() && interceptorManager.hasInterceptors()) {
-                        interceptorManager.setClassLoader(beanClass.getClassLoader());
-                        var aroundConstructChain = interceptorManager.resolveAroundConstructChain(
-                                ctorBindings, finalCtor, (Class<?>) beanClass, (jakarta.enterprise.context.spi.CreationalContext<?>) creationalCtx);
-                        if (!aroundConstructChain.isEmpty()) {
-                            var ctx = new fr.vidocq.vauban.core.interceptor.VaubanInvocationContext(
-                                    null, null, finalArgs, aroundConstructChain,
-                                    (target, params) -> {
-                                        finalCtor.setAccessible(true);
-                                        return finalCtor.newInstance(params);
-                                    });
-                            ctx.setConstructor(finalCtor);
-                            ctx.setInterceptorBindings(ctorBindingAnnotations);
-                            ctx.proceed();
-                            // CDI spec: around-construct chain returns null, instance is in context.getTarget()
-                            return ctx.getTarget();
-                        }
                     }
 
                     return finalCtor.newInstance(finalArgs);

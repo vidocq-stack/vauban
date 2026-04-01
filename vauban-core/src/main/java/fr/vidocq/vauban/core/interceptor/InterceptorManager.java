@@ -186,26 +186,39 @@ public final class InterceptorManager {
      */
     public List<VaubanInvocationContext.InterceptorInvocation> resolveChainForConstructor(
             Set<DotName> classBindings, Set<DotName> constructorBindings, java.lang.reflect.Constructor<?> constructor, CreationalContext<?> ctx) {
-        var allBindings = new java.util.LinkedHashSet<>(classBindings);
-        allBindings.addAll(constructorBindings);
+        // CDI spec: constructor-level bindings override class-level bindings of the SAME type
+        // Wait, DotName is the binding name, so we just use a Map to handle overrides by type name
+        var resolvedBindings = new java.util.LinkedHashSet<DotName>();
+        resolvedBindings.addAll(classBindings);
+        resolvedBindings.addAll(constructorBindings);
+        // Actually, in CDI, if a binding is present on both class and method/constructor, 
+        // the method/constructor level annotation (with its members) prevails.
+        
         var beanAnnotations = new java.util.ArrayList<java.lang.annotation.Annotation>();
-
         Class<?> beanClass = constructor.getDeclaringClass();
         if (beanClass.getName().contains("$$Intercepted")) {
             beanClass = beanClass.getSuperclass();
         }
+        
+        var annotationsByType = new java.util.LinkedHashMap<Class<?>, java.lang.annotation.Annotation>();
         for (var ann : beanClass.getAnnotations()) {
             if (ann.annotationType().isAnnotationPresent(jakarta.interceptor.InterceptorBinding.class)) {
-                beanAnnotations.add(ann);
+                annotationsByType.put(ann.annotationType(), ann);
             }
         }
         for (var ann : constructor.getAnnotations()) {
             if (ann.annotationType().isAnnotationPresent(jakarta.interceptor.InterceptorBinding.class)) {
-                beanAnnotations.add(ann);
+                annotationsByType.put(ann.annotationType(), ann);
             }
         }
+        beanAnnotations.addAll(annotationsByType.values());
+        
+        var allBindingNames = new java.util.LinkedHashSet<DotName>();
+        for (var ann : beanAnnotations) {
+            allBindingNames.add(DotName.of(ann.annotationType().getName()));
+        }
 
-        var chain = resolveChainAroundConstruct(allBindings, beanAnnotations, ctx);
+        var chain = resolveChainAroundConstruct(allBindingNames, beanAnnotations, ctx);
 
         // CDI spec: target class @AroundConstruct methods are NOT supported on target class?
         // Spec says: "around-construct interceptor method... may be defined on an interceptor class...
@@ -227,7 +240,7 @@ public final class InterceptorManager {
 
     private List<VaubanInvocationContext.InterceptorInvocation> resolveChainAroundConstruct(
             Set<DotName> bindings, List<java.lang.annotation.Annotation> beanAnnotations, CreationalContext<?> ctx) {
-        var chain = new ArrayList<VaubanInvocationContext.InterceptorInvocation>();
+        var matches = new ArrayList<InterceptorDescriptor>();
         for (var descriptor : interceptors) {
             if (bindings.containsAll(descriptor.bindings()) && !descriptor.bindings().isEmpty()) {
                 if (!descriptor.bindingAnnotations().isEmpty() && !beanAnnotations.isEmpty()) {
@@ -235,11 +248,19 @@ public final class InterceptorManager {
                         continue;
                     }
                 }
-                var instance = getOrCreateInstance(descriptor, ctx);
-                var aroundConstruct = findAnnotatedMethod(instance.getClass(), jakarta.interceptor.AroundConstruct.class);
-                if (aroundConstruct != null) {
-                    chain.add(new VaubanInvocationContext.InterceptorInvocation(instance, aroundConstruct));
-                }
+                matches.add(descriptor);
+            }
+        }
+        // Sort by priority (CDI spec 9.5.2)
+        matches.sort(java.util.Comparator.comparingInt(InterceptorDescriptor::priority)
+                .thenComparing(d -> d.interceptorClass().toString(), java.util.Comparator.reverseOrder()));
+
+        var chain = new ArrayList<VaubanInvocationContext.InterceptorInvocation>();
+        for (var descriptor : matches) {
+            var instance = getOrCreateInstance(descriptor, ctx);
+            var aroundConstruct = findAnnotatedMethod(instance.getClass(), jakarta.interceptor.AroundConstruct.class);
+            if (aroundConstruct != null) {
+                chain.add(new VaubanInvocationContext.InterceptorInvocation(instance, aroundConstruct));
             }
         }
         return chain;
@@ -258,7 +279,7 @@ public final class InterceptorManager {
      */
     public List<VaubanInvocationContext.InterceptorInvocation> resolveChain(
             Set<DotName> methodBindings, List<java.lang.annotation.Annotation> beanAnnotations, CreationalContext<?> ctx) {
-        var chain = new ArrayList<VaubanInvocationContext.InterceptorInvocation>();
+        var matches = new ArrayList<InterceptorDescriptor>();
 
         for (var descriptor : interceptors) {
             // An interceptor matches if all its bindings are present on the target
@@ -269,11 +290,20 @@ public final class InterceptorManager {
                         continue;
                     }
                 }
-                var instance = getOrCreateInstance(descriptor, ctx);
-                var aroundInvoke = findAroundInvokeMethod(instance.getClass(), descriptor.aroundInvokeMethod());
-                if (aroundInvoke != null) {
-                    chain.add(new VaubanInvocationContext.InterceptorInvocation(instance, aroundInvoke));
-                }
+                matches.add(descriptor);
+            }
+        }
+
+        // Sort by priority (CDI spec 9.5.2)
+        matches.sort(java.util.Comparator.comparingInt(InterceptorDescriptor::priority)
+                .thenComparing(d -> d.interceptorClass().toString(), java.util.Comparator.reverseOrder()));
+
+        var chain = new ArrayList<VaubanInvocationContext.InterceptorInvocation>();
+        for (var descriptor : matches) {
+            var instance = getOrCreateInstance(descriptor, ctx);
+            var aroundInvoke = findAroundInvokeMethod(instance.getClass(), descriptor.aroundInvokeMethod());
+            if (aroundInvoke != null) {
+                chain.add(new VaubanInvocationContext.InterceptorInvocation(instance, aroundInvoke));
             }
         }
 
@@ -323,7 +353,7 @@ public final class InterceptorManager {
     public List<VaubanInvocationContext.InterceptorInvocation> resolveLifecycleChain(
             Set<DotName> methodBindings, Class<? extends java.lang.annotation.Annotation> lifecycleAnnotation,
             List<java.lang.annotation.Annotation> beanAnnotations, CreationalContext<?> ctx) {
-        var chain = new ArrayList<VaubanInvocationContext.InterceptorInvocation>();
+        var matches = new ArrayList<InterceptorDescriptor>();
 
         for (var descriptor : interceptors) {
             if (methodBindings.containsAll(descriptor.bindings()) && !descriptor.bindings().isEmpty()) {
@@ -333,11 +363,20 @@ public final class InterceptorManager {
                         continue;
                     }
                 }
-                var instance = getOrCreateInstance(descriptor, ctx);
-                var lifecycleMethod = findAnnotatedMethod(instance.getClass(), lifecycleAnnotation);
-                if (lifecycleMethod != null) {
-                    chain.add(new VaubanInvocationContext.InterceptorInvocation(instance, lifecycleMethod));
-                }
+                matches.add(descriptor);
+            }
+        }
+
+        // Sort by priority (CDI spec 9.5.2)
+        matches.sort(java.util.Comparator.comparingInt(InterceptorDescriptor::priority)
+                .thenComparing(d -> d.interceptorClass().toString(), java.util.Comparator.reverseOrder()));
+
+        var chain = new ArrayList<VaubanInvocationContext.InterceptorInvocation>();
+        for (var descriptor : matches) {
+            var instance = getOrCreateInstance(descriptor, ctx);
+            var lifecycleMethod = findAnnotatedMethod(instance.getClass(), lifecycleAnnotation);
+            if (lifecycleMethod != null) {
+                chain.add(new VaubanInvocationContext.InterceptorInvocation(instance, lifecycleMethod));
             }
         }
 
