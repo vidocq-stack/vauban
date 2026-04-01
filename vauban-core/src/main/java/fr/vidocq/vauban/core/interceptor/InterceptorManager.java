@@ -130,7 +130,6 @@ public final class InterceptorManager {
      */
     public List<VaubanInvocationContext.InterceptorInvocation> resolveChainForMethod(
             Set<DotName> classBindings, java.lang.reflect.Method method, Object target, CreationalContext<?> ctx) {
-        var allBindings = new java.util.LinkedHashSet<>(classBindings);
         var beanAnnotations = new java.util.ArrayList<java.lang.annotation.Annotation>();
 
         Class<?> beanClass = null;
@@ -139,9 +138,11 @@ public final class InterceptorManager {
             if (beanClass.getName().contains("$$Intercepted")) {
                 beanClass = beanClass.getSuperclass();
             }
+
+            var annotationsByType = new java.util.LinkedHashMap<Class<?>, java.lang.annotation.Annotation>();
             for (var ann : beanClass.getAnnotations()) {
                 if (ann.annotationType().isAnnotationPresent(jakarta.interceptor.InterceptorBinding.class)) {
-                    beanAnnotations.add(ann);
+                    annotationsByType.put(ann.annotationType(), ann);
                 }
             }
 
@@ -155,8 +156,7 @@ public final class InterceptorManager {
                     var originalMethod = current.getDeclaredMethod(methodName, method.getParameterTypes());
                     for (var ann : originalMethod.getAnnotations()) {
                         if (ann.annotationType().isAnnotationPresent(jakarta.interceptor.InterceptorBinding.class)) {
-                            allBindings.add(DotName.of(ann.annotationType().getName()));
-                            beanAnnotations.add(ann);
+                            annotationsByType.put(ann.annotationType(), ann);
                         }
                     }
                     break;
@@ -164,8 +164,15 @@ public final class InterceptorManager {
                     current = current.getSuperclass();
                 }
             }
+            beanAnnotations.addAll(annotationsByType.values());
         }
-        var chain = resolveChain(allBindings, beanAnnotations, ctx);
+
+        var allBindingNames = new java.util.LinkedHashSet<DotName>();
+        for (var ann : beanAnnotations) {
+            allBindingNames.add(DotName.of(ann.annotationType().getName()));
+        }
+
+        var chain = resolveChain(allBindingNames, beanAnnotations, ctx);
 
         // CDI spec: target class @AroundInvoke methods are invoked last, after external interceptors
         if (target != null && beanClass != null) {
