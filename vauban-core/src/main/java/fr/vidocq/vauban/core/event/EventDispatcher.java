@@ -67,9 +67,10 @@ public final class EventDispatcher {
                 }
             }
             if (!exceptions.isEmpty()) {
-                var ce = new java.util.concurrent.CompletionException(exceptions.getFirst());
-                for (int i = 1; i < exceptions.size(); i++) {
-                    ce.addSuppressed(exceptions.get(i));
+                // CDI spec: ALL exceptions are added as suppressed to the CompletionException
+                var ce = new java.util.concurrent.CompletionException(null);
+                for (var ex : exceptions) {
+                    ce.addSuppressed(ex);
                 }
                 throw ce;
             }
