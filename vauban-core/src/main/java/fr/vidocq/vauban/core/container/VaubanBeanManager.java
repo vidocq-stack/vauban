@@ -728,9 +728,20 @@ public final class VaubanBeanManager implements BeanManager {
             if (beanType instanceof Class<?> btClass) {
                 return reqClass == btClass;
             }
-            // Raw required type matches parameterized bean type if raw types are identical
+            // CDI 5.2.4: parameterized bean type matches raw required type only if
+            // raw types are identical AND all type params are unbounded TVs or Object
             if (beanType instanceof java.lang.reflect.ParameterizedType pt) {
-                return reqClass == pt.getRawType();
+                if (reqClass != pt.getRawType()) return false;
+                for (Type arg : pt.getActualTypeArguments()) {
+                    if (arg instanceof java.lang.reflect.TypeVariable<?> tv) {
+                        for (Type bound : tv.getBounds()) {
+                            if (bound != Object.class) return false;
+                        }
+                    } else if (arg != Object.class) {
+                        return false;
+                    }
+                }
+                return true;
             }
         }
 
@@ -743,16 +754,172 @@ public final class VaubanBeanManager implements BeanManager {
                 var beanArgs = beanPt.getActualTypeArguments();
                 if (reqArgs.length != beanArgs.length) return false;
                 for (int i = 0; i < reqArgs.length; i++) {
-                    if (!reqArgs[i].equals(beanArgs[i])) return false;
+                    if (!typeArgumentsMatch(beanArgs[i], reqArgs[i])) return false;
                 }
                 return true;
             }
-            // Raw bean type matches parameterized required type via assignability
+            // Raw bean type matches parameterized required type only if raw types identical
             if (beanType instanceof Class<?> btClass) {
-                return ((Class<?>) reqPt.getRawType()).isAssignableFrom(btClass);
+                return btClass == reqPt.getRawType();
             }
         }
 
+        return false;
+    }
+
+    private static boolean typeArgumentsMatch(Type beanArg, Type requiredArg) {
+        if (beanArg.equals(requiredArg)) return true;
+
+        // CDI spec (c/da/dc): required is wildcard
+        if (requiredArg instanceof java.lang.reflect.WildcardType reqWild) {
+            var upper = reqWild.getUpperBounds();
+            var lower = reqWild.getLowerBounds();
+            if (lower.length > 0) {
+                // (dc) bean is TV: lower bound must be assignable to TV upper bounds
+                // (c) bean is actual: lower bound must be assignable to bean arg
+                if (beanArg instanceof java.lang.reflect.TypeVariable<?> beanTv) {
+                    for (Type lb : lower) {
+                        if (!lowerBoundAssignableToBounds(lb, beanTv)) return false;
+                    }
+                    return true;
+                }
+                for (Type lb : lower) {
+                    if (!isTypeAssignableTo(lb, beanArg)) return false;
+                }
+                return true;
+            }
+            // ? extends X or unbounded ?
+            if (upper.length == 1 && upper[0] == Object.class) return true;
+            // (da) bean is TV: upper bound assignable to or from wildcard upper bound
+            // (c) bean is actual: actual assignable to wildcard upper bound
+            if (beanArg instanceof java.lang.reflect.TypeVariable<?> beanTv) {
+                for (Type ub : upper) {
+                    if (!upperBoundAssignableToOrFrom(ub, beanTv)) return false;
+                }
+                return true;
+            }
+            for (Type ub : upper) {
+                if (!isTypeAssignableTo(beanArg, ub)) return false;
+            }
+            return true;
+        }
+
+        // CDI spec (f): required is TypeVariable, bean is TypeVariable
+        // Each bean TV bound must be covered by at least one required TV bound
+        if (requiredArg instanceof java.lang.reflect.TypeVariable<?> reqTv) {
+            if (beanArg instanceof java.lang.reflect.TypeVariable<?> beanTv) {
+                Type[] reqBounds = resolvedBounds(reqTv);
+                for (Type beanBound : beanTv.getBounds()) {
+                    if (beanBound == Object.class) continue;
+                    boolean covered = false;
+                    for (Type reqBound : reqBounds) {
+                        if (isTypeAssignableTo(reqBound, beanBound)) {
+                            covered = true;
+                            break;
+                        }
+                    }
+                    if (!covered) return false;
+                }
+                return true;
+            }
+            // Bean is actual type, required is TypeVariable
+            for (Type bound : reqTv.getBounds()) {
+                if (bound != Object.class && !isTypeAssignableTo(beanArg, bound)) return false;
+            }
+            return true;
+        }
+
+        // CDI spec (e): bean is TypeVariable, required is actual type
+        if (beanArg instanceof java.lang.reflect.TypeVariable<?> beanTv) {
+            // Required actual type must be assignable to each upper bound of the TV
+            for (Type bound : beanTv.getBounds()) {
+                if (bound != Object.class && !isTypeAssignableTo(requiredArg, bound)) return false;
+            }
+            return true;
+        }
+
+        if (beanArg instanceof java.lang.reflect.WildcardType beanWild) {
+            var upper = beanWild.getUpperBounds();
+            if (upper.length > 0) {
+                return isTypeAssignableTo(upper[0], requiredArg);
+            }
+        }
+
+        if (beanArg instanceof java.lang.reflect.ParameterizedType && requiredArg instanceof java.lang.reflect.ParameterizedType) {
+            return typesMatch(beanArg, requiredArg);
+        }
+
+        return false;
+    }
+
+    private static Type[] resolvedBounds(java.lang.reflect.TypeVariable<?> tv) {
+        var bounds = tv.getBounds();
+        var result = new java.util.ArrayList<Type>();
+        for (Type b : bounds) {
+            if (b instanceof java.lang.reflect.TypeVariable<?> nested) {
+                for (Type nb : resolvedBounds(nested)) result.add(nb);
+            } else if (b != Object.class) {
+                result.add(b);
+            }
+        }
+        return result.isEmpty() ? new Type[]{ Object.class } : result.toArray(new Type[0]);
+    }
+
+    private static boolean lowerBoundAssignableToBounds(Type lowerBound, java.lang.reflect.TypeVariable<?> tv) {
+        Type[] lbBounds = (lowerBound instanceof java.lang.reflect.TypeVariable<?> lbTv)
+                ? lbTv.getBounds() : new Type[]{ lowerBound };
+        for (Type beanBound : tv.getBounds()) {
+            if (beanBound == Object.class) continue;
+            boolean satisfied = false;
+            for (Type lb : lbBounds) {
+                if (isTypeAssignableTo(lb, beanBound)) {
+                    satisfied = true;
+                    break;
+                }
+            }
+            if (!satisfied) return false;
+        }
+        return true;
+    }
+
+    private static boolean upperBoundAssignableToOrFrom(Type type, java.lang.reflect.TypeVariable<?> tv) {
+        Type[] otherBounds = (type instanceof java.lang.reflect.TypeVariable<?> otherTv)
+                ? otherTv.getBounds() : new Type[]{ type };
+        for (Type beanBound : tv.getBounds()) {
+            if (beanBound == Object.class) continue;
+            boolean satisfied = false;
+            for (Type otherBound : otherBounds) {
+                if (otherBound == Object.class) continue;
+                if (isTypeAssignableTo(otherBound, beanBound) || isTypeAssignableTo(beanBound, otherBound)) {
+                    satisfied = true;
+                    break;
+                }
+            }
+            if (!satisfied) return false;
+        }
+        return true;
+    }
+
+    private static boolean isTypeAssignableTo(Type subType, Type superType) {
+        if (subType.equals(superType)) return true;
+        if (superType == Object.class) return true;
+        // Resolve TypeVariable to its first (primary) upper bound
+        if (subType instanceof java.lang.reflect.TypeVariable<?> tv) {
+            var bounds = tv.getBounds();
+            return bounds.length > 0 && isTypeAssignableTo(bounds[0], superType);
+        }
+        if (subType instanceof Class<?> subClass && superType instanceof Class<?> superClass) {
+            return superClass.isAssignableFrom(subClass);
+        }
+        if (subType instanceof java.lang.reflect.ParameterizedType subPt && superType instanceof Class<?> superClass) {
+            return superClass.isAssignableFrom((Class<?>) subPt.getRawType());
+        }
+        if (subType instanceof Class<?> subClass && superType instanceof java.lang.reflect.ParameterizedType superPt) {
+            return ((Class<?>) superPt.getRawType()).isAssignableFrom(subClass);
+        }
+        if (subType instanceof java.lang.reflect.ParameterizedType subPt && superType instanceof java.lang.reflect.ParameterizedType superPt) {
+            return typesMatch(subPt, superPt);
+        }
         return false;
     }
 
@@ -771,7 +938,7 @@ public final class VaubanBeanManager implements BeanManager {
                 var evtArgs = evtPt.getActualTypeArguments();
                 if (obsArgs.length != evtArgs.length) return false;
                 for (int i = 0; i < obsArgs.length; i++) {
-                    if (!obsArgs[i].equals(evtArgs[i])) return false;
+                    if (!typeArgumentsMatch(evtArgs[i], obsArgs[i])) return false;
                 }
                 return true;
             }
