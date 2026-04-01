@@ -916,13 +916,15 @@ public final class VaubanContainer implements AutoCloseable {
 
                 interceptorManager.setClassLoader(beanClass.getClassLoader());
 
+                var classBindings = interceptorManager.findBindingsOnClass(beanClass, interceptorManager::isInterceptorBinding);
+                
                 // Check if there are matching interceptors (class, method, or constructor level)
-                var chain = interceptorManager.resolveChain(bindings, (jakarta.enterprise.context.spi.CreationalContext<?>) null);
+                var chain = interceptorManager.resolveChain(classBindings, List.of(), beanClass, (jakarta.enterprise.context.spi.CreationalContext<?>) null);
                 if (chain.isEmpty()) {
                     boolean hasInterceptors = false;
                     // Check method-level bindings
                     for (var m : beanClass.getMethods()) {
-                        if (!interceptorManager.resolveChainForMethod(bindings, m, (jakarta.enterprise.context.spi.CreationalContext<?>) null).isEmpty()) {
+                        if (!interceptorManager.resolveChainForMethod(classBindings, m, (jakarta.enterprise.context.spi.CreationalContext<?>) null).isEmpty()) {
                             hasInterceptors = true;
                             break;
                         }
@@ -944,7 +946,7 @@ public final class VaubanContainer implements AutoCloseable {
                     // Check constructor-level bindings (for @AroundConstruct)
                     if (!hasInterceptors) {
                         for (var ctor : beanClass.getDeclaredConstructors()) {
-                            var ctorBindings = new java.util.LinkedHashSet<>(bindings);
+                            var ctorBindings = new java.util.LinkedHashSet<>(classBindings);
                             for (var ann : ctor.getAnnotations()) {
                                 if (ann.annotationType().isAnnotationPresent(
                                         jakarta.interceptor.InterceptorBinding.class)) {
@@ -964,7 +966,7 @@ public final class VaubanContainer implements AutoCloseable {
 
                 // Generate the intercepted subclass
                 var generated = fr.vidocq.vauban.core.interceptor.InterceptorSubclassGenerator
-                        .generate(beanClass, bindings, descriptor.constructorBindings());
+                        .generate(beanClass, classBindings, descriptor.constructorBindings());
 
                 try {
                     var lookup = java.lang.invoke.MethodHandles.privateLookupIn(beanClass,
@@ -978,7 +980,7 @@ public final class VaubanContainer implements AutoCloseable {
 
                     // Replace the factory
                     var mgr = this.interceptorManager;
-                    var bds = bindings;
+                    var bds = classBindings;
                     var ctorBds = descriptor.constructorBindings();
                     var originalFactory = beans.get(descriptor.id()).factory();
 

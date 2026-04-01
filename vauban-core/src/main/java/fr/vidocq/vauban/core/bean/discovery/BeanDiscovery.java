@@ -294,15 +294,24 @@ public final class BeanDiscovery {
     }
 
     private boolean isStereotype(DotName annotationName) {
+        String val = annotationName.value();
+        if (val.startsWith("java.lang.annotation.") || 
+            val.startsWith("jakarta.interceptor.") || 
+            val.startsWith("jakarta.enterprise.inject.") ||
+            val.startsWith("jakarta.inject.")) {
+            return false;
+        }
         var annClass = index.getClassByName(annotationName);
         if (annClass.isPresent()) {
             return annClass.get().hasAnnotation(STEREOTYPE);
         }
         // Fallback: check via reflection
         try {
-            var annType = Class.forName(annotationName.value());
+            var cl = Thread.currentThread().getContextClassLoader();
+            var annType = cl != null ? Class.forName(val, false, cl)
+                    : Class.forName(val);
             return annType.isAnnotationPresent(jakarta.enterprise.inject.Stereotype.class);
-        } catch (ClassNotFoundException e) {
+        } catch (Exception e) {
             return false;
         }
     }
@@ -1399,11 +1408,25 @@ public final class BeanDiscovery {
         var seenClasses = new java.util.HashSet<DotName>();
         for (var classInfo : index.getKnownClasses()) {
             seenClasses.add(classInfo.name());
-            if (!classInfo.hasAnnotation(INTERCEPTOR)) {
-                // Check reflection if it's potentially an interceptor (optimization: check if it has bindings)
-                if (!hasInterceptorBindingViaReflection(classInfo.name())) {
-                    continue;
-                }
+            
+            boolean isInterceptor = classInfo.hasAnnotation(INTERCEPTOR);
+            if (!isInterceptor) {
+                // Fallback to reflection if index is incomplete
+                try {
+                    var cl = Thread.currentThread().getContextClassLoader();
+                    var clazz = cl != null ? Class.forName(classInfo.name().value(), false, cl)
+                            : Class.forName(classInfo.name().value());
+                    if (clazz.isAnnotationPresent(jakarta.interceptor.Interceptor.class)) {
+                        isInterceptor = true;
+                    }
+                } catch (Exception e) { /* skip */ }
+            }
+
+            if (!isInterceptor) {
+                // IMPORTANT: Only classes with @Interceptor are external interceptors.
+                // Classes with just @AroundInvoke are beans with interceptor methods, 
+                // they are not "interceptors" in the CDI sense (matching by binding).
+                continue;
             }
             addInterceptor(classInfo, interceptors);
         }
@@ -1426,7 +1449,9 @@ public final class BeanDiscovery {
         // Find bindings: annotations on the class whose annotation type is @InterceptorBinding
         var bindings = new LinkedHashSet<DotName>();
         collectBindings(classInfo, bindings);
-        if (bindings.isEmpty()) return;
+        if (bindings.isEmpty()) {
+            return;
+        }
 
         // Find @AroundInvoke and @AroundConstruct methods (from index + reflection fallback)
         String aroundInvoke = null;
@@ -1494,6 +1519,14 @@ public final class BeanDiscovery {
      * (i.e., it is itself annotated with {@code @InterceptorBinding} in the index).
      */
     public boolean isInterceptorBinding(DotName annotationName) {
+        String val = annotationName.value();
+        if (val.startsWith("java.lang.annotation.") || 
+            val.startsWith("jakarta.interceptor.") || 
+            val.startsWith("jakarta.enterprise.inject.") ||
+            val.startsWith("jakarta.inject.")) {
+            // These are never interceptor bindings themselves for application beans
+            return false;
+        }
         var annClass = index.getClassByName(annotationName);
         if (annClass.isPresent()) {
             // Check direct @InterceptorBinding
@@ -1511,8 +1544,8 @@ public final class BeanDiscovery {
         // Fallback: check via reflection with TCCL
         try {
             var cl = Thread.currentThread().getContextClassLoader();
-            var annType = cl != null ? Class.forName(annotationName.value(), false, cl)
-                    : Class.forName(annotationName.value());
+            var annType = cl != null ? Class.forName(val, false, cl)
+                    : Class.forName(val);
             if (annType.isAnnotationPresent(jakarta.interceptor.InterceptorBinding.class)) return true;
             // Check transitive bindings via reflection
             for (var metaAnn : annType.getAnnotations()) {
@@ -1546,23 +1579,64 @@ public final class BeanDiscovery {
     }
 
     private void collectBindings(ClassInfo classInfo, Set<DotName> bindings) {
-        for (var ann : classInfo.annotations()) {
-            if (isInterceptorBinding(ann.name())) {
-                bindings.add(ann.name());
+        var visited = new java.util.HashSet<DotName>();
+        var current = classInfo;
+        while (current != null) {
+            collectBindingsRecursively(current, bindings, visited);
+            // Check superclass from index
+            var superName = current.superName();
+            if (superName != null && !superName.value().equals("java.lang.Object")) {
+                current = index.getClassByName(superName).orElse(null);
+            } else {
+                current = null;
             }
         }
+        
         // Fallback for classes not fully indexed (e.g. inner classes in some environments)
-        if (bindings.isEmpty()) {
-            try {
-                var cl = Thread.currentThread().getContextClassLoader();
-                var clazz = cl != null ? Class.forName(classInfo.name().value(), false, cl)
-                        : Class.forName(classInfo.name().value());
-                for (var ann : clazz.getAnnotations()) {
-                    if (ann.annotationType().isAnnotationPresent(jakarta.interceptor.InterceptorBinding.class)) {
-                        bindings.add(DotName.of(ann.annotationType().getName()));
+        // Check for bindings via reflection as well, walking the hierarchy
+        try {
+            var cl = Thread.currentThread().getContextClassLoader();
+            var clazz = cl != null ? Class.forName(classInfo.name().value(), false, cl)
+                    : Class.forName(classInfo.name().value());
+            var curr = clazz;
+            while (curr != null && curr != Object.class) {
+                for (var ann : curr.getAnnotations()) {
+                    var annType = ann.annotationType();
+                    if (isInterceptorBinding(DotName.of(annType.getName()))) {
+                        // EXPLICITLY SKIP built-in Jakarta/Java annotations in the final set
+                        String val = annType.getName();
+                        if (!val.startsWith("java.lang.annotation.") && 
+                            !val.startsWith("jakarta.interceptor.") && 
+                            !val.startsWith("jakarta.enterprise.inject.")) {
+                            bindings.add(DotName.of(val));
+                        }
                     }
                 }
-            } catch (ClassNotFoundException e) { /* skip */ }
+                curr = curr.getSuperclass();
+            }
+        } catch (Exception e) { /* skip */ }
+    }
+
+    private void collectBindingsRecursively(ClassInfo classInfo, Set<DotName> result, Set<DotName> visited) {
+        if (!visited.add(classInfo.name())) return;
+        
+        for (var ann : classInfo.annotations()) {
+            var name = ann.name();
+            
+            if (isInterceptorBinding(name)) {
+                result.add(name);
+                // Transitive bindings
+                var annClass = index.getClassByName(name);
+                if (annClass.isPresent()) {
+                    collectBindingsRecursively(annClass.get(), result, visited);
+                }
+            } else if (isStereotype(name)) {
+                // Stereotypes can have bindings
+                var annClass = index.getClassByName(name);
+                if (annClass.isPresent()) {
+                    collectBindingsRecursively(annClass.get(), result, visited);
+                }
+            }
         }
     }
 
