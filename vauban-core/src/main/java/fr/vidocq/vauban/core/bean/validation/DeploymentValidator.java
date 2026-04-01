@@ -131,6 +131,28 @@ public final class DeploymentValidator {
             }
         }
 
+        // CDI spec: bean name must not be a prefix of another bean name (dot-separated)
+        var allNames = new ArrayList<String>();
+        for (var bean : beans) {
+            if (bean.name() != null) {
+                // Only consider enabled beans (skip disabled alternatives)
+                if (bean.isAlternative() && bean.priority() <= 0) continue;
+                allNames.add(bean.name());
+            }
+        }
+        for (int i = 0; i < allNames.size(); i++) {
+            for (int j = i + 1; j < allNames.size(); j++) {
+                var name1 = allNames.get(i);
+                var name2 = allNames.get(j);
+                if (name2.startsWith(name1 + ".") || name1.startsWith(name2 + ".")) {
+                    errors.add(new ValidationError(
+                            ValidationError.Kind.AMBIGUOUS_DEPENDENCY,
+                            "Bean name '" + name1 + "' is a prefix of '" + name2 + "' (or vice versa)",
+                            beans.getFirst()));
+                }
+            }
+        }
+
         return List.copyOf(errors);
     }
 
