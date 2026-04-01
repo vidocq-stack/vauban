@@ -691,6 +691,15 @@ public final class VaubanContainer implements AutoCloseable {
                     throw new jakarta.enterprise.inject.spi.DefinitionException(
                             "Bean class " + beanClass.getName() + " with interceptor bindings must not be final");
                 }
+                // CDI spec: intercepted bean cannot have non-private, non-static final methods
+                for (var m : beanClass.getDeclaredMethods()) {
+                    if (java.lang.reflect.Modifier.isFinal(m.getModifiers())
+                            && !java.lang.reflect.Modifier.isPrivate(m.getModifiers())
+                            && !java.lang.reflect.Modifier.isStatic(m.getModifiers())) {
+                        throw new jakarta.enterprise.inject.spi.DeploymentException(
+                                "Intercepted bean " + beanClass.getName() + " has final method " + m.getName());
+                    }
+                }
 
                 // Set the ClassLoader for interceptor class loading
                 interceptorManager.setClassLoader(beanClass.getClassLoader());
