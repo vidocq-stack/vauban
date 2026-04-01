@@ -681,33 +681,8 @@ public final class BeanDiscovery {
             return scope;
         }
 
-        // 2. Check stereotypes for scope (direct + inherited)
-        var allAnnotationNames = getAllAnnotationNames(classInfo);
-        for (var annName : allAnnotationNames) {
-            if (isStereotype(annName)) {
-                var stereotypeClass = index.getClassByName(annName);
-                if (stereotypeClass.isPresent()) {
-                    var stereotypeScope = computeScopeFromAnnotations(stereotypeClass.get().annotations());
-                    if (!stereotypeScope.equals(ScopeInfo.DEPENDENT)
-                            || hasScopeAnnotation(stereotypeClass.get().annotations())) {
-                        return stereotypeScope;
-                    }
-                } else {
-                    // Fallback: check stereotype scope via reflection
-                    try {
-                        var annType = Class.forName(annName.value());
-                        for (var metaAnn : annType.getAnnotations()) {
-                            var reflScope = mapScope(DotName.of(metaAnn.annotationType().getName()));
-                            if (reflScope != null) return reflScope;
-                        }
-                    } catch (ClassNotFoundException e) {
-                        // skip
-                    }
-                }
-            }
-        }
-
-        // 3. Check @Inherited scope from superclasses, respecting blocking
+        // 2. Check @Inherited scope from superclasses, respecting blocking
+        // CDI spec: inherited scope takes precedence over stereotype scope
         // CDI spec: intermediate class with any scope annotation blocks further inheritance
         try {
             var cl = Thread.currentThread().getContextClassLoader();
@@ -733,6 +708,32 @@ public final class BeanDiscovery {
                 var annName = DotName.of(ann.annotationType().getName());
                 var inheritedScope = mapScope(annName);
                 if (inheritedScope != null) return inheritedScope;
+            }
+        }
+
+        // 3. Check stereotypes for scope (direct + inherited)
+        var allAnnotationNames = getAllAnnotationNames(classInfo);
+        for (var annName : allAnnotationNames) {
+            if (isStereotype(annName)) {
+                var stereotypeClass = index.getClassByName(annName);
+                if (stereotypeClass.isPresent()) {
+                    var stereotypeScope = computeScopeFromAnnotations(stereotypeClass.get().annotations());
+                    if (!stereotypeScope.equals(ScopeInfo.DEPENDENT)
+                            || hasScopeAnnotation(stereotypeClass.get().annotations())) {
+                        return stereotypeScope;
+                    }
+                } else {
+                    // Fallback: check stereotype scope via reflection
+                    try {
+                        var annType = Class.forName(annName.value());
+                        for (var metaAnn : annType.getAnnotations()) {
+                            var reflScope = mapScope(DotName.of(metaAnn.annotationType().getName()));
+                            if (reflScope != null) return reflScope;
+                        }
+                    } catch (ClassNotFoundException e) {
+                        // skip
+                    }
+                }
             }
         }
 
