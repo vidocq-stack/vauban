@@ -273,8 +273,11 @@ public final class EventDispatcher {
                                 }
                             };
                         } else {
-                            // Resolve via BeanManager for proper dependent tracking
-                            var beans = bm.getBeans(paramTypes[i]);
+                            // Resolve via BeanManager with qualifiers for proper dependent tracking
+                            var paramQualifiers = extractQualifierAnnotations(params[i]);
+                            var beans = paramQualifiers.length > 0
+                                    ? bm.getBeans(paramTypes[i], paramQualifiers)
+                                    : bm.getBeans(paramTypes[i]);
                             if (!beans.isEmpty()) {
                                 var bean = bm.resolve(beans);
                                 var ref = bm.getReference(bean, paramTypes[i], ctx);
@@ -367,5 +370,18 @@ public final class EventDispatcher {
             current = current.getSuperclass();
         }
         return null;
+    }
+
+    private static java.lang.annotation.Annotation[] extractQualifierAnnotations(java.lang.reflect.Parameter param) {
+        var quals = new java.util.ArrayList<java.lang.annotation.Annotation>();
+        for (var ann : param.getAnnotations()) {
+            if (ann.annotationType() == jakarta.enterprise.event.Observes.class) continue;
+            if (ann.annotationType() == jakarta.enterprise.event.ObservesAsync.class) continue;
+            if (ann.annotationType() == jakarta.enterprise.inject.TransientReference.class) continue;
+            if (ann.annotationType().isAnnotationPresent(jakarta.inject.Qualifier.class)) {
+                quals.add(ann);
+            }
+        }
+        return quals.toArray(new java.lang.annotation.Annotation[0]);
     }
 }
