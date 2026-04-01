@@ -317,10 +317,42 @@ public final class BeanDiscovery {
         var name = extractNameWithStereotypes(classInfo);
         var interceptorBindings = extractInterceptorBindings(classInfo);
         var constructorBindings = extractConstructorBindings(classInfo);
+        var interceptorBindingAnnotations = extractInterceptorBindingAnnotations(classInfo);
 
         return new BeanDescriptor(id, classInfo.name(), BeanDescriptor.BeanKind.MANAGED,
                 types, qualifiers, scope, isAlternative, priority, injectionPoints, name,
-                interceptorBindings, constructorBindings);
+                interceptorBindings, constructorBindings, interceptorBindingAnnotations);
+    }
+
+    private List<java.lang.annotation.Annotation> extractInterceptorBindingAnnotations(ClassInfo classInfo) {
+        var annotations = new java.util.ArrayList<java.lang.annotation.Annotation>();
+        try {
+            var cl = Thread.currentThread().getContextClassLoader();
+            var clazz = cl != null ? Class.forName(classInfo.name().value(), false, cl)
+                    : Class.forName(classInfo.name().value());
+            
+            var collected = new java.util.HashSet<Class<? extends java.lang.annotation.Annotation>>();
+            collectBindingAnnotationsRecursively(clazz.getAnnotations(), annotations, collected);
+        } catch (Exception e) {
+            // Fallback: ignore if class not found
+        }
+        return annotations;
+    }
+
+    private void collectBindingAnnotationsRecursively(java.lang.annotation.Annotation[] annotations, 
+            List<java.lang.annotation.Annotation> result, 
+            Set<Class<? extends java.lang.annotation.Annotation>> visited) {
+        for (var ann : annotations) {
+            var type = ann.annotationType();
+            if (!visited.add(type)) continue;
+
+            if (type.isAnnotationPresent(jakarta.interceptor.InterceptorBinding.class)) {
+                result.add(ann);
+                collectBindingAnnotationsRecursively(type.getAnnotations(), result, visited);
+            } else if (type.isAnnotationPresent(jakarta.enterprise.inject.Stereotype.class)) {
+                collectBindingAnnotationsRecursively(type.getAnnotations(), result, visited);
+            }
+        }
     }
 
     private Set<DotName> extractConstructorBindings(ClassInfo classInfo) {

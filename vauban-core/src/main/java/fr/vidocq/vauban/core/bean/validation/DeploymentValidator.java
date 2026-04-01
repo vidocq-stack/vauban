@@ -41,7 +41,7 @@ public final class DeploymentValidator {
             }
 
             // Validate interceptor bindings
-            var bindings = bean.interceptorBindings();
+            var bindings = bean.interceptorBindingAnnotations();
             if (!bindings.isEmpty()) {
                 // CDI spec: At least one enabled interceptor must match the set of bindings
                 var matching = resolver.resolveInterceptors(bindings);

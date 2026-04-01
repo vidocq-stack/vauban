@@ -22,6 +22,7 @@ public final class BeanResolver {
     private final List<BeanDescriptor> beans;
     private final List<fr.vidocq.vauban.core.bean.model.InterceptorDescriptor> interceptors;
     private final AssignabilityRules assignability;
+    private final fr.vidocq.vauban.core.interceptor.InterceptorManager interceptorManager;
 
     public BeanResolver(List<BeanDescriptor> beans, AssignabilityRules assignability) {
         this(beans, List.of(), assignability);
@@ -33,6 +34,7 @@ public final class BeanResolver {
         this.beans = List.copyOf(beans);
         this.interceptors = List.copyOf(interceptors);
         this.assignability = Objects.requireNonNull(assignability);
+        this.interceptorManager = new fr.vidocq.vauban.core.interceptor.InterceptorManager(interceptors);
     }
 
     public List<fr.vidocq.vauban.core.bean.model.InterceptorDescriptor> getInterceptors() {
@@ -44,21 +46,8 @@ public final class BeanResolver {
      * CDI 4.1 Section 9.5.2.
      */
     public List<fr.vidocq.vauban.core.bean.model.InterceptorDescriptor> resolveInterceptors(
-            Set<fr.vidocq.vauban.indexer.model.DotName> bindings) {
-        var matching = new ArrayList<fr.vidocq.vauban.core.bean.model.InterceptorDescriptor>();
-
-        for (var interceptor : interceptors) {
-            // CDI spec: An interceptor matches if ALL its bindings are present in the bean's bindings
-            // "The set of interceptor bindings of the interceptor must be a subset of the interceptor bindings of the bean"
-            if (bindings.containsAll(interceptor.bindings()) && !interceptor.bindings().isEmpty()) {
-                matching.add(interceptor);
-            }
-        }
-
-        // Sort by priority (CDI spec 9.5.2)
-        matching.sort(java.util.Comparator.comparingInt(fr.vidocq.vauban.core.bean.model.InterceptorDescriptor::priority)
-                .thenComparing(d -> d.interceptorClass().toString(), java.util.Comparator.reverseOrder()));
-        return matching;
+            List<java.lang.annotation.Annotation> beanAnnotations) {
+        return interceptorManager.resolveInterceptors(beanAnnotations);
     }
 
     /**
