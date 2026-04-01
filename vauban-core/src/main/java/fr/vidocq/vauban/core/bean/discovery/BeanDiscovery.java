@@ -985,6 +985,16 @@ public final class BeanDiscovery {
                 .filter(m -> m.isConstructor() && hasAnnotation(m.annotations(), INJECT))
                 .findFirst();
 
+        // CDI 2.0+: if no @Inject constructor, and exactly one constructor, use it
+        if (injectConstructor.isEmpty()) {
+            var allConstructors = classInfo.methods().stream()
+                    .filter(MethodInfo::isConstructor)
+                    .toList();
+            if (allConstructors.size() == 1) {
+                injectConstructor = Optional.of(allConstructors.get(0));
+            }
+        }
+
         if (injectConstructor.isPresent()) {
             var ctor = injectConstructor.get();
             for (int i = 0; i < ctor.parameters().size(); i++) {

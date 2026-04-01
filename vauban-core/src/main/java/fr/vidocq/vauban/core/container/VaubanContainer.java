@@ -1477,7 +1477,7 @@ public final class VaubanContainer implements AutoCloseable {
         }
         
         var bm = getBeanManager();
-        var beansFound = bm.getBeans(paramType, qualifiers);
+        var beansFound = bm.getBeans(genericType, qualifiers);
         if (beansFound.isEmpty()) {
             return select(paramType);
         }
@@ -1494,7 +1494,7 @@ public final class VaubanContainer implements AutoCloseable {
             var pCtx = (ctx != null && resolved.getScope() == jakarta.enterprise.context.Dependent.class)
                     ? ctx
                     : bm.createCreationalContext(resolved);
-            return bm.getReference(resolved, paramType, pCtx);
+            return bm.getReference(resolved, genericType, pCtx);
         } finally {
             currentInjectionPoint.set(previousIp);
         }
