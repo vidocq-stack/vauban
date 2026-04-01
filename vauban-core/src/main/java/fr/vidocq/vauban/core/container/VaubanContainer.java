@@ -402,9 +402,10 @@ public final class VaubanContainer implements AutoCloseable {
                     continue;
                 }
 
-                // Handle Event<T> injection
+                // Handle Event<T> injection — capture qualifiers from the injection point
                 if (field.getType() == Event.class) {
-                    field.set(instance, new EventImpl<>(eventDispatcher));
+                    var eventQualifiers = collectEventQualifiers(field.getAnnotations());
+                    field.set(instance, new EventImpl<>(eventDispatcher, eventQualifiers));
                     continue;
                 }
 
@@ -501,6 +502,19 @@ public final class VaubanContainer implements AutoCloseable {
                     || ann.annotationType() == jakarta.enterprise.inject.Default.class
                     || ann.annotationType() == jakarta.enterprise.inject.Any.class
                     || ann.annotationType() == jakarta.inject.Named.class) {
+                quals.add(ann);
+            }
+        }
+        return quals.toArray(new java.lang.annotation.Annotation[0]);
+    }
+
+    private static java.lang.annotation.Annotation[] collectEventQualifiers(java.lang.annotation.Annotation[] annotations) {
+        var quals = new java.util.ArrayList<java.lang.annotation.Annotation>();
+        for (var ann : annotations) {
+            if (ann.annotationType() == jakarta.inject.Inject.class) continue;
+            if (ann.annotationType() == jakarta.enterprise.inject.Default.class) continue;
+            if (ann.annotationType() == jakarta.enterprise.inject.Any.class) continue;
+            if (ann.annotationType().isAnnotationPresent(jakarta.inject.Qualifier.class)) {
                 quals.add(ann);
             }
         }
@@ -876,7 +890,7 @@ public final class VaubanContainer implements AutoCloseable {
                             if (paramTypes[i] == BeanManager.class) {
                                 args[i] = getBeanManager();
                             } else if (paramTypes[i] == Event.class) {
-                                args[i] = new EventImpl<>(eventDispatcher);
+                                args[i] = new EventImpl<>(eventDispatcher, collectEventQualifiers(method.getParameters()[i].getAnnotations()));
                             } else if (paramTypes[i] == Instance.class) {
                                 Class<?> instanceType = Object.class;
                                 var genericType = method.getGenericParameterTypes()[i];
@@ -967,7 +981,7 @@ public final class VaubanContainer implements AutoCloseable {
                             || paramTypes[i] == jakarta.enterprise.inject.spi.BeanContainer.class) {
                         args[i] = getBeanManager();
                     } else if (paramTypes[i] == Event.class) {
-                        args[i] = new EventImpl<>(eventDispatcher);
+                        args[i] = new EventImpl<>(eventDispatcher, collectEventQualifiers(ctorParamsRefl[i].getAnnotations()));
                     } else {
                         // Try with qualifiers first
                         var pQuals = extractParamQualifiers(ctorParamsRefl[i]);

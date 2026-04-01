@@ -22,7 +22,7 @@ public final class EventImpl<T> implements Event<T> {
         this(dispatcher, new Annotation[0]);
     }
 
-    private EventImpl(EventDispatcher dispatcher, Annotation[] qualifiers) {
+    public EventImpl(EventDispatcher dispatcher, Annotation[] qualifiers) {
         this.dispatcher = dispatcher;
         this.qualifiers = qualifiers;
     }
