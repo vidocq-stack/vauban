@@ -97,10 +97,10 @@ public final class VaubanInjectionPoint implements InjectionPoint {
                 result.add(ann);
             }
         }
+        // CDI 4.1 Section 5.5.3: InjectionPoint qualifiers are only the declared ones
         if (result.isEmpty()) {
             result.add(jakarta.enterprise.inject.Default.Literal.INSTANCE);
         }
-        result.add(jakarta.enterprise.inject.Any.Literal.INSTANCE);
         return result;
     }
 
