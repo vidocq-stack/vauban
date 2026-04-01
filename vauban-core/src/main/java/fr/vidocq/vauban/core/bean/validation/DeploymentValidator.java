@@ -28,6 +28,9 @@ public final class DeploymentValidator {
     public List<ValidationError> validate() {
         var errors = new ArrayList<ValidationError>();
 
+        // 1. Name validation (CDI 4.1 Section 2.5)
+        validateNames(errors);
+
         for (var bean : beans) {
             // CDI spec: Interceptors themselves are not intercepted
             if (bean.kind() == BeanDescriptor.BeanKind.MANAGED) {
@@ -222,6 +225,41 @@ public final class DeploymentValidator {
         return List.copyOf(errors);
     }
 
+    private void validateNames(List<ValidationError> errors) {
+        var names = new java.util.HashMap<String, BeanDescriptor>();
+        for (var bean : beans) {
+            var name = bean.name();
+            if (name == null || name.isEmpty()) continue;
+
+            // Check for duplicate names
+            var existing = names.get(name);
+            if (existing != null) {
+                errors.add(new ValidationError(
+                        ValidationError.Kind.DEPLOYMENT_ERROR,
+                        "Duplicate bean name: " + name + " on " + bean.beanClass() + " and " + existing.beanClass(),
+                        bean));
+            }
+            names.put(name, bean);
+        }
+
+        // Check for name prefix conflicts (CDI 4.1 Section 2.5.1)
+        for (var entry1 : names.entrySet()) {
+            var name1 = entry1.getKey();
+            for (var entry2 : names.entrySet()) {
+                var name2 = entry2.getKey();
+                if (name1.equals(name2)) continue;
+                if (name1.startsWith(name2 + ".")) {
+                    errors.add(new ValidationError(
+                            ValidationError.Kind.DEFINITION_ERROR,
+                            "Bean name '" + name1 + "' on " + entry1.getValue().beanClass()
+                                    + " has a prefix '" + name2 + "' which is the name of another bean on "
+                                    + entry2.getValue().beanClass(),
+                            entry1.getValue()));
+                }
+            }
+        }
+    }
+
     private void validateProxyableType(TypeInfo type, BeanDescriptor bean, List<ValidationError> errors, BeanDescriptor contextBean) {
         if (type instanceof TypeInfo.PrimitiveType) {
             errors.add(new ValidationError(
@@ -291,7 +329,8 @@ public final class DeploymentValidator {
             AMBIGUOUS_DEPENDENCY,
             CIRCULAR_DEPENDENCY,
             UNPROXYABLE_BEAN,
-            DEFINITION_ERROR
+            DEFINITION_ERROR,
+            DEPLOYMENT_ERROR
         }
     }
 }

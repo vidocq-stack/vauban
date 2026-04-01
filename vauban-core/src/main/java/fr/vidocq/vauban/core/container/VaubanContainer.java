@@ -607,7 +607,7 @@ public final class VaubanContainer implements AutoCloseable {
                     for (int i = 0; i < paramTypes.length; i++) {
                         // Extract qualifiers from parameter annotations
                         var paramQuals = extractParamQualifiers(params[i]);
-                        args[i] = resolveParameter(paramTypes[i], genericParamTypes[i], ctx, paramQuals);
+                        args[i] = resolveParameter(paramTypes[i], genericParamTypes[i], ctx, paramQuals, method);
                     }
                     method.invoke(instance, args);
                 } catch (Exception e) {
@@ -1314,7 +1314,7 @@ public final class VaubanContainer implements AutoCloseable {
                     var args = new Object[paramTypes.length];
                     for (int i = 0; i < paramTypes.length; i++) {
                         var pQuals = extractParamQualifiers(ctorParamsRefl[i]);
-                        args[i] = resolveParameter(paramTypes[i], genericParamTypes[i], creationalCtx, pQuals);
+                        args[i] = resolveParameter(paramTypes[i], genericParamTypes[i], creationalCtx, pQuals, injectCtor);
                     }
 
                     final var finalCtor = injectCtor;
@@ -1403,7 +1403,7 @@ public final class VaubanContainer implements AutoCloseable {
                             var args = new Object[paramTypes.length];
                             for (int i = 0; i < paramTypes.length; i++) {
                                 var qualifiers = extractParamQualifiers(params[i]);
-                                args[i] = resolveParameter(paramTypes[i], genericParamTypes[i], ctx, qualifiers);
+                                args[i] = resolveParameter(paramTypes[i], genericParamTypes[i], ctx, qualifiers, method);
                             }
                             return method.invoke(declaringInstance, args);
                         }
@@ -1452,7 +1452,7 @@ public final class VaubanContainer implements AutoCloseable {
         return qualifiers.toArray(new java.lang.annotation.Annotation[0]);
     }
 
-    public Object resolveParameter(Class<?> paramType, java.lang.reflect.Type genericType, CreationalContext<?> ctx, java.lang.annotation.Annotation[] qualifiers) {
+    public Object resolveParameter(Class<?> paramType, java.lang.reflect.Type genericType, CreationalContext<?> ctx, java.lang.annotation.Annotation[] qualifiers, java.lang.reflect.Member member) {
         if (paramType == Event.class) {
             return new EventImpl<>(eventDispatcher, qualifiers);
         }
@@ -1482,18 +1482,34 @@ public final class VaubanContainer implements AutoCloseable {
             return select(paramType);
         }
         var resolved = bm.resolve(beansFound);
-        var pCtx = (ctx != null && resolved.getScope() == jakarta.enterprise.context.Dependent.class)
-                ? ctx
-                : bm.createCreationalContext(resolved);
-        return bm.getReference(resolved, paramType, pCtx);
+        
+        // Handle InjectionPoint for @Dependent beans
+        var previousIp = currentInjectionPoint.get();
+        if (resolved.getScope() == jakarta.enterprise.context.Dependent.class) {
+             var qualSet = new java.util.HashSet<>(java.util.Arrays.asList(qualifiers));
+             if (qualSet.isEmpty()) qualSet.add(jakarta.enterprise.inject.Default.Literal.INSTANCE);
+             currentInjectionPoint.set(new VaubanInjectionPoint(genericType, qualSet, null, member));
+        }
+        try {
+            var pCtx = (ctx != null && resolved.getScope() == jakarta.enterprise.context.Dependent.class)
+                    ? ctx
+                    : bm.createCreationalContext(resolved);
+            return bm.getReference(resolved, paramType, pCtx);
+        } finally {
+            currentInjectionPoint.set(previousIp);
+        }
+    }
+
+    public Object resolveParameter(Class<?> paramType, java.lang.reflect.Type genericType, CreationalContext<?> ctx, java.lang.annotation.Annotation[] qualifiers) {
+        return resolveParameter(paramType, genericType, ctx, qualifiers, null);
     }
 
     public Object resolveParameter(Class<?> paramType, java.lang.reflect.Type genericType, CreationalContext<?> ctx) {
-        return resolveParameter(paramType, genericType, ctx, new java.lang.annotation.Annotation[0]);
+        return resolveParameter(paramType, genericType, ctx, new java.lang.annotation.Annotation[0], null);
     }
 
     public Object resolveParameter(Class<?> paramType, java.lang.reflect.Type genericType) {
-        return resolveParameter(paramType, genericType, null, new java.lang.annotation.Annotation[0]);
+        return resolveParameter(paramType, genericType, null, new java.lang.annotation.Annotation[0], null);
     }
 
     private BeanFactory<?> createProducerFieldFactory(BeanDescriptor descriptor) {
@@ -1682,7 +1698,24 @@ public final class VaubanContainer implements AutoCloseable {
                         throw new jakarta.enterprise.inject.spi.DefinitionException(msg.toString());
                     }
 
-                    var msg = new StringBuilder("CDI deployment validation failed:\n");
+                    // Ambiguous or unsatisfied dependencies are DeploymentExceptions in CDI
+                    var deploymentErrors = errors.stream()
+                            .filter(e -> e.kind() == fr.vidocq.vauban.core.bean.validation.DeploymentValidator.ValidationError.Kind.DEPLOYMENT_ERROR
+                                    || e.kind() == fr.vidocq.vauban.core.bean.validation.DeploymentValidator.ValidationError.Kind.UNSATISFIED_DEPENDENCY
+                                    || e.kind() == fr.vidocq.vauban.core.bean.validation.DeploymentValidator.ValidationError.Kind.AMBIGUOUS_DEPENDENCY
+                                    || e.kind() == fr.vidocq.vauban.core.bean.validation.DeploymentValidator.ValidationError.Kind.CIRCULAR_DEPENDENCY)
+                            .toList();
+
+                    if (!deploymentErrors.isEmpty()) {
+                        var msg = new StringBuilder("CDI deployment validation failed:\n");
+                        for (var error : deploymentErrors) {
+                            msg.append("  - ").append(error.message()).append("\n");
+                        }
+                        throw new jakarta.enterprise.inject.spi.DeploymentException(msg.toString());
+                    }
+
+                    // Default fallback
+                    var msg = new StringBuilder("CDI validation failed:\n");
                     for (var error : errors) {
                         msg.append("  - ").append(error.message()).append("\n");
                     }
