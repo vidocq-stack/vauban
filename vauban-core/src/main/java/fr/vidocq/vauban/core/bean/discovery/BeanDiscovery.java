@@ -239,6 +239,16 @@ public final class BeanDiscovery {
     }
 
     /**
+     * CDI spec: disabled alternative = @Alternative without @Priority (directly or via stereotype).
+     */
+    private boolean isDisabledAlternative(ClassInfo classInfo) {
+        boolean isAlt = isAlternativeWithStereotypes(classInfo);
+        if (!isAlt) return false;
+        int priority = extractPriorityWithStereotypes(classInfo);
+        return priority <= 0;
+    }
+
+    /**
      * Extract interceptor bindings from a class and its stereotypes.
      * An interceptor binding is an annotation that is itself annotated with @InterceptorBinding.
      */
@@ -971,6 +981,8 @@ public final class BeanDiscovery {
         for (var classInfo : index.getKnownClasses()) {
             if (isVetoed(classInfo)) continue;
             if (!hasBeanDefiningAnnotation(classInfo)) continue;
+            // CDI spec: observer methods of disabled beans are NOT registered
+            if (isDisabledAlternative(classInfo)) continue;
 
             // Check declared methods in the index
             discoverObserversFromMethods(classInfo, classInfo.methods(), result);
