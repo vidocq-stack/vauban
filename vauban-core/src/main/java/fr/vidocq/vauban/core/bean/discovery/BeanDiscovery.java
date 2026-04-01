@@ -686,7 +686,27 @@ public final class BeanDiscovery {
      * Converts a java.lang.annotation.Annotation to an AnnotationInfo for indexer compatibility.
      */
     private AnnotationInfo toAnnotationInfo(java.lang.annotation.Annotation ann) {
-        return new AnnotationInfo(DotName.of(ann.annotationType().getName()), Map.of());
+        var members = new java.util.LinkedHashMap<String, fr.vidocq.vauban.indexer.model.AnnotationValue>();
+        for (var method : ann.annotationType().getDeclaredMethods()) {
+            if (method.getParameterCount() == 0 && method.getDeclaringClass() == ann.annotationType()) {
+                try {
+                    var value = method.invoke(ann);
+                    if (value instanceof String s) {
+                        members.put(method.getName(), new fr.vidocq.vauban.indexer.model.AnnotationValue.StringVal(s));
+                    } else if (value instanceof Boolean b) {
+                        members.put(method.getName(), new fr.vidocq.vauban.indexer.model.AnnotationValue.BooleanVal(b));
+                    } else if (value instanceof Integer i) {
+                        members.put(method.getName(), new fr.vidocq.vauban.indexer.model.AnnotationValue.IntVal(i));
+                    } else if (value instanceof Class<?> c) {
+                        members.put(method.getName(), new fr.vidocq.vauban.indexer.model.AnnotationValue.ClassVal(DotName.of(c.getName())));
+                    } else if (value instanceof Enum<?> e) {
+                        members.put(method.getName(), new fr.vidocq.vauban.indexer.model.AnnotationValue.EnumVal(
+                                DotName.of(e.getClass().getName()), e.name()));
+                    }
+                } catch (Exception e) { /* skip */ }
+            }
+        }
+        return new AnnotationInfo(DotName.of(ann.annotationType().getName()), members);
     }
 
     private boolean isQualifierAnnotation(DotName name) {
