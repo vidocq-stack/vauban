@@ -1313,38 +1313,8 @@ public final class VaubanContainer implements AutoCloseable {
                     var ctorParamsRefl = injectCtor.getParameters();
                     var args = new Object[paramTypes.length];
                     for (int i = 0; i < paramTypes.length; i++) {
-                        if (paramTypes[i] == Instance.class
-                                || paramTypes[i] == jakarta.inject.Provider.class) {
-                            Class<?> instanceType = Object.class;
-                            if (genericParamTypes[i] instanceof ParameterizedType pt) {
-                                var typeArg = pt.getActualTypeArguments()[0];
-                                if (typeArg instanceof Class<?> c) {
-                                    instanceType = c;
-                                }
-                            }
-                            args[i] = new InstanceImpl<>(VaubanContainer.this, instanceType);
-                        } else if (BeanManager.class.isAssignableFrom(paramTypes[i])
-                                || paramTypes[i] == jakarta.enterprise.inject.spi.BeanContainer.class) {
-                            args[i] = getBeanManager();
-                        } else if (paramTypes[i] == Event.class) {
-                            args[i] = new EventImpl<>(eventDispatcher, collectEventQualifiers(ctorParamsRefl[i].getAnnotations()));
-                        } else {
-                            // Try with qualifiers first
-                            var pQuals = extractParamQualifiers(ctorParamsRefl[i]);
-                            if (pQuals.length > 0) {
-                                var bm = getBeanManager();
-                                var beans2 = bm.getBeans(paramTypes[i], pQuals);
-                                if (!beans2.isEmpty()) {
-                                    var resolved = bm.resolve(beans2);
-                                    var ctx = bm.createCreationalContext(resolved);
-                                    args[i] = bm.getReference(resolved, paramTypes[i], ctx);
-                                } else {
-                                    args[i] = resolveParameter(paramTypes[i], genericParamTypes[i], creationalCtx);
-                                }
-                            } else {
-                                args[i] = resolveParameter(paramTypes[i], genericParamTypes[i], creationalCtx);
-                            }
-                        }
+                        var pQuals = extractParamQualifiers(ctorParamsRefl[i]);
+                        args[i] = resolveParameter(paramTypes[i], genericParamTypes[i], creationalCtx, pQuals);
                     }
 
                     final var finalCtor = injectCtor;
@@ -1429,9 +1399,11 @@ public final class VaubanContainer implements AutoCloseable {
                             // Resolve parameters as injection points
                             var paramTypes = method.getParameterTypes();
                             var genericParamTypes = method.getGenericParameterTypes();
+                            var params = method.getParameters();
                             var args = new Object[paramTypes.length];
                             for (int i = 0; i < paramTypes.length; i++) {
-                                args[i] = resolveParameter(paramTypes[i], genericParamTypes[i], ctx);
+                                var qualifiers = extractParamQualifiers(params[i]);
+                                args[i] = resolveParameter(paramTypes[i], genericParamTypes[i], ctx, qualifiers);
                             }
                             return method.invoke(declaringInstance, args);
                         }
