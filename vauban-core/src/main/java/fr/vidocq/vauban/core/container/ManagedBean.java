@@ -14,6 +14,7 @@ import java.util.LinkedHashSet;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import java.util.function.BiConsumer;
 import java.util.function.Consumer;
 
 /**
@@ -25,7 +26,7 @@ public final class ManagedBean<T> implements Bean<T> {
     private final BeanFactory<T> factory;
     private final Class<T> beanClass;
     private final ClassLoader classLoader;
-    private Consumer<Object> injector;
+    private BiConsumer<Object, CreationalContext<?>> injector;
     private Consumer<Object> destroyer;
     private fr.vidocq.vauban.core.interceptor.InterceptorManager interceptorManager;
 
@@ -45,7 +46,7 @@ public final class ManagedBean<T> implements Bean<T> {
      * Sets the injector callback that will be called after instance creation
      * to resolve and inject @Inject fields.
      */
-    public void setInjector(Consumer<Object> injector) {
+    public void setInjector(BiConsumer<Object, CreationalContext<?>> injector) {
         this.injector = injector;
     }
 
@@ -72,7 +73,7 @@ public final class ManagedBean<T> implements Bean<T> {
             }
         }
         if (instance != null && injector != null) {
-            injector.accept(instance);
+            injector.accept(instance, creationalContext);
         }
         return instance;
     }
@@ -88,8 +89,9 @@ public final class ManagedBean<T> implements Bean<T> {
             }
         }
         callPreDestroy(instance);
-        // Note: don't call creationalContext.release() here — it's the caller's responsibility
-        // (calling release() here would cause infinite recursion when destroy is triggered by release)
+        if (creationalContext != null) {
+            creationalContext.release();
+        }
     }
 
     private void callPreDestroy(Object instance) {

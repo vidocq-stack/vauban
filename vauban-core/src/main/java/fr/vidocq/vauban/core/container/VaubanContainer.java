@@ -26,6 +26,7 @@ import fr.vidocq.vauban.indexer.model.TypeInfo;
 import fr.vidocq.vauban.indexer.scanner.ClassFileScanner;
 import jakarta.enterprise.context.spi.Context;
 import jakarta.enterprise.context.spi.Contextual;
+import jakarta.enterprise.context.spi.CreationalContext;
 import jakarta.enterprise.event.Event;
 import jakarta.enterprise.inject.Instance;
 import jakarta.enterprise.inject.spi.BeanManager;
@@ -128,7 +129,7 @@ public final class VaubanContainer implements AutoCloseable {
 
         // Wire up field injection on each bean (includes PostConstruct in injectFields)
         for (var bean : beans.values()) {
-            bean.setInjector(instance -> injectFields(instance, bean.descriptor()));
+            bean.setInjector((instance, ctx) -> injectFields(instance, bean.descriptor(), ctx));
         }
 
         // Wire up disposer methods for producer beans
@@ -351,10 +352,8 @@ public final class VaubanContainer implements AutoCloseable {
         return interceptorManager;
     }
 
-    private void injectFields(Object instance, BeanDescriptor descriptor) {
-        // 1. Inject fields — use reflection directly to catch all @Inject fields,
-        // not just those found by BeanDiscovery (which may miss fields if scanning was incomplete)
-        injectFieldsByReflection(instance);
+    private void injectFields(Object instance, BeanDescriptor descriptor, CreationalContext<?> parentCtx) {
+        injectFieldsByReflection(instance, parentCtx);
 
         // 2. Call @Inject initializer methods
         callInitializerMethods(instance);
@@ -363,7 +362,7 @@ public final class VaubanContainer implements AutoCloseable {
         callPostConstruct(instance);
     }
 
-    private void injectFieldsByReflection(Object instance) {
+    private void injectFieldsByReflection(Object instance, CreationalContext<?> parentCtx) {
         var clazz = instance.getClass();
         while (clazz != null && clazz != Object.class) {
             for (var field : clazz.getDeclaredFields()) {
@@ -416,21 +415,19 @@ public final class VaubanContainer implements AutoCloseable {
                 var ownerBean = findBeanForInstance(instance);
                 currentInjectionPoint.set(new VaubanInjectionPoint(field, ownerBean));
                 try {
-                    // Resolve with field qualifiers for proper matching
                     var fieldQuals = extractFieldQualifiers(field);
                     Object value;
-                    if (fieldQuals.length > 0) {
-                        var bm = getBeanManager();
-                        var beans = bm.getBeans(field.getType(), fieldQuals);
-                        if (beans.isEmpty()) {
-                            value = select(field.getType());
-                        } else {
-                            var resolved = bm.resolve(beans);
-                            var ctx = bm.createCreationalContext(resolved);
-                            value = bm.getReference(resolved, field.getType(), ctx);
-                        }
-                    } else {
+                    var bm = getBeanManager();
+                    var resolvedBeans = bm.getBeans(field.getType(), fieldQuals);
+                    if (resolvedBeans.isEmpty()) {
                         value = select(field.getType());
+                    } else {
+                        var resolved = bm.resolve(resolvedBeans);
+                        var ctx = (parentCtx != null
+                                && resolved.getScope() == jakarta.enterprise.context.Dependent.class)
+                                ? parentCtx
+                                : bm.createCreationalContext(resolved);
+                        value = bm.getReference(resolved, field.getType(), ctx);
                     }
                     // CDI spec: don't set null on primitive fields
                     if (value != null || !field.getType().isPrimitive()) {
