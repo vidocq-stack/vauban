@@ -208,15 +208,12 @@ public final class VaubanBeanManager implements BeanManager {
         var result = new LinkedHashSet<Bean<?>>();
         for (var bean : beans) {
             if (Objects.equals(name, bean.getName())) {
+                // CDI spec: disabled alternatives (no @Priority) are excluded from resolution
+                if (bean.isAlternative() && bean instanceof ManagedBean<?> mb
+                        && mb.descriptor().priority() <= 0) {
+                    continue;
+                }
                 result.add(bean);
-            }
-        }
-        // CDI spec: if an enabled alternative with @Priority exists,
-        // non-alternatives with the same name are eliminated
-        if (result.size() > 1) {
-            boolean hasAlternative = result.stream().anyMatch(Bean::isAlternative);
-            if (hasAlternative) {
-                result.removeIf(b -> !b.isAlternative());
             }
         }
         return result;
