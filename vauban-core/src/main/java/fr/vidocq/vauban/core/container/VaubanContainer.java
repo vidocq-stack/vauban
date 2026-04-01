@@ -1615,6 +1615,11 @@ public final class VaubanContainer implements AutoCloseable {
                                 validateNoRawParameterized(paramTypes[i], rawTypes[i],
                                         clazz.getName() + "." + method.getName() + " disposer param", errors);
                             }
+                            // CDI spec: disposer methods must not have InjectionPoint parameter
+                            if (rawTypes[i] == jakarta.enterprise.inject.spi.InjectionPoint.class) {
+                                errors.add("Disposer method " + clazz.getName() + "." + method.getName()
+                                        + " must not have InjectionPoint parameter");
+                            }
                         }
                     }
 
