@@ -144,17 +144,16 @@ public final class VaubanInvocationContext implements InvocationContext {
         if (to.isAssignableFrom(from)) return true;
         // Handle primitive/wrapper conversion
         if (to.isPrimitive()) {
-            return switch (to.getName()) {
-                case "int" -> from == Integer.class;
-                case "long" -> from == Long.class;
-                case "double" -> from == Double.class;
-                case "float" -> from == Float.class;
-                case "boolean" -> from == Boolean.class;
-                case "byte" -> from == Byte.class;
-                case "char" -> from == Character.class;
-                case "short" -> from == Short.class;
-                default -> false;
-            };
+            String toName = to.getName();
+            if (toName.equals("int")) return from == Integer.class;
+            if (toName.equals("long")) return from == Long.class;
+            if (toName.equals("double")) return from == Double.class;
+            if (toName.equals("float")) return from == Float.class;
+            if (toName.equals("boolean")) return from == Boolean.class;
+            if (toName.equals("byte")) return from == Byte.class;
+            if (toName.equals("char")) return from == Character.class;
+            if (toName.equals("short")) return from == Short.class;
+            return false;
         }
         return false;
     }
@@ -233,9 +232,20 @@ public final class VaubanInvocationContext implements InvocationContext {
                 // Call next interceptor
                 var invocation = chain.get(currentIndex);
                 // CDI spec: target instance is null for @AroundConstruct until proceed() returns
-                if (constructor != null && invocation.target == null) {
-                    // target class @AroundConstruct method
-                    return invocation.method.invoke(target, this);
+                // For target class methods (target == null in invocation), they are called last,
+                // AFTER the actual constructor has been called via targetInvoker.
+                if (constructor != null && invocation.target() == null) {
+                    if (target == null) {
+                        // The method itself must call proceed() to create the instance.
+                        // We advance the index so that the method's proceed() call
+                        // continues to the next item (e.g. targetInvoker).
+                        return invocation.method().invoke(null, this);
+                    } else {
+                        // target already exists, just call the method
+                        invocation.method().setAccessible(true);
+                        invocation.method().invoke(target, this);
+                        return null;
+                    }
                 }
                 return invocation.invoke(this);
             } else {

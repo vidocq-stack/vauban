@@ -30,7 +30,6 @@ public final class ManagedBean<T> implements Bean<T> {
     private Consumer<Object> destroyer;
     private fr.vidocq.vauban.core.interceptor.InterceptorManager interceptorManager;
 
-    @SuppressWarnings("unchecked")
     public ManagedBean(BeanDescriptor descriptor, BeanFactory<T> factory, ClassLoader classLoader) {
         this.descriptor = Objects.requireNonNull(descriptor);
         this.factory = Objects.requireNonNull(factory);
@@ -42,18 +41,10 @@ public final class ManagedBean<T> implements Bean<T> {
         }
     }
 
-    /**
-     * Sets the injector callback that will be called after instance creation
-     * to resolve and inject @Inject fields.
-     */
     public void setInjector(BiConsumer<Object, CreationalContext<?>> injector) {
         this.injector = injector;
     }
 
-    /**
-     * Sets the destroyer callback that will be called when the bean instance is destroyed.
-     * Used for disposer methods on producer beans.
-     */
     public void setDestroyer(Consumer<Object> destroyer) {
         this.destroyer = destroyer;
     }
@@ -68,9 +59,7 @@ public final class ManagedBean<T> implements Bean<T> {
 
     @Override
     public T create(CreationalContext<T> creationalContext) {
-        T instance = factory.create();
-        // If the instance creation was intercepted by @AroundConstruct, the factory
-        // might need to handle the chain. But for non-intercepted beans, we use the simple create().
+        T instance = factory.create(creationalContext);
         
         // CDI spec: producer returning null for non-Dependent scope -> IllegalProductException
         if (instance == null && descriptor.kind() != BeanDescriptor.BeanKind.MANAGED) {
@@ -95,13 +84,13 @@ public final class ManagedBean<T> implements Bean<T> {
                 // CDI spec: exceptions in disposer methods are suppressed
             }
         }
-        callPreDestroy(instance);
+        callPreDestroy(instance, creationalContext);
         if (creationalContext != null) {
             creationalContext.release();
         }
     }
 
-    private void callPreDestroy(Object instance) {
+    private void callPreDestroy(Object instance, CreationalContext<?> ctx) {
         if (instance == null) return;
         // Find @PreDestroy method
         java.lang.reflect.Method preDestroyMethod = null;
@@ -124,17 +113,17 @@ public final class ManagedBean<T> implements Bean<T> {
             if (!bindings.isEmpty()) {
                 interceptorManager.setClassLoader(instance.getClass().getClassLoader());
                 var chain = interceptorManager.resolveLifecycleChain(
-                        bindings, jakarta.annotation.PreDestroy.class);
+                        bindings, jakarta.annotation.PreDestroy.class, ctx);
                 if (!chain.isEmpty()) {
                     final var pdMethod = preDestroyMethod;
-                    var ctx = new fr.vidocq.vauban.core.interceptor.VaubanInvocationContext(
+                    var invocationCtx = new fr.vidocq.vauban.core.interceptor.VaubanInvocationContext(
                             instance, null, new Object[0], chain,
                             (target, params) -> {
                                 if (pdMethod != null) pdMethod.invoke(target);
                                 return null;
                             });
                     try {
-                        ctx.proceed();
+                        invocationCtx.proceed();
                     } catch (Exception e) {
                         // CDI spec: suppress PreDestroy exceptions
                     }

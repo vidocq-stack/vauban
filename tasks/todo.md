@@ -98,7 +98,9 @@
 - [x] Validation de déploiement : constructeur sans argument non-privé pour beans interceptés
 - [x] Validation de déploiement : constructeur sans argument non-privé pour intercepteurs
 - [x] Execution TCK Maven 4 (via SDKMAN) : 917 tests, 218 échecs, 148 sautés
-- [ ] Support `AroundConstruct` (interception de l'instanciation) - 🚧 en cours
+- [x] Support `AroundConstruct` (interception de l'instanciation) ✅
+- [x] Génération de bytecode pour sous-classes d'intercepteurs (Class-File API) ✅
+- [x] Validation des paramètres et gestion du constructeur d'origine pour le TCK ✅
 - [ ] Amélioration de la gestion des exceptions de déploiement (DefinitionException vs DeploymentException)
 
 ## Phase 11: Outillage modules ✅

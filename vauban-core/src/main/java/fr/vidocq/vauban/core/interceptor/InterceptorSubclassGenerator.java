@@ -33,6 +33,7 @@ public final class InterceptorSubclassGenerator {
     private static final ClassDesc CD_Class = ClassDesc.of("java.lang.Class");
     private static final ClassDesc CD_String = ClassDesc.of("java.lang.String");
     private static final ClassDesc CD_List = ClassDesc.of("java.util.List");
+    private static final ClassDesc CD_CreationalContext = ClassDesc.of("jakarta.enterprise.context.spi.CreationalContext");
     private static final ClassDesc CD_TargetInvoker = ClassDesc.of("fr.vidocq.vauban.core.interceptor.VaubanInvocationContext$TargetInvoker");
 
     private InterceptorSubclassGenerator() {}
@@ -48,8 +49,8 @@ public final class InterceptorSubclassGenerator {
         String beanClassName = beanClass.getName();
         String subclassName = beanClassName + "$$Intercepted";
 
-        ClassDesc subclassCD = ClassDesc.of(subclassName);
-        ClassDesc beanCD = ClassDesc.of(beanClassName);
+        ClassDesc subclassCD = classDescOf(subclassName);
+        ClassDesc beanCD = classDescOf(beanClass);
 
         byte[] bytecode = ClassFile.of().build(subclassCD, clb -> {
             clb.withFlags(ClassFile.ACC_PUBLIC | ClassFile.ACC_SUPER);
@@ -58,16 +59,17 @@ public final class InterceptorSubclassGenerator {
             // Fields
             clb.withField("$$manager", CD_InterceptorManager, ClassFile.ACC_PRIVATE);
             clb.withField("$$bindings", CD_Set, ClassFile.ACC_PRIVATE);
+            clb.withField("$$context", CD_CreationalContext, ClassFile.ACC_PRIVATE);
 
             // Constructors: for each non-private constructor in super class, generate one here
             for (var constructor : beanClass.getDeclaredConstructors()) {
                 if (Modifier.isPrivate(constructor.getModifiers())) continue;
 
-                var paramTypes = java.util.Arrays.stream(constructor.getParameterTypes())
-                        .map(Class::getName)
-                        .map(ClassDesc::ofInternalName)
-                        .toList();
-                var mtd = MethodTypeDesc.of(ConstantDescs.CD_void, paramTypes);
+                var paramCDs = new ClassDesc[constructor.getParameterCount()];
+                for (int i = 0; i < paramCDs.length; i++) {
+                    paramCDs[i] = classDescOf(constructor.getParameterTypes()[i]);
+                }
+                var mtd = MethodTypeDesc.of(ConstantDescs.CD_void, paramCDs);
 
                 clb.withMethodBody(
                         ConstantDescs.INIT_NAME,
@@ -83,10 +85,10 @@ public final class InterceptorSubclassGenerator {
                         });
             }
 
-            // Setter: public void $$init(InterceptorManager, Set<DotName>)
+            // Setter: public void $$init(InterceptorManager, Set<DotName>, CreationalContext)
             clb.withMethodBody(
                     "$$init",
-                    MethodTypeDesc.of(ConstantDescs.CD_void, CD_InterceptorManager, CD_Set),
+                    MethodTypeDesc.of(ConstantDescs.CD_void, CD_InterceptorManager, CD_Set, CD_CreationalContext),
                     ClassFile.ACC_PUBLIC,
                     cob -> {
                         cob.aload(0);
@@ -95,6 +97,9 @@ public final class InterceptorSubclassGenerator {
                         cob.aload(0);
                         cob.aload(2);
                         cob.putfield(subclassCD, "$$bindings", CD_Set);
+                        cob.aload(0);
+                        cob.aload(3);
+                        cob.putfield(subclassCD, "$$context", CD_CreationalContext);
                         cob.return_();
                     });
 
@@ -240,8 +245,10 @@ public final class InterceptorSubclassGenerator {
                     cob.getfield(subclassCD, "$$bindings", CD_Set);
                     cob.aload(mSlot); // pass the $$super$ Method for binding resolution
                     cob.aload(0);     // pass this for target class @AroundInvoke
+                    cob.aload(0);
+                    cob.getfield(subclassCD, "$$context", CD_CreationalContext);
                     cob.invokevirtual(CD_InterceptorManager, "resolveChainForMethod",
-                            MethodTypeDesc.of(CD_List, CD_Set, CD_Method, CD_Object));
+                            MethodTypeDesc.of(CD_List, CD_Set, CD_Method, CD_Object, CD_CreationalContext));
                     int cSlot = aSlot + 1;
                     cob.astore(cSlot);
 
@@ -348,8 +355,35 @@ public final class InterceptorSubclassGenerator {
         }
     }
 
+    private static ClassDesc classDescOf(String className) {
+        if (className.contains(".")) {
+            int lastDot = className.lastIndexOf('.');
+            return ClassDesc.of(className.substring(0, lastDot), className.substring(lastDot + 1));
+        }
+        return ClassDesc.of(className);
+    }
+
     private static ClassDesc classDescOf(Class<?> type) {
-        return type.describeConstable().orElse(ClassDesc.of(type.getName()));
+        if (type.isPrimitive()) {
+            if (type == void.class) return ConstantDescs.CD_void;
+            if (type == boolean.class) return ConstantDescs.CD_boolean;
+            if (type == byte.class) return ConstantDescs.CD_byte;
+            if (type == char.class) return ConstantDescs.CD_char;
+            if (type == short.class) return ConstantDescs.CD_short;
+            if (type == int.class) return ConstantDescs.CD_int;
+            if (type == long.class) return ConstantDescs.CD_long;
+            if (type == float.class) return ConstantDescs.CD_float;
+            if (type == double.class) return ConstantDescs.CD_double;
+        }
+        if (type.isArray()) {
+            return classDescOf(type.getComponentType()).arrayType();
+        }
+        String name = type.getName();
+        if (name.contains(".")) {
+            int lastDot = name.lastIndexOf('.');
+            return ClassDesc.of(name.substring(0, lastDot), name.substring(lastDot + 1));
+        }
+        return ClassDesc.of(name);
     }
 
     private static Class<?> wrapperOf(Class<?> primitive) {
