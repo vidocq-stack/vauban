@@ -126,7 +126,7 @@ public final class VaubanContainer implements AutoCloseable {
         wrapInterceptedBeans(descriptors, factories);
 
 
-        // Wire up field injection on each bean
+        // Wire up field injection on each bean (includes PostConstruct in injectFields)
         for (var bean : beans.values()) {
             bean.setInjector(instance -> injectFields(instance, bean.descriptor()));
         }
@@ -1560,6 +1560,15 @@ public final class VaubanContainer implements AutoCloseable {
                         }
                     }
 
+                    // CDI spec: producer with wildcard type parameter is not a legal bean type
+                    if (method.isAnnotationPresent(jakarta.enterprise.inject.Produces.class)) {
+                        var genRetType = method.getGenericReturnType();
+                        if (containsWildcard(genRetType)) {
+                            errors.add("Producer method " + clazz.getName() + "." + method.getName()
+                                    + " has wildcard type parameter in return type");
+                        }
+                    }
+
                     // Generic initializer method
                     if (method.isAnnotationPresent(jakarta.inject.Inject.class)
                             && method.getTypeParameters().length > 0
@@ -1838,6 +1847,19 @@ public final class VaubanContainer implements AutoCloseable {
             if (scopeCount > 1) {
                 errors.add(location + " has multiple scope annotations");
             }
+        }
+
+        private static boolean containsWildcard(java.lang.reflect.Type type) {
+            if (type instanceof java.lang.reflect.WildcardType) return true;
+            if (type instanceof java.lang.reflect.ParameterizedType pt) {
+                for (var arg : pt.getActualTypeArguments()) {
+                    if (containsWildcard(arg)) return true;
+                }
+            }
+            if (type instanceof java.lang.reflect.GenericArrayType gat) {
+                return containsWildcard(gat.getGenericComponentType());
+            }
+            return false;
         }
 
         private static boolean containsTypeVariable(java.lang.reflect.Type type) {
