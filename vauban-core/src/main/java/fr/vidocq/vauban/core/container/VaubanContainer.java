@@ -1375,6 +1375,41 @@ public final class VaubanContainer implements AutoCloseable {
                     }
                 }
 
+                // CDI spec: @Named without value on producer/observer/disposer method parameters
+                for (var method : clazz.getDeclaredMethods()) {
+                    if (method.isAnnotationPresent(jakarta.enterprise.inject.Produces.class)) {
+                        for (var param : method.getParameters()) {
+                            var named = param.getAnnotation(jakarta.inject.Named.class);
+                            if (named != null && named.value().isEmpty()) {
+                                errors.add("@Named without value on producer method parameter: "
+                                        + clazz.getName() + "." + method.getName());
+                            }
+                        }
+                    }
+                    // Observer/disposer method non-event/non-disposes parameters
+                    boolean hasObservesOrDisposes = false;
+                    for (var param : method.getParameters()) {
+                        if (param.isAnnotationPresent(jakarta.enterprise.event.Observes.class)
+                                || param.isAnnotationPresent(jakarta.enterprise.event.ObservesAsync.class)
+                                || param.isAnnotationPresent(jakarta.enterprise.inject.Disposes.class)) {
+                            hasObservesOrDisposes = true;
+                            break;
+                        }
+                    }
+                    if (hasObservesOrDisposes) {
+                        for (var param : method.getParameters()) {
+                            if (param.isAnnotationPresent(jakarta.enterprise.event.Observes.class)
+                                    || param.isAnnotationPresent(jakarta.enterprise.event.ObservesAsync.class)
+                                    || param.isAnnotationPresent(jakarta.enterprise.inject.Disposes.class)) continue;
+                            var named = param.getAnnotation(jakarta.inject.Named.class);
+                            if (named != null && named.value().isEmpty()) {
+                                errors.add("@Named without value on observer/disposer method parameter: "
+                                        + clazz.getName() + "." + method.getName());
+                            }
+                        }
+                    }
+                }
+
                 // CDI spec: normal-scoped beans must not have non-static public fields
                 // This is a DefinitionException (not DeploymentException)
                 if (hasBeanDefiningAnnotation(clazz)) {
