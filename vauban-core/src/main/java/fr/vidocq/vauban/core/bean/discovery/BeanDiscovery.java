@@ -152,14 +152,42 @@ public final class BeanDiscovery {
         for (var ann : getInheritedAnnotations(classInfo)) {
             if (DotName.of(ann.annotationType().getName()).equals(ALTERNATIVE)) return true;
         }
+        // Check stereotypes for @Alternative (direct + transitive)
         var allAnnotationNames = getAllAnnotationNames(classInfo);
         for (var annName : allAnnotationNames) {
-            if (isStereotype(annName)) {
-                var stereotypeClass = index.getClassByName(annName);
-                if (stereotypeClass.isPresent() && stereotypeClass.get().hasAnnotation(ALTERNATIVE)) {
+            if (isStereotype(annName) && isAlternativeStereotype(annName, new java.util.HashSet<>())) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private boolean isAlternativeStereotype(DotName stereotypeName, Set<DotName> visited) {
+        if (!visited.add(stereotypeName)) return false;
+        var stereotypeClass = index.getClassByName(stereotypeName);
+        if (stereotypeClass.isPresent()) {
+            if (stereotypeClass.get().hasAnnotation(ALTERNATIVE)) return true;
+            // Check transitive stereotypes
+            for (var ann : stereotypeClass.get().annotations()) {
+                if (isStereotype(ann.name()) && isAlternativeStereotype(ann.name(), visited)) {
                     return true;
                 }
             }
+        } else {
+            // Reflection fallback
+            try {
+                var cl = Thread.currentThread().getContextClassLoader();
+                var annType = cl != null ? Class.forName(stereotypeName.value(), false, cl)
+                        : Class.forName(stereotypeName.value());
+                if (annType.isAnnotationPresent(jakarta.enterprise.inject.Alternative.class)) return true;
+                for (var metaAnn : annType.getAnnotations()) {
+                    if (metaAnn.annotationType().isAnnotationPresent(jakarta.enterprise.inject.Stereotype.class)) {
+                        if (isAlternativeStereotype(DotName.of(metaAnn.annotationType().getName()), visited)) {
+                            return true;
+                        }
+                    }
+                }
+            } catch (ClassNotFoundException e) { /* skip */ }
         }
         return false;
     }
