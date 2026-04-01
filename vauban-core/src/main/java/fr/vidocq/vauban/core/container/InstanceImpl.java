@@ -107,12 +107,27 @@ public final class InstanceImpl<T> implements Instance<T> {
 
     @Override
     public boolean isAmbiguous() {
-        return resolveCount() > 1;
+        var beans = container.getBeanManager().getBeans(type, qualifiers);
+        if (beans.size() <= 1) return false;
+        try {
+            container.getBeanManager().resolve(beans);
+            return false; // resolved successfully — not ambiguous
+        } catch (jakarta.enterprise.inject.AmbiguousResolutionException e) {
+            return true;
+        }
     }
 
     @Override
     public boolean isResolvable() {
-        return resolveCount() == 1;
+        var beans = container.getBeanManager().getBeans(type, qualifiers);
+        if (beans.isEmpty()) return false;
+        if (beans.size() == 1) return true;
+        try {
+            container.getBeanManager().resolve(beans);
+            return true;
+        } catch (jakarta.enterprise.inject.AmbiguousResolutionException e) {
+            return false;
+        }
     }
 
     @Override
