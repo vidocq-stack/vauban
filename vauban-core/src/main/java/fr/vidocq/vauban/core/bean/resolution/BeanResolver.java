@@ -108,7 +108,9 @@ public final class BeanResolver {
 
     private boolean matchesType(BeanDescriptor bean, TypeInfo requiredType) {
         for (var beanType : bean.types()) {
-            if (assignability.isAssignable(beanType, requiredType)) return true;
+            if (assignability.isAssignable(beanType, requiredType)) {
+                return true;
+            }
         }
         return false;
     }
@@ -119,29 +121,32 @@ public final class BeanResolver {
      * Non-alternative beans are included unless an alternative overrides them.
      */
     private List<BeanDescriptor> applyAlternativeSelection(List<BeanDescriptor> candidates) {
-        // CDI spec: @Alternative without @Priority is NOT enabled — filter out
-        var enabled = candidates.stream()
-                .filter(b -> !b.isAlternative() || b.priority() > 0)
+        if (candidates.size() <= 1) return candidates;
+
+        // Separate alternatives and non-alternatives
+        var alternatives = candidates.stream()
+                .filter(b -> b.isAlternative() && b.priority() > 0)
+                .toList();
+        
+        var nonAlternatives = candidates.stream()
+                .filter(b -> !b.isAlternative())
                 .toList();
 
-        if (enabled.size() <= 1) return new ArrayList<>(enabled);
+        if (alternatives.isEmpty()) {
+            return nonAlternatives;
+        }
 
-        var alternatives = enabled.stream()
-                .filter(BeanDescriptor::isAlternative)
-                .filter(b -> b.priority() > 0)
-                .toList();
-
-        if (alternatives.isEmpty()) return new ArrayList<>(enabled);
-
-        // Find max priority
+        // Find max priority among alternatives
         int maxPriority = alternatives.stream()
                 .mapToInt(BeanDescriptor::priority)
                 .max().orElse(0);
 
-        // Return only highest priority alternatives
+        // CDI 4.1 Section 5.2.2:
+        // "An alternative with higher priority prevails over an alternative with lower priority, 
+        // and over a bean which is not an alternative."
         return alternatives.stream()
                 .filter(b -> b.priority() == maxPriority)
-                .collect(java.util.stream.Collectors.toList());
+                .toList();
     }
 
     /**

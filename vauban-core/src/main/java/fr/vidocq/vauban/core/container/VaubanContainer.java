@@ -950,7 +950,12 @@ public final class VaubanContainer implements AutoCloseable {
                 try {
                     var lookup = java.lang.invoke.MethodHandles.privateLookupIn(beanClass,
                             java.lang.invoke.MethodHandles.lookup());
-                    var interceptedClass = lookup.defineClass(generated.bytecode());
+                    Class<?> interceptedClass;
+                    try {
+                        interceptedClass = loadClass(generated.className());
+                    } catch (ClassNotFoundException e) {
+                        interceptedClass = lookup.defineClass(generated.bytecode());
+                    }
 
                     // Replace the factory
                     var mgr = this.interceptorManager;
@@ -958,6 +963,7 @@ public final class VaubanContainer implements AutoCloseable {
                     var originalFactory = beans.get(descriptor.id()).factory();
 
                     final var finalBeanClass = beanClass;
+                    final Class<?> finalInterceptedClass = interceptedClass;
                     BeanFactory<?> interceptedFactory = new BeanFactory<Object>() {
                 @Override
                 public Object create() {
@@ -1002,7 +1008,7 @@ public final class VaubanContainer implements AutoCloseable {
                         }
 
                         // Resolve which constructor to use
-                        var ctors = interceptedClass.getDeclaredConstructors();
+                        var ctors = finalInterceptedClass.getDeclaredConstructors();
                         var ctor = ctors[0];
                         Object[] finalArgs = constructCtx != null ? constructCtx.getParameters() : new Object[0];
                         
@@ -1027,7 +1033,7 @@ public final class VaubanContainer implements AutoCloseable {
                         var instance = ctor.newInstance(finalArgs);
                         
                         // Initialize interceptor fields
-                        var initMethod = interceptedClass.getMethod("$$init",
+                        var initMethod = finalInterceptedClass.getMethod("$$init",
                                 fr.vidocq.vauban.core.interceptor.InterceptorManager.class,
                                 java.util.Set.class,
                                 jakarta.enterprise.context.spi.CreationalContext.class);
