@@ -20,11 +20,23 @@ import java.util.Set;
 public final class BeanResolver {
 
     private final List<BeanDescriptor> beans;
+    private final List<fr.vidocq.vauban.core.bean.model.InterceptorDescriptor> interceptors;
     private final AssignabilityRules assignability;
 
     public BeanResolver(List<BeanDescriptor> beans, AssignabilityRules assignability) {
+        this(beans, List.of(), assignability);
+    }
+
+    public BeanResolver(List<BeanDescriptor> beans,
+                        List<fr.vidocq.vauban.core.bean.model.InterceptorDescriptor> interceptors,
+                        AssignabilityRules assignability) {
         this.beans = List.copyOf(beans);
+        this.interceptors = List.copyOf(interceptors);
         this.assignability = Objects.requireNonNull(assignability);
+    }
+
+    public List<fr.vidocq.vauban.core.bean.model.InterceptorDescriptor> getInterceptors() {
+        return interceptors;
     }
 
     /**

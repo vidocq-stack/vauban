@@ -62,9 +62,16 @@ public final class ManagedBean<T> implements Bean<T> {
         this.interceptorManager = interceptorManager;
     }
 
+    public BeanFactory<T> factory() {
+        return factory;
+    }
+
     @Override
     public T create(CreationalContext<T> creationalContext) {
         T instance = factory.create();
+        // If the instance creation was intercepted by @AroundConstruct, the factory
+        // might need to handle the chain. But for non-intercepted beans, we use the simple create().
+        
         // CDI spec: producer returning null for non-Dependent scope -> IllegalProductException
         if (instance == null && descriptor.kind() != BeanDescriptor.BeanKind.MANAGED) {
             if (!descriptor.scope().equals(fr.vidocq.vauban.core.bean.model.ScopeInfo.DEPENDENT)) {

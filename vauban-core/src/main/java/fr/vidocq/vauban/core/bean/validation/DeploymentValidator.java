@@ -119,31 +119,9 @@ public final class DeploymentValidator {
                 }
             }
 
-            // CDI spec: Intercepted beans must have a non-private no-arg constructor
-            if (!bean.interceptorBindings().isEmpty() && bean.kind() == BeanDescriptor.BeanKind.MANAGED) {
-                try {
-                    var clazz = Class.forName(bean.beanClass().value());
-                    boolean hasNoArgCtor = false;
-                    boolean hasAnyCtor = false;
-                    for (var ctor : clazz.getDeclaredConstructors()) {
-                        hasAnyCtor = true;
-                        if (ctor.getParameterCount() == 0
-                                && !java.lang.reflect.Modifier.isPrivate(ctor.getModifiers())) {
-                            hasNoArgCtor = true;
-                            break;
-                        }
-                    }
-                    if (hasAnyCtor && !hasNoArgCtor) {
-                        errors.add(new ValidationError(
-                                ValidationError.Kind.UNPROXYABLE_BEAN,
-                                "Intercepted bean " + bean.beanClass()
-                                        + " has no non-private no-arg constructor (required for interception)",
-                                bean));
-                    }
-                } catch (ClassNotFoundException e) {
-                    // skip
-                }
-            }
+            // CDI spec: Intercepted beans can have @Inject constructors.
+            // But they must be proxiable if they are normal-scoped.
+            // CDILite: Interception via subclassing should support parameterized constructors.
         }
 
         // CDI spec: Duplicate bean names (two non-alternative beans with the same EL name)
@@ -186,7 +164,7 @@ public final class DeploymentValidator {
                 var name2 = allNames.get(j);
                 if (name2.startsWith(name1 + ".") || name1.startsWith(name2 + ".")) {
                     errors.add(new ValidationError(
-                            ValidationError.Kind.AMBIGUOUS_DEPENDENCY,
+                            ValidationError.Kind.DEFINITION_ERROR,
                             "Bean name '" + name1 + "' is a prefix of '" + name2 + "' (or vice versa)",
                             beans.getFirst()));
                 }
@@ -207,7 +185,7 @@ public final class DeploymentValidator {
                 }
                 if (!hasNoArgCtor) {
                     errors.add(new ValidationError(
-                            ValidationError.Kind.UNPROXYABLE_BEAN,
+                            ValidationError.Kind.DEFINITION_ERROR,
                             "Interceptor " + interceptor.interceptorClass()
                                     + " must have a non-private no-arg constructor",
                             null));
@@ -288,7 +266,8 @@ public final class DeploymentValidator {
             UNSATISFIED_DEPENDENCY,
             AMBIGUOUS_DEPENDENCY,
             CIRCULAR_DEPENDENCY,
-            UNPROXYABLE_BEAN
+            UNPROXYABLE_BEAN,
+            DEFINITION_ERROR
         }
     }
 }

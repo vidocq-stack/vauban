@@ -35,13 +35,19 @@ public final class VaubanInvocationContext implements InvocationContext {
 
     public VaubanInvocationContext(Object target, Method method, Object[] parameters,
                                    List<InterceptorInvocation> chain) {
-        this(target, method, parameters, chain, null);
+        this(target, method, null, parameters, chain, null);
     }
 
     public VaubanInvocationContext(Object target, Method method, Object[] parameters,
                                    List<InterceptorInvocation> chain, TargetInvoker targetInvoker) {
+        this(target, method, null, parameters, chain, targetInvoker);
+    }
+
+    public VaubanInvocationContext(Object target, Method method, Constructor<?> constructor, Object[] parameters,
+                                   List<InterceptorInvocation> chain, TargetInvoker targetInvoker) {
         this.target = target;
         this.method = method;
+        this.constructor = constructor;
         this.parameters = parameters != null ? parameters.clone() : new Object[0];
         this.chain = chain;
         this.targetInvoker = targetInvoker;
@@ -114,6 +120,20 @@ public final class VaubanInvocationContext implements InvocationContext {
                                 "Parameter " + i + " type mismatch: expected " + expectedTypes[i].getName()
                                         + " but got " + params[i].getClass().getName());
                     }
+                }
+            }
+        } else if (constructor != null) {
+            var expectedTypes = constructor.getParameterTypes();
+            if (params.length != expectedTypes.length) {
+                throw new IllegalArgumentException(
+                        "Wrong number of parameters: expected " + expectedTypes.length + " but got " + params.length);
+            }
+            // Validate parameter types
+            for (int i = 0; i < params.length; i++) {
+                if (params[i] != null && !isAssignableTo(params[i].getClass(), expectedTypes[i])) {
+                    throw new IllegalArgumentException(
+                            "Parameter " + i + " type mismatch: expected " + expectedTypes[i].getName()
+                                    + " but got " + params[i].getClass().getName());
                 }
             }
         }
@@ -207,37 +227,49 @@ public final class VaubanInvocationContext implements InvocationContext {
 
     @Override
     public Object proceed() throws Exception {
-        currentIndex++;
-        if (currentIndex < chain.size()) {
-            // Call next interceptor
-            var invocation = chain.get(currentIndex);
-            return invocation.invoke(this);
-        } else {
-            // End of chain — call the actual method/constructor
-            if (targetInvoker != null) {
-                var result = targetInvoker.invoke(target, parameters);
-                // For @AroundConstruct: set target to the newly created instance
-                // CDI spec: proceed() returns null for lifecycle callbacks
-                if (constructor != null && result != null && target == null) {
-                    target = result;
-                    return null;
+        try {
+            currentIndex++;
+            if (currentIndex < chain.size()) {
+                // Call next interceptor
+                var invocation = chain.get(currentIndex);
+                // CDI spec: target instance is null for @AroundConstruct until proceed() returns
+                if (constructor != null && invocation.target == null) {
+                    // target class @AroundConstruct method
+                    return invocation.method.invoke(target, this);
                 }
-                return result;
+                return invocation.invoke(this);
+            } else {
+                // End of chain — call the actual method/constructor
+                if (targetInvoker != null) {
+                    var result = targetInvoker.invoke(target, parameters);
+                    // For @AroundConstruct: the result is the newly created instance
+                    if (constructor != null && result != null && target == null) {
+                        target = result;
+                        // CDI spec: proceed() returns null for @AroundConstruct
+                        return null;
+                    }
+                    return result;
+                }
+                if (method != null) {
+                    return method.invoke(target, parameters);
+                }
+                return null;
             }
-            if (method != null) {
-                return method.invoke(target, parameters);
-            }
-            return null;
+        } catch (java.lang.reflect.InvocationTargetException e) {
+            var cause = e.getCause();
+            if (cause instanceof Exception ex) throw ex;
+            if (cause instanceof Error err) throw err;
+            throw e;
         }
     }
 
     /**
      * Represents one interceptor in the chain.
      */
-    public record InterceptorInvocation(Object interceptorInstance, Method aroundInvokeMethod) {
+    public record InterceptorInvocation(Object target, Method method) {
         public Object invoke(InvocationContext ctx) throws Exception {
             try {
-                return aroundInvokeMethod.invoke(interceptorInstance, ctx);
+                return method.invoke(target, ctx);
             } catch (java.lang.reflect.InvocationTargetException e) {
                 var cause = e.getCause();
                 if (cause instanceof Exception ex) throw ex;
@@ -245,5 +277,12 @@ public final class VaubanInvocationContext implements InvocationContext {
                 throw e;
             }
         }
+    }
+    public static VaubanInvocationContext dummy() {
+        return dummy(new Object[0]);
+    }
+
+    public static VaubanInvocationContext dummy(Object[] params) {
+        return new VaubanInvocationContext(null, null, null, params, java.util.Collections.emptyList(), null);
     }
 }

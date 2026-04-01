@@ -45,6 +45,9 @@ public final class BeanDiscovery {
     private static final DotName INTERCEPTOR = DotName.of("jakarta.interceptor.Interceptor");
     private static final DotName AROUND_INVOKE = DotName.of("jakarta.interceptor.AroundInvoke");
     private static final DotName INTERCEPTOR_BINDING = DotName.of("jakarta.interceptor.InterceptorBinding");
+    private static final DotName AROUND_CONSTRUCT = DotName.of("jakarta.interceptor.AroundConstruct");
+    private static final DotName POST_CONSTRUCT = DotName.of("jakarta.annotation.PostConstruct");
+    private static final DotName PRE_DESTROY = DotName.of("jakarta.annotation.PreDestroy");
     private static final DotName DISPOSES = DotName.of("jakarta.enterprise.inject.Disposes");
     private static final DotName STEREOTYPE = DotName.of("jakarta.enterprise.inject.Stereotype");
 
@@ -63,7 +66,12 @@ public final class BeanDiscovery {
         for (var classInfo : index.getKnownClasses()) {
             if (isVetoed(classInfo)) continue;
             if (!isBeanCandidate(classInfo)) continue;
-            if (!hasBeanDefiningAnnotation(classInfo)) continue;
+            if (!hasBeanDefiningAnnotation(classInfo)) {
+                // Potential bean but no annotation in index, check reflection
+                if (!hasBeanDefiningAnnotationViaReflection(classInfo.name())) {
+                    continue;
+                }
+            }
 
             // Discover managed bean
             beans.add(buildManagedBean(classInfo));
@@ -86,6 +94,40 @@ public final class BeanDiscovery {
         return List.copyOf(beans);
     }
 
+    private boolean hasBeanDefiningAnnotationViaReflection(DotName name) {
+        try {
+            var cl = Thread.currentThread().getContextClassLoader();
+            var clazz = cl != null ? Class.forName(name.value(), false, cl)
+                    : Class.forName(name.value());
+            for (var ann : clazz.getAnnotations()) {
+                var annName = DotName.of(ann.annotationType().getName());
+                if (BEAN_DEFINING_ANNOTATIONS.contains(annName)) return true;
+                if (isStereotype(annName)) return true;
+                if (mapScope(annName) != null) return true;
+                if (annName.equals(ALTERNATIVE) && clazz.isAnnotationPresent(jakarta.annotation.Priority.class)) return true;
+            }
+            for (var ctor : clazz.getDeclaredConstructors()) {
+                if (ctor.isAnnotationPresent(jakarta.inject.Inject.class)) return true;
+            }
+            // Check inherited
+            var superClass = clazz.getSuperclass();
+            while (superClass != null && superClass != Object.class) {
+                for (var ann : superClass.getAnnotations()) {
+                    if (ann.annotationType().isAnnotationPresent(java.lang.annotation.Inherited.class)) {
+                        var annName = DotName.of(ann.annotationType().getName());
+                        if (BEAN_DEFINING_ANNOTATIONS.contains(annName)) return true;
+                        if (isStereotype(annName)) return true;
+                        if (mapScope(annName) != null) return true;
+                    }
+                }
+                superClass = superClass.getSuperclass();
+            }
+            return false;
+        } catch (ClassNotFoundException e) {
+            return false;
+        }
+    }
+
     private boolean isVetoed(ClassInfo classInfo) {
         if (classInfo.hasAnnotation(VETOED)) return true;
         // Check package-level @Vetoed via package-info class
@@ -105,6 +147,18 @@ public final class BeanDiscovery {
         if (classInfo.isEnum()) return false;
         if (classInfo.isAbstract()) return false;
 
+        // Check reflection if index is empty (test environment fallback)
+        if (classInfo.methods().isEmpty()) {
+            try {
+                var cl = Thread.currentThread().getContextClassLoader();
+                var clazz = cl != null ? Class.forName(classInfo.name().value(), false, cl)
+                        : Class.forName(classInfo.name().value());
+                if (clazz.isInterface() || clazz.isAnnotation() || clazz.isEnum() || java.lang.reflect.Modifier.isAbstract(clazz.getModifiers())) {
+                    return false;
+                }
+            } catch (ClassNotFoundException e) { /* skip */ }
+        }
+
         // Must have a suitable constructor
         return hasSuitableConstructor(classInfo);
     }
@@ -117,7 +171,19 @@ public final class BeanDiscovery {
 
         // Has no-arg constructor or no declared constructors (implicit default)
         boolean hasExplicitConstructor = classInfo.methods().stream().anyMatch(MethodInfo::isConstructor);
-        if (!hasExplicitConstructor) return true; // implicit no-arg
+        if (!hasExplicitConstructor) {
+            // Check reflection for classes not in index
+            try {
+                var cl = Thread.currentThread().getContextClassLoader();
+                var clazz = cl != null ? Class.forName(classInfo.name().value(), false, cl)
+                        : Class.forName(classInfo.name().value());
+                for (var ctor : clazz.getDeclaredConstructors()) {
+                    if (ctor.isAnnotationPresent(jakarta.inject.Inject.class)) return true;
+                    if (ctor.getParameterCount() == 0) return true;
+                }
+            } catch (ClassNotFoundException e) { /* skip */ }
+            return true; // implicit no-arg
+        }
 
         return classInfo.methods().stream()
                 .anyMatch(m -> m.isConstructor() && m.parameters().isEmpty());
@@ -136,6 +202,24 @@ public final class BeanDiscovery {
         if (classInfo.methods().stream().anyMatch(m -> m.isConstructor() && hasAnnotation(m.annotations(), INJECT))) {
             return true;
         }
+
+        // Fallback: check reflection for bean-defining annotations (for classes not fully indexed in tests)
+        try {
+            var cl = Thread.currentThread().getContextClassLoader();
+            var clazz = cl != null ? Class.forName(classInfo.name().value(), false, cl)
+                    : Class.forName(classInfo.name().value());
+            for (var ann : clazz.getAnnotations()) {
+                var annName = DotName.of(ann.annotationType().getName());
+                if (BEAN_DEFINING_ANNOTATIONS.contains(annName)) return true;
+                if (isStereotype(annName)) return true;
+                if (mapScope(annName) != null) return true;
+                if (annName.equals(ALTERNATIVE) && clazz.isAnnotationPresent(jakarta.annotation.Priority.class)) return true;
+            }
+            for (var ctor : clazz.getDeclaredConstructors()) {
+                if (ctor.isAnnotationPresent(jakarta.inject.Inject.class)) return true;
+            }
+        } catch (ClassNotFoundException e) { /* skip */ }
+
         // Check @Inherited annotations from superclasses via reflection
         for (var ann : getInheritedAnnotations(classInfo)) {
             var annName = DotName.of(ann.annotationType().getName());
@@ -1210,86 +1294,97 @@ public final class BeanDiscovery {
     public List<InterceptorDescriptor> discoverInterceptors() {
         var interceptors = new ArrayList<InterceptorDescriptor>();
 
+        var seenClasses = new java.util.HashSet<DotName>();
         for (var classInfo : index.getKnownClasses()) {
-            if (!classInfo.hasAnnotation(INTERCEPTOR)) continue;
-
-            // Find bindings: annotations on the class whose annotation type is @InterceptorBinding
-            var bindings = new LinkedHashSet<DotName>();
-            for (var ann : classInfo.annotations()) {
-                if (isInterceptorBinding(ann.name())) {
-                    bindings.add(ann.name());
+            seenClasses.add(classInfo.name());
+            if (!classInfo.hasAnnotation(INTERCEPTOR)) {
+                // Check reflection if it's potentially an interceptor (optimization: check if it has bindings)
+                if (!hasInterceptorBindingViaReflection(classInfo.name())) {
+                    continue;
                 }
             }
+            addInterceptor(classInfo, interceptors);
+        }
 
-            // Fallback: also find bindings via reflection (for annotations not in index)
-            try {
-                var cl = Thread.currentThread().getContextClassLoader();
-                var clazz = cl != null ? Class.forName(classInfo.name().value(), false, cl)
-                        : Class.forName(classInfo.name().value());
-                for (var ann : clazz.getAnnotations()) {
-                    if (ann.annotationType().isAnnotationPresent(jakarta.interceptor.InterceptorBinding.class)) {
-                        bindings.add(DotName.of(ann.annotationType().getName()));
-                    }
-                }
-            } catch (ClassNotFoundException e) { /* skip */ }
-
-            // Find @AroundInvoke method (from index + reflection fallback)
-            String aroundInvoke = null;
-            for (var method : classInfo.methods()) {
-                if (hasAnnotation(method.annotations(), AROUND_INVOKE)) {
-                    aroundInvoke = method.name();
-                    break;
-                }
-            }
-            // Reflection fallback for @AroundInvoke
-            if (aroundInvoke == null) {
-                try {
-                    var cl = Thread.currentThread().getContextClassLoader();
-                    var clazz = cl != null ? Class.forName(classInfo.name().value(), false, cl)
-                            : Class.forName(classInfo.name().value());
-                    for (var m : clazz.getDeclaredMethods()) {
-                        if (m.isAnnotationPresent(jakarta.interceptor.AroundInvoke.class)) {
-                            aroundInvoke = m.getName();
-                            break;
-                        }
-                    }
-                    // Also check superclass
-                    if (aroundInvoke == null) {
-                        var superClass = clazz.getSuperclass();
-                        while (superClass != null && superClass != Object.class) {
-                            for (var m : superClass.getDeclaredMethods()) {
-                                if (m.isAnnotationPresent(jakarta.interceptor.AroundInvoke.class)) {
-                                    aroundInvoke = m.getName();
-                                    break;
-                                }
-                            }
-                            if (aroundInvoke != null) break;
-                            superClass = superClass.getSuperclass();
-                        }
-                    }
-                } catch (ClassNotFoundException e) { /* skip */ }
-            }
-
-            // Collect actual binding annotations for member comparison
-            var bindingAnnotations = new ArrayList<java.lang.annotation.Annotation>();
-            try {
-                var cl = Thread.currentThread().getContextClassLoader();
-                var clazz2 = cl != null ? Class.forName(classInfo.name().value(), false, cl)
-                        : Class.forName(classInfo.name().value());
-                for (var ann : clazz2.getAnnotations()) {
-                    if (ann.annotationType().isAnnotationPresent(jakarta.interceptor.InterceptorBinding.class)) {
-                        bindingAnnotations.add(ann);
-                    }
-                }
-            } catch (ClassNotFoundException e) { /* skip */ }
-
-            var priority = extractPriority(classInfo.annotations());
-            interceptors.add(new InterceptorDescriptor(classInfo.name(), bindings, aroundInvoke, priority, bindingAnnotations));
+        // Check classes that might not be in the index but are known via reflection
+        // (This happens for some inner classes or classes added via Builder in tests)
+        var cl = Thread.currentThread().getContextClassLoader();
+        if (cl != null) {
+            // We can't easily list all classes in a classloader, but we can check the ones
+            // that were registered in the index or are being discovered as beans.
+            // For now, let's trust that known classes are in the index.
         }
 
         // Sort by priority
         interceptors.sort(Comparator.comparingInt(InterceptorDescriptor::priority));
         return interceptors;
+    }
+
+    private void addInterceptor(ClassInfo classInfo, List<InterceptorDescriptor> interceptors) {
+        // Find bindings: annotations on the class whose annotation type is @InterceptorBinding
+        var bindings = new LinkedHashSet<DotName>();
+        collectBindings(classInfo, bindings);
+        if (bindings.isEmpty()) return;
+
+        // Find @AroundInvoke and @AroundConstruct methods (from index + reflection fallback)
+        String aroundInvoke = null;
+        String aroundConstruct = null;
+        for (var method : classInfo.methods()) {
+            if (hasAnnotation(method.annotations(), AROUND_INVOKE)) {
+                aroundInvoke = method.name();
+            }
+            if (hasAnnotation(method.annotations(), AROUND_CONSTRUCT)) {
+                aroundConstruct = method.name();
+            }
+        }
+        // Reflection fallback for @AroundInvoke / @AroundConstruct
+        if (aroundInvoke == null || aroundConstruct == null) {
+            try {
+                var cl = Thread.currentThread().getContextClassLoader();
+                var clazz = cl != null ? Class.forName(classInfo.name().value(), false, cl)
+                        : Class.forName(classInfo.name().value());
+                for (var m : clazz.getDeclaredMethods()) {
+                    if (aroundInvoke == null && m.isAnnotationPresent(jakarta.interceptor.AroundInvoke.class)) {
+                        aroundInvoke = m.getName();
+                    }
+                    if (aroundConstruct == null && m.isAnnotationPresent(jakarta.interceptor.AroundConstruct.class)) {
+                        aroundConstruct = m.getName();
+                    }
+                }
+                // Also check superclass
+                if (aroundInvoke == null || aroundConstruct == null) {
+                    var superClass = clazz.getSuperclass();
+                    while (superClass != null && superClass != Object.class) {
+                        for (var m : superClass.getDeclaredMethods()) {
+                            if (aroundInvoke == null && m.isAnnotationPresent(jakarta.interceptor.AroundInvoke.class)) {
+                                aroundInvoke = m.getName();
+                            }
+                            if (aroundConstruct == null && m.isAnnotationPresent(jakarta.interceptor.AroundConstruct.class)) {
+                                aroundConstruct = m.getName();
+                            }
+                        }
+                        if (aroundInvoke != null && aroundConstruct != null) break;
+                        superClass = superClass.getSuperclass();
+                    }
+                }
+            } catch (ClassNotFoundException e) { /* skip */ }
+        }
+
+        // Collect actual binding annotations for member comparison
+        var bindingAnnotations = new ArrayList<java.lang.annotation.Annotation>();
+        try {
+            var cl = Thread.currentThread().getContextClassLoader();
+            var clazz2 = cl != null ? Class.forName(classInfo.name().value(), false, cl)
+                    : Class.forName(classInfo.name().value());
+            for (var ann : clazz2.getAnnotations()) {
+                if (ann.annotationType().isAnnotationPresent(jakarta.interceptor.InterceptorBinding.class)) {
+                    bindingAnnotations.add(ann);
+                }
+            }
+        } catch (ClassNotFoundException e) { /* skip */ }
+
+        var priority = extractPriority(classInfo.annotations());
+        interceptors.add(new InterceptorDescriptor(classInfo.name(), bindings, aroundInvoke, aroundConstruct, priority, bindingAnnotations));
     }
 
     /**
@@ -1326,6 +1421,46 @@ public final class BeanDiscovery {
             return false;
         } catch (ClassNotFoundException e) {
             return false;
+        }
+    }
+
+    private boolean hasInterceptorBindingViaReflection(DotName name) {
+        try {
+            var cl = Thread.currentThread().getContextClassLoader();
+            var clazz = cl != null ? Class.forName(name.value(), false, cl)
+                    : Class.forName(name.value());
+            if (!clazz.isAnnotationPresent(jakarta.interceptor.Interceptor.class)) {
+                return false;
+            }
+            for (var ann : clazz.getAnnotations()) {
+                if (ann.annotationType().isAnnotationPresent(jakarta.interceptor.InterceptorBinding.class)) {
+                    return true;
+                }
+            }
+            return false;
+        } catch (ClassNotFoundException e) {
+            return false;
+        }
+    }
+
+    private void collectBindings(ClassInfo classInfo, Set<DotName> bindings) {
+        for (var ann : classInfo.annotations()) {
+            if (isInterceptorBinding(ann.name())) {
+                bindings.add(ann.name());
+            }
+        }
+        // Fallback for classes not fully indexed (e.g. inner classes in some environments)
+        if (bindings.isEmpty()) {
+            try {
+                var cl = Thread.currentThread().getContextClassLoader();
+                var clazz = cl != null ? Class.forName(classInfo.name().value(), false, cl)
+                        : Class.forName(classInfo.name().value());
+                for (var ann : clazz.getAnnotations()) {
+                    if (ann.annotationType().isAnnotationPresent(jakarta.interceptor.InterceptorBinding.class)) {
+                        bindings.add(DotName.of(ann.annotationType().getName()));
+                    }
+                }
+            } catch (ClassNotFoundException e) { /* skip */ }
         }
     }
 

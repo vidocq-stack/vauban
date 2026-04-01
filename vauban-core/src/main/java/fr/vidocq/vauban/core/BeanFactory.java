@@ -6,4 +6,8 @@ package fr.vidocq.vauban.core;
  */
 public interface BeanFactory<T> {
     T create();
+
+    default T create(fr.vidocq.vauban.core.interceptor.VaubanInvocationContext ctx) {
+        return create();
+    }
 }

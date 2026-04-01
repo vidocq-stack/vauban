@@ -59,22 +59,29 @@ public final class InterceptorSubclassGenerator {
             clb.withField("$$manager", CD_InterceptorManager, ClassFile.ACC_PRIVATE);
             clb.withField("$$bindings", CD_Set, ClassFile.ACC_PRIVATE);
 
-            // Constructor: public Intercepted() { super(); }
-            // Support @AroundConstruct interception by using a static flag or similar mechanism
-            // For now, keep it simple: the constructor itself checks if it should be intercepted
-            clb.withMethodBody(
-                    ConstantDescs.INIT_NAME,
-                    MethodTypeDesc.of(ConstantDescs.CD_void),
-                    ClassFile.ACC_PUBLIC,
-                    cob -> {
-                        // 1. Initial super() call (mandatory)
-                        cob.aload(0);
-                        cob.invokespecial(beanCD, ConstantDescs.INIT_NAME, MethodTypeDesc.of(ConstantDescs.CD_void));
+            // Constructors: for each non-private constructor in super class, generate one here
+            for (var constructor : beanClass.getDeclaredConstructors()) {
+                if (Modifier.isPrivate(constructor.getModifiers())) continue;
 
-                        // 2. Clear stack for safety (not needed if aload/invokespecial worked)
-                        // 3. Just return for now to avoid any complex stack issues during verification
-                        cob.return_();
-                    });
+                var paramTypes = java.util.Arrays.stream(constructor.getParameterTypes())
+                        .map(Class::getName)
+                        .map(ClassDesc::ofInternalName)
+                        .toList();
+                var mtd = MethodTypeDesc.of(ConstantDescs.CD_void, paramTypes);
+
+                clb.withMethodBody(
+                        ConstantDescs.INIT_NAME,
+                        mtd,
+                        ClassFile.ACC_PUBLIC,
+                        cob -> {
+                            cob.aload(0);
+                            for (int i = 0; i < constructor.getParameterCount(); i++) {
+                                cob.loadLocal(java.lang.classfile.TypeKind.from(constructor.getParameterTypes()[i]), cob.parameterSlot(i));
+                            }
+                            cob.invokespecial(beanCD, ConstantDescs.INIT_NAME, mtd);
+                            cob.return_();
+                        });
+            }
 
             // Setter: public void $$init(InterceptorManager, Set<DotName>)
             clb.withMethodBody(

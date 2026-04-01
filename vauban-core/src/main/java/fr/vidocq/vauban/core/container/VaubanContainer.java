@@ -641,6 +641,13 @@ public final class VaubanContainer implements AutoCloseable {
     private void wrapInterceptedBeans(List<BeanDescriptor> descriptors,
                                        Map<DotName, BeanFactory<?>> factories) {
         for (var descriptor : descriptors) {
+            Class<?> currentBeanClassTemp;
+            try {
+                currentBeanClassTemp = loadClass(descriptor.beanClass().value());
+            } catch (ClassNotFoundException e) {
+                continue;
+            }
+            final var currentBeanClass = currentBeanClassTemp;
             if (descriptor.kind() != BeanDescriptor.BeanKind.MANAGED) continue;
 
             var bean = beans.get(descriptor.id());
@@ -759,7 +766,7 @@ public final class VaubanContainer implements AutoCloseable {
                                 }
                             }
                             var ctorChain = interceptorManager.resolveAroundConstructChain(
-                                    ctorBindings, ctor);
+                                    ctorBindings, ctor, beanClass);
                             if (!ctorChain.isEmpty()) {
                                 hasInterceptors = true;
                                 break;
@@ -781,53 +788,70 @@ public final class VaubanContainer implements AutoCloseable {
             // Replace the factory
             var mgr = this.interceptorManager;
             var bds = bindings;
-            BeanFactory<?> interceptedFactory = () -> {
-                try {
-                    var ctor = interceptedClass.getDeclaredConstructor();
-                    var constructChain = mgr.resolveAroundConstructChain(bds, ctor);
-                    if (!constructChain.isEmpty()) {
-                        // AroundConstruct interception
-                        final Object[] box = new Object[1];
-                        var ctx = new fr.vidocq.vauban.core.interceptor.VaubanInvocationContext(
-                                null, null, ctor, new Object[0], constructChain,
-                                (target, params) -> {
-                                    mgr.$$beginInterception(java.util.Collections.emptyList(), bds);
-                                    try {
-                                        var instance = ctor.newInstance();
+            var originalFactory = beans.get(descriptor.id()).factory();
+
+            final var finalBeanClass = beanClass;
+            BeanFactory<?> interceptedFactory = new BeanFactory<Object>() {
+                @Override
+                public Object create() {
+                    return create(null);
+                }
+
+                @Override
+                public Object create(fr.vidocq.vauban.core.interceptor.VaubanInvocationContext constructCtx) {
+                    try {
+                // Resolve AroundConstruct chain for the class
+                var constructChain = mgr.resolveAroundConstructChain(bds, null, currentBeanClass);
+                        if (!constructChain.isEmpty() && constructCtx == null) {
+                            // First time: run the chain
+                            final Object[] box = new Object[1];
+                            var ctx = new fr.vidocq.vauban.core.interceptor.VaubanInvocationContext(
+                                    null, null, null, new Object[0], constructChain,
+                                    (target, params) -> {
+                                        var instance = create(fr.vidocq.vauban.core.interceptor.VaubanInvocationContext.dummy(params));
                                         box[0] = instance;
                                         return instance;
-                                    } finally {
-                                        mgr.$$endInterception();
-                                    }
-                                });
-                        ctx.proceed();
-                        var instance = box[0];
-                        if (instance == null) {
-                            throw new jakarta.enterprise.inject.CreationException(
-                                    "Interceptor chain for @AroundConstruct failed to create an instance for " + interceptedClass.getName());
+                                    });
+                            ctx.setConstructor(interceptedClass.getDeclaredConstructors()[0]); // Best effort for TCK
+                            ctx.proceed();
+                            return box[0];
                         }
-                        // Initialize fields
-                        interceptedClass.getMethod("$$init",
+
+                        // Resolve which constructor to use
+                        var ctor = interceptedClass.getDeclaredConstructors()[0];
+                        Object[] finalArgs = new Object[0];
+                        if (constructCtx != null && constructCtx.getParameters().length > 0) {
+                            finalArgs = constructCtx.getParameters();
+                            // Find matching constructor by param count
+                            for (var c : interceptedClass.getDeclaredConstructors()) {
+                                if (c.getParameterCount() == finalArgs.length) {
+                                    ctor = c;
+                                    break;
+                                }
+                            }
+                        } else {
+                            for (var c : interceptedClass.getDeclaredConstructors()) {
+                                if (c.getParameterCount() == 0) {
+                                    ctor = c;
+                                    break;
+                                }
+                            }
+                        }
+                        
+                        ctor.setAccessible(true);
+                        var instance = ctor.newInstance(finalArgs);
+                        
+                        // Initialize interceptor fields
+                        var initMethod = interceptedClass.getMethod("$$init",
                                 fr.vidocq.vauban.core.interceptor.InterceptorManager.class,
-                                java.util.Set.class).invoke(instance, mgr, bds);
+                                java.util.Set.class);
+                        initMethod.invoke(instance, mgr, bds);
                         return instance;
-                    } else {
-                            var instance = ctor.newInstance();
-                            // Initialize the interceptor fields
-                            var initMethod = interceptedClass.getMethod("$$init",
-                                    fr.vidocq.vauban.core.interceptor.InterceptorManager.class,
-                                    java.util.Set.class);
-                            initMethod.invoke(instance, mgr, bds);
-                            return instance;
-                        }
                     } catch (Exception e) {
-                        var cause = e instanceof java.lang.reflect.InvocationTargetException ite ? ite.getCause() : e;
-                        if (cause instanceof RuntimeException re) throw re;
-                        throw new jakarta.enterprise.inject.CreationException(
-                                "Failed to create intercepted bean: " + interceptedClass.getName()
-                                        + ". Cause: " + cause.getMessage(), cause);
+                        throw new jakarta.enterprise.inject.CreationException(e);
                     }
-                };
+                }
+            };
 
                 // Update the bean with the new factory
                 var interceptedBean = new ManagedBean<>(descriptor, interceptedFactory, classLoader);
@@ -856,10 +880,11 @@ public final class VaubanContainer implements AutoCloseable {
                             0, generated2.bytecode().length);
                 var mgr2 = this.interceptorManager;
                 var bds2 = bindings;
+                final var finalBeanClass2 = currentBeanClass;
                 BeanFactory<?> f2 = () -> {
                     try {
                         var ctor = interceptedClass2.getDeclaredConstructor();
-                        var constructChain2 = mgr2.resolveAroundConstructChain(bds2, ctor);
+                        var constructChain2 = mgr2.resolveAroundConstructChain(bds2, ctor, finalBeanClass2);
                         if (!constructChain2.isEmpty()) {
                             final Object[] box2 = new Object[1];
                             var ctx = new fr.vidocq.vauban.core.interceptor.VaubanInvocationContext(
@@ -1023,120 +1048,133 @@ public final class VaubanContainer implements AutoCloseable {
         }
 
         // Has @Inject constructor — create a factory that resolves parameters
-        return () -> {
-            try {
-                var beanClass = loadClass(descriptor.beanClass().value());
+        return new BeanFactory<Object>() {
+            @Override
+            public Object create() {
+                return create(null);
+            }
 
-                // Find the @Inject constructor (the one with matching parameter count)
-                java.lang.reflect.Constructor<?> injectCtor = null;
-                for (var ctor : beanClass.getDeclaredConstructors()) {
-                    if (ctor.isAnnotationPresent(jakarta.inject.Inject.class)) {
-                        injectCtor = ctor;
-                        break;
-                    }
-                }
+            @Override
+            public Object create(fr.vidocq.vauban.core.interceptor.VaubanInvocationContext constructCtx) {
+                try {
+                    var beanClass = loadClass(descriptor.beanClass().value());
 
-                if (injectCtor == null) {
-                    // Fallback: try matching by parameter count
+                    // Find the @Inject constructor (the one with matching parameter count)
+                    java.lang.reflect.Constructor<?> injectCtor = null;
                     for (var ctor : beanClass.getDeclaredConstructors()) {
-                        if (ctor.getParameterCount() == ctorParams.size()) {
+                        if (ctor.isAnnotationPresent(jakarta.inject.Inject.class)) {
                             injectCtor = ctor;
                             break;
                         }
                     }
-                }
 
-                if (injectCtor == null) {
-                    throw new RuntimeException("No @Inject constructor found for " + descriptor.beanClass());
-                }
-
-                // Resolve each constructor parameter
-                var paramTypes = injectCtor.getParameterTypes();
-                var genericParamTypes = injectCtor.getGenericParameterTypes();
-                var ctorParamsRefl = injectCtor.getParameters();
-                var args = new Object[paramTypes.length];
-                for (int i = 0; i < paramTypes.length; i++) {
-                    if (paramTypes[i] == Instance.class
-                            || paramTypes[i] == jakarta.inject.Provider.class) {
-                        Class<?> instanceType = Object.class;
-                        if (genericParamTypes[i] instanceof ParameterizedType pt) {
-                            var typeArg = pt.getActualTypeArguments()[0];
-                            if (typeArg instanceof Class<?> c) {
-                                instanceType = c;
+                    if (injectCtor == null) {
+                        // Fallback: try matching by parameter count
+                        for (var ctor : beanClass.getDeclaredConstructors()) {
+                            if (ctor.getParameterCount() == ctorParams.size()) {
+                                injectCtor = ctor;
+                                break;
                             }
                         }
-                        args[i] = new InstanceImpl<>(this, instanceType);
-                    } else if (BeanManager.class.isAssignableFrom(paramTypes[i])
-                            || paramTypes[i] == jakarta.enterprise.inject.spi.BeanContainer.class) {
-                        args[i] = getBeanManager();
-                    } else if (paramTypes[i] == Event.class) {
-                        args[i] = new EventImpl<>(eventDispatcher, collectEventQualifiers(ctorParamsRefl[i].getAnnotations()));
-                    } else {
-                        // Try with qualifiers first
-                        var pQuals = extractParamQualifiers(ctorParamsRefl[i]);
-                        if (pQuals.length > 0) {
-                            var bm = getBeanManager();
-                            var beans2 = bm.getBeans(paramTypes[i], pQuals);
-                            if (!beans2.isEmpty()) {
-                                var resolved = bm.resolve(beans2);
-                                var ctx = bm.createCreationalContext(resolved);
-                                args[i] = bm.getReference(resolved, paramTypes[i], ctx);
+                    }
+
+                    if (injectCtor == null) {
+                        throw new RuntimeException("No @Inject constructor found for " + descriptor.beanClass());
+                    }
+
+                    // Resolve each constructor parameter
+                    var paramTypes = injectCtor.getParameterTypes();
+                    var genericParamTypes = injectCtor.getGenericParameterTypes();
+                    var ctorParamsRefl = injectCtor.getParameters();
+                    var args = new Object[paramTypes.length];
+                    for (int i = 0; i < paramTypes.length; i++) {
+                        if (paramTypes[i] == Instance.class
+                                || paramTypes[i] == jakarta.inject.Provider.class) {
+                            Class<?> instanceType = Object.class;
+                            if (genericParamTypes[i] instanceof ParameterizedType pt) {
+                                var typeArg = pt.getActualTypeArguments()[0];
+                                if (typeArg instanceof Class<?> c) {
+                                    instanceType = c;
+                                }
+                            }
+                            args[i] = new InstanceImpl<>(VaubanContainer.this, instanceType);
+                        } else if (BeanManager.class.isAssignableFrom(paramTypes[i])
+                                || paramTypes[i] == jakarta.enterprise.inject.spi.BeanContainer.class) {
+                            args[i] = getBeanManager();
+                        } else if (paramTypes[i] == Event.class) {
+                            args[i] = new EventImpl<>(eventDispatcher, collectEventQualifiers(ctorParamsRefl[i].getAnnotations()));
+                        } else {
+                            // Try with qualifiers first
+                            var pQuals = extractParamQualifiers(ctorParamsRefl[i]);
+                            if (pQuals.length > 0) {
+                                var bm = getBeanManager();
+                                var beans2 = bm.getBeans(paramTypes[i], pQuals);
+                                if (!beans2.isEmpty()) {
+                                    var resolved = bm.resolve(beans2);
+                                    var ctx = bm.createCreationalContext(resolved);
+                                    args[i] = bm.getReference(resolved, paramTypes[i], ctx);
+                                } else {
+                                    args[i] = resolveParameter(paramTypes[i], genericParamTypes[i]);
+                                }
                             } else {
                                 args[i] = resolveParameter(paramTypes[i], genericParamTypes[i]);
                             }
-                        } else {
-                            args[i] = resolveParameter(paramTypes[i], genericParamTypes[i]);
                         }
                     }
-                }
 
-                injectCtor.setAccessible(true);
+                    final var finalCtor = injectCtor;
+                    final var finalArgs = args;
+                    finalCtor.setAccessible(true);
 
-                // Check for @AroundConstruct interceptors
-                var ctorBindings = new java.util.LinkedHashSet<DotName>();
-                var ctorBindingAnnotations = new java.util.LinkedHashSet<java.lang.annotation.Annotation>();
-                for (var ann : beanClass.getAnnotations()) {
-                    if (ann.annotationType().isAnnotationPresent(jakarta.interceptor.InterceptorBinding.class)) {
-                        ctorBindings.add(DotName.of(ann.annotationType().getName()));
-                        ctorBindingAnnotations.add(ann);
+                    // If we have an interception context, let it handle the instantiation
+                    if (constructCtx != null) {
+                        return finalCtor.newInstance(finalArgs);
                     }
-                }
-                for (var ann : injectCtor.getAnnotations()) {
-                    if (ann.annotationType().isAnnotationPresent(jakarta.interceptor.InterceptorBinding.class)) {
-                        ctorBindings.add(DotName.of(ann.annotationType().getName()));
-                        ctorBindingAnnotations.add(ann);
-                    }
-                }
-                // Transitively resolve meta-bindings
-                collectTransitiveBindings(ctorBindingAnnotations, ctorBindings);
-                if (!ctorBindings.isEmpty() && interceptorManager.hasInterceptors()) {
-                    interceptorManager.setClassLoader(beanClass.getClassLoader());
-                    var aroundConstructChain = interceptorManager.resolveLifecycleChain(
-                            ctorBindings, jakarta.interceptor.AroundConstruct.class, new java.util.ArrayList<>(ctorBindingAnnotations));
-                    if (!aroundConstructChain.isEmpty()) {
-                        final var ctor = injectCtor;
-                        final var ctorArgs = args;
-                        var ctx = new fr.vidocq.vauban.core.interceptor.VaubanInvocationContext(
-                                null, null, ctorArgs, aroundConstructChain,
-                                (target, params) -> {
-                                    ctor.setAccessible(true);
-                                    return ctor.newInstance(params);
-                                });
-                        ctx.setConstructor(injectCtor);
-                        ctx.setInterceptorBindings(ctorBindingAnnotations);
-                        return ctx.proceed();
-                    }
-                }
 
-                return injectCtor.newInstance(args);
-            } catch (java.lang.reflect.InvocationTargetException e) {
-                var cause = e.getCause();
-                if (cause instanceof RuntimeException re) throw re;
-                throw new jakarta.enterprise.inject.CreationException(cause);
-            } catch (RuntimeException e) {
-                throw e;
-            } catch (Exception e) {
-                throw new jakarta.enterprise.inject.CreationException(e);
+                    // Check for @AroundConstruct interceptors
+                    var ctorBindings = new java.util.LinkedHashSet<DotName>();
+                    var ctorBindingAnnotations = new java.util.LinkedHashSet<java.lang.annotation.Annotation>();
+                    for (var ann : beanClass.getAnnotations()) {
+                        if (ann.annotationType().isAnnotationPresent(jakarta.interceptor.InterceptorBinding.class)) {
+                            ctorBindings.add(DotName.of(ann.annotationType().getName()));
+                            ctorBindingAnnotations.add(ann);
+                        }
+                    }
+                    for (var ann : finalCtor.getAnnotations()) {
+                        if (ann.annotationType().isAnnotationPresent(jakarta.interceptor.InterceptorBinding.class)) {
+                            ctorBindings.add(DotName.of(ann.annotationType().getName()));
+                            ctorBindingAnnotations.add(ann);
+                        }
+                    }
+                    // Transitively resolve meta-bindings
+                    collectTransitiveBindings(ctorBindingAnnotations, ctorBindings);
+                    if (!ctorBindings.isEmpty() && interceptorManager.hasInterceptors()) {
+                        interceptorManager.setClassLoader(beanClass.getClassLoader());
+                        var aroundConstructChain = interceptorManager.resolveLifecycleChain(
+                                ctorBindings, jakarta.interceptor.AroundConstruct.class, new java.util.ArrayList<>(ctorBindingAnnotations));
+                        if (!aroundConstructChain.isEmpty()) {
+                            var ctx = new fr.vidocq.vauban.core.interceptor.VaubanInvocationContext(
+                                    null, null, finalArgs, aroundConstructChain,
+                                    (target, params) -> {
+                                        finalCtor.setAccessible(true);
+                                        return finalCtor.newInstance(params);
+                                    });
+                            ctx.setConstructor(finalCtor);
+                            ctx.setInterceptorBindings(ctorBindingAnnotations);
+                            return ctx.proceed();
+                        }
+                    }
+
+                    return finalCtor.newInstance(finalArgs);
+                } catch (java.lang.reflect.InvocationTargetException e) {
+                    var cause = e.getCause();
+                    if (cause instanceof RuntimeException re) throw re;
+                    throw new jakarta.enterprise.inject.CreationException(cause);
+                } catch (RuntimeException e) {
+                    throw e;
+                } catch (Exception e) {
+                    throw new jakarta.enterprise.inject.CreationException(e);
+                }
             }
         };
     }
@@ -1399,6 +1437,18 @@ public final class VaubanContainer implements AutoCloseable {
                         descriptors, tempResolver);
                 var errors = validator.validate();
                 if (!errors.isEmpty()) {
+                    var definitionErrors = errors.stream()
+                            .filter(e -> e.kind() == fr.vidocq.vauban.core.bean.validation.DeploymentValidator.ValidationError.Kind.DEFINITION_ERROR)
+                            .toList();
+
+                    if (!definitionErrors.isEmpty()) {
+                        var msg = new StringBuilder("CDI definition validation failed:\n");
+                        for (var error : definitionErrors) {
+                            msg.append("  - ").append(error.message()).append("\n");
+                        }
+                        throw new jakarta.enterprise.inject.spi.DefinitionException(msg.toString());
+                    }
+
                     var msg = new StringBuilder("CDI deployment validation failed:\n");
                     for (var error : errors) {
                         msg.append("  - ").append(error.message()).append("\n");

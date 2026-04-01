@@ -20,8 +20,89 @@ public final class InterceptorManager {
     private final List<InterceptorDescriptor> interceptors;
     private final Map<DotName, Object> interceptorInstances = new LinkedHashMap<>();
 
+    private static final ThreadLocal<Boolean> IS_INTERCEPTING = ThreadLocal.withInitial(() -> false);
+    private static final ThreadLocal<List<VaubanInvocationContext.InterceptorInvocation>> CURRENT_CHAIN = new ThreadLocal<>();
+    private static final ThreadLocal<Set<DotName>> CURRENT_BINDINGS = new ThreadLocal<>();
+
+    public static boolean $$isIntercepting() {
+        return IS_INTERCEPTING.get();
+    }
+
+    public static List<VaubanInvocationContext.InterceptorInvocation> $$getAroundConstructChain() {
+        return CURRENT_CHAIN.get();
+    }
+
+    public static Set<DotName> $$getAroundConstructBindings() {
+        return CURRENT_BINDINGS.get();
+    }
+
+    public static void $$beginInterception(List<VaubanInvocationContext.InterceptorInvocation> chain, Set<DotName> bindings) {
+        IS_INTERCEPTING.set(true);
+        CURRENT_CHAIN.set(chain);
+        CURRENT_BINDINGS.set(bindings);
+    }
+
+    public static void $$endInterception() {
+        IS_INTERCEPTING.set(false);
+        CURRENT_CHAIN.remove();
+        CURRENT_BINDINGS.remove();
+    }
+
     public InterceptorManager(List<InterceptorDescriptor> interceptors) {
         this.interceptors = List.copyOf(interceptors);
+    }
+
+    /**
+     * Resolve the interceptor chain for a constructor.
+     */
+    public List<VaubanInvocationContext.InterceptorInvocation> resolveAroundConstructChain(
+            Set<DotName> classBindings, java.lang.reflect.Constructor<?> constructor, Class<?> beanClass) {
+        var allBindings = new java.util.LinkedHashSet<>(classBindings);
+        var beanAnnotations = new java.util.ArrayList<java.lang.annotation.Annotation>();
+
+        if (beanClass.getName().contains("$$Intercepted")) {
+            beanClass = beanClass.getSuperclass();
+        }
+        // Bindings from the class
+        for (var ann : beanClass.getAnnotations()) {
+            if (ann.annotationType().isAnnotationPresent(jakarta.interceptor.InterceptorBinding.class)) {
+                allBindings.add(DotName.of(ann.annotationType().getName()));
+                beanAnnotations.add(ann);
+            }
+        }
+        // Check bindings on the constructor itself
+        if (constructor != null) {
+            for (var ann : constructor.getAnnotations()) {
+                if (ann.annotationType().isAnnotationPresent(jakarta.interceptor.InterceptorBinding.class)) {
+                    allBindings.add(DotName.of(ann.annotationType().getName()));
+                    beanAnnotations.add(ann);
+                }
+            }
+        }
+
+        var chain = new ArrayList<VaubanInvocationContext.InterceptorInvocation>();
+        for (var descriptor : interceptors) {
+            if (allBindings.containsAll(descriptor.bindings()) && !descriptor.bindings().isEmpty()) {
+                if (!descriptor.bindingAnnotations().isEmpty() && !beanAnnotations.isEmpty()) {
+                    if (!bindingMembersMatch(descriptor.bindingAnnotations(), beanAnnotations)) {
+                        continue;
+                    }
+                }
+                var instance = getOrCreateInstance(descriptor);
+                var aroundConstruct = findAnnotatedMethod(instance.getClass(), jakarta.interceptor.AroundConstruct.class);
+                if (aroundConstruct != null) {
+                    chain.add(new VaubanInvocationContext.InterceptorInvocation(instance, aroundConstruct));
+                }
+            }
+        }
+
+            // CDI spec: target class @AroundConstruct methods are invoked last
+        var targetAroundConstruct = findAnnotatedMethod(beanClass, jakarta.interceptor.AroundConstruct.class);
+        if (targetAroundConstruct != null) {
+            chain.add(new VaubanInvocationContext.InterceptorInvocation(null, targetAroundConstruct));
+        }
+
+        return chain;
     }
 
     /**
