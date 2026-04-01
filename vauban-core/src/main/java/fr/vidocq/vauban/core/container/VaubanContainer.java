@@ -701,6 +701,27 @@ public final class VaubanContainer implements AutoCloseable {
                     }
                 }
 
+                // CDI spec: intercepted bean needs a non-private no-arg constructor
+                boolean hasAccessibleNoArgCtor = false;
+                for (var ctor : beanClass.getDeclaredConstructors()) {
+                    if (ctor.getParameterCount() == 0
+                            && !java.lang.reflect.Modifier.isPrivate(ctor.getModifiers())) {
+                        hasAccessibleNoArgCtor = true;
+                        break;
+                    }
+                }
+                if (!hasAccessibleNoArgCtor) {
+                    // Check if there's ANY no-arg constructor (even private)
+                    boolean hasPrivateNoArgCtor = false;
+                    try { beanClass.getDeclaredConstructor(); hasPrivateNoArgCtor = true; }
+                    catch (NoSuchMethodException e) { /* no no-arg ctor at all */ }
+                    if (hasPrivateNoArgCtor) {
+                        throw new jakarta.enterprise.inject.spi.DeploymentException(
+                                "Intercepted bean " + beanClass.getName()
+                                        + " has only private no-arg constructor (unproxyable)");
+                    }
+                }
+
                 // Set the ClassLoader for interceptor class loading
                 interceptorManager.setClassLoader(beanClass.getClassLoader());
 
