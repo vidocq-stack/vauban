@@ -1687,27 +1687,39 @@ public final class VaubanContainer implements AutoCloseable {
                     }
                 }
                 // CDI spec: stereotypes must not declare same interceptor binding with different values
+                // CDI spec: conflicting interceptor binding values (from stereotypes or transitive bindings)
                 if (hasBeanDefiningAnnotation(clazz)) {
                     var bindingsByType = new java.util.HashMap<Class<?>, java.lang.annotation.Annotation>();
-                    boolean conflict = false;
-                    for (var ann : clazz.getAnnotations()) {
-                        if (ann.annotationType().isAnnotationPresent(jakarta.enterprise.inject.Stereotype.class)) {
-                            for (var metaAnn : ann.annotationType().getAnnotations()) {
-                                if (metaAnn.annotationType().isAnnotationPresent(jakarta.interceptor.InterceptorBinding.class)) {
-                                    var prev = bindingsByType.put(metaAnn.annotationType(), metaAnn);
-                                    if (prev != null && !prev.equals(metaAnn)) {
-                                        errors.add("Bean " + clazz.getName()
-                                                + " has conflicting interceptor binding values for "
-                                                + metaAnn.annotationType().getSimpleName());
-                                        conflict = true;
-                                    }
-                                }
-                            }
-                        }
-                    }
+                    collectTransitiveInterceptorBindings(clazz.getAnnotations(), bindingsByType, errors, clazz.getName(), new java.util.HashSet<>());
                 }
             }
             return errors;
+        }
+
+        private static void collectTransitiveInterceptorBindings(
+                java.lang.annotation.Annotation[] annotations,
+                java.util.Map<Class<?>, java.lang.annotation.Annotation> bindingsByType,
+                List<String> errors, String beanName, Set<Class<?>> visited) {
+            for (var ann : annotations) {
+                var annType = ann.annotationType();
+                // Check both stereotypes and interceptor bindings for transitive bindings
+                if (annType.isAnnotationPresent(jakarta.enterprise.inject.Stereotype.class)
+                        || annType.isAnnotationPresent(jakarta.interceptor.InterceptorBinding.class)) {
+                    if (!visited.add(annType)) continue;
+                    for (var metaAnn : annType.getAnnotations()) {
+                        if (metaAnn.annotationType().isAnnotationPresent(jakarta.interceptor.InterceptorBinding.class)) {
+                            var prev = bindingsByType.put(metaAnn.annotationType(), metaAnn);
+                            if (prev != null && !prev.equals(metaAnn)) {
+                                errors.add("Bean " + beanName
+                                        + " has conflicting interceptor binding values for "
+                                        + metaAnn.annotationType().getSimpleName());
+                            }
+                        }
+                    }
+                    // Recurse into meta-annotations
+                    collectTransitiveInterceptorBindings(annType.getAnnotations(), bindingsByType, errors, beanName, visited);
+                }
+            }
         }
 
         private static void collectStereotypePriorities(Class<?> clazz,
