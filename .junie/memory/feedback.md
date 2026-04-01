@@ -30,3 +30,11 @@
     "NEW INSTRUCTION": "WHEN an internal review/status message is shown THEN explain in plain French with cause, impact, next steps"
 }
 
+[2026-04-01 19:54] - Updated by Junie
+{
+    "TYPE": "preference",
+    "CATEGORY": "Commit workflow",
+    "EXPECTATION": "User wants commits made as soon as the code is stable after a step.",
+    "NEW INSTRUCTION": "WHEN code is stable after completing a step THEN commit changes immediately"
+}
+

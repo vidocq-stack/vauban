@@ -101,7 +101,12 @@
 - [x] Support `AroundConstruct` (interception de l'instanciation) ✅
 - [x] Génération de bytecode pour sous-classes d'intercepteurs (Class-File API) ✅
 - [x] Validation des paramètres et gestion du constructeur d'origine pour le TCK ✅
-- [ ] Amélioration de la gestion des exceptions de déploiement (DefinitionException vs DeploymentException)
+- [x] Amélioration de la gestion des exceptions de déploiement (DefinitionException vs DeploymentException)
+- [x] Support de l'injection par constructeur dans les intercepteurs (CDI 2.0+)
+- [x] Support de l'ordre d'interception par @Priority
+- [x] Support du matching des bindings d'intercepteurs avec membres et @Nonbinding
+- [x] Exclusion des alternatives désactivées de la découverte des beans
+- [x] Amélioration de l'assignabilité des types (raw vs parameterized, wildcards)
 
 ## Phase 11: Outillage modules ✅
 - [x] `ModuleAnalyzer` : analyse JARs (explicit/automatic/unnamed), lit module-info via Class-File API

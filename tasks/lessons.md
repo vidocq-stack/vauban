@@ -43,3 +43,11 @@
 ## 11. Ne pas supposer l'origine des commits
 **Contexte**: Les commits "Missing file to commit" etaient de l'utilisateur, pas des agents.
 **Regle**: Ne pas faire d'hypotheses sur qui a fait un commit. Verifier avec l'utilisateur avant de consolider/rebase.
+
+## 12. CDI DefinitionException vs DeploymentException
+**Contexte**: Phase 10 - Le TCK est tres strict sur le type d'exception lancee. Les erreurs de syntaxe/definition sont des `DefinitionException`, les problemes de resolution de graphe (unsatisfied, ambiguous) sont des `DeploymentException`.
+**Regle**: Toujours verifier la spec CDI (Section 2.8) pour le type d'exception attendu. Dans `VaubanContainer.builder().build()`, filtrer les erreurs par `ValidationError.Kind` pour lancer la bonne exception Jakarta EE.
+
+## 13. Alternatives desactivees et decouverte de beans
+**Contexte**: Phase 10 - `DisabledBeanNotAvailableForInjectionTest` echouait car un bean alternative sans `@Priority` etait quand meme decouvert.
+**Regle**: CDI 4.1 Section 5.1.1 : une alternative n'est pas disponible pour l'injection si elle n'est pas activee. Il est preferable de les exclure des la phase `BeanDiscovery` pour eviter qu'elles ne polluent le `BeanResolver`.
