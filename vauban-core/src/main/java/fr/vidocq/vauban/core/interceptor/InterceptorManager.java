@@ -26,6 +26,7 @@ public final class InterceptorManager {
     private static final ThreadLocal<Boolean> IS_INTERCEPTING = ThreadLocal.withInitial(() -> false);
     private static final ThreadLocal<List<VaubanInvocationContext.InterceptorInvocation>> CURRENT_CHAIN = new ThreadLocal<>();
     private static final ThreadLocal<Set<DotName>> CURRENT_BINDINGS = new ThreadLocal<>();
+    private static final ThreadLocal<CreationalContext<?>> CURRENT_CONTEXT = new ThreadLocal<>();
 
     public static boolean $$isIntercepting() {
         return IS_INTERCEPTING.get();
@@ -39,16 +40,26 @@ public final class InterceptorManager {
         return CURRENT_BINDINGS.get();
     }
 
+    public static CreationalContext<?> $$getAroundConstructContext() {
+        return CURRENT_CONTEXT.get();
+    }
+
     public static void $$beginInterception(List<VaubanInvocationContext.InterceptorInvocation> chain, Set<DotName> bindings) {
+        $$beginInterception(chain, bindings, null);
+    }
+
+    public static void $$beginInterception(List<VaubanInvocationContext.InterceptorInvocation> chain, Set<DotName> bindings, CreationalContext<?> ctx) {
         IS_INTERCEPTING.set(true);
         CURRENT_CHAIN.set(chain);
         CURRENT_BINDINGS.set(bindings);
+        CURRENT_CONTEXT.set(ctx);
     }
 
     public static void $$endInterception() {
         IS_INTERCEPTING.set(false);
         CURRENT_CHAIN.remove();
         CURRENT_BINDINGS.remove();
+        CURRENT_CONTEXT.remove();
     }
 
     public InterceptorManager(List<InterceptorDescriptor> interceptors) {
@@ -105,6 +116,104 @@ public final class InterceptorManager {
     }
 
     /**
+     * Resolve matching interceptor descriptors without creating instances.
+     * Use this during boot phase to check if a bean needs interception.
+     */
+    public List<InterceptorDescriptor> resolveInterceptorDescriptors(Set<DotName> bindings) {
+        if (bindings == null || bindings.isEmpty()) return List.of();
+        var matches = new ArrayList<InterceptorDescriptor>();
+        for (var descriptor : interceptors) {
+            if (bindings.containsAll(descriptor.bindings()) && !descriptor.bindings().isEmpty()) {
+                matches.add(descriptor);
+            }
+        }
+        return matches;
+    }
+
+    public List<InterceptorDescriptor> resolveInterceptorDescriptorsForMethod(
+            Set<DotName> classBindings, java.lang.reflect.Method method) {
+        if (method == null) return List.of();
+        
+        Class<?> beanClass = method.getDeclaringClass();
+        if (beanClass.getName().contains("$$Intercepted")) {
+            beanClass = beanClass.getSuperclass();
+        }
+
+        var bindingsMap = collectAllBindings(beanClass);
+        var methodName = method.getName();
+        if (methodName.startsWith("$$super$")) {
+            methodName = methodName.substring("$$super$".length());
+        }
+        
+        var current = beanClass;
+        while (current != null && current != Object.class) {
+            try {
+                var originalMethod = current.getDeclaredMethod(methodName, method.getParameterTypes());
+                collectBindingsRecursively(originalMethod.getAnnotations(), bindingsMap, new java.util.HashSet<>());
+                break;
+            } catch (NoSuchMethodException e) {
+                current = current.getSuperclass();
+            }
+        }
+        
+        var allBindingNames = new java.util.LinkedHashSet<DotName>();
+        for (var type : bindingsMap.keySet()) {
+            allBindingNamesAdd(allBindingNames, type.getName());
+        }
+        allBindingNames.addAll(classBindings);
+
+        var beanAnnotations = new java.util.ArrayList<>(bindingsMap.values());
+
+        var matches = new ArrayList<InterceptorDescriptor>();
+        for (var descriptor : interceptors) {
+            if (allBindingNames.containsAll(descriptor.bindings()) && !descriptor.bindings().isEmpty()) {
+                if (!descriptor.bindingAnnotations().isEmpty() && !beanAnnotations.isEmpty()) {
+                    if (!bindingMembersMatch(descriptor.bindingAnnotations(), beanAnnotations)) {
+                        continue;
+                    }
+                }
+                matches.add(descriptor);
+            }
+        }
+        return matches;
+    }
+
+    public List<InterceptorDescriptor> resolveInterceptorDescriptorsAroundConstruct(
+            Set<DotName> classBindings, java.lang.reflect.Constructor<?> constructor, Class<?> beanClass,
+            List<java.lang.annotation.Annotation> beanAnnotations) {
+        if (beanClass.getName().contains("$$Intercepted")) {
+            beanClass = beanClass.getSuperclass();
+        }
+        
+        var bindingsMap = collectAllBindings(beanClass);
+        if (constructor != null) {
+            collectBindingsRecursively(constructor.getAnnotations(), bindingsMap, new java.util.HashSet<>());
+        }
+        
+        var allBindings = new java.util.LinkedHashSet<DotName>();
+        for (var type : bindingsMap.keySet()) {
+            allBindingNamesAdd(allBindings, type.getName());
+        }
+        allBindings.addAll(classBindings);
+        
+        var currentBeanAnnotations = new java.util.ArrayList<>(bindingsMap.values());
+        currentBeanAnnotations.addAll(beanAnnotations);
+
+        var matches = new ArrayList<InterceptorDescriptor>();
+        for (var descriptor : interceptors) {
+            if (allBindings.containsAll(descriptor.bindings()) && !descriptor.bindings().isEmpty()) {
+                if (!descriptor.bindingAnnotations().isEmpty() && !currentBeanAnnotations.isEmpty()) {
+                    if (!bindingMembersMatch(descriptor.bindingAnnotations(), currentBeanAnnotations)) {
+                        continue;
+                    }
+                }
+                matches.add(descriptor);
+            }
+        }
+        return matches;
+    }
+
+    /**
      * Resolve the interceptor chain for a constructor.
      */
     public List<VaubanInvocationContext.InterceptorInvocation> resolveAroundConstructChain(
@@ -119,14 +228,15 @@ public final class InterceptorManager {
         }
         
         var allBindings = new java.util.LinkedHashSet<DotName>();
+        if (classBindings != null) {
+            allBindings.addAll(classBindings);
+        }
         for (var type : bindingsMap.keySet()) {
             allBindingNamesAdd(allBindings, type.getName());
         }
-        allBindings.addAll(classBindings); // Add pre-resolved names if any
         
         var beanAnnotations = new java.util.ArrayList<>(bindingsMap.values());
 
-        var chain = new ArrayList<VaubanInvocationContext.InterceptorInvocation>();
         var matches = new ArrayList<InterceptorDescriptor>();
         for (var descriptor : interceptors) {
             if (allBindings.containsAll(descriptor.bindings()) && !descriptor.bindings().isEmpty()) {
@@ -143,12 +253,13 @@ public final class InterceptorManager {
         matches.sort(java.util.Comparator.comparingInt(InterceptorDescriptor::priority)
                 .thenComparing(d -> d.interceptorClass().toString()));
 
+        var chain = new ArrayList<VaubanInvocationContext.InterceptorInvocation>();
         for (var descriptor : matches) {
             var instance = getOrCreateInstance(descriptor, ctx);
             addLifecycleInvocations(instance.getClass(), instance, jakarta.interceptor.AroundConstruct.class, chain);
         }
-
-        // CDI spec: target class @AroundConstruct methods are invoked last
+        
+        // Target class @AroundConstruct methods are invoked last
         addLifecycleInvocations(beanClass, null, jakarta.interceptor.AroundConstruct.class, chain);
 
         return chain;
@@ -187,6 +298,9 @@ public final class InterceptorManager {
      */
     public List<VaubanInvocationContext.InterceptorInvocation> resolveChainForMethod(
             Set<DotName> classBindings, java.lang.reflect.Method method, Object target, CreationalContext<?> ctx) {
+        // If we are currently in AroundConstruct, reuse its context if none provided
+        var effectiveCtx = ctx != null ? ctx : $$getAroundConstructContext();
+        
         Class<?> beanClass = null;
         if (method != null) {
             // Use the target class if available, as class-level bindings on the bean
@@ -264,6 +378,7 @@ public final class InterceptorManager {
 
     private List<VaubanInvocationContext.InterceptorInvocation> resolveChainAroundConstruct(
             Set<DotName> bindings, List<java.lang.annotation.Annotation> beanAnnotations, CreationalContext<?> ctx) {
+        var effectiveCtx = ctx != null ? ctx : $$getAroundConstructContext();
         var matches = new ArrayList<InterceptorDescriptor>();
         for (var descriptor : interceptors) {
             if (bindings.containsAll(descriptor.bindings()) && !descriptor.bindings().isEmpty()) {
@@ -281,7 +396,7 @@ public final class InterceptorManager {
 
         var chain = new ArrayList<VaubanInvocationContext.InterceptorInvocation>();
         for (var descriptor : matches) {
-            var instance = getOrCreateInstance(descriptor, ctx);
+            var instance = getOrCreateInstance(descriptor, effectiveCtx);
             addLifecycleInvocations(instance.getClass(), instance, jakarta.interceptor.AroundConstruct.class, chain);
         }
         return chain;
@@ -305,6 +420,7 @@ public final class InterceptorManager {
      */
     public List<VaubanInvocationContext.InterceptorInvocation> resolveChain(
             Set<DotName> methodBindings, List<java.lang.annotation.Annotation> beanAnnotations, Object target, CreationalContext<?> ctx) {
+        var effectiveCtx = ctx != null ? ctx : $$getAroundConstructContext();
         var matches = new ArrayList<InterceptorDescriptor>();
 
         for (var descriptor : interceptors) {
@@ -326,8 +442,12 @@ public final class InterceptorManager {
 
         var chain = new ArrayList<VaubanInvocationContext.InterceptorInvocation>();
         for (var descriptor : matches) {
-            var instance = getOrCreateInstance(descriptor, ctx);
-            addLifecycleInvocations(instance.getClass(), instance, jakarta.interceptor.AroundInvoke.class, chain);
+            if (effectiveCtx != null) {
+                var instance = getOrCreateInstance(descriptor, effectiveCtx);
+                addLifecycleInvocations(instance.getClass(), instance, jakarta.interceptor.AroundInvoke.class, chain);
+            } else {
+                chain.add(new VaubanInvocationContext.InterceptorInvocation(null, null));
+            }
         }
         return chain;
     }
@@ -381,6 +501,8 @@ public final class InterceptorManager {
     public List<VaubanInvocationContext.InterceptorInvocation> resolveLifecycleChain(
             Set<DotName> methodBindings, Class<? extends java.lang.annotation.Annotation> lifecycleAnnotation,
             List<java.lang.annotation.Annotation> beanAnnotations, CreationalContext<?> ctx) {
+        // Use AroundConstruct context if none provided (e.g. for PostConstruct called after constructor interception)
+        var effectiveCtx = ctx != null ? ctx : $$getAroundConstructContext();
         var matches = new ArrayList<InterceptorDescriptor>();
 
         for (var descriptor : interceptors) {
@@ -401,11 +523,26 @@ public final class InterceptorManager {
 
         var chain = new ArrayList<VaubanInvocationContext.InterceptorInvocation>();
         for (var descriptor : matches) {
-            var instance = getOrCreateInstance(descriptor, ctx);
-            addLifecycleInvocations(instance.getClass(), instance, lifecycleAnnotation, chain);
+            if (effectiveCtx != null) {
+                var instance = getOrCreateInstance(descriptor, effectiveCtx);
+                addLifecycleInvocations(instance.getClass(), instance, lifecycleAnnotation, chain);
+            } else {
+                chain.add(new VaubanInvocationContext.InterceptorInvocation(null, null));
+            }
         }
 
         return chain;
+    }
+
+    /**
+     * Share interceptor instances with the provided creational context.
+     */
+    public void shareInstances(CreationalContext<?> ctx) {
+        if (ctx instanceof fr.vidocq.vauban.core.context.CreationalContextImpl<?> vCtx) {
+            for (var entry : interceptorInstances.entrySet()) {
+                vCtx.addInterceptorInstance(entry.getKey().toString(), entry.getValue());
+            }
+        }
     }
 
     /**
@@ -477,21 +614,36 @@ public final class InterceptorManager {
 
     private ClassLoader classLoader;
 
-    private Object getOrCreateInstance(InterceptorDescriptor descriptor, CreationalContext<?> ctx) {
+    public Object getOrCreateInstance(InterceptorDescriptor descriptor, CreationalContext<?> ctx) {
         if (instanceFactory != null) {
             return instanceFactory.apply(descriptor, ctx);
         }
-        return interceptorInstances.computeIfAbsent(descriptor.interceptorClass(), name -> {
-            try {
-                var cl = classLoader != null ? classLoader
-                        : Thread.currentThread().getContextClassLoader();
-                var clazz = cl != null ? Class.forName(name.value(), true, cl)
-                                       : Class.forName(name.value());
-                return clazz.getDeclaredConstructor().newInstance();
-            } catch (Exception e) {
-                throw new RuntimeException("Failed to create interceptor: " + name, e);
+        
+        String className = descriptor.interceptorClass().value();
+        if (ctx instanceof fr.vidocq.vauban.core.context.CreationalContextImpl<?> vCtx) {
+            Object instance = vCtx.getInterceptorInstance(className);
+            if (instance != null) {
+                return instance;
             }
-        });
+        }
+
+        try {
+            var cl = classLoader != null ? classLoader
+                    : Thread.currentThread().getContextClassLoader();
+            var clazz = cl != null ? Class.forName(className, true, cl)
+                                   : Class.forName(className);
+            Object instance = clazz.getDeclaredConstructor().newInstance();
+            
+            if (ctx instanceof fr.vidocq.vauban.core.context.CreationalContextImpl<?> vCtx) {
+                vCtx.addInterceptorInstance(className, instance);
+                // Register for destruction - interceptors are destroyed with the bean
+                vCtx.pushInterceptor(instance); 
+            }
+            
+            return instance;
+        } catch (Exception e) {
+            throw new RuntimeException("Failed to create interceptor: " + className, e);
+        }
     }
 
     private Method findAroundInvokeMethod(Class<?> clazz, String methodName) {

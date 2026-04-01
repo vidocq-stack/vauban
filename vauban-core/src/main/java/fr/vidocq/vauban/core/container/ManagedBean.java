@@ -76,18 +76,24 @@ public final class ManagedBean<T> implements Bean<T> {
 
     @Override
     public void destroy(T instance, CreationalContext<T> creationalContext) {
+        if (instance == null) return;
+        
         // Call disposer method first (for producer beans)
-        if (destroyer != null && instance != null) {
+        if (destroyer != null) {
             try {
                 destroyer.accept(instance);
             } catch (Exception e) {
                 // CDI spec: exceptions in disposer methods are suppressed
             }
         }
+        
         callPreDestroy(instance, creationalContext);
-        if (creationalContext != null) {
-            creationalContext.release();
-        }
+        
+        // CDI Spec 6.1: The responsibility of calling release() is on the caller of Contextual.create().
+        // ManagedBean.destroy() MUST NOT call creationalContext.release() if it would trigger 
+        // a recursive call (e.g. if this bean is a dependent bean being destroyed BY release()).
+        // In our current implementation, calling release() here causes a StackOverflowError 
+        // because release() calls destroy() on all dependent instances.
     }
 
     private void callPreDestroy(Object instance, CreationalContext<?> ctx) {

@@ -276,6 +276,12 @@ public final class InterceptorSubclassGenerator {
                     cob.invokevirtual(CD_VaubanInvocationContext, "proceed",
                             MethodTypeDesc.of(CD_Object));
 
+                    // Cache any interceptor instances created during AroundConstruct
+                    cob.aload(0);
+                    cob.getfield(subclassCD, "$$manager", CD_InterceptorManager);
+                    cob.invokestatic(CD_InterceptorManager, "$$getAroundConstructContext", MethodTypeDesc.of(CD_CreationalContext));
+                    cob.invokevirtual(CD_InterceptorManager, "shareInstances", MethodTypeDesc.of(ConstantDescs.CD_void, CD_CreationalContext));
+
                     // Return
                     if (method.getReturnType() == void.class) {
                         cob.pop();

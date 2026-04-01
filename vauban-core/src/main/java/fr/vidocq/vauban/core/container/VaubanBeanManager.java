@@ -90,11 +90,20 @@ public final class VaubanBeanManager implements BeanManager {
         if (context == null) {
             context = contexts.get(jakarta.enterprise.context.Dependent.class);
         }
+        
         @SuppressWarnings("unchecked")
         var contextual = (Contextual<Object>) bean;
         @SuppressWarnings("unchecked")
         var cc = (CreationalContext<Object>) ctx;
-        return context.get(contextual, cc);
+        
+        Object instance = context.get(contextual, cc);
+        
+        // Ensure dependent instances are registered for cleanup in the provided context
+        if (scope == jakarta.enterprise.context.Dependent.class && cc instanceof CreationalContextImpl<?> vcc && instance != null) {
+             vcc.addDependentInstance(contextual, instance, cc);
+        }
+        
+        return instance;
     }
 
     @Override

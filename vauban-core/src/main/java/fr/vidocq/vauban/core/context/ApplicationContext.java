@@ -19,7 +19,6 @@ public final class ApplicationContext implements AlterableContext {
         return ApplicationScoped.class;
     }
 
-    @Override
     @SuppressWarnings("unchecked")
     public <T> T get(Contextual<T> contextual, CreationalContext<T> creationalContext) {
         var existing = instances.get(contextual);
@@ -29,10 +28,20 @@ public final class ApplicationContext implements AlterableContext {
         if (creationalContext == null) {
             return null;
         }
+        
+        // CDI Spec: if another thread created the instance in the meantime, 
+        // we must destroy the one we just created and return the existing one.
         var instance = contextual.create(creationalContext);
         var ci = new ContextualInstance(instance, creationalContext);
         var previous = instances.putIfAbsent(contextual, ci);
-        return (T) (previous != null ? previous.instance() : instance);
+        if (previous != null) {
+            // Another thread won the race. Destroy the instance we created.
+            contextual.destroy(instance, creationalContext);
+            // DO NOT release the creationalContext if it's the one we're still using for the bean
+            // but here we created a new one in VaubanContainer.getContextualInstance
+            return (T) previous.instance();
+        }
+        return instance;
     }
 
     @Override

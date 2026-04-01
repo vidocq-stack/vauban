@@ -17,11 +17,7 @@ public final class DependentContext implements Context {
     @SuppressWarnings("unchecked")
     public <T> T get(Contextual<T> contextual, CreationalContext<T> creationalContext) {
         if (creationalContext == null) return null;
-        var childCtx = new CreationalContextImpl<T>();
-        T instance = contextual.create(childCtx);
-        if (instance != null && creationalContext instanceof CreationalContextImpl<?> cci) {
-            ((CreationalContextImpl<T>) cci).addDependentInstance(contextual, instance, childCtx);
-        }
+        T instance = contextual.create(creationalContext);
         return instance;
     }
 
