@@ -71,7 +71,12 @@ public final class AssignabilityRules {
     private boolean isAssignableToClass(TypeInfo beanType, ClassType required) {
         return switch (beanType) {
             case ClassType bean -> isSubtypeOf(bean.name(), required.name());
-            case ParameterizedType bean -> isSubtypeOf(bean.rawType(), required.name());
+            case ParameterizedType bean -> {
+                // CDI 4.1 Section 2.4.1: A bean type that is a parameterized type is assignable to 
+                // a required type that is a class or interface if the bean type's raw type is assignable
+                // to the required type.
+                yield isSubtypeOf(bean.rawType(), required.name());
+            }
             default -> false;
         };
     }
@@ -81,7 +86,7 @@ public final class AssignabilityRules {
             case ParameterizedType bean -> {
                 if (!bean.rawType().equals(required.rawType())) yield false;
                 if (bean.typeArguments().size() != required.typeArguments().size()) yield false;
-                // Each type argument must match
+                // Each type argument must match (CDI 4.1 Section 2.4.1)
                 for (int i = 0; i < bean.typeArguments().size(); i++) {
                     if (!isTypeArgumentAssignable(bean.typeArguments().get(i), required.typeArguments().get(i))) {
                         yield false;
@@ -89,11 +94,11 @@ public final class AssignabilityRules {
                 }
                 yield true;
             }
-            // CDI spec: A raw bean type is assignable to a parameterized required type if they have identical raw types.
+            // CDI spec 4.1 Section 2.4.1: A raw bean type is assignable to a parameterized required type if they have identical raw types.
+            // This case specifically applies when the bean itself IS a raw type (no type parameters in declaration).
+            // However, most beans in these tests ARE parameterized, so they fall into the ParameterizedType case above.
             case ClassType bean -> {
                 if (!bean.name().equals(required.rawType())) yield false;
-                // If it's a raw type being injected into a parameterized type, it matches
-                // if the raw types are identical (CDI 4.1 Section 2.4.1)
                 yield true;
             }
             default -> false;
