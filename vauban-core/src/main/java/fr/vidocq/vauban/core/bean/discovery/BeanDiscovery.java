@@ -334,6 +334,24 @@ public final class BeanDiscovery {
             
             var collected = new java.util.HashSet<Class<? extends java.lang.annotation.Annotation>>();
             collectBindingAnnotationsRecursively(clazz.getAnnotations(), annotations, collected);
+
+            // Bindings from superclasses (inherited bindings)
+            var superClass = clazz.getSuperclass();
+            while (superClass != null && superClass != Object.class) {
+                var superAnns = new java.util.ArrayList<java.lang.annotation.Annotation>();
+                collectBindingAnnotationsRecursively(superClass.getAnnotations(), superAnns, new java.util.HashSet<>());
+                for (var ann : superAnns) {
+                    var type = ann.annotationType();
+                    if (type.isAnnotationPresent(java.lang.annotation.Inherited.class)) {
+                        // Only add if not already present on subclass (overriding)
+                        if (!collected.contains(type)) {
+                            annotations.add(ann);
+                            collected.add(type);
+                        }
+                    }
+                }
+                superClass = superClass.getSuperclass();
+            }
         } catch (Exception e) {
             // Fallback: ignore if class not found
         }
