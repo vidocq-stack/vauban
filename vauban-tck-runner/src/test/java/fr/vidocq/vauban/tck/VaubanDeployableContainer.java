@@ -96,6 +96,15 @@ public class VaubanDeployableContainer implements DeployableContainer<VaubanCont
             throw new DeploymentException("CDI DefinitionException: " + e.getMessage(), e);
         } catch (jakarta.enterprise.inject.spi.DeploymentException e) {
             throw new DeploymentException("CDI DeploymentException: " + e.getMessage(), e);
+        } catch (RuntimeException e) {
+            // Unwrap some RuntimeExceptions that might be CDI exceptions
+            if (e.getCause() instanceof jakarta.enterprise.inject.spi.DefinitionException) {
+                throw new DeploymentException("CDI DefinitionException: " + e.getCause().getMessage(), e.getCause());
+            }
+            if (e.getCause() instanceof jakarta.enterprise.inject.spi.DeploymentException) {
+                throw new DeploymentException("CDI DeploymentException: " + e.getCause().getMessage(), e.getCause());
+            }
+            throw new DeploymentException("Unexpected RuntimeException during deployment: " + e.getMessage(), e);
         } catch (Exception e) {
             throw new DeploymentException("Failed to deploy archive: " + archive.getName(), e);
         }

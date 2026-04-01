@@ -47,7 +47,7 @@ public final class DeploymentValidator {
                 var matching = resolver.resolveInterceptors(bindings);
                 if (matching.isEmpty()) {
                     errors.add(new ValidationError(
-                            ValidationError.Kind.DEFINITION_ERROR,
+                            ValidationError.Kind.DEPLOYMENT_ERROR,
                             "Interceptor bindings " + bindings + " on bean " + bean.beanClass()
                                     + " do not match any enabled interceptor",
                             bean));

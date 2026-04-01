@@ -79,7 +79,7 @@ public final class AssignabilityRules {
     private boolean isAssignableToParameterized(TypeInfo beanType, ParameterizedType required) {
         return switch (beanType) {
             case ParameterizedType bean -> {
-                if (!isSubtypeOf(bean.rawType(), required.rawType())) yield false;
+                if (!bean.rawType().equals(required.rawType())) yield false;
                 if (bean.typeArguments().size() != required.typeArguments().size()) yield false;
                 // Each type argument must match
                 for (int i = 0; i < bean.typeArguments().size(); i++) {
@@ -89,8 +89,8 @@ public final class AssignabilityRules {
                 }
                 yield true;
             }
-            // Raw type is assignable to parameterized (unsafe but CDI allows it)
-            case ClassType bean -> isSubtypeOf(bean.name(), required.rawType());
+            // CDI spec: A raw bean type is assignable to a parameterized required type if they have identical raw types.
+            case ClassType bean -> bean.name().equals(required.rawType());
             default -> false;
         };
     }
@@ -122,7 +122,14 @@ public final class AssignabilityRules {
                 yield true;
             }
             default -> {
-                // Exact match required for non-wildcard type arguments
+                // Exact match required for non-wildcard type arguments, EXCEPT if beanArg is a TypeVariable
+                if (beanArg instanceof TypeVariable tv) {
+                     // If bean arg is a type variable, it matches if all its bounds are assignable to requiredArg
+                     for (var bound : tv.bounds()) {
+                         if (isAssignable(bound, requiredArg)) yield true;
+                     }
+                     yield false;
+                }
                 if (beanArg instanceof WildcardType beanWild) {
                     // Bean wildcard vs required concrete: check bounds
                     if (beanWild.upperBound() != null) {

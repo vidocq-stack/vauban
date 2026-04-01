@@ -1506,6 +1506,12 @@ public final class VaubanContainer implements AutoCloseable {
             return select(paramType);
         }
         var resolved = bm.resolve(beansFound);
+        if (resolved == null) {
+            // Primitive injection point cannot be null, but bm.resolve() returns null for empty or ambiguous?
+            // Wait, getBeans was not empty, so bm.resolve should return something.
+            // But just in case, or if it returns null...
+            return select(paramType);
+        }
         
         // Handle InjectionPoint for @Dependent beans
         var previousIp = currentInjectionPoint.get();

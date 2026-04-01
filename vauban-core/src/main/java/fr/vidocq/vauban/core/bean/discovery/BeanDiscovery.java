@@ -65,6 +65,7 @@ public final class BeanDiscovery {
 
         for (var classInfo : index.getKnownClasses()) {
             if (isVetoed(classInfo)) continue;
+            if (isDisabledAlternative(classInfo)) continue;
             if (!isBeanCandidate(classInfo)) continue;
             if (!hasBeanDefiningAnnotation(classInfo)) {
                 // Potential bean but no annotation in index, check reflection
