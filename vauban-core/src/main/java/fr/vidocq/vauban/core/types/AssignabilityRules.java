@@ -90,7 +90,12 @@ public final class AssignabilityRules {
                 yield true;
             }
             // CDI spec: A raw bean type is assignable to a parameterized required type if they have identical raw types.
-            case ClassType bean -> bean.name().equals(required.rawType());
+            case ClassType bean -> {
+                if (!bean.name().equals(required.rawType())) yield false;
+                // If it's a raw type being injected into a parameterized type, it matches
+                // if the raw types are identical (CDI 4.1 Section 2.4.1)
+                yield true;
+            }
             default -> false;
         };
     }

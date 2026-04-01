@@ -30,7 +30,22 @@ public final class InstanceImpl<T> implements Instance<T> {
     private InstanceImpl(VaubanContainer container, Class<T> type, Annotation[] qualifiers) {
         this.container = container;
         this.type = type;
-        this.qualifiers = qualifiers;
+        // If qualifiers are empty, default to @Any and @Default
+        if (qualifiers == null || qualifiers.length == 0) {
+            this.qualifiers = new Annotation[] {
+                jakarta.enterprise.inject.Any.Literal.INSTANCE,
+                jakarta.enterprise.inject.Default.Literal.INSTANCE
+            };
+        } else {
+            // Ensure @Any is present (CDI 4.1 Section 2.3.1)
+            var set = new java.util.LinkedHashSet<Annotation>(java.util.Arrays.asList(qualifiers));
+            set.add(jakarta.enterprise.inject.Any.Literal.INSTANCE);
+            // If only @Any is present, add @Default (CDI 4.1 Section 2.3.1)
+            if (set.size() == 1 && set.iterator().next().annotationType() == jakarta.enterprise.inject.Any.class) {
+                set.add(jakarta.enterprise.inject.Default.Literal.INSTANCE);
+            }
+            this.qualifiers = set.toArray(new Annotation[0]);
+        }
     }
 
     @Override
@@ -71,15 +86,30 @@ public final class InstanceImpl<T> implements Instance<T> {
 
     private static Annotation[] combineQualifiers(Annotation[] existing, Annotation[] additional) {
         if (additional == null || additional.length == 0) return existing;
-        if (existing.length == 0) return additional;
-        var combined = Arrays.copyOf(existing, existing.length + additional.length);
-        System.arraycopy(additional, 0, combined, existing.length, additional.length);
-        return combined;
+        if (existing == null || existing.length == 0) {
+            var set = new java.util.LinkedHashSet<Annotation>(java.util.Arrays.asList(additional));
+            set.add(jakarta.enterprise.inject.Any.Literal.INSTANCE);
+            return set.toArray(new Annotation[0]);
+        }
+
+        var result = new java.util.LinkedHashSet<Annotation>(java.util.Arrays.asList(existing));
+        for (var q : additional) {
+            // Remove @Default if we're adding a non-@Any qualifier
+            if (q.annotationType() != jakarta.enterprise.inject.Any.class
+                    && q.annotationType() != jakarta.enterprise.inject.Default.class) {
+                result.removeIf(ann -> ann.annotationType() == jakarta.enterprise.inject.Default.class);
+            }
+            // Remove existing same-type qualifier to avoid duplicates
+            result.removeIf(ann -> ann.annotationType() == q.annotationType());
+            result.add(q);
+        }
+        result.add(jakarta.enterprise.inject.Any.Literal.INSTANCE);
+        return result.toArray(new Annotation[0]);
     }
 
     private static void validateQualifiers(Annotation... qualifiers) {
         if (qualifiers == null) return;
-        var seen = new HashSet<Class<?>>();
+        var seen = new java.util.HashSet<Class<?>>();
         for (var q : qualifiers) {
             if (!q.annotationType().isAnnotationPresent(jakarta.inject.Qualifier.class)
                     && q.annotationType() != jakarta.enterprise.inject.Default.class
@@ -160,10 +190,7 @@ public final class InstanceImpl<T> implements Instance<T> {
         }
         @SuppressWarnings("unchecked")
         var bean = (Bean<T>) bm.resolve(beans);
-        var ctx = bm.createCreationalContext(bean);
-        @SuppressWarnings("unchecked")
-        var ref = (T) bm.getReference(bean, type, ctx);
-        return new HandleImpl<>(ref, bean, container);
+        return new HandleImpl<>(bean, type, container);
     }
 
     @Override
@@ -174,10 +201,7 @@ public final class InstanceImpl<T> implements Instance<T> {
         for (var b : beans) {
             @SuppressWarnings("unchecked")
             var bean = (Bean<T>) b;
-            var ctx = bm.createCreationalContext(bean);
-            @SuppressWarnings("unchecked")
-            var ref = (T) bm.getReference(bean, type, ctx);
-            result.add(new HandleImpl<>(ref, bean, container));
+            result.add(new HandleImpl<>(bean, type, container));
         }
         return result;
     }
@@ -212,18 +236,28 @@ public final class InstanceImpl<T> implements Instance<T> {
      * Implementation of {@link Handle} wrapping a bean instance and its metadata.
      */
     private static final class HandleImpl<T> implements Handle<T> {
-        private final T instance;
         private final Bean<T> bean;
+        private final Class<T> type;
         private final VaubanContainer container;
+        private T instance;
+        private boolean destroyed;
 
-        HandleImpl(T instance, Bean<T> bean, VaubanContainer container) {
-            this.instance = instance;
+        HandleImpl(Bean<T> bean, Class<T> type, VaubanContainer container) {
             this.bean = bean;
+            this.type = type;
             this.container = container;
         }
 
         @Override
         public T get() {
+            if (destroyed) {
+                throw new IllegalStateException("Handle has been destroyed");
+            }
+            if (instance == null) {
+                var bm = container.getBeanManager();
+                var ctx = bm.createCreationalContext(bean);
+                instance = (T) bm.getReference(bean, type, ctx);
+            }
             return instance;
         }
 
@@ -235,6 +269,7 @@ public final class InstanceImpl<T> implements Instance<T> {
         @Override
         @SuppressWarnings("unchecked")
         public void destroy() {
+            if (destroyed) return;
             try {
                 var bm = container.getBeanManager();
                 var ctx = bm.getContext(bean.getScope());
@@ -244,6 +279,8 @@ public final class InstanceImpl<T> implements Instance<T> {
             } catch (Exception e) {
                 // Best effort
             }
+            destroyed = true;
+            instance = null;
         }
 
         @Override

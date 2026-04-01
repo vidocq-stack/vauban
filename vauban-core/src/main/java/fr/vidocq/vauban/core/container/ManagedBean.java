@@ -671,19 +671,31 @@ public final class ManagedBean<T> implements Bean<T> {
     }
 
     private static Set<java.lang.annotation.Annotation> extractParamQualifiers(java.lang.reflect.Parameter param) {
-        var qualifiers = new LinkedHashSet<java.lang.annotation.Annotation>();
+        var qualifiers = new java.util.LinkedHashSet<java.lang.annotation.Annotation>();
+        boolean hasAnyAnnotation = false;
         for (var ann : param.getAnnotations()) {
             if (ann.annotationType().isAnnotationPresent(jakarta.inject.Qualifier.class)
                     || ann.annotationType() == jakarta.enterprise.inject.Default.class
                     || ann.annotationType() == jakarta.enterprise.inject.Any.class
                     || ann.annotationType() == jakarta.inject.Named.class) {
                 qualifiers.add(ann);
+                hasAnyAnnotation = true;
             }
         }
-        if (qualifiers.isEmpty()) {
+        if (!hasAnyAnnotation) {
             qualifiers.add(jakarta.enterprise.inject.Default.Literal.INSTANCE);
         }
-        qualifiers.add(jakarta.enterprise.inject.Any.Literal.INSTANCE);
+        // Always add @Any (CDI 4.1 Section 2.3.1)
+        boolean hasAny = false;
+        for (var q : qualifiers) {
+            if (q.annotationType() == jakarta.enterprise.inject.Any.class) {
+                hasAny = true;
+                break;
+            }
+        }
+        if (!hasAny) {
+            qualifiers.add(jakarta.enterprise.inject.Any.Literal.INSTANCE);
+        }
         return qualifiers;
     }
 

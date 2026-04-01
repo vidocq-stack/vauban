@@ -511,7 +511,11 @@ public final class VaubanContainer implements AutoCloseable {
                 // Handle InjectionPoint injection — the dependent bean receives the
                 // InjectionPoint that describes WHERE it was injected (set by the caller)
                 if (field.getType() == InjectionPoint.class) {
-                    field.set(instance, currentInjectionPoint.get());
+                    var ip = currentInjectionPoint.get();
+                    if (ip == null) {
+                        ip = new VaubanInjectionPoint(field, findBeanForInstance(instance));
+                    }
+                    field.set(instance, ip);
                     continue;
                 }
 
@@ -619,14 +623,29 @@ public final class VaubanContainer implements AutoCloseable {
 
     private static java.lang.annotation.Annotation[] extractParamQualifiers(java.lang.reflect.Parameter param) {
         var quals = new java.util.ArrayList<java.lang.annotation.Annotation>();
+        boolean hasAnyAnnotation = false;
         for (var ann : param.getAnnotations()) {
-            if (ann.annotationType() == jakarta.inject.Inject.class) continue;
             if (ann.annotationType().isAnnotationPresent(jakarta.inject.Qualifier.class)
                     || ann.annotationType() == jakarta.enterprise.inject.Default.class
                     || ann.annotationType() == jakarta.enterprise.inject.Any.class
                     || ann.annotationType() == jakarta.inject.Named.class) {
                 quals.add(ann);
+                hasAnyAnnotation = true;
             }
+        }
+        if (!hasAnyAnnotation) {
+            quals.add(jakarta.enterprise.inject.Default.Literal.INSTANCE);
+        }
+        // Always add @Any (CDI 4.1 Section 2.3.1)
+        boolean hasAny = false;
+        for (var q : quals) {
+            if (q.annotationType() == jakarta.enterprise.inject.Any.class) {
+                hasAny = true;
+                break;
+            }
+        }
+        if (!hasAny) {
+            quals.add(jakarta.enterprise.inject.Any.Literal.INSTANCE);
         }
         return quals.toArray(new java.lang.annotation.Annotation[0]);
     }
@@ -874,8 +893,11 @@ public final class VaubanContainer implements AutoCloseable {
                 if (!hasAccessibleNoArgCtor) {
                     // Check if there's ANY no-arg constructor (even private)
                     boolean hasPrivateNoArgCtor = false;
-                    try { beanClass.getDeclaredConstructor(); hasPrivateNoArgCtor = true; }
-                    catch (NoSuchMethodException e) { /* no no-arg ctor at all */ }
+                    try {
+                        beanClass.getDeclaredConstructor();
+                        hasPrivateNoArgCtor = true;
+                    } catch (NoSuchMethodException e) { /* no no-arg ctor at all */ }
+
                     if (hasPrivateNoArgCtor) {
                         throw new jakarta.enterprise.inject.spi.DeploymentException(
                                 "Intercepted bean " + beanClass.getName()
@@ -1464,14 +1486,29 @@ public final class VaubanContainer implements AutoCloseable {
 
     private static java.lang.annotation.Annotation[] extractFieldQualifiers(java.lang.reflect.Field field) {
         var qualifiers = new java.util.ArrayList<java.lang.annotation.Annotation>();
+        boolean hasAnyAnnotation = false;
         for (var ann : field.getAnnotations()) {
-            if (ann.annotationType() == jakarta.inject.Inject.class) continue;
             if (ann.annotationType().isAnnotationPresent(jakarta.inject.Qualifier.class)
                     || ann.annotationType() == jakarta.enterprise.inject.Default.class
                     || ann.annotationType() == jakarta.enterprise.inject.Any.class
                     || ann.annotationType() == jakarta.inject.Named.class) {
                 qualifiers.add(ann);
+                hasAnyAnnotation = true;
             }
+        }
+        if (!hasAnyAnnotation) {
+            qualifiers.add(jakarta.enterprise.inject.Default.Literal.INSTANCE);
+        }
+        // Always add @Any (CDI 4.1 Section 2.3.1)
+        boolean hasAny = false;
+        for (var q : qualifiers) {
+            if (q.annotationType() == jakarta.enterprise.inject.Any.class) {
+                hasAny = true;
+                break;
+            }
+        }
+        if (!hasAny) {
+            qualifiers.add(jakarta.enterprise.inject.Any.Literal.INSTANCE);
         }
         return qualifiers.toArray(new java.lang.annotation.Annotation[0]);
     }
@@ -1497,7 +1534,12 @@ public final class VaubanContainer implements AutoCloseable {
             return null;
         }
         if (paramType == jakarta.enterprise.inject.spi.InjectionPoint.class) {
-            return currentInjectionPoint.get();
+            var ip = currentInjectionPoint.get();
+            if (ip == null) {
+                // If no current injection point is set (e.g., manual lookup), return a dummy IP
+                return new VaubanInjectionPoint(jakarta.enterprise.inject.spi.InjectionPoint.class, java.util.Set.of(jakarta.enterprise.inject.Default.Literal.INSTANCE, jakarta.enterprise.inject.Any.Literal.INSTANCE), null);
+            }
+            return ip;
         }
         
         var bm = getBeanManager();

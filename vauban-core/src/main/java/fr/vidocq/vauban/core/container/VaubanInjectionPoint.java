@@ -89,18 +89,21 @@ public final class VaubanInjectionPoint implements InjectionPoint {
 
     private static Set<Annotation> extractQualifiers(Field field) {
         var result = new LinkedHashSet<Annotation>();
+        boolean hasAnyAnnotation = false;
         for (var ann : field.getAnnotations()) {
             if (ann.annotationType().isAnnotationPresent(jakarta.inject.Qualifier.class)
                     || ann.annotationType() == jakarta.enterprise.inject.Default.class
                     || ann.annotationType() == jakarta.enterprise.inject.Any.class
                     || ann.annotationType() == jakarta.inject.Named.class) {
                 result.add(ann);
+                hasAnyAnnotation = true;
             }
         }
         // CDI 4.1 Section 5.5.3: InjectionPoint qualifiers are only the declared ones
-        if (result.isEmpty()) {
+        if (!hasAnyAnnotation) {
             result.add(jakarta.enterprise.inject.Default.Literal.INSTANCE);
         }
+        result.add(jakarta.enterprise.inject.Any.Literal.INSTANCE);
         return result;
     }
 

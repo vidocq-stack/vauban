@@ -254,6 +254,16 @@ public final class DeploymentValidator {
                 }
             }
         }
+
+        // 3. Circular dependency validation
+        var graph = buildDependencyGraph();
+        var illegalCycles = graph.detectIllegalCycles();
+        for (var cycle : illegalCycles) {
+            errors.add(new ValidationError(
+                    ValidationError.Kind.CIRCULAR_DEPENDENCY,
+                    "Illegal circular dependency involving @Dependent bean: " + cycle,
+                    null));
+        }
     }
 
     private void validateProxyableType(TypeInfo type, BeanDescriptor bean, List<ValidationError> errors, BeanDescriptor contextBean) {
