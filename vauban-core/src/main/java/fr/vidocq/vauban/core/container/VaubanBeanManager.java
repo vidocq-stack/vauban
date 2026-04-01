@@ -147,19 +147,32 @@ public final class VaubanBeanManager implements BeanManager {
                 }
             }
             if (typeMatch) {
-                // CDI spec: Event<T> and Instance<T> are available with any qualifier
-                // Other built-in beans match @Default and @Any only
-                var builtInClass = builtIn.getBeanClass();
-                if (builtInClass == Event.class || builtInClass == Instance.class) {
-                    result.add(builtIn);
-                } else if (requiredQualifiers.contains(jakarta.enterprise.inject.Any.class) ||
-                    requiredQualifiers.contains(jakarta.enterprise.inject.Default.class)) {
+                // Qualifier matching for built-in beans
+                var beanQualifiers = builtIn.getQualifiers();
+                boolean qualifiersMatch = true;
+                for (var reqAnn : requiredQualifierAnnotations) {
+                    // @Any always matches — all beans implicitly have @Any
+                    if (reqAnn.annotationType() == jakarta.enterprise.inject.Any.class) continue;
+                    boolean found = beanQualifiers.stream()
+                        .anyMatch(bq -> qualifierEquals(bq, reqAnn));
+                    if (!found) {
+                        qualifiersMatch = false;
+                        break;
+                    }
+                }
+                if (qualifiersMatch) {
                     result.add(builtIn);
                 }
             }
         }
 
         for (var bean : beans) {
+            // CDI spec: disabled alternatives (no @Priority) are excluded from resolution
+            if (bean.isAlternative() && bean instanceof ManagedBean<?> mb
+                    && mb.descriptor().priority() <= 0) {
+                continue;
+            }
+
             // Type matching (supports Class, ParameterizedType, etc.)
             boolean typeMatch = false;
             for (var bt : bean.getTypes()) {
@@ -171,17 +184,7 @@ public final class VaubanBeanManager implements BeanManager {
 
             if (!typeMatch) continue;
 
-            // Qualifier matching: @Any alone matches everything
-            // But @Any + other qualifiers must still check the other qualifiers
-            if (requiredQualifiers.contains(jakarta.enterprise.inject.Any.class)
-                    && requiredQualifiers.size() == 1) {
-                result.add(bean);
-                continue;
-            }
-
-            // Check if bean has all required qualifiers via bean.getQualifiers()
-            // CDI spec: qualifier matching considers member values (except @Nonbinding)
-            // @Any in the required set always matches — skip it in the comparison
+            // Qualifier matching
             {
                 var beanQualifiers = bean.getQualifiers();
                 boolean qualifiersMatch = true;
@@ -228,6 +231,7 @@ public final class VaubanBeanManager implements BeanManager {
         Bean<? extends X> best = null;
         int bestPriority = -1;
         boolean hasAlternative = false;
+        boolean duplicatePriority = false;
 
         for (var bean : beans) {
             if (bean.isAlternative()) {
@@ -239,11 +243,21 @@ public final class VaubanBeanManager implements BeanManager {
                 if (priority > bestPriority) {
                     bestPriority = priority;
                     best = bean;
+                    duplicatePriority = false;
+                } else if (priority == bestPriority && priority != -1) {
+                    duplicatePriority = true;
                 }
             }
         }
 
-        if (hasAlternative && best != null) return best;
+        if (hasAlternative) {
+            if (best != null && !duplicatePriority) {
+                return best;
+            } else {
+                throw new jakarta.enterprise.inject.AmbiguousResolutionException(
+                    "Ambiguous dependency: multiple alternatives with the same priority: " + beans.size() + " beans match");
+            }
+        }
 
         // Still ambiguous — CDI spec requires AmbiguousResolutionException
         throw new jakarta.enterprise.inject.AmbiguousResolutionException(
