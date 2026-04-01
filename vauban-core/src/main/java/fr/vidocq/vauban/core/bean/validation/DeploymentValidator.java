@@ -49,40 +49,80 @@ public final class DeploymentValidator {
                                     ". Matching beans: " + result.beans().stream()
                                     .map(b -> b.beanClass().value()).toList(),
                             bean));
-                    case RESOLVED -> {}
+                    case RESOLVED -> {
+                        // CDI Spec: Check if a normal-scoped bean is being injected into
+                        // a point that doesn't support proxies (primitives, arrays, etc.)
+                        var resolvedBean = result.bean();
+                        if (resolvedBean.scope().isNormal()) {
+                            validateProxyableType(ip.requiredType(), resolvedBean, errors, bean);
+                        }
+                    }
                 }
             }
         }
 
         // Unproxyable beans with normal scope
         for (var bean : beans) {
-            if (bean.scope().isNormal() && bean.kind() == BeanDescriptor.BeanKind.MANAGED) {
-                try {
-                    var clazz = Class.forName(bean.beanClass().value());
-                    if (java.lang.reflect.Modifier.isFinal(clazz.getModifiers())) {
-                        errors.add(new ValidationError(
-                                ValidationError.Kind.UNPROXYABLE_BEAN,
-                                "Normal-scoped bean " + bean.beanClass()
-                                        + " cannot be final (unproxyable)",
-                                bean));
-                    }
-                    // CDI spec: normal-scoped beans cannot have final methods
-                    // (except private, static, or methods from Object)
-                    for (var method : clazz.getDeclaredMethods()) {
-                        if (java.lang.reflect.Modifier.isFinal(method.getModifiers())
-                                && !java.lang.reflect.Modifier.isPrivate(method.getModifiers())
-                                && !java.lang.reflect.Modifier.isStatic(method.getModifiers())) {
+            if (bean.scope().isNormal()) {
+                // All normal-scoped beans must have a proxyable type
+                for (var type : bean.types()) {
+                    validateProxyableType(type, bean, errors, bean);
+                }
+
+                if (bean.kind() == BeanDescriptor.BeanKind.MANAGED) {
+                    try {
+                        var clazz = Class.forName(bean.beanClass().value());
+                        if (java.lang.reflect.Modifier.isFinal(clazz.getModifiers())) {
                             errors.add(new ValidationError(
                                     ValidationError.Kind.UNPROXYABLE_BEAN,
                                     "Normal-scoped bean " + bean.beanClass()
-                                            + " has final method " + method.getName()
-                                            + " (unproxyable)",
+                                            + " cannot be final (unproxyable)",
                                     bean));
-                            break; // one error per bean is enough
                         }
+                        // CDI spec: normal-scoped beans cannot have final methods
+                        // (except private, static, or methods from Object)
+                        for (var method : clazz.getDeclaredMethods()) {
+                            if (java.lang.reflect.Modifier.isFinal(method.getModifiers())
+                                    && !java.lang.reflect.Modifier.isPrivate(method.getModifiers())
+                                    && !java.lang.reflect.Modifier.isStatic(method.getModifiers())) {
+                                errors.add(new ValidationError(
+                                        ValidationError.Kind.UNPROXYABLE_BEAN,
+                                        "Normal-scoped bean " + bean.beanClass()
+                                                + " has final method " + method.getName()
+                                                + " (unproxyable)",
+                                        bean));
+                                break; // one error per bean is enough
+                            }
+                        }
+                        // Also check: bean must have a non-private no-arg constructor
+                        // (or no explicit constructor) to be proxyable
+                        boolean hasNoArgCtor = false;
+                        boolean hasAnyCtor = false;
+                        for (var ctor : clazz.getDeclaredConstructors()) {
+                            hasAnyCtor = true;
+                            if (ctor.getParameterCount() == 0
+                                    && !java.lang.reflect.Modifier.isPrivate(ctor.getModifiers())) {
+                                hasNoArgCtor = true;
+                                break;
+                            }
+                        }
+                        if (hasAnyCtor && !hasNoArgCtor) {
+                            errors.add(new ValidationError(
+                                    ValidationError.Kind.UNPROXYABLE_BEAN,
+                                    "Normal-scoped bean " + bean.beanClass()
+                                            + " has no non-private no-arg constructor (unproxyable)",
+                                    bean));
+                        }
+                    } catch (ClassNotFoundException e) {
+                        // skip
                     }
-                    // Also check: bean must have a non-private no-arg constructor
-                    // (or no explicit constructor) to be proxyable
+                }
+            }
+
+            // CDI spec: Intercepted beans must have a non-private no-arg constructor
+            if (!bean.interceptorBindings().isEmpty() && bean.kind() == BeanDescriptor.BeanKind.MANAGED) {
+                try {
+                    var clazz = Class.forName(bean.beanClass().value());
                     boolean hasNoArgCtor = false;
                     boolean hasAnyCtor = false;
                     for (var ctor : clazz.getDeclaredConstructors()) {
@@ -96,8 +136,8 @@ public final class DeploymentValidator {
                     if (hasAnyCtor && !hasNoArgCtor) {
                         errors.add(new ValidationError(
                                 ValidationError.Kind.UNPROXYABLE_BEAN,
-                                "Normal-scoped bean " + bean.beanClass()
-                                        + " has no non-private no-arg constructor (unproxyable)",
+                                "Intercepted bean " + bean.beanClass()
+                                        + " has no non-private no-arg constructor (required for interception)",
                                 bean));
                     }
                 } catch (ClassNotFoundException e) {
@@ -153,7 +193,45 @@ public final class DeploymentValidator {
             }
         }
 
+        // CDI spec: Interceptors must have a non-private no-arg constructor
+        for (var interceptor : resolver.getInterceptors()) {
+            try {
+                var clazz = Class.forName(interceptor.interceptorClass().value());
+                boolean hasNoArgCtor = false;
+                for (var ctor : clazz.getDeclaredConstructors()) {
+                    if (ctor.getParameterCount() == 0
+                            && !java.lang.reflect.Modifier.isPrivate(ctor.getModifiers())) {
+                        hasNoArgCtor = true;
+                        break;
+                    }
+                }
+                if (!hasNoArgCtor) {
+                    errors.add(new ValidationError(
+                            ValidationError.Kind.UNPROXYABLE_BEAN,
+                            "Interceptor " + interceptor.interceptorClass()
+                                    + " must have a non-private no-arg constructor",
+                            null));
+                }
+            } catch (ClassNotFoundException e) {
+                // skip
+            }
+        }
+
         return List.copyOf(errors);
+    }
+
+    private void validateProxyableType(TypeInfo type, BeanDescriptor bean, List<ValidationError> errors, BeanDescriptor contextBean) {
+        if (type instanceof TypeInfo.PrimitiveType) {
+            errors.add(new ValidationError(
+                    ValidationError.Kind.UNPROXYABLE_BEAN,
+                    "Normal-scoped bean " + bean.beanClass() + " cannot have primitive type " + type,
+                    contextBean));
+        } else if (type instanceof TypeInfo.ArrayType) {
+            errors.add(new ValidationError(
+                    ValidationError.Kind.UNPROXYABLE_BEAN,
+                    "Normal-scoped bean " + bean.beanClass() + " cannot have array type " + type,
+                    contextBean));
+        }
     }
 
     private static final Set<String> BUILT_IN_TYPES = Set.of(

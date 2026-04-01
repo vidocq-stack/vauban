@@ -793,8 +793,10 @@ public final class VaubanContainer implements AutoCloseable {
                         initMethod.invoke(instance, mgr, bds);
                         return instance;
                     } catch (Exception e) {
+                        e.printStackTrace();
                         throw new jakarta.enterprise.inject.CreationException(
-                                "Failed to create intercepted bean: " + interceptedClass.getName(), e);
+                                "Failed to create intercepted bean: " + interceptedClass.getName()
+                                        + ". Cause: " + e.getMessage(), e);
                     }
                 };
 

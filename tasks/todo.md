@@ -92,7 +92,16 @@
 - [x] META-INF/cdi-tck.properties + libraryDirectory
 - [x] Execution TCK effective : 1826 tests, 91 passes, 1227 failures, 508 skipped (5s)
 
-## Phase 9: Outillage modules ✅
+## Phase 10: Validation TCK CDI Lite 🚧
+- [x] Validation de déploiement : types proxiables (pas de primitifs/tableaux pour portée normale)
+- [x] Validation de déploiement : constructeur sans argument non-privé pour beans à portée normale
+- [x] Validation de déploiement : constructeur sans argument non-privé pour beans interceptés
+- [x] Validation de déploiement : constructeur sans argument non-privé pour intercepteurs
+- [x] Execution TCK Maven 4 (via SDKMAN) : 917 tests, 218 échecs, 148 sautés
+- [ ] Support `AroundConstruct` (interception de l'instanciation) - 🚧 en cours
+- [ ] Amélioration de la gestion des exceptions de déploiement (DefinitionException vs DeploymentException)
+
+## Phase 11: Outillage modules ✅
 - [x] `ModuleAnalyzer` : analyse JARs (explicit/automatic/unnamed), lit module-info via Class-File API
 - [x] `ModuleReport` : rapport lisible [OK]/[WARN]/[ERROR], resume, split packages
 - [x] Detection split packages entre JARs
