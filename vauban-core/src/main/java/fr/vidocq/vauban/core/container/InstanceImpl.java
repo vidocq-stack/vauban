@@ -133,7 +133,7 @@ public final class InstanceImpl<T> implements Instance<T> {
     @Override
     @SuppressWarnings("unchecked")
     public void destroy(T instance) {
-        if (instance == null) return;
+        if (instance == null) throw new NullPointerException("Instance to destroy must not be null");
         var bm = container.getBeanManager();
         var beans = bm.getBeans(type, qualifiers);
         if (beans.isEmpty()) return;
