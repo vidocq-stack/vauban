@@ -43,24 +43,20 @@ public final class DeploymentValidator {
             // Validate interceptor bindings
             var bindings = bean.interceptorBindings();
             if (!bindings.isEmpty()) {
-                // CDI spec: At least one enabled interceptor must match each binding
-                for (var binding : bindings) {
-                    var matching = resolver.resolveInterceptors(Set.of(binding));
-                    if (matching.isEmpty()) {
-                        errors.add(new ValidationError(
-                                ValidationError.Kind.DEFINITION_ERROR,
-                                "Interceptor binding " + binding + " on bean " + bean.beanClass()
-                                        + " does not match any enabled interceptor",
-                                bean));
-                    }
+                // CDI spec: At least one enabled interceptor must match the set of bindings
+                var matching = resolver.resolveInterceptors(bindings);
+                if (matching.isEmpty()) {
+                    errors.add(new ValidationError(
+                            ValidationError.Kind.DEFINITION_ERROR,
+                            "Interceptor bindings " + bindings + " on bean " + bean.beanClass()
+                                    + " do not match any enabled interceptor",
+                            bean));
                 }
             }
 
             for (var ip : bean.injectionPoints()) {
                 if (isBuiltInType(ip)) continue;
-                // Skip parameterized type validation — our bytecode index doesn't
-                // track generic type arguments, so resolution would be incorrect
-                if (ip.requiredType() instanceof TypeInfo.ParameterizedType) continue;
+                
                 var result = resolver.resolveInjectionPoint(ip);
                 switch (result.status()) {
                     case UNSATISFIED -> errors.add(new ValidationError(
