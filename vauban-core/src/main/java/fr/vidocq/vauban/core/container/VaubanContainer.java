@@ -1460,6 +1460,26 @@ public final class VaubanContainer implements AutoCloseable {
                                 "Producer method " + clazz.getName() + "." + method.getName(), errors);
                     }
 
+                    // CDI spec: producer with TypeVariable return type must be @Dependent
+                    if (method.isAnnotationPresent(jakarta.enterprise.inject.Produces.class)) {
+                        var genRetType = method.getGenericReturnType();
+                        if (containsTypeVariable(genRetType)) {
+                            boolean isDependent = true;
+                            for (var mAnn : method.getAnnotations()) {
+                                if (mAnn.annotationType().isAnnotationPresent(jakarta.enterprise.context.NormalScope.class)
+                                        || (mAnn.annotationType().isAnnotationPresent(jakarta.inject.Scope.class)
+                                            && mAnn.annotationType() != jakarta.enterprise.context.Dependent.class)) {
+                                    isDependent = false;
+                                    break;
+                                }
+                            }
+                            if (!isDependent) {
+                                errors.add("Producer method " + clazz.getName() + "." + method.getName()
+                                        + " has TypeVariable return type and non-@Dependent scope");
+                            }
+                        }
+                    }
+
                     // Generic initializer method
                     if (method.isAnnotationPresent(jakarta.inject.Inject.class)
                             && method.getTypeParameters().length > 0
@@ -1538,6 +1558,22 @@ public final class VaubanContainer implements AutoCloseable {
                         // Multiple scope annotations on producer field
                         validateNoMultipleScopes(field.getAnnotations(),
                                 "Producer field " + clazz.getName() + "." + field.getName(), errors);
+                        // CDI spec: producer field with TypeVariable type must be @Dependent
+                        if (containsTypeVariable(field.getGenericType())) {
+                            boolean isDependent = true;
+                            for (var fAnn : field.getAnnotations()) {
+                                if (fAnn.annotationType().isAnnotationPresent(jakarta.enterprise.context.NormalScope.class)
+                                        || (fAnn.annotationType().isAnnotationPresent(jakarta.inject.Scope.class)
+                                            && fAnn.annotationType() != jakarta.enterprise.context.Dependent.class)) {
+                                    isDependent = false;
+                                    break;
+                                }
+                            }
+                            if (!isDependent) {
+                                errors.add("Producer field " + clazz.getName() + "." + field.getName()
+                                        + " has TypeVariable type and non-@Dependent scope");
+                            }
+                        }
                     }
                 }
 
@@ -1685,6 +1721,27 @@ public final class VaubanContainer implements AutoCloseable {
             if (scopeCount > 1) {
                 errors.add(location + " has multiple scope annotations");
             }
+        }
+
+        private static boolean containsTypeVariable(java.lang.reflect.Type type) {
+            if (type instanceof java.lang.reflect.TypeVariable<?>) return true;
+            if (type instanceof java.lang.reflect.ParameterizedType pt) {
+                for (var arg : pt.getActualTypeArguments()) {
+                    if (containsTypeVariable(arg)) return true;
+                }
+            }
+            if (type instanceof java.lang.reflect.GenericArrayType gat) {
+                return containsTypeVariable(gat.getGenericComponentType());
+            }
+            if (type instanceof java.lang.reflect.WildcardType wt) {
+                for (var bound : wt.getUpperBounds()) {
+                    if (containsTypeVariable(bound)) return true;
+                }
+                for (var bound : wt.getLowerBounds()) {
+                    if (containsTypeVariable(bound)) return true;
+                }
+            }
+            return false;
         }
 
         private static boolean hasBeanDefiningAnnotation(Class<?> clazz) {
