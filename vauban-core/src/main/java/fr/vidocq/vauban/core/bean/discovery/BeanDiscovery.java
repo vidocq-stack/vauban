@@ -992,7 +992,6 @@ public final class BeanDiscovery {
                 var clazz = Class.forName(classInfo.name().value());
                 for (var method : clazz.getMethods()) {
                     if (method.getDeclaringClass() == clazz) continue; // already handled above
-                    if (java.lang.reflect.Modifier.isStatic(method.getModifiers())) continue;
                     for (var param : method.getParameters()) {
                         if (param.isAnnotationPresent(jakarta.enterprise.event.Observes.class)
                                 || param.isAnnotationPresent(jakarta.enterprise.event.ObservesAsync.class)) {
@@ -1041,7 +1040,8 @@ public final class BeanDiscovery {
     private void discoverObserversFromMethods(ClassInfo classInfo, List<MethodInfo> methods,
             List<ObserverDescriptor> result) {
         for (var method : methods) {
-            if (method.isConstructor() || method.isStatic()) continue;
+            if (method.isConstructor()) continue;
+            // CDI 4.1: static observer methods are supported
 
             for (var param : method.parameters()) {
                 boolean isObserves = hasAnnotation(param.annotations(), OBSERVES);

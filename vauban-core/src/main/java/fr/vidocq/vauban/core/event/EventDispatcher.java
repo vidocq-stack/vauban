@@ -232,11 +232,12 @@ public final class EventDispatcher {
                 }
             }
 
-            var beanInstance = container.selectByBeanClass(beanClass);
-
             var method = findMethod(beanClass, observer.methodName(), event.getClass());
             if (method != null) {
                 method.setAccessible(true);
+                // Static observer methods don't need a bean instance
+                var beanInstance = java.lang.reflect.Modifier.isStatic(method.getModifiers())
+                        ? null : container.selectByBeanClass(beanClass);
                 if (method.getParameterCount() == 1) {
                     method.invoke(beanInstance, event);
                 } else {
