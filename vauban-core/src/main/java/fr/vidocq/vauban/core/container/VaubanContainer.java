@@ -119,7 +119,7 @@ public final class VaubanContainer implements AutoCloseable {
         }
 
         var assignability = new AssignabilityRules(index);
-        this.resolver = new BeanResolver(descriptors, assignability);
+        this.resolver = new BeanResolver(descriptors, interceptorDescriptors, assignability);
         this.eventDispatcher = new EventDispatcher(observers, this);
         this.interceptorManager = new InterceptorManager(interceptorDescriptors);
 
@@ -758,13 +758,11 @@ public final class VaubanContainer implements AutoCloseable {
                                     ctorBindings.add(DotName.of(ann.annotationType().getName()));
                                 }
                             }
-                            if (!ctorBindings.equals(bindings)) {
-                                var ctorChain = interceptorManager.resolveLifecycleChain(
-                                        ctorBindings, jakarta.interceptor.AroundConstruct.class);
-                                if (!ctorChain.isEmpty()) {
-                                    hasInterceptors = true;
-                                    break;
-                                }
+                            var ctorChain = interceptorManager.resolveAroundConstructChain(
+                                    ctorBindings, ctor);
+                            if (!ctorChain.isEmpty()) {
+                                hasInterceptors = true;
+                                break;
                             }
                         }
                     }
@@ -780,23 +778,54 @@ public final class VaubanContainer implements AutoCloseable {
                         java.lang.invoke.MethodHandles.lookup());
                 var interceptedClass = lookup.defineClass(generated.bytecode());
 
-                // Replace the factory
-                var mgr = this.interceptorManager;
-                var bds = bindings;
-                BeanFactory<?> interceptedFactory = () -> {
-                    try {
-                        var instance = interceptedClass.getDeclaredConstructor().newInstance();
-                        // Initialize the interceptor fields
-                        var initMethod = interceptedClass.getMethod("$$init",
+            // Replace the factory
+            var mgr = this.interceptorManager;
+            var bds = bindings;
+            BeanFactory<?> interceptedFactory = () -> {
+                try {
+                    var ctor = interceptedClass.getDeclaredConstructor();
+                    var constructChain = mgr.resolveAroundConstructChain(bds, ctor);
+                    if (!constructChain.isEmpty()) {
+                        // AroundConstruct interception
+                        final Object[] box = new Object[1];
+                        var ctx = new fr.vidocq.vauban.core.interceptor.VaubanInvocationContext(
+                                null, null, ctor, new Object[0], constructChain,
+                                (target, params) -> {
+                                    mgr.$$beginInterception(java.util.Collections.emptyList(), bds);
+                                    try {
+                                        var instance = ctor.newInstance();
+                                        box[0] = instance;
+                                        return instance;
+                                    } finally {
+                                        mgr.$$endInterception();
+                                    }
+                                });
+                        ctx.proceed();
+                        var instance = box[0];
+                        if (instance == null) {
+                            throw new jakarta.enterprise.inject.CreationException(
+                                    "Interceptor chain for @AroundConstruct failed to create an instance for " + interceptedClass.getName());
+                        }
+                        // Initialize fields
+                        interceptedClass.getMethod("$$init",
                                 fr.vidocq.vauban.core.interceptor.InterceptorManager.class,
-                                java.util.Set.class);
-                        initMethod.invoke(instance, mgr, bds);
+                                java.util.Set.class).invoke(instance, mgr, bds);
                         return instance;
+                    } else {
+                            var instance = ctor.newInstance();
+                            // Initialize the interceptor fields
+                            var initMethod = interceptedClass.getMethod("$$init",
+                                    fr.vidocq.vauban.core.interceptor.InterceptorManager.class,
+                                    java.util.Set.class);
+                            initMethod.invoke(instance, mgr, bds);
+                            return instance;
+                        }
                     } catch (Exception e) {
-                        e.printStackTrace();
+                        var cause = e instanceof java.lang.reflect.InvocationTargetException ite ? ite.getCause() : e;
+                        if (cause instanceof RuntimeException re) throw re;
                         throw new jakarta.enterprise.inject.CreationException(
                                 "Failed to create intercepted bean: " + interceptedClass.getName()
-                                        + ". Cause: " + e.getMessage(), e);
+                                        + ". Cause: " + cause.getMessage(), cause);
                     }
                 };
 
@@ -825,19 +854,49 @@ public final class VaubanContainer implements AutoCloseable {
                             beanClass.getClassLoader(),
                             generated2.className(), generated2.bytecode(),
                             0, generated2.bytecode().length);
-                    var mgr2 = this.interceptorManager;
-                    var bds2 = bindings;
-                    BeanFactory<?> f2 = () -> {
-                        try {
-                            var inst = interceptedClass2.getDeclaredConstructor().newInstance();
+                var mgr2 = this.interceptorManager;
+                var bds2 = bindings;
+                BeanFactory<?> f2 = () -> {
+                    try {
+                        var ctor = interceptedClass2.getDeclaredConstructor();
+                        var constructChain2 = mgr2.resolveAroundConstructChain(bds2, ctor);
+                        if (!constructChain2.isEmpty()) {
+                            final Object[] box2 = new Object[1];
+                            var ctx = new fr.vidocq.vauban.core.interceptor.VaubanInvocationContext(
+                                    null, null, ctor, new Object[0], constructChain2,
+                                    (target, params) -> {
+                                        mgr2.$$beginInterception(java.util.Collections.emptyList(), bds2);
+                                        try {
+                                            var instance = ctor.newInstance();
+                                            box2[0] = instance;
+                                            return instance;
+                                        } finally {
+                                            mgr2.$$endInterception();
+                                        }
+                                    });
+                            ctx.proceed();
+                            var inst = box2[0];
+                            if (inst == null) {
+                                throw new jakarta.enterprise.inject.CreationException(
+                                        "Interceptor chain for @AroundConstruct failed to create an instance for " + interceptedClass2.getName());
+                            }
                             interceptedClass2.getMethod("$$init",
                                     fr.vidocq.vauban.core.interceptor.InterceptorManager.class,
                                     java.util.Set.class).invoke(inst, mgr2, bds2);
                             return inst;
-                        } catch (Exception ex) {
-                            throw new jakarta.enterprise.inject.CreationException(ex);
+                        } else {
+                            var inst = ctor.newInstance();
+                            interceptedClass2.getMethod("$$init",
+                                    fr.vidocq.vauban.core.interceptor.InterceptorManager.class,
+                                    java.util.Set.class).invoke(inst, mgr2, bds2);
+                            return inst;
                         }
-                    };
+                    } catch (Exception ex) {
+                        var cause = ex instanceof java.lang.reflect.InvocationTargetException ite ? ite.getCause() : ex;
+                        if (cause instanceof RuntimeException re) throw re;
+                        throw new jakarta.enterprise.inject.CreationException(cause);
+                    }
+                };
                     var ib2 = new ManagedBean<>(descriptor, f2, classLoader);
                     ib2.setInterceptorManager(this.interceptorManager);
                     beans.put(descriptor.id(), ib2);
@@ -1266,7 +1325,9 @@ public final class VaubanContainer implements AutoCloseable {
                     String resource = clazz.getName().replace('.', '/') + ".class";
                     try (var is = clazz.getClassLoader().getResourceAsStream(resource)) {
                         if (is != null) {
-                            indexBuilder.add(ClassFileScanner.scan(is.readAllBytes()));
+                            indexBuilder.add(fr.vidocq.vauban.indexer.scanner.ClassFileScanner.scan(is.readAllBytes()));
+                        } else {
+                            // Fallback for classes not in resources (e.g. dynamic or some test classes)
                         }
                     }
                 } catch (IOException e) {
@@ -1333,7 +1394,7 @@ public final class VaubanContainer implements AutoCloseable {
 
                 // Validate deployment — throw if there are errors
                 var assignability = new AssignabilityRules(index);
-                var tempResolver = new BeanResolver(descriptors, assignability);
+                var tempResolver = new BeanResolver(descriptors, interceptors, assignability);
                 var validator = new fr.vidocq.vauban.core.bean.validation.DeploymentValidator(
                         descriptors, tempResolver);
                 var errors = validator.validate();

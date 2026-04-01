@@ -25,7 +25,7 @@ class EventSystemTest {
     // Observer bean
     @ApplicationScoped
     public static class OrderListener {
-        public String lastOrderId;
+        private String lastOrderId;
 
         public void onOrderCreated(@Observes OrderCreated event) {
             lastOrderId = event.orderId;
@@ -47,7 +47,7 @@ class EventSystemTest {
 
     @ApplicationScoped
     public static class AuditListener {
-        public boolean audited;
+        private boolean audited;
 
         public void onOrder(@Observes OrderCreated event) {
             audited = true;

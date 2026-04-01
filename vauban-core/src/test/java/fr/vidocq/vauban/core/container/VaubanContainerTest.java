@@ -41,7 +41,8 @@ class VaubanContainerTest {
 
     @RequestScoped
     public static class RequestBean {
-        public String value = "request";
+        private String value = "request";
+        public String getValue() { return value; }
     }
 
     @ApplicationScoped
@@ -58,6 +59,8 @@ class VaubanContainerTest {
     @ApplicationScoped
     public static class CtorInjectedService {
         private final Repository repository;
+
+        protected CtorInjectedService() { this.repository = null; }
 
         @Inject
         public CtorInjectedService(Repository repository) {
@@ -133,7 +136,7 @@ class VaubanContainerTest {
                 try {
                     var bean = container.select(RequestBean.class);
                     assertNotNull(bean);
-                    assertEquals("request", bean.value);
+                    assertEquals("request", bean.getValue());
 
                     var bean2 = container.select(RequestBean.class);
                     assertSame(bean, bean2);
@@ -211,8 +214,8 @@ class VaubanContainerTest {
 
     @ApplicationScoped
     public static class LifecycleBean {
-        public boolean postConstructCalled;
-        public boolean preDestroyCalled;
+        private boolean postConstructCalled;
+        private boolean preDestroyCalled;
         public static boolean preDestroyCalledStatic;
 
         @jakarta.annotation.PostConstruct
@@ -227,7 +230,7 @@ class VaubanContainerTest {
 
     @ApplicationScoped
     public static class InitMethodBean {
-        public Repository repo;
+        private Repository repo;
 
         @Inject
         public void setRepo(Repository repo) { this.repo = repo; }
