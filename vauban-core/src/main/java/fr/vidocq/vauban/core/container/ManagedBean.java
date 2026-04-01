@@ -112,8 +112,11 @@ public final class ManagedBean<T> implements Bean<T> {
             var bindings = findInterceptorBindings(instance);
             if (!bindings.isEmpty()) {
                 interceptorManager.setClassLoader(instance.getClass().getClassLoader());
+                // Collect binding annotations for InvocationContext.getInterceptorBindings()
+                var bindingAnnotations = collectBindingAnnotations(instance);
+                var bindingAnnsList = new java.util.ArrayList<>(bindingAnnotations);
                 var chain = interceptorManager.resolveLifecycleChain(
-                        bindings, jakarta.annotation.PreDestroy.class, ctx);
+                        bindings, jakarta.annotation.PreDestroy.class, bindingAnnsList, ctx);
                 if (!chain.isEmpty()) {
                     final var pdMethod = preDestroyMethod;
                     var invocationCtx = new fr.vidocq.vauban.core.interceptor.VaubanInvocationContext(
@@ -122,6 +125,7 @@ public final class ManagedBean<T> implements Bean<T> {
                                 if (pdMethod != null) pdMethod.invoke(target);
                                 return null;
                             });
+                    invocationCtx.setInterceptorBindings(bindingAnnotations);
                     try {
                         invocationCtx.proceed();
                     } catch (Exception e) {
@@ -140,6 +144,21 @@ public final class ManagedBean<T> implements Bean<T> {
                 // CDI spec says exceptions in @PreDestroy are caught, not propagated
             }
         }
+    }
+
+    private Set<java.lang.annotation.Annotation> collectBindingAnnotations(Object instance) {
+        var clazz = instance.getClass();
+        if (clazz.getName().contains("$$Intercepted") || clazz.getName().contains("$$Proxy")) {
+            clazz = clazz.getSuperclass();
+        }
+        var annotations = new java.util.LinkedHashSet<java.lang.annotation.Annotation>();
+        for (var ann : clazz.getAnnotations()) {
+            if (ann.annotationType().isAnnotationPresent(jakarta.interceptor.InterceptorBinding.class)) {
+                annotations.add(ann);
+            }
+        }
+        // Simplified transitive collection if needed, but for now basic ones
+        return annotations;
     }
 
     private Set<fr.vidocq.vauban.indexer.model.DotName> findInterceptorBindings(Object instance) {

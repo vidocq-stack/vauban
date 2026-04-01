@@ -607,19 +607,7 @@ public final class VaubanContainer implements AutoCloseable {
                     for (int i = 0; i < paramTypes.length; i++) {
                         // Extract qualifiers from parameter annotations
                         var paramQuals = extractParamQualifiers(params[i]);
-                        if (paramQuals.length > 0) {
-                            var bm = getBeanManager();
-                            var beans2 = bm.getBeans(paramTypes[i], paramQuals);
-                            if (!beans2.isEmpty()) {
-                                var resolved = bm.resolve(beans2);
-                                var pCtx = bm.createCreationalContext(resolved);
-                                args[i] = bm.getReference(resolved, paramTypes[i], pCtx);
-                            } else {
-                                args[i] = resolveParameter(paramTypes[i], genericParamTypes[i], ctx);
-                            }
-                        } else {
-                            args[i] = resolveParameter(paramTypes[i], genericParamTypes[i], ctx);
-                        }
+                        args[i] = resolveParameter(paramTypes[i], genericParamTypes[i], ctx, paramQuals);
                     }
                     method.invoke(instance, args);
                 } catch (Exception e) {
@@ -1492,13 +1480,9 @@ public final class VaubanContainer implements AutoCloseable {
         return qualifiers.toArray(new java.lang.annotation.Annotation[0]);
     }
 
-    public Object resolveParameter(Class<?> paramType, java.lang.reflect.Type genericType) {
-        return resolveParameter(paramType, genericType, null);
-    }
-
-    public Object resolveParameter(Class<?> paramType, java.lang.reflect.Type genericType, CreationalContext<?> ctx) {
+    public Object resolveParameter(Class<?> paramType, java.lang.reflect.Type genericType, CreationalContext<?> ctx, java.lang.annotation.Annotation[] qualifiers) {
         if (paramType == Event.class) {
-            return new EventImpl<>(eventDispatcher);
+            return new EventImpl<>(eventDispatcher, qualifiers);
         }
         if (paramType == Instance.class || paramType == jakarta.inject.Provider.class) {
             Class<?> instanceType = Object.class;
@@ -1506,7 +1490,7 @@ public final class VaubanContainer implements AutoCloseable {
                 var typeArg = pt.getActualTypeArguments()[0];
                 if (typeArg instanceof Class<?> c) instanceType = c;
             }
-            return new InstanceImpl<>(this, instanceType);
+            return new InstanceImpl<>(this, instanceType).select(qualifiers);
         }
         if (BeanManager.class.isAssignableFrom(paramType)
                 || paramType == jakarta.enterprise.inject.spi.BeanContainer.class) {
@@ -1519,7 +1503,25 @@ public final class VaubanContainer implements AutoCloseable {
         if (paramType == jakarta.enterprise.inject.spi.InjectionPoint.class) {
             return currentInjectionPoint.get();
         }
-        return select(paramType);
+        
+        var bm = getBeanManager();
+        var beansFound = bm.getBeans(paramType, qualifiers);
+        if (beansFound.isEmpty()) {
+            return select(paramType);
+        }
+        var resolved = bm.resolve(beansFound);
+        var pCtx = (ctx != null && resolved.getScope() == jakarta.enterprise.context.Dependent.class)
+                ? ctx
+                : bm.createCreationalContext(resolved);
+        return bm.getReference(resolved, paramType, pCtx);
+    }
+
+    public Object resolveParameter(Class<?> paramType, java.lang.reflect.Type genericType, CreationalContext<?> ctx) {
+        return resolveParameter(paramType, genericType, ctx, new java.lang.annotation.Annotation[0]);
+    }
+
+    public Object resolveParameter(Class<?> paramType, java.lang.reflect.Type genericType) {
+        return resolveParameter(paramType, genericType, null, new java.lang.annotation.Annotation[0]);
     }
 
     private BeanFactory<?> createProducerFieldFactory(BeanDescriptor descriptor) {
