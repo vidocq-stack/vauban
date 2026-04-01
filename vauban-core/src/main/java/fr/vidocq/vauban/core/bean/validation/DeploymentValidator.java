@@ -29,6 +29,30 @@ public final class DeploymentValidator {
         var errors = new ArrayList<ValidationError>();
 
         for (var bean : beans) {
+            // CDI spec: Interceptors themselves are not intercepted
+            if (bean.kind() == BeanDescriptor.BeanKind.MANAGED) {
+                try {
+                    var clazz = Class.forName(bean.beanClass().value());
+                    if (clazz.isAnnotationPresent(jakarta.interceptor.Interceptor.class)) continue;
+                } catch (Exception e) { /* ignore */ }
+            }
+
+            // Validate interceptor bindings
+            var bindings = bean.interceptorBindings();
+            if (!bindings.isEmpty()) {
+                // CDI spec: At least one enabled interceptor must match each binding
+                for (var binding : bindings) {
+                    var matching = resolver.resolveInterceptors(Set.of(binding));
+                    if (matching.isEmpty()) {
+                        errors.add(new ValidationError(
+                                ValidationError.Kind.DEFINITION_ERROR,
+                                "Interceptor binding " + binding + " on bean " + bean.beanClass()
+                                        + " does not match any enabled interceptor",
+                                bean));
+                    }
+                }
+            }
+
             for (var ip : bean.injectionPoints()) {
                 if (isBuiltInType(ip)) continue;
                 // Skip parameterized type validation — our bytecode index doesn't

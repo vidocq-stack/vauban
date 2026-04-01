@@ -158,7 +158,51 @@ public final class VaubanContainer implements AutoCloseable {
             try {
                 var className = descriptor.interceptorClass().value();
                 var clazz = loadClass(className);
-                var instance = clazz.getDeclaredConstructor().newInstance();
+                
+                // Find @Inject constructor or no-arg constructor
+                java.lang.reflect.Constructor<?> constructor = null;
+                for (var c : clazz.getDeclaredConstructors()) {
+                    if (c.isAnnotationPresent(jakarta.inject.Inject.class)) {
+                        constructor = c;
+                        break;
+                    }
+                }
+                if (constructor == null) {
+                    try {
+                        constructor = clazz.getDeclaredConstructor();
+                    } catch (NoSuchMethodException e) {
+                        // If no no-arg constructor and no @Inject constructor, pick the only one
+                        if (clazz.getDeclaredConstructors().length == 1) {
+                            constructor = clazz.getDeclaredConstructors()[0];
+                        } else {
+                            throw e;
+                        }
+                    }
+                }
+                
+                constructor.setAccessible(true);
+                var paramTypes = constructor.getParameterTypes();
+                var genericParamTypes = constructor.getGenericParameterTypes();
+                var params = constructor.getParameters();
+                var args = new Object[paramTypes.length];
+                for (int i = 0; i < paramTypes.length; i++) {
+                    var paramQuals = extractParamQualifiers(params[i]);
+                    if (paramQuals.length > 0) {
+                        var bm = getBeanManager();
+                        var beans2 = bm.getBeans(paramTypes[i], paramQuals);
+                        if (!beans2.isEmpty()) {
+                            var resolved = bm.resolve(beans2);
+                            var pCtx = bm.createCreationalContext(resolved);
+                            args[i] = bm.getReference(resolved, paramTypes[i], pCtx);
+                        } else {
+                            args[i] = resolveParameter(paramTypes[i], genericParamTypes[i], ctx);
+                        }
+                    } else {
+                        args[i] = resolveParameter(paramTypes[i], genericParamTypes[i], ctx);
+                    }
+                }
+                
+                var instance = constructor.newInstance(args);
                 injectFieldsByReflection(instance, ctx);
                 // Call PostConstruct directly
                 java.lang.reflect.Method pc = null;
@@ -175,7 +219,51 @@ public final class VaubanContainer implements AutoCloseable {
         try {
             var className = descriptor.interceptorClass().value();
             var clazz = loadClass(className);
-            var instance = clazz.getDeclaredConstructor().newInstance();
+
+            // Find @Inject constructor or no-arg constructor
+            java.lang.reflect.Constructor<?> constructor = null;
+            for (var c : clazz.getDeclaredConstructors()) {
+                if (c.isAnnotationPresent(jakarta.inject.Inject.class)) {
+                    constructor = c;
+                    break;
+                }
+            }
+            if (constructor == null) {
+                try {
+                    constructor = clazz.getDeclaredConstructor();
+                } catch (NoSuchMethodException e) {
+                    // If no no-arg constructor and no @Inject constructor, pick the only one
+                    if (clazz.getDeclaredConstructors().length == 1) {
+                        constructor = clazz.getDeclaredConstructors()[0];
+                    } else {
+                        throw e;
+                    }
+                }
+            }
+            
+            constructor.setAccessible(true);
+            var paramTypes = constructor.getParameterTypes();
+            var genericParamTypes = constructor.getGenericParameterTypes();
+            var params = constructor.getParameters();
+            var args = new Object[paramTypes.length];
+            for (int i = 0; i < paramTypes.length; i++) {
+                var paramQuals = extractParamQualifiers(params[i]);
+                if (paramQuals.length > 0) {
+                    var bm = getBeanManager();
+                    var beans2 = bm.getBeans(paramTypes[i], paramQuals);
+                    if (!beans2.isEmpty()) {
+                        var resolved = bm.resolve(beans2);
+                        var pCtx = bm.createCreationalContext(resolved);
+                        args[i] = bm.getReference(resolved, paramTypes[i], pCtx);
+                    } else {
+                        args[i] = resolveParameter(paramTypes[i], genericParamTypes[i], ctx);
+                    }
+                } else {
+                    args[i] = resolveParameter(paramTypes[i], genericParamTypes[i], ctx);
+                }
+            }
+
+            var instance = constructor.newInstance(args);
 
             // Dependency injection on the interceptor instance
             injectFields(instance, null, (CreationalContext<Object>) ctx);
@@ -190,6 +278,12 @@ public final class VaubanContainer implements AutoCloseable {
 
             return instance;
         } catch (Exception e) {
+            System.err.println("CRITICAL: Failed to create interceptor " + descriptor.interceptorClass());
+            e.printStackTrace();
+            if (e instanceof java.lang.reflect.InvocationTargetException ite) {
+                System.err.println("Caused by: " + ite.getTargetException());
+                ite.getTargetException().printStackTrace();
+            }
             throw new jakarta.enterprise.inject.CreationException("Failed to create interceptor: " + descriptor.interceptorClass(), e);
         } finally {
             isCreatingInterceptor.set(false);
@@ -400,7 +494,7 @@ public final class VaubanContainer implements AutoCloseable {
         injectFieldsByReflection(instance, parentCtx);
 
         // 2. Call @Inject initializer methods
-        callInitializerMethods(instance);
+        callInitializerMethods(instance, parentCtx);
 
         // 3. Call @PostConstruct
         callPostConstruct(instance, parentCtx);
@@ -501,7 +595,7 @@ public final class VaubanContainer implements AutoCloseable {
         return null;
     }
 
-    private void callInitializerMethods(Object instance) {
+    private void callInitializerMethods(Object instance, CreationalContext<?> ctx) {
         for (var method : instance.getClass().getDeclaredMethods()) {
             if (method.isAnnotationPresent(jakarta.inject.Inject.class)) {
                 method.setAccessible(true);
@@ -518,13 +612,13 @@ public final class VaubanContainer implements AutoCloseable {
                             var beans2 = bm.getBeans(paramTypes[i], paramQuals);
                             if (!beans2.isEmpty()) {
                                 var resolved = bm.resolve(beans2);
-                                var ctx = bm.createCreationalContext(resolved);
-                                args[i] = bm.getReference(resolved, paramTypes[i], ctx);
+                                var pCtx = bm.createCreationalContext(resolved);
+                                args[i] = bm.getReference(resolved, paramTypes[i], pCtx);
                             } else {
-                                args[i] = resolveParameter(paramTypes[i], genericParamTypes[i]);
+                                args[i] = resolveParameter(paramTypes[i], genericParamTypes[i], ctx);
                             }
                         } else {
-                            args[i] = resolveParameter(paramTypes[i], genericParamTypes[i]);
+                            args[i] = resolveParameter(paramTypes[i], genericParamTypes[i], ctx);
                         }
                     }
                     method.invoke(instance, args);
@@ -563,6 +657,28 @@ public final class VaubanContainer implements AutoCloseable {
     }
 
     private void callPostConstruct(Object instance, CreationalContext<?> ctx) {
+        // CDI spec: Interceptor instances are not intercepted
+        if (instance.getClass().isAnnotationPresent(jakarta.interceptor.Interceptor.class)) {
+            // CDI spec: @PostConstruct on an interceptor can be a lifecycle interceptor (takes InvocationContext)
+            // or a PostConstruct callback for the interceptor instance itself (no args).
+            java.lang.reflect.Method pc = null;
+            for (var m : instance.getClass().getDeclaredMethods()) {
+                if (m.isAnnotationPresent(jakarta.annotation.PostConstruct.class) && m.getParameterCount() == 0) {
+                    pc = m;
+                    break;
+                }
+            }
+            if (pc != null) {
+                try {
+                    pc.setAccessible(true);
+                    pc.invoke(instance);
+                } catch (Exception e) {
+                    throw new RuntimeException("@PostConstruct on interceptor instance failed: " + pc, e);
+                }
+            }
+            return;
+        }
+
         // Find @PostConstruct method
         java.lang.reflect.Method postConstructMethod = null;
         var clazz = instance.getClass();
@@ -693,6 +809,14 @@ public final class VaubanContainer implements AutoCloseable {
             }
             final var currentBeanClass = currentBeanClassTemp;
             if (descriptor.kind() != BeanDescriptor.BeanKind.MANAGED) continue;
+
+            // CDI spec: Interceptors themselves are not intercepted
+            try {
+                var cls = loadClass(descriptor.beanClass().value());
+                if (cls.isAnnotationPresent(jakarta.interceptor.Interceptor.class)) {
+                    continue;
+                }
+            } catch (ClassNotFoundException e) { /* skip */ }
 
             var bean = beans.get(descriptor.id());
             if (bean == null) continue;

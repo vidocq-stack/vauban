@@ -40,6 +40,33 @@ public final class BeanResolver {
     }
 
     /**
+     * Resolves interceptors for a set of bindings.
+     * CDI 4.1 Section 9.5.2.
+     */
+    public List<fr.vidocq.vauban.core.bean.model.InterceptorDescriptor> resolveInterceptors(
+            Set<fr.vidocq.vauban.indexer.model.DotName> bindings) {
+        var matching = new ArrayList<fr.vidocq.vauban.core.bean.model.InterceptorDescriptor>();
+
+        for (var interceptor : interceptors) {
+            // An interceptor matches if all its bindings are present in the bean's bindings
+            boolean allBindingsMatch = true;
+            for (var binding : interceptor.bindings()) {
+                if (!bindings.contains(binding)) {
+                    allBindingsMatch = false;
+                    break;
+                }
+            }
+            if (allBindingsMatch && !interceptor.bindings().isEmpty()) {
+                matching.add(interceptor);
+            }
+        }
+
+        // Sort by priority (CDI spec: higher priority first)
+        matching.sort(java.util.Comparator.comparingInt(fr.vidocq.vauban.core.bean.model.InterceptorDescriptor::priority).reversed());
+        return matching;
+    }
+
+    /**
      * Resolves beans matching a required type and qualifiers.
      * CDI 4.1 Section 2.5.
      */
