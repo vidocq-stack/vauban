@@ -325,6 +325,16 @@ public final class EventDispatcher {
                             ? java.lang.reflect.Array.newInstance(component, 0).getClass()
                             : null;
                 }
+                case TypeInfo.PrimitiveType pt -> switch (pt.kind()) {
+                    case BOOLEAN -> boolean.class;
+                    case BYTE -> byte.class;
+                    case CHAR -> char.class;
+                    case SHORT -> short.class;
+                    case INT -> int.class;
+                    case LONG -> long.class;
+                    case FLOAT -> float.class;
+                    case DOUBLE -> double.class;
+                };
                 default -> null;
             };
         } catch (ClassNotFoundException e) {
