@@ -164,6 +164,8 @@ public final class InterceptorManager {
     public List<InterceptorDescriptor> resolveInterceptors(Set<DotName> bindings) {
         var result = new ArrayList<InterceptorDescriptor>();
         for (var descriptor : interceptors) {
+            // CDI spec: only interceptors with @Priority are enabled
+            if (descriptor.priority() <= 0) continue;
             if (bindings.containsAll(descriptor.bindings()) && !descriptor.bindings().isEmpty()) {
                 result.add(descriptor);
             }
