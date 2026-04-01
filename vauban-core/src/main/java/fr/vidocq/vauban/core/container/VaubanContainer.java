@@ -73,6 +73,13 @@ public final class VaubanContainer implements AutoCloseable {
         return currentInjectionPoint.get();
     }
 
+    /**
+     * Sets the current injection point (used by Instance.get()).
+     */
+    static void setInjectionPoint(InjectionPoint ip) {
+        currentInjectionPoint.set(ip);
+    }
+
     private final Map<BeanId, ManagedBean<?>> beans = new LinkedHashMap<>();
     private final Map<Class<? extends Annotation>, Context> contexts = new ConcurrentHashMap<>();
     private final ApplicationContext applicationContext;
@@ -532,7 +539,9 @@ public final class VaubanContainer implements AutoCloseable {
                     }
                     // Pass field qualifiers to Instance for proper resolution
                     var fieldQualifiers = extractFieldQualifiers(field);
-                    field.set(instance, new InstanceImpl<>(this, instanceType).select(fieldQualifiers));
+                    var ownerBean = findBeanForInstance(instance);
+                    var ip = new VaubanInjectionPoint(field, ownerBean);
+                    field.set(instance, new InstanceImpl<>(this, instanceType, ip).select(fieldQualifiers));
                     continue;
                 }
 
@@ -1315,7 +1324,8 @@ public final class VaubanContainer implements AutoCloseable {
                                     var typeArg = pt.getActualTypeArguments()[0];
                                     if (typeArg instanceof Class<?> c) instanceType = c;
                                 }
-                                args[i] = new InstanceImpl<>(this, instanceType);
+                                var ip = new VaubanInjectionPoint(genericType, java.util.Set.of(jakarta.enterprise.inject.Any.Literal.INSTANCE, jakarta.enterprise.inject.Default.Literal.INSTANCE), null, method);
+                                args[i] = new InstanceImpl<>(this, instanceType, ip);
                             } else {
                                 args[i] = select(paramTypes[i]);
                             }
@@ -1523,7 +1533,18 @@ public final class VaubanContainer implements AutoCloseable {
                 var typeArg = pt.getActualTypeArguments()[0];
                 if (typeArg instanceof Class<?> c) instanceType = c;
             }
-            return new InstanceImpl<>(this, instanceType).select(qualifiers);
+            
+            var qualSet = new java.util.HashSet<>(java.util.Arrays.asList(qualifiers));
+            if (qualSet.isEmpty()) qualSet.add(jakarta.enterprise.inject.Default.Literal.INSTANCE);
+            qualSet.add(jakarta.enterprise.inject.Any.Literal.INSTANCE);
+            
+            var targetType = genericType;
+            if (genericType instanceof ParameterizedType pt && pt.getActualTypeArguments().length > 0) {
+                targetType = pt.getActualTypeArguments()[0];
+            }
+            var ip = new VaubanInjectionPoint(targetType, qualSet, null, member);
+            
+            return new InstanceImpl<>(this, instanceType, ip).select(qualifiers);
         }
         if (BeanManager.class.isAssignableFrom(paramType)
                 || paramType == jakarta.enterprise.inject.spi.BeanContainer.class) {

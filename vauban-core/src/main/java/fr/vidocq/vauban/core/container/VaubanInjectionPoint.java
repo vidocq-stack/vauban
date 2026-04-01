@@ -27,11 +27,18 @@ public final class VaubanInjectionPoint implements InjectionPoint {
      * Creates an InjectionPoint for a field injection.
      */
     public VaubanInjectionPoint(Field field, Bean<?> bean) {
-        this.type = field.getGenericType();
+        Type t = field.getGenericType();
+        if (field.getType() == jakarta.enterprise.inject.Instance.class
+                || field.getType() == jakarta.inject.Provider.class) {
+            if (t instanceof java.lang.reflect.ParameterizedType pt) {
+                t = pt.getActualTypeArguments()[0];
+            }
+        }
+        this.type = t;
         this.qualifiers = extractQualifiers(field);
         this.bean = bean;
         this.member = field;
-        this.annotated = new SimpleAnnotatedField(field);
+        this.annotated = new SimpleAnnotatedField(field, this.type, this.qualifiers);
     }
 
     /**
@@ -49,7 +56,7 @@ public final class VaubanInjectionPoint implements InjectionPoint {
         this.qualifiers = Set.copyOf(qualifiers);
         this.bean = bean;
         this.member = member;
-        this.annotated = null;
+        this.annotated = new SimpleAnnotatedMember(member, type, qualifiers);
     }
 
     @Override
@@ -115,21 +122,73 @@ public final class VaubanInjectionPoint implements InjectionPoint {
     /**
      * Minimal Annotated implementation for injection point metadata.
      */
+    private static final class SimpleAnnotatedMember implements Annotated {
+        private final Member member;
+        private final Type type;
+        private final Set<Annotation> qualifiers;
+
+        SimpleAnnotatedMember(Member member, Type type, Set<Annotation> qualifiers) {
+            this.member = member;
+            this.type = type;
+            this.qualifiers = qualifiers;
+        }
+
+        @Override public Type getBaseType() { return type; }
+        @Override public Set<Type> getTypeClosure() { return Set.of(type, Object.class); }
+
+        @Override
+        @SuppressWarnings("unchecked")
+        public <T extends Annotation> T getAnnotation(Class<T> annotationType) {
+            if (member == null) return null;
+            if (member instanceof java.lang.reflect.AccessibleObject ao) {
+                return ao.getAnnotation(annotationType);
+            }
+            return null;
+        }
+
+        @Override
+        public Set<Annotation> getAnnotations() {
+            if (member == null) return qualifiers;
+            if (member instanceof java.lang.reflect.AccessibleObject ao) {
+                return Set.of(ao.getAnnotations());
+            }
+            return qualifiers;
+        }
+
+        @Override
+        public boolean isAnnotationPresent(Class<? extends Annotation> annotationType) {
+            return getAnnotation(annotationType) != null;
+        }
+
+        @Override
+        public <T extends Annotation> Set<T> getAnnotations(Class<T> annotationType) {
+            if (member == null) return Set.of();
+            if (member instanceof java.lang.reflect.AccessibleObject ao) {
+                return Set.of(ao.getAnnotationsByType(annotationType));
+            }
+            return Set.of();
+        }
+    }
+
     private static final class SimpleAnnotatedField implements jakarta.enterprise.inject.spi.AnnotatedField<Object> {
         private final Field field;
+        private final Type type;
+        private final Set<Annotation> qualifiers;
 
-        SimpleAnnotatedField(Field field) {
+        SimpleAnnotatedField(Field field, Type type, Set<Annotation> qualifiers) {
             this.field = field;
+            this.type = type;
+            this.qualifiers = qualifiers;
         }
 
         @Override public Field getJavaMember() { return field; }
         @Override public boolean isStatic() { return Modifier.isStatic(field.getModifiers()); }
-        @Override public Type getBaseType() { return field.getGenericType(); }
+        @Override public Type getBaseType() { return type; }
 
         @Override
         public Set<Type> getTypeClosure() {
             var types = new java.util.LinkedHashSet<Type>();
-            types.add(field.getGenericType());
+            types.add(type);
             types.add(Object.class);
             return types;
         }
@@ -148,6 +207,11 @@ public final class VaubanInjectionPoint implements InjectionPoint {
         @Override
         public boolean isAnnotationPresent(Class<? extends Annotation> annotationType) {
             return field.isAnnotationPresent(annotationType);
+        }
+
+        @Override
+        public <T extends Annotation> Set<T> getAnnotations(Class<T> annotationType) {
+            return Set.of(field.getAnnotationsByType(annotationType));
         }
 
         @Override

@@ -22,14 +22,20 @@ public final class InstanceImpl<T> implements Instance<T> {
     private final VaubanContainer container;
     private final Class<T> type;
     private final Annotation[] qualifiers;
+    private final jakarta.enterprise.inject.spi.InjectionPoint injectionPoint;
 
     public InstanceImpl(VaubanContainer container, Class<T> type) {
-        this(container, type, new Annotation[0]);
+        this(container, type, new Annotation[0], null);
     }
 
-    private InstanceImpl(VaubanContainer container, Class<T> type, Annotation[] qualifiers) {
+    public InstanceImpl(VaubanContainer container, Class<T> type, jakarta.enterprise.inject.spi.InjectionPoint injectionPoint) {
+        this(container, type, new Annotation[0], injectionPoint);
+    }
+
+    private InstanceImpl(VaubanContainer container, Class<T> type, Annotation[] qualifiers, jakarta.enterprise.inject.spi.InjectionPoint injectionPoint) {
         this.container = container;
         this.type = type;
+        this.injectionPoint = injectionPoint;
         // If qualifiers are empty, default to @Any and @Default
         if (qualifiers == null || qualifiers.length == 0) {
             this.qualifiers = new Annotation[] {
@@ -58,22 +64,31 @@ public final class InstanceImpl<T> implements Instance<T> {
         }
         @SuppressWarnings("unchecked")
         var bean = (Bean<T>) bm.resolve(beans);
-        var ctx = bm.createCreationalContext(bean);
-        @SuppressWarnings("unchecked")
-        var ref = (T) bm.getReference(bean, type, ctx);
-        return ref;
+        
+        var previousIp = VaubanContainer.getCurrentInjectionPoint();
+        if (injectionPoint != null) {
+            VaubanContainer.setInjectionPoint(injectionPoint);
+        }
+        try {
+            var ctx = bm.createCreationalContext(bean);
+            @SuppressWarnings("unchecked")
+            var ref = (T) bm.getReference(bean, type, ctx);
+            return ref;
+        } finally {
+            VaubanContainer.setInjectionPoint(previousIp);
+        }
     }
 
     @Override
     public Instance<T> select(Annotation... newQualifiers) {
         validateQualifiers(newQualifiers);
-        return new InstanceImpl<>(container, type, combineQualifiers(this.qualifiers, newQualifiers));
+        return new InstanceImpl<>(container, type, combineQualifiers(this.qualifiers, newQualifiers), injectionPoint);
     }
 
     @Override
     public <U extends T> Instance<U> select(Class<U> subtype, Annotation... newQualifiers) {
         validateQualifiers(newQualifiers);
-        return new InstanceImpl<>(container, subtype, combineQualifiers(this.qualifiers, newQualifiers));
+        return new InstanceImpl<>(container, subtype, combineQualifiers(this.qualifiers, newQualifiers), injectionPoint);
     }
 
     @Override
@@ -81,7 +96,7 @@ public final class InstanceImpl<T> implements Instance<T> {
         validateQualifiers(newQualifiers);
         @SuppressWarnings("unchecked")
         var clazz = (Class<U>) subtype.getType();
-        return new InstanceImpl<>(container, clazz, combineQualifiers(this.qualifiers, newQualifiers));
+        return new InstanceImpl<>(container, clazz, combineQualifiers(this.qualifiers, newQualifiers), injectionPoint);
     }
 
     private static Annotation[] combineQualifiers(Annotation[] existing, Annotation[] additional) {
@@ -190,7 +205,7 @@ public final class InstanceImpl<T> implements Instance<T> {
         }
         @SuppressWarnings("unchecked")
         var bean = (Bean<T>) bm.resolve(beans);
-        return new HandleImpl<>(bean, type, container);
+        return new HandleImpl<>(bean, type, container, injectionPoint);
     }
 
     @Override
@@ -201,7 +216,7 @@ public final class InstanceImpl<T> implements Instance<T> {
         for (var b : beans) {
             @SuppressWarnings("unchecked")
             var bean = (Bean<T>) b;
-            result.add(new HandleImpl<>(bean, type, container));
+            result.add(new HandleImpl<>(bean, type, container, injectionPoint));
         }
         return result;
     }
@@ -217,13 +232,22 @@ public final class InstanceImpl<T> implements Instance<T> {
         var bm = container.getBeanManager();
         var beans = bm.getBeans(type, qualifiers);
         var instances = new ArrayList<T>();
-        for (var b : beans) {
-            @SuppressWarnings("unchecked")
-            var bean = (Bean<T>) b;
-            var ctx = bm.createCreationalContext(bean);
-            @SuppressWarnings("unchecked")
-            var ref = (T) bm.getReference(bean, type, ctx);
-            instances.add(ref);
+        
+        var previousIp = VaubanContainer.getCurrentInjectionPoint();
+        if (injectionPoint != null) {
+            VaubanContainer.setInjectionPoint(injectionPoint);
+        }
+        try {
+            for (var b : beans) {
+                @SuppressWarnings("unchecked")
+                var bean = (Bean<T>) b;
+                var ctx = bm.createCreationalContext(bean);
+                @SuppressWarnings("unchecked")
+                var ref = (T) bm.getReference(bean, type, ctx);
+                instances.add(ref);
+            }
+        } finally {
+            VaubanContainer.setInjectionPoint(previousIp);
         }
         return instances.iterator();
     }
@@ -239,13 +263,15 @@ public final class InstanceImpl<T> implements Instance<T> {
         private final Bean<T> bean;
         private final Class<T> type;
         private final VaubanContainer container;
+        private final jakarta.enterprise.inject.spi.InjectionPoint injectionPoint;
         private T instance;
         private boolean destroyed;
 
-        HandleImpl(Bean<T> bean, Class<T> type, VaubanContainer container) {
+        HandleImpl(Bean<T> bean, Class<T> type, VaubanContainer container, jakarta.enterprise.inject.spi.InjectionPoint injectionPoint) {
             this.bean = bean;
             this.type = type;
             this.container = container;
+            this.injectionPoint = injectionPoint;
         }
 
         @Override
@@ -254,9 +280,17 @@ public final class InstanceImpl<T> implements Instance<T> {
                 throw new IllegalStateException("Handle has been destroyed");
             }
             if (instance == null) {
-                var bm = container.getBeanManager();
-                var ctx = bm.createCreationalContext(bean);
-                instance = (T) bm.getReference(bean, type, ctx);
+                var previousIp = VaubanContainer.getCurrentInjectionPoint();
+                if (injectionPoint != null) {
+                    VaubanContainer.setInjectionPoint(injectionPoint);
+                }
+                try {
+                    var bm = container.getBeanManager();
+                    var ctx = bm.createCreationalContext(bean);
+                    instance = (T) bm.getReference(bean, type, ctx);
+                } finally {
+                    VaubanContainer.setInjectionPoint(previousIp);
+                }
             }
             return instance;
         }
