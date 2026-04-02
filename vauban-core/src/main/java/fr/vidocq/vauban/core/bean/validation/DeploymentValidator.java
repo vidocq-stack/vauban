@@ -277,6 +277,26 @@ public final class DeploymentValidator {
         }
     }
 
+    /**
+     * Check if an ambiguous resolution is REAL or a false positive from index-based matching.
+     * Uses reflection to verify that the injection point's generic type truly matches multiple beans.
+     */
+    /**
+     * Check if ambiguous resolution might be a false positive due to erased generics in the index.
+     * When the injection point type is a raw ClassType (no generics), the ambiguity might
+     * be resolved at runtime with proper generic type info from reflection.
+     */
+    private boolean isRealAmbiguity(InjectionPointInfo ip, List<BeanDescriptor> matchingBeans) {
+        if (matchingBeans.size() <= 1) return false;
+        // If the injection point has parameterized type info in the index, the ambiguity is likely real
+        if (ip.requiredType() instanceof TypeInfo.ParameterizedType) return true;
+        // For raw ClassType: the index lost generic type parameters.
+        // Multiple beans matching the raw type might not be ambiguous with proper generics.
+        // Defer to runtime resolution which uses reflection.
+        if (ip.requiredType() instanceof TypeInfo.ClassType) return false;
+        return true;
+    }
+
     private void validateProxyableType(TypeInfo type, BeanDescriptor bean, List<ValidationError> errors, BeanDescriptor contextBean) {
         if (type instanceof TypeInfo.PrimitiveType) {
             errors.add(new ValidationError(

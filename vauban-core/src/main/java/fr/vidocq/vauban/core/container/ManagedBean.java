@@ -243,6 +243,31 @@ public final class ManagedBean<T> implements Bean<T> {
         return null;
     }
 
+    /**
+     * CDI 4.1 Section 2.2.1: Filter illegal bean types for producer beans.
+     * Parameterized types with unresolved TypeVariables or Wildcards are illegal.
+     */
+    private static Set<Type> filterIllegalBeanTypes(Set<Type> types) {
+        var result = new LinkedHashSet<Type>();
+        for (var t : types) {
+            if (t == Object.class || t instanceof Class<?>) {
+                result.add(t);
+            } else if (t instanceof java.lang.reflect.ParameterizedType pt) {
+                boolean legal = true;
+                for (var arg : pt.getActualTypeArguments()) {
+                    if (arg instanceof java.lang.reflect.TypeVariable<?>
+                            || arg instanceof java.lang.reflect.WildcardType) {
+                        legal = false;
+                        break;
+                    }
+                }
+                if (legal) result.add(t);
+            }
+            // Skip TypeVariable, WildcardType, GenericArrayType
+        }
+        return result;
+    }
+
     private Set<Type> getProducerTypes() {
         // For @Typed producers, use reflection to get the correct parameterized types
         if (hasProducerTypedRestriction()) {

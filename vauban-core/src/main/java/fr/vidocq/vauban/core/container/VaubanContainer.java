@@ -691,8 +691,6 @@ public final class VaubanContainer implements AutoCloseable {
         var className = beanClass.getName();
         var creating = beansBeingCreated.get();
         if (creating.contains(className)) {
-            // Circular dependency during creation — return null to break cycle
-            // The caller should handle null for producer declaring instances
             return null;
         }
         creating.add(className);
