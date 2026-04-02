@@ -149,11 +149,11 @@ public final class InstanceImpl<T> implements Instance<T> {
 
     @Override
     public boolean isAmbiguous() {
-        var beans = container.getBeanManager().getBeans(type, qualifiers);
+        var beans = getEffectiveBeans();
         if (beans.size() <= 1) return false;
         try {
             container.getBeanManager().resolve(beans);
-            return false; // resolved successfully — not ambiguous
+            return false;
         } catch (jakarta.enterprise.inject.AmbiguousResolutionException e) {
             return true;
         }
@@ -214,7 +214,7 @@ public final class InstanceImpl<T> implements Instance<T> {
     @Override
     public Iterable<? extends Handle<T>> handles() {
         var bm = container.getBeanManager();
-        var beans = bm.getBeans(type, qualifiers);
+        var beans = getEffectiveBeans();
         var result = new ArrayList<Handle<T>>();
         for (var b : beans) {
             @SuppressWarnings("unchecked")
@@ -233,7 +233,7 @@ public final class InstanceImpl<T> implements Instance<T> {
     @Override
     public Iterator<T> iterator() {
         var bm = container.getBeanManager();
-        var beans = bm.getBeans(type, qualifiers);
+        var beans = getEffectiveBeans();
         var instances = new ArrayList<T>();
         
         var previousIp = VaubanContainer.getCurrentInjectionPoint();
@@ -256,7 +256,32 @@ public final class InstanceImpl<T> implements Instance<T> {
     }
 
     private int resolveCount() {
-        return container.getBeanManager().getBeans(type, qualifiers).size();
+        return getEffectiveBeans().size();
+    }
+
+    /**
+     * CDI spec: when alternatives with @Priority are present, non-alternative beans are excluded.
+     * Only the highest-priority alternative(s) are returned.
+     */
+    private Set<Bean<?>> getEffectiveBeans() {
+        var beans = container.getBeanManager().getBeans(type, qualifiers);
+        if (beans.size() <= 1) return beans;
+        // Check if any enabled alternatives are present
+        var alternatives = beans.stream()
+                .filter(Bean::isAlternative)
+                .toList();
+        if (alternatives.isEmpty()) return beans;
+        // Only keep the highest-priority alternative(s)
+        int maxPriority = alternatives.stream()
+                .mapToInt(b -> b instanceof ManagedBean<?> mb ? mb.descriptor().priority() : 0)
+                .max().orElse(0);
+        var best = alternatives.stream()
+                .filter(b -> {
+                    int p = b instanceof ManagedBean<?> mb ? mb.descriptor().priority() : 0;
+                    return p == maxPriority;
+                })
+                .collect(java.util.stream.Collectors.toCollection(java.util.LinkedHashSet::new));
+        return best;
     }
 
     /**
