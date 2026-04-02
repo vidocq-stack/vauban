@@ -512,7 +512,23 @@ public final class VaubanContainer implements AutoCloseable {
                         // This parameter must be resolvable as an injection point
                         var paramType = param.getType();
                         if (paramType == jakarta.enterprise.inject.spi.BeanManager.class
-                                || paramType == jakarta.enterprise.inject.spi.BeanContainer.class) continue;
+                                || paramType == jakarta.enterprise.inject.spi.BeanContainer.class
+                                || paramType == jakarta.enterprise.inject.spi.InjectionPoint.class
+                                || paramType == jakarta.enterprise.inject.Instance.class
+                                || paramType == jakarta.inject.Provider.class
+                                || paramType == jakarta.enterprise.event.Event.class) continue;
+                        // Skip validation if parameter has custom qualifiers (we can't reliably resolve them)
+                        boolean hasCustomQualifier = false;
+                        for (var ann : param.getAnnotations()) {
+                            if (ann.annotationType().isAnnotationPresent(jakarta.inject.Qualifier.class)
+                                    && ann.annotationType() != jakarta.enterprise.inject.Default.class
+                                    && ann.annotationType() != jakarta.enterprise.inject.Any.class
+                                    && ann.annotationType() != jakarta.inject.Named.class) {
+                                hasCustomQualifier = true;
+                                break;
+                            }
+                        }
+                        if (hasCustomQualifier) continue;
                         // Check if any bean matches this type
                         var ip = new fr.vidocq.vauban.core.bean.model.InjectionPointInfo(
                                 new fr.vidocq.vauban.indexer.model.TypeInfo.ClassType(
@@ -567,9 +583,13 @@ public final class VaubanContainer implements AutoCloseable {
                     if (!method.getName().equals(disposer.methodName())) continue;
                     for (var param : method.getParameters()) {
                         if (param.isAnnotationPresent(jakarta.enterprise.inject.Disposes.class)) continue;
-                        if (param.getType() == jakarta.enterprise.inject.spi.BeanManager.class
-                                || param.getType() == jakarta.enterprise.inject.spi.BeanContainer.class) continue;
                         var paramType = param.getType();
+                        if (paramType == jakarta.enterprise.inject.spi.BeanManager.class
+                                || paramType == jakarta.enterprise.inject.spi.BeanContainer.class
+                                || paramType == jakarta.enterprise.inject.spi.InjectionPoint.class
+                                || paramType == jakarta.enterprise.inject.Instance.class
+                                || paramType == jakarta.inject.Provider.class
+                                || paramType == jakarta.enterprise.event.Event.class) continue;
                         var ip = new fr.vidocq.vauban.core.bean.model.InjectionPointInfo(
                                 new fr.vidocq.vauban.indexer.model.TypeInfo.ClassType(
                                         fr.vidocq.vauban.indexer.model.DotName.of(paramType.getName())),
