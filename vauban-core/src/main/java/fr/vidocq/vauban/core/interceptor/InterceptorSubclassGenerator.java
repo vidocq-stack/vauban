@@ -48,6 +48,7 @@ public final class InterceptorSubclassGenerator {
     public static GeneratedInterceptedClass generate(Class<?> beanClass, Set<DotName> bindings, Set<DotName> constructorBindings) {
         String beanClassName = beanClass.getName();
         String subclassName = beanClassName + "$$Intercepted";
+        boolean dump = false;
 
         ClassDesc subclassCD = classDescOf(subclassName);
         ClassDesc beanCD = classDescOf(beanClass);
