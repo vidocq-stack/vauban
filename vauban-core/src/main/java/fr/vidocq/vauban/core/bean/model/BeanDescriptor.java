@@ -26,7 +26,7 @@ public record BeanDescriptor(
 ) {
 
     public enum BeanKind {
-        MANAGED, PRODUCER_METHOD, PRODUCER_FIELD
+        MANAGED, PRODUCER_METHOD, PRODUCER_FIELD, SYNTHETIC
     }
 
     public BeanDescriptor {

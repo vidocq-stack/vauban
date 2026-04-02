@@ -193,7 +193,11 @@ public final class ManagedBean<T> implements Bean<T> {
 
         Set<Type> types;
         // For producer beans, derive types from the produced type, not the declaring class
-        if (descriptor.kind() != BeanDescriptor.BeanKind.MANAGED) {
+        if (descriptor.kind() == BeanDescriptor.BeanKind.PRODUCER_METHOD
+                || descriptor.kind() == BeanDescriptor.BeanKind.PRODUCER_FIELD) {
+            types = getProducerTypes();
+        } else if (descriptor.kind() == BeanDescriptor.BeanKind.SYNTHETIC) {
+            // Synthetic beans use the types from the descriptor directly
             types = getProducerTypes();
         } else {
             types = new LinkedHashSet<Type>();

@@ -128,10 +128,30 @@ public final class VaubanClassInfo implements jakarta.enterprise.lang.model.decl
 
     @Override
     public Collection<jakarta.enterprise.lang.model.declarations.MethodInfo> methods() {
-        return indexClass.methods().stream()
-                .filter(m -> !m.isConstructor() && !m.isStaticInitializer())
-                .map(m -> (jakarta.enterprise.lang.model.declarations.MethodInfo) new VaubanMethodInfo(m, this, lookup))
-                .toList();
+        var result = new java.util.ArrayList<jakarta.enterprise.lang.model.declarations.MethodInfo>();
+        // Methods declared directly on this class
+        var declaredMethodNames = new java.util.HashSet<String>();
+        for (var m : indexClass.methods()) {
+            if (!m.isConstructor() && !m.isStaticInitializer()) {
+                result.add(new VaubanMethodInfo(m, this, lookup));
+                declaredMethodNames.add(m.name());
+            }
+        }
+        // Methods from superinterfaces (always included, even if overridden,
+        // because BCE extensions may filter on declaringClass().isInterface())
+        for (var ifaceName : indexClass.interfaces()) {
+            var ifaceClassOpt = lookup.getClass(ifaceName);
+            if (ifaceClassOpt.isPresent()) {
+                var ifaceClass = ifaceClassOpt.get();
+                var ifaceInfo = new VaubanClassInfo(ifaceClass, lookup);
+                for (var m : ifaceClass.methods()) {
+                    if (!m.isConstructor() && !m.isStaticInitializer()) {
+                        result.add(new VaubanMethodInfo(m, ifaceInfo, lookup));
+                    }
+                }
+            }
+        }
+        return result;
     }
 
     @Override

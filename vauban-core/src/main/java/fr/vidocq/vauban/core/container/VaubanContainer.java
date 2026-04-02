@@ -119,6 +119,8 @@ public final class VaubanContainer implements AutoCloseable {
                 factory = createProducerMethodFactory(descriptor);
             } else if (descriptor.kind() == BeanDescriptor.BeanKind.PRODUCER_FIELD) {
                 factory = createProducerFieldFactory(descriptor);
+            } else if (descriptor.kind() == BeanDescriptor.BeanKind.SYNTHETIC) {
+                factory = factories.get(descriptor.beanClass());
             } else {
                 continue;
             }
@@ -2178,7 +2180,11 @@ public final class VaubanContainer implements AutoCloseable {
                 }
 
                 // Reflection-based validation (for generic signatures not in bytecode index)
-                var reflectionErrors = validateWithReflection(beanClasses);
+                // Exclude BCE classes from validation (they are not beans)
+                var nonBceClasses = beanClasses.stream()
+                        .filter(c -> !isBuildCompatibleExtension(c))
+                        .toList();
+                var reflectionErrors = validateWithReflection(nonBceClasses);
                 if (!reflectionErrors.isEmpty()) {
                     var msg = new StringBuilder("CDI definition validation failed:\n");
                     for (var error : reflectionErrors) {
@@ -2188,15 +2194,43 @@ public final class VaubanContainer implements AutoCloseable {
                 }
 
                 var discovery = new BeanDiscovery(index);
-                var descriptors = discovery.discoverBeans();
+                var descriptors = new ArrayList<>(discovery.discoverBeans());
                 var observers = discovery.discoverObservers();
                 var interceptors = discovery.discoverInterceptors();
                 var disposers = discovery.discoverDisposerMethods();
+
+                // --- Build Compatible Extensions (BCE) processing ---
+                var bceClasses = beanClasses.stream()
+                        .filter(c -> isBuildCompatibleExtension(c))
+                        .toList();
+
+
+                if (!bceClasses.isEmpty()) {
+                    var bceResult = fr.vidocq.vauban.core.extensions.BceProcessor.process(
+                            bceClasses, descriptors, index,
+                            beanClasses.isEmpty() ? Thread.currentThread().getContextClassLoader()
+                                    : beanClasses.getFirst().getClassLoader());
+
+                    // BCE errors are deployment errors
+                    if (!bceResult.errors().isEmpty()) {
+                        var msg = new StringBuilder("CDI deployment validation failed:\n");
+                        for (var error : bceResult.errors()) {
+                            msg.append("  - ").append(error).append("\n");
+                        }
+                        throw new jakarta.enterprise.inject.spi.DeploymentException(msg.toString());
+                    }
+
+                    // Register synthetic beans
+                    for (var synBean : bceResult.syntheticBeans()) {
+                        registerSyntheticBean(synBean, descriptors, factories);
+                    }
+                }
 
                 // Validate observer/disposer method parameters (CDI spec)
                 validateObserverParameters(observers, descriptors, index);
                 validateDisposerParameters(disposers, descriptors, index);
                 // Disposer method definition validation deferred (causes regressions with TCK test archives)
+
 
                 // Validate deployment — throw if there are errors
                 var assignability = new AssignabilityRules(index);
@@ -2248,6 +2282,74 @@ public final class VaubanContainer implements AutoCloseable {
             } finally {
                 Thread.currentThread().setContextClassLoader(previousCl);
             }
+        }
+
+        @SuppressWarnings({"unchecked", "rawtypes"})
+        private static void registerSyntheticBean(
+                fr.vidocq.vauban.core.extensions.VaubanSyntheticBeanBuilder<?> synBean,
+                List<BeanDescriptor> descriptors,
+                Map<DotName, BeanFactory<?>> factories) {
+            var beanClass = synBean.getBeanClass();
+            var beanName = DotName.of(beanClass.getName());
+
+            // Build bean types from the builder's types
+            var beanTypes = new java.util.LinkedHashSet<TypeInfo>();
+            for (var type : synBean.getTypes()) {
+                if (type instanceof Class<?> cls) {
+                    beanTypes.add(new TypeInfo.ClassType(DotName.of(cls.getName())));
+                }
+            }
+            if (beanTypes.isEmpty()) {
+                beanTypes.add(new TypeInfo.ClassType(beanName));
+                beanTypes.add(new TypeInfo.ClassType(DotName.of("java.lang.Object")));
+            }
+
+            // Determine scope
+            var scope = fr.vidocq.vauban.core.bean.model.ScopeInfo.DEPENDENT;
+            if (synBean.getScopeAnnotation() != null) {
+                var scopeAnn = synBean.getScopeAnnotation();
+                if (scopeAnn == jakarta.enterprise.context.ApplicationScoped.class) {
+                    scope = fr.vidocq.vauban.core.bean.model.ScopeInfo.APPLICATION;
+                } else if (scopeAnn == jakarta.enterprise.context.RequestScoped.class) {
+                    scope = fr.vidocq.vauban.core.bean.model.ScopeInfo.REQUEST;
+                } else if (scopeAnn == jakarta.inject.Singleton.class) {
+                    scope = fr.vidocq.vauban.core.bean.model.ScopeInfo.SINGLETON;
+                }
+            }
+
+            // Default qualifiers: @Default + @Any
+            var qualifiers = Set.of(QualifierInstance.DEFAULT, QualifierInstance.ANY);
+
+            var descriptor = new BeanDescriptor(
+                    new BeanId(beanName.value() + "#synthetic"),
+                    beanName,
+                    BeanDescriptor.BeanKind.SYNTHETIC,
+                    beanTypes,
+                    qualifiers,
+                    scope,
+                    synBean.isAlternative(),
+                    synBean.getPriority(),
+                    List.of(),
+                    synBean.getName()
+            );
+            descriptors.add(descriptor);
+
+            // Create factory using SyntheticBeanCreator
+            var creatorClass = synBean.getCreatorClass();
+            var params = synBean.getParams();
+            factories.put(beanName, (BeanFactory<Object>) () -> {
+                try {
+                    var creator = (jakarta.enterprise.inject.build.compatible.spi.SyntheticBeanCreator)
+                            creatorClass.getDeclaredConstructor().newInstance();
+                    var vaubanParams = new fr.vidocq.vauban.core.extensions.VaubanParameters(params);
+                    var instance = jakarta.enterprise.inject.spi.CDI.current().select(Object.class);
+                    return creator.create((jakarta.enterprise.inject.Instance) instance, vaubanParams);
+                } catch (RuntimeException e) {
+                    throw e;
+                } catch (Exception e) {
+                    throw new jakarta.enterprise.inject.CreationException(e);
+                }
+            });
         }
 
         /**
@@ -2777,6 +2879,23 @@ public final class VaubanContainer implements AutoCloseable {
             }
             return false;
         }
+
+    /**
+     * Check if a class implements BuildCompatibleExtension, using interface name
+     * comparison to avoid ClassLoader issues.
+     */
+    private static boolean isBuildCompatibleExtension(Class<?> clazz) {
+        return implementsInterface(clazz, "jakarta.enterprise.inject.build.compatible.spi.BuildCompatibleExtension");
+    }
+
+    private static boolean implementsInterface(Class<?> clazz, String interfaceName) {
+        if (clazz == null || clazz == Object.class) return false;
+        for (var iface : clazz.getInterfaces()) {
+            if (iface.getName().equals(interfaceName)) return true;
+            if (implementsInterface(iface, interfaceName)) return true;
+        }
+        return implementsInterface(clazz.getSuperclass(), interfaceName);
+    }
 
         private static boolean hasBeanDefiningAnnotation(Class<?> clazz) {
             for (var ann : clazz.getAnnotations()) {

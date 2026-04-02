@@ -3,7 +3,9 @@
     "allow": [
       "Bash(*)",
       "Read(*)",
-      "WebFetch(domain:*)"
+      "WebFetch(domain:*)",
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "WebFetch(domain:github.com)"
     ]
   }
 }
