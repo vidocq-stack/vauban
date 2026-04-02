@@ -271,6 +271,7 @@ public final class VaubanInvocationContext implements InvocationContext {
                     return constructor != null ? null : result;
                 }
                 if (method != null) {
+                    method.setAccessible(true);
                     return method.invoke(target, parameters);
                 }
                 return null;
@@ -289,6 +290,7 @@ public final class VaubanInvocationContext implements InvocationContext {
     public record InterceptorInvocation(Object target, Method method) {
         public Object invoke(InvocationContext ctx) throws Exception {
             try {
+                method.setAccessible(true);
                 return method.invoke(target, ctx);
             } catch (java.lang.reflect.InvocationTargetException e) {
                 var cause = e.getCause();
