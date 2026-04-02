@@ -912,6 +912,23 @@ public final class VaubanContainer implements AutoCloseable {
         return quals.toArray(new java.lang.annotation.Annotation[0]);
     }
 
+    private static Set<java.lang.annotation.Annotation> collectQualifierSet(java.lang.annotation.Annotation[] annotations) {
+        var quals = new java.util.LinkedHashSet<java.lang.annotation.Annotation>();
+        for (var ann : annotations) {
+            if (ann.annotationType() == jakarta.inject.Inject.class) continue;
+            if (ann.annotationType().isAnnotationPresent(jakarta.inject.Qualifier.class)
+                    || ann.annotationType() == jakarta.enterprise.inject.Default.class
+                    || ann.annotationType() == jakarta.enterprise.inject.Any.class) {
+                quals.add(ann);
+            }
+        }
+        if (quals.isEmpty()) {
+            quals.add(jakarta.enterprise.inject.Default.Literal.INSTANCE);
+        }
+        quals.add(jakarta.enterprise.inject.Any.Literal.INSTANCE);
+        return quals;
+    }
+
     private static java.lang.annotation.Annotation[] collectEventQualifiers(java.lang.annotation.Annotation[] annotations) {
         var quals = new java.util.ArrayList<java.lang.annotation.Annotation>();
         for (var ann : annotations) {
@@ -1698,7 +1715,9 @@ public final class VaubanContainer implements AutoCloseable {
                                 if (paramTypes[i] == BeanManager.class) {
                                     args[i] = getBeanManager();
                                 } else if (paramTypes[i] == Event.class) {
-                                    args[i] = new EventImpl<>(eventDispatcher, collectEventQualifiers(method.getParameters()[i].getAnnotations()));
+                                    var eventIp = new VaubanInjectionPoint(method.getGenericParameterTypes()[i],
+                                            collectQualifierSet(method.getParameters()[i].getAnnotations()), null, method);
+                                    args[i] = new EventImpl<>(eventDispatcher, collectEventQualifiers(method.getParameters()[i].getAnnotations()), eventIp);
                                 } else if (paramTypes[i] == Instance.class) {
                                     Class<?> instanceType = Object.class;
                                     var genericType = method.getGenericParameterTypes()[i];
@@ -1930,7 +1949,10 @@ public final class VaubanContainer implements AutoCloseable {
 
     public Object resolveParameter(Class<?> paramType, java.lang.reflect.Type genericType, CreationalContext<?> ctx, java.lang.annotation.Annotation[] qualifiers, java.lang.reflect.Member member) {
         if (paramType == Event.class) {
-            return new EventImpl<>(eventDispatcher, qualifiers);
+            var eventIp = member != null
+                    ? new VaubanInjectionPoint(genericType, collectQualifierSet(qualifiers), null, member)
+                    : null;
+            return new EventImpl<>(eventDispatcher, qualifiers, eventIp);
         }
         if (paramType == Instance.class || paramType == jakarta.inject.Provider.class) {
             Class<?> instanceType = Object.class;
@@ -2238,7 +2260,8 @@ public final class VaubanContainer implements AutoCloseable {
                 // Validate observer/disposer method parameters (CDI spec)
                 validateObserverParameters(observers, descriptors, index);
                 validateDisposerParameters(disposers, descriptors, index);
-                // Disposer method definition validation deferred (causes regressions with TCK test archives)
+                // Validate disposer method definitions (CDI 4.1 Section 3.5)
+                validateDisposerDefinitions(disposers, descriptors);
 
 
                 // Validate deployment — throw if there are errors
@@ -2291,6 +2314,66 @@ public final class VaubanContainer implements AutoCloseable {
             } finally {
                 Thread.currentThread().setContextClassLoader(previousCl);
             }
+        }
+
+        /**
+         * Validates disposer method definitions (CDI 4.1 Section 3.5).
+         * - Each disposer must match at least one producer bean in the same declaring class
+         * - Multiple disposers for the same producer in the same class are DefinitionException
+         */
+        private static void validateDisposerDefinitions(
+                List<DisposerDescriptor> disposers,
+                List<BeanDescriptor> descriptors) {
+            var producerBeans = descriptors.stream()
+                    .filter(d -> d.kind() == BeanDescriptor.BeanKind.PRODUCER_METHOD
+                            || d.kind() == BeanDescriptor.BeanKind.PRODUCER_FIELD)
+                    .toList();
+
+            // CDI spec: Each disposer must have a matching producer in the same bean class
+            for (var disposer : disposers) {
+                boolean found = false;
+                for (var producer : producerBeans) {
+                    // Disposer must be in the same declaring class as the producer
+                    if (!producer.beanClass().equals(disposer.declaringClass())
+                            && !producerDeclaredIn(producer, disposer.declaringClass())) {
+                        continue;
+                    }
+                    if (disposerMatchesProducerType(disposer, producer)) {
+                        found = true;
+                        break;
+                    }
+                }
+                if (!found) {
+                    // Only throw if the disposer is in a bean class (not a non-bean utility class)
+                    boolean isInBeanClass = descriptors.stream()
+                            .anyMatch(d -> d.beanClass().equals(disposer.declaringClass())
+                                    && d.kind() == BeanDescriptor.BeanKind.MANAGED);
+                    if (isInBeanClass) {
+                        throw new jakarta.enterprise.inject.spi.DefinitionException(
+                                "Disposer method " + disposer.declaringClass().value() + "." + disposer.methodName()
+                                        + "(): no matching producer found for disposed type " + disposer.disposedType());
+                    }
+                }
+            }
+        }
+
+        private static boolean producerDeclaredIn(BeanDescriptor producer, DotName declaringClass) {
+            // Check if the producer's ID references this declaring class
+            return producer.id().value().startsWith(declaringClass.value());
+        }
+
+        private static boolean disposerMatchesProducerType(DisposerDescriptor disposer, BeanDescriptor producer) {
+            for (var producerType : producer.types()) {
+                if (producerType instanceof TypeInfo.ClassType ct
+                        && disposer.disposedType() instanceof TypeInfo.ClassType dt
+                        && ct.name().equals(dt.name())) {
+                    return true;
+                }
+                if (producerType.equals(disposer.disposedType())) {
+                    return true;
+                }
+            }
+            return false;
         }
 
         @SuppressWarnings({"unchecked", "rawtypes"})
