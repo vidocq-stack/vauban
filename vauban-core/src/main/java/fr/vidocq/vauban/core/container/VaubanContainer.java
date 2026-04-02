@@ -788,10 +788,12 @@ public final class VaubanContainer implements AutoCloseable {
                     continue;
                 }
 
-                // Handle Event<T> injection — capture qualifiers from the injection point
+                // Handle Event<T> injection — capture qualifiers and InjectionPoint
                 if (field.getType() == Event.class) {
                     var eventQualifiers = collectEventQualifiers(field.getAnnotations());
-                    field.set(instance, new EventImpl<>(eventDispatcher, eventQualifiers));
+                    var ownerBean = findBeanForInstance(instance);
+                    var eventIp = new VaubanInjectionPoint(field, ownerBean);
+                    field.set(instance, new EventImpl<>(eventDispatcher, eventQualifiers, eventIp));
                     continue;
                 }
 

@@ -17,14 +17,25 @@ public final class EventImpl<T> implements Event<T> {
 
     private final EventDispatcher dispatcher;
     private final Annotation[] qualifiers;
+    private final jakarta.enterprise.inject.spi.InjectionPoint injectionPoint;
 
     public EventImpl(EventDispatcher dispatcher) {
-        this(dispatcher, new Annotation[0]);
+        this(dispatcher, new Annotation[0], null);
     }
 
     public EventImpl(EventDispatcher dispatcher, Annotation[] qualifiers) {
+        this(dispatcher, qualifiers, null);
+    }
+
+    public EventImpl(EventDispatcher dispatcher, Annotation[] qualifiers,
+            jakarta.enterprise.inject.spi.InjectionPoint injectionPoint) {
         this.dispatcher = dispatcher;
         this.qualifiers = qualifiers;
+        this.injectionPoint = injectionPoint;
+    }
+
+    public jakarta.enterprise.inject.spi.InjectionPoint getInjectionPoint() {
+        return injectionPoint;
     }
 
     @Override
@@ -32,7 +43,7 @@ public final class EventImpl<T> implements Event<T> {
         if (event == null) {
             throw new IllegalArgumentException("Event object must not be null");
         }
-        dispatcher.fire(event, qualifiers);
+        dispatcher.fire(event, injectionPoint, qualifiers);
     }
 
     @Override
@@ -59,7 +70,7 @@ public final class EventImpl<T> implements Event<T> {
     @Override
     public Event<T> select(Annotation... newQualifiers) {
         validateQualifiers(newQualifiers);
-        return new EventImpl<>(dispatcher, combineQualifiers(this.qualifiers, newQualifiers));
+        return new EventImpl<>(dispatcher, combineQualifiers(this.qualifiers, newQualifiers), injectionPoint);
     }
 
     @Override
@@ -68,7 +79,7 @@ public final class EventImpl<T> implements Event<T> {
         if (subtype == null) {
             throw new IllegalArgumentException("Subtype must not be null");
         }
-        return new EventImpl<>(dispatcher, combineQualifiers(this.qualifiers, newQualifiers));
+        return new EventImpl<>(dispatcher, combineQualifiers(this.qualifiers, newQualifiers), injectionPoint);
     }
 
     @Override
@@ -81,7 +92,7 @@ public final class EventImpl<T> implements Event<T> {
         if (containsTypeVariable(type)) {
             throw new IllegalArgumentException("TypeVariable is not a legal event type");
         }
-        return new EventImpl<>(dispatcher, combineQualifiers(this.qualifiers, newQualifiers));
+        return new EventImpl<>(dispatcher, combineQualifiers(this.qualifiers, newQualifiers), injectionPoint);
     }
 
     private static boolean containsTypeVariable(java.lang.reflect.Type type) {

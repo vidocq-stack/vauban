@@ -29,6 +29,11 @@ public final class EventDispatcher {
      * Fire a synchronous event to all matching observers.
      */
     public <T> void fire(T event, Annotation... qualifiers) {
+        fire(event, null, qualifiers);
+    }
+
+    public <T> void fire(T event, jakarta.enterprise.inject.spi.InjectionPoint eventInjectionPoint,
+            Annotation... qualifiers) {
         var eventType = event.getClass();
         var qualifierInstances = toQualifierInstances(qualifiers);
         var matching = findMatchingObservers(eventType, false, qualifierInstances);
@@ -37,7 +42,7 @@ public final class EventDispatcher {
         matching.sort(Comparator.comparingInt(ObserverDescriptor::priority));
 
         for (var observer : matching) {
-            invokeObserver(observer, event, qualifiers);
+            invokeObserver(observer, event, eventInjectionPoint, qualifiers);
         }
     }
 
@@ -214,6 +219,11 @@ public final class EventDispatcher {
     }
 
     private void invokeObserver(ObserverDescriptor observer, Object event, Annotation... eventQualifiers) {
+        invokeObserver(observer, event, null, eventQualifiers);
+    }
+
+    private void invokeObserver(ObserverDescriptor observer, Object event,
+            jakarta.enterprise.inject.spi.InjectionPoint eventInjectionPoint, Annotation... eventQualifiers) {
         try {
             var beanClass = Class.forName(observer.declaringClass().value(), true, container.classLoader());
 
@@ -269,7 +279,7 @@ public final class EventDispatcher {
                                     return immutableQualifiers;
                                 }
                                 @Override public jakarta.enterprise.inject.spi.InjectionPoint getInjectionPoint() {
-                                    return null; // CDI spec: null if event was not fired from an injection point
+                                    return eventInjectionPoint; // The injection point of the Event<T> field
                                 }
                                 @Override public java.lang.reflect.Type getType() {
                                     return eventObj.getClass();
