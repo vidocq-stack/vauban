@@ -1388,7 +1388,8 @@ public final class BeanDiscovery {
             if (!hasBeanDefiningAnnotation(classInfo)) continue;
 
             for (var method : classInfo.methods()) {
-                if (method.isConstructor() || method.isStatic()) continue;
+                if (method.isConstructor()) continue;
+                // CDI spec: disposer methods can be static
 
                 for (int i = 0; i < method.parameters().size(); i++) {
                     var param = method.parameters().get(i);
