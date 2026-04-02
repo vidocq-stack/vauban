@@ -72,12 +72,30 @@ public final class AssignabilityRules {
         return switch (beanType) {
             case ClassType bean -> isSubtypeOf(bean.name(), required.name());
             case ParameterizedType bean -> {
-                // CDI 4.1 Section 2.4.1: A bean type that is a parameterized type is assignable to 
+                // CDI 4.1 Section 2.4.1: A bean type that is a parameterized type is assignable to
                 // a required type that is a class or interface if the bean type's raw type is assignable
                 // to the required type.
                 yield isSubtypeOf(bean.rawType(), required.name());
             }
             default -> false;
+        };
+    }
+
+    /**
+     * CDI bean type matching: checks if a bean type exactly matches a required type.
+     * Unlike isAssignable, this uses equality for ClassType (since bean type sets
+     * already include all supertypes).
+     */
+    public boolean beanTypeMatches(TypeInfo beanType, TypeInfo requiredType) {
+        if (beanType.equals(requiredType)) return true;
+        return switch (requiredType) {
+            case ClassType req -> switch (beanType) {
+                case ClassType bean -> bean.name().equals(req.name());
+                case ParameterizedType bean -> bean.rawType().equals(req.name());
+                default -> false;
+            };
+            case ParameterizedType req -> isAssignableToParameterized(beanType, req);
+            default -> isAssignable(beanType, requiredType);
         };
     }
 

@@ -92,7 +92,7 @@ public final class BeanResolver {
 
     private boolean matchesType(BeanDescriptor bean, TypeInfo requiredType) {
         for (var beanType : bean.types()) {
-            if (assignability.isAssignable(beanType, requiredType)) {
+            if (assignability.beanTypeMatches(beanType, requiredType)) {
                 return true;
             }
         }
