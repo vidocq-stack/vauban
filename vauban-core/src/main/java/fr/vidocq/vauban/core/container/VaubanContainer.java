@@ -1506,7 +1506,6 @@ public final class VaubanContainer implements AutoCloseable {
                         typeMatches = true;
                         break;
                     }
-                    // Also check by raw class name match for ClassType
                     if (bt instanceof TypeInfo.ClassType btCt
                             && disposer.disposedType() instanceof TypeInfo.ClassType dCt
                             && btCt.name().equals(dCt.name())) {
@@ -1514,26 +1513,122 @@ public final class VaubanContainer implements AutoCloseable {
                         break;
                     }
                 }
+                // Fallback: use reflection for assignability (index may lack type info)
+                if (!typeMatches && disposer.disposedType() instanceof TypeInfo.ClassType dCt) {
+                    try {
+                        var cl = Thread.currentThread().getContextClassLoader();
+                        var disposedClass = Class.forName(dCt.name().value(), false, cl);
+                        for (var bt : descriptor.types()) {
+                            String btName = null;
+                            if (bt instanceof TypeInfo.ClassType btCt) btName = btCt.name().value();
+                            else if (bt instanceof TypeInfo.ParameterizedType pt) btName = pt.rawType().value();
+                            if (btName != null) {
+                                var beanTypeClass = Class.forName(btName, false, cl);
+                                if (disposedClass.isAssignableFrom(beanTypeClass)) {
+                                    typeMatches = true;
+                                    break;
+                                }
+                            }
+                        }
+                    } catch (ClassNotFoundException e) { /* skip */ }
+                }
                 if (!typeMatches) continue;
 
                 // CDI spec: disposer qualifiers must match producer qualifiers
-                var disposerQuals = disposer.qualifiers().stream()
+                // Use annotation names for matching (members from index may be incomplete)
+                // Then verify via reflection for exact member values
+                var disposerQualNames = disposer.qualifiers().stream()
                         .filter(q -> !q.isDefault() && !q.isAny())
+                        .map(q -> q.annotationName())
                         .collect(java.util.stream.Collectors.toSet());
-                var producerQuals = descriptor.qualifiers().stream()
+                var producerQualNames = descriptor.qualifiers().stream()
                         .filter(q -> !q.isDefault() && !q.isAny())
+                        .map(q -> q.annotationName())
                         .collect(java.util.stream.Collectors.toSet());
                 boolean qualifiersMatch;
-                if (disposerQuals.isEmpty()) {
-                    qualifiersMatch = producerQuals.isEmpty();
+                if (disposerQualNames.isEmpty()) {
+                    qualifiersMatch = producerQualNames.isEmpty();
+                } else if (!producerQualNames.containsAll(disposerQualNames)) {
+                    qualifiersMatch = false;
                 } else {
-                    qualifiersMatch = producerQuals.containsAll(disposerQuals);
+                    // Annotation names match — verify via reflection for exact member values
+                    qualifiersMatch = verifyDisposerQualifiersViaReflection(descriptor, disposer);
                 }
                 if (!qualifiersMatch) continue;
 
                 bean.setDestroyer(instance -> callDisposer(instance, disposer));
                 break;
             }
+        }
+    }
+
+    /**
+     * Use reflection to compare qualifier annotation values between a producer and disposer.
+     * The index may not capture annotation member values, so we use the actual Java annotations.
+     */
+    private boolean verifyDisposerQualifiersViaReflection(BeanDescriptor producer, DisposerDescriptor disposer) {
+        try {
+            var cl = Thread.currentThread().getContextClassLoader();
+            var declaringClass = Class.forName(producer.beanClass().value(), false, cl);
+
+            // Find producer method/field annotations
+            java.lang.annotation.Annotation[] producerAnnotations = null;
+            var producerId = producer.id().value();
+            if (producer.kind() == BeanDescriptor.BeanKind.PRODUCER_METHOD) {
+                var methodName = producerId.contains("#") ? producerId.substring(producerId.indexOf('#') + 1) : null;
+                if (methodName != null) {
+                    for (var m : declaringClass.getDeclaredMethods()) {
+                        if (m.getName().equals(methodName) && m.isAnnotationPresent(jakarta.enterprise.inject.Produces.class)) {
+                            producerAnnotations = m.getAnnotations();
+                            break;
+                        }
+                    }
+                }
+            } else if (producer.kind() == BeanDescriptor.BeanKind.PRODUCER_FIELD) {
+                var fieldName = producerId.contains(".") ? producerId.substring(producerId.lastIndexOf('.') + 1) : null;
+                if (fieldName != null) {
+                    try {
+                        var f = declaringClass.getDeclaredField(fieldName);
+                        producerAnnotations = f.getAnnotations();
+                    } catch (NoSuchFieldException e) { /* skip */ }
+                }
+            }
+
+            if (producerAnnotations == null) return true; // Can't verify, assume match
+
+            // Find disposer method parameter annotations
+            java.lang.annotation.Annotation[] disposerParamAnnotations = null;
+            for (var m : declaringClass.getDeclaredMethods()) {
+                if (m.getName().equals(disposer.methodName()) && m.getParameterCount() > disposer.parameterIndex()) {
+                    disposerParamAnnotations = m.getParameterAnnotations()[disposer.parameterIndex()];
+                    break;
+                }
+            }
+
+            if (disposerParamAnnotations == null) return true;
+
+            // Compare qualifier annotations between producer and disposer
+            for (var dAnn : disposerParamAnnotations) {
+                if (!dAnn.annotationType().isAnnotationPresent(jakarta.inject.Qualifier.class)
+                        && dAnn.annotationType() != jakarta.enterprise.inject.Default.class
+                        && dAnn.annotationType() != jakarta.enterprise.inject.Any.class) continue;
+                if (dAnn.annotationType() == jakarta.enterprise.inject.Default.class
+                        || dAnn.annotationType() == jakarta.enterprise.inject.Any.class
+                        || dAnn.annotationType() == jakarta.enterprise.inject.Disposes.class) continue;
+
+                // Find matching annotation on producer
+                boolean found = false;
+                for (var pAnn : producerAnnotations) {
+                    if (pAnn.annotationType() == dAnn.annotationType() && pAnn.equals(dAnn)) {
+                        found = true;
+                        break;
+                    }
+                }
+                if (!found) return false;
+            }
+            return true;
+        } catch (Exception e) {
+            return true; // Can't verify, assume match
         }
     }
 
