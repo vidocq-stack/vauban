@@ -756,6 +756,23 @@ public final class BeanDiscovery {
     }
 
     /**
+     * CDI spec: @Named without a value on an injection point defaults to the field name.
+     */
+    private Set<QualifierInstance> resolveNamedDefault(Set<QualifierInstance> qualifiers, String defaultName) {
+        var result = new LinkedHashSet<QualifierInstance>();
+        for (var q : qualifiers) {
+            if (q.annotationName().equals(QualifierInstance.NAMED_NAME) && q.members().isEmpty()) {
+                // @Named without value → default to field/parameter name
+                result.add(new QualifierInstance(QualifierInstance.NAMED_NAME,
+                        java.util.Map.of("value", new fr.vidocq.vauban.indexer.model.AnnotationValue.StringVal(defaultName))));
+            } else {
+                result.add(q);
+            }
+        }
+        return result;
+    }
+
+    /**
      * Computes qualifiers for observer methods — only explicit qualifiers,
      * no automatic @Default/@Any (CDI spec: an observer with no qualifiers
      * observes all events of that type regardless of qualifiers).
@@ -1111,8 +1128,11 @@ public final class BeanDiscovery {
         // @Inject fields
         for (var field : classInfo.fields()) {
             if (hasAnnotation(field.annotations(), INJECT)) {
+                var qualifiers = computeQualifiers(field.annotations());
+                // CDI spec: @Named without value on injection point defaults to the field name
+                qualifiers = resolveNamedDefault(qualifiers, field.name());
                 points.add(new InjectionPointInfo(
-                        field.type(), computeQualifiers(field.annotations()),
+                        field.type(), qualifiers,
                         InjectionPointInfo.InjectionKind.FIELD,
                         "field " + classInfo.name().simpleName() + "." + field.name()
                 ));
