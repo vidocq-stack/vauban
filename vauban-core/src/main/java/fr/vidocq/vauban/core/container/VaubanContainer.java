@@ -82,6 +82,7 @@ public final class VaubanContainer implements AutoCloseable {
 
     private final Map<BeanId, ManagedBean<?>> beans = new LinkedHashMap<>();
     private final Map<Class<? extends Annotation>, Context> contexts = new ConcurrentHashMap<>();
+    private static final ThreadLocal<Set<String>> beansBeingCreated = ThreadLocal.withInitial(java.util.HashSet::new);
     private final ApplicationContext applicationContext;
     private final RequestContext requestContext;
     private final DependentContext dependentContext;
@@ -687,20 +688,32 @@ public final class VaubanContainer implements AutoCloseable {
      */
     @SuppressWarnings("unchecked")
     public Object selectByBeanClass(Class<?> beanClass) {
-        var dotName = DotName.of(beanClass.getName());
-        for (var bean : beans.values()) {
-            if (bean.descriptor().beanClass().equals(dotName)) {
-                return getDirectInstance((ManagedBean<Object>) (ManagedBean<?>) bean);
-            }
+        var className = beanClass.getName();
+        var creating = beansBeingCreated.get();
+        if (creating.contains(className)) {
+            // Circular dependency during creation — return null to break cycle
+            // The caller should handle null for producer declaring instances
+            return null;
         }
-        // Fallback: exact class match (for intercepted subclasses where getBeanClass differs from dotName)
-        for (var bean : beans.values()) {
-            if (bean.getBeanClass() == beanClass) {
-                return getDirectInstance((ManagedBean<Object>) (ManagedBean<?>) bean);
+        creating.add(className);
+        try {
+            var dotName = DotName.of(className);
+            for (var bean : beans.values()) {
+                if (bean.descriptor().beanClass().equals(dotName)) {
+                    return getDirectInstance((ManagedBean<Object>) (ManagedBean<?>) bean);
+                }
             }
+            // Fallback: exact class match (for intercepted subclasses where getBeanClass differs from dotName)
+            for (var bean : beans.values()) {
+                if (bean.getBeanClass() == beanClass) {
+                    return getDirectInstance((ManagedBean<Object>) (ManagedBean<?>) bean);
+                }
+            }
+            throw new jakarta.enterprise.inject.UnsatisfiedResolutionException(
+                    "No bean found for class: " + beanClass.getName());
+        } finally {
+            creating.remove(className);
         }
-        throw new jakarta.enterprise.inject.UnsatisfiedResolutionException(
-                "No bean found for class: " + beanClass.getName());
     }
 
     /**
