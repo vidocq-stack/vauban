@@ -117,14 +117,36 @@ public final class InterceptorManager {
 
     private void addLifecycleInvocations(Class<?> clazz, Object target, Class<? extends java.lang.annotation.Annotation> annotation, List<VaubanInvocationContext.InterceptorInvocation> chain) {
         if (clazz == null || clazz == Object.class) return;
-        
-        // CDI spec: superclass methods are called first for interceptors
-        addLifecycleInvocations(clazz.getSuperclass(), target, annotation, chain);
-        
+
+        // Collect lifecycle methods from hierarchy, respecting override rules
+        var methods = new java.util.ArrayList<java.lang.reflect.Method>();
+        collectLifecycleMethods(clazz, annotation, methods);
+
+        for (var method : methods) {
+            method.setAccessible(true);
+            chain.add(new VaubanInvocationContext.InterceptorInvocation(target, method));
+        }
+    }
+
+    private void collectLifecycleMethods(Class<?> clazz, Class<? extends java.lang.annotation.Annotation> annotation,
+            java.util.List<java.lang.reflect.Method> result) {
+        if (clazz == null || clazz == Object.class) return;
+
+        // Process superclass first (CDI spec: superclass methods called first)
+        collectLifecycleMethods(clazz.getSuperclass(), annotation, result);
+
         for (var method : clazz.getDeclaredMethods()) {
             if (method.isAnnotationPresent(annotation)) {
-                method.setAccessible(true);
-                chain.add(new VaubanInvocationContext.InterceptorInvocation(target, method));
+                // Check if this method is already in the list from a superclass
+                // If so, remove the superclass version (this one overrides it)
+                result.removeIf(m -> m.getName().equals(method.getName())
+                        && java.util.Arrays.equals(m.getParameterTypes(), method.getParameterTypes()));
+                result.add(method);
+            } else {
+                // If subclass overrides a lifecycle method WITHOUT the annotation,
+                // the lifecycle callback is disabled (CDI spec)
+                result.removeIf(m -> m.getName().equals(method.getName())
+                        && java.util.Arrays.equals(m.getParameterTypes(), method.getParameterTypes()));
             }
         }
     }
