@@ -329,6 +329,11 @@ public final class BeanDiscovery {
         var constructorBindings = extractConstructorBindings(classInfo);
         var interceptorBindingAnnotations = extractInterceptorBindingAnnotations(classInfo);
 
+        // CDI spec: @Named without value defaults to the decapitalized class name
+        if (name != null) {
+            qualifiers = resolveNamedDefault(qualifiers, name);
+        }
+
         return new BeanDescriptor(id, classInfo.name(), BeanDescriptor.BeanKind.MANAGED,
                 types, qualifiers, scope, isAlternative, priority, injectionPoints, name,
                 interceptorBindings, constructorBindings, interceptorBindingAnnotations);
