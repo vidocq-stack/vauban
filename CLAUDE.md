@@ -51,6 +51,13 @@
 5. **Document Results** – Add a review section to `tasks/todo.md`
 6. **Capture Lessons** – Update `tasks/lessons.md` after corrections
 
+## Environment
+
+- Use **sdkman** to manage Java and Maven versions
+- Required: **Java 25** (`sdk use java 25.ea.4-open` or equivalent)
+- Required: **Maven 4** (`sdk use maven 4.0.0-rc-5`)
+- If `mvn` fails with "modelVersion 4.1.0 not supported", Maven `current` has been reset to 3.x — switch back to 4.x
+
 ## Core Principles
 
 ### Simplicity First
