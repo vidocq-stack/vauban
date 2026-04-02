@@ -280,16 +280,58 @@ public final class BeanDiscovery {
     private int extractPriorityWithStereotypes(ClassInfo classInfo) {
         int priority = extractPriority(classInfo.annotations());
         if (priority > 0) return priority;
+        // Check via reflection (more reliable for annotation member values)
+        try {
+            var cl = Thread.currentThread().getContextClassLoader();
+            var clazz = cl != null ? Class.forName(classInfo.name().value(), false, cl)
+                    : Class.forName(classInfo.name().value());
+            if (clazz.isAnnotationPresent(jakarta.annotation.Priority.class)) {
+                return clazz.getAnnotation(jakarta.annotation.Priority.class).value();
+            }
+        } catch (Exception e) { /* skip */ }
+        // Search through stereotypes (including transitive)
         var allAnnotationNames = getAllAnnotationNames(classInfo);
         for (var annName : allAnnotationNames) {
             if (isStereotype(annName)) {
-                var stereotypeClass = index.getClassByName(annName);
-                if (stereotypeClass.isPresent()) {
-                    int stereotypePriority = extractPriority(stereotypeClass.get().annotations());
-                    if (stereotypePriority > 0) return stereotypePriority;
+                int stereotypePriority = extractPriorityFromStereotypeRecursive(annName, new java.util.HashSet<>());
+                if (stereotypePriority > 0) return stereotypePriority;
+            }
+        }
+        return 0;
+    }
+
+    private int extractPriorityFromStereotypeRecursive(DotName stereotypeName, Set<DotName> visited) {
+        if (!visited.add(stereotypeName)) return 0;
+        // Check index
+        var stereotypeClass = index.getClassByName(stereotypeName);
+        if (stereotypeClass.isPresent()) {
+            int p = extractPriority(stereotypeClass.get().annotations());
+            if (p > 0) return p;
+            // Check transitive stereotypes
+            for (var ann : stereotypeClass.get().annotations()) {
+                if (isStereotype(ann.name())) {
+                    int tp = extractPriorityFromStereotypeRecursive(ann.name(), visited);
+                    if (tp > 0) return tp;
                 }
             }
         }
+        // Reflection fallback
+        try {
+            var cl = Thread.currentThread().getContextClassLoader();
+            var annType = cl != null ? Class.forName(stereotypeName.value(), false, cl)
+                    : Class.forName(stereotypeName.value());
+            if (annType.isAnnotationPresent(jakarta.annotation.Priority.class)) {
+                return annType.getAnnotation(jakarta.annotation.Priority.class).value();
+            }
+            // Transitive via reflection
+            for (var metaAnn : annType.getAnnotations()) {
+                if (metaAnn.annotationType().isAnnotationPresent(jakarta.enterprise.inject.Stereotype.class)) {
+                    int tp = extractPriorityFromStereotypeRecursive(
+                            DotName.of(metaAnn.annotationType().getName()), visited);
+                    if (tp > 0) return tp;
+                }
+            }
+        } catch (Exception e) { /* skip */ }
         return 0;
     }
 
