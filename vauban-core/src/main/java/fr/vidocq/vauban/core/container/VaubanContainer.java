@@ -439,24 +439,15 @@ public final class VaubanContainer implements AutoCloseable {
                 // Use the bean's ID to resolve the current ManagedBean at runtime
                 // (may change after wrapInterceptedBeans replaces it)
                 var beanId = bean.descriptor().id();
-                java.util.function.Supplier<Object> delegate = new java.util.function.Supplier<Object>() {
-                    private volatile Object instance;
-                    @Override
-                    public Object get() {
-                        if (instance != null) return instance;
-                        synchronized (this) {
-                            if (instance != null) return instance;
-                            var currentBean = beans.get(beanId);
-                            if (currentBean == null) currentBean = bean;
-                            var scopeClass = currentBean.getScope();
-                            var ctx = contexts.get(scopeClass);
-                            if (ctx == null) ctx = dependentContext;
-                            // Delegate resolves bean from context
-                            instance = ctx.get((Contextual<Object>) (Contextual<?>) currentBean,
-                                    new CreationalContextImpl<Object>());
-                            return instance;
-                        }
-                    }
+                // No caching — always resolve from context so that AlterableContext.destroy() works
+                java.util.function.Supplier<Object> delegate = () -> {
+                    var currentBean = beans.get(beanId);
+                    if (currentBean == null) currentBean = bean;
+                    var scopeClass = currentBean.getScope();
+                    var ctx = contexts.get(scopeClass);
+                    if (ctx == null) ctx = dependentContext;
+                    return ctx.get((Contextual<Object>) (Contextual<?>) currentBean,
+                            new CreationalContextImpl<Object>());
                 };
                 setDelegate.invoke(proxy, delegate);
 

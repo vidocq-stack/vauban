@@ -32,28 +32,38 @@ public final class DeploymentValidator {
         validateNames(errors);
 
         for (var bean : beans) {
-            // CDI spec: Interceptors themselves are not intercepted
+            boolean isInterceptor = false;
             if (bean.kind() == BeanDescriptor.BeanKind.MANAGED) {
                 try {
                     var clazz = Class.forName(bean.beanClass().value(), false, Thread.currentThread().getContextClassLoader());
-                    if (clazz.isAnnotationPresent(jakarta.interceptor.Interceptor.class)) continue;
+                    isInterceptor = clazz.isAnnotationPresent(jakarta.interceptor.Interceptor.class);
                 } catch (Exception e) { /* ignore */ }
             }
 
-            // Validate interceptor bindings
-            var bindings = bean.interceptorBindingAnnotations();
-            if (!bindings.isEmpty()) {
-                // CDI spec: At least one enabled interceptor must match the set of bindings
-                var matching = resolver.resolveInterceptors(bindings);
-                if (matching.isEmpty()) {
-                    // TCK HACK: Be lenient about missing enabled interceptors
-                    // as they might be defined in beans.xml which we don't fully support yet.
+            if (!isInterceptor) {
+                // Validate interceptor bindings (interceptors themselves are not intercepted)
+                var bindings = bean.interceptorBindingAnnotations();
+                if (!bindings.isEmpty()) {
+                    var matching = resolver.resolveInterceptors(bindings);
+                    if (matching.isEmpty()) {
+                        // TCK HACK: Be lenient about missing enabled interceptors
+                    }
                 }
             }
 
+            // Always validate injection points (including for interceptors)
             for (var ip : bean.injectionPoints()) {
+                // Check for illegal metadata injection (Bean<T>, Interceptor<T> with TypeVariable)
+                if (isIllegalMetadataInjection(ip)) {
+                    errors.add(new ValidationError(
+                            ValidationError.Kind.DEFINITION_ERROR,
+                            "Illegal injection of built-in metadata type with type variable or raw type: "
+                                    + ip.description() + " of type " + ip.requiredType(),
+                            bean));
+                    continue;
+                }
                 if (isBuiltInType(ip)) continue;
-                
+
                 var result = resolver.resolveInjectionPoint(ip);
                 switch (result.status()) {
                     case UNSATISFIED -> errors.add(new ValidationError(
@@ -94,7 +104,7 @@ public final class DeploymentValidator {
                         var clazz = Class.forName(bean.beanClass().value());
                         if (java.lang.reflect.Modifier.isFinal(clazz.getModifiers())) {
                             errors.add(new ValidationError(
-                                    ValidationError.Kind.DEFINITION_ERROR,
+                                    ValidationError.Kind.DEPLOYMENT_ERROR,
                                     "Normal-scoped bean " + bean.beanClass()
                                             + " cannot be final (unproxyable)",
                                     bean));
@@ -106,7 +116,7 @@ public final class DeploymentValidator {
                                     && !java.lang.reflect.Modifier.isPrivate(method.getModifiers())
                                     && !java.lang.reflect.Modifier.isStatic(method.getModifiers())) {
                                 errors.add(new ValidationError(
-                                        ValidationError.Kind.DEFINITION_ERROR,
+                                        ValidationError.Kind.DEPLOYMENT_ERROR,
                                         "Normal-scoped bean " + bean.beanClass()
                                                 + " has final method " + method.getName()
                                                 + " (unproxyable)",
@@ -128,7 +138,7 @@ public final class DeploymentValidator {
                         }
                         if (hasAnyCtor && !hasNoArgCtor) {
                             errors.add(new ValidationError(
-                                    ValidationError.Kind.DEFINITION_ERROR,
+                                    ValidationError.Kind.DEPLOYMENT_ERROR,
                                     "Normal-scoped bean " + bean.beanClass()
                                             + " has no non-private no-arg constructor (unproxyable)",
                                     bean));
@@ -139,9 +149,43 @@ public final class DeploymentValidator {
                 }
             }
 
-            // CDI spec: Intercepted beans can have @Inject constructors.
-            // But they must be proxiable if they are normal-scoped.
-            // CDILite: Interception via subclassing should support parameterized constructors.
+            // CDI spec: Intercepted beans (any scope) cannot be final or have final methods
+            // because interception is implemented via subclassing
+            if (!bean.interceptorBindingAnnotations().isEmpty() || !bean.interceptorBindings().isEmpty()) {
+                if (bean.kind() == BeanDescriptor.BeanKind.MANAGED && !bean.scope().isNormal()) {
+                    // Normal-scoped beans are already checked above; only check non-normal-scoped here
+                    try {
+                        var clazz = Class.forName(bean.beanClass().value(), false, Thread.currentThread().getContextClassLoader());
+                        if (clazz.isAnnotationPresent(jakarta.interceptor.Interceptor.class)) {
+                            // Interceptors themselves are not intercepted
+                        } else {
+                            if (java.lang.reflect.Modifier.isFinal(clazz.getModifiers())) {
+                                errors.add(new ValidationError(
+                                        ValidationError.Kind.DEPLOYMENT_ERROR,
+                                        "Intercepted bean " + bean.beanClass()
+                                                + " cannot be final (interception requires subclassing)",
+                                        bean));
+                            } else {
+                                for (var method : clazz.getDeclaredMethods()) {
+                                    if (java.lang.reflect.Modifier.isFinal(method.getModifiers())
+                                            && !java.lang.reflect.Modifier.isPrivate(method.getModifiers())
+                                            && !java.lang.reflect.Modifier.isStatic(method.getModifiers())) {
+                                        errors.add(new ValidationError(
+                                                ValidationError.Kind.DEPLOYMENT_ERROR,
+                                                "Intercepted bean " + bean.beanClass()
+                                                        + " has final method " + method.getName()
+                                                        + " (interception requires subclassing)",
+                                                bean));
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                    } catch (ClassNotFoundException e) {
+                        // skip
+                    }
+                }
+            }
         }
 
         // CDI spec: Duplicate bean names (two non-alternative beans with the same EL name)
@@ -184,7 +228,7 @@ public final class DeploymentValidator {
                 var name2 = allNames.get(j);
                 if (name2.startsWith(name1 + ".") || name1.startsWith(name2 + ".")) {
                     errors.add(new ValidationError(
-                            ValidationError.Kind.DEFINITION_ERROR,
+                            ValidationError.Kind.DEPLOYMENT_ERROR,
                             "Bean name '" + name1 + "' is a prefix of '" + name2 + "' (or vice versa)",
                             beans.getFirst()));
                 }
@@ -219,40 +263,10 @@ public final class DeploymentValidator {
     }
 
     private void validateNames(List<ValidationError> errors) {
-        var names = new java.util.HashMap<String, BeanDescriptor>();
-        for (var bean : beans) {
-            var name = bean.name();
-            if (name == null || name.isEmpty()) continue;
+        // Name duplicate and prefix checks are done in validate() method
+        // which properly handles alternatives
 
-            // Check for duplicate names
-            var existing = names.get(name);
-            if (existing != null) {
-                errors.add(new ValidationError(
-                        ValidationError.Kind.DEPLOYMENT_ERROR,
-                        "Duplicate bean name: " + name + " on " + bean.beanClass() + " and " + existing.beanClass(),
-                        bean));
-            }
-            names.put(name, bean);
-        }
-
-        // Check for name prefix conflicts (CDI 4.1 Section 2.5.1)
-        for (var entry1 : names.entrySet()) {
-            var name1 = entry1.getKey();
-            for (var entry2 : names.entrySet()) {
-                var name2 = entry2.getKey();
-                if (name1.equals(name2)) continue;
-                if (name1.startsWith(name2 + ".")) {
-                    errors.add(new ValidationError(
-                            ValidationError.Kind.DEFINITION_ERROR,
-                            "Bean name '" + name1 + "' on " + entry1.getValue().beanClass()
-                                    + " has a prefix '" + name2 + "' which is the name of another bean on "
-                                    + entry2.getValue().beanClass(),
-                            entry1.getValue()));
-                }
-            }
-        }
-
-        // 3. Circular dependency validation
+        // Circular dependency validation
         var graph = buildDependencyGraph();
         var illegalCycles = graph.detectIllegalCycles();
         for (var cycle : illegalCycles) {
@@ -266,12 +280,12 @@ public final class DeploymentValidator {
     private void validateProxyableType(TypeInfo type, BeanDescriptor bean, List<ValidationError> errors, BeanDescriptor contextBean) {
         if (type instanceof TypeInfo.PrimitiveType) {
             errors.add(new ValidationError(
-                    ValidationError.Kind.DEFINITION_ERROR,
+                    ValidationError.Kind.DEPLOYMENT_ERROR,
                     "Normal-scoped bean " + bean.beanClass() + " cannot have primitive type " + type,
                     contextBean));
         } else if (type instanceof TypeInfo.ArrayType) {
             errors.add(new ValidationError(
-                    ValidationError.Kind.DEFINITION_ERROR,
+                    ValidationError.Kind.DEPLOYMENT_ERROR,
                     "Normal-scoped bean " + bean.beanClass() + " cannot have array type " + type,
                     contextBean));
         }
@@ -295,16 +309,33 @@ public final class DeploymentValidator {
 
     private static boolean isBuiltInType(InjectionPointInfo ip) {
         if (ip.requiredType() instanceof TypeInfo.ClassType ct) {
-            return BUILT_IN_TYPES.contains(ct.name().value());
+            if (BUILT_IN_TYPES.contains(ct.name().value())) return true;
+            // Raw Bean, Interceptor, etc. are built-in (but illegal — validated separately)
+            if (METADATA_BUILT_IN_TYPES.contains(ct.name().value())) return true;
         }
         if (ip.requiredType() instanceof TypeInfo.ParameterizedType pt) {
             if (BUILT_IN_TYPES.contains(pt.rawType().value())) return true;
-            // Bean<T>, Interceptor<T>, etc. are built-in only when parameterized
-            // with a concrete type (not a TypeVariable)
+            // Bean<T>, Interceptor<T>, etc. are always built-in (legal or not — validated separately)
+            if (METADATA_BUILT_IN_TYPES.contains(pt.rawType().value())) return true;
+        }
+        return false;
+    }
+
+    /**
+     * CDI 4.1 Section 11.3.22: Bean<T>, Interceptor<T>, Decorator<T> metadata injection
+     * is only legal when T is a concrete type (not a TypeVariable) and the injection
+     * point is in the bean itself (not in an interceptor wrapping it).
+     */
+    private static boolean isIllegalMetadataInjection(InjectionPointInfo ip) {
+        // Raw metadata type (e.g., Bean without type parameter) is illegal
+        if (ip.requiredType() instanceof TypeInfo.ClassType ct) {
+            return METADATA_BUILT_IN_TYPES.contains(ct.name().value());
+        }
+        // Parameterized with TypeVariable (e.g., Bean<T>) is illegal
+        if (ip.requiredType() instanceof TypeInfo.ParameterizedType pt) {
             if (METADATA_BUILT_IN_TYPES.contains(pt.rawType().value())) {
-                boolean hasTypeVariable = pt.typeArguments().stream()
+                return pt.typeArguments().stream()
                         .anyMatch(t -> t instanceof TypeInfo.TypeVariable);
-                return !hasTypeVariable;
             }
         }
         return false;

@@ -90,13 +90,14 @@ public final class DependencyGraph {
     }
 
     /**
-     * A cycle is illegal if any bean in the cycle is {@code @Dependent} (pseudo-scope).
+     * A cycle is illegal only if ALL beans in the cycle are {@code @Dependent} (pseudo-scope).
+     * If any bean is normal-scoped, the client proxy breaks the cycle.
      */
     private boolean isIllegalCycle(List<BeanId> cycle) {
         return cycle.stream()
                 .map(beanMap::get)
                 .filter(Objects::nonNull)
-                .anyMatch(b -> !b.scope().isNormal());
+                .allMatch(b -> !b.scope().isNormal());
     }
 
     public Set<BeanId> getDependencies(BeanId beanId) {
