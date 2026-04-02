@@ -286,7 +286,7 @@ public final class VaubanBeanManager implements BeanManager {
 
     @Override
     public Context getContext(Class<? extends Annotation> scopeType) {
-        var context = contexts.get(scopeType);
+        var context = findContext(scopeType);
         if (context == null) {
             throw new jakarta.enterprise.context.ContextNotActiveException(
                     "No context for scope: " + scopeType.getName());
@@ -300,11 +300,27 @@ public final class VaubanBeanManager implements BeanManager {
 
     @Override
     public Collection<Context> getContexts(Class<? extends Annotation> scopeType) {
-        var context = contexts.get(scopeType);
+        var context = findContext(scopeType);
         if (context == null) {
             return List.of();
         }
         return List.of(context);
+    }
+
+    /**
+     * Find a context by scope type, handling cross-classloader scenarios.
+     */
+    private Context findContext(Class<? extends Annotation> scopeType) {
+        var context = contexts.get(scopeType);
+        if (context != null) return context;
+        // Fallback: match by class name (for cross-classloader support in test frameworks)
+        var scopeName = scopeType.getName();
+        for (var entry : contexts.entrySet()) {
+            if (entry.getKey().getName().equals(scopeName)) {
+                return entry.getValue();
+            }
+        }
+        return null;
     }
 
     @Override
