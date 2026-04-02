@@ -180,15 +180,21 @@ public final class InstanceImpl<T> implements Instance<T> {
         var beans = bm.getBeans(type, qualifiers);
         if (beans.isEmpty()) return;
         var bean = (Bean<T>) bm.resolve(beans);
-        // For normal-scoped beans, use AlterableContext.destroy()
         var scope = bean.getScope();
-        try {
-            var ctx = bm.getContext(scope);
-            if (ctx instanceof jakarta.enterprise.context.spi.AlterableContext ac) {
-                ac.destroy((jakarta.enterprise.context.spi.Contextual<?>) bean);
+        if (scope == jakarta.enterprise.context.Dependent.class) {
+            // CDI spec: @Dependent beans are destroyed directly via Bean.destroy()
+            var ctx = bm.createCreationalContext(bean);
+            bean.destroy(instance, ctx);
+        } else {
+            // For normal-scoped beans, use AlterableContext.destroy()
+            try {
+                var ctx = bm.getContext(scope);
+                if (ctx instanceof jakarta.enterprise.context.spi.AlterableContext ac) {
+                    ac.destroy((jakarta.enterprise.context.spi.Contextual<?>) bean);
+                }
+            } catch (Exception e) {
+                // Best effort — context may not be active
             }
-        } catch (Exception e) {
-            // Best effort — context may not be active
         }
     }
 
