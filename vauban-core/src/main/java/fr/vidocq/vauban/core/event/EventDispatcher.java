@@ -128,7 +128,7 @@ public final class EventDispatcher {
 
             var eventTypeArgs = eventGenericType.getActualTypeArguments();
             var observerTypeArgs = observerType.typeArguments();
-            if (eventTypeArgs.length != observerTypeArgs.size()) return true; // fallback
+            if (eventTypeArgs.length != observerTypeArgs.size()) return false; // type args must match in count
 
             for (int i = 0; i < eventTypeArgs.length; i++) {
                 var eventArg = eventTypeArgs[i];
@@ -256,18 +256,20 @@ public final class EventDispatcher {
                         } else if (paramTypes[i] == jakarta.enterprise.inject.spi.EventMetadata.class) {
                             // CDI spec: EventMetadata injection in observer methods
                             final Object eventObj = event;
-                            final java.util.Set<java.lang.annotation.Annotation> metaQualifiers =
-                                    eventQualifiers != null && eventQualifiers.length > 0
-                                            ? java.util.Set.copyOf(java.util.Arrays.asList(eventQualifiers))
-                                            : java.util.Set.of();
+                            // Build qualifiers: always include @Any (CDI spec: every event has @Any)
+                            final var metaQualifiers = new java.util.LinkedHashSet<java.lang.annotation.Annotation>();
+                            if (eventQualifiers != null) {
+                                for (var q : eventQualifiers) metaQualifiers.add(q);
+                            }
+                            metaQualifiers.add(jakarta.enterprise.inject.Any.Literal.INSTANCE);
+                            final java.util.Set<java.lang.annotation.Annotation> immutableQualifiers =
+                                    java.util.Set.copyOf(metaQualifiers);
                             args[i] = new jakarta.enterprise.inject.spi.EventMetadata() {
                                 @Override public java.util.Set<java.lang.annotation.Annotation> getQualifiers() {
-                                    return metaQualifiers;
+                                    return immutableQualifiers;
                                 }
                                 @Override public jakarta.enterprise.inject.spi.InjectionPoint getInjectionPoint() {
-                                    // Minimal InjectionPoint — the point where the event was fired
-                                    return new fr.vidocq.vauban.core.container.VaubanInjectionPoint(
-                                            eventObj.getClass(), metaQualifiers, null);
+                                    return null; // CDI spec: null if event was not fired from an injection point
                                 }
                                 @Override public java.lang.reflect.Type getType() {
                                     return eventObj.getClass();

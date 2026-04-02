@@ -88,12 +88,13 @@ public final class ManagedBean<T> implements Bean<T> {
         }
         
         callPreDestroy(instance, creationalContext);
-        
-        // CDI Spec 6.1: The responsibility of calling release() is on the caller of Contextual.create().
-        // ManagedBean.destroy() MUST NOT call creationalContext.release() if it would trigger 
-        // a recursive call (e.g. if this bean is a dependent bean being destroyed BY release()).
-        // In our current implementation, calling release() here causes a StackOverflowError 
-        // because release() calls destroy() on all dependent instances.
+
+        // CDI Spec 6.1: release dependent instances tracked by this creational context.
+        // Use a guard to prevent recursive release when this bean is itself being
+        // destroyed by its parent's release().
+        if (creationalContext instanceof fr.vidocq.vauban.core.context.CreationalContextImpl<?> cc) {
+            cc.release();
+        }
     }
 
     private void callPreDestroy(Object instance, CreationalContext<?> ctx) {

@@ -1122,8 +1122,19 @@ public final class BeanDiscovery {
         // @Inject initializer methods
         for (var method : classInfo.methods()) {
             if (!method.isConstructor() && !method.isStatic() && hasAnnotation(method.annotations(), INJECT)) {
+                // CDI spec: initializer method parameters must not have @Observes, @ObservesAsync, or @Disposes
                 for (int i = 0; i < method.parameters().size(); i++) {
                     var param = method.parameters().get(i);
+                    for (var ann : param.annotations()) {
+                        var annName = ann.name().value();
+                        if (annName.equals("jakarta.enterprise.event.Observes")
+                                || annName.equals("jakarta.enterprise.event.ObservesAsync")
+                                || annName.equals("jakarta.enterprise.inject.Disposes")) {
+                            throw new jakarta.enterprise.inject.spi.DefinitionException(
+                                    "Initializer method " + classInfo.name().simpleName() + "." + method.name()
+                                            + "() parameter " + i + " must not have @" + ann.name().simpleName());
+                        }
+                    }
                     points.add(new InjectionPointInfo(
                             param.type(), computeQualifiers(param.annotations()),
                             InjectionPointInfo.InjectionKind.METHOD_PARAMETER,

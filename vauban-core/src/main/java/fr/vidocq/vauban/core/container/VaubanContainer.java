@@ -486,6 +486,122 @@ public final class VaubanContainer implements AutoCloseable {
         return Class.forName(name, true, classLoader);
     }
 
+    /**
+     * CDI spec: validate that observer method parameters (other than the observed event param,
+     * EventMetadata, and the event itself) can be resolved as injection points.
+     */
+    private static void validateObserverParameters(
+            java.util.List<fr.vidocq.vauban.core.bean.model.ObserverDescriptor> observers,
+            java.util.List<fr.vidocq.vauban.core.bean.model.BeanDescriptor> descriptors,
+            fr.vidocq.vauban.indexer.VaubanIndex index) {
+        var assignability = new fr.vidocq.vauban.core.types.AssignabilityRules(index);
+        var tempResolver = new fr.vidocq.vauban.core.bean.resolution.BeanResolver(
+                descriptors, java.util.List.of(), assignability);
+
+        for (var observer : observers) {
+            try {
+                var cl = Thread.currentThread().getContextClassLoader();
+                var clazz = Class.forName(observer.declaringClass().value(), false, cl);
+                for (var method : clazz.getDeclaredMethods()) {
+                    if (!method.getName().equals(observer.methodName())) continue;
+                    // Check each parameter that is NOT @Observes/@ObservesAsync and NOT EventMetadata
+                    for (var param : method.getParameters()) {
+                        if (param.isAnnotationPresent(jakarta.enterprise.event.Observes.class)) continue;
+                        if (param.isAnnotationPresent(jakarta.enterprise.event.ObservesAsync.class)) continue;
+                        if (param.getType() == jakarta.enterprise.inject.spi.EventMetadata.class) continue;
+                        // This parameter must be resolvable as an injection point
+                        var paramType = param.getType();
+                        if (paramType == jakarta.enterprise.inject.spi.BeanManager.class
+                                || paramType == jakarta.enterprise.inject.spi.BeanContainer.class) continue;
+                        // Check if any bean matches this type
+                        var ip = new fr.vidocq.vauban.core.bean.model.InjectionPointInfo(
+                                new fr.vidocq.vauban.indexer.model.TypeInfo.ClassType(
+                                        fr.vidocq.vauban.indexer.model.DotName.of(paramType.getName())),
+                                java.util.Set.of(new fr.vidocq.vauban.core.bean.model.QualifierInstance(
+                                        fr.vidocq.vauban.indexer.model.DotName.of("jakarta.enterprise.inject.Default"),
+                                        java.util.Map.of()),
+                                        new fr.vidocq.vauban.core.bean.model.QualifierInstance(
+                                        fr.vidocq.vauban.indexer.model.DotName.of("jakarta.enterprise.inject.Any"),
+                                        java.util.Map.of())),
+                                fr.vidocq.vauban.core.bean.model.InjectionPointInfo.InjectionKind.METHOD_PARAMETER,
+                                "observer parameter " + param.getName());
+                        var result = tempResolver.resolveInjectionPoint(ip);
+                        if (result.status() == fr.vidocq.vauban.core.bean.resolution.BeanResolver.ResolutionResult.Status.UNSATISFIED) {
+                            throw new jakarta.enterprise.inject.spi.DeploymentException(
+                                    "Observer method " + observer.declaringClass().simpleName() + "." + observer.methodName()
+                                            + "(): unsatisfied dependency for parameter " + param.getName()
+                                            + " of type " + paramType.getName());
+                        } else if (result.status() == fr.vidocq.vauban.core.bean.resolution.BeanResolver.ResolutionResult.Status.AMBIGUOUS) {
+                            throw new jakarta.enterprise.inject.spi.DeploymentException(
+                                    "Observer method " + observer.declaringClass().simpleName() + "." + observer.methodName()
+                                            + "(): ambiguous dependency for parameter " + param.getName()
+                                            + " of type " + paramType.getName());
+                        }
+                    }
+                    break; // found the method
+                }
+            } catch (jakarta.enterprise.inject.spi.DeploymentException e) {
+                throw e; // re-throw deployment exceptions
+            } catch (Exception e) {
+                // Skip validation for classes that can't be loaded
+            }
+        }
+    }
+
+    /**
+     * CDI spec: validate disposer method parameters (other than @Disposes) can be resolved.
+     */
+    private static void validateDisposerParameters(
+            java.util.List<fr.vidocq.vauban.core.bean.model.DisposerDescriptor> disposers,
+            java.util.List<fr.vidocq.vauban.core.bean.model.BeanDescriptor> descriptors,
+            fr.vidocq.vauban.indexer.VaubanIndex index) {
+        var assignability = new fr.vidocq.vauban.core.types.AssignabilityRules(index);
+        var tempResolver = new fr.vidocq.vauban.core.bean.resolution.BeanResolver(
+                descriptors, java.util.List.of(), assignability);
+
+        for (var disposer : disposers) {
+            try {
+                var cl = Thread.currentThread().getContextClassLoader();
+                var clazz = Class.forName(disposer.declaringClass().value(), false, cl);
+                for (var method : clazz.getDeclaredMethods()) {
+                    if (!method.getName().equals(disposer.methodName())) continue;
+                    for (var param : method.getParameters()) {
+                        if (param.isAnnotationPresent(jakarta.enterprise.inject.Disposes.class)) continue;
+                        if (param.getType() == jakarta.enterprise.inject.spi.BeanManager.class
+                                || param.getType() == jakarta.enterprise.inject.spi.BeanContainer.class) continue;
+                        var paramType = param.getType();
+                        var ip = new fr.vidocq.vauban.core.bean.model.InjectionPointInfo(
+                                new fr.vidocq.vauban.indexer.model.TypeInfo.ClassType(
+                                        fr.vidocq.vauban.indexer.model.DotName.of(paramType.getName())),
+                                java.util.Set.of(new fr.vidocq.vauban.core.bean.model.QualifierInstance(
+                                        fr.vidocq.vauban.indexer.model.DotName.of("jakarta.enterprise.inject.Default"),
+                                        java.util.Map.of()),
+                                        new fr.vidocq.vauban.core.bean.model.QualifierInstance(
+                                        fr.vidocq.vauban.indexer.model.DotName.of("jakarta.enterprise.inject.Any"),
+                                        java.util.Map.of())),
+                                fr.vidocq.vauban.core.bean.model.InjectionPointInfo.InjectionKind.METHOD_PARAMETER,
+                                "disposer parameter " + param.getName());
+                        var result = tempResolver.resolveInjectionPoint(ip);
+                        if (result.status() == fr.vidocq.vauban.core.bean.resolution.BeanResolver.ResolutionResult.Status.UNSATISFIED) {
+                            throw new jakarta.enterprise.inject.spi.DeploymentException(
+                                    "Disposer method " + disposer.declaringClass().simpleName() + "." + disposer.methodName()
+                                            + "(): unsatisfied dependency for parameter of type " + paramType.getName());
+                        } else if (result.status() == fr.vidocq.vauban.core.bean.resolution.BeanResolver.ResolutionResult.Status.AMBIGUOUS) {
+                            throw new jakarta.enterprise.inject.spi.DeploymentException(
+                                    "Disposer method " + disposer.declaringClass().simpleName() + "." + disposer.methodName()
+                                            + "(): ambiguous dependency for parameter of type " + paramType.getName());
+                        }
+                    }
+                    break;
+                }
+            } catch (jakarta.enterprise.inject.spi.DeploymentException e) {
+                throw e;
+            } catch (Exception e) {
+                // Skip
+            }
+        }
+    }
+
     private static Class<?> wrapPrimitive(Class<?> p) {
         if (p == int.class) return Integer.class;
         if (p == long.class) return Long.class;
@@ -1837,6 +1953,10 @@ public final class VaubanContainer implements AutoCloseable {
                 var observers = discovery.discoverObservers();
                 var interceptors = discovery.discoverInterceptors();
                 var disposers = discovery.discoverDisposerMethods();
+
+                // Validate observer/disposer method parameters (CDI spec)
+                validateObserverParameters(observers, descriptors, index);
+                validateDisposerParameters(disposers, descriptors, index);
 
                 // Validate deployment — throw if there are errors
                 var assignability = new AssignabilityRules(index);

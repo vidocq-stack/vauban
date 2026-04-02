@@ -43,15 +43,23 @@ public final class CreationalContextImpl<T> implements CreationalContext<T> {
         return false;
     }
 
+    private volatile boolean releasing = false;
+
     @Override
     public void release() {
-        // CDI spec: release() must destroy all dependent objects
-        List<DependentInstance> copy = new ArrayList<>(dependentInstances);
-        dependentInstances.clear();
-        for (var dep : copy) {
-            dep.destroy();
+        if (releasing) return; // Guard against recursive release
+        releasing = true;
+        try {
+            // CDI spec: release() must destroy all dependent objects
+            List<DependentInstance> copy = new ArrayList<>(dependentInstances);
+            dependentInstances.clear();
+            for (var dep : copy) {
+                dep.destroy();
+            }
+            incompleteInstances.clear();
+        } finally {
+            releasing = false;
         }
-        incompleteInstances.clear();
     }
 
     /**
