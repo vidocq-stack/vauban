@@ -46,6 +46,26 @@ public final class EventDispatcher {
         }
     }
 
+    public <T> void fire(T event, java.lang.reflect.Type selectedType,
+            jakarta.enterprise.inject.spi.InjectionPoint eventInjectionPoint,
+            Annotation... qualifiers) {
+        Class<?> eventClass;
+        if (selectedType instanceof Class<?> c) {
+            eventClass = c;
+        } else if (selectedType instanceof java.lang.reflect.ParameterizedType pt
+                && pt.getRawType() instanceof Class<?> rc) {
+            eventClass = rc;
+        } else {
+            eventClass = event.getClass();
+        }
+        var qualifierInstances = toQualifierInstances(qualifiers);
+        var matching = findMatchingObservers(eventClass, false, qualifierInstances);
+        matching.sort(Comparator.comparingInt(ObserverDescriptor::priority));
+        for (var observer : matching) {
+            invokeObserver(observer, event, eventInjectionPoint, qualifiers);
+        }
+    }
+
     /**
      * Fire an asynchronous event.
      */
@@ -251,68 +271,75 @@ public final class EventDispatcher {
             var method = findMethod(beanClass, observer.methodName(), event.getClass());
             if (method != null) {
                 method.setAccessible(true);
-                // Static observer methods don't need a bean instance
+                var bm = container.getBeanManager();
+                // CDI spec: @Dependent declaring bean must be destroyed after observer invocation.
+                // Use exact-class lookup to avoid AmbiguousResolutionException from subtype matching.
+                var exactBean = container.findManagedBeanByExactClass(beanClass);
+                boolean declaringIsDependent = exactBean != null
+                        && exactBean.getScope() == jakarta.enterprise.context.Dependent.class;
+                @SuppressWarnings("unchecked")
+                var beanCtx = declaringIsDependent
+                        ? new fr.vidocq.vauban.core.context.CreationalContextImpl<>()
+                        : null;
                 var beanInstance = java.lang.reflect.Modifier.isStatic(method.getModifiers())
-                        ? null : container.selectByBeanClass(beanClass);
-                if (method.getParameterCount() == 1) {
-                    method.invoke(beanInstance, event);
-                } else {
-                    // Resolve additional parameters as injection points
-                    // Use a CreationalContext to track @Dependent instances for cleanup
-                    var bm = container.getBeanManager();
-                    var ctx = new fr.vidocq.vauban.core.context.CreationalContextImpl<>();
-                    var paramTypes = method.getParameterTypes();
-                    var args = new Object[paramTypes.length];
-                    var params = method.getParameters();
-                    for (int i = 0; i < params.length; i++) {
-                        if (params[i].isAnnotationPresent(jakarta.enterprise.event.Observes.class)
-                                || params[i].isAnnotationPresent(jakarta.enterprise.event.ObservesAsync.class)) {
-                            args[i] = event;
-                        } else if (paramTypes[i] == jakarta.enterprise.inject.spi.EventMetadata.class) {
-                            // CDI spec: EventMetadata injection in observer methods
-                            final Object eventObj = event;
-                            // Build qualifiers: always include @Any (CDI spec: every event has @Any)
-                            final var metaQualifiers = new java.util.LinkedHashSet<java.lang.annotation.Annotation>();
-                            if (eventQualifiers != null) {
-                                for (var q : eventQualifiers) metaQualifiers.add(q);
-                            }
-                            metaQualifiers.add(jakarta.enterprise.inject.Any.Literal.INSTANCE);
-                            final java.util.Set<java.lang.annotation.Annotation> immutableQualifiers =
-                                    java.util.Set.copyOf(metaQualifiers);
-                            args[i] = new jakarta.enterprise.inject.spi.EventMetadata() {
-                                @Override public java.util.Set<java.lang.annotation.Annotation> getQualifiers() {
-                                    return immutableQualifiers;
+                        ? null : (beanCtx != null
+                                ? bm.getReference(exactBean, beanClass, beanCtx)
+                                : container.selectByBeanClass(beanClass));
+                try {
+                    if (method.getParameterCount() == 1) {
+                        method.invoke(beanInstance, event);
+                    } else {
+                        var ctx = new fr.vidocq.vauban.core.context.CreationalContextImpl<>();
+                        var paramTypes = method.getParameterTypes();
+                        var args = new Object[paramTypes.length];
+                        var params = method.getParameters();
+                        for (int i = 0; i < params.length; i++) {
+                            if (params[i].isAnnotationPresent(jakarta.enterprise.event.Observes.class)
+                                    || params[i].isAnnotationPresent(jakarta.enterprise.event.ObservesAsync.class)) {
+                                args[i] = event;
+                            } else if (paramTypes[i] == jakarta.enterprise.inject.spi.EventMetadata.class) {
+                                final Object eventObj = event;
+                                final var metaQualifiers = new java.util.LinkedHashSet<java.lang.annotation.Annotation>();
+                                if (eventQualifiers != null) {
+                                    for (var q : eventQualifiers) metaQualifiers.add(q);
                                 }
-                                @Override public jakarta.enterprise.inject.spi.InjectionPoint getInjectionPoint() {
-                                    return eventInjectionPoint; // The injection point of the Event<T> field
-                                }
-                                @Override public java.lang.reflect.Type getType() {
-                                    return eventObj.getClass();
-                                }
-                            };
-                        } else {
-                            // Resolve via BeanManager with qualifiers for proper dependent tracking
-                            var paramQualifiers = extractQualifierAnnotations(params[i]);
-                            var beans = paramQualifiers.length > 0
-                                    ? bm.getBeans(paramTypes[i], paramQualifiers)
-                                    : bm.getBeans(paramTypes[i]);
-                            if (!beans.isEmpty()) {
-                                var bean = bm.resolve(beans);
-                                var ref = bm.getReference(bean, paramTypes[i], ctx);
-                                args[i] = ref;
+                                metaQualifiers.add(jakarta.enterprise.inject.Any.Literal.INSTANCE);
+                                final java.util.Set<java.lang.annotation.Annotation> immutableQualifiers =
+                                        java.util.Set.copyOf(metaQualifiers);
+                                args[i] = new jakarta.enterprise.inject.spi.EventMetadata() {
+                                    @Override public java.util.Set<java.lang.annotation.Annotation> getQualifiers() {
+                                        return immutableQualifiers;
+                                    }
+                                    @Override public jakarta.enterprise.inject.spi.InjectionPoint getInjectionPoint() {
+                                        return eventInjectionPoint;
+                                    }
+                                    @Override public java.lang.reflect.Type getType() {
+                                        return eventObj.getClass();
+                                    }
+                                };
                             } else {
-                                args[i] = container.resolveParameter(paramTypes[i],
-                                        method.getGenericParameterTypes()[i]);
+                                var paramQualifiers = extractQualifierAnnotations(params[i]);
+                                var beans = paramQualifiers.length > 0
+                                        ? bm.getBeans(paramTypes[i], paramQualifiers)
+                                        : bm.getBeans(paramTypes[i]);
+                                if (!beans.isEmpty()) {
+                                    var bean = bm.resolve(beans);
+                                    var ref = bm.getReference(bean, paramTypes[i], ctx);
+                                    args[i] = ref;
+                                } else {
+                                    args[i] = container.resolveParameter(paramTypes[i],
+                                            method.getGenericParameterTypes()[i]);
+                                }
                             }
                         }
+                        try {
+                            method.invoke(beanInstance, args);
+                        } finally {
+                            ctx.release();
+                        }
                     }
-                    try {
-                        method.invoke(beanInstance, args);
-                    } finally {
-                        // CDI spec: @Dependent instances injected into observer methods
-                        // are destroyed after the observer invocation completes
-                        ctx.release();
-                    }
+                } finally {
+                    if (beanCtx != null) beanCtx.release();
                 }
             }
         } catch (java.lang.reflect.InvocationTargetException e) {

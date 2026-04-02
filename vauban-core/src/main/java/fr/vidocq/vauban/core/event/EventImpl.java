@@ -18,20 +18,41 @@ public final class EventImpl<T> implements Event<T> {
     private final EventDispatcher dispatcher;
     private final Annotation[] qualifiers;
     private final jakarta.enterprise.inject.spi.InjectionPoint injectionPoint;
+    private final java.lang.reflect.Type selectedType;
 
     public EventImpl(EventDispatcher dispatcher) {
-        this(dispatcher, new Annotation[0], null);
+        this(dispatcher, new Annotation[0], null, null);
     }
 
     public EventImpl(EventDispatcher dispatcher, Annotation[] qualifiers) {
-        this(dispatcher, qualifiers, null);
+        this(dispatcher, qualifiers, null, null);
     }
 
     public EventImpl(EventDispatcher dispatcher, Annotation[] qualifiers,
             jakarta.enterprise.inject.spi.InjectionPoint injectionPoint) {
+        this(dispatcher, qualifiers, injectionPoint, null);
+    }
+
+    public EventImpl(EventDispatcher dispatcher, Annotation[] qualifiers,
+            jakarta.enterprise.inject.spi.InjectionPoint injectionPoint,
+            java.lang.reflect.Type selectedType) {
         this.dispatcher = dispatcher;
         this.qualifiers = qualifiers;
         this.injectionPoint = injectionPoint;
+        if (selectedType != null) {
+            this.selectedType = selectedType;
+        } else if (injectionPoint != null) {
+            var ipType = injectionPoint.getType();
+            if (ipType instanceof java.lang.reflect.ParameterizedType pt
+                    && pt.getRawType() == jakarta.enterprise.event.Event.class
+                    && pt.getActualTypeArguments().length > 0) {
+                this.selectedType = pt.getActualTypeArguments()[0];
+            } else {
+                this.selectedType = null;
+            }
+        } else {
+            this.selectedType = null;
+        }
     }
 
     public jakarta.enterprise.inject.spi.InjectionPoint getInjectionPoint() {
@@ -43,7 +64,11 @@ public final class EventImpl<T> implements Event<T> {
         if (event == null) {
             throw new IllegalArgumentException("Event object must not be null");
         }
-        dispatcher.fire(event, injectionPoint, qualifiers);
+        if (selectedType != null) {
+            dispatcher.fire(event, selectedType, injectionPoint, qualifiers);
+        } else {
+            dispatcher.fire(event, injectionPoint, qualifiers);
+        }
     }
 
     @Override
@@ -79,7 +104,7 @@ public final class EventImpl<T> implements Event<T> {
         if (subtype == null) {
             throw new IllegalArgumentException("Subtype must not be null");
         }
-        return new EventImpl<>(dispatcher, combineQualifiers(this.qualifiers, newQualifiers), injectionPoint);
+        return new EventImpl<>(dispatcher, combineQualifiers(this.qualifiers, newQualifiers), injectionPoint, subtype);
     }
 
     @Override
@@ -92,7 +117,7 @@ public final class EventImpl<T> implements Event<T> {
         if (containsTypeVariable(type)) {
             throw new IllegalArgumentException("TypeVariable is not a legal event type");
         }
-        return new EventImpl<>(dispatcher, combineQualifiers(this.qualifiers, newQualifiers), injectionPoint);
+        return new EventImpl<>(dispatcher, combineQualifiers(this.qualifiers, newQualifiers), injectionPoint, type);
     }
 
     private static boolean containsTypeVariable(java.lang.reflect.Type type) {

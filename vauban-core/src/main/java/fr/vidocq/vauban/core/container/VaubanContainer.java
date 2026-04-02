@@ -844,6 +844,21 @@ public final class VaubanContainer implements AutoCloseable {
         return null;
     }
 
+    private ManagedBean<?> findManagedBeanByClass(DotName beanClassName) {
+        for (var bean : beans.values()) {
+            if (bean.descriptor().beanClass().equals(beanClassName)
+                    && bean.descriptor().kind() == BeanDescriptor.BeanKind.MANAGED) {
+                return bean;
+            }
+        }
+        return null;
+    }
+
+    /** Returns the MANAGED bean for the exact class (no subtype matching), or null. */
+    public ManagedBean<?> findManagedBeanByExactClass(Class<?> beanClass) {
+        return findManagedBeanByClass(DotName.of(beanClass.getName()));
+    }
+
     private void callInitializerMethods(Object instance, CreationalContext<?> ctx) {
         for (var method : instance.getClass().getDeclaredMethods()) {
             if (method.isAnnotationPresent(jakarta.inject.Inject.class)) {
@@ -1663,37 +1678,47 @@ public final class VaubanContainer implements AutoCloseable {
                 if (method.getName().equals(disposer.methodName())
                         && method.getParameterCount() > disposer.parameterIndex()) {
                     method.setAccessible(true);
-                    // For static disposer methods, no declaring instance needed
-                    var declaringInstance = java.lang.reflect.Modifier.isStatic(method.getModifiers())
-                            ? null : selectByBeanClass(declaringClass);
-                    // Build args - the @Disposes param gets the produced instance, others are injection points
-                    var paramTypes = method.getParameterTypes();
-                    var args = new Object[method.getParameterCount()];
-                    args[disposer.parameterIndex()] = producedInstance;
-                    for (int i = 0; i < paramTypes.length; i++) {
-                        if (i == disposer.parameterIndex()) continue;
-                        try {
-                            if (paramTypes[i] == BeanManager.class) {
-                                args[i] = getBeanManager();
-                            } else if (paramTypes[i] == Event.class) {
-                                args[i] = new EventImpl<>(eventDispatcher, collectEventQualifiers(method.getParameters()[i].getAnnotations()));
-                            } else if (paramTypes[i] == Instance.class) {
-                                Class<?> instanceType = Object.class;
-                                var genericType = method.getGenericParameterTypes()[i];
-                                if (genericType instanceof ParameterizedType pt) {
-                                    var typeArg = pt.getActualTypeArguments()[0];
-                                    if (typeArg instanceof Class<?> c) instanceType = c;
+                    var bm = getBeanManager();
+                    var ctx = new fr.vidocq.vauban.core.context.CreationalContextImpl<>();
+                    try {
+                        var declBeans = bm.getBeans(declaringClass);
+                        var declBean = declBeans.isEmpty() ? null : bm.resolve(declBeans);
+                        var declaringInstance = java.lang.reflect.Modifier.isStatic(method.getModifiers())
+                                ? null : (declBean != null
+                                        ? bm.getReference(declBean, declaringClass, ctx)
+                                        : selectByBeanClass(declaringClass));
+                        var paramTypes = method.getParameterTypes();
+                        var args = new Object[method.getParameterCount()];
+                        args[disposer.parameterIndex()] = producedInstance;
+                        for (int i = 0; i < paramTypes.length; i++) {
+                            if (i == disposer.parameterIndex()) continue;
+                            try {
+                                if (paramTypes[i] == BeanManager.class) {
+                                    args[i] = getBeanManager();
+                                } else if (paramTypes[i] == Event.class) {
+                                    args[i] = new EventImpl<>(eventDispatcher, collectEventQualifiers(method.getParameters()[i].getAnnotations()));
+                                } else if (paramTypes[i] == Instance.class) {
+                                    Class<?> instanceType = Object.class;
+                                    var genericType = method.getGenericParameterTypes()[i];
+                                    if (genericType instanceof ParameterizedType pt) {
+                                        var typeArg = pt.getActualTypeArguments()[0];
+                                        if (typeArg instanceof Class<?> c) instanceType = c;
+                                    }
+                                    var ip = new VaubanInjectionPoint(genericType, java.util.Set.of(jakarta.enterprise.inject.Any.Literal.INSTANCE, jakarta.enterprise.inject.Default.Literal.INSTANCE), null, method);
+                                    args[i] = new InstanceImpl<>(this, instanceType, ip);
+                                } else {
+                                    var beans = bm.getBeans(paramTypes[i]);
+                                    var bean = beans.isEmpty() ? null : bm.resolve(beans);
+                                    args[i] = bean != null ? bm.getReference(bean, paramTypes[i], ctx) : select(paramTypes[i]);
                                 }
-                                var ip = new VaubanInjectionPoint(genericType, java.util.Set.of(jakarta.enterprise.inject.Any.Literal.INSTANCE, jakarta.enterprise.inject.Default.Literal.INSTANCE), null, method);
-                                args[i] = new InstanceImpl<>(this, instanceType, ip);
-                            } else {
-                                args[i] = select(paramTypes[i]);
+                            } catch (Exception e) {
+                                // Best effort for other params
                             }
-                        } catch (Exception e) {
-                            // Best effort for other params
                         }
+                        method.invoke(declaringInstance, args);
+                    } finally {
+                        ctx.release();
                     }
-                    method.invoke(declaringInstance, args);
                     return;
                 }
             }
@@ -1978,10 +2003,25 @@ public final class VaubanContainer implements AutoCloseable {
             public Object create(jakarta.enterprise.context.spi.CreationalContext<Object> ctx) {
                 try {
                     var declaringClass = loadClass(descriptor.beanClass().value());
+                    // Find the managed bean for the exact declaring class
+                    ManagedBean<?> declBean = findManagedBeanByClass(descriptor.beanClass());
+                    boolean isDependent = declBean != null
+                            && declBean.getScope() == jakarta.enterprise.context.Dependent.class;
+                    // Use selectByBeanClass (has cycle guard) to avoid StackOverflowError
                     var declaringInstance = selectByBeanClass(declaringClass);
-                    var field = declaringClass.getDeclaredField(fieldName);
-                    field.setAccessible(true);
-                    return field.get(declaringInstance);
+                    try {
+                        var field = declaringClass.getDeclaredField(fieldName);
+                        field.setAccessible(true);
+                        return field.get(declaringInstance);
+                    } finally {
+                        // CDI spec: @Dependent declaring bean must be destroyed after producer field access
+                        if (isDependent && declaringInstance != null) {
+                            @SuppressWarnings("unchecked")
+                            var castBean = (ManagedBean<Object>) (ManagedBean<?>) declBean;
+                            castBean.destroy(declaringInstance,
+                                    new fr.vidocq.vauban.core.context.CreationalContextImpl<>());
+                        }
+                    }
                 } catch (RuntimeException e) {
                     throw e;
                 } catch (Exception e) {
