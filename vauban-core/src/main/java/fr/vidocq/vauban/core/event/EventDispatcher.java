@@ -218,6 +218,11 @@ public final class EventDispatcher {
         return result;
     }
 
+    /** Public entry point for ObserverMethod.notify() — direct invocation of a specific observer. */
+    public void invokeObserverDirect(ObserverDescriptor observer, Object event) {
+        invokeObserver(observer, event, (Annotation[]) new Annotation[0]);
+    }
+
     private void invokeObserver(ObserverDescriptor observer, Object event, Annotation... eventQualifiers) {
         invokeObserver(observer, event, null, eventQualifiers);
     }

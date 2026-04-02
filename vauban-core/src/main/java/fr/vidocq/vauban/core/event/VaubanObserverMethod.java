@@ -93,7 +93,8 @@ public final class VaubanObserverMethod<T> implements ObserverMethod<T> {
 
     @Override
     public void notify(T event) {
-        dispatcher.fire(event);
+        // CDI spec: notify() directly invokes THIS observer, not all matching observers
+        dispatcher.invokeObserverDirect(descriptor, event);
     }
 
     @Override

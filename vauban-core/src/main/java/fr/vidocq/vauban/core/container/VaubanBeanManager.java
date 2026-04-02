@@ -156,17 +156,23 @@ public final class VaubanBeanManager implements BeanManager {
                 }
             }
             if (typeMatch) {
-                // Qualifier matching for built-in beans
-                var beanQualifiers = builtIn.getQualifiers();
-                boolean qualifiersMatch = true;
-                for (var reqAnn : requiredQualifierAnnotations) {
-                    // @Any always matches — all beans implicitly have @Any
-                    if (reqAnn.annotationType() == jakarta.enterprise.inject.Any.class) continue;
-                    boolean found = beanQualifiers.stream()
-                        .anyMatch(bq -> qualifierEquals(bq, reqAnn));
-                    if (!found) {
-                        qualifiersMatch = false;
-                        break;
+                // CDI spec 3.11: Event and Instance built-in beans have "every qualifier type"
+                // (they match any qualifier combination, so qualifier matching always succeeds)
+                boolean isWildcardQualifier = builtIn.getBeanClass() == Event.class
+                        || builtIn.getBeanClass() == Instance.class;
+                boolean qualifiersMatch = isWildcardQualifier;
+                if (!qualifiersMatch) {
+                    qualifiersMatch = true;
+                    var beanQualifiers = builtIn.getQualifiers();
+                    for (var reqAnn : requiredQualifierAnnotations) {
+                        // @Any always matches — all beans implicitly have @Any
+                        if (reqAnn.annotationType() == jakarta.enterprise.inject.Any.class) continue;
+                        boolean found = beanQualifiers.stream()
+                            .anyMatch(bq -> qualifierEquals(bq, reqAnn));
+                        if (!found) {
+                            qualifiersMatch = false;
+                            break;
+                        }
                     }
                 }
                 if (qualifiersMatch) {

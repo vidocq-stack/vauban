@@ -87,7 +87,7 @@ public final class ManagedBean<T> implements Bean<T> {
                 // CDI spec: exceptions in disposer methods are suppressed
             }
         }
-        
+
         callPreDestroy(instance, creationalContext);
 
         // CDI Spec 6.1: release dependent instances tracked by this creational context.

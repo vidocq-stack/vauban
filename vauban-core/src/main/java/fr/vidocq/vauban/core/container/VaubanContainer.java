@@ -1533,24 +1533,31 @@ public final class VaubanContainer implements AutoCloseable {
                 if (!typeMatches) continue;
 
                 // CDI spec: disposer qualifiers must match producer qualifiers
-                // Use annotation names for matching (members from index may be incomplete)
-                // Then verify via reflection for exact member values
-                var disposerQualNames = disposer.qualifiers().stream()
-                        .filter(q -> !q.isDefault() && !q.isAny())
-                        .map(q -> q.annotationName())
-                        .collect(java.util.stream.Collectors.toSet());
-                var producerQualNames = descriptor.qualifiers().stream()
-                        .filter(q -> !q.isDefault() && !q.isAny())
-                        .map(q -> q.annotationName())
-                        .collect(java.util.stream.Collectors.toSet());
+                // Special case: @Any EXPLICITLY on disposer param matches ALL producers of same type
+                boolean disposerHasExplicitAny = hasExplicitAnyOnDisposerParam(disposer);
                 boolean qualifiersMatch;
-                if (disposerQualNames.isEmpty()) {
-                    qualifiersMatch = producerQualNames.isEmpty();
-                } else if (!producerQualNames.containsAll(disposerQualNames)) {
-                    qualifiersMatch = false;
+                if (disposerHasExplicitAny) {
+                    // @Any disposer matches any producer regardless of its qualifiers
+                    qualifiersMatch = true;
                 } else {
-                    // Annotation names match — verify via reflection for exact member values
-                    qualifiersMatch = verifyDisposerQualifiersViaReflection(descriptor, disposer);
+                    // Use annotation names for matching (members from index may be incomplete)
+                    // Then verify via reflection for exact member values
+                    var disposerQualNames = disposer.qualifiers().stream()
+                            .filter(q -> !q.isDefault() && !q.isAny())
+                            .map(q -> q.annotationName())
+                            .collect(java.util.stream.Collectors.toSet());
+                    var producerQualNames = descriptor.qualifiers().stream()
+                            .filter(q -> !q.isDefault() && !q.isAny())
+                            .map(q -> q.annotationName())
+                            .collect(java.util.stream.Collectors.toSet());
+                    if (disposerQualNames.isEmpty()) {
+                        qualifiersMatch = producerQualNames.isEmpty();
+                    } else if (!producerQualNames.containsAll(disposerQualNames)) {
+                        qualifiersMatch = false;
+                    } else {
+                        // Annotation names match — verify via reflection for exact member values
+                        qualifiersMatch = verifyDisposerQualifiersViaReflection(descriptor, disposer);
+                    }
                 }
                 if (!qualifiersMatch) continue;
 
@@ -1558,6 +1565,24 @@ public final class VaubanContainer implements AutoCloseable {
                 break;
             }
         }
+    }
+
+    /** Returns true if @Any was EXPLICITLY declared on the disposer parameter (not just auto-added). */
+    private boolean hasExplicitAnyOnDisposerParam(DisposerDescriptor disposer) {
+        try {
+            var cl = Thread.currentThread().getContextClassLoader();
+            var declaringClass = Class.forName(disposer.declaringClass().value(), false, cl);
+            for (var method : declaringClass.getDeclaredMethods()) {
+                if (method.getName().equals(disposer.methodName())
+                        && method.getParameterCount() > disposer.parameterIndex()) {
+                    for (var ann : method.getParameters()[disposer.parameterIndex()].getAnnotations()) {
+                        if (ann.annotationType() == jakarta.enterprise.inject.Any.class) return true;
+                    }
+                    return false;
+                }
+            }
+        } catch (Exception e) { /* ignore */ }
+        return false;
     }
 
     /**
