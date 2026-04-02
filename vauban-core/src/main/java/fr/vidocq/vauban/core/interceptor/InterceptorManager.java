@@ -472,6 +472,7 @@ public final class InterceptorManager {
             }
         }
 
+
         // Sort by priority (CDI spec 9.5.2)
         matches.sort(java.util.Comparator.comparingInt(InterceptorDescriptor::priority)
                 .thenComparing(d -> d.interceptorClass().toString()));

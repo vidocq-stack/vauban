@@ -31,10 +31,16 @@ public final class BeanResolver {
     public BeanResolver(List<BeanDescriptor> beans,
                         List<fr.vidocq.vauban.core.bean.model.InterceptorDescriptor> interceptors,
                         AssignabilityRules assignability) {
-        this.beans = List.copyOf(beans);
         this.interceptors = List.copyOf(interceptors);
         this.assignability = Objects.requireNonNull(assignability);
         this.interceptorManager = new fr.vidocq.vauban.core.interceptor.InterceptorManager(interceptors);
+        // CDI spec: interceptors are not eligible for injection as regular beans
+        var interceptorClasses = interceptors.stream()
+                .map(fr.vidocq.vauban.core.bean.model.InterceptorDescriptor::interceptorClass)
+                .collect(java.util.stream.Collectors.toSet());
+        this.beans = beans.stream()
+                .filter(b -> !interceptorClasses.contains(b.beanClass()))
+                .toList();
     }
 
     public List<fr.vidocq.vauban.core.bean.model.InterceptorDescriptor> getInterceptors() {
