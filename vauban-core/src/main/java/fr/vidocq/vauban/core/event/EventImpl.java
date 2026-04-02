@@ -64,6 +64,11 @@ public final class EventImpl<T> implements Event<T> {
         if (event == null) {
             throw new IllegalArgumentException("Event object must not be null");
         }
+        // CDI spec: if the selected event type contains unresolvable type variables, throw IAE
+        if (selectedType != null && containsTypeVariable(selectedType)) {
+            throw new IllegalArgumentException(
+                    "Event type contains unresolvable type variable: " + selectedType);
+        }
         if (selectedType != null) {
             dispatcher.fire(event, selectedType, injectionPoint, qualifiers);
         } else {

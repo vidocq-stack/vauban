@@ -62,7 +62,7 @@ public final class EventDispatcher {
         var matching = findMatchingObservers(eventClass, false, qualifierInstances);
         matching.sort(Comparator.comparingInt(ObserverDescriptor::priority));
         for (var observer : matching) {
-            invokeObserver(observer, event, eventInjectionPoint, qualifiers);
+            invokeObserver(observer, event, selectedType, eventInjectionPoint, qualifiers);
         }
     }
 
@@ -244,10 +244,16 @@ public final class EventDispatcher {
     }
 
     private void invokeObserver(ObserverDescriptor observer, Object event, Annotation... eventQualifiers) {
-        invokeObserver(observer, event, null, eventQualifiers);
+        invokeObserver(observer, event, null, null, eventQualifiers);
     }
 
     private void invokeObserver(ObserverDescriptor observer, Object event,
+            jakarta.enterprise.inject.spi.InjectionPoint eventInjectionPoint, Annotation... eventQualifiers) {
+        invokeObserver(observer, event, null, eventInjectionPoint, eventQualifiers);
+    }
+
+    private void invokeObserver(ObserverDescriptor observer, Object event,
+            java.lang.reflect.Type selectedEventType,
             jakarta.enterprise.inject.spi.InjectionPoint eventInjectionPoint, Annotation... eventQualifiers) {
         try {
             var beanClass = Class.forName(observer.declaringClass().value(), true, container.classLoader());
@@ -314,7 +320,8 @@ public final class EventDispatcher {
                                         return eventInjectionPoint;
                                     }
                                     @Override public java.lang.reflect.Type getType() {
-                                        return eventObj.getClass();
+                                        // CDI spec: return selected type if available, else runtime type
+                                        return selectedEventType != null ? selectedEventType : eventObj.getClass();
                                     }
                                 };
                             } else {

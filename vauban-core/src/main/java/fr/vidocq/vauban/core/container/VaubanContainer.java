@@ -1830,24 +1830,41 @@ public final class VaubanContainer implements AutoCloseable {
             public Object create(jakarta.enterprise.context.spi.CreationalContext<Object> ctx) {
                 try {
                     var declaringClass = loadClass(descriptor.beanClass().value());
+                    // CDI spec: @Dependent declaring bean must be destroyed after producer method invocation
+                    ManagedBean<?> declBean = findManagedBeanByClass(descriptor.beanClass());
+                    boolean isDependent = declBean != null
+                            && declBean.getScope() == jakarta.enterprise.context.Dependent.class;
                     var declaringInstance = selectByBeanClass(declaringClass);
 
                     for (var method : declaringClass.getDeclaredMethods()) {
                         if (method.getName().equals(methodName)) {
                             method.setAccessible(true);
-                            if (method.getParameterCount() == 0) {
-                                return method.invoke(declaringInstance);
+                            // Use a temporary ctx to track @Dependent params for cleanup
+                            var paramCtx = new fr.vidocq.vauban.core.context.CreationalContextImpl<>();
+                            try {
+                                if (method.getParameterCount() == 0) {
+                                    return method.invoke(declaringInstance);
+                                }
+                                // Resolve parameters as injection points
+                                var paramTypes = method.getParameterTypes();
+                                var genericParamTypes = method.getGenericParameterTypes();
+                                var params = method.getParameters();
+                                var args = new Object[paramTypes.length];
+                                for (int i = 0; i < paramTypes.length; i++) {
+                                    var qualifiers = extractParamQualifiers(params[i]);
+                                    args[i] = resolveParameter(paramTypes[i], genericParamTypes[i], paramCtx, qualifiers, method);
+                                }
+                                return method.invoke(declaringInstance, args);
+                            } finally {
+                                paramCtx.release();
+                                // CDI spec: destroy @Dependent declaring bean after producer method completes
+                                if (isDependent && declaringInstance != null) {
+                                    @SuppressWarnings("unchecked")
+                                    var castBean = (ManagedBean<Object>) (ManagedBean<?>) declBean;
+                                    castBean.destroy(declaringInstance,
+                                            new fr.vidocq.vauban.core.context.CreationalContextImpl<>());
+                                }
                             }
-                            // Resolve parameters as injection points
-                            var paramTypes = method.getParameterTypes();
-                            var genericParamTypes = method.getGenericParameterTypes();
-                            var params = method.getParameters();
-                            var args = new Object[paramTypes.length];
-                            for (int i = 0; i < paramTypes.length; i++) {
-                                var qualifiers = extractParamQualifiers(params[i]);
-                                args[i] = resolveParameter(paramTypes[i], genericParamTypes[i], ctx, qualifiers, method);
-                            }
-                            return method.invoke(declaringInstance, args);
                         }
                     }
                     throw new RuntimeException("Producer method not found: " + methodName + " in " + descriptor.beanClass());
