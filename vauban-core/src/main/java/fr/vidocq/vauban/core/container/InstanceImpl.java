@@ -32,7 +32,7 @@ public final class InstanceImpl<T> implements Instance<T> {
         this(container, type, new Annotation[0], injectionPoint);
     }
 
-    private InstanceImpl(VaubanContainer container, Class<T> type, Annotation[] qualifiers, jakarta.enterprise.inject.spi.InjectionPoint injectionPoint) {
+    public InstanceImpl(VaubanContainer container, Class<T> type, Annotation[] qualifiers, jakarta.enterprise.inject.spi.InjectionPoint injectionPoint) {
         this.container = container;
         this.type = type;
         this.injectionPoint = injectionPoint;
@@ -46,10 +46,8 @@ public final class InstanceImpl<T> implements Instance<T> {
             // Ensure @Any is present (CDI 4.1 Section 2.3.1)
             var set = new java.util.LinkedHashSet<Annotation>(java.util.Arrays.asList(qualifiers));
             set.add(jakarta.enterprise.inject.Any.Literal.INSTANCE);
-            // If only @Any is present, add @Default (CDI 4.1 Section 2.3.1)
-            if (set.size() == 1 && set.iterator().next().annotationType() == jakarta.enterprise.inject.Any.class) {
-                set.add(jakarta.enterprise.inject.Default.Literal.INSTANCE);
-            }
+            // DO NOT add @Default when explicit qualifiers are present.
+            // @Any alone means "wildcard matching" — adding @Default would restrict resolution.
             this.qualifiers = set.toArray(new Annotation[0]);
         }
     }

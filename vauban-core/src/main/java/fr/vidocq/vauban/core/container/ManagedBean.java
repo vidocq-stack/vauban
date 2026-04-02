@@ -29,6 +29,7 @@ public final class ManagedBean<T> implements Bean<T> {
     private BiConsumer<Object, CreationalContext<?>> injector;
     private Consumer<Object> destroyer;
     private fr.vidocq.vauban.core.interceptor.InterceptorManager interceptorManager;
+    private volatile Set<Type> cachedTypes;
 
     public ManagedBean(BeanDescriptor descriptor, BeanFactory<T> factory, ClassLoader classLoader) {
         this.descriptor = Objects.requireNonNull(descriptor);
@@ -187,17 +188,23 @@ public final class ManagedBean<T> implements Bean<T> {
 
     @Override
     public Set<Type> getTypes() {
+        var cached = cachedTypes;
+        if (cached != null) return cached;
+
+        Set<Type> types;
         // For producer beans, derive types from the produced type, not the declaring class
         if (descriptor.kind() != BeanDescriptor.BeanKind.MANAGED) {
-            return getProducerTypes();
+            types = getProducerTypes();
+        } else {
+            types = new LinkedHashSet<Type>();
+            collectTypes(beanClass, types);
+            types.add(Object.class);
+            // Check if @Typed restricts the bean types
+            if (hasTypedRestriction()) {
+                types = filterByTyped(types);
+            }
         }
-        var types = new LinkedHashSet<Type>();
-        collectTypes(beanClass, types);
-        types.add(Object.class);
-        // Check if @Typed restricts the bean types
-        if (hasTypedRestriction()) {
-            return filterByTyped(types);
-        }
+        cachedTypes = types;
         return types;
     }
 

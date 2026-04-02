@@ -744,7 +744,7 @@ public final class VaubanContainer implements AutoCloseable {
                     var fieldQualifiers = extractFieldQualifiers(field);
                     var ownerBean = findBeanForInstance(instance);
                     var ip = new VaubanInjectionPoint(field, ownerBean);
-                    field.set(instance, new InstanceImpl<>(this, instanceType, ip).select(fieldQualifiers));
+                    field.set(instance, new InstanceImpl<>(this, instanceType, fieldQualifiers, ip));
                     continue;
                 }
 
