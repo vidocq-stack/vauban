@@ -2211,10 +2211,19 @@ public final class VaubanContainer implements AutoCloseable {
                             beanClasses.isEmpty() ? Thread.currentThread().getContextClassLoader()
                                     : beanClasses.getFirst().getClassLoader());
 
-                    // BCE errors are deployment errors
-                    if (!bceResult.errors().isEmpty()) {
+                    // BCE definition errors → DefinitionException
+                    if (!bceResult.definitionErrors().isEmpty()) {
+                        var msg = new StringBuilder("CDI definition validation failed:\n");
+                        for (var error : bceResult.definitionErrors()) {
+                            msg.append("  - ").append(error).append("\n");
+                        }
+                        throw new jakarta.enterprise.inject.spi.DefinitionException(msg.toString());
+                    }
+
+                    // BCE deployment errors → DeploymentException
+                    if (!bceResult.deploymentErrors().isEmpty()) {
                         var msg = new StringBuilder("CDI deployment validation failed:\n");
-                        for (var error : bceResult.errors()) {
+                        for (var error : bceResult.deploymentErrors()) {
                             msg.append("  - ").append(error).append("\n");
                         }
                         throw new jakarta.enterprise.inject.spi.DeploymentException(msg.toString());
