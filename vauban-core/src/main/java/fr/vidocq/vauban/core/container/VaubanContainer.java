@@ -1516,15 +1516,21 @@ public final class VaubanContainer implements AutoCloseable {
                 }
                 if (!typeMatches) continue;
 
-                // Check qualifier match: disposer qualifiers must be subset of producer qualifiers
-                // CDI spec: disposer qualifiers without @Default/@Any must match
+                // CDI spec: disposer qualifiers must match producer qualifiers
+                // If disposer has no explicit qualifiers (only @Default/@Any), it matches any producer
                 var disposerQuals = disposer.qualifiers().stream()
                         .filter(q -> !q.isDefault() && !q.isAny())
                         .collect(java.util.stream.Collectors.toSet());
                 var producerQuals = descriptor.qualifiers().stream()
                         .filter(q -> !q.isDefault() && !q.isAny())
                         .collect(java.util.stream.Collectors.toSet());
-                boolean qualifiersMatch = producerQuals.containsAll(disposerQuals);
+                boolean qualifiersMatch;
+                if (disposerQuals.isEmpty()) {
+                    // No explicit qualifiers on disposer → matches producers with @Default (or no custom quals)
+                    qualifiersMatch = producerQuals.isEmpty();
+                } else {
+                    qualifiersMatch = producerQuals.containsAll(disposerQuals);
+                }
                 if (!qualifiersMatch) continue;
 
                 bean.setDestroyer(instance -> callDisposer(instance, disposer));

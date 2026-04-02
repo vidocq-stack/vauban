@@ -91,14 +91,28 @@ public final class InterceptorManager {
     private Map<Class<? extends java.lang.annotation.Annotation>, java.lang.annotation.Annotation> collectAllBindings(Class<?> beanClass) {
         var result = new java.util.LinkedHashMap<Class<? extends java.lang.annotation.Annotation>, java.lang.annotation.Annotation>();
         var visited = new java.util.HashSet<Class<? extends java.lang.annotation.Annotation>>();
-        
-        var current = beanClass;
+
+        // Collect from the bean class itself (all bindings)
+        collectBindingsRecursively(beanClass.getAnnotations(), result, visited);
+
+        // Collect from superclasses (only @Inherited bindings — CDI spec)
+        var current = beanClass.getSuperclass();
         while (current != null && current != Object.class) {
-            collectBindingsRecursively(current.getAnnotations(), result, visited);
+            for (var ann : current.getAnnotations()) {
+                if (ann.annotationType().isAnnotationPresent(java.lang.annotation.Inherited.class)
+                        || isInterceptorBindingViaStereotype(ann)) {
+                    collectBindingsRecursively(new java.lang.annotation.Annotation[]{ann}, result, visited);
+                }
+            }
             current = current.getSuperclass();
         }
-        
+
         return result;
+    }
+
+    private boolean isInterceptorBindingViaStereotype(java.lang.annotation.Annotation ann) {
+        // Check if annotation is a stereotype that carries interceptor bindings
+        return ann.annotationType().isAnnotationPresent(jakarta.enterprise.inject.Stereotype.class);
     }
 
     private void addLifecycleInvocations(Class<?> clazz, Object target, Class<? extends java.lang.annotation.Annotation> annotation, List<VaubanInvocationContext.InterceptorInvocation> chain) {

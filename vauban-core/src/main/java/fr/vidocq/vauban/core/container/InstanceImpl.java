@@ -64,9 +64,8 @@ public final class InstanceImpl<T> implements Instance<T> {
         var bean = (Bean<T>) bm.resolve(beans);
         
         var previousIp = VaubanContainer.getCurrentInjectionPoint();
-        if (injectionPoint != null) {
-            VaubanContainer.setInjectionPoint(injectionPoint);
-        }
+        // Always set the injection point — null means "not being injected" (CDI spec)
+        VaubanContainer.setInjectionPoint(injectionPoint);
         try {
             var ctx = bm.createCreationalContext(bean);
             @SuppressWarnings("unchecked")
