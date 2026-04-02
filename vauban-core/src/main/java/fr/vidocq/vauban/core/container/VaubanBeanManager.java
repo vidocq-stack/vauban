@@ -780,14 +780,16 @@ public final class VaubanBeanManager implements BeanManager {
         }
 
         // CDI 4.1 Section 5.2.5: raw types must be identical
+        // Use name comparison to handle cross-classloader scenarios
         if (requiredType instanceof Class<?> reqClass) {
             if (beanType instanceof Class<?> btClass) {
-                return reqClass == btClass;
+                return reqClass == btClass || reqClass.getName().equals(btClass.getName());
             }
             // CDI 5.2.4: parameterized bean type matches raw required type only if
             // raw types are identical AND all type params are unbounded TVs or Object
             if (beanType instanceof java.lang.reflect.ParameterizedType pt) {
-                if (reqClass != pt.getRawType()) return false;
+                if (reqClass != pt.getRawType()
+                        && !reqClass.getName().equals(((Class<?>) pt.getRawType()).getName())) return false;
                 for (Type arg : pt.getActualTypeArguments()) {
                     if (arg instanceof java.lang.reflect.TypeVariable<?> tv) {
                         for (Type bound : tv.getBounds()) {
