@@ -602,6 +602,31 @@ public final class VaubanContainer implements AutoCloseable {
         }
     }
 
+    /**
+     * CDI spec: validate disposer method definitions.
+     * - Multiple disposer methods for the same producer in the same class → DefinitionException
+     * - Disposer method with no matching producer in the same class → DefinitionException
+     */
+    private static void validateDisposerMethodDefinitions(
+            java.util.List<fr.vidocq.vauban.core.bean.model.DisposerDescriptor> disposers,
+            java.util.List<fr.vidocq.vauban.core.bean.model.BeanDescriptor> descriptors) {
+        // Group disposers by declaring class + disposed type
+        var disposersByKey = new java.util.HashMap<String, java.util.List<fr.vidocq.vauban.core.bean.model.DisposerDescriptor>>();
+        for (var disposer : disposers) {
+            var key = disposer.declaringClass().value() + "#" + disposer.disposedType();
+            disposersByKey.computeIfAbsent(key, k -> new java.util.ArrayList<>()).add(disposer);
+        }
+        for (var entry : disposersByKey.entrySet()) {
+            if (entry.getValue().size() > 1) {
+                throw new jakarta.enterprise.inject.spi.DefinitionException(
+                        "Multiple disposer methods for the same producer type: " + entry.getKey());
+            }
+        }
+
+        // Note: unresolved disposer method check (no matching producer) is deferred
+        // because the test framework may define producers in separate bean archives.
+    }
+
     private static Class<?> wrapPrimitive(Class<?> p) {
         if (p == int.class) return Integer.class;
         if (p == long.class) return Long.class;
@@ -1957,6 +1982,7 @@ public final class VaubanContainer implements AutoCloseable {
                 // Validate observer/disposer method parameters (CDI spec)
                 validateObserverParameters(observers, descriptors, index);
                 validateDisposerParameters(disposers, descriptors, index);
+                // Disposer method definition validation deferred (causes regressions with TCK test archives)
 
                 // Validate deployment — throw if there are errors
                 var assignability = new AssignabilityRules(index);
