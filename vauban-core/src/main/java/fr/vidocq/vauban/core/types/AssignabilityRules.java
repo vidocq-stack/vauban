@@ -72,10 +72,30 @@ public final class AssignabilityRules {
         return switch (beanType) {
             case ClassType bean -> isSubtypeOf(bean.name(), required.name());
             case ParameterizedType bean -> {
-                // CDI 4.1 Section 2.4.1: A bean type that is a parameterized type is assignable to
-                // a required type that is a class or interface if the bean type's raw type is assignable
-                // to the required type.
-                yield isSubtypeOf(bean.rawType(), required.name());
+                // CDI 4.1 Section 5.2.4: A parameterized bean type is assignable to
+                // a raw required type if the raw types are identical and all type parameters
+                // of the bean type are either unbounded type variables or java.lang.Object.
+                if (!bean.rawType().equals(required.name())) {
+                    // Check if there's any supertype that matches
+                    yield isSubtypeOf(bean.rawType(), required.name());
+                } else {
+                    for (TypeInfo arg : bean.typeArguments()) {
+                        if (arg instanceof TypeVariable tv) {
+                            for (TypeInfo bound : tv.bounds()) {
+                                if (bound instanceof ClassType ct && !ct.name().value().equals("java.lang.Object")) {
+                                    yield false;
+                                }
+                            }
+                        } else if (arg instanceof ClassType ct) {
+                            if (!ct.name().value().equals("java.lang.Object")) {
+                                yield false;
+                            }
+                        } else {
+                            yield false;
+                        }
+                    }
+                    yield true;
+                }
             }
             default -> false;
         };
@@ -91,7 +111,27 @@ public final class AssignabilityRules {
         return switch (requiredType) {
             case ClassType req -> switch (beanType) {
                 case ClassType bean -> bean.name().equals(req.name());
-                case ParameterizedType bean -> bean.rawType().equals(req.name());
+                case ParameterizedType bean -> {
+                    if (!bean.rawType().equals(req.name())) {
+                        yield false;
+                    }
+                    for (TypeInfo arg : bean.typeArguments()) {
+                        if (arg instanceof TypeVariable tv) {
+                            for (TypeInfo bound : tv.bounds()) {
+                                if (bound instanceof ClassType ct && !ct.name().value().equals("java.lang.Object")) {
+                                    yield false;
+                                }
+                            }
+                        } else if (arg instanceof ClassType ct) {
+                            if (!ct.name().value().equals("java.lang.Object")) {
+                                yield false;
+                            }
+                        } else {
+                            yield false;
+                        }
+                    }
+                    yield true;
+                }
                 default -> false;
             };
             case ParameterizedType req -> isAssignableToParameterized(beanType, req);
@@ -132,14 +172,12 @@ public final class AssignabilityRules {
     private boolean isTypeArgumentAssignable(TypeInfo beanArg, TypeInfo requiredArg) {
         return switch (requiredArg) {
             case WildcardType wildcard -> {
-                if (wildcard.upperBound() != null) {
-                    // ? extends X — bean arg must be assignable to X
-                    yield isAssignable(beanArg, wildcard.upperBound());
-                } else if (wildcard.lowerBound() != null) {
-                    // ? super X — X must be assignable to bean arg
-                    yield isAssignable(wildcard.lowerBound(), beanArg);
+                if (wildcard.lowerBound() != null) {
+                    if (!isAssignable(wildcard.lowerBound(), beanArg)) yield false;
                 }
-                // Unbounded wildcard ? — any type matches
+                if (wildcard.upperBound() != null) {
+                    if (!isAssignable(beanArg, wildcard.upperBound())) yield false;
+                }
                 yield true;
             }
             case TypeVariable tv -> {
@@ -212,7 +250,26 @@ public final class AssignabilityRules {
         if (current.equals(target)) return true;
 
         var classInfo = index.getClassByName(current);
-        if (classInfo.isEmpty()) return false;
+        if (classInfo.isEmpty()) {
+            // Fallback to reflection if not in index (e.g. JDK classes like java.lang.Integer)
+            try {
+                var cl = Thread.currentThread().getContextClassLoader();
+                var clazz = cl != null ? Class.forName(current.value(), false, cl)
+                        : Class.forName(current.value());
+                var superClass = clazz.getSuperclass();
+                if (superClass != null && isSubtypeOfRecursive(DotName.of(superClass.getName()), target, visited)) {
+                    return true;
+                }
+                for (var iface : clazz.getInterfaces()) {
+                    if (isSubtypeOfRecursive(DotName.of(iface.getName()), target, visited)) {
+                        return true;
+                    }
+                }
+            } catch (Exception e) {
+                // skip
+            }
+            return false;
+        }
 
         var info = classInfo.get();
 

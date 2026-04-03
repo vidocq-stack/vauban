@@ -666,11 +666,22 @@ public final class BeanDiscovery {
         collectBeanTypes(classInfo.name(), types);
         // Enrich with parameterized supertypes via reflection
         try {
-            var clazz = Class.forName(classInfo.name().value());
+            var cl = Thread.currentThread().getContextClassLoader();
+            var clazz = cl != null ? Class.forName(classInfo.name().value(), false, cl)
+                    : Class.forName(classInfo.name().value());
             collectParameterizedSupertypes(clazz, types);
         } catch (ClassNotFoundException e) {
             // skip
         }
+        
+        // Remove raw ClassTypes if a ParameterizedType exists for the same class name
+        // (CDI spec: parameterized beans only have their parameterized types in the bean types set, not raw types)
+        var rawNamesWithParams = types.stream()
+                .filter(t -> t instanceof TypeInfo.ParameterizedType)
+                .map(t -> ((TypeInfo.ParameterizedType) t).rawType())
+                .collect(java.util.stream.Collectors.toSet());
+        types.removeIf(t -> t instanceof TypeInfo.ClassType ct && rawNamesWithParams.contains(ct.name()));
+        
         types.add(new TypeInfo.ClassType(DotName.of("java.lang.Object")));
         return types;
     }
@@ -1142,6 +1153,49 @@ public final class BeanDiscovery {
         return null;
     }
 
+    private TypeInfo resolveGenericTypeForField(ClassInfo classInfo, FieldInfo field) {
+        try {
+            var cl = Thread.currentThread().getContextClassLoader();
+            var clazz = cl != null ? Class.forName(classInfo.name().value(), false, cl)
+                    : Class.forName(classInfo.name().value());
+            var reflField = clazz.getDeclaredField(field.name());
+            var reflType = reflField.getGenericType();
+            var typeInfo = reflectTypeToTypeInfo(reflType);
+            if (typeInfo != null) return typeInfo;
+        } catch (Exception e) {
+            // fallback
+        }
+        return field.type();
+    }
+
+    private TypeInfo resolveGenericTypeForMethodParameter(ClassInfo classInfo, MethodInfo method, int paramIndex) {
+        try {
+            var cl = Thread.currentThread().getContextClassLoader();
+            var clazz = cl != null ? Class.forName(classInfo.name().value(), false, cl)
+                    : Class.forName(classInfo.name().value());
+            if (method.isConstructor()) {
+                for (var ctor : clazz.getDeclaredConstructors()) {
+                    if (ctor.getParameterCount() == method.parameters().size()) {
+                        var reflType = ctor.getGenericParameterTypes()[paramIndex];
+                        var typeInfo = reflectTypeToTypeInfo(reflType);
+                        if (typeInfo != null) return typeInfo;
+                    }
+                }
+            } else {
+                for (var m : clazz.getDeclaredMethods()) {
+                    if (m.getName().equals(method.name()) && m.getParameterCount() == method.parameters().size()) {
+                        var reflType = m.getGenericParameterTypes()[paramIndex];
+                        var typeInfo = reflectTypeToTypeInfo(reflType);
+                        if (typeInfo != null) return typeInfo;
+                    }
+                }
+            }
+        } catch (Exception e) {
+            // fallback
+        }
+        return method.parameters().get(paramIndex).type();
+    }
+
     List<InjectionPointInfo> discoverInjectionPoints(ClassInfo classInfo) {
         var points = new ArrayList<InjectionPointInfo>();
 
@@ -1164,8 +1218,9 @@ public final class BeanDiscovery {
             var ctor = injectConstructor.get();
             for (int i = 0; i < ctor.parameters().size(); i++) {
                 var param = ctor.parameters().get(i);
+                var resolvedType = resolveGenericTypeForMethodParameter(classInfo, ctor, i);
                 points.add(new InjectionPointInfo(
-                        param.type(), computeQualifiers(param.annotations()),
+                        resolvedType, computeQualifiers(param.annotations()),
                         InjectionPointInfo.InjectionKind.CONSTRUCTOR_PARAMETER,
                         "parameter " + i + " of " + classInfo.name().simpleName() + "()"
                 ));
@@ -1178,8 +1233,9 @@ public final class BeanDiscovery {
                 var qualifiers = computeQualifiers(field.annotations());
                 // CDI spec: @Named without value on injection point defaults to the field name
                 qualifiers = resolveNamedDefault(qualifiers, field.name());
+                var resolvedType = resolveGenericTypeForField(classInfo, field);
                 points.add(new InjectionPointInfo(
-                        field.type(), qualifiers,
+                        resolvedType, qualifiers,
                         InjectionPointInfo.InjectionKind.FIELD,
                         "field " + classInfo.name().simpleName() + "." + field.name()
                 ));
@@ -1202,8 +1258,9 @@ public final class BeanDiscovery {
                                             + "() parameter " + i + " must not have @" + ann.name().simpleName());
                         }
                     }
+                    var resolvedType = resolveGenericTypeForMethodParameter(classInfo, method, i);
                     points.add(new InjectionPointInfo(
-                            param.type(), computeQualifiers(param.annotations()),
+                            resolvedType, computeQualifiers(param.annotations()),
                             InjectionPointInfo.InjectionKind.METHOD_PARAMETER,
                             "parameter " + i + " of " + classInfo.name().simpleName() + "." + method.name() + "()"
                     ));
