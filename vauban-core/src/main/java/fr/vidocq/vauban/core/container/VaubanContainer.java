@@ -123,7 +123,8 @@ public final class VaubanContainer implements AutoCloseable {
             } else if (descriptor.kind() == BeanDescriptor.BeanKind.PRODUCER_FIELD) {
                 factory = createProducerFieldFactory(descriptor);
             } else if (descriptor.kind() == BeanDescriptor.BeanKind.SYNTHETIC) {
-                factory = factories.get(descriptor.beanClass());
+                // Synthetic beans use their unique ID as factory key
+                factory = factories.get(DotName.of(descriptor.id().value()));
             } else {
                 continue;
             }
@@ -2514,8 +2515,10 @@ public final class VaubanContainer implements AutoCloseable {
             }
             qualifiers.add(QualifierInstance.ANY);
 
+            // Use unique key to avoid collisions when multiple synthetic beans share the same type
+            var syntheticKey = DotName.of(beanName.value() + "#synthetic#" + descriptors.size());
             var descriptor = new BeanDescriptor(
-                    new BeanId(beanName.value() + "#synthetic"),
+                    new BeanId(syntheticKey.value()),
                     beanName,
                     BeanDescriptor.BeanKind.SYNTHETIC,
                     beanTypes,
@@ -2531,13 +2534,17 @@ public final class VaubanContainer implements AutoCloseable {
             // Create factory using SyntheticBeanCreator
             var creatorClass = synBean.getCreatorClass();
             var params = synBean.getParams();
-            factories.put(beanName, (BeanFactory<Object>) () -> {
+            factories.put(syntheticKey, (BeanFactory<Object>) () -> {
                 try {
-                    var creator = (jakarta.enterprise.inject.build.compatible.spi.SyntheticBeanCreator)
+                    @SuppressWarnings("unchecked")
+                    var creator = (jakarta.enterprise.inject.build.compatible.spi.SyntheticBeanCreator<Object>)
                             creatorClass.getDeclaredConstructor().newInstance();
                     var vaubanParams = new fr.vidocq.vauban.core.extensions.VaubanParameters(params);
-                    var instance = jakarta.enterprise.inject.spi.CDI.current().select(Object.class);
-                    return creator.create((jakarta.enterprise.inject.Instance) instance, vaubanParams);
+                    // Create an Instance<Object> that supports InjectionPoint lookup
+                    var cdi = jakarta.enterprise.inject.spi.CDI.current();
+                    @SuppressWarnings("unchecked")
+                    var lookup = (jakarta.enterprise.inject.Instance<Object>) cdi.select(Object.class);
+                    return creator.create(lookup, vaubanParams);
                 } catch (RuntimeException e) {
                     throw e;
                 } catch (Exception e) {
