@@ -154,7 +154,8 @@ public final class EventDispatcher {
             java.lang.reflect.ParameterizedType eventGenericType = null;
             for (java.lang.reflect.Type supertype : fr.vidocq.vauban.core.types.TypeHierarchyResolver.resolveAllSupertypes(eventType)) {
                 if (supertype instanceof java.lang.reflect.ParameterizedType pt) {
-                    if (pt.getRawType() == rawObserved) {
+                    if (pt.getRawType() == rawObserved
+                            || (pt.getRawType() instanceof Class<?> ptc && ptc.getName().equals(rawObserved.getName()))) {
                         eventGenericType = pt;
                         break;
                     }
@@ -217,13 +218,13 @@ public final class EventDispatcher {
         }
 
         if (observerArg instanceof TypeInfo.ClassType ct) {
-            var expectedClass = Class.forName(ct.name().value(), true, cl);
+            var expectedName = ct.name().value();
             if (eventArg instanceof Class<?> ec) {
-                return expectedClass.equals(ec);
+                return expectedName.equals(ec.getName());
             }
             if (eventArg instanceof java.lang.reflect.WildcardType ewt) {
                 for (var bound : ewt.getUpperBounds()) {
-                    if (bound instanceof Class<?> bc && expectedClass.equals(bc)) return true;
+                    if (bound instanceof Class<?> bc && expectedName.equals(bc.getName())) return true;
                 }
                 return false;
             }
@@ -232,8 +233,9 @@ public final class EventDispatcher {
 
         if (observerArg instanceof TypeInfo.ParameterizedType opt) {
             if (eventArg instanceof java.lang.reflect.ParameterizedType ept) {
-                var obsRaw = Class.forName(opt.rawType().value(), true, cl);
-                if (ept.getRawType() != obsRaw) return false;
+                var obsRawName = opt.rawType().value();
+                var eptRaw = ept.getRawType();
+                if (!(eptRaw instanceof Class<?> eptRawClass && obsRawName.equals(eptRawClass.getName()))) return false;
                 var eArgs = ept.getActualTypeArguments();
                 var oArgs = opt.typeArguments();
                 if (eArgs.length != oArgs.size()) return false;
