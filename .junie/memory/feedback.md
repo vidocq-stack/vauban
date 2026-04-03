@@ -38,3 +38,19 @@
     "NEW INSTRUCTION": "WHEN code is stable after completing a step THEN commit changes immediately"
 }
 
+[2026-04-03 10:51] - Updated by Junie
+{
+    "TYPE": "preference",
+    "CATEGORY": "Commit workflow",
+    "EXPECTATION": "User wants an immediate commit at each stable step with a proper message.",
+    "NEW INSTRUCTION": "WHEN code is stable after a step THEN commit immediately with a descriptive message"
+}
+
+[2026-04-03 15:42] - Updated by Junie
+{
+    "TYPE": "preference",
+    "CATEGORY": "Commit workflow override",
+    "EXPECTATION": "Do not commit after fixing ParameterizedEventTest; only report success.",
+    "NEW INSTRUCTION": "WHEN ParameterizedEventTest passes locally THEN do not commit and just report success"
+}
+
