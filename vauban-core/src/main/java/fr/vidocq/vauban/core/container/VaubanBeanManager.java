@@ -684,6 +684,9 @@ public final class VaubanBeanManager implements BeanManager {
         for (var bt : beanTypes) {
             if (bt instanceof java.lang.reflect.TypeVariable<?>) continue;
             if (bt instanceof java.lang.reflect.WildcardType) continue;
+            // CDI spec: parameterized types with wildcards are not legal bean types
+            if (bt instanceof java.lang.reflect.ParameterizedType bpt
+                    && containsWildcard(bpt)) continue;
             if (bt.equals(requiredType)) {
                 typeMatch = true;
                 break;
@@ -797,6 +800,14 @@ public final class VaubanBeanManager implements BeanManager {
      * Checks if a bean type is assignable to a required type,
      * supporting Class, ParameterizedType, and raw/parameterized compatibility.
      */
+    private static boolean containsWildcard(java.lang.reflect.ParameterizedType pt) {
+        for (var arg : pt.getActualTypeArguments()) {
+            if (arg instanceof java.lang.reflect.WildcardType) return true;
+            if (arg instanceof java.lang.reflect.ParameterizedType nested && containsWildcard(nested)) return true;
+        }
+        return false;
+    }
+
     private static boolean typesMatch(Type beanType, Type requiredType) {
         if (beanType.equals(requiredType)) return true;
 
