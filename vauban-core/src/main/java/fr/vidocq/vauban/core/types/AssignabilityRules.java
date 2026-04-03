@@ -209,11 +209,20 @@ public final class AssignabilityRules {
     private boolean isTypeArgumentAssignable(TypeInfo beanArg, TypeInfo requiredArg) {
         return switch (requiredArg) {
             case WildcardType wildcard -> {
+                // Extract effective bean type when beanArg is a wildcard or type variable
+                TypeInfo effectiveBeanArg = beanArg;
+                if (beanArg instanceof WildcardType bw) {
+                    effectiveBeanArg = bw.upperBound() != null ? bw.upperBound()
+                            : new ClassType(DotName.of("java.lang.Object"));
+                } else if (beanArg instanceof TypeVariable tv && !tv.bounds().isEmpty()) {
+                    effectiveBeanArg = tv.bounds().getFirst();
+                }
+
                 if (wildcard.lowerBound() != null) {
-                    if (!isAssignable(wildcard.lowerBound(), beanArg)) yield false;
+                    if (!isAssignable(wildcard.lowerBound(), effectiveBeanArg)) yield false;
                 }
                 if (wildcard.upperBound() != null) {
-                    if (!isAssignable(beanArg, wildcard.upperBound())) yield false;
+                    if (!isAssignable(effectiveBeanArg, wildcard.upperBound())) yield false;
                 }
                 yield true;
             }

@@ -119,11 +119,11 @@ public final class VaubanInjectionPoint implements InjectionPoint {
                 hasAnyAnnotation = true;
             }
         }
-        // CDI 4.1 Section 5.5.3: InjectionPoint qualifiers are only the declared ones
+        // CDI 4.1 Section 2.3.5: If no qualifier is declared, @Default is the only qualifier.
+        // @Any is NOT added to InjectionPoint qualifiers (it's a bean-side concept).
         if (!hasAnyAnnotation) {
             result.add(jakarta.enterprise.inject.Default.Literal.INSTANCE);
         }
-        result.add(jakarta.enterprise.inject.Any.Literal.INSTANCE);
         return result;
     }
 

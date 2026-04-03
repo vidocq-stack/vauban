@@ -829,8 +829,10 @@ public final class VaubanBeanManager implements BeanManager {
 
         if (requiredType instanceof java.lang.reflect.ParameterizedType reqPt) {
             if (beanType instanceof java.lang.reflect.ParameterizedType beanPt) {
-                // Raw types must be identical
-                if (beanPt.getRawType() != reqPt.getRawType()) return false;
+                // Raw types must be identical (compare by name for cross-classloader)
+                if (beanPt.getRawType() != reqPt.getRawType()
+                        && (!(beanPt.getRawType() instanceof Class<?> bc && reqPt.getRawType() instanceof Class<?> rc)
+                            || !bc.getName().equals(rc.getName()))) return false;
                 // Type arguments must match exactly (invariant)
                 var reqArgs = reqPt.getActualTypeArguments();
                 var beanArgs = beanPt.getActualTypeArguments();

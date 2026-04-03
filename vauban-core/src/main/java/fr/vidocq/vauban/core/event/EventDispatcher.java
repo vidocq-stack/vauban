@@ -486,20 +486,12 @@ public final class EventDispatcher {
                                 args[i] = event;
                             } else if (paramTypes[i] == jakarta.enterprise.inject.spi.EventMetadata.class) {
                                 final Object eventObj = event;
+                                // CDI spec: EventMetadata.getQualifiers() returns the qualifiers
+                                // explicitly passed at fire-time plus @Any (always implicit).
+                                // @Default is NOT added implicitly to EventMetadata.
                                 final var metaQualifiers = new java.util.LinkedHashSet<java.lang.annotation.Annotation>();
                                 if (eventQualifiers != null) {
                                     for (var q : eventQualifiers) metaQualifiers.add(q);
-                                }
-                                boolean hasExplicitQualifier = false;
-                                for (var q : metaQualifiers) {
-                                    if (q.annotationType() != jakarta.enterprise.inject.Any.class
-                                            && q.annotationType() != jakarta.enterprise.inject.Default.class) {
-                                        hasExplicitQualifier = true;
-                                        break;
-                                    }
-                                }
-                                if (!hasExplicitQualifier) {
-                                    metaQualifiers.add(jakarta.enterprise.inject.Default.Literal.INSTANCE);
                                 }
                                 metaQualifiers.add(jakarta.enterprise.inject.Any.Literal.INSTANCE);
                                 final java.util.Set<java.lang.annotation.Annotation> immutableQualifiers =

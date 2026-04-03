@@ -94,10 +94,21 @@ public final class DeploymentValidator {
         // Unproxyable beans with normal scope
         for (var bean : beans) {
             if (bean.scope().isNormal()) {
-                // Removed strict validation of all bean types for normal scoped beans.
-                // We only validate the specific type requested at the injection point.
-
-                // Unproxyable checks are deferred to runtime when the context is actually requested.
+                // Validate that producer beans with primitive/array return types cannot be normal-scoped
+                if (bean.kind() == BeanDescriptor.BeanKind.PRODUCER_METHOD
+                        || bean.kind() == BeanDescriptor.BeanKind.PRODUCER_FIELD) {
+                    for (var type : bean.types()) {
+                        boolean isPrimitive = type instanceof TypeInfo.PrimitiveType
+                                || (type instanceof TypeInfo.ClassType ct && PRIMITIVE_NAMES.contains(ct.name().value()));
+                        if (isPrimitive) {
+                            errors.add(new ValidationError(
+                                    ValidationError.Kind.DEPLOYMENT_ERROR,
+                                    "Normal-scoped producer " + bean.id() + " has primitive return type " + type,
+                                    bean));
+                            break;
+                        }
+                    }
+                }
             }
 
             // CDI spec: Intercepted beans (any scope) cannot be final or have final methods
@@ -311,6 +322,9 @@ public final class DeploymentValidator {
             }
         }
     }
+
+    private static final Set<String> PRIMITIVE_NAMES = Set.of(
+            "boolean", "byte", "char", "short", "int", "long", "float", "double", "void");
 
     private static final Set<String> BUILT_IN_TYPES = Set.of(
             "jakarta.enterprise.event.Event",
