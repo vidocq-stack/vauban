@@ -94,10 +94,8 @@ public final class DeploymentValidator {
         // Unproxyable beans with normal scope
         for (var bean : beans) {
             if (bean.scope().isNormal()) {
-                // All normal-scoped beans must have a proxyable type
-                for (var type : bean.types()) {
-                    validateProxyableType(type, bean, errors, bean);
-                }
+                // Removed strict validation of all bean types for normal scoped beans.
+                // We only validate the specific type requested at the injection point.
 
                 // Unproxyable checks are deferred to runtime when the context is actually requested.
             }
