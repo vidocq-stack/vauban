@@ -1276,6 +1276,20 @@ public final class VaubanContainer implements AutoCloseable {
                             }
                         }
                     }
+                    // Check for target-class @AroundInvoke methods
+                    if (!hasInterceptors) {
+                        var cur = beanClass;
+                        while (cur != null && cur != Object.class) {
+                            for (var m : cur.getDeclaredMethods()) {
+                                if (m.isAnnotationPresent(jakarta.interceptor.AroundInvoke.class)) {
+                                    hasInterceptors = true;
+                                    break;
+                                }
+                            }
+                            if (hasInterceptors) break;
+                            cur = cur.getSuperclass();
+                        }
+                    }
                     if (!hasInterceptors) continue;
                 }
                 

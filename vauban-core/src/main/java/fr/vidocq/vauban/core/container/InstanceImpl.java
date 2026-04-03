@@ -200,11 +200,12 @@ public final class InstanceImpl<T> implements Instance<T> {
         var bean = (Bean<T>) bm.resolve(beans);
         var scope = bean.getScope();
         if (scope == jakarta.enterprise.context.Dependent.class) {
-            var trackedCtx = (jakarta.enterprise.context.spi.CreationalContext<T>) dependentInstances.remove(instance);
-            if (trackedCtx == null) {
-                trackedCtx = bm.createCreationalContext(bean);
+            var trackedCtx = dependentInstances.remove(instance);
+            if (trackedCtx != null) {
+                trackedCtx.release();
+            } else {
+                bean.destroy(instance, bm.createCreationalContext(bean));
             }
-            bean.destroy(instance, trackedCtx);
         } else {
             try {
                 var ctx = bm.getContext(scope);
@@ -357,7 +358,9 @@ public final class InstanceImpl<T> implements Instance<T> {
             if (instance == null) return;
             var scope = bean.getScope();
             if (scope == jakarta.enterprise.context.Dependent.class) {
-                bean.destroy(instance, creationalContext);
+                if (creationalContext != null) {
+                    creationalContext.release();
+                }
             } else {
                 try {
                     var bm = container.getBeanManager();
