@@ -78,8 +78,13 @@ public class VaubanDeployableContainer implements DeployableContainer<VaubanCont
             var archiveClassLoader = new ByteArrayClassLoader(
                     Thread.currentThread().getContextClassLoader(), classBytecodeMap);
 
+            // Check if the archive has beans.xml (determines bean archive vs non-bean archive)
+            boolean hasBeanArchiveDescriptor = archive.getContent().keySet().stream()
+                    .anyMatch(p -> p.get().endsWith("beans.xml"));
+
             var builder = VaubanContainer.builder();
             builder.classLoader(archiveClassLoader);
+            builder.beanArchive(hasBeanArchiveDescriptor);
             for (var className : classNames) {
                 try {
                     var clazz = archiveClassLoader.loadClass(className);

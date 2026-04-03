@@ -52,9 +52,48 @@ public final class BeanDiscovery {
     private static final DotName STEREOTYPE = DotName.of("jakarta.enterprise.inject.Stereotype");
 
     private final VaubanIndex index;
+    private Set<DotName> customQualifiers = Set.of();
+    private Set<DotName> customInterceptorBindings = Set.of();
+    private Set<DotName> customStereotypes = Set.of();
+    private Map<DotName, Set<Class<? extends java.lang.annotation.Annotation>>> customStereotypeAnnotations = Map.of();
+    private Map<String, Set<String>> customNonbindingMembers = Map.of();
 
     public BeanDiscovery(VaubanIndex index) {
         this.index = Objects.requireNonNull(index);
+    }
+
+    public void setCustomQualifiers(Set<DotName> qualifiers) {
+        this.customQualifiers = qualifiers;
+    }
+
+    public void setCustomInterceptorBindings(Set<DotName> bindings) {
+        this.customInterceptorBindings = bindings;
+    }
+
+    public void setCustomStereotypes(Set<DotName> stereotypes) {
+        this.customStereotypes = stereotypes;
+    }
+
+    public void setCustomStereotypeAnnotations(Map<DotName, Set<Class<? extends java.lang.annotation.Annotation>>> annotations) {
+        this.customStereotypeAnnotations = annotations;
+    }
+
+    public void setCustomNonbindingMembers(Map<String, Set<String>> nonbindingMembers) {
+        this.customNonbindingMembers = nonbindingMembers;
+    }
+
+    public Map<String, Set<String>> getCustomNonbindingMembers() {
+        return customNonbindingMembers;
+    }
+
+    private Set<DotName> scannedClassesFilter = Set.of();
+
+    public void setScannedClassesFilter(Set<DotName> filter) {
+        this.scannedClassesFilter = filter;
+    }
+
+    private boolean isAllowedByScannedClassesFilter(ClassInfo classInfo) {
+        return scannedClassesFilter.isEmpty() || scannedClassesFilter.contains(classInfo.name());
     }
 
     /**
@@ -64,6 +103,7 @@ public final class BeanDiscovery {
         var beans = new ArrayList<BeanDescriptor>();
 
         for (var classInfo : index.getKnownClasses()) {
+            if (!isAllowedByScannedClassesFilter(classInfo)) continue;
             if (isVetoed(classInfo)) continue;
             if (isDisabledAlternative(classInfo)) continue;
             if (!isBeanCandidate(classInfo)) continue;
@@ -336,9 +376,12 @@ public final class BeanDiscovery {
     }
 
     private boolean isStereotype(DotName annotationName) {
+        if (customStereotypes.contains(annotationName)) {
+            return true;
+        }
         String val = annotationName.value();
-        if (val.startsWith("java.lang.annotation.") || 
-            val.startsWith("jakarta.interceptor.") || 
+        if (val.startsWith("java.lang.annotation.") ||
+            val.startsWith("jakarta.interceptor.") ||
             val.startsWith("jakarta.enterprise.inject.") ||
             val.startsWith("jakarta.inject.")) {
             return false;
@@ -1103,6 +1146,11 @@ public final class BeanDiscovery {
             return true;
         }
 
+        // Custom qualifiers registered via @Discovery / MetaAnnotations
+        if (customQualifiers.contains(name)) {
+            return true;
+        }
+
         // Check the index for the annotation class having @Qualifier
         var annClass = index.getClassByName(name);
         if (annClass.isPresent()) {
@@ -1216,6 +1264,16 @@ public final class BeanDiscovery {
 
     private ScopeInfo findScopeInStereotypeRecursive(DotName stereotypeName, Set<DotName> visited) {
         if (!visited.add(stereotypeName)) return null;
+
+        // Check custom stereotype annotations (from @Discovery phase)
+        var customAnns = customStereotypeAnnotations.get(stereotypeName);
+        if (customAnns != null) {
+            for (var annClass : customAnns) {
+                var scope = mapScope(DotName.of(annClass.getName()));
+                if (scope != null) return scope;
+            }
+        }
+
         var stereotypeClass = index.getClassByName(stereotypeName);
         if (stereotypeClass.isPresent()) {
             // Check direct scope annotations
@@ -1748,9 +1806,12 @@ public final class BeanDiscovery {
      * (i.e., it is itself annotated with {@code @InterceptorBinding} in the index).
      */
     public boolean isInterceptorBinding(DotName annotationName) {
+        if (customInterceptorBindings.contains(annotationName)) {
+            return true;
+        }
         String val = annotationName.value();
-        if (val.startsWith("java.lang.annotation.") || 
-            val.startsWith("jakarta.interceptor.") || 
+        if (val.startsWith("java.lang.annotation.") ||
+            val.startsWith("jakarta.interceptor.") ||
             val.startsWith("jakarta.enterprise.inject.") ||
             val.startsWith("jakarta.inject.")) {
             // These are never interceptor bindings themselves for application beans

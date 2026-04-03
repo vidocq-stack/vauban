@@ -2199,6 +2199,12 @@ public final class VaubanContainer implements AutoCloseable {
         private final Map<DotName, BeanFactory<?>> factories = new LinkedHashMap<>();
         private java.util.function.BiFunction<String, byte[], Class<?>> classDefiner;
         private ClassLoader classLoader;
+        private boolean isBeanArchive = true;
+
+        public Builder beanArchive(boolean isBeanArchive) {
+            this.isBeanArchive = isBeanArchive;
+            return this;
+        }
 
         /**
          * Add a bean class. The container will scan it and create a default factory.
@@ -2269,14 +2275,61 @@ public final class VaubanContainer implements AutoCloseable {
                 }
             }
 
-            var index = indexBuilder.build();
-
             // Set TCCL to the bean class's ClassLoader so BeanDiscovery can
             // resolve inherited annotations via reflection on TCK archive classes
             var previousCl = Thread.currentThread().getContextClassLoader();
+            ClassLoader discoveryClassLoader = !beanClasses.isEmpty()
+                    ? beanClasses.getFirst().getClassLoader()
+                    : Thread.currentThread().getContextClassLoader();
             if (!beanClasses.isEmpty()) {
-                Thread.currentThread().setContextClassLoader(beanClasses.getFirst().getClassLoader());
+                Thread.currentThread().setContextClassLoader(discoveryClassLoader);
             }
+
+            // --- @Discovery phase (BCE) — runs BEFORE bean discovery ---
+            var bceClasses = beanClasses.stream()
+                    .filter(c -> isBuildCompatibleExtension(c))
+                    .toList();
+
+            fr.vidocq.vauban.core.extensions.BceProcessor.DiscoveryResult discoveryResult = null;
+            if (!bceClasses.isEmpty()) {
+                var tempIndex = indexBuilder.build();
+                var tempLookup = new fr.vidocq.vauban.core.langmodel.IndexLookup(tempIndex);
+                discoveryResult = fr.vidocq.vauban.core.extensions.BceProcessor.processDiscovery(bceClasses, tempLookup);
+
+                // Add scanned classes to the index
+                for (var className : discoveryResult.scannedClasses().getAddedClasses()) {
+                    try {
+                        var cls = Class.forName(className, false, discoveryClassLoader);
+                        String resource = className.replace('.', '/') + ".class";
+                        try (var is = discoveryClassLoader.getResourceAsStream(resource)) {
+                            if (is != null) {
+                                indexBuilder.add(fr.vidocq.vauban.indexer.scanner.ClassFileScanner.scan(is.readAllBytes()));
+                            }
+                        }
+                        if (!factories.containsKey(DotName.of(className))) {
+                            factories.put(DotName.of(className), () -> {
+                                try {
+                                    var ctor = cls.getDeclaredConstructor();
+                                    ctor.setAccessible(true);
+                                    return ctor.newInstance();
+                                } catch (java.lang.reflect.InvocationTargetException e) {
+                                    var cause = e.getCause();
+                                    if (cause instanceof RuntimeException re) throw re;
+                                    throw new jakarta.enterprise.inject.CreationException(cause);
+                                } catch (RuntimeException e) {
+                                    throw e;
+                                } catch (Exception e) {
+                                    throw new jakarta.enterprise.inject.CreationException(e);
+                                }
+                            });
+                        }
+                    } catch (Exception e) {
+                        // Class not found — skip
+                    }
+                }
+            }
+
+            var index = indexBuilder.build();
 
             // Validate class-level CDI rules (before bean discovery)
             try {
@@ -2304,17 +2357,48 @@ public final class VaubanContainer implements AutoCloseable {
                 }
 
                 var discovery = new BeanDiscovery(index);
+
+                // Apply @Discovery results to BeanDiscovery
+                if (discoveryResult != null) {
+                    var meta = discoveryResult.metaAnnotations();
+                    discovery.setCustomQualifiers(
+                            meta.getCustomQualifiers().stream()
+                                    .map(c -> DotName.of(c.getName()))
+                                    .collect(java.util.stream.Collectors.toSet()));
+                    discovery.setCustomInterceptorBindings(
+                            meta.getCustomInterceptorBindings().stream()
+                                    .map(c -> DotName.of(c.getName()))
+                                    .collect(java.util.stream.Collectors.toSet()));
+                    discovery.setCustomStereotypes(
+                            meta.getCustomStereotypes().stream()
+                                    .map(c -> DotName.of(c.getName()))
+                                    .collect(java.util.stream.Collectors.toSet()));
+                    var stereotypeAnns = new java.util.HashMap<DotName, java.util.Set<Class<? extends java.lang.annotation.Annotation>>>();
+                    for (var entry : meta.getStereotypeAnnotations().entrySet()) {
+                        stereotypeAnns.put(DotName.of(entry.getKey().getName()), entry.getValue());
+                    }
+                    discovery.setCustomStereotypeAnnotations(stereotypeAnns);
+                    discovery.setCustomNonbindingMembers(meta.getNonbindingMembersPerQualifier());
+                    fr.vidocq.vauban.core.bean.resolution.QualifierMatcher.setCustomNonbindingMembers(
+                            meta.getNonbindingMembersPerQualifier());
+                    VaubanBeanManager.setCustomQualifierTypes(meta.getCustomQualifiers());
+                    VaubanBeanManager.setCustomInterceptorBindingTypes(meta.getCustomInterceptorBindings());
+                    VaubanBeanManager.setCustomStereotypeTypes(meta.getCustomStereotypes());
+
+                    // When not a bean archive, only discover classes added via ScannedClasses
+                    if (!isBeanArchive && !discoveryResult.scannedClasses().getAddedClasses().isEmpty()) {
+                        var allowedClasses = discoveryResult.scannedClasses().getAddedClasses().stream()
+                                .map(DotName::of)
+                                .collect(java.util.stream.Collectors.toSet());
+                        discovery.setScannedClassesFilter(allowedClasses);
+                    }
+                }
                 var descriptors = new ArrayList<>(discovery.discoverBeans());
                 var observers = discovery.discoverObservers();
                 var interceptors = discovery.discoverInterceptors();
                 var disposers = discovery.discoverDisposerMethods();
 
-                // --- Build Compatible Extensions (BCE) processing ---
-                var bceClasses = beanClasses.stream()
-                        .filter(c -> isBuildCompatibleExtension(c))
-                        .toList();
-
-
+                // --- Build Compatible Extensions (BCE) — remaining phases ---
                 if (!bceClasses.isEmpty()) {
                     var bceResult = fr.vidocq.vauban.core.extensions.BceProcessor.process(
                             bceClasses, descriptors, index,

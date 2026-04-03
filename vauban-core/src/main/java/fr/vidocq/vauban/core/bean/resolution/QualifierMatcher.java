@@ -9,6 +9,16 @@ import java.util.Set;
  */
 public final class QualifierMatcher {
 
+    private static volatile java.util.Map<String, Set<String>> customNonbindingMembers = java.util.Map.of();
+
+    public static void setCustomNonbindingMembers(java.util.Map<String, Set<String>> nonbindingMembers) {
+        customNonbindingMembers = nonbindingMembers != null ? nonbindingMembers : java.util.Map.of();
+    }
+
+    public static Set<String> getCustomNonbindingMembers(String qualifierName) {
+        return customNonbindingMembers.get(qualifierName);
+    }
+
     private QualifierMatcher() {}
 
     /**
@@ -47,6 +57,12 @@ public final class QualifierMatcher {
             }
         } catch (ClassNotFoundException e) {
             nonBindingMembers = java.util.Set.of();
+        }
+        // Add custom nonbinding members from @Discovery phase
+        var customNb = customNonbindingMembers.get(a.annotationName().value());
+        if (customNb != null) {
+            nonBindingMembers = new java.util.HashSet<>(nonBindingMembers);
+            nonBindingMembers.addAll(customNb);
         }
 
         // Compare binding members only

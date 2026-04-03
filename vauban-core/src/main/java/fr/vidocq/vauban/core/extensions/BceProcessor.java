@@ -25,6 +25,42 @@ public final class BceProcessor {
             List<String> deploymentErrors
     ) {}
 
+    public record DiscoveryResult(
+            VaubanMetaAnnotations metaAnnotations,
+            VaubanScannedClasses scannedClasses
+    ) {}
+
+    public static DiscoveryResult processDiscovery(List<Class<?>> bceClasses, IndexLookup lookup) {
+        var metaAnnotations = new VaubanMetaAnnotations(lookup);
+        var scannedClasses = new VaubanScannedClasses();
+
+        for (var bceClass : bceClasses) {
+            try {
+                var bce = instantiateBce(bceClass);
+                for (var method : getDeclaredMethodsSafe(bceClass)) {
+                    if (method.getAnnotation(Discovery.class) == null) continue;
+                    method.setAccessible(true);
+
+                    var params = method.getParameters();
+                    var args = new Object[params.length];
+                    for (int i = 0; i < params.length; i++) {
+                        var paramType = params[i].getType();
+                        if (MetaAnnotations.class.isAssignableFrom(paramType)) {
+                            args[i] = metaAnnotations;
+                        } else if (ScannedClasses.class.isAssignableFrom(paramType)) {
+                            args[i] = scannedClasses;
+                        }
+                    }
+                    method.invoke(bce, args);
+                }
+            } catch (Exception e) {
+                // Discovery phase errors are silently ignored per spec
+            }
+        }
+
+        return new DiscoveryResult(metaAnnotations, scannedClasses);
+    }
+
     /**
      * Process all BCE classes through their lifecycle phases.
      */

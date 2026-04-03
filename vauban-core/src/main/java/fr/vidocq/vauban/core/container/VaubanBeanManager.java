@@ -26,6 +26,26 @@ import java.util.*;
  */
 public final class VaubanBeanManager implements BeanManager {
 
+    private static volatile Set<Class<? extends Annotation>> customQualifierTypes = Set.of();
+    private static volatile Set<Class<? extends Annotation>> customInterceptorBindingTypes = Set.of();
+    private static volatile Set<Class<? extends Annotation>> customStereotypeTypes = Set.of();
+
+    public static void setCustomQualifierTypes(Set<Class<? extends Annotation>> types) {
+        customQualifierTypes = types != null ? types : Set.of();
+    }
+
+    public static void setCustomInterceptorBindingTypes(Set<Class<? extends Annotation>> types) {
+        customInterceptorBindingTypes = types != null ? types : Set.of();
+    }
+
+    public static void setCustomStereotypeTypes(Set<Class<? extends Annotation>> types) {
+        customStereotypeTypes = types != null ? types : Set.of();
+    }
+
+    public static boolean isCustomQualifier(Class<? extends Annotation> annotationType) {
+        return customQualifierTypes.contains(annotationType);
+    }
+
     private final VaubanContainer container;
     private final Map<Class<? extends Annotation>, Context> contexts;
     private final Collection<ManagedBean<?>> beans;
@@ -354,7 +374,8 @@ public final class VaubanBeanManager implements BeanManager {
         return annotationType.isAnnotationPresent(jakarta.inject.Qualifier.class)
                 || annotationType == jakarta.enterprise.inject.Default.class
                 || annotationType == jakarta.enterprise.inject.Any.class
-                || annotationType == jakarta.inject.Named.class;
+                || annotationType == jakarta.inject.Named.class
+                || customQualifierTypes.contains(annotationType);
     }
 
     @Override
@@ -376,12 +397,14 @@ public final class VaubanBeanManager implements BeanManager {
 
     @Override
     public boolean isStereotype(Class<? extends Annotation> annotationType) {
-        return annotationType.isAnnotationPresent(jakarta.enterprise.inject.Stereotype.class);
+        return annotationType.isAnnotationPresent(jakarta.enterprise.inject.Stereotype.class)
+                || customStereotypeTypes.contains(annotationType);
     }
 
     @Override
     public boolean isInterceptorBinding(Class<? extends Annotation> annotationType) {
-        return annotationType.isAnnotationPresent(jakarta.interceptor.InterceptorBinding.class);
+        return annotationType.isAnnotationPresent(jakarta.interceptor.InterceptorBinding.class)
+                || customInterceptorBindingTypes.contains(annotationType);
     }
 
     @Override
@@ -1108,10 +1131,14 @@ public final class VaubanBeanManager implements BeanManager {
         // If annotation has no members, type equality is sufficient
         var methods = a.annotationType().getDeclaredMethods();
         if (methods.length == 0) return true;
+        // Get custom nonbinding members from @Discovery phase
+        var customNb = fr.vidocq.vauban.core.bean.resolution.QualifierMatcher.getCustomNonbindingMembers(
+                a.annotationType().getName());
         // Compare all non-@Nonbinding members
         try {
             for (var method : methods) {
                 if (method.isAnnotationPresent(jakarta.enterprise.util.Nonbinding.class)) continue;
+                if (customNb != null && customNb.contains(method.getName())) continue;
                 var valA = method.invoke(a);
                 var valB = method.invoke(b);
                 if (!java.util.Objects.deepEquals(valA, valB)) return false;

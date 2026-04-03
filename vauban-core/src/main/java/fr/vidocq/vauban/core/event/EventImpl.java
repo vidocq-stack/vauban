@@ -164,7 +164,8 @@ public final class EventImpl<T> implements Event<T> {
             if (!q.annotationType().isAnnotationPresent(jakarta.inject.Qualifier.class)
                     && q.annotationType() != jakarta.enterprise.inject.Default.class
                     && q.annotationType() != jakarta.enterprise.inject.Any.class
-                    && q.annotationType() != jakarta.inject.Named.class) {
+                    && q.annotationType() != jakarta.inject.Named.class
+                    && !fr.vidocq.vauban.core.container.VaubanBeanManager.isCustomQualifier(q.annotationType())) {
                 throw new IllegalArgumentException(
                         q.annotationType().getName() + " is not a qualifier");
             }
