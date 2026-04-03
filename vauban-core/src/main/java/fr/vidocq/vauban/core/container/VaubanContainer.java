@@ -761,7 +761,14 @@ public final class VaubanContainer implements AutoCloseable {
     private void injectFieldsByReflection(Object instance, CreationalContext<?> parentCtx) {
         var clazz = instance.getClass();
         while (clazz != null && clazz != Object.class) {
+            if (clazz.getName().contains("InjectedBean")) {
+                System.out.println("SCANNING CLASS FOR INJECTION: " + clazz.getName());
+            }
             for (var field : clazz.getDeclaredFields()) {
+                if (clazz.getName().contains("InjectedBean") && field.getName().equals("map")) {
+                    System.out.println("  FOUND map FIELD! annotations: " + java.util.Arrays.toString(field.getAnnotations()));
+                    System.out.println("  HAS @Inject? " + field.isAnnotationPresent(jakarta.inject.Inject.class));
+                }
                 if (!field.isAnnotationPresent(jakarta.inject.Inject.class)) continue;
                 field.setAccessible(true);
                 try {
@@ -833,6 +840,9 @@ public final class VaubanContainer implements AutoCloseable {
                                 : bm.createCreationalContext(resolved);
                         value = bm.getReference(resolved, field.getType(), ctx);
                     }
+                    if (field.getName().equals("map")) {
+                        System.out.println("INJECTING FIELD map ON " + instance.getClass().getName() + " WITH VALUE: " + (value != null ? value.getClass() : "null"));
+                    }
                     // CDI spec: don't set null on primitive fields
                     if (value != null || !field.getType().isPrimitive()) {
                         field.set(instance, value);
@@ -842,6 +852,8 @@ public final class VaubanContainer implements AutoCloseable {
                 }
             } catch (Exception e) {
                 // Skip fields that can't be resolved (may not be CDI beans)
+                System.err.println("INJECTION FAILED FOR " + field.getName() + " ON " + instance.getClass() + " : " + e.getMessage());
+                e.printStackTrace();
             }
             }
             clazz = clazz.getSuperclass();

@@ -281,35 +281,33 @@ public final class ManagedBean<T> implements Bean<T> {
     }
 
     private Set<Type> getProducerTypes() {
-        // For @Typed producers, use reflection to get the correct parameterized types
-        if (hasProducerTypedRestriction()) {
-            var typedClasses = getProducerTypedClasses();
-            Type producerGenericType = resolveProducerGenericType();
-            if (typedClasses != null && producerGenericType != null) {
-                // Build full type hierarchy from the produced type
-                var allTypes = new LinkedHashSet<Type>();
-                if (producerGenericType instanceof java.lang.reflect.ParameterizedType pt) {
-                    allTypes.add(pt);
-                    var rawClass = (Class<?>) pt.getRawType();
-                    collectTypes(rawClass, allTypes);
-                } else if (producerGenericType instanceof Class<?> c) {
-                    collectTypes(c, allTypes);
-                }
-                allTypes.add(Object.class);
-                // Filter by @Typed raw classes
-                var filtered = new LinkedHashSet<Type>();
-                for (var t : allTypes) {
-                    if (t == Object.class) { filtered.add(t); continue; }
-                    Class<?> raw = rawTypeOf(t);
-                    if (raw != null && typedClasses.contains(raw)) {
-                        filtered.add(t);
+        Type producerGenericType = resolveProducerGenericType();
+        if (producerGenericType != null) {
+            // Build full type hierarchy from the produced type using reflection
+            var allTypes = new LinkedHashSet<Type>();
+            allTypes.addAll(fr.vidocq.vauban.core.types.TypeHierarchyResolver.resolveAllSupertypes(producerGenericType));
+            allTypes.add(Object.class);
+
+            if (hasProducerTypedRestriction()) {
+                var typedClasses = getProducerTypedClasses();
+                if (typedClasses != null) {
+                    var filtered = new LinkedHashSet<Type>();
+                    for (var t : allTypes) {
+                        if (t == Object.class) { filtered.add(t); continue; }
+                        Class<?> raw = rawTypeOf(t);
+                        if (raw != null && typedClasses.contains(raw)) {
+                            filtered.add(t);
+                        }
                     }
+                    return filtered;
                 }
-                return filtered;
             }
+            
+            // Filter illegal types
+            return filterIllegalBeanTypes(allTypes);
         }
 
-        // Standard path: resolve descriptor types to Java Types
+        // Fallback: resolve descriptor types to Java Types
         var types = new LinkedHashSet<Type>();
         for (var typeInfo : descriptor.types()) {
             switch (typeInfo) {
@@ -321,21 +319,37 @@ public final class ManagedBean<T> implements Bean<T> {
                 case fr.vidocq.vauban.indexer.model.TypeInfo.ParameterizedType pt -> {
                     try {
                         var rawClass = Class.forName(pt.rawType().value(), true, classLoader);
-                        types.add(rawClass);
+                        
+                        // We must reconstruct ParameterizedType, otherwise generic types are lost!
+                        java.lang.reflect.Type[] args = new java.lang.reflect.Type[pt.typeArguments().size()];
+                        for (int i = 0; i < args.length; i++) {
+                            var argType = pt.typeArguments().get(i);
+                            if (argType instanceof fr.vidocq.vauban.indexer.model.TypeInfo.ClassType act) {
+                                args[i] = Class.forName(act.name().value(), true, classLoader);
+                            } else {
+                                args[i] = Object.class; // default fallback
+                            }
+                        }
+                        types.add(new java.lang.reflect.ParameterizedType() {
+                            @Override public java.lang.reflect.Type[] getActualTypeArguments() { return args; }
+                            @Override public java.lang.reflect.Type getRawType() { return rawClass; }
+                            @Override public java.lang.reflect.Type getOwnerType() { return null; }
+                        });
+                        
                     } catch (ClassNotFoundException e) { /* skip */ }
                 }
                 case fr.vidocq.vauban.indexer.model.TypeInfo.ArrayType at -> {
                     var arrayClass = resolveArrayClass(at, classLoader);
                     if (arrayClass != null) types.add(arrayClass);
                 }
-                case fr.vidocq.vauban.indexer.model.TypeInfo.PrimitiveType pt -> {
-                    types.add(primitiveClass(pt.kind()));
+                case fr.vidocq.vauban.indexer.model.TypeInfo.PrimitiveType ptt -> {
+                    types.add(primitiveClass(ptt.kind()));
                 }
                 default -> {}
             }
         }
         types.add(Object.class);
-        return types;
+        return filterIllegalBeanTypes(types);
     }
 
     private Type resolveProducerGenericType() {

@@ -217,6 +217,24 @@ public final class VaubanBeanManager implements BeanManager {
                 }
             }
         }
+        
+        if (beanType.getTypeName().contains("Dao<T1, T3>") || beanType.getTypeName().contains("Dao")) {
+            // removing old debug
+        }
+        
+        if (beanType.getTypeName().contains("Map<java.lang.Integer, java.lang.Integer>")) {
+            System.out.println("RESOLVING Map<Integer, Integer>. result.size=" + result.size());
+            for (var b : beans) {
+                if (b.getBeanClass() != null && b.getBeanClass().getName().contains("MapProducer")) {
+                    System.out.println("  AVAILABLE MAPPRODUCER BEAN: " + b.getBeanClass().getName());
+                    System.out.println("  TYPES: " + b.getTypes());
+                }
+            }
+            for (var b : result) {
+                System.out.println("  FOUND MAP BEAN: " + b.getBeanClass());
+            }
+        }
+        
         return result;
     }
 
@@ -817,7 +835,24 @@ public final class VaubanBeanManager implements BeanManager {
             }
             // Raw bean type matches parameterized required type only if raw types identical
             if (beanType instanceof Class<?> btClass) {
-                return btClass == reqPt.getRawType();
+                if (btClass != reqPt.getRawType()) return false;
+                for (Type arg : reqPt.getActualTypeArguments()) {
+                    if (arg instanceof java.lang.reflect.TypeVariable<?> tv) {
+                        for (Type bound : resolvedBounds(tv)) {
+                            if (bound != Object.class) return false;
+                        }
+                    } else if (arg instanceof java.lang.reflect.WildcardType wt) {
+                        for (Type ub : wt.getUpperBounds()) {
+                            if (ub != Object.class) return false;
+                        }
+                        for (Type lb : wt.getLowerBounds()) {
+                            if (lb != Object.class && lb != null) return false; // wait, lower bounds shouldn't exist for it to be treated as unbounded
+                        }
+                    } else if (arg != Object.class) {
+                        return false;
+                    }
+                }
+                return true;
             }
         }
 
