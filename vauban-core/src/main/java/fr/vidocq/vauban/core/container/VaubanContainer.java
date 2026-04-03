@@ -1423,9 +1423,16 @@ public final class VaubanContainer implements AutoCloseable {
                             ctx.setInterceptorBindings(bindingAnnotations);
                             try {
                                 ctx.proceed();
-                            } catch (RuntimeException re) {
-                                throw re;
+                            } catch (jakarta.enterprise.inject.spi.DeploymentException | jakarta.enterprise.inject.CreationException e) {
+                                // Wrap deployment/creation exceptions
+                                throw e;
                             } catch (Exception e) {
+                                // CDI spec: exceptions from @AroundConstruct interceptors should propagate directly
+                                // This includes application exceptions thrown by interceptors
+                                if (e instanceof RuntimeException re) {
+                                    throw re;
+                                }
+                                // For checked exceptions, wrap in CreationException as they can't be thrown directly
                                 throw new jakarta.enterprise.inject.CreationException(e);
                             }
                             return box[0];

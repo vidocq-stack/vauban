@@ -44,7 +44,11 @@ public final class EventDispatcher {
             jakarta.enterprise.inject.spi.InjectionPoint eventInjectionPoint,
             Annotation... qualifiers) {
         var qualifierInstances = toQualifierInstances(qualifiers);
-        var matching = findMatchingObservers(event.getClass(), false, qualifierInstances, qualifiers);
+        java.lang.reflect.Type eventTypeToMatch = event.getClass();
+        if (selectedType != null) {
+            eventTypeToMatch = resolveEventType(event.getClass(), selectedType);
+        }
+        var matching = findMatchingObservers(eventTypeToMatch, false, qualifierInstances, qualifiers);
         matching.sort(Comparator.comparingInt(ObserverDescriptor::priority));
         for (var observer : matching) {
             invokeObserver(observer, event, selectedType, eventInjectionPoint, qualifiers);
@@ -83,12 +87,12 @@ public final class EventDispatcher {
                 : CompletableFuture.supplyAsync(task);
     }
 
-    public List<ObserverDescriptor> findMatchingObservers(Class<?> eventType, boolean asyncOnly,
+    public List<ObserverDescriptor> findMatchingObservers(java.lang.reflect.Type eventType, boolean asyncOnly,
             Set<DotName> eventQualifiers) {
         return findMatchingObservers(eventType, asyncOnly, eventQualifiers, null);
     }
 
-    public List<ObserverDescriptor> findMatchingObservers(Class<?> eventType, boolean asyncOnly,
+    public List<ObserverDescriptor> findMatchingObservers(java.lang.reflect.Type eventType, boolean asyncOnly,
             Set<DotName> eventQualifiers, Annotation[] eventQualifierAnnotations) {
         var result = new ArrayList<ObserverDescriptor>();
         for (var observer : observers) {
@@ -110,13 +114,16 @@ public final class EventDispatcher {
         return result;
     }
 
-    private boolean eventTypeMatches(ObserverDescriptor observer, Class<?> eventType) {
+    private boolean eventTypeMatches(ObserverDescriptor observer, java.lang.reflect.Type eventType) {
+        Class<?> eventClass = resolveTypeToClass(eventType);
+        if (eventClass == null) return false;
+
         if (observer.eventType() instanceof TypeInfo.TypeVariable tv) {
             // CDI spec: TypeVariable observer matches any event assignable to the bounds
             if (!tv.bounds().isEmpty()) {
                 for (var bound : tv.bounds()) {
                     var boundClass = resolveObservedType(bound);
-                    if (boundClass != null && !boundClass.isAssignableFrom(eventType)) {
+                    if (boundClass != null && !boundClass.isAssignableFrom(eventClass)) {
                         return false;
                     }
                 }
@@ -126,7 +133,7 @@ public final class EventDispatcher {
 
         Class<?> observedClass = resolveObservedType(observer.eventType());
         if (observedClass == null) return false;
-        if (!observedClass.isAssignableFrom(eventType)) return false;
+        if (!observedClass.isAssignableFrom(eventClass)) return false;
 
         if (observer.eventType() instanceof TypeInfo.ParameterizedType pt) {
             if (!matchesParameterizedObserver(pt, eventType)) return false;
@@ -134,12 +141,23 @@ public final class EventDispatcher {
         return true;
     }
 
-    private boolean matchesParameterizedObserver(TypeInfo.ParameterizedType observerType, Class<?> eventClass) {
+    private boolean matchesParameterizedObserver(TypeInfo.ParameterizedType observerType, java.lang.reflect.Type eventType) {
+        Class<?> eventClass = resolveTypeToClass(eventType);
+        if (eventClass == null) return false;
         try {
             var cl = container.classLoader();
             var rawObserved = Class.forName(observerType.rawType().value(), true, cl);
 
-            var eventGenericType = findParameterizedSupertype(eventClass, rawObserved);
+            java.lang.reflect.ParameterizedType eventGenericType = null;
+            for (java.lang.reflect.Type supertype : fr.vidocq.vauban.core.types.TypeHierarchyResolver.resolveAllSupertypes(eventType)) {
+                if (supertype instanceof java.lang.reflect.ParameterizedType pt) {
+                    if (pt.getRawType() == rawObserved) {
+                        eventGenericType = pt;
+                        break;
+                    }
+                }
+            }
+
             if (eventGenericType == null) {
                 return true;
             }
@@ -240,26 +258,58 @@ public final class EventDispatcher {
         return null;
     }
 
-    private static java.lang.reflect.ParameterizedType findParameterizedSupertype(
-            Class<?> clazz, Class<?> rawTarget) {
-        if (clazz == null || clazz == Object.class) return null;
 
-        var genericSuper = clazz.getGenericSuperclass();
-        if (genericSuper instanceof java.lang.reflect.ParameterizedType pt) {
-            if (pt.getRawType() == rawTarget) return pt;
+    private static java.lang.reflect.Type resolveEventType(Class<?> runtimeClass, java.lang.reflect.Type selectedType) {
+        if (runtimeClass.getTypeParameters().length == 0) {
+            return runtimeClass;
         }
-        for (var iface : clazz.getGenericInterfaces()) {
-            if (iface instanceof java.lang.reflect.ParameterizedType pt) {
-                if (pt.getRawType() == rawTarget) return pt;
+        java.lang.reflect.Type resultType = runtimeClass;
+        if (selectedType instanceof java.lang.reflect.ParameterizedType pt) {
+            Class<?> selectedClass = resolveTypeToClass(pt.getRawType());
+            if (selectedClass != null && selectedClass.isAssignableFrom(runtimeClass)) {
+                resultType = mergeTypeParameters(runtimeClass, pt);
             }
         }
-        var fromSuper = findParameterizedSupertype(clazz.getSuperclass(), rawTarget);
-        if (fromSuper != null) return fromSuper;
-        for (var iface : clazz.getInterfaces()) {
-            var fromIface = findParameterizedSupertype(iface, rawTarget);
-            if (fromIface != null) return fromIface;
+        return resultType;
+    }
+
+    private static java.lang.reflect.Type mergeTypeParameters(Class<?> runtimeClass, java.lang.reflect.ParameterizedType selectedType) {
+        java.util.Map<String, java.lang.reflect.Type> typeMappings = new java.util.HashMap<>();
+        Class<?> selectedRaw = resolveTypeToClass(selectedType.getRawType());
+        if (selectedRaw != null) {
+            var typeParams = selectedRaw.getTypeParameters();
+            var typeArgs = selectedType.getActualTypeArguments();
+            for (int i = 0; i < typeParams.length && i < typeArgs.length; i++) {
+                typeMappings.put(typeParams[i].getName(), typeArgs[i]);
+            }
         }
-        return null;
+
+        var runtimeParams = runtimeClass.getTypeParameters();
+        java.lang.reflect.Type[] resolvedArgs = new java.lang.reflect.Type[runtimeParams.length];
+        for (int i = 0; i < runtimeParams.length; i++) {
+            java.lang.reflect.Type mapped = typeMappings.get(runtimeParams[i].getName());
+            resolvedArgs[i] = mapped != null ? mapped : runtimeParams[i];
+        }
+        
+        var result = new ParameterizedTypeImpl(runtimeClass, resolvedArgs, runtimeClass.getDeclaringClass());
+        System.err.println("mergeTypeParameters returning " + java.util.Arrays.toString(resolvedArgs) + " for " + runtimeClass + " and " + selectedType);
+        return result;
+    }
+
+    private static class ParameterizedTypeImpl implements java.lang.reflect.ParameterizedType {
+        private final Class<?> rawType;
+        private final java.lang.reflect.Type[] actualTypeArguments;
+        private final java.lang.reflect.Type ownerType;
+
+        public ParameterizedTypeImpl(Class<?> rawType, java.lang.reflect.Type[] actualTypeArguments, java.lang.reflect.Type ownerType) {
+            this.rawType = rawType;
+            this.actualTypeArguments = actualTypeArguments;
+            this.ownerType = ownerType;
+        }
+        @Override public java.lang.reflect.Type[] getActualTypeArguments() { return actualTypeArguments; }
+        @Override public java.lang.reflect.Type getRawType() { return rawType; }
+        @Override public java.lang.reflect.Type getOwnerType() { return ownerType; }
+        @Override public String toString() { return rawType.getName() + "<...>"; }
     }
 
     private boolean observerQualifiersMatch(List<QualifierInstance> observerQualifiers,

@@ -17,10 +17,10 @@ public class TypeHierarchyResolver {
         return result;
     }
 
-    private static void resolveInternal(Type type, Map<TypeVariable<?>, Type> typeMap, Set<Type> result) {
+    private static void resolveInternal(Type type, Map<String, Type> typeMap, Set<Type> result) {
         if (type == null || type == Object.class) return;
         
-        Type resolvedType = substitute(type, typeMap);
+        Type resolvedType = substitute(type, typeMap, new HashSet<>());
         result.add(resolvedType);
         
         if (resolvedType instanceof Class<?> c) {
@@ -30,11 +30,11 @@ public class TypeHierarchyResolver {
             }
         } else if (resolvedType instanceof ParameterizedType pt) {
             Class<?> raw = (Class<?>) pt.getRawType();
-            Map<TypeVariable<?>, Type> newMap = new HashMap<>(typeMap);
+            Map<String, Type> newMap = new HashMap<>(typeMap);
             TypeVariable<?>[] typeVars = raw.getTypeParameters();
             Type[] actualArgs = pt.getActualTypeArguments();
             for (int i = 0; i < typeVars.length; i++) {
-                newMap.put(typeVars[i], actualArgs[i]);
+                newMap.put(System.identityHashCode(typeVars[i].getGenericDeclaration()) + "#" + typeVars[i].getName(), actualArgs[i]);
             }
             resolveInternal(raw.getGenericSuperclass(), newMap, result);
             for (Type gi : raw.getGenericInterfaces()) {
@@ -43,12 +43,15 @@ public class TypeHierarchyResolver {
         }
     }
 
-    private static Type substitute(Type type, Map<TypeVariable<?>, Type> typeMap) {
+    private static Type substitute(Type type, Map<String, Type> typeMap, Set<String> seen) {
         if (type instanceof TypeVariable<?> tv) {
-            Type resolved = typeMap.get(tv);
-            if (resolved != null) {
-                // recursively substitute in case it maps to another TypeVariable
-                return substitute(resolved, typeMap);
+            String key = System.identityHashCode(tv.getGenericDeclaration()) + "#" + tv.getName();
+            Type resolved = typeMap.get(key);
+            if (resolved != null && !seen.contains(key) && resolved != tv) {
+                seen.add(key);
+                Type result = substitute(resolved, typeMap, seen);
+                seen.remove(key);
+                return result;
             }
             return tv;
         }
@@ -57,7 +60,7 @@ public class TypeHierarchyResolver {
             boolean changed = false;
             Type[] newArgs = new Type[args.length];
             for (int i = 0; i < args.length; i++) {
-                newArgs[i] = substitute(args[i], typeMap);
+                newArgs[i] = substitute(args[i], typeMap, seen);
                 if (newArgs[i] != args[i]) changed = true;
             }
             if (changed) {
