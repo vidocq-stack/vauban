@@ -113,10 +113,15 @@ public final class ManagedBean<T> implements Bean<T> {
 
         // Check for lifecycle interceptors
         java.util.Set<fr.vidocq.vauban.indexer.model.DotName> bindings = (descriptor != null) ? descriptor.interceptorBindings() : findInterceptorBindings(instance);
+        // Fallback: check via reflection if descriptor bindings are empty
+        if ((bindings == null || bindings.isEmpty()) && interceptorManager != null && interceptorManager.hasInterceptors()) {
+            bindings = findInterceptorBindings(instance);
+        }
         if (interceptorManager != null && interceptorManager.hasInterceptors() && bindings != null && !bindings.isEmpty()) {
             interceptorManager.setClassLoader(instance.getClass().getClassLoader());
-            var bindingAnnotations = (descriptor != null) ? new java.util.ArrayList<java.lang.annotation.Annotation>(descriptor.interceptorBindingAnnotations())
-                                                          : new java.util.ArrayList<java.lang.annotation.Annotation>(collectBindingAnnotations(instance));
+            var bindingAnnotations = (descriptor != null && !descriptor.interceptorBindingAnnotations().isEmpty())
+                    ? new java.util.ArrayList<java.lang.annotation.Annotation>(descriptor.interceptorBindingAnnotations())
+                    : new java.util.ArrayList<java.lang.annotation.Annotation>(collectBindingAnnotations(instance));
             var chain = interceptorManager.resolveLifecycleChain(
                     bindings, jakarta.annotation.PreDestroy.class, bindingAnnotations, ctx);
                 if (!chain.isEmpty()) {

@@ -987,10 +987,15 @@ public final class VaubanContainer implements AutoCloseable {
 
         // Check for lifecycle interceptors on the bean
         java.util.Set<fr.vidocq.vauban.indexer.model.DotName> beanBindings = (descriptor != null) ? descriptor.interceptorBindings() : findInterceptorBindings(instance);
+        // Fallback: check via reflection if descriptor bindings are empty
+        if ((beanBindings == null || beanBindings.isEmpty()) && interceptorManager.hasInterceptors()) {
+            beanBindings = findInterceptorBindings(instance);
+        }
         if (beanBindings != null && !beanBindings.isEmpty() && interceptorManager.hasInterceptors()) {
             interceptorManager.setClassLoader(instance.getClass().getClassLoader());
-            var bindingAnns = (descriptor != null) ? new java.util.ArrayList<java.lang.annotation.Annotation>(descriptor.interceptorBindingAnnotations())
-                                                   : new java.util.ArrayList<java.lang.annotation.Annotation>(collectBindingAnnotations(instance));
+            var bindingAnns = (descriptor != null && !descriptor.interceptorBindingAnnotations().isEmpty())
+                    ? new java.util.ArrayList<java.lang.annotation.Annotation>(descriptor.interceptorBindingAnnotations())
+                    : new java.util.ArrayList<java.lang.annotation.Annotation>(collectBindingAnnotations(instance));
             var lifecycleChain = interceptorManager.resolveLifecycleChain(
                     beanBindings, jakarta.annotation.PostConstruct.class, bindingAnns, ctx);
             if (!lifecycleChain.isEmpty()) {
