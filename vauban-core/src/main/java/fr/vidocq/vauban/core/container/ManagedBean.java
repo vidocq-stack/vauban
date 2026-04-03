@@ -324,21 +324,10 @@ public final class ManagedBean<T> implements Bean<T> {
             if (t == Object.class || t instanceof Class<?>) {
                 result.add(t);
             } else if (t instanceof java.lang.reflect.ParameterizedType pt) {
-                boolean legal = true;
-                for (var arg : pt.getActualTypeArguments()) {
-                    if (arg instanceof java.lang.reflect.TypeVariable<?> tv) {
-                        if (!allowedTypeVars.contains(tv)) {
-                            legal = false;
-                            break;
-                        }
-                    } else if (arg instanceof java.lang.reflect.WildcardType) {
-                        legal = false;
-                        break;
-                    }
+                if (isLegalParameterizedType(pt, allowedTypeVars)) {
+                    result.add(t);
                 }
-                if (legal) result.add(t);
             } else if (t instanceof java.lang.reflect.GenericArrayType gat) {
-                // Array types are legal if their component type is legal
                 if (!containsUnresolvedTypeVariable(gat)) {
                     result.add(t);
                 }
@@ -346,6 +335,20 @@ public final class ManagedBean<T> implements Bean<T> {
             // Skip TypeVariable, WildcardType
         }
         return result;
+    }
+
+    private static boolean isLegalParameterizedType(java.lang.reflect.ParameterizedType pt,
+            Set<java.lang.reflect.TypeVariable<?>> allowedTypeVars) {
+        for (var arg : pt.getActualTypeArguments()) {
+            if (arg instanceof java.lang.reflect.TypeVariable<?> tv) {
+                if (!allowedTypeVars.contains(tv)) return false;
+            } else if (arg instanceof java.lang.reflect.WildcardType) {
+                return false;
+            } else if (arg instanceof java.lang.reflect.ParameterizedType nested) {
+                if (!isLegalParameterizedType(nested, allowedTypeVars)) return false;
+            }
+        }
+        return true;
     }
 
     private Set<Type> getProducerTypes() {
