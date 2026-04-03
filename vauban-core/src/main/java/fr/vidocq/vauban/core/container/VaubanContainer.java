@@ -767,13 +767,10 @@ public final class VaubanContainer implements AutoCloseable {
                 try {
 
                 // Handle InjectionPoint injection — the dependent bean receives the
-                // InjectionPoint that describes WHERE it was injected (set by the caller)
+                // InjectionPoint that describes WHERE it was injected (set by the caller).
+                // CDI spec: null if not being injected (programmatic lookup).
                 if (field.getType() == InjectionPoint.class) {
-                    var ip = currentInjectionPoint.get();
-                    if (ip == null) {
-                        ip = new VaubanInjectionPoint(field, findBeanForInstance(instance));
-                    }
-                    field.set(instance, ip);
+                    field.set(instance, currentInjectionPoint.get());
                     continue;
                 }
 
@@ -2056,12 +2053,8 @@ public final class VaubanContainer implements AutoCloseable {
             return null;
         }
         if (paramType == jakarta.enterprise.inject.spi.InjectionPoint.class) {
-            var ip = currentInjectionPoint.get();
-            if (ip == null) {
-                // If no current injection point is set (e.g., manual lookup), return a dummy IP
-                return new VaubanInjectionPoint(jakarta.enterprise.inject.spi.InjectionPoint.class, java.util.Set.of(jakarta.enterprise.inject.Default.Literal.INSTANCE), null);
-            }
-            return ip;
+            // CDI spec: InjectionPoint is null for beans not being injected (programmatic lookup)
+            return currentInjectionPoint.get();
         }
         
         var bm = getBeanManager();
