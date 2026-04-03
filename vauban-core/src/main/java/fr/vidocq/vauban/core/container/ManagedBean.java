@@ -346,6 +346,19 @@ public final class ManagedBean<T> implements Bean<T> {
     private Set<Type> getProducerTypes() {
         Type producerGenericType = resolveProducerGenericType();
         if (producerGenericType != null) {
+            // CDI spec: array types have only {ArrayType, Object} as bean types
+            if (producerGenericType instanceof Class<?> c && c.isArray()) {
+                var arrayTypes = new LinkedHashSet<Type>();
+                arrayTypes.add(c);
+                arrayTypes.add(Object.class);
+                return arrayTypes;
+            }
+            if (producerGenericType instanceof java.lang.reflect.GenericArrayType) {
+                var arrayTypes = new LinkedHashSet<Type>();
+                arrayTypes.add(producerGenericType);
+                arrayTypes.add(Object.class);
+                return arrayTypes;
+            }
             // Build full type hierarchy from the produced type using reflection
             var allTypes = new LinkedHashSet<Type>();
             allTypes.addAll(fr.vidocq.vauban.core.types.TypeHierarchyResolver.resolveAllSupertypes(producerGenericType));
