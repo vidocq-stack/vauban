@@ -47,6 +47,9 @@ public final class EventDispatcher {
         java.lang.reflect.Type eventTypeToMatch = event.getClass();
         if (selectedType != null) {
             eventTypeToMatch = resolveEventType(event.getClass(), selectedType);
+            if (containsTypeVariable(eventTypeToMatch)) {
+                throw new IllegalArgumentException("Event type contains unresolvable type variable: " + eventTypeToMatch);
+            }
         }
         var matching = findMatchingObservers(eventTypeToMatch, false, qualifierInstances, qualifiers);
         matching.sort(Comparator.comparingInt(ObserverDescriptor::priority));
@@ -259,6 +262,27 @@ public final class EventDispatcher {
     }
 
 
+    private static boolean containsTypeVariable(java.lang.reflect.Type type) {
+        if (type instanceof java.lang.reflect.TypeVariable<?>) return true;
+        if (type instanceof java.lang.reflect.ParameterizedType pt) {
+            for (var arg : pt.getActualTypeArguments()) {
+                if (containsTypeVariable(arg)) return true;
+            }
+        }
+        if (type instanceof java.lang.reflect.GenericArrayType gat) {
+            return containsTypeVariable(gat.getGenericComponentType());
+        }
+        if (type instanceof java.lang.reflect.WildcardType wt) {
+            for (var bound : wt.getUpperBounds()) {
+                if (containsTypeVariable(bound)) return true;
+            }
+            for (var bound : wt.getLowerBounds()) {
+                if (containsTypeVariable(bound)) return true;
+            }
+        }
+        return false;
+    }
+
     private static java.lang.reflect.Type resolveEventType(Class<?> runtimeClass, java.lang.reflect.Type selectedType) {
         if (runtimeClass.getTypeParameters().length == 0) {
             return runtimeClass;
@@ -267,33 +291,64 @@ public final class EventDispatcher {
         if (selectedType instanceof java.lang.reflect.ParameterizedType pt) {
             Class<?> selectedClass = resolveTypeToClass(pt.getRawType());
             if (selectedClass != null && selectedClass.isAssignableFrom(runtimeClass)) {
-                resultType = mergeTypeParameters(runtimeClass, pt);
+                // Determine the generic mapping from selectedType to runtimeClass
+                resultType = mergeTypeHierarchy(runtimeClass, pt);
             }
         }
         return resultType;
     }
 
-    private static java.lang.reflect.Type mergeTypeParameters(Class<?> runtimeClass, java.lang.reflect.ParameterizedType selectedType) {
-        java.util.Map<String, java.lang.reflect.Type> typeMappings = new java.util.HashMap<>();
-        Class<?> selectedRaw = resolveTypeToClass(selectedType.getRawType());
-        if (selectedRaw != null) {
-            var typeParams = selectedRaw.getTypeParameters();
-            var typeArgs = selectedType.getActualTypeArguments();
-            for (int i = 0; i < typeParams.length && i < typeArgs.length; i++) {
-                typeMappings.put(typeParams[i].getName(), typeArgs[i]);
-            }
-        }
-
+    private static java.lang.reflect.Type mergeTypeHierarchy(Class<?> runtimeClass, java.lang.reflect.ParameterizedType selectedType) {
+        // We know runtimeClass is assignable to selectedType's raw class.
+        // We want to map selectedType's actual arguments to runtimeClass's type parameters.
+        // E.g., Blah<B1, B2> extends Foo<B1>, and we have Foo<List<Integer>>.
+        // Let's do a simple heuristic or use TypeHierarchyResolver.
+        // For CDI event resolution, if we can't fully resolve, we leave type variables.
+        
+        // A robust way: construct a parameterized type for runtimeClass with its own TypeVariables,
+        // compute its supertypes, find the one matching selectedType's raw class,
+        // and match the arguments to deduce the values of runtimeClass's TypeVariables.
+        
+        java.util.Map<java.lang.reflect.TypeVariable<?>, java.lang.reflect.Type> resolvedMap = new java.util.HashMap<>();
+        
+        // Match them by traversing the hierarchy up from runtimeClass
+        matchTypeParameters(runtimeClass, selectedType, resolvedMap);
+        
         var runtimeParams = runtimeClass.getTypeParameters();
         java.lang.reflect.Type[] resolvedArgs = new java.lang.reflect.Type[runtimeParams.length];
         for (int i = 0; i < runtimeParams.length; i++) {
-            java.lang.reflect.Type mapped = typeMappings.get(runtimeParams[i].getName());
+            java.lang.reflect.Type mapped = resolvedMap.get(runtimeParams[i]);
             resolvedArgs[i] = mapped != null ? mapped : runtimeParams[i];
         }
+        return new ParameterizedTypeImpl(runtimeClass, resolvedArgs, runtimeClass.getDeclaringClass());
+    }
+
+    private static void matchTypeParameters(java.lang.reflect.Type current, java.lang.reflect.ParameterizedType target, java.util.Map<java.lang.reflect.TypeVariable<?>, java.lang.reflect.Type> resolvedMap) {
+        Class<?> currentRaw = resolveTypeToClass(current);
+        if (currentRaw == null) return;
+        Class<?> targetRaw = resolveTypeToClass(target.getRawType());
+        if (targetRaw == null || !targetRaw.isAssignableFrom(currentRaw)) return;
         
-        var result = new ParameterizedTypeImpl(runtimeClass, resolvedArgs, runtimeClass.getDeclaringClass());
-        System.err.println("mergeTypeParameters returning " + java.util.Arrays.toString(resolvedArgs) + " for " + runtimeClass + " and " + selectedType);
-        return result;
+        if (currentRaw.equals(targetRaw)) {
+            if (current instanceof java.lang.reflect.ParameterizedType cpt) {
+                var currentArgs = cpt.getActualTypeArguments();
+                var targetArgs = target.getActualTypeArguments();
+                for (int i = 0; i < currentArgs.length && i < targetArgs.length; i++) {
+                    if (currentArgs[i] instanceof java.lang.reflect.TypeVariable<?> tv) {
+                        resolvedMap.put(tv, targetArgs[i]);
+                    }
+                }
+            }
+            return;
+        }
+        
+        var superclass = currentRaw.getGenericSuperclass();
+        if (superclass != null) {
+            matchTypeParameters(superclass, target, resolvedMap);
+        }
+        for (var iface : currentRaw.getGenericInterfaces()) {
+            matchTypeParameters(iface, target, resolvedMap);
+        }
     }
 
     private static class ParameterizedTypeImpl implements java.lang.reflect.ParameterizedType {
