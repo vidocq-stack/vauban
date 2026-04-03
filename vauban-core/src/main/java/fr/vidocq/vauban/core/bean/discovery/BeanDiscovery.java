@@ -888,19 +888,23 @@ public final class BeanDiscovery {
         for (var ann : annotations) {
             if (isQualifierAnnotation(ann.name())) {
                 qualifiers.add(QualifierInstance.from(ann));
-                // @Named and @Any don't count as "explicit qualifiers" for @Default rule
                 if (!ann.name().equals(QualifierInstance.NAMED_NAME)
                         && !ann.name().equals(QualifierInstance.ANY_NAME)) {
+                    hasExplicitQualifier = true;
+                }
+            } else {
+                // Unwrap repeatable qualifier container annotations
+                var unwrapped = unwrapRepeatableQualifiers(ann);
+                if (!unwrapped.isEmpty()) {
+                    qualifiers.addAll(unwrapped);
                     hasExplicitQualifier = true;
                 }
             }
         }
 
-        // CDI: if no qualifier other than @Named/@Any, add @Default
         if (!hasExplicitQualifier) {
             qualifiers.add(QualifierInstance.DEFAULT);
         }
-        // @Any is always present
         qualifiers.add(QualifierInstance.ANY);
 
         return qualifiers;
@@ -933,6 +937,8 @@ public final class BeanDiscovery {
         for (var ann : annotations) {
             if (isQualifierAnnotation(ann.name())) {
                 qualifiers.add(QualifierInstance.from(ann));
+            } else {
+                qualifiers.addAll(unwrapRepeatableQualifiers(ann));
             }
         }
         return qualifiers;
@@ -1070,6 +1076,23 @@ public final class BeanDiscovery {
             }
         }
         return new AnnotationInfo(DotName.of(ann.annotationType().getName()), members);
+    }
+
+    private List<QualifierInstance> unwrapRepeatableQualifiers(AnnotationInfo ann) {
+        var result = new java.util.ArrayList<QualifierInstance>();
+        // Check if this annotation's value() contains repeatable qualifier annotations
+        var valueMember = ann.member("value");
+        if (!(valueMember instanceof fr.vidocq.vauban.indexer.model.AnnotationValue.ArrayVal arrayVal)) {
+            return result;
+        }
+        for (var item : arrayVal.values()) {
+            if (item instanceof fr.vidocq.vauban.indexer.model.AnnotationValue.AnnotationVal av) {
+                if (isQualifierAnnotation(av.annotation().name())) {
+                    result.add(QualifierInstance.from(av.annotation()));
+                }
+            }
+        }
+        return result;
     }
 
     private boolean isQualifierAnnotation(DotName name) {

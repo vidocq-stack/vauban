@@ -130,7 +130,8 @@ public final class VaubanBeanManager implements BeanManager {
                     throw new IllegalArgumentException(
                         q.annotationType().getName() + " is not a qualifier");
                 }
-                if (!seen.add(q.annotationType())) {
+                if (!seen.add(q.annotationType())
+                        && !q.annotationType().isAnnotationPresent(java.lang.annotation.Repeatable.class)) {
                     throw new IllegalArgumentException(
                         "Duplicate qualifier: " + q.annotationType().getName());
                 }
@@ -455,7 +456,8 @@ public final class VaubanBeanManager implements BeanManager {
                     throw new IllegalArgumentException(
                         q.annotationType().getName() + " does not have @Retention(RUNTIME)");
                 }
-                if (!seen.add(q.annotationType())) {
+                if (!seen.add(q.annotationType())
+                        && !q.annotationType().isAnnotationPresent(java.lang.annotation.Repeatable.class)) {
                     throw new IllegalArgumentException(
                         "Duplicate qualifier: " + q.annotationType().getName());
                 }

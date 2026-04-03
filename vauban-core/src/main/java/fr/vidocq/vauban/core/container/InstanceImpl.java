@@ -161,7 +161,8 @@ public final class InstanceImpl<T> implements Instance<T> {
                 throw new IllegalArgumentException(
                         q.annotationType().getName() + " is not a qualifier");
             }
-            if (!seen.add(q.annotationType())) {
+            if (!seen.add(q.annotationType())
+                    && !q.annotationType().isAnnotationPresent(java.lang.annotation.Repeatable.class)) {
                 throw new IllegalArgumentException(
                         "Duplicate qualifier: " + q.annotationType().getName());
             }
