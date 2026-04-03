@@ -752,7 +752,24 @@ public final class BeanDiscovery {
 
     private static TypeInfo reflectTypeToTypeInfo(java.lang.reflect.Type type, java.util.Set<java.lang.reflect.TypeVariable<?>> visited) {
         if (type instanceof Class<?> c) {
+            if (c.isArray()) {
+                int dimensions = 0;
+                Class<?> comp = c;
+                while (comp.isArray()) {
+                    dimensions++;
+                    comp = comp.getComponentType();
+                }
+                TypeInfo componentInfo = reflectTypeToTypeInfo(comp, visited);
+                return new TypeInfo.ArrayType(componentInfo, dimensions);
+            }
             return new TypeInfo.ClassType(DotName.of(c.getName()));
+        }
+        if (type instanceof java.lang.reflect.GenericArrayType gat) {
+            TypeInfo componentInfo = reflectTypeToTypeInfo(gat.getGenericComponentType(), visited);
+            if (componentInfo instanceof TypeInfo.ArrayType at) {
+                return new TypeInfo.ArrayType(at.componentType(), at.dimensions() + 1);
+            }
+            return new TypeInfo.ArrayType(componentInfo, 1);
         }
         if (type instanceof java.lang.reflect.ParameterizedType pt) {
             var rawType = DotName.of(((Class<?>) pt.getRawType()).getName());

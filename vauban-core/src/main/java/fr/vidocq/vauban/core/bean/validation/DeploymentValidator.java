@@ -261,6 +261,44 @@ public final class DeploymentValidator {
                     ValidationError.Kind.DEPLOYMENT_ERROR,
                     "Normal-scoped bean " + bean.beanClass() + " cannot have array type " + type,
                     contextBean));
+        } else if (type instanceof TypeInfo.ClassType ct) {
+            try {
+                var clazz = Class.forName(ct.name().value(), false, Thread.currentThread().getContextClassLoader());
+                if (java.lang.reflect.Modifier.isFinal(clazz.getModifiers())) {
+                    errors.add(new ValidationError(
+                            ValidationError.Kind.DEPLOYMENT_ERROR,
+                            "Normal-scoped bean " + bean.beanClass() + " cannot be a final class",
+                            contextBean));
+                } else {
+                    boolean hasNoArgCtor = false;
+                    for (var ctor : clazz.getDeclaredConstructors()) {
+                        if (ctor.getParameterCount() == 0 && !java.lang.reflect.Modifier.isPrivate(ctor.getModifiers())) {
+                            hasNoArgCtor = true;
+                            break;
+                        }
+                    }
+                    if (!hasNoArgCtor) {
+                        errors.add(new ValidationError(
+                                ValidationError.Kind.DEPLOYMENT_ERROR,
+                                "Normal-scoped bean " + bean.beanClass() + " must have a non-private no-arg constructor",
+                                contextBean));
+                    }
+                    
+                    for (var method : clazz.getDeclaredMethods()) {
+                        if (java.lang.reflect.Modifier.isFinal(method.getModifiers())
+                                && !java.lang.reflect.Modifier.isPrivate(method.getModifiers())
+                                && !java.lang.reflect.Modifier.isStatic(method.getModifiers())) {
+                            errors.add(new ValidationError(
+                                    ValidationError.Kind.DEPLOYMENT_ERROR,
+                                    "Normal-scoped bean " + bean.beanClass() + " has final method " + method.getName(),
+                                    contextBean));
+                            break;
+                        }
+                    }
+                }
+            } catch (ClassNotFoundException e) {
+                // Ignore
+            }
         }
     }
 
