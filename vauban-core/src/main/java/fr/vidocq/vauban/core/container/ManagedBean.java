@@ -332,8 +332,13 @@ public final class ManagedBean<T> implements Bean<T> {
                     }
                 }
                 if (legal) result.add(t);
+            } else if (t instanceof java.lang.reflect.GenericArrayType gat) {
+                // Array types are legal if their component type is legal
+                if (!containsUnresolvedTypeVariable(gat)) {
+                    result.add(t);
+                }
             }
-            // Skip TypeVariable, WildcardType, GenericArrayType
+            // Skip TypeVariable, WildcardType
         }
         return result;
     }
@@ -422,7 +427,14 @@ public final class ManagedBean<T> implements Bean<T> {
                 for (var m : declaringClass.getDeclaredMethods()) {
                     if (m.getName().equals(methodName)
                             && m.isAnnotationPresent(jakarta.enterprise.inject.Produces.class)) {
-                        return m.getGenericReturnType();
+                        return resolveTypeVariables(m.getGenericReturnType(), declaringClass);
+                    }
+                }
+                // Also check inherited methods
+                for (var m : declaringClass.getMethods()) {
+                    if (m.getName().equals(methodName)
+                            && m.isAnnotationPresent(jakarta.enterprise.inject.Produces.class)) {
+                        return resolveTypeVariables(m.getGenericReturnType(), declaringClass);
                     }
                 }
             } else if (descriptor.kind() == BeanDescriptor.BeanKind.PRODUCER_FIELD) {
@@ -431,10 +443,103 @@ public final class ManagedBean<T> implements Bean<T> {
                 String declaringClassName = idValue.substring(0, dotIdx);
                 String fieldName = idValue.substring(dotIdx + 1);
                 Class<?> declaringClass = Class.forName(declaringClassName, true, classLoader);
-                return declaringClass.getDeclaredField(fieldName).getGenericType();
+                var field = findField(declaringClass, fieldName);
+                if (field != null) {
+                    return resolveTypeVariables(field.getGenericType(), declaringClass);
+                }
             }
         } catch (Exception e) { /* skip - fallback to descriptor */ }
         return null;
+    }
+
+    private static java.lang.reflect.Field findField(Class<?> clazz, String name) {
+        while (clazz != null && clazz != Object.class) {
+            try {
+                return clazz.getDeclaredField(name);
+            } catch (NoSuchFieldException e) {
+                clazz = clazz.getSuperclass();
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Resolve TypeVariables in a type using the class hierarchy of the declaring class.
+     * E.g., if declaringClass is FooProducer extends GenericProducer&lt;Spider&gt;,
+     * and type is List&lt;T&gt; where T is GenericProducer's type param,
+     * this resolves it to List&lt;Spider&gt;.
+     */
+    private static Type resolveTypeVariables(Type type, Class<?> declaringClass) {
+        if (!containsUnresolvedTypeVariable(type)) return type;
+        // Build a mapping from TypeVariable -> actual type by walking the class hierarchy
+        var mapping = buildFullTypeMapping(declaringClass);
+        if (mapping.isEmpty()) return type;
+        return substituteTypeVariables(type, mapping);
+    }
+
+    private static Map<java.lang.reflect.TypeVariable<?>, Type> buildFullTypeMapping(Class<?> clazz) {
+        var mapping = new java.util.HashMap<java.lang.reflect.TypeVariable<?>, Type>();
+        var current = clazz;
+        while (current != null && current != Object.class) {
+            var genericSuper = current.getGenericSuperclass();
+            if (genericSuper instanceof java.lang.reflect.ParameterizedType pt) {
+                var rawSuper = (Class<?>) pt.getRawType();
+                var typeParams = rawSuper.getTypeParameters();
+                var typeArgs = pt.getActualTypeArguments();
+                for (int i = 0; i < Math.min(typeParams.length, typeArgs.length); i++) {
+                    // Resolve any already-mapped type variables in the arguments
+                    var resolved = substituteTypeVariables(typeArgs[i], mapping);
+                    mapping.put(typeParams[i], resolved);
+                }
+            }
+            current = current.getSuperclass();
+        }
+        return mapping;
+    }
+
+    private static Type substituteTypeVariables(Type type, Map<java.lang.reflect.TypeVariable<?>, Type> mapping) {
+        if (type instanceof java.lang.reflect.TypeVariable<?> tv) {
+            var resolved = mapping.get(tv);
+            return resolved != null ? resolved : type;
+        }
+        if (type instanceof java.lang.reflect.ParameterizedType pt) {
+            var args = pt.getActualTypeArguments();
+            var newArgs = new Type[args.length];
+            boolean changed = false;
+            for (int i = 0; i < args.length; i++) {
+                newArgs[i] = substituteTypeVariables(args[i], mapping);
+                if (newArgs[i] != args[i]) changed = true;
+            }
+            if (!changed) return type;
+            var rawType = pt.getRawType();
+            var owner = pt.getOwnerType();
+            return new java.lang.reflect.ParameterizedType() {
+                @Override public Type[] getActualTypeArguments() { return newArgs.clone(); }
+                @Override public Type getRawType() { return rawType; }
+                @Override public Type getOwnerType() { return owner; }
+                @Override public boolean equals(Object o) {
+                    if (!(o instanceof java.lang.reflect.ParameterizedType other)) return false;
+                    return rawType.equals(other.getRawType())
+                            && java.util.Arrays.equals(newArgs, other.getActualTypeArguments());
+                }
+                @Override public int hashCode() {
+                    return java.util.Arrays.hashCode(newArgs) ^ rawType.hashCode();
+                }
+                @Override public String toString() {
+                    return rawType.getTypeName() + "<" +
+                            java.util.Arrays.stream(newArgs).map(Type::getTypeName)
+                                    .collect(java.util.stream.Collectors.joining(", ")) + ">";
+                }
+            };
+        }
+        if (type instanceof java.lang.reflect.GenericArrayType gat) {
+            var newComponent = substituteTypeVariables(gat.getGenericComponentType(), mapping);
+            if (newComponent == gat.getGenericComponentType()) return type;
+            return new java.lang.reflect.GenericArrayType() {
+                @Override public Type getGenericComponentType() { return newComponent; }
+            };
+        }
+        return type;
     }
 
     private boolean hasProducerTypedRestriction() {
