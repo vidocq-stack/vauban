@@ -165,19 +165,21 @@ public final class VaubanContainer implements AutoCloseable {
     }
 
 
-    private final Map<String, Object> sharedInterceptors = new java.util.concurrent.ConcurrentHashMap<>();
-
     private Object getOrCreateInterceptorInstance(InterceptorDescriptor descriptor, CreationalContext<?> ctx) {
         String className = descriptor.interceptorClass().value();
         
-        // 1. Check sharedInterceptors (application-wide cache for interceptors)
-        Object shared = sharedInterceptors.get(className);
-        if (shared != null) return shared;
+        try {
+            Class<?> c = classLoader.loadClass(className);
+        } catch (Throwable t) {
+            t.printStackTrace(System.out);
+        }
 
         if (ctx instanceof CreationalContextImpl<?> vCtx) {
-            // 2. Check current context cache
+            // Check current context cache
             Object cached = vCtx.getInterceptorInstance(className);
-            if (cached != null) return cached;
+            if (cached != null) {
+                return cached;
+            }
             
             // 3. Look into incomplete or dependent instances in the same context
             for (Object inst : vCtx.getIncompleteInstances()) {
@@ -205,7 +207,6 @@ public final class VaubanContainer implements AutoCloseable {
                 var bean = bm.resolve(interceptorBeans);
                 Object inst = bm.getReference(bean, clazz, ctx);
                 if (inst != null) {
-                    sharedInterceptors.putIfAbsent(className, inst);
                     if (ctx instanceof CreationalContextImpl<?> vCtx) {
                         vCtx.addInterceptorInstance(className, inst);
                     }
@@ -262,7 +263,6 @@ public final class VaubanContainer implements AutoCloseable {
                 }
                 
                 var instance = constructor.newInstance(args);
-                sharedInterceptors.putIfAbsent(className, instance);
                 injectFieldsByReflection(instance, ctx);
                 // Call PostConstruct directly
                 java.lang.reflect.Method pc = null;
@@ -327,7 +327,6 @@ public final class VaubanContainer implements AutoCloseable {
             }
 
             var instance = constructor.newInstance(args);
-            sharedInterceptors.putIfAbsent(className, instance);
 
             // Dependency injection on the interceptor instance
             injectFields(instance, null, (CreationalContext<Object>) ctx);
@@ -1388,7 +1387,12 @@ public final class VaubanContainer implements AutoCloseable {
             };
 
                 // Update the bean with the new factory
+                var originalBean = (ManagedBean<?>) beans.get(descriptor.id());
                 var interceptedBean = new ManagedBean<>(descriptor, interceptedFactory, classLoader);
+                if (originalBean != null) {
+                    interceptedBean.setInjector((java.util.function.BiConsumer) originalBean.getInjector());
+                    interceptedBean.setDestroyer((java.util.function.Consumer) originalBean.getDestroyer());
+                }
                 interceptedBean.setInterceptorManager(this.interceptorManager);
                 beans.put(descriptor.id(), interceptedBean);
             } catch (Exception e) {
@@ -1486,6 +1490,11 @@ public final class VaubanContainer implements AutoCloseable {
                     }
                 };
                     var ib2 = new ManagedBean<>(descriptor, f2, classLoader);
+                    var originalBean2 = (ManagedBean<?>) beans.get(descriptor.id());
+                    if (originalBean2 != null) {
+                        ib2.setInjector((java.util.function.BiConsumer) originalBean2.getInjector());
+                        ib2.setDestroyer((java.util.function.Consumer) originalBean2.getDestroyer());
+                    }
                     ib2.setInterceptorManager(this.interceptorManager);
                     beans.put(descriptor.id(), ib2);
                 } catch (LinkageError le2) {
@@ -2072,7 +2081,6 @@ public final class VaubanContainer implements AutoCloseable {
         if (!running) return;
         running = false;
         
-        sharedInterceptors.clear();
         proxyCache.clear();
 
         // CDI lifecycle events: fire @Shutdown and @BeforeDestroyed/@Destroyed
@@ -2108,6 +2116,7 @@ public final class VaubanContainer implements AutoCloseable {
         private final List<Class<?>> beanClasses = new ArrayList<>();
         private final Map<DotName, BeanFactory<?>> factories = new LinkedHashMap<>();
         private java.util.function.BiFunction<String, byte[], Class<?>> classDefiner;
+        private ClassLoader classLoader;
 
         /**
          * Add a bean class. The container will scan it and create a default factory.
@@ -2126,6 +2135,11 @@ public final class VaubanContainer implements AutoCloseable {
          */
         public Builder classDefiner(java.util.function.BiFunction<String, byte[], Class<?>> definer) {
             this.classDefiner = definer;
+            return this;
+        }
+
+        public Builder classLoader(ClassLoader classLoader) {
+            this.classLoader = classLoader;
             return this;
         }
 
@@ -2299,9 +2313,11 @@ public final class VaubanContainer implements AutoCloseable {
                     throw new jakarta.enterprise.inject.spi.DeploymentException(msg.toString());
                 }
 
-                var beanClassLoader = beanClasses.isEmpty()
+                var beanClassLoader = this.classLoader != null 
+                        ? this.classLoader
+                        : (beanClasses.isEmpty()
                         ? Thread.currentThread().getContextClassLoader()
-                        : beanClasses.getFirst().getClassLoader();
+                        : beanClasses.getFirst().getClassLoader());
                 return new VaubanContainer(index, descriptors, observers, interceptors, disposers, factories, beanClassLoader, classDefiner);
             } finally {
                 Thread.currentThread().setContextClassLoader(previousCl);

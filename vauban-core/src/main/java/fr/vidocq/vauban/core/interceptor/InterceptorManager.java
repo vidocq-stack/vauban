@@ -499,7 +499,9 @@ public final class InterceptorManager {
             var matchingBeanBindings = beanBindings.stream()
                     .filter(b -> b.annotationType() == interceptorBinding.annotationType())
                     .toList();
-            if (matchingBeanBindings.isEmpty()) return false; // Must match presence and members
+            if (matchingBeanBindings.isEmpty()) {
+                return false; // Must match presence and members
+            }
             
             boolean matched = false;
             for (var beanBinding : matchingBeanBindings) {
@@ -508,7 +510,9 @@ public final class InterceptorManager {
                     break;
                 }
             }
-            if (!matched) return false;
+            if (!matched) {
+                return false;
+            }
         }
         return true;
     }
@@ -541,9 +545,10 @@ public final class InterceptorManager {
         // Use AroundConstruct context if none provided (e.g. for PostConstruct called after constructor interception)
         var effectiveCtx = ctx != null ? ctx : $$getAroundConstructContext();
         var matches = new ArrayList<InterceptorDescriptor>();
-
         for (var descriptor : interceptors) {
-            if (methodBindings.containsAll(descriptor.bindings()) && !descriptor.bindings().isEmpty()) {
+            boolean containsAll = methodBindings.containsAll(descriptor.bindings());
+
+            if (containsAll && !descriptor.bindings().isEmpty()) {
                 // Check binding member values if available
                 if (!descriptor.bindingAnnotations().isEmpty() && !beanAnnotations.isEmpty()) {
                     if (!bindingMembersMatch(descriptor.bindingAnnotations(), beanAnnotations)) {

@@ -42,6 +42,14 @@ public final class ManagedBean<T> implements Bean<T> {
         }
     }
 
+    public BiConsumer<Object, CreationalContext<?>> getInjector() {
+        return injector;
+    }
+
+    public Consumer<Object> getDestroyer() {
+        return destroyer;
+    }
+
     public void setInjector(BiConsumer<Object, CreationalContext<?>> injector) {
         this.injector = injector;
     }
