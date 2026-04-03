@@ -40,6 +40,17 @@ public final class AssignabilityRules {
             "DOUBLE", DotName.of("java.lang.Double")
     );
 
+    private static final java.util.Map<String, DotName> PRIMITIVE_NAME_TO_WRAPPER = java.util.Map.of(
+            "boolean", DotName.of("java.lang.Boolean"),
+            "byte", DotName.of("java.lang.Byte"),
+            "char", DotName.of("java.lang.Character"),
+            "short", DotName.of("java.lang.Short"),
+            "int", DotName.of("java.lang.Integer"),
+            "long", DotName.of("java.lang.Long"),
+            "float", DotName.of("java.lang.Float"),
+            "double", DotName.of("java.lang.Double")
+    );
+
     public boolean isAssignable(TypeInfo beanType, TypeInfo requiredType) {
         // Same type
         if (beanType.equals(requiredType)) return true;
@@ -56,6 +67,24 @@ public final class AssignabilityRules {
             if (wrapperName != null) {
                 if (requiredType instanceof ClassType rc && rc.name().equals(wrapperName)) return true;
             }
+        }
+
+        // Handle ClassType with primitive name (e.g. ClassType[name=boolean] <-> ClassType[name=java.lang.Boolean])
+        if (beanType instanceof ClassType bc && requiredType instanceof ClassType rc) {
+            var beanWrapper = PRIMITIVE_NAME_TO_WRAPPER.get(bc.name().value());
+            var reqWrapper = PRIMITIVE_NAME_TO_WRAPPER.get(rc.name().value());
+            if (beanWrapper != null && rc.name().equals(beanWrapper)) return true;
+            if (reqWrapper != null && bc.name().equals(reqWrapper)) return true;
+            if (beanWrapper != null && reqWrapper != null && beanWrapper.equals(reqWrapper)) return true;
+        }
+        // Handle PrimitiveType <-> ClassType[primitive name]
+        if (beanType instanceof PrimitiveType bp2 && requiredType instanceof ClassType rc) {
+            var primName = bp2.kind().name().toLowerCase();
+            if (rc.name().value().equals(primName)) return true;
+        }
+        if (requiredType instanceof PrimitiveType rp2 && beanType instanceof ClassType bc) {
+            var primName = rp2.kind().name().toLowerCase();
+            if (bc.name().value().equals(primName)) return true;
         }
 
         return switch (requiredType) {
@@ -110,7 +139,15 @@ public final class AssignabilityRules {
         if (beanType.equals(requiredType)) return true;
         return switch (requiredType) {
             case ClassType req -> switch (beanType) {
-                case ClassType bean -> bean.name().equals(req.name());
+                case ClassType bean -> {
+                    if (bean.name().equals(req.name())) yield true;
+                    var beanWrapper = PRIMITIVE_NAME_TO_WRAPPER.get(bean.name().value());
+                    var reqWrapper = PRIMITIVE_NAME_TO_WRAPPER.get(req.name().value());
+                    if (beanWrapper != null && req.name().equals(beanWrapper)) yield true;
+                    if (reqWrapper != null && bean.name().equals(reqWrapper)) yield true;
+                    if (beanWrapper != null && reqWrapper != null && beanWrapper.equals(reqWrapper)) yield true;
+                    yield false;
+                }
                 case ParameterizedType bean -> {
                     if (!bean.rawType().equals(req.name())) {
                         yield false;

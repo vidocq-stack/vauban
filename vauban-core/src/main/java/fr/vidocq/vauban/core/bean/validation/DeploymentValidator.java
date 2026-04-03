@@ -54,7 +54,7 @@ public final class DeploymentValidator {
             // Always validate injection points (including for interceptors)
             for (var ip : bean.injectionPoints()) {
                 // Check for illegal metadata injection (Bean<T>, Interceptor<T> with TypeVariable)
-                if (isIllegalMetadataInjection(ip)) {
+                if (isIllegalMetadataInjection(ip, bean, isInterceptor)) {
                     errors.add(new ValidationError(
                             ValidationError.Kind.DEFINITION_ERROR,
                             "Illegal injection of built-in metadata type with type variable or raw type: "
@@ -117,18 +117,24 @@ public final class DeploymentValidator {
                                                 + " cannot be final (interception requires subclassing)",
                                         bean));
                             } else {
-                                for (var method : clazz.getDeclaredMethods()) {
-                                    if (java.lang.reflect.Modifier.isFinal(method.getModifiers())
-                                            && !java.lang.reflect.Modifier.isPrivate(method.getModifiers())
-                                            && !java.lang.reflect.Modifier.isStatic(method.getModifiers())) {
-                                        errors.add(new ValidationError(
-                                                ValidationError.Kind.DEPLOYMENT_ERROR,
-                                                "Intercepted bean " + bean.beanClass()
-                                                        + " has final method " + method.getName()
-                                                        + " (interception requires subclassing)",
-                                                bean));
-                                        break;
+                                Class<?> checkClass = clazz;
+                                boolean foundFinalMethod = false;
+                                while (checkClass != null && checkClass != Object.class && !foundFinalMethod) {
+                                    for (var method : checkClass.getDeclaredMethods()) {
+                                        if (java.lang.reflect.Modifier.isFinal(method.getModifiers())
+                                                && !java.lang.reflect.Modifier.isPrivate(method.getModifiers())
+                                                && !java.lang.reflect.Modifier.isStatic(method.getModifiers())) {
+                                            errors.add(new ValidationError(
+                                                    ValidationError.Kind.DEPLOYMENT_ERROR,
+                                                    "Intercepted bean " + bean.beanClass()
+                                                            + " has final method " + method.getName()
+                                                            + " (interception requires subclassing)",
+                                                    bean));
+                                            foundFinalMethod = true;
+                                            break;
+                                        }
                                     }
+                                    checkClass = checkClass.getSuperclass();
                                 }
                             }
                         }
@@ -282,16 +288,22 @@ public final class DeploymentValidator {
                                 contextBean));
                     }
                     
-                    for (var method : clazz.getDeclaredMethods()) {
-                        if (java.lang.reflect.Modifier.isFinal(method.getModifiers())
-                                && !java.lang.reflect.Modifier.isPrivate(method.getModifiers())
-                                && !java.lang.reflect.Modifier.isStatic(method.getModifiers())) {
-                            errors.add(new ValidationError(
-                                    ValidationError.Kind.DEPLOYMENT_ERROR,
-                                    "Normal-scoped bean " + bean.beanClass() + " has final method " + method.getName(),
-                                    contextBean));
-                            break;
+                    Class<?> proxyCheck = clazz;
+                    boolean proxyFinalFound = false;
+                    while (proxyCheck != null && proxyCheck != Object.class && !proxyFinalFound) {
+                        for (var method : proxyCheck.getDeclaredMethods()) {
+                            if (java.lang.reflect.Modifier.isFinal(method.getModifiers())
+                                    && !java.lang.reflect.Modifier.isPrivate(method.getModifiers())
+                                    && !java.lang.reflect.Modifier.isStatic(method.getModifiers())) {
+                                errors.add(new ValidationError(
+                                        ValidationError.Kind.DEPLOYMENT_ERROR,
+                                        "Normal-scoped bean " + bean.beanClass() + " has final method " + method.getName(),
+                                        contextBean));
+                                proxyFinalFound = true;
+                                break;
+                            }
                         }
+                        proxyCheck = proxyCheck.getSuperclass();
                     }
                 }
             } catch (ClassNotFoundException e) {
@@ -330,22 +342,97 @@ public final class DeploymentValidator {
         return false;
     }
 
+    private static final DotName INTERCEPTED_QUALIFIER = DotName.of("jakarta.enterprise.inject.Intercepted");
+
+    private static boolean hasInterceptedQualifier(InjectionPointInfo ip) {
+        return ip.qualifiers().stream()
+                .anyMatch(q -> q.annotationName().equals(INTERCEPTED_QUALIFIER));
+    }
+
     /**
-     * CDI 4.1 Section 11.3.22: Bean<T>, Interceptor<T>, Decorator<T> metadata injection
-     * is only legal when T is a concrete type (not a TypeVariable) and the injection
-     * point is in the bean itself (not in an interceptor wrapping it).
+     * CDI 4.1 Section 11.3.22: Bean metadata injection rules.
+     *
+     * Bean<X> can only be injected into bean class X itself.
+     * Interceptor<X> can only be injected into interceptor class X itself.
+     * @Intercepted Bean<X> can only be injected into an interceptor, and X must be unbounded (Object).
+     * Raw metadata types and TypeVariable parameters are always illegal.
      */
-    private static boolean isIllegalMetadataInjection(InjectionPointInfo ip) {
-        // Raw metadata type (e.g., Bean without type parameter) is illegal
+    private static boolean isIllegalMetadataInjection(InjectionPointInfo ip, BeanDescriptor bean, boolean isInterceptor) {
+        String rawType = null;
         if (ip.requiredType() instanceof TypeInfo.ClassType ct) {
-            return METADATA_BUILT_IN_TYPES.contains(ct.name().value());
+            rawType = ct.name().value();
+        } else if (ip.requiredType() instanceof TypeInfo.ParameterizedType pt) {
+            rawType = pt.rawType().value();
         }
-        // Parameterized with TypeVariable (e.g., Bean<T>) is illegal
-        if (ip.requiredType() instanceof TypeInfo.ParameterizedType pt) {
-            if (METADATA_BUILT_IN_TYPES.contains(pt.rawType().value())) {
-                return pt.typeArguments().stream()
-                        .anyMatch(t -> t instanceof TypeInfo.TypeVariable);
+        if (rawType == null || !METADATA_BUILT_IN_TYPES.contains(rawType)) {
+            return false;
+        }
+
+        // Raw metadata type (e.g., Bean without type parameter) is always illegal
+        if (ip.requiredType() instanceof TypeInfo.ClassType) {
+            return true;
+        }
+
+        var pt = (TypeInfo.ParameterizedType) ip.requiredType();
+        var typeArgs = pt.typeArguments();
+
+        // TypeVariable parameter (e.g., Bean<T>) is always illegal
+        if (typeArgs.stream().anyMatch(t -> t instanceof TypeInfo.TypeVariable)) {
+            return true;
+        }
+
+        boolean isInterceptedBean = rawType.equals("jakarta.enterprise.inject.spi.Bean") && hasInterceptedQualifier(ip);
+        boolean isInterceptorType = rawType.equals("jakarta.enterprise.inject.spi.Interceptor");
+        boolean isDecoratorType = rawType.equals("jakarta.enterprise.inject.spi.Decorator");
+
+        // @Intercepted Bean<X>: only legal in an interceptor, and X must be unbounded
+        if (isInterceptedBean) {
+            if (!isInterceptor) return true;
+            // In an interceptor, @Intercepted Bean<X> requires X = Object (no concrete type, no bounded wildcard)
+            if (!typeArgs.isEmpty()) {
+                var arg = typeArgs.getFirst();
+                // Only Bean<?> (unbounded wildcard) or Bean<Object> is legal
+                if (arg instanceof TypeInfo.WildcardType wt) {
+                    // Unbounded wildcard: upperBound=Object, lowerBound=null
+                    return wt.lowerBound() != null || !isObjectType(wt.upperBound());
+                }
+                if (arg instanceof TypeInfo.ClassType argCt) {
+                    return !argCt.name().value().equals("java.lang.Object");
+                }
+                return true;
             }
+            return false;
+        }
+
+        // Interceptor<X>: only legal in an interceptor, and X must match the interceptor class
+        if (isInterceptorType) {
+            if (!isInterceptor) return true;
+            return !typeArgMatchesBeanClass(typeArgs, bean);
+        }
+
+        // Decorator<X>: only legal in a decorator, and X must match the decorator class
+        if (isDecoratorType) {
+            // For now, decorators are not fully implemented; treat similarly
+            return !typeArgMatchesBeanClass(typeArgs, bean);
+        }
+
+        // Bean<X> (without @Intercepted): X must match the declaring bean class
+        if (rawType.equals("jakarta.enterprise.inject.spi.Bean")) {
+            return !typeArgMatchesBeanClass(typeArgs, bean);
+        }
+
+        return false;
+    }
+
+    private static boolean isObjectType(TypeInfo type) {
+        return type instanceof TypeInfo.ClassType ct && ct.name().value().equals("java.lang.Object");
+    }
+
+    private static boolean typeArgMatchesBeanClass(java.util.List<TypeInfo> typeArgs, BeanDescriptor bean) {
+        if (typeArgs.isEmpty()) return false;
+        var arg = typeArgs.getFirst();
+        if (arg instanceof TypeInfo.ClassType argCt) {
+            return argCt.name().value().equals(bean.beanClass().value());
         }
         return false;
     }

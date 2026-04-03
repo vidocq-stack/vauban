@@ -218,23 +218,6 @@ public final class VaubanBeanManager implements BeanManager {
             }
         }
         
-        if (beanType.getTypeName().contains("Dao<T1, T3>") || beanType.getTypeName().contains("Dao")) {
-            // removing old debug
-        }
-        
-        if (beanType.getTypeName().contains("Map<java.lang.Integer, java.lang.Integer>")) {
-            System.out.println("RESOLVING Map<Integer, Integer>. result.size=" + result.size());
-            for (var b : beans) {
-                if (b.getBeanClass() != null && b.getBeanClass().getName().contains("MapProducer")) {
-                    System.out.println("  AVAILABLE MAPPRODUCER BEAN: " + b.getBeanClass().getName());
-                    System.out.println("  TYPES: " + b.getTypes());
-                }
-            }
-            for (var b : result) {
-                System.out.println("  FOUND MAP BEAN: " + b.getBeanClass());
-            }
-        }
-        
         return result;
     }
 

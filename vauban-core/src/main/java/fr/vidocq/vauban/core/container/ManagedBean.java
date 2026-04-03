@@ -214,6 +214,10 @@ public final class ManagedBean<T> implements Bean<T> {
             if (hasTypedRestriction()) {
                 types = filterByTyped(types);
             }
+            // CDI 4.1 Section 2.2.1: filter illegal bean types, keeping the bean's own type variables
+            var ownTypeVars = new LinkedHashSet<java.lang.reflect.TypeVariable<?>>();
+            java.util.Collections.addAll(ownTypeVars, beanClass.getTypeParameters());
+            types = filterIllegalBeanTypes(types, ownTypeVars);
         }
         cachedTypes = types;
         return types;
@@ -255,10 +259,11 @@ public final class ManagedBean<T> implements Bean<T> {
     }
 
     /**
-     * CDI 4.1 Section 2.2.1: Filter illegal bean types for producer beans.
-     * Parameterized types with unresolved TypeVariables or Wildcards are illegal.
+     * CDI 4.1 Section 2.2.1: Filter illegal bean types.
+     * Parameterized types with unresolved TypeVariables or Wildcards are illegal,
+     * unless the TypeVariables are the bean's own type parameters.
      */
-    private static Set<Type> filterIllegalBeanTypes(Set<Type> types) {
+    private static Set<Type> filterIllegalBeanTypes(Set<Type> types, Set<java.lang.reflect.TypeVariable<?>> allowedTypeVars) {
         var result = new LinkedHashSet<Type>();
         for (var t : types) {
             if (t == Object.class || t instanceof Class<?>) {
@@ -266,8 +271,12 @@ public final class ManagedBean<T> implements Bean<T> {
             } else if (t instanceof java.lang.reflect.ParameterizedType pt) {
                 boolean legal = true;
                 for (var arg : pt.getActualTypeArguments()) {
-                    if (arg instanceof java.lang.reflect.TypeVariable<?>
-                            || arg instanceof java.lang.reflect.WildcardType) {
+                    if (arg instanceof java.lang.reflect.TypeVariable<?> tv) {
+                        if (!allowedTypeVars.contains(tv)) {
+                            legal = false;
+                            break;
+                        }
+                    } else if (arg instanceof java.lang.reflect.WildcardType) {
                         legal = false;
                         break;
                     }
@@ -302,8 +311,8 @@ public final class ManagedBean<T> implements Bean<T> {
                 }
             }
             
-            // Filter illegal types
-            return filterIllegalBeanTypes(allTypes);
+            // Filter illegal types (producers have no allowed type variables)
+            return filterIllegalBeanTypes(allTypes, Set.of());
         }
 
         // Fallback: resolve descriptor types to Java Types
@@ -348,7 +357,7 @@ public final class ManagedBean<T> implements Bean<T> {
             }
         }
         types.add(Object.class);
-        return filterIllegalBeanTypes(types);
+        return filterIllegalBeanTypes(types, Set.of());
     }
 
     private Type resolveProducerGenericType() {
