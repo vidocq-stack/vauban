@@ -55,6 +55,9 @@ public final class BceProcessor {
                 var syntheticBeans = processSynthesis(bce, bceClass, deploymentErrors);
                 allSyntheticBeans.addAll(syntheticBeans);
 
+                // Phase: @Validation
+                processValidation(bce, bceClass, deploymentErrors);
+
             } catch (Exception e) {
                 deploymentErrors.add("BCE processing failed for " + bceClass.getName() + ": " + e.getMessage());
             }
@@ -204,6 +207,42 @@ public final class BceProcessor {
         }
 
         return components.getBeanDefinitions();
+    }
+
+    /**
+     * Process @Validation methods — collect errors that cause DeploymentException.
+     */
+    private static void processValidation(Object bce, Class<?> bceClass, List<String> errors) {
+        for (var method : getDeclaredMethodsSafe(bceClass)) {
+            if (method.getAnnotation(Validation.class) == null) continue;
+
+            method.setAccessible(true);
+            var messages = new VaubanMessages();
+            var params = method.getParameters();
+            var args = new Object[params.length];
+            for (int i = 0; i < params.length; i++) {
+                if (Messages.class.isAssignableFrom(params[i].getType())) {
+                    args[i] = messages;
+                } else if (jakarta.enterprise.inject.build.compatible.spi.Types.class.isAssignableFrom(params[i].getType())) {
+                    args[i] = null; // Types not yet implemented
+                }
+            }
+
+            try {
+                method.invoke(bce, args);
+            } catch (java.lang.reflect.InvocationTargetException e) {
+                var cause = e.getCause();
+                errors.add("@Validation error: " + (cause != null ? cause.getMessage() : e.getMessage()));
+            } catch (Exception e) {
+                errors.add("@Validation error: " + e.getMessage());
+            }
+
+            if (messages.hasErrors()) {
+                for (var msg : messages.getErrors()) {
+                    errors.add(msg);
+                }
+            }
+        }
     }
 
     private static Object[] resolveSynthesisArgs(Method method, VaubanSyntheticComponents components) {
