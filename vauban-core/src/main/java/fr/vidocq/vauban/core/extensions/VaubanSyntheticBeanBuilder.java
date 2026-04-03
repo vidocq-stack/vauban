@@ -56,13 +56,35 @@ public final class VaubanSyntheticBeanBuilder<T> implements SyntheticBeanBuilder
     }
 
     @Override
+    @SuppressWarnings("unchecked")
     public SyntheticBeanBuilder<T> qualifier(Class<? extends Annotation> qualifierAnnotation) {
-        return this; // simplified
+        // Create a proxy instance of the qualifier annotation with default values
+        qualifiers.add((Annotation) java.lang.reflect.Proxy.newProxyInstance(
+                qualifierAnnotation.getClassLoader(),
+                new Class<?>[]{qualifierAnnotation},
+                (proxy, method, args) -> {
+                    if ("annotationType".equals(method.getName())) return qualifierAnnotation;
+                    if ("hashCode".equals(method.getName())) return 0;
+                    if ("equals".equals(method.getName())) return proxy == args[0];
+                    if ("toString".equals(method.getName())) return "@" + qualifierAnnotation.getName();
+                    return method.getDefaultValue();
+                }));
+        return this;
     }
 
     @Override
     public SyntheticBeanBuilder<T> qualifier(AnnotationInfo qualifierAnnotation) {
-        return this;
+        // Convert AnnotationInfo name to a Class and create proxy
+        try {
+            var cl = Thread.currentThread().getContextClassLoader();
+            @SuppressWarnings("unchecked")
+            var annClass = (Class<? extends Annotation>) (cl != null
+                    ? Class.forName(qualifierAnnotation.name(), false, cl)
+                    : Class.forName(qualifierAnnotation.name()));
+            return qualifier(annClass);
+        } catch (ClassNotFoundException e) {
+            return this;
+        }
     }
 
     @Override
@@ -146,6 +168,7 @@ public final class VaubanSyntheticBeanBuilder<T> implements SyntheticBeanBuilder
 
     public Class<T> getBeanClass() { return beanClass; }
     public Set<java.lang.reflect.Type> getTypes() { return types; }
+    public Set<Annotation> getQualifiers() { return qualifiers; }
     public Class<? extends Annotation> getScopeAnnotation() { return scopeAnnotation; }
     public String getName() { return name; }
     public boolean isAlternative() { return alternative; }

@@ -45,18 +45,20 @@ public final class BceProcessor {
 
                 var bce = instantiateBce(bceClass);
 
+                var types = new VaubanTypes(lookup);
+
                 // Phase: @Enhancement
                 processEnhancement(bce, bceClass, beans, lookup, classLoader, deploymentErrors);
 
                 // Phase: @Registration
-                processRegistration(bce, bceClass, beans, lookup, classLoader, deploymentErrors);
+                processRegistration(bce, bceClass, beans, lookup, classLoader, types, deploymentErrors);
 
                 // Phase: @Synthesis
-                var syntheticBeans = processSynthesis(bce, bceClass, deploymentErrors);
+                var syntheticBeans = processSynthesis(bce, bceClass, types, deploymentErrors);
                 allSyntheticBeans.addAll(syntheticBeans);
 
                 // Phase: @Validation
-                processValidation(bce, bceClass, deploymentErrors);
+                processValidation(bce, bceClass, types, deploymentErrors);
 
             } catch (Exception e) {
                 deploymentErrors.add("BCE processing failed for " + bceClass.getName() + ": " + e.getMessage());
@@ -126,6 +128,7 @@ public final class BceProcessor {
     private static void processRegistration(Object bce, Class<?> bceClass,
                                             List<BeanDescriptor> beans,
                                             IndexLookup lookup, ClassLoader classLoader,
+                                            VaubanTypes types,
                                             List<String> errors) {
         for (var method : getDeclaredMethodsSafe(bceClass)) {
             var registration = method.getAnnotation(Registration.class);
@@ -140,7 +143,7 @@ public final class BceProcessor {
                 var invokerFactory = new VaubanInvokerFactory(classLoader);
                 var messages = new VaubanMessages();
 
-                var args = resolveRegistrationArgs(method, beanInfo, invokerFactory, messages);
+                var args = resolveRegistrationArgs(method, beanInfo, invokerFactory, messages, types);
 
                 try {
                     method.invoke(bce, args);
@@ -165,7 +168,7 @@ public final class BceProcessor {
 
     private static Object[] resolveRegistrationArgs(Method method, VaubanBceBeanInfo beanInfo,
                                                     VaubanInvokerFactory invokerFactory,
-                                                    VaubanMessages messages) {
+                                                    VaubanMessages messages, VaubanTypes types) {
         var params = method.getParameters();
         var args = new Object[params.length];
         for (int i = 0; i < params.length; i++) {
@@ -176,6 +179,8 @@ public final class BceProcessor {
                 args[i] = invokerFactory;
             } else if (Messages.class.isAssignableFrom(paramType)) {
                 args[i] = messages;
+            } else if (jakarta.enterprise.inject.build.compatible.spi.Types.class.isAssignableFrom(paramType)) {
+                args[i] = types;
             }
         }
         return args;
@@ -185,6 +190,7 @@ public final class BceProcessor {
      * Process @Synthesis methods — creates synthetic beans.
      */
     private static List<VaubanSyntheticBeanBuilder<?>> processSynthesis(Object bce, Class<?> bceClass,
+                                                                        VaubanTypes types,
                                                                         List<String> errors) {
         var components = new VaubanSyntheticComponents();
 
@@ -194,7 +200,7 @@ public final class BceProcessor {
 
             method.setAccessible(true);
 
-            var args = resolveSynthesisArgs(method, components);
+            var args = resolveSynthesisArgs(method, components, types);
 
             try {
                 method.invoke(bce, args);
@@ -212,7 +218,7 @@ public final class BceProcessor {
     /**
      * Process @Validation methods — collect errors that cause DeploymentException.
      */
-    private static void processValidation(Object bce, Class<?> bceClass, List<String> errors) {
+    private static void processValidation(Object bce, Class<?> bceClass, VaubanTypes types, List<String> errors) {
         for (var method : getDeclaredMethodsSafe(bceClass)) {
             if (method.getAnnotation(Validation.class) == null) continue;
 
@@ -224,7 +230,7 @@ public final class BceProcessor {
                 if (Messages.class.isAssignableFrom(params[i].getType())) {
                     args[i] = messages;
                 } else if (jakarta.enterprise.inject.build.compatible.spi.Types.class.isAssignableFrom(params[i].getType())) {
-                    args[i] = null; // Types not yet implemented
+                    args[i] = types;
                 }
             }
 
@@ -245,13 +251,16 @@ public final class BceProcessor {
         }
     }
 
-    private static Object[] resolveSynthesisArgs(Method method, VaubanSyntheticComponents components) {
+    private static Object[] resolveSynthesisArgs(Method method, VaubanSyntheticComponents components,
+                                                  VaubanTypes types) {
         var params = method.getParameters();
         var args = new Object[params.length];
         for (int i = 0; i < params.length; i++) {
             var paramType = params[i].getType();
             if (SyntheticComponents.class.isAssignableFrom(paramType)) {
                 args[i] = components;
+            } else if (jakarta.enterprise.inject.build.compatible.spi.Types.class.isAssignableFrom(paramType)) {
+                args[i] = types;
             }
         }
         return args;

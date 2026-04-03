@@ -22,4 +22,7 @@ module fr.vidocq.vauban.core {
 
     provides jakarta.enterprise.inject.spi.CDIProvider
             with fr.vidocq.vauban.core.container.VaubanCDIProvider;
+
+    provides jakarta.enterprise.inject.build.compatible.spi.BuildServices
+            with fr.vidocq.vauban.core.extensions.VaubanBuildServices;
 }

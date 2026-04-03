@@ -14,8 +14,12 @@ public final class VaubanPrimitiveType implements PrimitiveType {
 
     private final PrimitiveKind primitiveKind;
 
+    public VaubanPrimitiveType(PrimitiveKind primitiveKind) {
+        this.primitiveKind = Objects.requireNonNull(primitiveKind);
+    }
+
     public VaubanPrimitiveType(TypeInfo.PrimitiveType indexType) {
-        this.primitiveKind = mapKind(indexType.kind());
+        this(mapKind(indexType.kind()));
     }
 
     @Override

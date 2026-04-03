@@ -2499,8 +2499,20 @@ public final class VaubanContainer implements AutoCloseable {
                 }
             }
 
-            // Default qualifiers: @Default + @Any
-            var qualifiers = Set.of(QualifierInstance.DEFAULT, QualifierInstance.ANY);
+            // Build qualifiers from builder's qualifier set
+            var qualifiers = new java.util.LinkedHashSet<QualifierInstance>();
+            boolean hasExplicitQualifier = false;
+            for (var q : synBean.getQualifiers()) {
+                var qName = DotName.of(q.annotationType().getName());
+                if (!qName.equals(QualifierInstance.DEFAULT_NAME) && !qName.equals(QualifierInstance.ANY_NAME)) {
+                    hasExplicitQualifier = true;
+                }
+                qualifiers.add(new QualifierInstance(qName, java.util.Map.of()));
+            }
+            if (!hasExplicitQualifier) {
+                qualifiers.add(QualifierInstance.DEFAULT);
+            }
+            qualifiers.add(QualifierInstance.ANY);
 
             var descriptor = new BeanDescriptor(
                     new BeanId(beanName.value() + "#synthetic"),
