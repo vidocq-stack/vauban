@@ -399,7 +399,13 @@ public final class VaubanBeanManager implements BeanManager {
                     "No bean for injection point: " + ij);
         }
         var bean = resolve(beans);
-        return getReference(bean, ij.getType(), ctx);
+        var previousIp = VaubanContainer.getCurrentInjectionPoint();
+        VaubanContainer.setInjectionPoint(ij);
+        try {
+            return getReference(bean, ij.getType(), ctx);
+        } finally {
+            VaubanContainer.setInjectionPoint(previousIp);
+        }
     }
 
     @Override
@@ -640,7 +646,8 @@ public final class VaubanBeanManager implements BeanManager {
 
     @Override
     public Event<Object> getEvent() {
-        return new EventImpl<>(eventDispatcher);
+        var ip = VaubanContainer.getCurrentInjectionPoint();
+        return new EventImpl<>(eventDispatcher, new java.lang.annotation.Annotation[0], ip);
     }
 
     @Override

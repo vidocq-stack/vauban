@@ -299,19 +299,7 @@ public final class EventDispatcher {
     }
 
     private static java.lang.reflect.Type mergeTypeHierarchy(Class<?> runtimeClass, java.lang.reflect.ParameterizedType selectedType) {
-        // We know runtimeClass is assignable to selectedType's raw class.
-        // We want to map selectedType's actual arguments to runtimeClass's type parameters.
-        // E.g., Blah<B1, B2> extends Foo<B1>, and we have Foo<List<Integer>>.
-        // Let's do a simple heuristic or use TypeHierarchyResolver.
-        // For CDI event resolution, if we can't fully resolve, we leave type variables.
-        
-        // A robust way: construct a parameterized type for runtimeClass with its own TypeVariables,
-        // compute its supertypes, find the one matching selectedType's raw class,
-        // and match the arguments to deduce the values of runtimeClass's TypeVariables.
-        
         java.util.Map<java.lang.reflect.TypeVariable<?>, java.lang.reflect.Type> resolvedMap = new java.util.HashMap<>();
-        
-        // Match them by traversing the hierarchy up from runtimeClass
         matchTypeParameters(runtimeClass, selectedType, resolvedMap);
         
         var runtimeParams = runtimeClass.getTypeParameters();
@@ -320,7 +308,8 @@ public final class EventDispatcher {
             java.lang.reflect.Type mapped = resolvedMap.get(runtimeParams[i]);
             resolvedArgs[i] = mapped != null ? mapped : runtimeParams[i];
         }
-        return new ParameterizedTypeImpl(runtimeClass, resolvedArgs, runtimeClass.getDeclaringClass());
+        var result = new ParameterizedTypeImpl(runtimeClass, resolvedArgs, runtimeClass.getDeclaringClass());
+        return result;
     }
 
     private static void matchTypeParameters(java.lang.reflect.Type current, java.lang.reflect.ParameterizedType target, java.util.Map<java.lang.reflect.TypeVariable<?>, java.lang.reflect.Type> resolvedMap) {
@@ -337,6 +326,12 @@ public final class EventDispatcher {
                     if (currentArgs[i] instanceof java.lang.reflect.TypeVariable<?> tv) {
                         resolvedMap.put(tv, targetArgs[i]);
                     }
+                }
+            } else if (current instanceof Class<?> cc) {
+                var currentArgs = cc.getTypeParameters();
+                var targetArgs = target.getActualTypeArguments();
+                for (int i = 0; i < currentArgs.length && i < targetArgs.length; i++) {
+                    resolvedMap.put(currentArgs[i], targetArgs[i]);
                 }
             }
             return;

@@ -59,12 +59,16 @@ public class VaubanTestEnricher implements TestEnricher {
         // Instance<T> or Provider<T>
         if (type == Instance.class || type == Provider.class) {
             var instanceType = extractGenericType(field);
-            return new InstanceImpl<>(container, instanceType);
+            var ownerBean = container.findManagedBeanByExactClass(field.getDeclaringClass());
+            var ip = new fr.vidocq.vauban.core.container.VaubanInjectionPoint(field, ownerBean);
+            return new InstanceImpl<>(container, instanceType, qualifiers, ip);
         }
 
         // Event<T>
         if (type == Event.class) {
-            return new EventImpl<>(container.eventDispatcher());
+            var ownerBean = container.findManagedBeanByExactClass(field.getDeclaringClass());
+            var ip = new fr.vidocq.vauban.core.container.VaubanInjectionPoint(field, ownerBean);
+            return new EventImpl<>(container.eventDispatcher(), qualifiers, ip);
         }
 
         // Regular bean — use BeanManager with qualifiers for proper resolution
@@ -142,13 +146,19 @@ public class VaubanTestEnricher implements TestEnricher {
                         var typeArg = pt.getActualTypeArguments()[0];
                         if (typeArg instanceof Class<?> c) instanceType = c;
                     }
-                    args[i] = new InstanceImpl<>(container, instanceType);
+                    var ownerBean = container.findManagedBeanByExactClass(method.getDeclaringClass());
+                    var qualifiers = extractParamQualifiers(params[i]);
+                    var ip = new fr.vidocq.vauban.core.container.VaubanInjectionPoint(genericParamTypes[i], new java.util.HashSet<>(java.util.Arrays.asList(qualifiers)), ownerBean, method);
+                    args[i] = new InstanceImpl<>(container, instanceType, qualifiers, ip);
                     continue;
                 }
 
                 // Event<T>
                 if (type == Event.class) {
-                    args[i] = new EventImpl<>(container.eventDispatcher());
+                    var ownerBean = container.findManagedBeanByExactClass(method.getDeclaringClass());
+                    var qualifiers = extractParamQualifiers(params[i]);
+                    var ip = new fr.vidocq.vauban.core.container.VaubanInjectionPoint(genericParamTypes[i], new java.util.HashSet<>(java.util.Arrays.asList(qualifiers)), ownerBean, method);
+                    args[i] = new EventImpl<>(container.eventDispatcher(), qualifiers, ip);
                     continue;
                 }
 
