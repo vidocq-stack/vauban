@@ -420,20 +420,9 @@ public final class VaubanContainer implements AutoCloseable {
                 // Load the proxy class (check if already defined)
                 Class<?> proxyClass;
                 try {
-                    proxyClass = beanClass.getClassLoader().loadClass(generated.className());
-                } catch (ClassNotFoundException cnfe) {
-                    try {
-                        var lookup = java.lang.invoke.MethodHandles.privateLookupIn(beanClass,
-                                java.lang.invoke.MethodHandles.lookup());
-                        proxyClass = lookup.defineClass(generated.bytecode());
-                    } catch (Exception e) {
-                        var defineMethod = ClassLoader.class.getDeclaredMethod(
-                                "defineClass", String.class, byte[].class, int.class, int.class);
-                        defineMethod.setAccessible(true);
-                        proxyClass = (Class<?>) defineMethod.invoke(beanClass.getClassLoader(),
-                                generated.className(), generated.bytecode(),
-                                0, generated.bytecode().length);
-                    }
+                    proxyClass = loadOrDefineClassRobustly(beanClass, generated.className(), generated.bytecode());
+                } catch (Exception e) {
+                    throw new RuntimeException("Failed to define proxy class for " + beanClass, e);
                 }
 
                 // Create proxy instance
@@ -1227,12 +1216,10 @@ public final class VaubanContainer implements AutoCloseable {
                         interceptedClass = classDefiner.apply(generated.className(), generated.bytecode());
                     } else {
                         // Default: use privateLookupIn to define in the bean's classloader
-                        var lookup = java.lang.invoke.MethodHandles.privateLookupIn(beanClass,
-                                java.lang.invoke.MethodHandles.lookup());
                         try {
-                            interceptedClass = beanClass.getClassLoader().loadClass(generated.className());
-                        } catch (ClassNotFoundException e) {
-                            interceptedClass = lookup.defineClass(generated.bytecode());
+                            interceptedClass = loadOrDefineClassRobustly(beanClass, generated.className(), generated.bytecode());
+                        } catch (Exception e) {
+                            throw new jakarta.enterprise.inject.spi.DeploymentException("Could not define interceptor subclass", e);
                         }
                     }
 
@@ -1418,9 +1405,7 @@ public final class VaubanContainer implements AutoCloseable {
                         if (classDefiner != null) {
                             interceptedClass2 = classDefiner.apply(generated2.className(), generated2.bytecode());
                         } else {
-                            var lookup2 = java.lang.invoke.MethodHandles.privateLookupIn(beanClass,
-                                    java.lang.invoke.MethodHandles.lookup());
-                            interceptedClass2 = lookup2.defineClass(generated2.bytecode());
+                            interceptedClass2 = loadOrDefineClassRobustly(beanClass, generated2.className(), generated2.bytecode());
                         }
                     } catch (Exception ex2) {
                         System.err.println("[VAUBAN-DBG] Fallback interception also failed for " + descriptor.beanClass().value() + ": " + ex2);
@@ -3012,6 +2997,47 @@ public final class VaubanContainer implements AutoCloseable {
                 if (ctor.isAnnotationPresent(jakarta.inject.Inject.class)) return true;
             }
             return false;
+        }
+    }
+
+    /**
+     * Attempts to load a generated proxy or interceptor subclass. If it does not exist, defines it.
+     * 
+     * NOTE ON THE USE OF sun.misc.Unsafe:
+     * This fallback mechanism is essential for passing the CDI TCK in Arquillian/Surefire environments.
+     * When running the TCK (e.g., InterceptorLifeCycleTest), tests are loaded by the AppClassLoader,
+     * but they are often wrapped in ShrinkWrap deployments. Using `MethodHandles.lookup().defineClass`
+     * can fail with IllegalAccessException due to module boundary restrictions (missing "opens" directives
+     * to the unnamed module or between modules) when trying to define the proxy in the exact same package 
+     * and classloader as the target bean.
+     * By using Unsafe (or the trusted MethodHandles.Lookup.IMPL_LOOKUP), we bypass these module 
+     * restrictions, ensuring that the proxy class is defined correctly in the target classloader,
+     * preventing DeploymentExceptions related to class definition in tests.
+     */
+    private Class<?> loadOrDefineClassRobustly(Class<?> targetClass, String className, byte[] bytecode) throws Exception {
+        try {
+            return targetClass.getClassLoader().loadClass(className);
+        } catch (ClassNotFoundException cnfe) {
+            try {
+                var lookup = java.lang.invoke.MethodHandles.privateLookupIn(targetClass, java.lang.invoke.MethodHandles.lookup());
+                return lookup.defineClass(bytecode);
+            } catch (IllegalAccessException e) {
+                try {
+                    // Unsafe fallback for modules that don't open packages to Vauban (like Arquillian/TestNG tests)
+                    java.lang.reflect.Field f = sun.misc.Unsafe.class.getDeclaredField("theUnsafe");
+                    f.setAccessible(true);
+                    sun.misc.Unsafe unsafe = (sun.misc.Unsafe) f.get(null);
+                    
+                    java.lang.reflect.Field implLookupField = java.lang.invoke.MethodHandles.Lookup.class.getDeclaredField("IMPL_LOOKUP");
+                    long offset = unsafe.staticFieldOffset(implLookupField);
+                    java.lang.invoke.MethodHandles.Lookup trustedLookup = (java.lang.invoke.MethodHandles.Lookup) unsafe.getObject(java.lang.invoke.MethodHandles.Lookup.class, offset);
+                    
+                    return trustedLookup.in(targetClass).defineClass(bytecode);
+                } catch (Exception unsafeEx) {
+                    e.addSuppressed(unsafeEx);
+                    throw e;
+                }
+            }
         }
     }
 }
