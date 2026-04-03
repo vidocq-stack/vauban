@@ -103,7 +103,9 @@ public final class InstanceImpl<T> implements Instance<T> {
     @Override
     public <U extends T> Instance<U> select(Class<U> subtype, Annotation... newQualifiers) {
         validateQualifiers(newQualifiers);
-        return new InstanceImpl<>(container, subtype, combineQualifiers(this.qualifiers, newQualifiers), injectionPoint, parentCreationalContext);
+        var combinedQuals = combineQualifiers(this.qualifiers, newQualifiers);
+        var updatedIp = updateInjectionPointType(subtype, combinedQuals);
+        return new InstanceImpl<>(container, subtype, combinedQuals, updatedIp, parentCreationalContext);
     }
 
     @Override
@@ -111,7 +113,18 @@ public final class InstanceImpl<T> implements Instance<T> {
         validateQualifiers(newQualifiers);
         @SuppressWarnings("unchecked")
         var clazz = (Class<U>) subtype.getType();
-        return new InstanceImpl<>(container, clazz, combineQualifiers(this.qualifiers, newQualifiers), injectionPoint, parentCreationalContext);
+        var combinedQuals = combineQualifiers(this.qualifiers, newQualifiers);
+        var updatedIp = updateInjectionPointType(clazz, combinedQuals);
+        return new InstanceImpl<>(container, clazz, combinedQuals, updatedIp, parentCreationalContext);
+    }
+
+    private jakarta.enterprise.inject.spi.InjectionPoint updateInjectionPointType(
+            Class<?> newType, Annotation[] newQualifiers) {
+        if (injectionPoint == null) return null;
+        var qualSet = new java.util.LinkedHashSet<Annotation>();
+        for (var q : newQualifiers) qualSet.add(q);
+        if (qualSet.isEmpty()) qualSet.add(jakarta.enterprise.inject.Default.Literal.INSTANCE);
+        return new VaubanInjectionPoint(newType, qualSet, injectionPoint.getBean(), injectionPoint.getMember());
     }
 
     private static Annotation[] combineQualifiers(Annotation[] existing, Annotation[] additional) {

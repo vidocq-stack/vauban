@@ -977,30 +977,40 @@ public final class BeanDiscovery {
             }
         }
 
-        // Check stereotypes (direct + inherited)
+        // Check stereotypes (direct + transitive)
         var allAnnotationNames = getAllAnnotationNames(classInfo);
         for (var annName : allAnnotationNames) {
             if (isStereotype(annName)) {
-                var stereotypeClass = index.getClassByName(annName);
-                if (stereotypeClass.isPresent()) {
-                    var stereotypeName = extractName(stereotypeClass.get().annotations(),
-                            decapitalize(classInfo.name().simpleName()));
-                    if (stereotypeName != null) return stereotypeName;
-                } else {
-                    // Fallback: check via reflection if stereotype has @Named
-                    try {
-                        var annType = Class.forName(annName.value());
-                        if (annType.isAnnotationPresent(jakarta.inject.Named.class)) {
-                            return decapitalize(classInfo.name().simpleName());
-                        }
-                    } catch (ClassNotFoundException e) {
-                        // skip
-                    }
+                if (hasNamedInStereotypeRecursive(annName, new java.util.HashSet<>())) {
+                    return decapitalize(classInfo.name().simpleName());
                 }
             }
         }
 
         return null;
+    }
+
+    private boolean hasNamedInStereotypeRecursive(DotName stereotypeName, Set<DotName> visited) {
+        if (!visited.add(stereotypeName)) return false;
+        var stereotypeClass = index.getClassByName(stereotypeName);
+        if (stereotypeClass.isPresent()) {
+            for (var ann : stereotypeClass.get().annotations()) {
+                if (ann.name().equals(NAMED)) return true;
+                if (isStereotype(ann.name()) && hasNamedInStereotypeRecursive(ann.name(), visited)) return true;
+            }
+        } else {
+            try {
+                var annType = Class.forName(stereotypeName.value());
+                if (annType.isAnnotationPresent(jakarta.inject.Named.class)) return true;
+                for (var meta : annType.getAnnotations()) {
+                    if (meta.annotationType().isAnnotationPresent(jakarta.enterprise.inject.Stereotype.class)
+                            && hasNamedInStereotypeRecursive(DotName.of(meta.annotationType().getName()), visited)) {
+                        return true;
+                    }
+                }
+            } catch (ClassNotFoundException e) { /* skip */ }
+        }
+        return false;
     }
 
     /**
@@ -1122,29 +1132,12 @@ public final class BeanDiscovery {
             }
         }
 
-        // 3. Check stereotypes for scope (direct + inherited)
+        // 3. Check stereotypes for scope (direct + transitive)
         var allAnnotationNames = getAllAnnotationNames(classInfo);
         for (var annName : allAnnotationNames) {
             if (isStereotype(annName)) {
-                var stereotypeClass = index.getClassByName(annName);
-                if (stereotypeClass.isPresent()) {
-                    var stereotypeScope = computeScopeFromAnnotations(stereotypeClass.get().annotations());
-                    if (!stereotypeScope.equals(ScopeInfo.DEPENDENT)
-                            || hasScopeAnnotation(stereotypeClass.get().annotations())) {
-                        return stereotypeScope;
-                    }
-                } else {
-                    // Fallback: check stereotype scope via reflection
-                    try {
-                        var annType = Class.forName(annName.value());
-                        for (var metaAnn : annType.getAnnotations()) {
-                            var reflScope = mapScope(DotName.of(metaAnn.annotationType().getName()));
-                            if (reflScope != null) return reflScope;
-                        }
-                    } catch (ClassNotFoundException e) {
-                        // skip
-                    }
-                }
+                var stereotypeScope = findScopeInStereotypeRecursive(annName, new java.util.HashSet<>());
+                if (stereotypeScope != null) return stereotypeScope;
             }
         }
 
@@ -1188,31 +1181,46 @@ public final class BeanDiscovery {
             var scope = mapScope(ann.name());
             if (scope != null) return scope;
         }
-        // 2. Scope from stereotype
+        // 2. Scope from stereotype (transitively)
         for (var ann : annotations) {
             if (isStereotype(ann.name())) {
-                var stereotypeClass = index.getClassByName(ann.name());
-                if (stereotypeClass.isPresent()) {
-                    var scope = computeScopeFromAnnotations(stereotypeClass.get().annotations());
-                    if (!scope.equals(ScopeInfo.DEPENDENT) ||
-                            stereotypeClass.get().annotations().stream().anyMatch(a -> mapScope(a.name()) != null)) {
-                        return scope;
-                    }
-                } else {
-                    // Fallback: check stereotype scope via reflection
-                    try {
-                        var annType = Class.forName(ann.name().value());
-                        for (var metaAnn : annType.getAnnotations()) {
-                            var scope = mapScope(DotName.of(metaAnn.annotationType().getName()));
-                            if (scope != null) return scope;
-                        }
-                    } catch (ClassNotFoundException e) {
-                        // skip
-                    }
-                }
+                var scope = findScopeInStereotypeRecursive(ann.name(), new java.util.HashSet<>());
+                if (scope != null) return scope;
             }
         }
         return ScopeInfo.DEPENDENT;
+    }
+
+    private ScopeInfo findScopeInStereotypeRecursive(DotName stereotypeName, Set<DotName> visited) {
+        if (!visited.add(stereotypeName)) return null;
+        var stereotypeClass = index.getClassByName(stereotypeName);
+        if (stereotypeClass.isPresent()) {
+            // Check direct scope annotations
+            for (var ann : stereotypeClass.get().annotations()) {
+                var scope = mapScope(ann.name());
+                if (scope != null) return scope;
+            }
+            // Recurse into transitive stereotypes
+            for (var ann : stereotypeClass.get().annotations()) {
+                if (isStereotype(ann.name())) {
+                    var scope = findScopeInStereotypeRecursive(ann.name(), visited);
+                    if (scope != null) return scope;
+                }
+            }
+        } else {
+            try {
+                var annType = Class.forName(stereotypeName.value());
+                for (var metaAnn : annType.getAnnotations()) {
+                    var scope = mapScope(DotName.of(metaAnn.annotationType().getName()));
+                    if (scope != null) return scope;
+                    if (metaAnn.annotationType().isAnnotationPresent(jakarta.enterprise.inject.Stereotype.class)) {
+                        var s = findScopeInStereotypeRecursive(DotName.of(metaAnn.annotationType().getName()), visited);
+                        if (s != null) return s;
+                    }
+                }
+            } catch (ClassNotFoundException e) { /* skip */ }
+        }
+        return null;
     }
 
     private ScopeInfo mapScope(DotName annotationName) {
