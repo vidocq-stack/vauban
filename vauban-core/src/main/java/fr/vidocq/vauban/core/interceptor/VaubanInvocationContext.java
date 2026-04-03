@@ -239,42 +239,37 @@ public final class VaubanInvocationContext implements InvocationContext {
     @Override
     public Object proceed() throws Exception {
         try {
+            int savedIndex = currentIndex;
             currentIndex++;
-            if (currentIndex < chain.size()) {
-                // Call next interceptor
-                var invocation = chain.get(currentIndex);
-                // CDI spec: target instance is null for @AroundConstruct until proceed() returns
-                // For target class methods (target == null in invocation), they are called last,
-                // AFTER the actual constructor has been called via targetInvoker.
-                if (constructor != null && invocation.target() == null) {
-                    if (target == null) {
-                        // The method itself must call proceed() to create the instance.
-                        // We advance the index so that the method's proceed() call
-                        // continues to the next item (e.g. targetInvoker).
-                        return invocation.method().invoke(null, this);
-                    } else {
-                        // target already exists, just call the method
-                        invocation.method().setAccessible(true);
-                        invocation.method().invoke(target, this);
-                        return null;
+            try {
+                if (currentIndex < chain.size()) {
+                    var invocation = chain.get(currentIndex);
+                    if (constructor != null && invocation.target() == null) {
+                        if (target == null) {
+                            return invocation.method().invoke(null, this);
+                        } else {
+                            invocation.method().setAccessible(true);
+                            invocation.method().invoke(target, this);
+                            return null;
+                        }
                     }
-                }
-                return invocation.invoke(this);
-            } else {
-                // End of chain — call the actual method/constructor
-                if (targetInvoker != null) {
-                    var result = targetInvoker.invoke(target, parameters);
-                    // For @AroundConstruct: the result is the newly created instance
-                    if (constructor != null && result != null) {
-                        target = result;
+                    return invocation.invoke(this);
+                } else {
+                    if (targetInvoker != null) {
+                        var result = targetInvoker.invoke(target, parameters);
+                        if (constructor != null && result != null) {
+                            target = result;
+                        }
+                        return constructor != null ? null : result;
                     }
-                    return constructor != null ? null : result;
+                    if (method != null) {
+                        method.setAccessible(true);
+                        return method.invoke(target, parameters);
+                    }
+                    return null;
                 }
-                if (method != null) {
-                    method.setAccessible(true);
-                    return method.invoke(target, parameters);
-                }
-                return null;
+            } finally {
+                currentIndex = savedIndex;
             }
         } catch (java.lang.reflect.InvocationTargetException e) {
             var cause = e.getCause();

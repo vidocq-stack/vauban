@@ -108,37 +108,27 @@ public final class ManagedBean<T> implements Bean<T> {
 
     private void callPreDestroy(Object instance, CreationalContext<?> ctx) {
         if (instance == null) return;
-        // Find @PreDestroy method
-        java.lang.reflect.Method preDestroyMethod = null;
-        var clazz = instance.getClass();
-        while (clazz != null && clazz != Object.class) {
-            for (var method : clazz.getDeclaredMethods()) {
-                if (method.isAnnotationPresent(jakarta.annotation.PreDestroy.class)) {
-                    method.setAccessible(true);
-                    preDestroyMethod = method;
-                    break;
-                }
-            }
-            if (preDestroyMethod != null) break;
-            clazz = clazz.getSuperclass();
-        }
+        // Find all @PreDestroy methods in the bean hierarchy (respecting override rules)
+        var preDestroyMethods = collectLifecycleMethodsInHierarchy(instance.getClass(), jakarta.annotation.PreDestroy.class);
 
         // Check for lifecycle interceptors
         java.util.Set<fr.vidocq.vauban.indexer.model.DotName> bindings = (descriptor != null) ? descriptor.interceptorBindings() : findInterceptorBindings(instance);
         if (interceptorManager != null && interceptorManager.hasInterceptors() && bindings != null && !bindings.isEmpty()) {
             interceptorManager.setClassLoader(instance.getClass().getClassLoader());
-            // Collect binding annotations for InvocationContext.getInterceptorBindings()
-            var bindingAnnotations = (descriptor != null) ? new java.util.ArrayList<java.lang.annotation.Annotation>(descriptor.interceptorBindingAnnotations()) 
+            var bindingAnnotations = (descriptor != null) ? new java.util.ArrayList<java.lang.annotation.Annotation>(descriptor.interceptorBindingAnnotations())
                                                           : new java.util.ArrayList<java.lang.annotation.Annotation>(collectBindingAnnotations(instance));
             var chain = interceptorManager.resolveLifecycleChain(
                     bindings, jakarta.annotation.PreDestroy.class, bindingAnnotations, ctx);
                 if (!chain.isEmpty()) {
                     var bindingAnnotationsSet = new java.util.LinkedHashSet<java.lang.annotation.Annotation>(bindingAnnotations);
-                    final var pdMethod = preDestroyMethod;
+                    final var pdMethods = preDestroyMethods;
                     var invocationCtx = new fr.vidocq.vauban.core.interceptor.VaubanInvocationContext(
                             instance, null, new Object[0], chain,
                             (target, params) -> {
-                                if (pdMethod != null) pdMethod.invoke(target);
+                                for (var m : pdMethods) {
+                                    m.setAccessible(true);
+                                    m.invoke(target);
+                                }
                                 return null;
                             });
                     invocationCtx.setInterceptorBindings(bindingAnnotationsSet);
@@ -152,11 +142,39 @@ public final class ManagedBean<T> implements Bean<T> {
         }
 
         // No interceptors — call directly
-        if (preDestroyMethod != null) {
+        for (var pdMethod : preDestroyMethods) {
             try {
-                preDestroyMethod.invoke(instance);
+                pdMethod.setAccessible(true);
+                pdMethod.invoke(instance);
             } catch (Exception e) {
                 // CDI spec says exceptions in @PreDestroy are caught, not propagated
+            }
+        }
+    }
+
+    private static java.util.List<java.lang.reflect.Method> collectLifecycleMethodsInHierarchy(
+            Class<?> clazz, Class<? extends java.lang.annotation.Annotation> annotation) {
+        if (clazz.getName().contains("$$Intercepted") || clazz.getName().contains("$$Proxy")) {
+            clazz = clazz.getSuperclass();
+        }
+        var result = new java.util.ArrayList<java.lang.reflect.Method>();
+        collectLifecycleMethodsRecursive(clazz, annotation, result);
+        return result;
+    }
+
+    private static void collectLifecycleMethodsRecursive(Class<?> clazz,
+            Class<? extends java.lang.annotation.Annotation> annotation,
+            java.util.List<java.lang.reflect.Method> result) {
+        if (clazz == null || clazz == Object.class) return;
+        collectLifecycleMethodsRecursive(clazz.getSuperclass(), annotation, result);
+        for (var method : clazz.getDeclaredMethods()) {
+            if (method.isAnnotationPresent(annotation)) {
+                result.removeIf(m -> m.getName().equals(method.getName())
+                        && java.util.Arrays.equals(m.getParameterTypes(), method.getParameterTypes()));
+                result.add(method);
+            } else {
+                result.removeIf(m -> m.getName().equals(method.getName())
+                        && java.util.Arrays.equals(m.getParameterTypes(), method.getParameterTypes()));
             }
         }
     }
@@ -172,8 +190,26 @@ public final class ManagedBean<T> implements Bean<T> {
                 annotations.add(ann);
             }
         }
-        // Simplified transitive collection if needed, but for now basic ones
+        // Collect transitive binding annotations from meta-annotations
+        var toAdd = new java.util.LinkedHashSet<java.lang.annotation.Annotation>();
+        for (var ann : annotations) {
+            collectTransitiveBindingAnnotations(ann.annotationType(), toAdd, annotations);
+        }
+        annotations.addAll(toAdd);
         return annotations;
+    }
+
+    private static void collectTransitiveBindingAnnotations(
+            Class<? extends java.lang.annotation.Annotation> annType,
+            Set<java.lang.annotation.Annotation> toAdd,
+            Set<java.lang.annotation.Annotation> existing) {
+        for (var meta : annType.getAnnotations()) {
+            if (meta.annotationType().isAnnotationPresent(jakarta.interceptor.InterceptorBinding.class)
+                    && !existing.contains(meta) && !toAdd.contains(meta)) {
+                toAdd.add(meta);
+                collectTransitiveBindingAnnotations(meta.annotationType(), toAdd, existing);
+            }
+        }
     }
 
     private Set<fr.vidocq.vauban.indexer.model.DotName> findInterceptorBindings(Object instance) {
@@ -183,9 +219,23 @@ public final class ManagedBean<T> implements Bean<T> {
         for (var ann : clazz.getAnnotations()) {
             if (ann.annotationType().isAnnotationPresent(jakarta.interceptor.InterceptorBinding.class)) {
                 bindings.add(fr.vidocq.vauban.indexer.model.DotName.of(ann.annotationType().getName()));
+                // Collect transitive bindings from meta-annotations
+                collectTransitiveInterceptorBindings(ann.annotationType(), bindings);
             }
         }
         return bindings;
+    }
+
+    private static void collectTransitiveInterceptorBindings(Class<? extends java.lang.annotation.Annotation> annType,
+            Set<fr.vidocq.vauban.indexer.model.DotName> bindings) {
+        for (var meta : annType.getAnnotations()) {
+            if (meta.annotationType().isAnnotationPresent(jakarta.interceptor.InterceptorBinding.class)) {
+                var name = fr.vidocq.vauban.indexer.model.DotName.of(meta.annotationType().getName());
+                if (bindings.add(name)) {
+                    collectTransitiveInterceptorBindings(meta.annotationType(), bindings);
+                }
+            }
+        }
     }
 
     @Override
@@ -722,7 +772,7 @@ public final class ManagedBean<T> implements Bean<T> {
                     var params = ctor.getParameters();
                     for (int i = 0; i < params.length; i++) {
                         var qualifiers = extractParamQualifiers(params[i]);
-                        result.add(new VaubanInjectionPoint(paramTypes[i], qualifiers, this));
+                        result.add(new VaubanInjectionPoint(params[i], i, ctor, paramTypes[i], qualifiers, this));
                     }
                 }
             }
@@ -733,7 +783,7 @@ public final class ManagedBean<T> implements Bean<T> {
                     var params = method.getParameters();
                     for (int i = 0; i < params.length; i++) {
                         var qualifiers = extractParamQualifiers(params[i]);
-                        result.add(new VaubanInjectionPoint(paramTypes[i], qualifiers, this));
+                        result.add(new VaubanInjectionPoint(params[i], i, method, paramTypes[i], qualifiers, this));
                     }
                 }
             }

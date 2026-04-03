@@ -47,14 +47,84 @@ public final class VaubanObserverMethod<T> implements ObserverMethod<T> {
 
     @Override
     public Type getObservedType() {
-        if (descriptor.eventType() instanceof TypeInfo.ClassType ct) {
-            try {
-                return Class.forName(ct.name().value(), true, classLoader);
-            } catch (ClassNotFoundException e) {
-                return Object.class;
+        return resolveTypeInfo(descriptor.eventType());
+    }
+
+    private Type resolveTypeInfo(TypeInfo typeInfo) {
+        return switch (typeInfo) {
+            case TypeInfo.ClassType ct -> {
+                try {
+                    yield Class.forName(ct.name().value(), true, classLoader);
+                } catch (ClassNotFoundException e) {
+                    yield Object.class;
+                }
             }
-        }
-        return Object.class;
+            case TypeInfo.ParameterizedType pt -> {
+                try {
+                    var rawClass = Class.forName(pt.rawType().value(), true, classLoader);
+                    var typeArgs = pt.typeArguments().stream()
+                            .map(this::resolveTypeInfo)
+                            .toArray(Type[]::new);
+                    yield new ResolvedParameterizedType(rawClass, typeArgs);
+                } catch (ClassNotFoundException e) {
+                    yield Object.class;
+                }
+            }
+            case TypeInfo.TypeVariable tv -> {
+                var bounds = tv.bounds().stream()
+                        .map(this::resolveTypeInfo)
+                        .filter(t -> t != Object.class)
+                        .toArray(Type[]::new);
+                yield new ResolvedTypeVariable(tv.name(), bounds.length > 0 ? bounds : new Type[]{Object.class});
+            }
+            case TypeInfo.WildcardType wt -> {
+                var upper = wt.upperBound() != null ? resolveTypeInfo(wt.upperBound()) : Object.class;
+                var lower = wt.lowerBound() != null ? resolveTypeInfo(wt.lowerBound()) : null;
+                yield new ResolvedWildcardType(
+                        new Type[]{upper},
+                        lower != null ? new Type[]{lower} : new Type[0]);
+            }
+            case TypeInfo.ArrayType at -> {
+                var component = resolveTypeInfo(at.componentType());
+                if (component instanceof Class<?> cc) {
+                    yield java.lang.reflect.Array.newInstance(cc, 0).getClass();
+                }
+                yield new ResolvedGenericArrayType(component);
+            }
+            default -> Object.class;
+        };
+    }
+
+    private record ResolvedParameterizedType(Class<?> rawType, Type[] typeArguments)
+            implements java.lang.reflect.ParameterizedType {
+        @Override public Type[] getActualTypeArguments() { return typeArguments.clone(); }
+        @Override public Type getRawType() { return rawType; }
+        @Override public Type getOwnerType() { return null; }
+    }
+
+    private record ResolvedWildcardType(Type[] upperBounds, Type[] lowerBounds)
+            implements java.lang.reflect.WildcardType {
+        @Override public Type[] getUpperBounds() { return upperBounds.clone(); }
+        @Override public Type[] getLowerBounds() { return lowerBounds.clone(); }
+    }
+
+    @SuppressWarnings("unchecked")
+    private static final class ResolvedTypeVariable implements java.lang.reflect.TypeVariable<java.lang.reflect.GenericDeclaration> {
+        private final String tvName;
+        private final Type[] tvBounds;
+        ResolvedTypeVariable(String name, Type[] bounds) { this.tvName = name; this.tvBounds = bounds; }
+        @Override public Type[] getBounds() { return tvBounds.clone(); }
+        @Override public java.lang.reflect.GenericDeclaration getGenericDeclaration() { return Object.class; }
+        @Override public String getName() { return tvName; }
+        @Override public java.lang.reflect.AnnotatedType[] getAnnotatedBounds() { return new java.lang.reflect.AnnotatedType[0]; }
+        @Override public <T extends java.lang.annotation.Annotation> T getAnnotation(Class<T> c) { return null; }
+        @Override public java.lang.annotation.Annotation[] getAnnotations() { return new java.lang.annotation.Annotation[0]; }
+        @Override public java.lang.annotation.Annotation[] getDeclaredAnnotations() { return new java.lang.annotation.Annotation[0]; }
+    }
+
+    private record ResolvedGenericArrayType(Type componentType)
+            implements java.lang.reflect.GenericArrayType {
+        @Override public Type getGenericComponentType() { return componentType; }
     }
 
     @Override

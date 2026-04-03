@@ -897,12 +897,21 @@ public final class VaubanContainer implements AutoCloseable {
                     var genericParamTypes = method.getGenericParameterTypes();
                     var params = method.getParameters();
                     var args = new Object[paramTypes.length];
+                    var transientContexts = new java.util.ArrayList<CreationalContextImpl<?>>();
                     for (int i = 0; i < paramTypes.length; i++) {
-                        // Extract qualifiers from parameter annotations
                         var paramQuals = extractParamQualifiers(params[i]);
-                        args[i] = resolveParameter(paramTypes[i], genericParamTypes[i], ctx, paramQuals, method);
+                        if (params[i].isAnnotationPresent(jakarta.enterprise.inject.TransientReference.class)) {
+                            var transientCtx = new CreationalContextImpl<>();
+                            args[i] = resolveParameter(paramTypes[i], genericParamTypes[i], transientCtx, paramQuals, method);
+                            transientContexts.add(transientCtx);
+                        } else {
+                            args[i] = resolveParameter(paramTypes[i], genericParamTypes[i], ctx, paramQuals, method);
+                        }
                     }
                     method.invoke(instance, args);
+                    for (var tc : transientContexts) {
+                        tc.release();
+                    }
                 } catch (Exception e) {
                     throw new RuntimeException("Failed to call initializer method: " + method.getName(), e);
                 }
@@ -992,38 +1001,27 @@ public final class VaubanContainer implements AutoCloseable {
             return;
         }
 
-        // Find @PostConstruct method
-        java.lang.reflect.Method postConstructMethod = null;
-        var clazz = instance.getClass();
-        while (clazz != null && clazz != Object.class) {
-            for (var method : clazz.getDeclaredMethods()) {
-                if (method.isAnnotationPresent(jakarta.annotation.PostConstruct.class)) {
-                    method.setAccessible(true);
-                    postConstructMethod = method;
-                    break;
-                }
-            }
-            if (postConstructMethod != null) break;
-            clazz = clazz.getSuperclass();
-        }
+        // Find all @PostConstruct methods in the bean hierarchy (respecting override rules)
+        var postConstructMethods = collectLifecycleMethodsInHierarchy(instance.getClass(), jakarta.annotation.PostConstruct.class);
 
         // Check for lifecycle interceptors on the bean
         java.util.Set<fr.vidocq.vauban.indexer.model.DotName> beanBindings = (descriptor != null) ? descriptor.interceptorBindings() : findInterceptorBindings(instance);
         if (beanBindings != null && !beanBindings.isEmpty() && interceptorManager.hasInterceptors()) {
             interceptorManager.setClassLoader(instance.getClass().getClassLoader());
-            var bindingAnns = (descriptor != null) ? new java.util.ArrayList<java.lang.annotation.Annotation>(descriptor.interceptorBindingAnnotations()) 
+            var bindingAnns = (descriptor != null) ? new java.util.ArrayList<java.lang.annotation.Annotation>(descriptor.interceptorBindingAnnotations())
                                                    : new java.util.ArrayList<java.lang.annotation.Annotation>(collectBindingAnnotations(instance));
             var lifecycleChain = interceptorManager.resolveLifecycleChain(
                     beanBindings, jakarta.annotation.PostConstruct.class, bindingAnns, ctx);
             if (!lifecycleChain.isEmpty()) {
-                // Collect binding annotations for InvocationContext.getInterceptorBindings()
                 var bindingAnnotations = new java.util.LinkedHashSet<java.lang.annotation.Annotation>(bindingAnns);
-                // Invoke lifecycle interceptors through InvocationContext
-                final var pcMethod = postConstructMethod;
+                final var pcMethods = postConstructMethods;
                 var invocationCtx = new fr.vidocq.vauban.core.interceptor.VaubanInvocationContext(
                         instance, null, new Object[0], lifecycleChain,
                         (target, params) -> {
-                            if (pcMethod != null) pcMethod.invoke(target);
+                            for (var m : pcMethods) {
+                                m.setAccessible(true);
+                                m.invoke(target);
+                            }
                             return null;
                         });
                 invocationCtx.setInterceptorBindings(bindingAnnotations);
@@ -1039,11 +1037,48 @@ public final class VaubanContainer implements AutoCloseable {
         }
 
         // No interceptors — call @PostConstruct directly
-        if (postConstructMethod != null) {
+        for (var pcMethod : postConstructMethods) {
             try {
-                postConstructMethod.invoke(instance);
+                pcMethod.setAccessible(true);
+                pcMethod.invoke(instance);
             } catch (Exception e) {
-                throw new RuntimeException("@PostConstruct failed: " + postConstructMethod, e);
+                throw new RuntimeException("@PostConstruct failed: " + pcMethod, e);
+            }
+        }
+    }
+
+    /**
+     * Collect all lifecycle methods in a class hierarchy, respecting override rules.
+     * Superclass methods come first. If a subclass overrides a method WITHOUT the
+     * lifecycle annotation, the callback is disabled.
+     */
+    private static java.util.List<java.lang.reflect.Method> collectLifecycleMethodsInHierarchy(
+            Class<?> clazz, Class<? extends java.lang.annotation.Annotation> annotation) {
+        // Skip intercepted subclass
+        if (clazz.getName().contains("$$Intercepted") || clazz.getName().contains("$$Proxy")) {
+            clazz = clazz.getSuperclass();
+        }
+        var result = new java.util.ArrayList<java.lang.reflect.Method>();
+        collectLifecycleMethodsRecursive(clazz, annotation, result);
+        return result;
+    }
+
+    private static void collectLifecycleMethodsRecursive(Class<?> clazz,
+            Class<? extends java.lang.annotation.Annotation> annotation,
+            java.util.List<java.lang.reflect.Method> result) {
+        if (clazz == null || clazz == Object.class) return;
+        // Process superclass first (CDI spec: superclass methods called first)
+        collectLifecycleMethodsRecursive(clazz.getSuperclass(), annotation, result);
+        for (var method : clazz.getDeclaredMethods()) {
+            if (method.isAnnotationPresent(annotation)) {
+                // Remove any superclass method with the same signature (override)
+                result.removeIf(m -> m.getName().equals(method.getName())
+                        && java.util.Arrays.equals(m.getParameterTypes(), method.getParameterTypes()));
+                result.add(method);
+            } else {
+                // If subclass overrides WITHOUT annotation, disable the callback
+                result.removeIf(m -> m.getName().equals(method.getName())
+                        && java.util.Arrays.equals(m.getParameterTypes(), method.getParameterTypes()));
             }
         }
     }
@@ -1078,16 +1113,19 @@ public final class VaubanContainer implements AutoCloseable {
      */
     private Set<DotName> findInterceptorBindings(Object instance) {
         var bindings = new java.util.LinkedHashSet<DotName>();
-        // Check the original bean class (superclass of intercepted subclass)
         var clazz = instance.getClass();
         if (clazz.getName().contains("$$Intercepted")) {
             clazz = clazz.getSuperclass();
         }
+        var annotations = new java.util.LinkedHashSet<java.lang.annotation.Annotation>();
         for (var ann : clazz.getAnnotations()) {
             if (ann.annotationType().isAnnotationPresent(jakarta.interceptor.InterceptorBinding.class)) {
                 bindings.add(DotName.of(ann.annotationType().getName()));
+                annotations.add(ann);
             }
         }
+        // Collect transitive bindings
+        collectTransitiveBindings(annotations, bindings);
         return bindings;
     }
 
@@ -1220,8 +1258,8 @@ public final class VaubanContainer implements AutoCloseable {
                 var matches = interceptorManager.resolveInterceptorDescriptors(classBindings);
                 if (matches.isEmpty()) {
                     boolean hasInterceptors = false;
-                    // Check method-level bindings
-                    for (var m : beanClass.getMethods()) {
+                    // Check method-level bindings (include non-public methods)
+                    for (var m : beanClass.getDeclaredMethods()) {
                         if (!interceptorManager.resolveInterceptorDescriptorsForMethod(classBindings, m).isEmpty()) {
                             hasInterceptors = true;
                             break;
@@ -1839,21 +1877,32 @@ public final class VaubanContainer implements AutoCloseable {
                     var genericParamTypes = injectCtor.getGenericParameterTypes();
                     var ctorParamsRefl = injectCtor.getParameters();
                     var args = new Object[paramTypes.length];
+                    var transientCtxs = new java.util.ArrayList<fr.vidocq.vauban.core.context.CreationalContextImpl<?>>();
                     for (int i = 0; i < paramTypes.length; i++) {
                         var pQuals = extractParamQualifiers(ctorParamsRefl[i]);
-                        args[i] = resolveParameter(paramTypes[i], genericParamTypes[i], creationalCtx, pQuals, injectCtor);
+                        if (ctorParamsRefl[i].isAnnotationPresent(jakarta.enterprise.inject.TransientReference.class)) {
+                            var transientCtx = new fr.vidocq.vauban.core.context.CreationalContextImpl<>();
+                            args[i] = resolveParameter(paramTypes[i], genericParamTypes[i], transientCtx, pQuals, injectCtor);
+                            transientCtxs.add(transientCtx);
+                        } else {
+                            args[i] = resolveParameter(paramTypes[i], genericParamTypes[i], creationalCtx, pQuals, injectCtor);
+                        }
                     }
 
                     final var finalCtor = injectCtor;
                     final var finalArgs = args;
                     finalCtor.setAccessible(true);
 
-                    // If we have an interception context, let it handle the instantiation
+                    Object result;
                     if (constructCtx != null) {
-                        return finalCtor.newInstance(finalArgs);
+                        result = finalCtor.newInstance(finalArgs);
+                    } else {
+                        result = finalCtor.newInstance(finalArgs);
                     }
-
-                    return finalCtor.newInstance(finalArgs);
+                    for (var tc : transientCtxs) {
+                        tc.release();
+                    }
+                    return result;
                 } catch (java.lang.reflect.InvocationTargetException e) {
                     var cause = e.getCause();
                     if (cause instanceof RuntimeException re) throw re;
@@ -1888,24 +1937,26 @@ public final class VaubanContainer implements AutoCloseable {
                     for (var method : declaringClass.getDeclaredMethods()) {
                         if (method.getName().equals(methodName)) {
                             method.setAccessible(true);
-                            // Use a temporary ctx to track @Dependent params for cleanup
-                            var paramCtx = new fr.vidocq.vauban.core.context.CreationalContextImpl<>();
+                            var transientCtx = new fr.vidocq.vauban.core.context.CreationalContextImpl<>();
                             try {
                                 if (method.getParameterCount() == 0) {
                                     return method.invoke(declaringInstance);
                                 }
-                                // Resolve parameters as injection points
                                 var paramTypes = method.getParameterTypes();
                                 var genericParamTypes = method.getGenericParameterTypes();
                                 var params = method.getParameters();
                                 var args = new Object[paramTypes.length];
                                 for (int i = 0; i < paramTypes.length; i++) {
                                     var qualifiers = extractParamQualifiers(params[i]);
-                                    args[i] = resolveParameter(paramTypes[i], genericParamTypes[i], paramCtx, qualifiers, method);
+                                    if (params[i].isAnnotationPresent(jakarta.enterprise.inject.TransientReference.class)) {
+                                        args[i] = resolveParameter(paramTypes[i], genericParamTypes[i], transientCtx, qualifiers, method);
+                                    } else {
+                                        args[i] = resolveParameter(paramTypes[i], genericParamTypes[i], ctx != null ? ctx : transientCtx, qualifiers, method);
+                                    }
                                 }
                                 return method.invoke(declaringInstance, args);
                             } finally {
-                                paramCtx.release();
+                                transientCtx.release();
                                 // CDI spec: destroy @Dependent declaring bean after producer method completes
                                 if (isDependent && declaringInstance != null) {
                                     @SuppressWarnings("unchecked")

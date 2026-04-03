@@ -8,10 +8,14 @@ import java.lang.annotation.Annotation;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashSet;
+import java.util.IdentityHashMap;
 import java.util.Iterator;
+import java.util.Map;
 import java.util.Set;
 import java.util.stream.Stream;
 import java.util.stream.StreamSupport;
+
+import fr.vidocq.vauban.core.context.CreationalContextImpl;
 
 /**
  * Implementation of {@link Instance} for programmatic bean lookup.
@@ -23,19 +27,28 @@ public final class InstanceImpl<T> implements Instance<T> {
     private final Class<T> type;
     private final Annotation[] qualifiers;
     private final jakarta.enterprise.inject.spi.InjectionPoint injectionPoint;
+    private final CreationalContextImpl<?> parentCreationalContext;
+    private final Map<Object, jakarta.enterprise.context.spi.CreationalContext<?>> dependentInstances = new IdentityHashMap<>();
 
     public InstanceImpl(VaubanContainer container, Class<T> type) {
-        this(container, type, new Annotation[0], null);
+        this(container, type, new Annotation[0], null, null);
     }
 
     public InstanceImpl(VaubanContainer container, Class<T> type, jakarta.enterprise.inject.spi.InjectionPoint injectionPoint) {
-        this(container, type, new Annotation[0], injectionPoint);
+        this(container, type, new Annotation[0], injectionPoint, null);
     }
 
     public InstanceImpl(VaubanContainer container, Class<T> type, Annotation[] qualifiers, jakarta.enterprise.inject.spi.InjectionPoint injectionPoint) {
+        this(container, type, qualifiers, injectionPoint, null);
+    }
+
+    public InstanceImpl(VaubanContainer container, Class<T> type, Annotation[] qualifiers,
+                        jakarta.enterprise.inject.spi.InjectionPoint injectionPoint,
+                        CreationalContextImpl<?> parentCreationalContext) {
         this.container = container;
         this.type = type;
         this.injectionPoint = injectionPoint;
+        this.parentCreationalContext = parentCreationalContext;
         // If qualifiers are empty, default to @Any and @Default
         if (qualifiers == null || qualifiers.length == 0) {
             this.qualifiers = new Annotation[] {
@@ -62,14 +75,19 @@ public final class InstanceImpl<T> implements Instance<T> {
         }
         @SuppressWarnings("unchecked")
         var bean = (Bean<T>) bm.resolve(beans);
-        
+
         var previousIp = VaubanContainer.getCurrentInjectionPoint();
-        // Always set the injection point — null means "not being injected" (CDI spec)
         VaubanContainer.setInjectionPoint(injectionPoint);
         try {
             var ctx = bm.createCreationalContext(bean);
             @SuppressWarnings("unchecked")
             var ref = (T) bm.getReference(bean, type, ctx);
+            if (ref != null && bean.getScope() == jakarta.enterprise.context.Dependent.class) {
+                dependentInstances.put(ref, ctx);
+                if (parentCreationalContext != null) {
+                    parentCreationalContext.addDependentInstance(bean, ref, ctx);
+                }
+            }
             return ref;
         } finally {
             VaubanContainer.setInjectionPoint(previousIp);
@@ -79,13 +97,13 @@ public final class InstanceImpl<T> implements Instance<T> {
     @Override
     public Instance<T> select(Annotation... newQualifiers) {
         validateQualifiers(newQualifiers);
-        return new InstanceImpl<>(container, type, combineQualifiers(this.qualifiers, newQualifiers), injectionPoint);
+        return new InstanceImpl<>(container, type, combineQualifiers(this.qualifiers, newQualifiers), injectionPoint, parentCreationalContext);
     }
 
     @Override
     public <U extends T> Instance<U> select(Class<U> subtype, Annotation... newQualifiers) {
         validateQualifiers(newQualifiers);
-        return new InstanceImpl<>(container, subtype, combineQualifiers(this.qualifiers, newQualifiers), injectionPoint);
+        return new InstanceImpl<>(container, subtype, combineQualifiers(this.qualifiers, newQualifiers), injectionPoint, parentCreationalContext);
     }
 
     @Override
@@ -93,7 +111,7 @@ public final class InstanceImpl<T> implements Instance<T> {
         validateQualifiers(newQualifiers);
         @SuppressWarnings("unchecked")
         var clazz = (Class<U>) subtype.getType();
-        return new InstanceImpl<>(container, clazz, combineQualifiers(this.qualifiers, newQualifiers), injectionPoint);
+        return new InstanceImpl<>(container, clazz, combineQualifiers(this.qualifiers, newQualifiers), injectionPoint, parentCreationalContext);
     }
 
     private static Annotation[] combineQualifiers(Annotation[] existing, Annotation[] additional) {
@@ -182,18 +200,19 @@ public final class InstanceImpl<T> implements Instance<T> {
         var bean = (Bean<T>) bm.resolve(beans);
         var scope = bean.getScope();
         if (scope == jakarta.enterprise.context.Dependent.class) {
-            // CDI spec: @Dependent beans are destroyed directly via Bean.destroy()
-            var ctx = bm.createCreationalContext(bean);
-            bean.destroy(instance, ctx);
+            var trackedCtx = (jakarta.enterprise.context.spi.CreationalContext<T>) dependentInstances.remove(instance);
+            if (trackedCtx == null) {
+                trackedCtx = bm.createCreationalContext(bean);
+            }
+            bean.destroy(instance, trackedCtx);
         } else {
-            // For normal-scoped beans, use AlterableContext.destroy()
             try {
                 var ctx = bm.getContext(scope);
                 if (ctx instanceof jakarta.enterprise.context.spi.AlterableContext ac) {
                     ac.destroy((jakarta.enterprise.context.spi.Contextual<?>) bean);
                 }
             } catch (Exception e) {
-                // Best effort — context may not be active
+                // Best effort -- context may not be active
             }
         }
     }
@@ -293,6 +312,7 @@ public final class InstanceImpl<T> implements Instance<T> {
         private final VaubanContainer container;
         private final jakarta.enterprise.inject.spi.InjectionPoint injectionPoint;
         private T instance;
+        private jakarta.enterprise.context.spi.CreationalContext<T> creationalContext;
         private boolean destroyed;
 
         HandleImpl(Bean<T> bean, Class<T> type, VaubanContainer container, jakarta.enterprise.inject.spi.InjectionPoint injectionPoint) {
@@ -303,6 +323,7 @@ public final class InstanceImpl<T> implements Instance<T> {
         }
 
         @Override
+        @SuppressWarnings("unchecked")
         public T get() {
             if (destroyed) {
                 throw new IllegalStateException("Handle has been destroyed");
@@ -314,8 +335,8 @@ public final class InstanceImpl<T> implements Instance<T> {
                 }
                 try {
                     var bm = container.getBeanManager();
-                    var ctx = bm.createCreationalContext(bean);
-                    instance = (T) bm.getReference(bean, type, ctx);
+                    creationalContext = bm.createCreationalContext(bean);
+                    instance = (T) bm.getReference(bean, type, creationalContext);
                 } finally {
                     VaubanContainer.setInjectionPoint(previousIp);
                 }
@@ -332,16 +353,22 @@ public final class InstanceImpl<T> implements Instance<T> {
         @SuppressWarnings("unchecked")
         public void destroy() {
             if (destroyed) return;
-            try {
-                var bm = container.getBeanManager();
-                var ctx = bm.getContext(bean.getScope());
-                if (ctx instanceof jakarta.enterprise.context.spi.AlterableContext ac) {
-                    ac.destroy((jakarta.enterprise.context.spi.Contextual<?>) bean);
-                }
-            } catch (Exception e) {
-                // Best effort
-            }
             destroyed = true;
+            if (instance == null) return;
+            var scope = bean.getScope();
+            if (scope == jakarta.enterprise.context.Dependent.class) {
+                bean.destroy(instance, creationalContext);
+            } else {
+                try {
+                    var bm = container.getBeanManager();
+                    var ctx = bm.getContext(scope);
+                    if (ctx instanceof jakarta.enterprise.context.spi.AlterableContext ac) {
+                        ac.destroy((jakarta.enterprise.context.spi.Contextual<?>) bean);
+                    }
+                } catch (Exception e) {
+                    // Best effort
+                }
+            }
             instance = null;
         }
 

@@ -2,6 +2,7 @@ package fr.vidocq.vauban.core.event;
 
 import fr.vidocq.vauban.core.bean.model.ObserverDescriptor;
 import fr.vidocq.vauban.core.bean.model.QualifierInstance;
+import fr.vidocq.vauban.core.container.QualifierUtils;
 import fr.vidocq.vauban.core.container.VaubanContainer;
 import fr.vidocq.vauban.indexer.model.DotName;
 import fr.vidocq.vauban.indexer.model.TypeInfo;
@@ -36,9 +37,8 @@ public final class EventDispatcher {
             Annotation... qualifiers) {
         var eventType = event.getClass();
         var qualifierInstances = toQualifierInstances(qualifiers);
-        var matching = findMatchingObservers(eventType, false, qualifierInstances);
+        var matching = findMatchingObservers(eventType, false, qualifierInstances, qualifiers);
 
-        // Sort by priority
         matching.sort(Comparator.comparingInt(ObserverDescriptor::priority));
 
         for (var observer : matching) {
@@ -59,7 +59,7 @@ public final class EventDispatcher {
             eventClass = event.getClass();
         }
         var qualifierInstances = toQualifierInstances(qualifiers);
-        var matching = findMatchingObservers(eventClass, false, qualifierInstances);
+        var matching = findMatchingObservers(eventClass, false, qualifierInstances, qualifiers);
         matching.sort(Comparator.comparingInt(ObserverDescriptor::priority));
         for (var observer : matching) {
             invokeObserver(observer, event, selectedType, eventInjectionPoint, qualifiers);
@@ -113,25 +113,46 @@ public final class EventDispatcher {
      */
     public List<ObserverDescriptor> findMatchingObservers(Class<?> eventType, boolean asyncOnly,
             Set<DotName> eventQualifiers) {
+        return findMatchingObservers(eventType, asyncOnly, eventQualifiers, null);
+    }
+
+    public List<ObserverDescriptor> findMatchingObservers(Class<?> eventType, boolean asyncOnly,
+            Set<DotName> eventQualifiers, Annotation[] eventQualifierAnnotations) {
         var result = new ArrayList<ObserverDescriptor>();
         for (var observer : observers) {
             if (asyncOnly && !observer.async()) continue;
             if (!asyncOnly && observer.async()) continue;
 
             // Match event type
-            Class<?> observedClass = resolveObservedType(observer.eventType());
-            if (observedClass != null && observedClass.isAssignableFrom(eventType)) {
-                // CDI spec: if observer has parameterized event type, check type arguments
-                if (observer.eventType() instanceof TypeInfo.ParameterizedType pt) {
-                    if (!matchesParameterizedObserver(pt, eventType)) continue;
-                }
-                // Match qualifiers: observer qualifiers must be subset of event qualifiers
-                if (observerQualifiersMatch(observer.qualifiers(), eventQualifiers)) {
-                    result.add(observer);
-                }
+            if (!eventTypeMatches(observer, eventType)) continue;
+
+            // Match qualifiers: observer qualifiers must be subset of event qualifiers
+            boolean qualMatch;
+            if (eventQualifierAnnotations != null && eventQualifierAnnotations.length > 0) {
+                qualMatch = observerQualifiersMatchFull(observer.qualifiers(), eventQualifierAnnotations);
+            } else {
+                qualMatch = observerQualifiersMatch(observer.qualifiers(), eventQualifiers);
+            }
+            if (qualMatch) {
+                result.add(observer);
             }
         }
         return result;
+    }
+
+    private boolean eventTypeMatches(ObserverDescriptor observer, Class<?> eventType) {
+        // TypeVariable observer type matches any event type
+        if (observer.eventType() instanceof TypeInfo.TypeVariable) return true;
+
+        Class<?> observedClass = resolveObservedType(observer.eventType());
+        if (observedClass == null) return false;
+        if (!observedClass.isAssignableFrom(eventType)) return false;
+
+        // CDI spec: if observer has parameterized event type, check type arguments
+        if (observer.eventType() instanceof TypeInfo.ParameterizedType pt) {
+            if (!matchesParameterizedObserver(pt, eventType)) return false;
+        }
+        return true;
     }
 
     /**
@@ -143,38 +164,89 @@ public final class EventDispatcher {
             var cl = container.classLoader();
             var rawObserved = Class.forName(observerType.rawType().value(), true, cl);
 
-            // Find the actual type arguments of eventClass for rawObserved
             var eventGenericType = findParameterizedSupertype(eventClass, rawObserved);
             if (eventGenericType == null) {
-                // eventClass implements rawObserved but we can't find the parameterized version
                 // Raw type assignability — accept (CDI spec: raw types are assignable)
                 return true;
             }
 
             var eventTypeArgs = eventGenericType.getActualTypeArguments();
             var observerTypeArgs = observerType.typeArguments();
-            if (eventTypeArgs.length != observerTypeArgs.size()) return false; // type args must match in count
+            if (eventTypeArgs.length != observerTypeArgs.size()) return false;
 
             for (int i = 0; i < eventTypeArgs.length; i++) {
-                var eventArg = eventTypeArgs[i];
-                var observerArg = observerTypeArgs.get(i);
-
-                if (observerArg instanceof TypeInfo.ClassType ct) {
-                    // Observer expects a specific type — event must have exactly that type
-                    var expectedClass = Class.forName(ct.name().value(), true, cl);
-                    if (eventArg instanceof Class<?> ec) {
-                        if (!expectedClass.equals(ec)) return false;
-                    } else {
-                        return false; // event has wildcard/type variable, observer wants concrete
-                    }
+                if (!typeArgMatchesObserver(eventTypeArgs[i], observerTypeArgs.get(i), cl)) {
+                    return false;
                 }
-                // TypeVariable in observer = matches anything (CDI spec)
-                // Wildcard in observer = check bounds (simplified: accept)
             }
             return true;
         } catch (Exception e) {
-            return true; // fallback: accept on error
+            return true;
         }
+    }
+
+    private static boolean typeArgMatchesObserver(java.lang.reflect.Type eventArg, TypeInfo observerArg, ClassLoader cl)
+            throws ClassNotFoundException {
+        // TypeVariable in observer = matches anything (CDI spec)
+        if (observerArg instanceof TypeInfo.TypeVariable) return true;
+
+        // Wildcard in observer = check bounds
+        if (observerArg instanceof TypeInfo.WildcardType wt) {
+            if (wt.upperBound() != null && !(wt.upperBound() instanceof TypeInfo.ClassType ct
+                    && ct.name().value().equals("java.lang.Object"))) {
+                var upperClass = resolveTypeInfoToClass(wt.upperBound(), cl);
+                var eventClass = resolveTypeToClass(eventArg);
+                if (upperClass != null && eventClass != null && !upperClass.isAssignableFrom(eventClass)) {
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        if (observerArg instanceof TypeInfo.ClassType ct) {
+            var expectedClass = Class.forName(ct.name().value(), true, cl);
+            if (eventArg instanceof Class<?> ec) {
+                return expectedClass.equals(ec);
+            }
+            if (eventArg instanceof java.lang.reflect.WildcardType ewt) {
+                // Event has wildcard — observer wants concrete: no match unless upper bound matches
+                for (var bound : ewt.getUpperBounds()) {
+                    if (bound instanceof Class<?> bc && expectedClass.equals(bc)) return true;
+                }
+                return false;
+            }
+            return false;
+        }
+
+        if (observerArg instanceof TypeInfo.ParameterizedType opt) {
+            if (eventArg instanceof java.lang.reflect.ParameterizedType ept) {
+                var obsRaw = Class.forName(opt.rawType().value(), true, cl);
+                if (ept.getRawType() != obsRaw) return false;
+                var eArgs = ept.getActualTypeArguments();
+                var oArgs = opt.typeArguments();
+                if (eArgs.length != oArgs.size()) return false;
+                for (int i = 0; i < eArgs.length; i++) {
+                    if (!typeArgMatchesObserver(eArgs[i], oArgs.get(i), cl)) return false;
+                }
+                return true;
+            }
+            return false;
+        }
+
+        return true;
+    }
+
+    private static Class<?> resolveTypeInfoToClass(TypeInfo typeInfo, ClassLoader cl) {
+        if (typeInfo instanceof TypeInfo.ClassType ct) {
+            try { return Class.forName(ct.name().value(), true, cl); } catch (Exception e) { return null; }
+        }
+        return null;
+    }
+
+    private static Class<?> resolveTypeToClass(java.lang.reflect.Type type) {
+        if (type instanceof Class<?> c) return c;
+        if (type instanceof java.lang.reflect.ParameterizedType pt && pt.getRawType() instanceof Class<?> c) return c;
+        return null;
     }
 
     /**
@@ -208,18 +280,58 @@ public final class EventDispatcher {
     /**
      * Check if all observer qualifiers are present in the event qualifiers.
      * An observer with no qualifiers matches any event.
+     * Uses DotName-only comparison (ignores member values).
      */
     private boolean observerQualifiersMatch(List<QualifierInstance> observerQualifiers,
             Set<DotName> eventQualifiers) {
         if (observerQualifiers.isEmpty()) return true;
         for (var oq : observerQualifiers) {
-            // Skip @Any — it matches everything
             if (oq.isAny()) continue;
             if (!eventQualifiers.contains(oq.annotationName())) {
                 return false;
             }
         }
         return true;
+    }
+
+    /**
+     * Check observer qualifiers against full Annotation instances, respecting @Nonbinding.
+     */
+    private boolean observerQualifiersMatchFull(List<QualifierInstance> observerQualifiers,
+            Annotation[] eventQualifiers) {
+        if (observerQualifiers.isEmpty()) return true;
+        var cl = container.classLoader();
+        for (var oq : observerQualifiers) {
+            if (oq.isAny()) continue;
+            var observerAnn = QualifierUtils.toAnnotation(oq, null, cl);
+            if (observerAnn == null) continue;
+            boolean found = false;
+            for (var eq : eventQualifiers) {
+                if (eq.annotationType().getName().equals(oq.annotationName().value())) {
+                    if (qualifierMembersMatch(observerAnn, eq)) {
+                        found = true;
+                        break;
+                    }
+                }
+            }
+            if (!found) return false;
+        }
+        return true;
+    }
+
+    private static boolean qualifierMembersMatch(Annotation observer, Annotation event) {
+        if (!observer.annotationType().getName().equals(event.annotationType().getName())) return false;
+        try {
+            for (var method : observer.annotationType().getDeclaredMethods()) {
+                if (method.isAnnotationPresent(jakarta.enterprise.util.Nonbinding.class)) continue;
+                var obsVal = method.invoke(observer);
+                var evtVal = method.invoke(event);
+                if (!Objects.deepEquals(obsVal, evtVal)) return false;
+            }
+            return true;
+        } catch (Exception e) {
+            return observer.equals(event);
+        }
     }
 
     /**
@@ -309,6 +421,18 @@ public final class EventDispatcher {
                                 if (eventQualifiers != null) {
                                     for (var q : eventQualifiers) metaQualifiers.add(q);
                                 }
+                                // CDI spec: if no explicit qualifiers, add @Default
+                                boolean hasExplicitQualifier = false;
+                                for (var q : metaQualifiers) {
+                                    if (q.annotationType() != jakarta.enterprise.inject.Any.class
+                                            && q.annotationType() != jakarta.enterprise.inject.Default.class) {
+                                        hasExplicitQualifier = true;
+                                        break;
+                                    }
+                                }
+                                if (!hasExplicitQualifier) {
+                                    metaQualifiers.add(jakarta.enterprise.inject.Default.Literal.INSTANCE);
+                                }
                                 metaQualifiers.add(jakarta.enterprise.inject.Any.Literal.INSTANCE);
                                 final java.util.Set<java.lang.annotation.Annotation> immutableQualifiers =
                                         java.util.Set.copyOf(metaQualifiers);
@@ -324,6 +448,18 @@ public final class EventDispatcher {
                                         return selectedEventType != null ? selectedEventType : eventObj.getClass();
                                     }
                                 };
+                            } else if (paramTypes[i] == jakarta.enterprise.inject.Instance.class
+                                    || paramTypes[i] == jakarta.inject.Provider.class) {
+                                Class<?> instanceType = Object.class;
+                                var genericType = method.getGenericParameterTypes()[i];
+                                if (genericType instanceof java.lang.reflect.ParameterizedType pt
+                                        && pt.getActualTypeArguments().length > 0) {
+                                    var typeArg = pt.getActualTypeArguments()[0];
+                                    if (typeArg instanceof Class<?> c) instanceType = c;
+                                }
+                                var paramQualifiers = extractQualifierAnnotations(params[i]);
+                                args[i] = new fr.vidocq.vauban.core.container.InstanceImpl<>(
+                                        container, instanceType, paramQualifiers, null, ctx);
                             } else {
                                 var paramQualifiers = extractQualifierAnnotations(params[i]);
                                 var beans = paramQualifiers.length > 0
@@ -390,6 +526,19 @@ public final class EventDispatcher {
                     case FLOAT -> float.class;
                     case DOUBLE -> double.class;
                 };
+                case TypeInfo.TypeVariable tv -> {
+                    // TypeVariable: resolve upper bound if present, else Object
+                    if (!tv.bounds().isEmpty()) {
+                        yield resolveObservedType(tv.bounds().getFirst());
+                    }
+                    yield Object.class;
+                }
+                case TypeInfo.WildcardType wt -> {
+                    if (wt.upperBound() != null) {
+                        yield resolveObservedType(wt.upperBound());
+                    }
+                    yield Object.class;
+                }
                 default -> null;
             };
         } catch (ClassNotFoundException e) {
@@ -398,17 +547,21 @@ public final class EventDispatcher {
     }
 
     private Method findMethod(Class<?> clazz, String name, Class<?> eventType) {
-        // Search the class hierarchy (inherited observer methods)
         var current = clazz;
         while (current != null && current != Object.class) {
             for (var method : current.getDeclaredMethods()) {
                 if (method.getName().equals(name) && method.getParameterCount() >= 1) {
-                    // Find the @Observes/@ObservesAsync parameter
                     var params = method.getParameters();
-                    for (var param : params) {
-                        if (param.isAnnotationPresent(jakarta.enterprise.event.Observes.class)
-                                || param.isAnnotationPresent(jakarta.enterprise.event.ObservesAsync.class)) {
-                            if (param.getType().isAssignableFrom(eventType)) {
+                    for (int p = 0; p < params.length; p++) {
+                        if (params[p].isAnnotationPresent(jakarta.enterprise.event.Observes.class)
+                                || params[p].isAnnotationPresent(jakarta.enterprise.event.ObservesAsync.class)) {
+                            if (params[p].getType().isAssignableFrom(eventType)) {
+                                return method;
+                            }
+                            // TypeVariable parameter: the raw erased type is Object (or bound),
+                            // check generic parameter type
+                            var genericType = method.getGenericParameterTypes()[p];
+                            if (genericType instanceof java.lang.reflect.TypeVariable<?>) {
                                 return method;
                             }
                         }

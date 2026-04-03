@@ -52,7 +52,7 @@ public final class VaubanBeanManager implements BeanManager {
                     Set.of(BeanManager.class, jakarta.enterprise.inject.spi.BeanContainer.class),
                     () -> this),
                 new BuiltInBean<>(Event.class,
-                    Set.of(Event.class),
+                    Set.of(Event.class, Object.class),
                     () -> getEvent()),
                 new BuiltInBean<>(Instance.class,
                     Set.of(Instance.class),
@@ -72,6 +72,13 @@ public final class VaubanBeanManager implements BeanManager {
         // Validate that beanType is actually a type of the bean
         boolean valid = bean.getTypes().stream()
             .anyMatch(bt -> typesMatch(bt, beanType));
+        // Built-in beans match any parameterization of their raw type
+        if (!valid && bean instanceof BuiltInBean<?>) {
+            valid = bean.getTypes().stream().anyMatch(bt ->
+                bt instanceof Class<?> btClass && beanType instanceof java.lang.reflect.ParameterizedType reqPt
+                    && reqPt.getRawType() instanceof Class<?> reqRaw
+                    && (btClass == reqRaw || btClass.getName().equals(reqRaw.getName())));
+        }
         if (!valid) {
             throw new IllegalArgumentException(
                 "Type " + beanType + " is not a bean type of " + bean.getBeanClass());
@@ -150,6 +157,13 @@ public final class VaubanBeanManager implements BeanManager {
             boolean typeMatch = false;
             for (var bt : builtIn.getTypes()) {
                 if (typesMatch(bt, beanType)) {
+                    typeMatch = true;
+                    break;
+                }
+                // Built-in beans like Instance and Event match any parameterization of their raw type
+                if (bt instanceof Class<?> btClass && beanType instanceof java.lang.reflect.ParameterizedType reqPt
+                        && reqPt.getRawType() instanceof Class<?> reqRaw
+                        && (btClass == reqRaw || btClass.getName().equals(reqRaw.getName()))) {
                     typeMatch = true;
                     break;
                 }
@@ -446,8 +460,8 @@ public final class VaubanBeanManager implements BeanManager {
             eventQualifiers.add(fr.vidocq.vauban.indexer.model.DotName.of(q.annotationType().getName()));
         }
         // CDI spec: resolveObserverMethods returns both sync and async observers
-        var matching = new java.util.ArrayList<>(eventDispatcher.findMatchingObservers(event.getClass(), false, eventQualifiers));
-        matching.addAll(eventDispatcher.findMatchingObservers(event.getClass(), true, eventQualifiers));
+        var matching = new java.util.ArrayList<>(eventDispatcher.findMatchingObservers(event.getClass(), false, eventQualifiers, qualifiers));
+        matching.addAll(eventDispatcher.findMatchingObservers(event.getClass(), true, eventQualifiers, qualifiers));
         var result = new LinkedHashSet<ObserverMethod<? super T>>();
         for (var descriptor : matching) {
             // Find the declaring bean
@@ -490,10 +504,13 @@ public final class VaubanBeanManager implements BeanManager {
             bindingNames.add(DotName.of(binding.annotationType().getName()));
         }
 
-        var descriptors = interceptorManager.resolveInterceptors(bindingNames);
+        var descriptors = interceptorManager.resolveInterceptors(java.util.Arrays.asList(interceptorBindings));
         var result = new ArrayList<Interceptor<?>>();
         for (var descriptor : descriptors) {
-            result.add(new VaubanInterceptor(descriptor));
+            var vi = new VaubanInterceptor(descriptor);
+            if (vi.intercepts(type)) {
+                result.add(vi);
+            }
         }
         return result;
     }

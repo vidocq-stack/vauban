@@ -54,7 +54,24 @@ public final class VaubanInterceptor<T> implements Interceptor<T> {
 
     @Override
     public boolean intercepts(InterceptionType type) {
-        return type == InterceptionType.AROUND_INVOKE && descriptor.aroundInvokeMethod() != null;
+        return switch (type) {
+            case AROUND_INVOKE -> hasMethodWithAnnotation(jakarta.interceptor.AroundInvoke.class);
+            case AROUND_CONSTRUCT -> hasMethodWithAnnotation(jakarta.interceptor.AroundConstruct.class);
+            case POST_CONSTRUCT -> hasMethodWithAnnotation(jakarta.annotation.PostConstruct.class);
+            case PRE_DESTROY -> hasMethodWithAnnotation(jakarta.annotation.PreDestroy.class);
+            default -> false;
+        };
+    }
+
+    private boolean hasMethodWithAnnotation(Class<? extends java.lang.annotation.Annotation> annotation) {
+        Class<?> current = interceptorClass;
+        while (current != null && current != Object.class) {
+            for (var m : current.getDeclaredMethods()) {
+                if (m.isAnnotationPresent(annotation)) return true;
+            }
+            current = current.getSuperclass();
+        }
+        return false;
     }
 
     @Override
