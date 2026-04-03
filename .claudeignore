@@ -1,0 +1,28 @@
+# TCK results and logs (massive, temporary)
+tck_results_*.txt
+.tck_full.log
+tck_results_new.txt
+
+# Build/debug logs
+*.log
+.output.txt
+test_out.txt
+build_all.log
+
+# Test artifacts
+failing_tests.txt
+failures_summary.txt
+failing_configs.txt
+current_failures.txt
+TestAssignability.java
+ParameterizedEventTest.java
+TestLog.java
+tck_generics_classes.java
+test-generics.sh
+org/
+
+# Environment
+.env
+
+# Junie (unused duplicate of .claude/)
+.junie/
