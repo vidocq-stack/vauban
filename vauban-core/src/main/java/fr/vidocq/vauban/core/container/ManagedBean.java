@@ -124,16 +124,16 @@ public final class ManagedBean<T> implements Bean<T> {
         }
 
         // Check for lifecycle interceptors
-        if (interceptorManager != null && interceptorManager.hasInterceptors()) {
-            var bindings = findInterceptorBindings(instance);
-            if (!bindings.isEmpty()) {
-                interceptorManager.setClassLoader(instance.getClass().getClassLoader());
-                // Collect binding annotations for InvocationContext.getInterceptorBindings()
-                var bindingAnnotations = collectBindingAnnotations(instance);
-                var bindingAnnsList = new java.util.ArrayList<>(bindingAnnotations);
-                var chain = interceptorManager.resolveLifecycleChain(
-                        bindings, jakarta.annotation.PreDestroy.class, bindingAnnsList, ctx);
+        java.util.Set<fr.vidocq.vauban.indexer.model.DotName> bindings = (descriptor != null) ? descriptor.interceptorBindings() : findInterceptorBindings(instance);
+        if (interceptorManager != null && interceptorManager.hasInterceptors() && bindings != null && !bindings.isEmpty()) {
+            interceptorManager.setClassLoader(instance.getClass().getClassLoader());
+            // Collect binding annotations for InvocationContext.getInterceptorBindings()
+            var bindingAnnotations = (descriptor != null) ? new java.util.ArrayList<java.lang.annotation.Annotation>(descriptor.interceptorBindingAnnotations()) 
+                                                          : new java.util.ArrayList<java.lang.annotation.Annotation>(collectBindingAnnotations(instance));
+            var chain = interceptorManager.resolveLifecycleChain(
+                    bindings, jakarta.annotation.PreDestroy.class, bindingAnnotations, ctx);
                 if (!chain.isEmpty()) {
+                    var bindingAnnotationsSet = new java.util.LinkedHashSet<java.lang.annotation.Annotation>(bindingAnnotations);
                     final var pdMethod = preDestroyMethod;
                     var invocationCtx = new fr.vidocq.vauban.core.interceptor.VaubanInvocationContext(
                             instance, null, new Object[0], chain,
@@ -141,7 +141,7 @@ public final class ManagedBean<T> implements Bean<T> {
                                 if (pdMethod != null) pdMethod.invoke(target);
                                 return null;
                             });
-                    invocationCtx.setInterceptorBindings(bindingAnnotations);
+                    invocationCtx.setInterceptorBindings(bindingAnnotationsSet);
                     try {
                         invocationCtx.proceed();
                     } catch (Exception e) {
@@ -149,7 +149,6 @@ public final class ManagedBean<T> implements Bean<T> {
                     }
                     return;
                 }
-            }
         }
 
         // No interceptors — call directly

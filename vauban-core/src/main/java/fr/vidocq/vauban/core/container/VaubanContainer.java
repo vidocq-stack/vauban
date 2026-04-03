@@ -332,7 +332,7 @@ public final class VaubanContainer implements AutoCloseable {
             injectFields(instance, null, (CreationalContext<Object>) ctx);
 
             // Call @PostConstruct on the interceptor itself
-            callPostConstruct(instance, ctx);
+            callPostConstruct(instance, null, ctx);
 
             // Register interceptor instance for destruction
             if (ctx instanceof CreationalContextImpl<?> vCtx) {
@@ -755,7 +755,7 @@ public final class VaubanContainer implements AutoCloseable {
         callInitializerMethods(instance, parentCtx);
 
         // 3. Call @PostConstruct
-        callPostConstruct(instance, parentCtx);
+        callPostConstruct(instance, descriptor, parentCtx);
     }
 
     private void injectFieldsByReflection(Object instance, CreationalContext<?> parentCtx) {
@@ -969,7 +969,7 @@ public final class VaubanContainer implements AutoCloseable {
         return quals.toArray(new java.lang.annotation.Annotation[0]);
     }
 
-    private void callPostConstruct(Object instance, CreationalContext<?> ctx) {
+    private void callPostConstruct(Object instance, BeanDescriptor descriptor, CreationalContext<?> ctx) {
         // CDI spec: Interceptor instances are not intercepted
         if (instance.getClass().isAnnotationPresent(jakarta.interceptor.Interceptor.class)) {
             // CDI spec: @PostConstruct on an interceptor can be a lifecycle interceptor (takes InvocationContext)
@@ -1008,15 +1008,16 @@ public final class VaubanContainer implements AutoCloseable {
         }
 
         // Check for lifecycle interceptors on the bean
-        var beanBindings = findInterceptorBindings(instance);
-        if (!beanBindings.isEmpty() && interceptorManager.hasInterceptors()) {
+        java.util.Set<fr.vidocq.vauban.indexer.model.DotName> beanBindings = (descriptor != null) ? descriptor.interceptorBindings() : findInterceptorBindings(instance);
+        if (beanBindings != null && !beanBindings.isEmpty() && interceptorManager.hasInterceptors()) {
             interceptorManager.setClassLoader(instance.getClass().getClassLoader());
-            var bindingAnns = new java.util.ArrayList<java.lang.annotation.Annotation>(collectBindingAnnotations(instance));
+            var bindingAnns = (descriptor != null) ? new java.util.ArrayList<java.lang.annotation.Annotation>(descriptor.interceptorBindingAnnotations()) 
+                                                   : new java.util.ArrayList<java.lang.annotation.Annotation>(collectBindingAnnotations(instance));
             var lifecycleChain = interceptorManager.resolveLifecycleChain(
                     beanBindings, jakarta.annotation.PostConstruct.class, bindingAnns, ctx);
             if (!lifecycleChain.isEmpty()) {
                 // Collect binding annotations for InvocationContext.getInterceptorBindings()
-                var bindingAnnotations = collectBindingAnnotations(instance);
+                var bindingAnnotations = new java.util.LinkedHashSet<java.lang.annotation.Annotation>(bindingAnns);
                 // Invoke lifecycle interceptors through InvocationContext
                 final var pcMethod = postConstructMethod;
                 var invocationCtx = new fr.vidocq.vauban.core.interceptor.VaubanInvocationContext(
