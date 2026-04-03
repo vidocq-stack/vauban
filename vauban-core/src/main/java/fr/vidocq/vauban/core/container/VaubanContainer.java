@@ -396,10 +396,9 @@ public final class VaubanContainer implements AutoCloseable {
         var existing = context.get((Contextual<T>) finalBean);
         if (existing != null) return existing;
 
-        // For normal-scoped managed beans (not producers, not final), return a client proxy
+        // For normal-scoped managed beans (not producers), return a client proxy
         if (finalBean.descriptor().scope().isNormal()
-                && finalBean.descriptor().kind() == fr.vidocq.vauban.core.bean.model.BeanDescriptor.BeanKind.MANAGED
-                && !Modifier.isFinal(finalBean.getBeanClass().getModifiers())) {
+                && finalBean.descriptor().kind() == fr.vidocq.vauban.core.bean.model.BeanDescriptor.BeanKind.MANAGED) {
             return getOrCreateProxy(finalBean);
         }
         
@@ -412,8 +411,33 @@ public final class VaubanContainer implements AutoCloseable {
     @SuppressWarnings("unchecked")
     private <T> T getOrCreateProxy(ManagedBean<T> bean) {
         return (T) proxyCache.computeIfAbsent(bean.descriptor().id(), id -> {
+            var beanClass = bean.getBeanClass();
+
+            // CDI Unproxyable bean checks
+            if (java.lang.reflect.Modifier.isFinal(beanClass.getModifiers())) {
+                throw new jakarta.enterprise.inject.UnproxyableResolutionException("Normal scoped bean " + beanClass.getName() + " is final");
+            }
+            for (var method : beanClass.getDeclaredMethods()) {
+                if (java.lang.reflect.Modifier.isFinal(method.getModifiers())
+                        && !java.lang.reflect.Modifier.isPrivate(method.getModifiers())
+                        && !java.lang.reflect.Modifier.isStatic(method.getModifiers())) {
+                    throw new jakarta.enterprise.inject.UnproxyableResolutionException("Normal scoped bean " + beanClass.getName() + " has final method " + method.getName());
+                }
+            }
+            boolean hasNoArgCtor = false;
+            boolean hasAnyCtor = false;
+            for (var ctor : beanClass.getDeclaredConstructors()) {
+                hasAnyCtor = true;
+                if (ctor.getParameterCount() == 0 && !java.lang.reflect.Modifier.isPrivate(ctor.getModifiers())) {
+                    hasNoArgCtor = true;
+                    break;
+                }
+            }
+            if (hasAnyCtor && !hasNoArgCtor) {
+                throw new jakarta.enterprise.inject.UnproxyableResolutionException("Normal scoped bean " + beanClass.getName() + " has no non-private no-arg constructor");
+            }
+
             try {
-                var beanClass = bean.getBeanClass();
                 var generated = fr.vidocq.vauban.core.proxy.RuntimeClientProxyGenerator.generate(beanClass);
 
                 // Load the proxy class (check if already defined)
