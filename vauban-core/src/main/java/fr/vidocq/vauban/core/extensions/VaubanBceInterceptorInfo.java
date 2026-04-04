@@ -1,15 +1,14 @@
 package fr.vidocq.vauban.core.extensions;
 
-import fr.vidocq.vauban.core.bean.model.BeanDescriptor;
+import fr.vidocq.vauban.core.bean.model.InterceptorDescriptor;
 import fr.vidocq.vauban.core.langmodel.IndexLookup;
-import fr.vidocq.vauban.core.langmodel.VaubanAnnotationInfo;
 import fr.vidocq.vauban.core.langmodel.declarations.VaubanClassInfo;
-import fr.vidocq.vauban.core.langmodel.types.TypeMapper;
-import fr.vidocq.vauban.indexer.model.DotName;
-import jakarta.enterprise.inject.build.compatible.spi.BeanInfo;
 import jakarta.enterprise.inject.build.compatible.spi.DisposerInfo;
+import jakarta.enterprise.inject.build.compatible.spi.InjectionPointInfo;
 import jakarta.enterprise.inject.build.compatible.spi.InterceptorInfo;
+import jakarta.enterprise.inject.build.compatible.spi.ScopeInfo;
 import jakarta.enterprise.inject.build.compatible.spi.StereotypeInfo;
+import jakarta.enterprise.inject.spi.InterceptionType;
 import jakarta.enterprise.lang.model.AnnotationInfo;
 import jakarta.enterprise.lang.model.declarations.ClassInfo;
 import jakarta.enterprise.lang.model.declarations.FieldInfo;
@@ -18,42 +17,55 @@ import jakarta.enterprise.lang.model.types.Type;
 
 import java.util.Collection;
 import java.util.List;
+import java.util.Map;
 
-/**
- * Adapts Vauban's {@link BeanDescriptor} to the BCE {@link BeanInfo} interface.
- */
-public final class VaubanBceBeanInfo implements BeanInfo {
+public final class VaubanBceInterceptorInfo implements InterceptorInfo {
 
-    private final BeanDescriptor descriptor;
+    private final InterceptorDescriptor descriptor;
     private final IndexLookup lookup;
 
-    public VaubanBceBeanInfo(BeanDescriptor descriptor, IndexLookup lookup) {
+    public VaubanBceInterceptorInfo(InterceptorDescriptor descriptor, IndexLookup lookup) {
         this.descriptor = descriptor;
         this.lookup = lookup;
     }
 
     @Override
-    public jakarta.enterprise.inject.build.compatible.spi.ScopeInfo scope() {
-        return new VaubanBceScopeInfo(descriptor.scope(), lookup);
+    public Collection<AnnotationInfo> interceptorBindings() {
+        return descriptor.bindings().stream()
+                .map(b -> (AnnotationInfo) new SimpleAnnotationInfo(b.value(), Map.of()))
+                .toList();
+    }
+
+    @Override
+    public boolean intercepts(InterceptionType type) {
+        return switch (type) {
+            case AROUND_INVOKE -> descriptor.aroundInvokeMethod() != null;
+            case AROUND_CONSTRUCT -> descriptor.aroundConstructMethod() != null;
+            default -> false;
+        };
+    }
+
+    @Override
+    public ScopeInfo scope() {
+        return new VaubanBceScopeInfo(
+                new fr.vidocq.vauban.core.bean.model.ScopeInfo(
+                        fr.vidocq.vauban.indexer.model.DotName.of("jakarta.enterprise.context.Dependent"), false),
+                lookup);
     }
 
     @Override
     public Collection<Type> types() {
-        return descriptor.types().stream()
-                .map(t -> TypeMapper.map(t, lookup))
-                .toList();
+        return List.of();
     }
 
     @Override
     public Collection<AnnotationInfo> qualifiers() {
-        return descriptor.qualifiers().stream()
-                .map(q -> (AnnotationInfo) new SimpleAnnotationInfo(q.annotationName().value(), java.util.Map.of()))
-                .toList();
+        return List.of();
     }
 
     @Override
     public ClassInfo declaringClass() {
-        var indexClass = lookup.getClass(descriptor.beanClass()).orElse(null);
+        var indexClass = lookup.getClass(descriptor.interceptorClass()).orElse(null);
         if (indexClass != null) {
             return new VaubanClassInfo(indexClass, lookup);
         }
@@ -62,17 +74,17 @@ public final class VaubanBceBeanInfo implements BeanInfo {
 
     @Override
     public boolean isClassBean() {
-        return descriptor.kind() == BeanDescriptor.BeanKind.MANAGED;
+        return true;
     }
 
     @Override
     public boolean isProducerMethod() {
-        return descriptor.kind() == BeanDescriptor.BeanKind.PRODUCER_METHOD;
+        return false;
     }
 
     @Override
     public boolean isProducerField() {
-        return descriptor.kind() == BeanDescriptor.BeanKind.PRODUCER_FIELD;
+        return false;
     }
 
     @Override
@@ -92,7 +104,7 @@ public final class VaubanBceBeanInfo implements BeanInfo {
 
     @Override
     public boolean isAlternative() {
-        return descriptor.isAlternative();
+        return false;
     }
 
     @Override
@@ -102,7 +114,7 @@ public final class VaubanBceBeanInfo implements BeanInfo {
 
     @Override
     public String name() {
-        return descriptor.name();
+        return null;
     }
 
     @Override
@@ -116,11 +128,7 @@ public final class VaubanBceBeanInfo implements BeanInfo {
     }
 
     @Override
-    public Collection<jakarta.enterprise.inject.build.compatible.spi.InjectionPointInfo> injectionPoints() {
+    public Collection<InjectionPointInfo> injectionPoints() {
         return List.of();
-    }
-
-    public BeanDescriptor descriptor() {
-        return descriptor;
     }
 }

@@ -70,4 +70,14 @@ public record BeanDescriptor(
         this(id, beanClass, kind, types, qualifiers, scope, isAlternative, priority,
                 injectionPoints, name, interceptorBindings, constructorBindings, List.of());
     }
+
+    /** Create a minimal descriptor for a class (used by BCE Enhancement/Registration fallback). */
+    public static BeanDescriptor minimal(DotName className) {
+        return new BeanDescriptor(
+                new BeanId(className.value()), className, BeanKind.MANAGED,
+                Set.of(new TypeInfo.ClassType(className)),
+                Set.of(QualifierInstance.DEFAULT, QualifierInstance.ANY),
+                new ScopeInfo(DotName.of("jakarta.enterprise.context.Dependent"), false),
+                false, 0, List.of(), null);
+    }
 }

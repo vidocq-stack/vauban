@@ -58,6 +58,15 @@
 - Required: **Maven 4** (`sdk use maven 4.0.0-rc-5`)
 - If `mvn` fails with "modelVersion 4.1.0 not supported", Maven `current` has been reset to 3.x — switch back to 4.x
 
+## Context Mode
+
+- Use `ctx_batch_execute` pour les commandes produisant beaucoup d'output (builds, tests, logs)
+- Use `ctx_search` pour les recherches de suivi après un batch_execute
+- Use `ctx_execute` / `ctx_execute_file` pour l'analyse de données, parsing de logs, transformations
+- **Ne jamais** utiliser Bash pour des commandes produisant >20 lignes d'output — passer par context-mode
+- **Ne jamais** utiliser ctx_execute/ctx_execute_file pour créer ou modifier des fichiers — utiliser Write/Edit
+- Read est réservé aux fichiers qu'on va éditer ensuite — pour l'analyse, utiliser ctx_execute_file
+
 ## Core Principles
 
 ### Simplicity First

@@ -38,16 +38,19 @@ public final class BceProcessor {
 
     public record DiscoveryResult(
             VaubanMetaAnnotations metaAnnotations,
-            VaubanScannedClasses scannedClasses
+            VaubanScannedClasses scannedClasses,
+            Map<Class<?>, Object> bceInstances
     ) {}
 
     public static DiscoveryResult processDiscovery(List<Class<?>> bceClasses, IndexLookup lookup) {
         var metaAnnotations = new VaubanMetaAnnotations(lookup);
         var scannedClasses = new VaubanScannedClasses();
+        var bceInstances = new LinkedHashMap<Class<?>, Object>();
 
         for (var bceClass : bceClasses) {
             try {
                 var bce = instantiateBce(bceClass);
+                bceInstances.put(bceClass, bce);
                 for (var method : getDeclaredMethodsSafe(bceClass)) {
                     if (method.getAnnotation(Discovery.class) == null) continue;
                     method.setAccessible(true);
@@ -69,16 +72,30 @@ public final class BceProcessor {
             }
         }
 
-        return new DiscoveryResult(metaAnnotations, scannedClasses);
+        return new DiscoveryResult(metaAnnotations, scannedClasses, bceInstances);
     }
 
     /**
      * Process all BCE classes through their lifecycle phases.
+     * Reuses instances from Discovery to maintain state across phases.
      */
     public static Result process(List<Class<?>> bceClasses,
                                  List<BeanDescriptor> beans,
                                  VaubanIndex index,
-                                 ClassLoader classLoader) {
+                                 ClassLoader classLoader,
+                                 Map<Class<?>, Object> bceInstances,
+                                 List<Class<?>> allArchiveClasses) {
+        return process(bceClasses, beans, List.of(), List.of(), index, classLoader, bceInstances, allArchiveClasses);
+    }
+
+    public static Result process(List<Class<?>> bceClasses,
+                                 List<BeanDescriptor> beans,
+                                 List<fr.vidocq.vauban.core.bean.model.ObserverDescriptor> observers,
+                                 List<fr.vidocq.vauban.core.bean.model.InterceptorDescriptor> interceptors,
+                                 VaubanIndex index,
+                                 ClassLoader classLoader,
+                                 Map<Class<?>, Object> bceInstances,
+                                 List<Class<?>> allArchiveClasses) {
         var lookup = new IndexLookup(index);
         var definitionErrors = new ArrayList<String>();
         var deploymentErrors = new ArrayList<String>();
@@ -91,15 +108,17 @@ public final class BceProcessor {
                 validateExtensionMethods(bceClass, definitionErrors);
                 if (!definitionErrors.isEmpty()) continue;
 
-                var bce = instantiateBce(bceClass);
+                // Reuse instance from Discovery phase to maintain state
+                var bce = bceInstances != null ? bceInstances.get(bceClass) : null;
+                if (bce == null) bce = instantiateBce(bceClass);
 
                 var types = new VaubanTypes(lookup);
 
-                // Phase: @Enhancement
-                processEnhancement(bce, bceClass, beans, lookup, classLoader, deploymentErrors, allEnhancementMods);
+                // Phase: @Enhancement — iterates over beans, fallback to archive classes if none match
+                processEnhancement(bce, bceClass, beans, allArchiveClasses, lookup, classLoader, deploymentErrors, allEnhancementMods);
 
                 // Phase: @Registration
-                processRegistration(bce, bceClass, beans, lookup, classLoader, types, deploymentErrors);
+                processRegistration(bce, bceClass, beans, observers, interceptors, lookup, classLoader, types, deploymentErrors, allArchiveClasses);
 
                 // Phase: @Synthesis
                 var syntheticBeans = processSynthesis(bce, bceClass, types, deploymentErrors);
@@ -143,6 +162,7 @@ public final class BceProcessor {
 
     private static void processEnhancement(Object bce, Class<?> bceClass,
                                            List<BeanDescriptor> beans,
+                                           List<Class<?>> archiveClasses,
                                            IndexLookup lookup, ClassLoader classLoader,
                                            List<String> errors,
                                            Map<fr.vidocq.vauban.indexer.model.DotName, List<VaubanClassConfig>> modifications) {
@@ -153,68 +173,91 @@ public final class BceProcessor {
             method.setAccessible(true);
             var paramKind = detectEnhancementParamKind(method);
 
+            // First try beans (normal CDI path)
+            boolean matched = false;
             for (var bean : beans) {
                 if (!matchesTypes(enhancement.types(), bean, classLoader)) continue;
+                matched = true;
+                invokeEnhancement(method, bce, paramKind, bean.beanClass(), lookup, errors, modifications);
+            }
 
-                var indexClass = lookup.getClass(bean.beanClass()).orElse(null);
-                if (indexClass == null) continue;
-
-                var vaubanClassInfo = new VaubanClassInfo(indexClass, lookup);
-
-                try {
-                    switch (paramKind) {
-                        case CLASS_CONFIG -> {
-                            var classConfig = new VaubanClassConfig(vaubanClassInfo);
-                            invokeWithArg(method, bce, ClassConfig.class, classConfig);
-                            if (classConfig.isModified()) {
-                                modifications.computeIfAbsent(bean.beanClass(), k -> new ArrayList<>())
-                                        .add(classConfig);
-                            }
-                        }
-                        case CLASS_INFO -> {
-                            invokeWithArg(method, bce,
-                                    jakarta.enterprise.lang.model.declarations.ClassInfo.class, vaubanClassInfo);
-                        }
-                        case METHOD_CONFIG -> {
-                            var classConfig = new VaubanClassConfig(vaubanClassInfo);
-                            for (var mc : classConfig.methods()) {
-                                invokeWithArg(method, bce, MethodConfig.class, mc);
-                            }
-                            if (classConfig.isModified()) {
-                                modifications.computeIfAbsent(bean.beanClass(), k -> new ArrayList<>())
-                                        .add(classConfig);
-                            }
-                        }
-                        case METHOD_INFO -> {
-                            for (var mi : vaubanClassInfo.methods()) {
-                                invokeWithArg(method, bce,
-                                        jakarta.enterprise.lang.model.declarations.MethodInfo.class, mi);
-                            }
-                        }
-                        case FIELD_CONFIG -> {
-                            var classConfig = new VaubanClassConfig(vaubanClassInfo);
-                            for (var fc : classConfig.fields()) {
-                                invokeWithArg(method, bce, FieldConfig.class, fc);
-                            }
-                            if (classConfig.isModified()) {
-                                modifications.computeIfAbsent(bean.beanClass(), k -> new ArrayList<>())
-                                        .add(classConfig);
-                            }
-                        }
-                        case FIELD_INFO -> {
-                            for (var fi : vaubanClassInfo.fields()) {
-                                invokeWithArg(method, bce,
-                                        jakarta.enterprise.lang.model.declarations.FieldInfo.class, fi);
-                            }
-                        }
-                    }
-                } catch (Exception e) {
-                    var cause = e instanceof java.lang.reflect.InvocationTargetException ite
-                            ? (ite.getCause() != null ? ite.getCause() : ite) : e;
-                    errors.add("@Enhancement error: " + cause.getMessage());
+            // If no beans matched, fallback to archive classes (for BCE-only deployments like PriorityTest)
+            if (!matched && archiveClasses != null) {
+                for (var archiveClass : archiveClasses) {
+                    if (!matchesClass(enhancement.types(), enhancement.withSubtypes(), archiveClass, classLoader)) continue;
+                    var className = DotName.of(archiveClass.getName());
+                    invokeEnhancement(method, bce, paramKind, className, lookup, errors, modifications);
                 }
             }
         }
+    }
+
+    private static void invokeEnhancement(Method method, Object bce, EnhancementParamKind paramKind,
+                                           DotName className, IndexLookup lookup,
+                                           List<String> errors,
+                                           Map<DotName, List<VaubanClassConfig>> modifications) {
+        var indexClass = lookup.getClass(className).orElse(null);
+        if (indexClass == null) return;
+        var vaubanClassInfo = new VaubanClassInfo(indexClass, lookup);
+        try {
+            switch (paramKind) {
+                case CLASS_CONFIG -> {
+                    var classConfig = new VaubanClassConfig(vaubanClassInfo);
+                    invokeWithArg(method, bce, ClassConfig.class, classConfig);
+                    if (classConfig.isModified()) {
+                        modifications.computeIfAbsent(className, k -> new ArrayList<>()).add(classConfig);
+                    }
+                }
+                case CLASS_INFO -> invokeWithArg(method, bce,
+                        jakarta.enterprise.lang.model.declarations.ClassInfo.class, vaubanClassInfo);
+                case METHOD_CONFIG -> {
+                    var classConfig = new VaubanClassConfig(vaubanClassInfo);
+                    for (var mc : classConfig.methods()) invokeWithArg(method, bce, MethodConfig.class, mc);
+                    if (classConfig.isModified()) {
+                        modifications.computeIfAbsent(className, k -> new ArrayList<>()).add(classConfig);
+                    }
+                }
+                case METHOD_INFO -> {
+                    for (var mi : vaubanClassInfo.methods())
+                        invokeWithArg(method, bce, jakarta.enterprise.lang.model.declarations.MethodInfo.class, mi);
+                }
+                case FIELD_CONFIG -> {
+                    var classConfig = new VaubanClassConfig(vaubanClassInfo);
+                    for (var fc : classConfig.fields()) invokeWithArg(method, bce, FieldConfig.class, fc);
+                    if (classConfig.isModified()) {
+                        modifications.computeIfAbsent(className, k -> new ArrayList<>()).add(classConfig);
+                    }
+                }
+                case FIELD_INFO -> {
+                    for (var fi : vaubanClassInfo.fields())
+                        invokeWithArg(method, bce, jakarta.enterprise.lang.model.declarations.FieldInfo.class, fi);
+                }
+            }
+        } catch (Exception e) {
+            var cause = e instanceof java.lang.reflect.InvocationTargetException ite
+                    ? (ite.getCause() != null ? ite.getCause() : ite) : e;
+            errors.add("@Enhancement error: " + cause.getMessage());
+        }
+    }
+
+    /** Check if a Registration method uses InvokerFactory parameter. */
+    private static boolean usesInvokerFactory(Method method) {
+        for (var param : method.getParameterTypes()) {
+            if (InvokerFactory.class.isAssignableFrom(param)) return true;
+        }
+        return false;
+    }
+
+    /** Check if a class matches Enhancement types filter. */
+    private static boolean matchesClass(Class<?>[] types, boolean withSubtypes, Class<?> targetClass, ClassLoader classLoader) {
+        for (var type : types) {
+            if (withSubtypes) {
+                if (type.isAssignableFrom(targetClass)) return true;
+            } else {
+                if (type.equals(targetClass)) return true;
+            }
+        }
+        return false;
     }
 
     private static void invokeWithArg(Method method, Object bce, Class<?> targetType, Object arg) throws Exception {
@@ -235,46 +278,164 @@ public final class BceProcessor {
      */
     private static void processRegistration(Object bce, Class<?> bceClass,
                                             List<BeanDescriptor> beans,
+                                            List<fr.vidocq.vauban.core.bean.model.ObserverDescriptor> observers,
+                                            List<fr.vidocq.vauban.core.bean.model.InterceptorDescriptor> interceptors,
                                             IndexLookup lookup, ClassLoader classLoader,
                                             VaubanTypes types,
-                                            List<String> errors) {
+                                            List<String> errors,
+                                            List<Class<?>> allArchiveClasses) {
         for (var method : getDeclaredMethodsSafe(bceClass)) {
             var registration = method.getAnnotation(Registration.class);
             if (registration == null) continue;
 
             method.setAccessible(true);
 
+            if (hasObserverInfoParam(method)) {
+                for (var observer : observers) {
+                    if (!matchesObserverTypes(registration.types(), observer, classLoader)) continue;
+                    var observerInfo = new VaubanBceObserverInfo(observer, lookup);
+                    invokeRegistrationMethodWithObserver(method, bce, observerInfo, classLoader, types, errors);
+                }
+                continue;
+            }
+
+            // Try matching against beans first
+            boolean matched = false;
             for (var bean : beans) {
                 if (!matchesTypes(registration.types(), bean, classLoader)) continue;
+                matched = true;
 
                 var beanInfo = new VaubanBceBeanInfo(bean, lookup);
-                var invokerFactory = new VaubanInvokerFactory(classLoader);
-                var messages = new VaubanMessages();
+                invokeRegistrationMethod(method, bce, beanInfo, classLoader, types, errors);
+            }
 
-                var args = resolveRegistrationArgs(method, beanInfo, invokerFactory, messages, types);
+            // Also try matching interceptors
+            for (var interceptor : interceptors) {
+                if (!matchesInterceptorTypes(registration.types(), interceptor, classLoader)) continue;
+                matched = true;
 
-                try {
-                    method.invoke(bce, args);
-                } catch (java.lang.reflect.InvocationTargetException e) {
-                    var cause = e.getCause();
-                    if (cause instanceof IllegalStateException ise) {
-                        errors.add(ise.getMessage());
-                    } else {
-                        errors.add("@Registration error on " + bean.beanClass() + ": "
-                                + (cause != null ? cause.getMessage() : e.getMessage()));
-                    }
-                } catch (Exception e) {
-                    errors.add("@Registration error: " + e.getMessage());
-                }
+                var interceptorInfo = new VaubanBceInterceptorInfo(interceptor, lookup);
+                invokeRegistrationMethod(method, bce, interceptorInfo, classLoader, types, errors);
+            }
 
-                if (messages.hasErrors()) {
-                    errors.addAll(messages.getErrors());
+            // If no beans matched and method doesn't use InvokerFactory, try archive classes
+            if (!matched && allArchiveClasses != null && !usesInvokerFactory(method)) {
+                for (var archiveClass : allArchiveClasses) {
+                    if (!matchesClass(registration.types(), true, archiveClass, classLoader)) continue;
+                    matched = true;
+
+                    var className = DotName.of(archiveClass.getName());
+                    var indexClass = lookup.getClass(className).orElse(null);
+                    if (indexClass == null) continue;
+
+                    var minimalBean = fr.vidocq.vauban.core.bean.model.BeanDescriptor.minimal(className);
+                    var beanInfo = new VaubanBceBeanInfo(minimalBean, lookup);
+                    invokeRegistrationMethod(method, bce, beanInfo, classLoader, types, errors);
                 }
             }
         }
     }
 
-    private static Object[] resolveRegistrationArgs(Method method, VaubanBceBeanInfo beanInfo,
+    private static boolean hasObserverInfoParam(Method method) {
+        for (var param : method.getParameters()) {
+            if (ObserverInfo.class.isAssignableFrom(param.getType())) return true;
+        }
+        return false;
+    }
+
+    private static boolean matchesObserverTypes(Class<?>[] types, fr.vidocq.vauban.core.bean.model.ObserverDescriptor observer, ClassLoader classLoader) {
+        String declaringClassName = observer.declaringClass().value();
+        try {
+            var declaringClass = classLoader.loadClass(declaringClassName);
+            for (var type : types) {
+                if (type.isAssignableFrom(declaringClass)) {
+                    return true;
+                }
+            }
+        } catch (ClassNotFoundException e) {
+            // skip
+        }
+        return false;
+    }
+
+    private static boolean matchesInterceptorTypes(Class<?>[] types, fr.vidocq.vauban.core.bean.model.InterceptorDescriptor interceptor, ClassLoader classLoader) {
+        String className = interceptor.interceptorClass().value();
+        try {
+            var clazz = classLoader.loadClass(className);
+            for (var type : types) {
+                if (type.isAssignableFrom(clazz)) {
+                    return true;
+                }
+            }
+        } catch (ClassNotFoundException e) {
+            // skip
+        }
+        return false;
+    }
+
+    private static void invokeRegistrationMethodWithObserver(Method method, Object bce,
+                                                              VaubanBceObserverInfo observerInfo, ClassLoader classLoader,
+                                                              VaubanTypes types, List<String> errors) {
+        var messages = new VaubanMessages();
+        var params = method.getParameters();
+        var args = new Object[params.length];
+        for (int i = 0; i < params.length; i++) {
+            var paramType = params[i].getType();
+            if (ObserverInfo.class.isAssignableFrom(paramType)) {
+                args[i] = observerInfo;
+            } else if (Messages.class.isAssignableFrom(paramType)) {
+                args[i] = messages;
+            } else if (jakarta.enterprise.inject.build.compatible.spi.Types.class.isAssignableFrom(paramType)) {
+                args[i] = types;
+            }
+        }
+
+        try {
+            method.invoke(bce, args);
+        } catch (java.lang.reflect.InvocationTargetException e) {
+            var cause = e.getCause();
+            if (cause instanceof IllegalStateException ise) {
+                errors.add(ise.getMessage());
+            } else {
+                errors.add("@Registration error: "
+                        + (cause != null ? cause.getMessage() : e.getMessage()));
+            }
+        } catch (Exception e) {
+            errors.add("@Registration error: " + e.getMessage());
+        }
+
+        if (messages.hasErrors()) {
+            errors.addAll(messages.getErrors());
+        }
+    }
+
+    private static void invokeRegistrationMethod(Method method, Object bce,
+                                                   BeanInfo beanInfo, ClassLoader classLoader,
+                                                   VaubanTypes types, List<String> errors) {
+        var invokerFactory = new VaubanInvokerFactory(classLoader);
+        var messages = new VaubanMessages();
+        var args = resolveRegistrationArgs(method, beanInfo, invokerFactory, messages, types);
+
+        try {
+            method.invoke(bce, args);
+        } catch (java.lang.reflect.InvocationTargetException e) {
+            var cause = e.getCause();
+            if (cause instanceof IllegalStateException ise) {
+                errors.add(ise.getMessage());
+            } else {
+                errors.add("@Registration error: "
+                        + (cause != null ? cause.getMessage() : e.getMessage()));
+            }
+        } catch (Exception e) {
+            errors.add("@Registration error: " + e.getMessage());
+        }
+
+        if (messages.hasErrors()) {
+            errors.addAll(messages.getErrors());
+        }
+    }
+
+    private static Object[] resolveRegistrationArgs(Method method, BeanInfo beanInfo,
                                                     VaubanInvokerFactory invokerFactory,
                                                     VaubanMessages messages, VaubanTypes types) {
         var params = method.getParameters();
@@ -412,7 +573,7 @@ public final class BceProcessor {
             Messages.class, jakarta.enterprise.inject.build.compatible.spi.Types.class
     );
     private static final java.util.Set<Class<?>> REGISTRATION_PRIMARY_TYPES = java.util.Set.of(
-            BeanInfo.class, InterceptorInfo.class
+            BeanInfo.class, InterceptorInfo.class, ObserverInfo.class
     );
     private static final java.util.Set<Class<?>> REGISTRATION_OPTIONAL_TYPES = java.util.Set.of(
             Messages.class, InvokerFactory.class, jakarta.enterprise.inject.build.compatible.spi.Types.class
@@ -699,7 +860,8 @@ public final class BceProcessor {
     }
 
     /**
-     * Get declared methods including from superclasses (for InvokerHolderExtensionBase pattern).
+     * Get declared methods including from superclasses (for InvokerHolderExtensionBase pattern),
+     * sorted by @Priority (lower value = earlier execution, no @Priority = APPLICATION + 500 = 2500).
      */
     private static Method[] getDeclaredMethodsSafe(Class<?> cls) {
         var methods = new ArrayList<Method>();
@@ -708,6 +870,14 @@ public final class BceProcessor {
                 methods.add(m);
             }
         }
+        methods.sort(Comparator.comparingInt(BceProcessor::getMethodPriority));
         return methods.toArray(new Method[0]);
+    }
+
+    private static final int DEFAULT_PRIORITY = 2500; // APPLICATION(2000) + 500
+
+    private static int getMethodPriority(Method m) {
+        var p = m.getAnnotation(jakarta.annotation.Priority.class);
+        return p != null ? p.value() : DEFAULT_PRIORITY;
     }
 }

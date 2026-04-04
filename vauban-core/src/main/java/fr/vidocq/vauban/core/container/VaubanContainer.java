@@ -81,7 +81,7 @@ public final class VaubanContainer implements AutoCloseable {
     }
 
     private final Map<BeanId, ManagedBean<?>> beans = new LinkedHashMap<>();
-    private final Map<Class<? extends Annotation>, Context> contexts = new ConcurrentHashMap<>();
+    private final Map<Class<? extends Annotation>, List<Context>> contexts = new ConcurrentHashMap<>();
     private static final ThreadLocal<Set<String>> beansBeingCreated = ThreadLocal.withInitial(java.util.HashSet::new);
     private final ApplicationContext applicationContext;
     private final RequestContext requestContext;
@@ -109,10 +109,10 @@ public final class VaubanContainer implements AutoCloseable {
         this.requestContext = new RequestContext();
         this.dependentContext = new DependentContext();
 
-        contexts.put(jakarta.enterprise.context.ApplicationScoped.class, applicationContext);
-        contexts.put(jakarta.enterprise.context.RequestScoped.class, requestContext);
-        contexts.put(jakarta.enterprise.context.Dependent.class, dependentContext);
-        contexts.put(jakarta.inject.Singleton.class, applicationContext);
+        contexts.computeIfAbsent(jakarta.enterprise.context.ApplicationScoped.class, k -> new java.util.ArrayList<>()).add(applicationContext);
+        contexts.computeIfAbsent(jakarta.enterprise.context.RequestScoped.class, k -> new java.util.ArrayList<>()).add(requestContext);
+        contexts.computeIfAbsent(jakarta.enterprise.context.Dependent.class, k -> new java.util.ArrayList<>()).add(dependentContext);
+        contexts.computeIfAbsent(jakarta.inject.Singleton.class, k -> new java.util.ArrayList<>()).add(applicationContext);
 
         for (var descriptor : descriptors) {
             BeanFactory<?> factory;
@@ -388,7 +388,7 @@ public final class VaubanContainer implements AutoCloseable {
         if (finalBean == null) finalBean = bean;
 
         var scopeClass = finalBean.getScope();
-        var context = contexts.get(scopeClass);
+        var context = getFirstContext(scopeClass);
         if (context == null) {
             context = dependentContext;
         }
@@ -463,7 +463,7 @@ public final class VaubanContainer implements AutoCloseable {
                     var currentBean = beans.get(beanId);
                     if (currentBean == null) currentBean = bean;
                     var scopeClass = currentBean.getScope();
-                    var ctx = contexts.get(scopeClass);
+                    var ctx = getFirstContext(scopeClass);
                     if (ctx == null) ctx = dependentContext;
                     return ctx.get((Contextual<Object>) (Contextual<?>) currentBean,
                             new CreationalContextImpl<Object>());
@@ -474,7 +474,7 @@ public final class VaubanContainer implements AutoCloseable {
             } catch (Exception e) {
                 // Fallback: return direct instance (no proxy)
                 var scopeClass = bean.getScope();
-                var ctx = contexts.get(scopeClass);
+                var ctx = getFirstContext(scopeClass);
                 if (ctx == null) ctx = dependentContext;
                 return ctx.get((Contextual<Object>) (Contextual<?>) bean,
                         new CreationalContextImpl<>());
@@ -690,7 +690,7 @@ public final class VaubanContainer implements AutoCloseable {
         return beanManager;
     }
 
-    Map<Class<? extends Annotation>, Context> contexts() {
+    Map<Class<? extends Annotation>, List<Context>> contexts() {
         return contexts;
     }
 
@@ -738,11 +738,16 @@ public final class VaubanContainer implements AutoCloseable {
     @SuppressWarnings("unchecked")
     private <T> T getDirectInstance(ManagedBean<T> bean) {
         var scopeClass = bean.getScope();
-        var context = contexts.get(scopeClass);
+        var context = getFirstContext(scopeClass);
         if (context == null) {
             context = dependentContext;
         }
         return context.get((jakarta.enterprise.context.spi.Contextual<T>) bean, new CreationalContextImpl<>());
+    }
+
+    private Context getFirstContext(Class<? extends Annotation> scopeType) {
+        var list = contexts.get(scopeType);
+        return (list != null && !list.isEmpty()) ? list.getFirst() : null;
     }
 
     public InterceptorManager interceptorManager() {
@@ -2449,9 +2454,11 @@ public final class VaubanContainer implements AutoCloseable {
                 // --- Build Compatible Extensions (BCE) — remaining phases ---
                 if (!bceClasses.isEmpty()) {
                     var bceResult = fr.vidocq.vauban.core.extensions.BceProcessor.process(
-                            bceClasses, descriptors, index,
+                            bceClasses, descriptors, observers, interceptors, index,
                             beanClasses.isEmpty() ? Thread.currentThread().getContextClassLoader()
-                                    : beanClasses.getFirst().getClassLoader());
+                                    : beanClasses.getFirst().getClassLoader(),
+                            discoveryResult != null ? discoveryResult.bceInstances() : null,
+                            nonBceClasses);
 
                     // BCE definition errors → DefinitionException
                     if (!bceResult.definitionErrors().isEmpty()) {
@@ -2540,7 +2547,23 @@ public final class VaubanContainer implements AutoCloseable {
                         : (beanClasses.isEmpty()
                         ? Thread.currentThread().getContextClassLoader()
                         : beanClasses.getFirst().getClassLoader());
-                return new VaubanContainer(index, descriptors, observers, interceptors, disposers, factories, beanClassLoader, classDefiner);
+                var container = new VaubanContainer(index, descriptors, observers, interceptors, disposers, factories, beanClassLoader, classDefiner);
+
+                // Register custom contexts from Build Compatible Extensions
+                if (discoveryResult != null) {
+                    for (var reg : discoveryResult.metaAnnotations().getCustomContexts()) {
+                        try {
+                            var ctor = reg.contextClass().getDeclaredConstructor();
+                            ctor.setAccessible(true);
+                            var ctx = (jakarta.enterprise.context.spi.Context) ctor.newInstance();
+                            container.contexts.computeIfAbsent(reg.scopeAnnotation(), k -> new java.util.ArrayList<>()).add(ctx);
+                        } catch (Exception e) {
+                            // Skip context if instantiation fails
+                        }
+                    }
+                }
+
+                return container;
             } finally {
                 Thread.currentThread().setContextClassLoader(previousCl);
             }

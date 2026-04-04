@@ -47,14 +47,14 @@ public final class VaubanBeanManager implements BeanManager {
     }
 
     private final VaubanContainer container;
-    private final Map<Class<? extends Annotation>, Context> contexts;
+    private final Map<Class<? extends Annotation>, List<Context>> contexts;
     private final Collection<ManagedBean<?>> beans;
     private final EventDispatcher eventDispatcher;
     private final InterceptorManager interceptorManager;
     private List<Bean<?>> builtInBeans;
 
     public VaubanBeanManager(VaubanContainer container,
-                             Map<Class<? extends Annotation>, Context> contexts,
+                             Map<Class<? extends Annotation>, List<Context>> contexts,
                              Collection<ManagedBean<?>> beans,
                              EventDispatcher eventDispatcher,
                              InterceptorManager interceptorManager) {
@@ -112,9 +112,9 @@ public final class VaubanBeanManager implements BeanManager {
         }
 
         var scope = bean.getScope();
-        var context = contexts.get(scope);
+        var context = getFirstContext(scope);
         if (context == null) {
-            context = contexts.get(jakarta.enterprise.context.Dependent.class);
+            context = getFirstContext(jakarta.enterprise.context.Dependent.class);
         }
         
         @SuppressWarnings("unchecked")
@@ -327,34 +327,27 @@ public final class VaubanBeanManager implements BeanManager {
 
     @Override
     public Context getContext(Class<? extends Annotation> scopeType) {
-        var context = findContext(scopeType);
-        if (context == null) {
+        var list = findContexts(scopeType);
+        if (list == null || list.isEmpty()) {
             throw new jakarta.enterprise.context.ContextNotActiveException(
                     "No context for scope: " + scopeType.getName());
         }
-        if (!context.isActive()) {
-            throw new jakarta.enterprise.context.ContextNotActiveException(
-                    "Context not active for scope: " + scopeType.getName());
+        for (var ctx : list) {
+            if (ctx.isActive()) return ctx;
         }
-        return context;
+        throw new jakarta.enterprise.context.ContextNotActiveException(
+                "Context not active for scope: " + scopeType.getName());
     }
 
     @Override
     public Collection<Context> getContexts(Class<? extends Annotation> scopeType) {
-        var context = findContext(scopeType);
-        if (context == null) {
-            return List.of();
-        }
-        return List.of(context);
+        var list = findContexts(scopeType);
+        return list != null ? List.copyOf(list) : List.of();
     }
 
-    /**
-     * Find a context by scope type, handling cross-classloader scenarios.
-     */
-    private Context findContext(Class<? extends Annotation> scopeType) {
-        var context = contexts.get(scopeType);
-        if (context != null) return context;
-        // Fallback: match by class name (for cross-classloader support in test frameworks)
+    private List<Context> findContexts(Class<? extends Annotation> scopeType) {
+        var list = contexts.get(scopeType);
+        if (list != null && !list.isEmpty()) return list;
         var scopeName = scopeType.getName();
         for (var entry : contexts.entrySet()) {
             if (entry.getKey().getName().equals(scopeName)) {
@@ -362,6 +355,11 @@ public final class VaubanBeanManager implements BeanManager {
             }
         }
         return null;
+    }
+
+    private Context getFirstContext(Class<? extends Annotation> scopeType) {
+        var list = findContexts(scopeType);
+        return (list != null && !list.isEmpty()) ? list.getFirst() : null;
     }
 
     @Override
