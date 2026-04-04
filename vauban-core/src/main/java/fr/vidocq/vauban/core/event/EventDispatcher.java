@@ -442,6 +442,10 @@ public final class EventDispatcher {
     private void invokeObserver(ObserverDescriptor observer, Object event,
             java.lang.reflect.Type selectedEventType,
             jakarta.enterprise.inject.spi.InjectionPoint eventInjectionPoint, Annotation... eventQualifiers) {
+        if (observer.isSynthetic()) {
+            observer.syntheticInvoker().accept(event, eventQualifiers);
+            return;
+        }
         try {
             var beanClass = Class.forName(observer.declaringClass().value(), true, container.classLoader());
 

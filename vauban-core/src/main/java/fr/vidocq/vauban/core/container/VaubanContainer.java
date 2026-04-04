@@ -529,6 +529,7 @@ public final class VaubanContainer implements AutoCloseable {
                 descriptors, java.util.List.of(), assignability);
 
         for (var observer : observers) {
+            if (observer.isSynthetic()) continue;
             try {
                 var cl = Thread.currentThread().getContextClassLoader();
                 var clazz = Class.forName(observer.declaringClass().value(), false, cl);
@@ -2496,7 +2497,7 @@ public final class VaubanContainer implements AutoCloseable {
                     }
                 }
                 var descriptors = new ArrayList<>(discovery.discoverBeans());
-                var observers = discovery.discoverObservers();
+                var observers = new ArrayList<>(discovery.discoverObservers());
                 var interceptors = discovery.discoverInterceptors();
                 var disposers = discovery.discoverDisposerMethods();
 
@@ -2530,6 +2531,11 @@ public final class VaubanContainer implements AutoCloseable {
                     // Register synthetic beans
                     for (var synBean : bceResult.syntheticBeans()) {
                         registerSyntheticBean(synBean, descriptors, factories);
+                    }
+
+                    // Register synthetic observers
+                    for (var synObs : bceResult.syntheticObservers()) {
+                        observers.add(buildSyntheticObserver(synObs));
                     }
 
                     // Apply enhancement modifications to bean descriptors
@@ -2681,6 +2687,78 @@ public final class VaubanContainer implements AutoCloseable {
                 }
             }
             return false;
+        }
+
+        @SuppressWarnings({"unchecked", "rawtypes"})
+        private static ObserverDescriptor buildSyntheticObserver(
+                fr.vidocq.vauban.core.extensions.VaubanSyntheticObserverBuilder<?> synObs) {
+            var eventReflectType = synObs.getEventType();
+            TypeInfo eventTypeInfo;
+            if (eventReflectType instanceof Class<?> cls) {
+                eventTypeInfo = new TypeInfo.ClassType(DotName.of(cls.getName()));
+            } else if (eventReflectType instanceof java.lang.reflect.ParameterizedType pt
+                    && pt.getRawType() instanceof Class<?> rawCls) {
+                var typeArgs = new java.util.ArrayList<TypeInfo>();
+                for (var arg : pt.getActualTypeArguments()) {
+                    if (arg instanceof Class<?> argCls) {
+                        typeArgs.add(new TypeInfo.ClassType(DotName.of(argCls.getName())));
+                    } else {
+                        typeArgs.add(new TypeInfo.ClassType(DotName.of("java.lang.Object")));
+                    }
+                }
+                eventTypeInfo = new TypeInfo.ParameterizedType(DotName.of(rawCls.getName()), typeArgs);
+            } else {
+                eventTypeInfo = new TypeInfo.ClassType(DotName.of("java.lang.Object"));
+            }
+
+            var qualifiers = new java.util.ArrayList<QualifierInstance>();
+            for (var q : synObs.getQualifiers()) {
+                var qName = DotName.of(q.annotationType().getName());
+                qualifiers.add(new QualifierInstance(qName, java.util.Map.of()));
+            }
+
+            var observerClass = synObs.getObserverClass();
+            var params = synObs.getParams();
+
+            java.util.function.BiConsumer<Object, java.lang.annotation.Annotation[]> invoker = (event, eventQualifiers) -> {
+                try {
+                    var observer = (jakarta.enterprise.inject.build.compatible.spi.SyntheticObserver) observerClass.getDeclaredConstructor().newInstance();
+                    var vaubanParams = new fr.vidocq.vauban.core.extensions.VaubanParameters(params);
+                    var metadata = new jakarta.enterprise.inject.spi.EventMetadata() {
+                        @Override public java.util.Set<java.lang.annotation.Annotation> getQualifiers() {
+                            var qs = new java.util.LinkedHashSet<java.lang.annotation.Annotation>();
+                            if (eventQualifiers != null) {
+                                for (var q : eventQualifiers) qs.add(q);
+                            }
+                            qs.add(jakarta.enterprise.inject.Any.Literal.INSTANCE);
+                            return java.util.Set.copyOf(qs);
+                        }
+                        @Override public jakarta.enterprise.inject.spi.InjectionPoint getInjectionPoint() { return null; }
+                        @Override public java.lang.reflect.Type getType() { return event.getClass(); }
+                    };
+                    var eventContext = new jakarta.enterprise.inject.spi.EventContext() {
+                        @Override public Object getEvent() { return event; }
+                        @Override public jakarta.enterprise.inject.spi.EventMetadata getMetadata() { return metadata; }
+                    };
+                    observer.observe(eventContext, vaubanParams);
+                } catch (RuntimeException e) {
+                    throw e;
+                } catch (Exception e) {
+                    throw new jakarta.enterprise.event.ObserverException("Synthetic observer failed", e);
+                }
+            };
+
+            return new ObserverDescriptor(
+                    DotName.of(observerClass.getName()),
+                    "observe",
+                    eventTypeInfo,
+                    qualifiers,
+                    synObs.isAsync(),
+                    synObs.getPriority(),
+                    "ALWAYS",
+                    "IN_PROGRESS",
+                    invoker
+            );
         }
 
         @SuppressWarnings({"unchecked", "rawtypes"})

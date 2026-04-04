@@ -32,6 +32,7 @@ public final class BceProcessor {
      */
     public record Result(
             List<VaubanSyntheticBeanBuilder<?>> syntheticBeans,
+            List<VaubanSyntheticObserverBuilder<?>> syntheticObservers,
             List<String> definitionErrors,
             List<String> deploymentErrors,
             Map<fr.vidocq.vauban.indexer.model.DotName, List<VaubanClassConfig>> enhancementModifications
@@ -101,6 +102,7 @@ public final class BceProcessor {
         var definitionErrors = new ArrayList<String>();
         var deploymentErrors = new ArrayList<String>();
         var allSyntheticBeans = new ArrayList<VaubanSyntheticBeanBuilder<?>>();
+        var allSyntheticObservers = new ArrayList<VaubanSyntheticObserverBuilder<?>>();
         var allEnhancementMods = new HashMap<fr.vidocq.vauban.indexer.model.DotName, List<VaubanClassConfig>>();
 
         for (var bceClass : bceClasses) {
@@ -122,8 +124,9 @@ public final class BceProcessor {
                 processRegistration(bce, bceClass, beans, observers, interceptors, lookup, classLoader, types, deploymentErrors, allArchiveClasses);
 
                 // Phase: @Synthesis
-                var syntheticBeans = processSynthesis(bce, bceClass, types, deploymentErrors);
-                allSyntheticBeans.addAll(syntheticBeans);
+                var synthesisResult = processSynthesis(bce, bceClass, types, deploymentErrors);
+                allSyntheticBeans.addAll(synthesisResult.beans());
+                allSyntheticObservers.addAll(synthesisResult.observers());
 
                 // Phase: @Validation
                 processValidation(bce, bceClass, types, deploymentErrors);
@@ -133,7 +136,7 @@ public final class BceProcessor {
             }
         }
 
-        return new Result(allSyntheticBeans, definitionErrors, deploymentErrors, allEnhancementMods);
+        return new Result(allSyntheticBeans, allSyntheticObservers, definitionErrors, deploymentErrors, allEnhancementMods);
     }
 
     private static Object instantiateBce(Class<?> bceClass) throws Exception {
@@ -499,12 +502,14 @@ public final class BceProcessor {
         return args;
     }
 
-    /**
-     * Process @Synthesis methods — creates synthetic beans.
-     */
-    private static List<VaubanSyntheticBeanBuilder<?>> processSynthesis(Object bce, Class<?> bceClass,
-                                                                        VaubanTypes types,
-                                                                        List<String> errors) {
+    record SynthesisResult(
+            List<VaubanSyntheticBeanBuilder<?>> beans,
+            List<VaubanSyntheticObserverBuilder<?>> observers
+    ) {}
+
+    private static SynthesisResult processSynthesis(Object bce, Class<?> bceClass,
+                                                     VaubanTypes types,
+                                                     List<String> errors) {
         var components = new VaubanSyntheticComponents();
 
         for (var method : getDeclaredMethodsSafe(bceClass)) {
@@ -525,7 +530,7 @@ public final class BceProcessor {
             }
         }
 
-        return components.getBeanDefinitions();
+        return new SynthesisResult(components.getBeanDefinitions(), components.getObserverDefinitions());
     }
 
     /**

@@ -14,6 +14,7 @@ import java.util.List;
 public final class VaubanSyntheticComponents implements SyntheticComponents {
 
     private final List<VaubanSyntheticBeanBuilder<?>> beanDefinitions = new ArrayList<>();
+    private final List<VaubanSyntheticObserverBuilder<?>> observerDefinitions = new ArrayList<>();
 
     @Override
     public <T> SyntheticBeanBuilder<T> addBean(Class<T> implementationClass) {
@@ -24,15 +25,24 @@ public final class VaubanSyntheticComponents implements SyntheticComponents {
 
     @Override
     public <T> SyntheticObserverBuilder<T> addObserver(Class<T> eventType) {
-        throw new UnsupportedOperationException("Synthetic observers not yet supported");
+        var builder = new VaubanSyntheticObserverBuilder<>(eventType);
+        observerDefinitions.add(builder);
+        return builder;
     }
 
     @Override
+    @SuppressWarnings("unchecked")
     public <T> SyntheticObserverBuilder<T> addObserver(Type eventType) {
-        throw new UnsupportedOperationException("Synthetic observers not yet supported");
+        var builder = new VaubanSyntheticObserverBuilder<T>(eventType);
+        observerDefinitions.add(builder);
+        return builder;
     }
 
     public List<VaubanSyntheticBeanBuilder<?>> getBeanDefinitions() {
         return beanDefinitions;
+    }
+
+    public List<VaubanSyntheticObserverBuilder<?>> getObserverDefinitions() {
+        return observerDefinitions;
     }
 }

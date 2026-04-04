@@ -515,8 +515,14 @@ public final class ManagedBean<T> implements Bean<T> {
         if (!containsUnresolvedTypeVariable(type)) return type;
         // Build a mapping from TypeVariable -> actual type by walking the class hierarchy
         var mapping = buildFullTypeMapping(declaringClass);
-        if (mapping.isEmpty()) return type;
-        return substituteTypeVariables(type, mapping);
+        if (!mapping.isEmpty()) {
+            type = substituteTypeVariables(type, mapping);
+        }
+        // Replace any remaining unresolved type variables with their upper bounds
+        if (containsUnresolvedTypeVariable(type)) {
+            type = replaceTypeVariablesWithBounds(type);
+        }
+        return type;
     }
 
     private static Map<java.lang.reflect.TypeVariable<?>, Type> buildFullTypeMapping(Class<?> clazz) {
@@ -696,6 +702,52 @@ public final class ManagedBean<T> implements Bean<T> {
             return containsUnresolvedTypeVariable(gat.getGenericComponentType());
         }
         return false;
+    }
+
+    private static Type replaceTypeVariablesWithBounds(Type type) {
+        if (type instanceof java.lang.reflect.TypeVariable<?> tv) {
+            var bounds = tv.getBounds();
+            if (bounds.length > 0 && bounds[0] != Object.class) {
+                return replaceTypeVariablesWithBounds(bounds[0]);
+            }
+            return Object.class;
+        }
+        if (type instanceof java.lang.reflect.ParameterizedType pt) {
+            var args = pt.getActualTypeArguments();
+            var newArgs = new Type[args.length];
+            boolean changed = false;
+            for (int i = 0; i < args.length; i++) {
+                newArgs[i] = replaceTypeVariablesWithBounds(args[i]);
+                if (newArgs[i] != args[i]) changed = true;
+            }
+            if (!changed) return type;
+            var rawType = pt.getRawType();
+            var owner = pt.getOwnerType();
+            return new java.lang.reflect.ParameterizedType() {
+                @Override public Type[] getActualTypeArguments() { return newArgs.clone(); }
+                @Override public Type getRawType() { return rawType; }
+                @Override public Type getOwnerType() { return owner; }
+                @Override public boolean equals(Object o) {
+                    if (!(o instanceof java.lang.reflect.ParameterizedType other)) return false;
+                    return rawType.equals(other.getRawType())
+                            && java.util.Arrays.equals(newArgs, other.getActualTypeArguments());
+                }
+                @Override public int hashCode() {
+                    return java.util.Objects.hash(rawType, java.util.Arrays.hashCode(newArgs));
+                }
+                @Override public String toString() {
+                    return rawType.getTypeName() + "<" + java.util.Arrays.stream(newArgs)
+                            .map(Type::getTypeName).collect(java.util.stream.Collectors.joining(", ")) + ">";
+                }
+            };
+        }
+        if (type instanceof java.lang.reflect.GenericArrayType gat) {
+            var resolved = replaceTypeVariablesWithBounds(gat.getGenericComponentType());
+            if (resolved != gat.getGenericComponentType()) {
+                return java.lang.reflect.Array.newInstance((Class<?>) resolved, 0).getClass();
+            }
+        }
+        return type;
     }
 
     private static void collectTypes(Class<?> clazz, Set<Type> types) {
