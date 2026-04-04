@@ -69,6 +69,12 @@ public final class EventImpl<T> implements Event<T> {
             throw new IllegalArgumentException(
                     "Event type contains unresolvable type variable: " + selectedType);
         }
+        // CDI spec: if runtime type has unresolvable type variables that aren't resolved by selected type
+        if (event.getClass().getTypeParameters().length > 0
+                && !(selectedType instanceof java.lang.reflect.ParameterizedType)) {
+            throw new IllegalArgumentException(
+                    "Event type contains unresolvable type variable: " + event.getClass());
+        }
         if (selectedType != null) {
             dispatcher.fire(event, selectedType, injectionPoint, qualifiers);
         } else {

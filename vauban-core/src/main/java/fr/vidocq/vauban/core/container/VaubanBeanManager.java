@@ -465,6 +465,11 @@ public final class VaubanBeanManager implements BeanManager {
         if (event == null) {
             throw new IllegalArgumentException("Event must not be null");
         }
+        // CDI spec: if the runtime type of the event object contains unresolvable type variables, throw IAE
+        if (event.getClass().getTypeParameters().length > 0) {
+            throw new IllegalArgumentException(
+                    "Event type contains unresolvable type variable: " + event.getClass());
+        }
         // Validate qualifiers
         if (qualifiers != null) {
             var seen = new HashSet<Class<?>>();
