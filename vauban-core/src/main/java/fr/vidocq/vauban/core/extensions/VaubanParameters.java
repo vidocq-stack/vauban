@@ -21,7 +21,7 @@ public final class VaubanParameters implements Parameters {
     public <T> T get(String key, Class<T> type) {
         var value = params.get(key);
         if (value == null) {
-            throw new IllegalArgumentException("No parameter with key: " + key);
+            return null;
         }
         return convertIfNeeded(value, type);
     }
