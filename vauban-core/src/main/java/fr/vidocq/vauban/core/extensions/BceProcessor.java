@@ -613,6 +613,10 @@ public final class BceProcessor {
         for (var ann : methodConfig.getAddedAnnotations()) {
             interceptorBindings.add(DotName.of(ann.getName()));
         }
+        // Store annotation instances for member value matching
+        for (var ann : methodConfig.getAddedAnnotationInstances()) {
+            interceptorBindingAnnotations.add(ann);
+        }
         for (var annInfo : methodConfig.getAddedAnnotationInfos()) {
             interceptorBindings.add(DotName.of(annInfo.name()));
             if (annInfo instanceof BuiltAnnotationInfo built) {

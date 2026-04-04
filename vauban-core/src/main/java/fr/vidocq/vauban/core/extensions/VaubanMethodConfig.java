@@ -13,6 +13,7 @@ public final class VaubanMethodConfig implements MethodConfig {
 
     private final MethodInfo methodInfo;
     private final Set<Class<? extends Annotation>> addedAnnotations = new LinkedHashSet<>();
+    private final List<Annotation> addedAnnotationInstances = new ArrayList<>();
     private final List<AnnotationInfo> addedAnnotationInfos = new ArrayList<>();
     private final List<Predicate<AnnotationInfo>> removePredicates = new ArrayList<>();
     private boolean allAnnotationsRemoved;
@@ -47,6 +48,7 @@ public final class VaubanMethodConfig implements MethodConfig {
     public MethodConfig addAnnotation(Annotation annotation) {
         try {
             addedAnnotations.add(annotation.annotationType());
+            addedAnnotationInstances.add(annotation);
         } catch (Exception ignored) {}
         return this;
     }
@@ -70,6 +72,10 @@ public final class VaubanMethodConfig implements MethodConfig {
 
     public Set<Class<? extends Annotation>> getAddedAnnotations() {
         return Set.copyOf(addedAnnotations);
+    }
+
+    public List<Annotation> getAddedAnnotationInstances() {
+        return List.copyOf(addedAnnotationInstances);
     }
 
     public List<AnnotationInfo> getAddedAnnotationInfos() {
