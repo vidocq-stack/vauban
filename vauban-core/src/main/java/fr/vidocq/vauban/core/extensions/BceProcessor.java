@@ -512,11 +512,24 @@ public final class BceProcessor {
             }
 
             // Class-level annotation additions
+            boolean classHasExplicit = false;
             for (var ann : config.getAddedAnnotations()) {
-                qualifiers.add(new QualifierInstance(DotName.of(ann.getName()), Map.of()));
+                var qName = DotName.of(ann.getName());
+                qualifiers.add(new QualifierInstance(qName, Map.of()));
+                if (!qName.equals(QualifierInstance.ANY_NAME) && !qName.equals(QualifierInstance.NAMED_NAME)) {
+                    classHasExplicit = true;
+                }
             }
             for (var annInfo : config.getAddedAnnotationInfos()) {
-                qualifiers.add(annotationInfoToQualifier(annInfo));
+                var qi = annotationInfoToQualifier(annInfo);
+                qualifiers.add(qi);
+                if (!qi.annotationName().equals(QualifierInstance.ANY_NAME)
+                        && !qi.annotationName().equals(QualifierInstance.NAMED_NAME)) {
+                    classHasExplicit = true;
+                }
+            }
+            if (classHasExplicit) {
+                qualifiers.removeIf(q -> q.annotationName().equals(QualifierInstance.DEFAULT_NAME));
             }
 
             // Field-level modifications -> update injection points
@@ -568,11 +581,25 @@ public final class BceProcessor {
                 ipQualifiers.clear();
             }
 
+            boolean hasExplicitQualifier = false;
             for (var ann : fieldConfig.getAddedAnnotations()) {
-                ipQualifiers.add(new QualifierInstance(DotName.of(ann.getName()), Map.of()));
+                var qName = DotName.of(ann.getName());
+                ipQualifiers.add(new QualifierInstance(qName, Map.of()));
+                if (!qName.equals(QualifierInstance.ANY_NAME) && !qName.equals(QualifierInstance.NAMED_NAME)) {
+                    hasExplicitQualifier = true;
+                }
             }
             for (var annInfo : fieldConfig.getAddedAnnotationInfos()) {
-                ipQualifiers.add(annotationInfoToQualifier(annInfo));
+                var qi = annotationInfoToQualifier(annInfo);
+                ipQualifiers.add(qi);
+                if (!qi.annotationName().equals(QualifierInstance.ANY_NAME)
+                        && !qi.annotationName().equals(QualifierInstance.NAMED_NAME)) {
+                    hasExplicitQualifier = true;
+                }
+            }
+            // CDI spec: @Default is removed when an explicit qualifier is added
+            if (hasExplicitQualifier) {
+                ipQualifiers.removeIf(q -> q.annotationName().equals(QualifierInstance.DEFAULT_NAME));
             }
 
             injectionPoints.set(i, new InjectionPointInfo(
