@@ -2,6 +2,7 @@ package fr.vidocq.vauban.core.extensions;
 
 import fr.vidocq.vauban.core.bean.model.BeanDescriptor;
 import fr.vidocq.vauban.core.bean.model.InjectionPointInfo;
+import fr.vidocq.vauban.core.bean.model.InterceptorDescriptor;
 import fr.vidocq.vauban.core.bean.model.QualifierInstance;
 import fr.vidocq.vauban.core.langmodel.IndexLookup;
 import fr.vidocq.vauban.core.langmodel.VaubanAnnotationInfo;
@@ -670,6 +671,43 @@ public final class BceProcessor {
             errors.add("@Registration method " + method.getName()
                     + " must have exactly one BeanInfo/InterceptorInfo parameter, found " + primaryCount);
         }
+    }
+
+    /**
+     * Apply enhancement modifications to interceptor descriptors.
+     * Handles @Priority additions from Enhancement phase.
+     */
+    public static List<InterceptorDescriptor> applyInterceptorEnhancements(
+            List<InterceptorDescriptor> interceptors,
+            Map<DotName, List<VaubanClassConfig>> modifications) {
+        if (modifications.isEmpty()) return interceptors;
+
+        var result = new ArrayList<InterceptorDescriptor>(interceptors.size());
+        for (var descriptor : interceptors) {
+            var configs = modifications.get(descriptor.interceptorClass());
+            if (configs == null || configs.isEmpty()) {
+                result.add(descriptor);
+                continue;
+            }
+            var updated = descriptor;
+            for (var config : configs) {
+                for (var annInfo : config.getAddedAnnotationInfos()) {
+                    if ("jakarta.annotation.Priority".equals(annInfo.name())) {
+                        int priorityValue = 0;
+                        var valueMember = annInfo.hasMember("value") ? annInfo.member("value") : null;
+                        if (valueMember != null && valueMember.isInt()) {
+                            priorityValue = valueMember.asInt();
+                        }
+                        updated = new InterceptorDescriptor(
+                                updated.interceptorClass(), updated.bindings(),
+                                updated.aroundInvokeMethod(), updated.aroundConstructMethod(),
+                                priorityValue, true, updated.bindingAnnotations());
+                    }
+                }
+            }
+            result.add(updated);
+        }
+        return result;
     }
 
     /**

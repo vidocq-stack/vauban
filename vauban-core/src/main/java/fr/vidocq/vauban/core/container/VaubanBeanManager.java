@@ -106,8 +106,7 @@ public final class VaubanBeanManager implements BeanManager {
 
         // For normal-scoped beans, return client proxy via container
         if (bean instanceof ManagedBean<?> mb
-                && mb.descriptor().scope().isNormal()
-                && mb.descriptor().kind() == fr.vidocq.vauban.core.bean.model.BeanDescriptor.BeanKind.MANAGED) {
+                && mb.descriptor().scope().isNormal()) {
             return container.getOrCreateProxyForBean(mb);
         }
 
@@ -675,7 +674,10 @@ public final class VaubanBeanManager implements BeanManager {
     @Override
     public Event<Object> getEvent() {
         var ip = VaubanContainer.getCurrentInjectionPoint();
-        return new EventImpl<>(eventDispatcher, new java.lang.annotation.Annotation[0], ip);
+        return new EventImpl<>(eventDispatcher, new java.lang.annotation.Annotation[]{
+                jakarta.enterprise.inject.Default.Literal.INSTANCE,
+                jakarta.enterprise.inject.Any.Literal.INSTANCE
+        }, ip);
     }
 
     @Override

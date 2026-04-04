@@ -397,9 +397,8 @@ public final class VaubanContainer implements AutoCloseable {
         var existing = context.get((Contextual<T>) finalBean);
         if (existing != null) return existing;
 
-        // For normal-scoped managed beans (not producers), return a client proxy
-        if (finalBean.descriptor().scope().isNormal()
-                && finalBean.descriptor().kind() == fr.vidocq.vauban.core.bean.model.BeanDescriptor.BeanKind.MANAGED) {
+        // For normal-scoped beans, return a client proxy
+        if (finalBean.descriptor().scope().isNormal()) {
             return getOrCreateProxy(finalBean);
         }
         
@@ -412,7 +411,7 @@ public final class VaubanContainer implements AutoCloseable {
     @SuppressWarnings("unchecked")
     private <T> T getOrCreateProxy(ManagedBean<T> bean) {
         return (T) proxyCache.computeIfAbsent(bean.descriptor().id(), id -> {
-            var beanClass = bean.getBeanClass();
+            var beanClass = resolveProxyTargetClass(bean);
 
             // CDI Unproxyable bean checks
             if (java.lang.reflect.Modifier.isFinal(beanClass.getModifiers())) {
@@ -480,6 +479,18 @@ public final class VaubanContainer implements AutoCloseable {
                         new CreationalContextImpl<>());
             }
         });
+    }
+
+    private Class<?> resolveProxyTargetClass(ManagedBean<?> bean) {
+        if (bean.descriptor().kind() == fr.vidocq.vauban.core.bean.model.BeanDescriptor.BeanKind.PRODUCER_METHOD
+                || bean.descriptor().kind() == fr.vidocq.vauban.core.bean.model.BeanDescriptor.BeanKind.PRODUCER_FIELD) {
+            for (var type : bean.getTypes()) {
+                if (type instanceof Class<?> c && c != Object.class && !c.isInterface()) {
+                    return c;
+                }
+            }
+        }
+        return bean.getBeanClass();
     }
 
     /**
@@ -845,7 +856,10 @@ public final class VaubanContainer implements AutoCloseable {
                 } finally {
                     currentInjectionPoint.set(previousIp);
                 }
+            } catch (jakarta.enterprise.inject.IllegalProductException | jakarta.enterprise.inject.UnproxyableResolutionException e) {
+                throw e;
             } catch (Exception e) {
+                if (e.getCause() instanceof jakarta.enterprise.inject.IllegalProductException ipe) throw ipe;
                 // Skip fields that can't be resolved (may not be CDI beans)
                 System.err.println("INJECTION FAILED FOR " + field.getName() + " ON " + instance.getClass() + " : " + e.getMessage());
                 e.printStackTrace();
@@ -964,13 +978,30 @@ public final class VaubanContainer implements AutoCloseable {
 
     private static java.lang.annotation.Annotation[] collectEventQualifiers(java.lang.annotation.Annotation[] annotations) {
         var quals = new java.util.ArrayList<java.lang.annotation.Annotation>();
+        boolean hasExplicitQualifier = false;
         for (var ann : annotations) {
             if (ann.annotationType() == jakarta.inject.Inject.class) continue;
-            if (ann.annotationType() == jakarta.enterprise.inject.Default.class) continue;
-            if (ann.annotationType() == jakarta.enterprise.inject.Any.class) continue;
+            if (ann.annotationType() == jakarta.enterprise.inject.Default.class) {
+                quals.add(ann);
+                continue;
+            }
+            if (ann.annotationType() == jakarta.enterprise.inject.Any.class) {
+                quals.add(ann);
+                continue;
+            }
             if (ann.annotationType().isAnnotationPresent(jakarta.inject.Qualifier.class)) {
                 quals.add(ann);
+                hasExplicitQualifier = true;
             }
+        }
+        // CDI spec: Event gets @Default if no explicit qualifiers, and @Any always
+        boolean hasDefault = quals.stream().anyMatch(q -> q.annotationType() == jakarta.enterprise.inject.Default.class);
+        boolean hasAny = quals.stream().anyMatch(q -> q.annotationType() == jakarta.enterprise.inject.Any.class);
+        if (!hasExplicitQualifier && !hasDefault) {
+            quals.add(jakarta.enterprise.inject.Default.Literal.INSTANCE);
+        }
+        if (!hasAny) {
+            quals.add(jakarta.enterprise.inject.Any.Literal.INSTANCE);
         }
         return quals.toArray(new java.lang.annotation.Annotation[0]);
     }
@@ -2511,6 +2542,10 @@ public final class VaubanContainer implements AutoCloseable {
                                 descriptors, bceResult.enhancementModifications(), index);
                         descriptors.clear();
                         descriptors.addAll(modified);
+
+                        // Apply enhancement modifications to interceptor descriptors (e.g. @Priority)
+                        interceptors = new ArrayList<>(fr.vidocq.vauban.core.extensions.BceProcessor.applyInterceptorEnhancements(
+                                interceptors, bceResult.enhancementModifications()));
                     }
                 }
 
