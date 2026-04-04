@@ -111,6 +111,15 @@ public final class VaubanParameters implements Parameters {
         if (returnType.isAnnotation()) {
             return createAnnotationProxy(returnType, member.asNestedAnnotation());
         }
+        if (member.isArray() && returnType.isArray()) {
+            var elements = member.asArray();
+            var componentType = returnType.getComponentType();
+            var array = java.lang.reflect.Array.newInstance(componentType, elements.size());
+            for (int i = 0; i < elements.size(); i++) {
+                java.lang.reflect.Array.set(array, i, convertMemberValue(elements.get(i), componentType));
+            }
+            return array;
+        }
         return null;
     }
 }
