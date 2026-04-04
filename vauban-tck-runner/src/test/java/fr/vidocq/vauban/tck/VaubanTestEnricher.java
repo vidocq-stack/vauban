@@ -87,8 +87,6 @@ public class VaubanTestEnricher implements TestEnricher {
             var ctx = bm.createCreationalContext(bean);
             return bm.getReference(bean, genericType, ctx);
         } catch (Exception e) {
-            System.err.println("ENRICHER RESOLUTION FAILED for type " + type + " with qualifiers " + java.util.Arrays.toString(qualifiers) + ": " + e);
-            e.printStackTrace(System.err);
             return null;
         }
     }
