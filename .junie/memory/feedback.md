@@ -54,3 +54,19 @@
     "NEW INSTRUCTION": "WHEN ParameterizedEventTest passes locally THEN do not commit and just report success"
 }
 
+[2026-04-03 18:49] - Updated by Junie
+{
+    "TYPE": "preference",
+    "CATEGORY": "Commit workflow",
+    "EXPECTATION": "User wants an immediate commit with a good message after each stable step, then continue.",
+    "NEW INSTRUCTION": "WHEN a development step is stable THEN commit immediately with a descriptive message"
+}
+
+[2026-04-03 18:58] - Updated by Junie
+{
+    "TYPE": "preference",
+    "CATEGORY": "Commit workflow",
+    "EXPECTATION": "User wants an immediate commit with a good message after each stable step, then continue.",
+    "NEW INSTRUCTION": "WHEN a development step is stable THEN commit immediately with descriptive message and continue"
+}
+
