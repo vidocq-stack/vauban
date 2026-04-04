@@ -31,7 +31,9 @@ public final class VaubanClassInfo implements jakarta.enterprise.lang.model.decl
 
     @Override
     public String simpleName() {
-        return indexClass.name().simpleName();
+        var full = indexClass.name().simpleName();
+        int dollarIdx = full.lastIndexOf('$');
+        return dollarIdx >= 0 ? full.substring(dollarIdx + 1) : full;
     }
 
     @Override

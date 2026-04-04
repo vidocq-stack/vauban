@@ -8,63 +8,58 @@ import jakarta.enterprise.lang.model.declarations.MethodInfo;
 
 import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
+import java.util.ArrayList;
+import java.util.List;
 
-/**
- * Creates {@link InvokerBuilder}s that produce reflection-based Invokers.
- */
 public final class VaubanInvokerFactory implements InvokerFactory {
 
     private final ClassLoader classLoader;
+    private final List<VaubanInvokerBuilder> builders = new ArrayList<>();
 
     public VaubanInvokerFactory(ClassLoader classLoader) {
         this.classLoader = classLoader;
     }
 
+    public List<VaubanInvokerBuilder> getBuilders() {
+        return builders;
+    }
+
     @Override
     public InvokerBuilder<InvokerInfo> createInvoker(BeanInfo bean, MethodInfo method) {
-        // Validate: not a producer bean
         if (bean.isProducerMethod() || bean.isProducerField()) {
             throw new IllegalStateException(
                     "Cannot create invoker for producer bean: " + bean.declaringClass().name());
         }
-
-        // Validate: not an interceptor
         if (bean.isInterceptor()) {
             throw new IllegalStateException(
                     "Cannot create invoker for interceptor bean: " + bean.declaringClass().name());
         }
-
-        // Validate: not a constructor
         if ("<init>".equals(method.name())) {
             throw new IllegalStateException(
                     "Cannot create invoker for constructor of: " + bean.declaringClass().name());
         }
 
-        // Resolve the actual java.lang.reflect.Method
         var beanClassName = bean.declaringClass().name();
         try {
             var beanClass = classLoader.loadClass(beanClassName);
             var reflectMethod = findMethod(beanClass, method);
 
-            // Validate: not private
             if (Modifier.isPrivate(reflectMethod.getModifiers())) {
                 throw new IllegalStateException(
                         "Cannot create invoker for private method: " + beanClassName + "." + method.name());
             }
-
-            // Validate: method belongs to the bean class (or its supertypes)
             if (!reflectMethod.getDeclaringClass().isAssignableFrom(beanClass)) {
                 throw new IllegalStateException(
                         "Method " + method.name() + " does not belong to bean class " + beanClassName);
             }
-
-            // Validate: not an Object method other than toString
             if (reflectMethod.getDeclaringClass() == Object.class && !"toString".equals(method.name())) {
                 throw new IllegalStateException(
                         "Cannot create invoker for Object method: " + method.name());
             }
 
-            return new VaubanInvokerBuilder(reflectMethod, beanClass);
+            var builder = new VaubanInvokerBuilder(reflectMethod, beanClass);
+            builders.add(builder);
+            return builder;
         } catch (ClassNotFoundException e) {
             throw new IllegalStateException("Cannot load bean class: " + beanClassName, e);
         }

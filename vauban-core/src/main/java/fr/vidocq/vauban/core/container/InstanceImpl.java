@@ -30,6 +30,13 @@ public final class InstanceImpl<T> implements Instance<T> {
     private final CreationalContextImpl<?> parentCreationalContext;
     private final Map<Object, jakarta.enterprise.context.spi.CreationalContext<?>> dependentInstances = new IdentityHashMap<>();
 
+    public void releaseAllDependents() {
+        for (var entry : new IdentityHashMap<>(dependentInstances).entrySet()) {
+            entry.getValue().release();
+        }
+        dependentInstances.clear();
+    }
+
     public InstanceImpl(VaubanContainer container, Class<T> type) {
         this(container, type, new Annotation[0], null, null);
     }
@@ -212,17 +219,20 @@ public final class InstanceImpl<T> implements Instance<T> {
     public void destroy(T instance) {
         if (instance == null) throw new NullPointerException("Instance to destroy must not be null");
         var bm = container.getBeanManager();
-        var beans = bm.getBeans(type, qualifiers);
+        // If the tracked context has this instance, use it directly (most reliable)
+        var trackedCtx = dependentInstances.remove(instance);
+        if (trackedCtx != null) {
+            trackedCtx.release();
+            return;
+        }
+        // Use the runtime type for resolution if our type is too broad (e.g. Object)
+        var lookupType = (type == Object.class) ? instance.getClass() : type;
+        var beans = bm.getBeans(lookupType, qualifiers);
         if (beans.isEmpty()) return;
         var bean = (Bean<T>) bm.resolve(beans);
         var scope = bean.getScope();
         if (scope == jakarta.enterprise.context.Dependent.class) {
-            var trackedCtx = dependentInstances.remove(instance);
-            if (trackedCtx != null) {
-                trackedCtx.release();
-            } else {
-                bean.destroy(instance, bm.createCreationalContext(bean));
-            }
+            bean.destroy(instance, bm.createCreationalContext(bean));
         } else {
             try {
                 var ctx = bm.getContext(scope);

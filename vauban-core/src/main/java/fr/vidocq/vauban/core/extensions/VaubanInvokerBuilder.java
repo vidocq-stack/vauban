@@ -22,6 +22,14 @@ public final class VaubanInvokerBuilder implements InvokerBuilder<InvokerInfo> {
         this.beanClass = beanClass;
     }
 
+    public Method getMethod() {
+        return method;
+    }
+
+    public Set<Integer> getArgumentLookups() {
+        return Set.copyOf(argumentLookups);
+    }
+
     @Override
     public InvokerBuilder<InvokerInfo> withInstanceLookup() {
         this.instanceLookup = true;

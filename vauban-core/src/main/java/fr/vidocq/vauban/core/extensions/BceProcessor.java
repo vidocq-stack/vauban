@@ -354,7 +354,7 @@ public final class BceProcessor {
                 matched = true;
 
                 var beanInfo = new VaubanBceBeanInfo(bean, lookup);
-                invokeRegistrationMethod(method, bce, beanInfo, classLoader, types, errors);
+                invokeRegistrationMethod(method, bce, beanInfo, classLoader, types, errors, beans);
             }
 
             // Also try matching interceptors
@@ -363,7 +363,7 @@ public final class BceProcessor {
                 matched = true;
 
                 var interceptorInfo = new VaubanBceInterceptorInfo(interceptor, lookup);
-                invokeRegistrationMethod(method, bce, interceptorInfo, classLoader, types, errors);
+                invokeRegistrationMethod(method, bce, interceptorInfo, classLoader, types, errors, beans);
             }
 
             // If no beans matched and method doesn't use InvokerFactory, try archive classes
@@ -378,7 +378,7 @@ public final class BceProcessor {
 
                     var minimalBean = fr.vidocq.vauban.core.bean.model.BeanDescriptor.minimal(className);
                     var beanInfo = new VaubanBceBeanInfo(minimalBean, lookup);
-                    invokeRegistrationMethod(method, bce, beanInfo, classLoader, types, errors);
+                    invokeRegistrationMethod(method, bce, beanInfo, classLoader, types, errors, beans);
                 }
             }
         }
@@ -459,7 +459,8 @@ public final class BceProcessor {
 
     private static void invokeRegistrationMethod(Method method, Object bce,
                                                    BeanInfo beanInfo, ClassLoader classLoader,
-                                                   VaubanTypes types, List<String> errors) {
+                                                   VaubanTypes types, List<String> errors,
+                                                   List<BeanDescriptor> allBeans) {
         var invokerFactory = new VaubanInvokerFactory(classLoader);
         var messages = new VaubanMessages();
         var args = resolveRegistrationArgs(method, beanInfo, invokerFactory, messages, types);
@@ -480,6 +481,56 @@ public final class BceProcessor {
 
         if (messages.hasErrors()) {
             errors.addAll(messages.getErrors());
+        }
+
+        validateInvokerLookups(invokerFactory, allBeans, classLoader, errors);
+    }
+
+    private static final Set<Class<?>> SPECIAL_LOOKUP_TYPES = Set.of(
+            jakarta.enterprise.inject.Instance.class,
+            jakarta.enterprise.event.Event.class,
+            jakarta.enterprise.inject.spi.BeanManager.class
+    );
+
+    private static void validateInvokerLookups(VaubanInvokerFactory factory,
+                                                List<BeanDescriptor> allBeans,
+                                                ClassLoader classLoader,
+                                                List<String> errors) {
+        for (var builder : factory.getBuilders()) {
+            var argLookups = builder.getArgumentLookups();
+            if (argLookups.isEmpty()) continue;
+
+            var reflectMethod = builder.getMethod();
+            var paramTypes = reflectMethod.getParameterTypes();
+
+            for (int idx : argLookups) {
+                var paramType = paramTypes[idx];
+
+                if (SPECIAL_LOOKUP_TYPES.stream().anyMatch(t -> t.isAssignableFrom(paramType))) {
+                    continue;
+                }
+
+                int matchCount = 0;
+                for (var bean : allBeans) {
+                    try {
+                        var beanClass = classLoader.loadClass(bean.beanClass().value());
+                        if (paramType.isAssignableFrom(beanClass)) {
+                            matchCount++;
+                        }
+                    } catch (ClassNotFoundException ignored) {
+                    }
+                }
+
+                if (matchCount == 0) {
+                    errors.add("Invoker argument lookup unsatisfied: no bean found for parameter type "
+                            + paramType.getName() + " at position " + idx
+                            + " of method " + reflectMethod.getDeclaringClass().getName() + "." + reflectMethod.getName());
+                } else if (matchCount > 1) {
+                    errors.add("Invoker argument lookup ambiguous: " + matchCount + " beans found for parameter type "
+                            + paramType.getName() + " at position " + idx
+                            + " of method " + reflectMethod.getDeclaringClass().getName() + "." + reflectMethod.getName());
+                }
+            }
         }
     }
 

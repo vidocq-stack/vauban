@@ -53,6 +53,10 @@ public final class VaubanBeanManager implements BeanManager {
     private final InterceptorManager interceptorManager;
     private List<Bean<?>> builtInBeans;
 
+    public EventDispatcher getEventDispatcher() {
+        return eventDispatcher;
+    }
+
     public VaubanBeanManager(VaubanContainer container,
                              Map<Class<? extends Annotation>, List<Context>> contexts,
                              Collection<ManagedBean<?>> beans,
