@@ -71,14 +71,17 @@ public final class RuntimeClientProxyGenerator {
                         cob.return_();
                     });
 
-            // Override each eligible method (including inherited)
+            // Override each eligible method (including inherited and package-private)
             var proxiedMethods = new java.util.HashSet<String>();
-            for (var method : beanClass.getMethods()) {
-                if (method.getDeclaringClass() == Object.class) continue;
-                var key = method.getName() + java.util.Arrays.toString(method.getParameterTypes());
-                if (proxiedMethods.add(key) && shouldProxy(method)) {
-                    generateProxyMethod(clb, proxyCD, beanCD, method);
+            var current = beanClass;
+            while (current != null && current != Object.class) {
+                for (var method : current.getDeclaredMethods()) {
+                    var key = method.getName() + java.util.Arrays.toString(method.getParameterTypes());
+                    if (proxiedMethods.add(key) && shouldProxy(method)) {
+                        generateProxyMethod(clb, proxyCD, beanCD, method);
+                    }
                 }
+                current = current.getSuperclass();
             }
         });
 

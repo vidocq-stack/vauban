@@ -854,30 +854,6 @@ public final class BeanDiscovery {
         return null;
     }
 
-    static TypeInfo resolveTypeVariablesToBounds(TypeInfo type) {
-        if (type instanceof TypeInfo.TypeVariable tv) {
-            if (!tv.bounds().isEmpty()) {
-                return resolveTypeVariablesToBounds(tv.bounds().getFirst());
-            }
-            return new TypeInfo.ClassType(DotName.of("java.lang.Object"));
-        }
-        if (type instanceof TypeInfo.ParameterizedType pt) {
-            var resolved = new java.util.ArrayList<TypeInfo>();
-            boolean changed = false;
-            for (var arg : pt.typeArguments()) {
-                var r = resolveTypeVariablesToBounds(arg);
-                resolved.add(r);
-                if (r != arg) changed = true;
-            }
-            return changed ? new TypeInfo.ParameterizedType(pt.rawType(), resolved) : pt;
-        }
-        if (type instanceof TypeInfo.ArrayType at) {
-            var r = resolveTypeVariablesToBounds(at.componentType());
-            return r != at.componentType() ? new TypeInfo.ArrayType(r, at.dimensions()) : at;
-        }
-        return type;
-    }
-
     Set<TypeInfo> computeProducerTypes(TypeInfo producerType) {
         var types = new LinkedHashSet<TypeInfo>();
         types.add(producerType);
