@@ -588,9 +588,6 @@ public final class BeanDiscovery {
             }
         } catch (Exception e) { /* fallback to indexer return type */ }
 
-        System.out.println("DEBUG PRODUCER METHOD: " + declaringClass.name() + "." + method.name() + " type before resolve: " + actualReturnType);
-        actualReturnType = resolveTypeVariablesToBounds(actualReturnType);
-        System.out.println("DEBUG PRODUCER METHOD: " + declaringClass.name() + "." + method.name() + " type after resolve: " + actualReturnType);
         var types = computeProducerTypesWithTyped(actualReturnType, method.annotations());
         var qualifiers = computeQualifiers(method.annotations());
         var scope = computeScopeWithStereotypes(method.annotations());
@@ -666,9 +663,6 @@ public final class BeanDiscovery {
             }
         } catch (Exception e) { /* fallback */ }
 
-        System.out.println("DEBUG PRODUCER FIELD: " + declaringClass.name() + "." + field.name() + " type before resolve: " + actualType);
-        actualType = resolveTypeVariablesToBounds(actualType);
-        System.out.println("DEBUG PRODUCER FIELD: " + declaringClass.name() + "." + field.name() + " type after resolve: " + actualType);
         var types = computeProducerTypesWithTyped(actualType, field.annotations());
         var qualifiers = computeQualifiers(field.annotations());
         var scope = computeScopeWithStereotypes(field.annotations());

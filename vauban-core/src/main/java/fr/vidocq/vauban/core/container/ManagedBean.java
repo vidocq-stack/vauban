@@ -331,10 +331,10 @@ public final class ManagedBean<T> implements Bean<T> {
                 if (isLegalParameterizedType(pt, allowedTypeVars)) {
                     result.add(t);
                 } else if (addRawForRemoved && pt.getRawType() instanceof Class<?> raw) {
-                    // CDI spec: replace removed illegal type with raw type,
-                    // but only if removed due to unresolvable type variables (not wildcards)
+                    // CDI spec 5.2.4: keep parameterized types with type variables for producers
+                    // so that assignability can match type variable bounds against required types
                     if (containsTypeVariable(pt)) {
-                        result.add(raw);
+                        result.add(t);
                     }
                 }
             } else if (t instanceof java.lang.reflect.GenericArrayType gat) {
