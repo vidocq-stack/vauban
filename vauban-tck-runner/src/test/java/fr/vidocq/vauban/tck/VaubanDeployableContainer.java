@@ -98,26 +98,16 @@ public class VaubanDeployableContainer implements DeployableContainer<VaubanCont
             container.requestContext().activate();
             ContainerHolder.set(container);
 
-        } catch (jakarta.enterprise.inject.spi.DefinitionException e) {
-            throw new org.jboss.arquillian.container.spi.client.container.DeploymentException("CDI DefinitionException: " + e.getMessage(), e);
-        } catch (jakarta.enterprise.inject.spi.DeploymentException e) {
-            throw new org.jboss.arquillian.container.spi.client.container.DeploymentException("CDI DeploymentException: " + e.getMessage(), e);
+        } catch (jakarta.enterprise.inject.spi.DefinitionException | jakarta.enterprise.inject.spi.DeploymentException e) {
+            // Let CDI spec exceptions propagate directly so Arquillian's @ShouldThrowException can match them
+            throw e;
         } catch (RuntimeException e) {
-            // Unwrap some RuntimeExceptions that might be CDI exceptions
-            if (e.getCause() instanceof jakarta.enterprise.inject.spi.DefinitionException) {
-                throw new org.jboss.arquillian.container.spi.client.container.DeploymentException("CDI DefinitionException: " + e.getCause().getMessage(), e.getCause());
-            }
-            if (e.getCause() instanceof jakarta.enterprise.inject.spi.DeploymentException) {
-                throw new org.jboss.arquillian.container.spi.client.container.DeploymentException("CDI DeploymentException: " + e.getCause().getMessage(), e.getCause());
-            }
-            // Log the full exception as it might be swallowed by Arquillian
-            System.err.println("CRITICAL: Unexpected RuntimeException during deployment: " + e.getMessage());
-            e.printStackTrace();
-            throw new org.jboss.arquillian.container.spi.client.container.DeploymentException("Unexpected RuntimeException during deployment: " + e.getMessage(), e);
+            // Unwrap nested CDI spec exceptions
+            if (e.getCause() instanceof jakarta.enterprise.inject.spi.DefinitionException de) throw de;
+            if (e.getCause() instanceof jakarta.enterprise.inject.spi.DeploymentException de) throw de;
+            throw new org.jboss.arquillian.container.spi.client.container.DeploymentException("Deployment failed: " + e.getMessage(), e);
         } catch (Exception e) {
-            System.err.println("CRITICAL: Failed to deploy archive: " + archive.getName());
-            e.printStackTrace();
-            throw new org.jboss.arquillian.container.spi.client.container.DeploymentException("Failed to deploy archive: " + archive.getName(), e);
+            throw new org.jboss.arquillian.container.spi.client.container.DeploymentException("Failed to deploy: " + archive.getName(), e);
         }
 
         return new ProtocolMetaData();

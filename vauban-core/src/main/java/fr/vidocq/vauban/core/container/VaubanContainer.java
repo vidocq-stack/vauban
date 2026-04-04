@@ -879,8 +879,16 @@ public final class VaubanContainer implements AutoCloseable {
     }
 
     private void callInitializerMethods(Object instance, CreationalContext<?> ctx) {
-        for (var method : instance.getClass().getDeclaredMethods()) {
-            if (method.isAnnotationPresent(jakarta.inject.Inject.class)) {
+        var clazz = instance.getClass();
+        // Skip intercepted subclass — look at the actual bean class
+        if (clazz.getName().contains("$$Intercepted")) {
+            clazz = clazz.getSuperclass();
+        }
+        // Walk hierarchy to find all @Inject initializer methods
+        var current = clazz;
+        while (current != null && current != Object.class) {
+            for (var method : current.getDeclaredMethods()) {
+                if (method.isAnnotationPresent(jakarta.inject.Inject.class)) {
                 method.setAccessible(true);
                 try {
                     var paramTypes = method.getParameterTypes();
@@ -905,7 +913,9 @@ public final class VaubanContainer implements AutoCloseable {
                 } catch (Exception e) {
                     throw new RuntimeException("Failed to call initializer method: " + method.getName(), e);
                 }
+                }
             }
+            current = current.getSuperclass();
         }
     }
 
@@ -1014,9 +1024,11 @@ public final class VaubanContainer implements AutoCloseable {
                 invocationCtx.setInterceptorBindings(bindingAnnotations);
                 try {
                     invocationCtx.proceed();
-                } catch (RuntimeException e) {
-                    throw e;
-                } catch (Exception e) {
+                } catch (Throwable e) {
+                    System.err.println("[VAUBAN-DEBUG] Lifecycle chain FAILED: " + e);
+                    e.printStackTrace(System.err);
+                    if (e instanceof RuntimeException re) throw re;
+                    if (e instanceof Error err) throw err;
                     throw new RuntimeException("Lifecycle interceptor failed", e);
                 }
                 return;
@@ -1245,12 +1257,16 @@ public final class VaubanContainer implements AutoCloseable {
                 var matches = interceptorManager.resolveInterceptorDescriptors(classBindings);
                 if (matches.isEmpty()) {
                     boolean hasInterceptors = false;
-                    // Check method-level bindings (include non-public methods)
-                    for (var m : beanClass.getDeclaredMethods()) {
-                        if (!interceptorManager.resolveInterceptorDescriptorsForMethod(classBindings, m).isEmpty()) {
-                            hasInterceptors = true;
-                            break;
+                    // Check method-level bindings (walk hierarchy for inherited methods)
+                    var checkClass = beanClass;
+                    while (checkClass != null && checkClass != Object.class && !hasInterceptors) {
+                        for (var m : checkClass.getDeclaredMethods()) {
+                            if (!interceptorManager.resolveInterceptorDescriptorsForMethod(classBindings, m).isEmpty()) {
+                                hasInterceptors = true;
+                                break;
+                            }
                         }
+                        checkClass = checkClass.getSuperclass();
                     }
                     // Check constructor-level bindings (for @AroundConstruct)
                     if (!hasInterceptors) {
@@ -1479,8 +1495,9 @@ public final class VaubanContainer implements AutoCloseable {
                 interceptedBean.setInterceptorManager(this.interceptorManager);
                 beans.put(descriptor.id(), interceptedBean);
             } catch (Exception e) {
-                // Log the first failure cause for debugging
-                System.err.println("[VAUBAN-DBG] Primary interception failed for " + descriptor.beanClass().value() + ": " + e);
+                // CDI spec: deployment/definition errors must propagate
+                if (e instanceof jakarta.enterprise.inject.spi.DeploymentException de) throw de;
+                if (e instanceof jakarta.enterprise.inject.spi.DefinitionException de) throw de;
                     // Primary interception failed — try fallback
                     // MethodHandles.privateLookupIn may fail for custom classloaders
                     // Fallback: define class via bean's classloader directly
@@ -1669,10 +1686,41 @@ public final class VaubanContainer implements AutoCloseable {
                 }
                 if (!qualifiersMatch) continue;
 
+                if (bean.getDestroyer() != null) {
+                    // CDI spec: multiple disposer methods for same producer → DefinitionException
+                    throw new jakarta.enterprise.inject.spi.DefinitionException(
+                        "Multiple disposer methods for producer " + descriptor.id() + " in " + descriptor.beanClass());
+                }
                 bean.setDestroyer(instance -> callDisposer(instance, disposer));
-                break;
             }
         }
+    }
+
+    private boolean matchesDisposerType(BeanDescriptor descriptor, DisposerDescriptor disposer) {
+        for (var bt : descriptor.types()) {
+            if (bt.equals(disposer.disposedType())) return true;
+            if (bt instanceof TypeInfo.ClassType btCt
+                    && disposer.disposedType() instanceof TypeInfo.ClassType dCt
+                    && btCt.name().equals(dCt.name())) {
+                return true;
+            }
+        }
+        if (disposer.disposedType() instanceof TypeInfo.ClassType dCt) {
+            try {
+                var cl = Thread.currentThread().getContextClassLoader();
+                var disposedClass = Class.forName(dCt.name().value(), false, cl);
+                for (var bt : descriptor.types()) {
+                    String btName = null;
+                    if (bt instanceof TypeInfo.ClassType btCt2) btName = btCt2.name().value();
+                    else if (bt instanceof TypeInfo.ParameterizedType pt) btName = pt.rawType().value();
+                    if (btName != null) {
+                        var beanTypeClass = Class.forName(btName, false, cl);
+                        if (disposedClass.isAssignableFrom(beanTypeClass)) return true;
+                    }
+                }
+            } catch (ClassNotFoundException e) { /* skip */ }
+        }
+        return false;
     }
 
     /** Returns true if @Any was EXPLICITLY declared on the disposer parameter (not just auto-added). */

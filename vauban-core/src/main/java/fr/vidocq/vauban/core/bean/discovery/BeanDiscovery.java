@@ -1710,9 +1710,6 @@ public final class BeanDiscovery {
             }
 
             if (!isInterceptor) {
-                // IMPORTANT: Only classes with @Interceptor are external interceptors.
-                // Classes with just @AroundInvoke are beans with interceptor methods, 
-                // they are not "interceptors" in the CDI sense (matching by binding).
                 continue;
             }
             addInterceptor(classInfo, interceptors);
@@ -1798,7 +1795,20 @@ public final class BeanDiscovery {
         } catch (ClassNotFoundException e) { /* skip */ }
 
         var priority = extractPriority(classInfo.annotations());
-        interceptors.add(new InterceptorDescriptor(classInfo.name(), bindings, aroundInvoke, aroundConstruct, priority, bindingAnnotations));
+        boolean hasPriority = hasAnnotation(classInfo.annotations(), DotName.of("jakarta.annotation.Priority"));
+        // Reflection fallback for @Priority detection
+        if (!hasPriority) {
+            try {
+                var cl2 = Thread.currentThread().getContextClassLoader();
+                var clazz3 = cl2 != null ? Class.forName(classInfo.name().value(), false, cl2)
+                        : Class.forName(classInfo.name().value());
+                hasPriority = clazz3.isAnnotationPresent(jakarta.annotation.Priority.class);
+                if (hasPriority && priority == 0) {
+                    priority = clazz3.getAnnotation(jakarta.annotation.Priority.class).value();
+                }
+            } catch (Exception e) { /* skip */ }
+        }
+        interceptors.add(new InterceptorDescriptor(classInfo.name(), bindings, aroundInvoke, aroundConstruct, priority, hasPriority, bindingAnnotations));
     }
 
     /**

@@ -159,6 +159,7 @@ public final class InterceptorManager {
         if (bindings == null || bindings.isEmpty()) return List.of();
         var matches = new ArrayList<InterceptorDescriptor>();
         for (var descriptor : interceptors) {
+            if (!descriptor.enabled()) continue;
             if (bindings.containsAll(descriptor.bindings()) && !descriptor.bindings().isEmpty()) {
                 matches.add(descriptor);
             }
@@ -202,6 +203,7 @@ public final class InterceptorManager {
 
         var matches = new ArrayList<InterceptorDescriptor>();
         for (var descriptor : interceptors) {
+            if (!descriptor.enabled()) continue;
             if (allBindingNames.containsAll(descriptor.bindings()) && !descriptor.bindings().isEmpty()) {
                 if (!descriptor.bindingAnnotations().isEmpty() && !beanAnnotations.isEmpty()) {
                     if (!bindingMembersMatch(descriptor.bindingAnnotations(), beanAnnotations)) {
@@ -237,6 +239,7 @@ public final class InterceptorManager {
 
         var matches = new ArrayList<InterceptorDescriptor>();
         for (var descriptor : interceptors) {
+            if (!descriptor.enabled()) continue;
             if (allBindings.containsAll(descriptor.bindings()) && !descriptor.bindings().isEmpty()) {
                 if (!descriptor.bindingAnnotations().isEmpty() && !currentBeanAnnotations.isEmpty()) {
                     if (!bindingMembersMatch(descriptor.bindingAnnotations(), currentBeanAnnotations)) {
@@ -275,6 +278,7 @@ public final class InterceptorManager {
 
         var matches = new ArrayList<InterceptorDescriptor>();
         for (var descriptor : interceptors) {
+            if (!descriptor.enabled()) continue;
             if (allBindings.containsAll(descriptor.bindings()) && !descriptor.bindings().isEmpty()) {
                 if (!descriptor.bindingAnnotations().isEmpty() && !beanAnnotations.isEmpty()) {
                     if (!bindingMembersMatch(descriptor.bindingAnnotations(), beanAnnotations)) {
@@ -284,7 +288,7 @@ public final class InterceptorManager {
                 matches.add(descriptor);
             }
         }
-        
+
         // Sort by priority
         matches.sort(java.util.Comparator.comparingInt(InterceptorDescriptor::priority)
                 .thenComparing(d -> d.interceptorClass().toString()));
@@ -417,6 +421,7 @@ public final class InterceptorManager {
         var effectiveCtx = ctx != null ? ctx : $$getAroundConstructContext();
         var matches = new ArrayList<InterceptorDescriptor>();
         for (var descriptor : interceptors) {
+            if (!descriptor.enabled()) continue;
             if (bindings.containsAll(descriptor.bindings()) && !descriptor.bindings().isEmpty()) {
                 if (!descriptor.bindingAnnotations().isEmpty() && !beanAnnotations.isEmpty()) {
                     if (!bindingMembersMatch(descriptor.bindingAnnotations(), beanAnnotations)) {
@@ -460,6 +465,7 @@ public final class InterceptorManager {
         var matches = new ArrayList<InterceptorDescriptor>();
 
         for (var descriptor : interceptors) {
+            if (!descriptor.enabled()) continue;
             // An interceptor matches if all its bindings are present on the target
             if (methodBindings.containsAll(descriptor.bindings()) && !descriptor.bindings().isEmpty()) {
                 // Check binding member values if both sides have annotation instances
@@ -546,6 +552,7 @@ public final class InterceptorManager {
         var effectiveCtx = ctx != null ? ctx : $$getAroundConstructContext();
         var matches = new ArrayList<InterceptorDescriptor>();
         for (var descriptor : interceptors) {
+            if (!descriptor.enabled()) continue;
             boolean containsAll = methodBindings.containsAll(descriptor.bindings());
 
             if (containsAll && !descriptor.bindings().isEmpty()) {
@@ -593,11 +600,8 @@ public final class InterceptorManager {
     public List<InterceptorDescriptor> resolveInterceptors(Set<DotName> bindings) {
         var result = new ArrayList<InterceptorDescriptor>();
         for (var descriptor : interceptors) {
-            // CDI spec: only interceptors with @Priority are enabled
-            // TCK HACK: allow all found interceptors to be resolved for now
-            // if (descriptor.priority() <= 0) continue;
-            
-            // An interceptor matches if its bindings are a subset of the bean's bindings
+            if (!descriptor.enabled()) continue;
+
             if (bindings.containsAll(descriptor.bindings()) && !descriptor.bindings().isEmpty()) {
                 result.add(descriptor);
             }
@@ -610,11 +614,10 @@ public final class InterceptorManager {
         var bindings = beanAnnotations.stream()
                 .map(a -> DotName.of(a.annotationType().getName()))
                 .collect(java.util.stream.Collectors.toSet());
-        
+
         for (var descriptor : interceptors) {
-            // TCK HACK: allow all found interceptors to be resolved for now
-            // if (descriptor.priority() <= 0) continue;
-            
+            if (!descriptor.enabled()) continue;
+
             if (bindings.containsAll(descriptor.bindings()) && !descriptor.bindings().isEmpty()) {
                 if (!descriptor.bindingAnnotations().isEmpty()) {
                     if (bindingMembersMatch(descriptor.bindingAnnotations(), beanAnnotations)) {
