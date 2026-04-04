@@ -515,14 +515,8 @@ public final class ManagedBean<T> implements Bean<T> {
         if (!containsUnresolvedTypeVariable(type)) return type;
         // Build a mapping from TypeVariable -> actual type by walking the class hierarchy
         var mapping = buildFullTypeMapping(declaringClass);
-        if (!mapping.isEmpty()) {
-            type = substituteTypeVariables(type, mapping);
-        }
-        // Replace any remaining unresolved type variables with their upper bounds
-        if (containsUnresolvedTypeVariable(type)) {
-            type = replaceTypeVariablesWithBounds(type);
-        }
-        return type;
+        if (mapping.isEmpty()) return type;
+        return substituteTypeVariables(type, mapping);
     }
 
     private static Map<java.lang.reflect.TypeVariable<?>, Type> buildFullTypeMapping(Class<?> clazz) {
