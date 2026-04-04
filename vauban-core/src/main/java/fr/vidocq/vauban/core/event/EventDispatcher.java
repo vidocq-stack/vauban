@@ -543,7 +543,7 @@ public final class EventDispatcher {
                             if (params[i].isAnnotationPresent(jakarta.enterprise.event.Observes.class)
                                     || params[i].isAnnotationPresent(jakarta.enterprise.event.ObservesAsync.class)) {
                                 args[i] = event;
-                            } else if (paramTypes[i] == jakarta.enterprise.inject.spi.EventMetadata.class) {
+                            } else if (isEventMetadataType(paramTypes[i])) {
                                 final Object eventObj = event;
                                 // CDI spec: EventMetadata.getQualifiers() returns the qualifiers
                                 // explicitly passed at fire-time plus @Any (always implicit).
@@ -712,5 +712,10 @@ public final class EventDispatcher {
             }
         }
         return quals.toArray(new java.lang.annotation.Annotation[0]);
+    }
+
+    private static boolean isEventMetadataType(Class<?> type) {
+        return type == jakarta.enterprise.inject.spi.EventMetadata.class
+                || "jakarta.enterprise.inject.spi.EventMetadata".equals(type.getName());
     }
 }

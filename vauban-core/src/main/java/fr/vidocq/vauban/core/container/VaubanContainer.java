@@ -180,12 +180,6 @@ public final class VaubanContainer implements AutoCloseable {
 
     private Object getOrCreateInterceptorInstance(InterceptorDescriptor descriptor, CreationalContext<?> ctx) {
         String className = descriptor.interceptorClass().value();
-        
-        try {
-            Class<?> c = classLoader.loadClass(className);
-        } catch (Throwable t) {
-            t.printStackTrace(System.out);
-        }
 
         if (ctx instanceof CreationalContextImpl<?> vCtx) {
             // Check current context cache
@@ -786,6 +780,59 @@ public final class VaubanContainer implements AutoCloseable {
 
         // 3. Call @PostConstruct
         callPostConstruct(instance, descriptor, parentCtx);
+
+        // 4. CDI spec 9.3: eagerly create all interceptor instances for this bean
+        eagerCreateInterceptors(instance, descriptor, parentCtx);
+    }
+
+    private boolean hasMethodOrClassInterceptors(ManagedBean<?> mb) {
+        var classBindings = mb.descriptor().interceptorBindings();
+        if (classBindings != null && !classBindings.isEmpty()
+                && !interceptorManager.resolveInterceptorDescriptors(classBindings).isEmpty()) {
+            return true;
+        }
+        try {
+            var beanClass = loadClass(mb.descriptor().beanClass().value());
+            for (var m : beanClass.getDeclaredMethods()) {
+                for (var ann : m.getAnnotations()) {
+                    if (ann.annotationType().isAnnotationPresent(jakarta.interceptor.InterceptorBinding.class)) {
+                        return true;
+                    }
+                }
+            }
+        } catch (ClassNotFoundException e) { /* skip */ }
+        return false;
+    }
+
+    private void eagerCreateInterceptors(Object instance, BeanDescriptor descriptor, CreationalContext<?> parentCtx) {
+        if (interceptorManager == null || !interceptorManager.hasInterceptors()) return;
+        if (instance.getClass().isAnnotationPresent(jakarta.interceptor.Interceptor.class)) return;
+
+        var allBindings = new java.util.LinkedHashSet<DotName>();
+        var beanBindings = (descriptor != null) ? descriptor.interceptorBindings() : findInterceptorBindings(instance);
+        if (beanBindings == null || beanBindings.isEmpty()) {
+            beanBindings = findInterceptorBindings(instance);
+        }
+        if (beanBindings != null) {
+            allBindings.addAll(beanBindings);
+        }
+        var beanClass = instance.getClass();
+        if (beanClass.getName().contains("$$Intercepted") || beanClass.getName().contains("$$Proxy")) {
+            beanClass = beanClass.getSuperclass();
+        }
+        for (var m : beanClass.getDeclaredMethods()) {
+            for (var ann : m.getAnnotations()) {
+                if (ann.annotationType().isAnnotationPresent(jakarta.interceptor.InterceptorBinding.class)) {
+                    allBindings.add(DotName.of(ann.annotationType().getName()));
+                }
+            }
+        }
+        if (allBindings.isEmpty()) return;
+        interceptorManager.setClassLoader(instance.getClass().getClassLoader());
+        var matchingDescriptors = interceptorManager.resolveInterceptorDescriptors(allBindings);
+        for (var desc : matchingDescriptors) {
+            interceptorManager.getOrCreateInstance(desc, parentCtx);
+        }
     }
 
     private void injectFieldsByReflection(Object instance, BeanDescriptor descriptor, CreationalContext<?> parentCtx) {
@@ -858,11 +905,22 @@ public final class VaubanContainer implements AutoCloseable {
                         value = select(field.getType());
                     } else {
                         var resolved = bm.resolve(resolvedBeans);
+                        boolean needsFreshCtx = resolved instanceof ManagedBean<?> mb
+                                && resolved.getScope() == jakarta.enterprise.context.Dependent.class
+                                && mb.descriptor().kind() == BeanDescriptor.BeanKind.MANAGED
+                                && interceptorManager != null && interceptorManager.hasInterceptors()
+                                && hasMethodOrClassInterceptors(mb);
                         var ctx = (parentCtx != null
-                                && resolved.getScope() == jakarta.enterprise.context.Dependent.class)
+                                && resolved.getScope() == jakarta.enterprise.context.Dependent.class
+                                && !needsFreshCtx)
                                 ? parentCtx
                                 : bm.createCreationalContext(resolved);
                         value = bm.getReference(resolved, fieldType, ctx);
+                        if (needsFreshCtx
+                                && parentCtx instanceof fr.vidocq.vauban.core.context.CreationalContextImpl<?> parentVCtx
+                                && value != null) {
+                            parentVCtx.addDependentInstance(resolved, value, ctx);
+                        }
                     }
                     // CDI spec: don't set null on primitive fields
                     if (value != null || !field.getType().isPrimitive()) {
@@ -1095,8 +1153,6 @@ public final class VaubanContainer implements AutoCloseable {
                 try {
                     invocationCtx.proceed();
                 } catch (Throwable e) {
-                    System.err.println("[VAUBAN-DEBUG] Lifecycle chain FAILED: " + e);
-                    e.printStackTrace(System.err);
                     if (e instanceof RuntimeException re) throw re;
                     if (e instanceof Error err) throw err;
                     throw new RuntimeException("Lifecycle interceptor failed", e);
@@ -1562,6 +1618,8 @@ public final class VaubanContainer implements AutoCloseable {
                                 jakarta.enterprise.context.spi.CreationalContext.class);
                         initMethod.invoke(instance, mgr, bds, descriptor.constructorBindings(), creationalCtx);
                         return instance;
+                    } catch (RuntimeException e) {
+                        throw e;
                     } catch (Exception e) {
                         throw new jakarta.enterprise.inject.CreationException(e);
                     }
@@ -1584,8 +1642,11 @@ public final class VaubanContainer implements AutoCloseable {
                 beans.put(descriptor.id(), interceptedBean);
             } catch (Exception e) {
                 // CDI spec: deployment/definition errors must propagate
-                if (e instanceof jakarta.enterprise.inject.spi.DeploymentException de) throw de;
-                if (e instanceof jakarta.enterprise.inject.spi.DefinitionException de) throw de;
+                // Check by class name to handle different classloaders
+                if (isCdiSpecException(e)) {
+                    if (e instanceof RuntimeException re) throw re;
+                    throw new RuntimeException(e);
+                }
                     // Primary interception failed — try fallback
                     // MethodHandles.privateLookupIn may fail for custom classloaders
                     // Fallback: define class via bean's classloader directly
@@ -1690,10 +1751,20 @@ public final class VaubanContainer implements AutoCloseable {
                             "Cannot create interceptor subclass: " + le2.getMessage(), le2);
                 }
             } catch (Exception e) {
+                if (isCdiSpecException(e)) {
+                    if (e instanceof RuntimeException re) throw re;
+                    throw new RuntimeException(e);
+                }
                 e.printStackTrace();
             }
 
         }
+    }
+
+    private static boolean isCdiSpecException(Throwable t) {
+        var name = t.getClass().getName();
+        return name.equals("jakarta.enterprise.inject.spi.DeploymentException")
+                || name.equals("jakarta.enterprise.inject.spi.DefinitionException");
     }
 
     private void wireDisposers(List<BeanDescriptor> descriptors, List<DisposerDescriptor> disposers) {
@@ -2159,7 +2230,7 @@ public final class VaubanContainer implements AutoCloseable {
         if (descriptor != null) {
             for (var ip : descriptor.injectionPoints()) {
                 if (ip.kind() != fr.vidocq.vauban.core.bean.model.InjectionPointInfo.InjectionKind.FIELD) continue;
-                if (!ip.description().contains(field.getName())) continue;
+                if (!ip.description().endsWith("." + field.getName())) continue;
                 return qualifierInstancesToAnnotations(ip.qualifiers());
             }
         }
@@ -3001,7 +3072,7 @@ public final class VaubanContainer implements AutoCloseable {
 
             // Create factory using SyntheticBeanCreator
             var creatorClass = synBean.getCreatorClass();
-            var params = synBean.getParams();
+            var creatorParams = synBean.getParams();
             var isDependent = scope.equals(fr.vidocq.vauban.core.bean.model.ScopeInfo.DEPENDENT);
             factories.put(syntheticKey, new BeanFactory<Object>() {
                 @Override
@@ -3012,7 +3083,7 @@ public final class VaubanContainer implements AutoCloseable {
                         @SuppressWarnings("unchecked")
                         var creator = (jakarta.enterprise.inject.build.compatible.spi.SyntheticBeanCreator<Object>)
                                 creatorClass.getDeclaredConstructor().newInstance();
-                        var vaubanParams = new fr.vidocq.vauban.core.extensions.VaubanParameters(params);
+                        var vaubanParams = new fr.vidocq.vauban.core.extensions.VaubanParameters(creatorParams);
                         var container = VaubanContainer.current();
                         var previousIp = VaubanContainer.getCurrentInjectionPoint();
                         if (previousIp == null && isDependent) {
@@ -3043,7 +3114,7 @@ public final class VaubanContainer implements AutoCloseable {
                         @SuppressWarnings("unchecked")
                         var disposer = (jakarta.enterprise.inject.build.compatible.spi.SyntheticBeanDisposer<Object>)
                                 disposerClass.getDeclaredConstructor().newInstance();
-                        var vaubanParams = new fr.vidocq.vauban.core.extensions.VaubanParameters(params);
+                        var vaubanParams = new fr.vidocq.vauban.core.extensions.VaubanParameters(creatorParams);
                         var container = VaubanContainer.current();
                         var lookup = new InstanceImpl<>(container, Object.class);
                         disposer.dispose(instance, lookup, vaubanParams);

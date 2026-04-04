@@ -71,10 +71,10 @@ public final class RuntimeClientProxyGenerator {
                         cob.return_();
                     });
 
-            // Override each eligible method (including inherited and package-private)
+            // Override each eligible method (including inherited, package-private, and Object methods)
             var proxiedMethods = new java.util.HashSet<String>();
             var current = beanClass;
-            while (current != null && current != Object.class) {
+            while (current != null) {
                 for (var method : current.getDeclaredMethods()) {
                     var key = method.getName() + java.util.Arrays.toString(method.getParameterTypes());
                     if (proxiedMethods.add(key) && shouldProxy(method)) {
@@ -95,6 +95,8 @@ public final class RuntimeClientProxyGenerator {
         if (method.isSynthetic()) return false;
         if (method.isBridge()) return false;
         if (method.getName().startsWith("$$")) return false;
+        if (method.getName().equals("finalize") && method.getParameterCount() == 0) return false;
+        if (method.getName().equals("clone") && method.getParameterCount() == 0) return false;
         return true;
     }
 

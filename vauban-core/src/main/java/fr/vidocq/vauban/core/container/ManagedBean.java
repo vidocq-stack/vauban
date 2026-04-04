@@ -83,9 +83,12 @@ public final class ManagedBean<T> implements Bean<T> {
         return instance;
     }
 
+    private final Set<Object> destroyedInstances = java.util.Collections.newSetFromMap(new java.util.WeakHashMap<>());
+
     @Override
     public void destroy(T instance, CreationalContext<T> creationalContext) {
         if (instance == null) return;
+        if (!destroyedInstances.add(instance)) return;
 
         // Call disposer method first (for producer beans)
         if (destroyer != null) {
@@ -160,7 +163,8 @@ public final class ManagedBean<T> implements Bean<T> {
 
     private static java.util.List<java.lang.reflect.Method> collectLifecycleMethodsInHierarchy(
             Class<?> clazz, Class<? extends java.lang.annotation.Annotation> annotation) {
-        if (clazz.getName().contains("$$Intercepted") || clazz.getName().contains("$$Proxy")) {
+        if (clazz.getName().contains("$$Intercepted") || clazz.getName().contains("$$Proxy")
+                || clazz.getName().contains("_ClientProxy")) {
             clazz = clazz.getSuperclass();
         }
         var result = new java.util.ArrayList<java.lang.reflect.Method>();

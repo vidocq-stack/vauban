@@ -98,19 +98,30 @@ public class VaubanDeployableContainer implements DeployableContainer<VaubanCont
             container.requestContext().activate();
             ContainerHolder.set(container);
 
-        } catch (jakarta.enterprise.inject.spi.DefinitionException | jakarta.enterprise.inject.spi.DeploymentException e) {
-            // Let CDI spec exceptions propagate directly so Arquillian's @ShouldThrowException can match them
-            throw e;
-        } catch (RuntimeException e) {
-            // Unwrap nested CDI spec exceptions
-            if (e.getCause() instanceof jakarta.enterprise.inject.spi.DefinitionException de) throw de;
-            if (e.getCause() instanceof jakarta.enterprise.inject.spi.DeploymentException de) throw de;
-            throw new org.jboss.arquillian.container.spi.client.container.DeploymentException("Deployment failed: " + e.getMessage(), e);
-        } catch (Exception e) {
-            throw new org.jboss.arquillian.container.spi.client.container.DeploymentException("Failed to deploy: " + archive.getName(), e);
+        } catch (Throwable e) {
+            var cdiException = findCdiException(e);
+            if (cdiException != null) {
+                throw new DeploymentException("CDI deployment failed", cdiException);
+            }
+            if (e instanceof DeploymentException de) throw de;
+            if (e instanceof Exception ex) throw new DeploymentException("Deployment failed: " + e.getMessage(), ex);
+            throw new DeploymentException("Deployment failed: " + e.getMessage(), new RuntimeException(e));
         }
 
         return new ProtocolMetaData();
+    }
+
+    private static Throwable findCdiException(Throwable t) {
+        var current = t;
+        while (current != null) {
+            var className = current.getClass().getName();
+            if (className.equals("jakarta.enterprise.inject.spi.DefinitionException")
+                    || className.equals("jakarta.enterprise.inject.spi.DeploymentException")) {
+                return current;
+            }
+            current = current.getCause();
+        }
+        return null;
     }
 
     private void extractClass(org.jboss.shrinkwrap.api.asset.Asset asset,
