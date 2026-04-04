@@ -841,6 +841,7 @@ public final class VaubanContainer implements AutoCloseable {
                     var fieldType = field.getGenericType();
                     var resolvedBeans = bm.getBeans(fieldType, fieldQuals);
                     if (resolvedBeans.isEmpty()) {
+                        System.err.println("[DEBUG-INJ] EMPTY resolvedBeans for field " + field.getName() + " type=" + fieldType + " quals=" + java.util.Arrays.toString(fieldQuals) + " on " + instance.getClass().getName());
                         value = select(field.getType());
                     } else {
                         var resolved = bm.resolve(resolvedBeans);
@@ -2834,10 +2835,8 @@ public final class VaubanContainer implements AutoCloseable {
                     var creator = (jakarta.enterprise.inject.build.compatible.spi.SyntheticBeanCreator<Object>)
                             creatorClass.getDeclaredConstructor().newInstance();
                     var vaubanParams = new fr.vidocq.vauban.core.extensions.VaubanParameters(params);
-                    // Create an Instance<Object> that supports InjectionPoint lookup
-                    var cdi = jakarta.enterprise.inject.spi.CDI.current();
-                    @SuppressWarnings("unchecked")
-                    var lookup = (jakarta.enterprise.inject.Instance<Object>) cdi.select(Object.class);
+                    var container = VaubanContainer.current();
+                    var lookup = new InstanceImpl<>(container, Object.class);
                     return creator.create(lookup, vaubanParams);
                 } catch (RuntimeException e) {
                     throw e;

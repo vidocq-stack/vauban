@@ -48,7 +48,12 @@ public final class EventDispatcher {
         if (selectedType != null) {
             eventTypeToMatch = resolveEventType(event.getClass(), selectedType);
             if (containsTypeVariable(eventTypeToMatch)) {
-                throw new IllegalArgumentException("Event type contains unresolvable type variable: " + eventTypeToMatch);
+                // If selectedType itself is fully resolved, use it directly
+                if (!containsTypeVariable(selectedType)) {
+                    eventTypeToMatch = selectedType;
+                } else {
+                    throw new IllegalArgumentException("Event type contains unresolvable type variable: " + eventTypeToMatch);
+                }
             }
         }
         var matching = findMatchingObservers(eventTypeToMatch, false, qualifierInstances, qualifiers);

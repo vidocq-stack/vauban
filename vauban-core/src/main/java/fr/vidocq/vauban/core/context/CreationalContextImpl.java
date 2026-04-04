@@ -52,6 +52,10 @@ public final class CreationalContextImpl<T> implements CreationalContext<T> {
         try {
             // CDI spec: release() must destroy all dependent objects
             List<DependentInstance> copy = new ArrayList<>(dependentInstances);
+            System.err.println("[DEBUG-REL] Releasing ctx@" + System.identityHashCode(this) + " with " + copy.size() + " dependents");
+            for (var dep : copy) {
+                System.err.println("[DEBUG-REL]   Destroying dependent: " + dep.instance().getClass().getName() + "@" + System.identityHashCode(dep.instance()));
+            }
             dependentInstances.clear();
             for (var dep : copy) {
                 dep.destroy();
