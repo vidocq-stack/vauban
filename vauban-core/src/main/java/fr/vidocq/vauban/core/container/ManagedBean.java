@@ -319,6 +319,10 @@ public final class ManagedBean<T> implements Bean<T> {
      * unless the TypeVariables are the bean's own type parameters.
      */
     private static Set<Type> filterIllegalBeanTypes(Set<Type> types, Set<java.lang.reflect.TypeVariable<?>> allowedTypeVars) {
+        return filterIllegalBeanTypes(types, allowedTypeVars, false);
+    }
+
+    private static Set<Type> filterIllegalBeanTypes(Set<Type> types, Set<java.lang.reflect.TypeVariable<?>> allowedTypeVars, boolean addRawForRemoved) {
         var result = new LinkedHashSet<Type>();
         for (var t : types) {
             if (t == Object.class || t instanceof Class<?>) {
@@ -326,6 +330,12 @@ public final class ManagedBean<T> implements Bean<T> {
             } else if (t instanceof java.lang.reflect.ParameterizedType pt) {
                 if (isLegalParameterizedType(pt, allowedTypeVars)) {
                     result.add(t);
+                } else if (addRawForRemoved && pt.getRawType() instanceof Class<?> raw) {
+                    // CDI spec: replace removed illegal type with raw type,
+                    // but only if removed due to unresolvable type variables (not wildcards)
+                    if (containsTypeVariable(pt)) {
+                        result.add(raw);
+                    }
                 }
             } else if (t instanceof java.lang.reflect.GenericArrayType gat) {
                 if (!containsUnresolvedTypeVariable(gat)) {
@@ -335,6 +345,16 @@ public final class ManagedBean<T> implements Bean<T> {
             // Skip TypeVariable, WildcardType
         }
         return result;
+    }
+
+    private static boolean containsTypeVariable(java.lang.reflect.ParameterizedType pt) {
+        for (var arg : pt.getActualTypeArguments()) {
+            if (arg instanceof java.lang.reflect.TypeVariable<?>) return true;
+            if (arg instanceof java.lang.reflect.ParameterizedType nested) {
+                if (containsTypeVariable(nested)) return true;
+            }
+        }
+        return false;
     }
 
     private static boolean isLegalParameterizedType(java.lang.reflect.ParameterizedType pt,
@@ -388,7 +408,8 @@ public final class ManagedBean<T> implements Bean<T> {
             }
             
             // Filter illegal types (producers have no allowed type variables)
-            return filterIllegalBeanTypes(allTypes, Set.of());
+            // CDI spec: for producers, replace removed illegal parameterized types with their raw type
+            return filterIllegalBeanTypes(allTypes, Set.of(), true);
         }
 
         // Fallback: resolve descriptor types to Java Types
@@ -433,7 +454,7 @@ public final class ManagedBean<T> implements Bean<T> {
             }
         }
         types.add(Object.class);
-        return filterIllegalBeanTypes(types, Set.of());
+        return filterIllegalBeanTypes(types, Set.of(), true);
     }
 
     private Type resolveProducerGenericType() {
