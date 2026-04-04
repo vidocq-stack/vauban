@@ -205,6 +205,15 @@ public final class VaubanInvocationContext implements InvocationContext {
                 // Remove class-level bindings that are overridden by method-level of same type
                 // (already handled by put above — method replaces class)
             }
+            // Include enhanced bindings added via BCE Enhancement
+            var mgr = InterceptorManager.currentInstance();
+            if (mgr != null) {
+                for (var ann : mgr.getEnhancedBindings(beanClass.getName())) {
+                    if (isInterceptorBinding(ann)) {
+                        bindingsByType.put(ann.annotationType(), ann);
+                    }
+                }
+            }
             // Transitively resolve meta-bindings
             var result = new java.util.LinkedHashSet<java.lang.annotation.Annotation>(bindingsByType.values());
             addTransitiveBindings(result);

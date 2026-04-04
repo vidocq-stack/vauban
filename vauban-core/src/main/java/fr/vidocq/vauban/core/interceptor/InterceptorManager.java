@@ -28,6 +28,30 @@ public final class InterceptorManager {
     private static final ThreadLocal<Set<DotName>> CURRENT_BINDINGS = new ThreadLocal<>();
     private static final ThreadLocal<CreationalContext<?>> CURRENT_CONTEXT = new ThreadLocal<>();
 
+    // Enhanced interceptor binding annotations added via BCE Enhancement (not present in bytecode)
+    private final Map<String, List<java.lang.annotation.Annotation>> enhancedBindings = new LinkedHashMap<>();
+
+    public void registerEnhancedBindings(String beanClassName, List<java.lang.annotation.Annotation> annotations) {
+        if (annotations != null && !annotations.isEmpty()) {
+            enhancedBindings.computeIfAbsent(beanClassName, k -> new ArrayList<>()).addAll(annotations);
+        }
+    }
+
+    public List<java.lang.annotation.Annotation> getEnhancedBindings(String beanClassName) {
+        return enhancedBindings.getOrDefault(beanClassName, List.of());
+    }
+
+    // Singleton reference for VaubanInvocationContext to access enhanced bindings
+    private static volatile InterceptorManager currentInstance;
+
+    public static InterceptorManager currentInstance() {
+        return currentInstance;
+    }
+
+    {
+        currentInstance = this;
+    }
+
     public static boolean $$isIntercepting() {
         return IS_INTERCEPTING.get();
     }
