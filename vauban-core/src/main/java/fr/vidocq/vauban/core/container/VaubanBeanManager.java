@@ -968,11 +968,8 @@ public final class VaubanBeanManager implements BeanManager {
                 }
                 return true;
             }
-            // Bean is actual type, required is TypeVariable
-            for (Type bound : reqTv.getBounds()) {
-                if (bound != Object.class && !isTypeAssignableTo(beanArg, bound)) return false;
-            }
-            return true;
+            // CDI spec: no rule for required TV vs bean actual type -> no match
+            return false;
         }
 
         // CDI spec (e): bean is TypeVariable, required is actual type

@@ -48,6 +48,7 @@ public class VaubanTestEnricher implements TestEnricher {
 
     private Object resolveField(Field field, fr.vidocq.vauban.core.container.VaubanContainer container) {
         var type = field.getType();
+        var genericType = field.getGenericType();
         var qualifiers = extractQualifiers(field);
 
         // BeanManager / BeanContainer
@@ -74,16 +75,20 @@ public class VaubanTestEnricher implements TestEnricher {
         // Regular bean — use BeanManager with qualifiers for proper resolution
         try {
             var bm = container.getBeanManager();
-            var beans = bm.getBeans(type, qualifiers);
+            var beans = bm.getBeans(genericType, qualifiers);
             if (beans.isEmpty()) {
-                // Fallback: try without qualifiers (some test classes inject without explicit qualifiers)
+                beans = bm.getBeans(type, qualifiers);
+            }
+            if (beans.isEmpty()) {
                 beans = bm.getBeans(type);
             }
             if (beans.isEmpty()) return null;
             var bean = bm.resolve(beans);
             var ctx = bm.createCreationalContext(bean);
-            return bm.getReference(bean, type, ctx);
+            return bm.getReference(bean, genericType, ctx);
         } catch (Exception e) {
+            System.err.println("ENRICHER RESOLUTION FAILED for type " + type + " with qualifiers " + java.util.Arrays.toString(qualifiers) + ": " + e);
+            e.printStackTrace(System.err);
             return null;
         }
     }

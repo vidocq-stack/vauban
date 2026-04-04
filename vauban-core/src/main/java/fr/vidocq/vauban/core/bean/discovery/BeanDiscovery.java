@@ -633,7 +633,7 @@ public final class BeanDiscovery {
         var injectionPoints = new ArrayList<InjectionPointInfo>();
         for (int i = 0; i < method.parameters().size(); i++) {
             var param = method.parameters().get(i);
-            var paramQualifiers = computeQualifiers(param.annotations());
+            var paramQualifiers = computeInjectionPointQualifiers(param.annotations());
             injectionPoints.add(new InjectionPointInfo(
                     param.type(), paramQualifiers, InjectionPointInfo.InjectionKind.METHOD_PARAMETER,
                     "parameter " + i + " of " + declaringClass.name().simpleName() + "." + method.name() + "()"
@@ -1009,6 +1009,33 @@ public final class BeanDiscovery {
                 }
             } else {
                 // Unwrap repeatable qualifier container annotations
+                var unwrapped = unwrapRepeatableQualifiers(ann);
+                if (!unwrapped.isEmpty()) {
+                    qualifiers.addAll(unwrapped);
+                    hasExplicitQualifier = true;
+                }
+            }
+        }
+
+        if (!hasExplicitQualifier) {
+            qualifiers.add(QualifierInstance.DEFAULT);
+        }
+        qualifiers.add(QualifierInstance.ANY);
+
+        return qualifiers;
+    }
+
+    Set<QualifierInstance> computeInjectionPointQualifiers(List<AnnotationInfo> annotations) {
+        var qualifiers = new LinkedHashSet<QualifierInstance>();
+        boolean hasExplicitQualifier = false;
+
+        for (var ann : annotations) {
+            if (isQualifierAnnotation(ann.name())) {
+                qualifiers.add(QualifierInstance.from(ann));
+                if (!ann.name().equals(QualifierInstance.NAMED_NAME)) {
+                    hasExplicitQualifier = true;
+                }
+            } else {
                 var unwrapped = unwrapRepeatableQualifiers(ann);
                 if (!unwrapped.isEmpty()) {
                     qualifiers.addAll(unwrapped);
@@ -1474,7 +1501,7 @@ public final class BeanDiscovery {
                 var param = ctor.parameters().get(i);
                 var resolvedType = resolveGenericTypeForMethodParameter(classInfo, ctor, i);
                 points.add(new InjectionPointInfo(
-                        resolvedType, computeQualifiers(param.annotations()),
+                        resolvedType, computeInjectionPointQualifiers(param.annotations()),
                         InjectionPointInfo.InjectionKind.CONSTRUCTOR_PARAMETER,
                         "parameter " + i + " of " + classInfo.name().simpleName() + "()"
                 ));
@@ -1484,7 +1511,7 @@ public final class BeanDiscovery {
         // @Inject fields
         for (var field : classInfo.fields()) {
             if (hasAnnotation(field.annotations(), INJECT)) {
-                var qualifiers = computeQualifiers(field.annotations());
+                var qualifiers = computeInjectionPointQualifiers(field.annotations());
                 // CDI spec: @Named without value on injection point defaults to the field name
                 qualifiers = resolveNamedDefault(qualifiers, field.name());
                 var resolvedType = resolveGenericTypeForField(classInfo, field);
@@ -1514,7 +1541,7 @@ public final class BeanDiscovery {
                     }
                     var resolvedType = resolveGenericTypeForMethodParameter(classInfo, method, i);
                     points.add(new InjectionPointInfo(
-                            resolvedType, computeQualifiers(param.annotations()),
+                            resolvedType, computeInjectionPointQualifiers(param.annotations()),
                             InjectionPointInfo.InjectionKind.METHOD_PARAMETER,
                             "parameter " + i + " of " + classInfo.name().simpleName() + "." + method.name() + "()"
                     ));

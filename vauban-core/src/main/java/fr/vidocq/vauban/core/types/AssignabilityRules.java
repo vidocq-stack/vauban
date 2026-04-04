@@ -100,6 +100,15 @@ public final class AssignabilityRules {
     private boolean isAssignableToClass(TypeInfo beanType, ClassType required) {
         return switch (beanType) {
             case ClassType bean -> isSubtypeOf(bean.name(), required.name());
+            case TypeVariable tv -> {
+                // A TypeVariable is assignable to a ClassType if at least one bound is assignable
+                for (var bound : tv.bounds()) {
+                    if (isAssignable(bound, required)) {
+                        yield true;
+                    }
+                }
+                yield false;
+            }
             case ParameterizedType bean -> {
                 // CDI 4.1 Section 5.2.4: A parameterized bean type is assignable to
                 // a raw required type if the raw types are identical and all type parameters
@@ -209,13 +218,31 @@ public final class AssignabilityRules {
     private boolean isTypeArgumentAssignable(TypeInfo beanArg, TypeInfo requiredArg) {
         return switch (requiredArg) {
             case WildcardType wildcard -> {
-                // Extract effective bean type when beanArg is a wildcard or type variable
+                if (beanArg instanceof TypeVariable beanTv && !beanTv.bounds().isEmpty()) {
+                    // Bean TV with bounds: lower bound must be assignable to ALL bounds,
+                    // and at least one bound must be assignable to upper bound
+                    if (wildcard.lowerBound() != null) {
+                        for (var beanBound : beanTv.bounds()) {
+                            if (!isAssignable(wildcard.lowerBound(), beanBound)) yield false;
+                        }
+                    }
+                    if (wildcard.upperBound() != null) {
+                        boolean anyMatch = false;
+                        for (var beanBound : beanTv.bounds()) {
+                            if (isAssignable(beanBound, wildcard.upperBound())) {
+                                anyMatch = true;
+                                break;
+                            }
+                        }
+                        if (!anyMatch) yield false;
+                    }
+                    yield true;
+                }
+
                 TypeInfo effectiveBeanArg = beanArg;
                 if (beanArg instanceof WildcardType bw) {
                     effectiveBeanArg = bw.upperBound() != null ? bw.upperBound()
                             : new ClassType(DotName.of("java.lang.Object"));
-                } else if (beanArg instanceof TypeVariable tv && !tv.bounds().isEmpty()) {
-                    effectiveBeanArg = tv.bounds().getFirst();
                 }
 
                 if (wildcard.lowerBound() != null) {
@@ -227,20 +254,32 @@ public final class AssignabilityRules {
                 yield true;
             }
             case TypeVariable tv -> {
-                // Type variable in required: bean arg must satisfy all bounds
-                for (var bound : tv.bounds()) {
-                    if (!isAssignable(beanArg, bound)) yield false;
+                if (beanArg instanceof TypeVariable beanTv) {
+                    // CDI spec rule (f): bean TV vs required TV
+                    // Each bound of the bean TV must be covered by at least one bound of the required TV
+                    for (var beanBound : beanTv.bounds()) {
+                        boolean covered = false;
+                        for (var reqBound : tv.bounds()) {
+                            if (isAssignable(reqBound, beanBound)) {
+                                covered = true;
+                                break;
+                            }
+                        }
+                        if (!covered) yield false;
+                    }
+                    yield true;
                 }
-                yield true;
+                // CDI spec: no rule for required TV vs bean actual type -> no match
+                yield false;
             }
             default -> {
-                // Exact match required for non-wildcard type arguments, EXCEPT if beanArg is a TypeVariable
+                // CDI spec rule (e): bean arg is a type variable, required arg is an actual type
+                // The actual type must be assignable to all bounds of the bean type variable
                 if (beanArg instanceof TypeVariable tv) {
-                     // If bean arg is a type variable, it matches if all its bounds are assignable to requiredArg
                      for (var bound : tv.bounds()) {
-                         if (isAssignable(bound, requiredArg)) yield true;
+                         if (!isAssignable(requiredArg, bound)) yield false;
                      }
-                     yield false;
+                     yield true;
                 }
                 if (beanArg instanceof WildcardType beanWild) {
                     // Bean wildcard vs required concrete: check bounds

@@ -15,6 +15,12 @@ import java.util.concurrent.CompletionStage;
 
 public final class EventDispatcher {
 
+    private static final java.util.Map<String, Class<?>> PRIMITIVE_NAME_TO_CLASS = java.util.Map.of(
+            "boolean", boolean.class, "byte", byte.class, "char", char.class,
+            "short", short.class, "int", int.class, "long", long.class,
+            "float", float.class, "double", double.class
+    );
+
     private final List<ObserverDescriptor> observers;
     private final VaubanContainer container;
 
@@ -621,7 +627,10 @@ public final class EventDispatcher {
         try {
             var cl = container.classLoader();
             return switch (typeInfo) {
-                case TypeInfo.ClassType ct -> Class.forName(ct.name().value(), true, cl);
+                case TypeInfo.ClassType ct -> {
+                    var primitiveClass = PRIMITIVE_NAME_TO_CLASS.get(ct.name().value());
+                    yield primitiveClass != null ? primitiveClass : Class.forName(ct.name().value(), true, cl);
+                }
                 case TypeInfo.ParameterizedType pt -> Class.forName(pt.rawType().value(), true, cl);
                 case TypeInfo.ArrayType at -> {
                     var component = resolveObservedType(at.componentType());

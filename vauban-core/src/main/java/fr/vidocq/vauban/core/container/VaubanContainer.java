@@ -1017,11 +1017,19 @@ public final class VaubanContainer implements AutoCloseable {
             }
             if (ann.annotationType() == jakarta.enterprise.inject.Any.class) {
                 quals.add(ann);
+                hasExplicitQualifier = true;
                 continue;
             }
             if (ann.annotationType().isAnnotationPresent(jakarta.inject.Qualifier.class)) {
                 quals.add(ann);
                 hasExplicitQualifier = true;
+            }
+        }
+        // CDI spec: if no explicit qualifier on the Event injection point, add @Default
+        if (!hasExplicitQualifier) {
+            boolean hasDefault = quals.stream().anyMatch(q -> q.annotationType() == jakarta.enterprise.inject.Default.class);
+            if (!hasDefault) {
+                quals.add(jakarta.enterprise.inject.Default.Literal.INSTANCE);
             }
         }
         // CDI spec: Event always has @Any
@@ -2122,6 +2130,18 @@ public final class VaubanContainer implements AutoCloseable {
     }
 
     @SuppressWarnings("unchecked")
+    private static Object primitiveDefault(Class<?> type) {
+        if (type == boolean.class) return false;
+        if (type == byte.class) return (byte) 0;
+        if (type == char.class) return '\0';
+        if (type == short.class) return (short) 0;
+        if (type == int.class) return 0;
+        if (type == long.class) return 0L;
+        if (type == float.class) return 0.0f;
+        if (type == double.class) return 0.0;
+        return null;
+    }
+
     private static <T> Class<T> primitiveToWrapper(Class<T> type) {
         if (type == boolean.class) return (Class<T>) Boolean.class;
         if (type == byte.class) return (Class<T>) Byte.class;
@@ -2324,7 +2344,11 @@ public final class VaubanContainer implements AutoCloseable {
             var pCtx = (ctx != null && resolved.getScope() == jakarta.enterprise.context.Dependent.class)
                     ? ctx
                     : bm.createCreationalContext(resolved);
-            return bm.getReference(resolved, genericType, pCtx);
+            var value = bm.getReference(resolved, genericType, pCtx);
+            if (value == null && paramType.isPrimitive()) {
+                return primitiveDefault(paramType);
+            }
+            return value;
         } finally {
             currentInjectionPoint.set(previousIp);
         }
