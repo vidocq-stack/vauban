@@ -551,6 +551,7 @@ public final class VaubanContainer implements AutoCloseable {
                         if (paramType == jakarta.enterprise.inject.spi.BeanManager.class
                                 || paramType == jakarta.enterprise.inject.spi.BeanContainer.class
                                 || paramType == jakarta.enterprise.inject.spi.InjectionPoint.class
+                                || paramType == jakarta.enterprise.inject.spi.Bean.class
                                 || paramType == jakarta.enterprise.inject.Instance.class
                                 || paramType == jakarta.inject.Provider.class
                                 || paramType == jakarta.enterprise.event.Event.class) continue;
@@ -618,15 +619,29 @@ public final class VaubanContainer implements AutoCloseable {
                 var clazz = Class.forName(disposer.declaringClass().value(), false, cl);
                 for (var method : clazz.getDeclaredMethods()) {
                     if (!method.getName().equals(disposer.methodName())) continue;
-                    for (var param : method.getParameters()) {
+                    for (int pi = 0; pi < method.getParameterCount(); pi++) {
+                        var param = method.getParameters()[pi];
                         if (param.isAnnotationPresent(jakarta.enterprise.inject.Disposes.class)) continue;
                         var paramType = param.getType();
-                        if (paramType == jakarta.enterprise.inject.spi.BeanManager.class
-                                || paramType == jakarta.enterprise.inject.spi.BeanContainer.class
-                                || paramType == jakarta.enterprise.inject.spi.InjectionPoint.class
-                                || paramType == jakarta.enterprise.inject.Instance.class
-                                || paramType == jakarta.inject.Provider.class
-                                || paramType == jakarta.enterprise.event.Event.class) continue;
+                        var paramTypeName = paramType.getName();
+                        // CDI spec: Bean<X> in disposer must use wildcard (Bean<?>), not concrete type
+                        if (paramTypeName.equals("jakarta.enterprise.inject.spi.Bean")) {
+                            var genericType = method.getGenericParameterTypes()[pi];
+                            if (genericType instanceof java.lang.reflect.ParameterizedType pt
+                                    && pt.getActualTypeArguments().length > 0
+                                    && !(pt.getActualTypeArguments()[0] instanceof java.lang.reflect.WildcardType)) {
+                                throw new jakarta.enterprise.inject.spi.DefinitionException(
+                                    "Disposer method " + disposer.declaringClass().simpleName() + "." + disposer.methodName()
+                                    + "(): Bean parameter must use wildcard type (Bean<?>), not concrete type");
+                            }
+                            continue;
+                        }
+                        if (paramTypeName.equals("jakarta.enterprise.inject.spi.BeanManager")
+                                || paramTypeName.equals("jakarta.enterprise.inject.spi.BeanContainer")
+                                || paramTypeName.equals("jakarta.enterprise.inject.spi.InjectionPoint")
+                                || paramTypeName.equals("jakarta.enterprise.inject.Instance")
+                                || paramTypeName.equals("jakarta.inject.Provider")
+                                || paramTypeName.equals("jakarta.enterprise.event.Event")) continue;
                         var ip = new fr.vidocq.vauban.core.bean.model.InjectionPointInfo(
                                 new fr.vidocq.vauban.indexer.model.TypeInfo.ClassType(
                                         fr.vidocq.vauban.indexer.model.DotName.of(paramType.getName())),
@@ -1642,11 +1657,8 @@ public final class VaubanContainer implements AutoCloseable {
                 beans.put(descriptor.id(), interceptedBean);
             } catch (Exception e) {
                 // CDI spec: deployment/definition errors must propagate
-                // Check by class name to handle different classloaders
-                if (isCdiSpecException(e)) {
-                    if (e instanceof RuntimeException re) throw re;
-                    throw new RuntimeException(e);
-                }
+                if (e instanceof jakarta.enterprise.inject.spi.DeploymentException de) throw de;
+                if (e instanceof jakarta.enterprise.inject.spi.DefinitionException de) throw de;
                     // Primary interception failed — try fallback
                     // MethodHandles.privateLookupIn may fail for custom classloaders
                     // Fallback: define class via bean's classloader directly
@@ -1751,20 +1763,12 @@ public final class VaubanContainer implements AutoCloseable {
                             "Cannot create interceptor subclass: " + le2.getMessage(), le2);
                 }
             } catch (Exception e) {
-                if (isCdiSpecException(e)) {
-                    if (e instanceof RuntimeException re) throw re;
-                    throw new RuntimeException(e);
-                }
+                if (e instanceof jakarta.enterprise.inject.spi.DeploymentException de) throw de;
+                if (e instanceof jakarta.enterprise.inject.spi.DefinitionException de) throw de;
                 e.printStackTrace();
             }
 
         }
-    }
-
-    private static boolean isCdiSpecException(Throwable t) {
-        var name = t.getClass().getName();
-        return name.equals("jakarta.enterprise.inject.spi.DeploymentException")
-                || name.equals("jakarta.enterprise.inject.spi.DefinitionException");
     }
 
     private void wireDisposers(List<BeanDescriptor> descriptors, List<DisposerDescriptor> disposers) {

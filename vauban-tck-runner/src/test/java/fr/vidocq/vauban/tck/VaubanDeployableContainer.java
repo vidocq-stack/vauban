@@ -98,30 +98,22 @@ public class VaubanDeployableContainer implements DeployableContainer<VaubanCont
             container.requestContext().activate();
             ContainerHolder.set(container);
 
-        } catch (Throwable e) {
-            var cdiException = findCdiException(e);
-            if (cdiException != null) {
-                throw new DeploymentException("CDI deployment failed", cdiException);
+        } catch (jakarta.enterprise.inject.spi.DefinitionException | jakarta.enterprise.inject.spi.DeploymentException e) {
+            throw e;
+        } catch (Exception e) {
+            // Classloader-safe: walk chain to find CDI exceptions from different classloaders
+            for (var t = (Throwable) e; t != null; t = t.getCause()) {
+                var n = t.getClass().getName();
+                if (n.equals("jakarta.enterprise.inject.spi.DefinitionException"))
+                    throw new jakarta.enterprise.inject.spi.DefinitionException(t.getMessage(), t);
+                if (n.equals("jakarta.enterprise.inject.spi.DeploymentException"))
+                    throw new jakarta.enterprise.inject.spi.DeploymentException(t.getMessage(), t);
             }
-            if (e instanceof DeploymentException de) throw de;
-            if (e instanceof Exception ex) throw new DeploymentException("Deployment failed: " + e.getMessage(), ex);
-            throw new DeploymentException("Deployment failed: " + e.getMessage(), new RuntimeException(e));
+            if (e instanceof RuntimeException re) throw re;
+            throw new org.jboss.arquillian.container.spi.client.container.DeploymentException("Failed to deploy: " + archive.getName(), e);
         }
 
         return new ProtocolMetaData();
-    }
-
-    private static Throwable findCdiException(Throwable t) {
-        var current = t;
-        while (current != null) {
-            var className = current.getClass().getName();
-            if (className.equals("jakarta.enterprise.inject.spi.DefinitionException")
-                    || className.equals("jakarta.enterprise.inject.spi.DeploymentException")) {
-                return current;
-            }
-            current = current.getCause();
-        }
-        return null;
     }
 
     private void extractClass(org.jboss.shrinkwrap.api.asset.Asset asset,

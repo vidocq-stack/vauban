@@ -83,14 +83,10 @@ public final class ManagedBean<T> implements Bean<T> {
         return instance;
     }
 
-    private final Set<Object> destroyedInstances = java.util.Collections.newSetFromMap(new java.util.WeakHashMap<>());
-
     @Override
     public void destroy(T instance, CreationalContext<T> creationalContext) {
         if (instance == null) return;
-        if (!destroyedInstances.add(instance)) return;
 
-        // Call disposer method first (for producer beans)
         if (destroyer != null) {
             try {
                 destroyer.accept(instance);
@@ -98,14 +94,12 @@ public final class ManagedBean<T> implements Bean<T> {
                 // CDI spec: exceptions in disposer methods are suppressed
             }
         }
-
-        // CDI spec: @PreDestroy is only called on managed beans, not on producer products
         if (descriptor.kind() == BeanDescriptor.BeanKind.MANAGED) {
             callPreDestroy(instance, creationalContext);
         }
-
-        // CDI Spec 6.1: release dependent instances tracked by this creational context.
         if (creationalContext instanceof fr.vidocq.vauban.core.context.CreationalContextImpl<?> cc) {
+            // Remove ourselves from the dependent list before releasing to avoid recursive destroy
+            cc.getDependentInstances().removeIf(dep -> dep.instance() == instance);
             cc.release();
         }
     }
