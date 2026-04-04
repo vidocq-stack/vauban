@@ -287,8 +287,10 @@ class VaubanContainerTest {
     // --- Producer test beans ---
 
     public static class DataSource {
-        public final String url;
+        public String url;
+        protected DataSource() { }
         public DataSource(String url) { this.url = url; }
+        public String getUrl() { return url; }
     }
 
     @ApplicationScoped
@@ -323,7 +325,7 @@ class VaubanContainerTest {
                     .build()) {
                 var ds = container.select(DataSource.class);
                 assertNotNull(ds);
-                assertEquals("jdbc:vauban:test", ds.url);
+                assertEquals("jdbc:vauban:test", ds.getUrl());
             }
         }
 
