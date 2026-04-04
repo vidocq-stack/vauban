@@ -1,14 +1,24 @@
 package fr.vidocq.vauban.core.extensions;
 
 import fr.vidocq.vauban.core.bean.model.BeanDescriptor;
+import fr.vidocq.vauban.core.bean.model.InjectionPointInfo;
+import fr.vidocq.vauban.core.bean.model.QualifierInstance;
 import fr.vidocq.vauban.core.langmodel.IndexLookup;
+import fr.vidocq.vauban.core.langmodel.VaubanAnnotationInfo;
+import fr.vidocq.vauban.core.langmodel.BuiltAnnotationInfo;
+import fr.vidocq.vauban.core.langmodel.declarations.VaubanClassInfo;
 import fr.vidocq.vauban.indexer.VaubanIndex;
+import fr.vidocq.vauban.indexer.model.AnnotationValue;
+import fr.vidocq.vauban.indexer.model.DotName;
 import jakarta.enterprise.inject.build.compatible.spi.*;
+import jakarta.enterprise.lang.model.AnnotationInfo;
+import jakarta.enterprise.lang.model.AnnotationMember;
 
+import java.lang.annotation.Annotation;
 import java.lang.reflect.Method;
 import java.lang.reflect.Parameter;
-import java.util.ArrayList;
-import java.util.List;
+import java.util.*;
+import java.util.stream.Collectors;
 
 /**
  * Processes Build Compatible Extensions (BCE) — CDI 4.1 spec chapter 28.
@@ -22,7 +32,8 @@ public final class BceProcessor {
     public record Result(
             List<VaubanSyntheticBeanBuilder<?>> syntheticBeans,
             List<String> definitionErrors,
-            List<String> deploymentErrors
+            List<String> deploymentErrors,
+            Map<fr.vidocq.vauban.indexer.model.DotName, List<VaubanClassConfig>> enhancementModifications
     ) {}
 
     public record DiscoveryResult(
@@ -72,6 +83,7 @@ public final class BceProcessor {
         var definitionErrors = new ArrayList<String>();
         var deploymentErrors = new ArrayList<String>();
         var allSyntheticBeans = new ArrayList<VaubanSyntheticBeanBuilder<?>>();
+        var allEnhancementMods = new HashMap<fr.vidocq.vauban.indexer.model.DotName, List<VaubanClassConfig>>();
 
         for (var bceClass : bceClasses) {
             try {
@@ -84,7 +96,7 @@ public final class BceProcessor {
                 var types = new VaubanTypes(lookup);
 
                 // Phase: @Enhancement
-                processEnhancement(bce, bceClass, beans, lookup, classLoader, deploymentErrors);
+                processEnhancement(bce, bceClass, beans, lookup, classLoader, deploymentErrors, allEnhancementMods);
 
                 // Phase: @Registration
                 processRegistration(bce, bceClass, beans, lookup, classLoader, types, deploymentErrors);
@@ -101,7 +113,7 @@ public final class BceProcessor {
             }
         }
 
-        return new Result(allSyntheticBeans, definitionErrors, deploymentErrors);
+        return new Result(allSyntheticBeans, definitionErrors, deploymentErrors, allEnhancementMods);
     }
 
     private static Object instantiateBce(Class<?> bceClass) throws Exception {
@@ -110,18 +122,36 @@ public final class BceProcessor {
         return ctor.newInstance();
     }
 
-    /**
-     * Process @Enhancement methods — minimal impl for MethodFromDifferentClassInvokerTest.
-     */
+    private enum EnhancementParamKind {
+        CLASS_CONFIG, FIELD_CONFIG, METHOD_CONFIG, CLASS_INFO, FIELD_INFO, METHOD_INFO
+    }
+
+    private static EnhancementParamKind detectEnhancementParamKind(Method method) {
+        for (var param : method.getParameterTypes()) {
+            if (ClassConfig.class.isAssignableFrom(param)) return EnhancementParamKind.CLASS_CONFIG;
+            if (FieldConfig.class.isAssignableFrom(param)) return EnhancementParamKind.FIELD_CONFIG;
+            if (MethodConfig.class.isAssignableFrom(param)) return EnhancementParamKind.METHOD_CONFIG;
+            if (jakarta.enterprise.lang.model.declarations.ClassInfo.class.isAssignableFrom(param))
+                return EnhancementParamKind.CLASS_INFO;
+            if (jakarta.enterprise.lang.model.declarations.FieldInfo.class.isAssignableFrom(param))
+                return EnhancementParamKind.FIELD_INFO;
+            if (jakarta.enterprise.lang.model.declarations.MethodInfo.class.isAssignableFrom(param))
+                return EnhancementParamKind.METHOD_INFO;
+        }
+        return EnhancementParamKind.CLASS_CONFIG; // fallback
+    }
+
     private static void processEnhancement(Object bce, Class<?> bceClass,
                                            List<BeanDescriptor> beans,
                                            IndexLookup lookup, ClassLoader classLoader,
-                                           List<String> errors) {
+                                           List<String> errors,
+                                           Map<fr.vidocq.vauban.indexer.model.DotName, List<VaubanClassConfig>> modifications) {
         for (var method : getDeclaredMethodsSafe(bceClass)) {
             var enhancement = method.getAnnotation(Enhancement.class);
             if (enhancement == null) continue;
 
             method.setAccessible(true);
+            var paramKind = detectEnhancementParamKind(method);
 
             for (var bean : beans) {
                 if (!matchesTypes(enhancement.types(), bean, classLoader)) continue;
@@ -129,33 +159,75 @@ public final class BceProcessor {
                 var indexClass = lookup.getClass(bean.beanClass()).orElse(null);
                 if (indexClass == null) continue;
 
-                var vaubanClassInfo = new fr.vidocq.vauban.core.langmodel.declarations.VaubanClassInfo(indexClass, lookup);
+                var vaubanClassInfo = new VaubanClassInfo(indexClass, lookup);
 
-                // Call with each method of the matching class
-                for (var beanMethod : vaubanClassInfo.methods()) {
-                    try {
-                        invokeEnhancementMethod(method, bce, beanMethod);
-                    } catch (Exception e) {
-                        errors.add("@Enhancement error: " + e.getMessage());
+                try {
+                    switch (paramKind) {
+                        case CLASS_CONFIG -> {
+                            var classConfig = new VaubanClassConfig(vaubanClassInfo);
+                            invokeWithArg(method, bce, ClassConfig.class, classConfig);
+                            if (classConfig.isModified()) {
+                                modifications.computeIfAbsent(bean.beanClass(), k -> new ArrayList<>())
+                                        .add(classConfig);
+                            }
+                        }
+                        case CLASS_INFO -> {
+                            invokeWithArg(method, bce,
+                                    jakarta.enterprise.lang.model.declarations.ClassInfo.class, vaubanClassInfo);
+                        }
+                        case METHOD_CONFIG -> {
+                            var classConfig = new VaubanClassConfig(vaubanClassInfo);
+                            for (var mc : classConfig.methods()) {
+                                invokeWithArg(method, bce, MethodConfig.class, mc);
+                            }
+                            if (classConfig.isModified()) {
+                                modifications.computeIfAbsent(bean.beanClass(), k -> new ArrayList<>())
+                                        .add(classConfig);
+                            }
+                        }
+                        case METHOD_INFO -> {
+                            for (var mi : vaubanClassInfo.methods()) {
+                                invokeWithArg(method, bce,
+                                        jakarta.enterprise.lang.model.declarations.MethodInfo.class, mi);
+                            }
+                        }
+                        case FIELD_CONFIG -> {
+                            var classConfig = new VaubanClassConfig(vaubanClassInfo);
+                            for (var fc : classConfig.fields()) {
+                                invokeWithArg(method, bce, FieldConfig.class, fc);
+                            }
+                            if (classConfig.isModified()) {
+                                modifications.computeIfAbsent(bean.beanClass(), k -> new ArrayList<>())
+                                        .add(classConfig);
+                            }
+                        }
+                        case FIELD_INFO -> {
+                            for (var fi : vaubanClassInfo.fields()) {
+                                invokeWithArg(method, bce,
+                                        jakarta.enterprise.lang.model.declarations.FieldInfo.class, fi);
+                            }
+                        }
                     }
+                } catch (Exception e) {
+                    var cause = e instanceof java.lang.reflect.InvocationTargetException ite
+                            ? (ite.getCause() != null ? ite.getCause() : ite) : e;
+                    errors.add("@Enhancement error: " + cause.getMessage());
                 }
             }
         }
     }
 
-    private static void invokeEnhancementMethod(Method extensionMethod, Object bce,
-                                                jakarta.enterprise.lang.model.declarations.MethodInfo beanMethod) throws Exception {
-        var params = extensionMethod.getParameters();
+    private static void invokeWithArg(Method method, Object bce, Class<?> targetType, Object arg) throws Exception {
+        var params = method.getParameters();
         var args = new Object[params.length];
         for (int i = 0; i < params.length; i++) {
             var paramType = params[i].getType();
-            if (jakarta.enterprise.lang.model.declarations.MethodInfo.class.isAssignableFrom(paramType)) {
-                args[i] = beanMethod;
-            } else if (MethodConfig.class.isAssignableFrom(paramType)) {
-                args[i] = beanMethod; // MethodConfig extends MethodInfo
+            if (targetType.isAssignableFrom(paramType) || paramType.isAssignableFrom(targetType)) {
+                args[i] = arg;
             }
+            // Messages and Types can be added here if needed
         }
-        extensionMethod.invoke(bce, args);
+        method.invoke(bce, args);
     }
 
     /**
@@ -394,6 +466,205 @@ public final class BceProcessor {
             errors.add("@Registration method " + method.getName()
                     + " must have exactly one BeanInfo/InterceptorInfo parameter, found " + primaryCount);
         }
+    }
+
+    /**
+     * Apply enhancement modifications to bean descriptors. Returns the modified list.
+     */
+    public static List<BeanDescriptor> applyEnhancements(
+            List<BeanDescriptor> descriptors,
+            Map<DotName, List<VaubanClassConfig>> modifications,
+            VaubanIndex index) {
+
+        if (modifications.isEmpty()) return descriptors;
+
+        var result = new ArrayList<BeanDescriptor>(descriptors.size());
+        for (var bean : descriptors) {
+            var configs = modifications.get(bean.beanClass());
+            if (configs == null || configs.isEmpty()) {
+                result.add(bean);
+                continue;
+            }
+            result.add(applyClassConfigs(bean, configs, index));
+        }
+        return result;
+    }
+
+    private static BeanDescriptor applyClassConfigs(BeanDescriptor bean, List<VaubanClassConfig> configs,
+                                                     VaubanIndex index) {
+        var qualifiers = new LinkedHashSet<>(bean.qualifiers());
+        var interceptorBindings = new LinkedHashSet<>(bean.interceptorBindings());
+        var interceptorBindingAnnotations = new ArrayList<>(bean.interceptorBindingAnnotations());
+        var injectionPoints = new ArrayList<>(bean.injectionPoints());
+
+        for (var config : configs) {
+            // Class-level annotation removals
+            for (var predicate : config.getRemovePredicates()) {
+                qualifiers.removeIf(q -> {
+                    var annInfo = qualifierToAnnotationInfo(q);
+                    return annInfo != null && predicate.test(annInfo);
+                });
+            }
+            if (config.isAllAnnotationsRemoved()) {
+                qualifiers.clear();
+                interceptorBindings.clear();
+                interceptorBindingAnnotations.clear();
+            }
+
+            // Class-level annotation additions
+            for (var ann : config.getAddedAnnotations()) {
+                qualifiers.add(new QualifierInstance(DotName.of(ann.getName()), Map.of()));
+            }
+            for (var annInfo : config.getAddedAnnotationInfos()) {
+                qualifiers.add(annotationInfoToQualifier(annInfo));
+            }
+
+            // Field-level modifications -> update injection points
+            for (var fieldConfig : config.getFieldConfigs()) {
+                if (!fieldConfig.isModified()) continue;
+                applyFieldEnhancement(fieldConfig, injectionPoints, index);
+            }
+
+            // Method-level modifications -> update interceptor bindings
+            for (var methodConfig : config.getMethodConfigs()) {
+                if (!methodConfig.isModified()) continue;
+                applyMethodEnhancement(methodConfig, interceptorBindings, interceptorBindingAnnotations);
+
+                // Parameter-level modifications -> update observer/injection qualifiers
+                for (var paramConfig : methodConfig.getParameterConfigs()) {
+                    if (!paramConfig.isModified()) continue;
+                    applyParameterEnhancement(paramConfig, methodConfig.info().name(), injectionPoints);
+                }
+            }
+        }
+
+        // Re-add @Any if qualifiers were modified and it was there before
+        if (!qualifiers.isEmpty() && qualifiers.stream().noneMatch(QualifierInstance::isAny)
+                && bean.qualifiers().stream().anyMatch(QualifierInstance::isAny)) {
+            qualifiers.add(QualifierInstance.ANY);
+        }
+
+        return new BeanDescriptor(
+                bean.id(), bean.beanClass(), bean.kind(), bean.types(),
+                qualifiers, bean.scope(), bean.isAlternative(), bean.priority(),
+                injectionPoints, bean.name(), interceptorBindings,
+                bean.constructorBindings(), interceptorBindingAnnotations
+        );
+    }
+
+    private static void applyFieldEnhancement(VaubanFieldConfig fieldConfig,
+                                               List<InjectionPointInfo> injectionPoints,
+                                               VaubanIndex index) {
+        String fieldName = fieldConfig.info().name();
+
+        for (int i = 0; i < injectionPoints.size(); i++) {
+            var ip = injectionPoints.get(i);
+            if (ip.kind() != InjectionPointInfo.InjectionKind.FIELD) continue;
+            if (!ip.description().contains(fieldName)) continue;
+
+            var ipQualifiers = new LinkedHashSet<>(ip.qualifiers());
+
+            if (fieldConfig.isAllAnnotationsRemoved()) {
+                ipQualifiers.clear();
+            }
+
+            for (var ann : fieldConfig.getAddedAnnotations()) {
+                ipQualifiers.add(new QualifierInstance(DotName.of(ann.getName()), Map.of()));
+            }
+            for (var annInfo : fieldConfig.getAddedAnnotationInfos()) {
+                ipQualifiers.add(annotationInfoToQualifier(annInfo));
+            }
+
+            injectionPoints.set(i, new InjectionPointInfo(
+                    ip.requiredType(), ipQualifiers, ip.kind(), ip.description()));
+        }
+    }
+
+    private static void applyMethodEnhancement(VaubanMethodConfig methodConfig,
+                                                Set<DotName> interceptorBindings,
+                                                List<Annotation> interceptorBindingAnnotations) {
+        for (var ann : methodConfig.getAddedAnnotations()) {
+            interceptorBindings.add(DotName.of(ann.getName()));
+        }
+        for (var annInfo : methodConfig.getAddedAnnotationInfos()) {
+            interceptorBindings.add(DotName.of(annInfo.name()));
+            if (annInfo instanceof BuiltAnnotationInfo built) {
+                try {
+                    var proxy = createAnnotationProxy(built);
+                    if (proxy != null) interceptorBindingAnnotations.add(proxy);
+                } catch (Exception ignored) {}
+            }
+        }
+    }
+
+    private static void applyParameterEnhancement(VaubanParameterConfig paramConfig,
+                                                    String methodName,
+                                                    List<InjectionPointInfo> injectionPoints) {
+        // Parameter modifications affect observer qualifiers, handled via observer descriptors
+        // For now this is mainly used by ChangeObserverQualifierTest which modifies observer parameters
+        // The actual observer modification happens in the observer discovery phase
+    }
+
+    private static QualifierInstance annotationInfoToQualifier(AnnotationInfo annInfo) {
+        var members = new LinkedHashMap<String, AnnotationValue>();
+        if (annInfo.members() != null) {
+            for (var entry : annInfo.members().entrySet()) {
+                var member = entry.getValue();
+                members.put(entry.getKey(), annotationMemberToValue(member));
+            }
+        }
+        return new QualifierInstance(DotName.of(annInfo.name()), members);
+    }
+
+    private static AnnotationValue annotationMemberToValue(AnnotationMember member) {
+        return switch (member.kind()) {
+            case STRING -> new AnnotationValue.StringVal(member.asString());
+            case BOOLEAN -> new AnnotationValue.BooleanVal(member.asBoolean());
+            case INT -> new AnnotationValue.IntVal(member.asInt());
+            case LONG -> new AnnotationValue.LongVal(member.asLong());
+            case DOUBLE -> new AnnotationValue.DoubleVal(member.asDouble());
+            case FLOAT -> new AnnotationValue.FloatVal(member.asFloat());
+            case BYTE -> new AnnotationValue.ByteVal(member.asByte());
+            case SHORT -> new AnnotationValue.ShortVal(member.asShort());
+            case CHAR -> new AnnotationValue.CharVal(member.asChar());
+            default -> new AnnotationValue.StringVal(member.toString());
+        };
+    }
+
+    private static AnnotationInfo qualifierToAnnotationInfo(QualifierInstance q) {
+        var members = new LinkedHashMap<String, AnnotationMember>();
+        return new SimpleAnnotationInfo(q.annotationName().value(), members);
+    }
+
+    @SuppressWarnings("unchecked")
+    private static Annotation createAnnotationProxy(BuiltAnnotationInfo built) {
+        var annotationType = built.annotationType();
+        return (Annotation) java.lang.reflect.Proxy.newProxyInstance(
+                annotationType.getClassLoader(),
+                new Class<?>[]{annotationType},
+                (proxy, method, args) -> {
+                    if ("annotationType".equals(method.getName())) return annotationType;
+                    if ("toString".equals(method.getName())) return "@" + annotationType.getName();
+                    if ("hashCode".equals(method.getName())) return 0;
+                    if ("equals".equals(method.getName())) return false;
+                    var member = built.member(method.getName());
+                    if (member != null) {
+                        return switch (member.kind()) {
+                            case STRING -> member.asString();
+                            case BOOLEAN -> member.asBoolean();
+                            case INT -> member.asInt();
+                            case LONG -> member.asLong();
+                            case DOUBLE -> member.asDouble();
+                            case FLOAT -> member.asFloat();
+                            case BYTE -> member.asByte();
+                            case SHORT -> member.asShort();
+                            case CHAR -> member.asChar();
+                            default -> method.getDefaultValue();
+                        };
+                    }
+                    return method.getDefaultValue();
+                }
+        );
     }
 
     /**

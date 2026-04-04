@@ -13,9 +13,17 @@ public final class VaubanMethodConfig implements MethodConfig {
 
     private final MethodInfo methodInfo;
     private final Set<Class<? extends Annotation>> addedAnnotations = new LinkedHashSet<>();
+    private final List<AnnotationInfo> addedAnnotationInfos = new ArrayList<>();
+    private final List<Predicate<AnnotationInfo>> removePredicates = new ArrayList<>();
+    private boolean allAnnotationsRemoved;
+    private final List<VaubanParameterConfig> parameterConfigs;
 
     public VaubanMethodConfig(MethodInfo methodInfo) {
         this.methodInfo = methodInfo;
+        this.parameterConfigs = new ArrayList<>();
+        for (var p : methodInfo.parameters()) {
+            parameterConfigs.add(new VaubanParameterConfig(p));
+        }
     }
 
     @Override
@@ -31,6 +39,7 @@ public final class VaubanMethodConfig implements MethodConfig {
 
     @Override
     public MethodConfig addAnnotation(AnnotationInfo annotation) {
+        addedAnnotationInfos.add(annotation);
         return this;
     }
 
@@ -44,24 +53,50 @@ public final class VaubanMethodConfig implements MethodConfig {
 
     @Override
     public MethodConfig removeAnnotation(Predicate<AnnotationInfo> predicate) {
+        removePredicates.add(predicate);
         return this;
     }
 
     @Override
     public MethodConfig removeAllAnnotations() {
+        allAnnotationsRemoved = true;
         return this;
     }
 
     @Override
     public List<ParameterConfig> parameters() {
-        return List.of();
+        return List.copyOf(parameterConfigs);
     }
 
     public Set<Class<? extends Annotation>> getAddedAnnotations() {
         return Set.copyOf(addedAnnotations);
     }
 
+    public List<AnnotationInfo> getAddedAnnotationInfos() {
+        return List.copyOf(addedAnnotationInfos);
+    }
+
     public boolean hasAddedAnnotation(Class<? extends Annotation> annotationType) {
         return addedAnnotations.contains(annotationType);
+    }
+
+    public boolean isAllAnnotationsRemoved() {
+        return allAnnotationsRemoved;
+    }
+
+    public List<Predicate<AnnotationInfo>> getRemovePredicates() {
+        return List.copyOf(removePredicates);
+    }
+
+    public List<VaubanParameterConfig> getParameterConfigs() {
+        return List.copyOf(parameterConfigs);
+    }
+
+    public boolean isModified() {
+        if (!addedAnnotations.isEmpty() || !addedAnnotationInfos.isEmpty()
+                || allAnnotationsRemoved || !removePredicates.isEmpty()) {
+            return true;
+        }
+        return parameterConfigs.stream().anyMatch(VaubanParameterConfig::isModified);
     }
 }

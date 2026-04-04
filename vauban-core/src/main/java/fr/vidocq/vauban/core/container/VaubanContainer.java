@@ -2427,6 +2427,14 @@ public final class VaubanContainer implements AutoCloseable {
                     for (var synBean : bceResult.syntheticBeans()) {
                         registerSyntheticBean(synBean, descriptors, factories);
                     }
+
+                    // Apply enhancement modifications to bean descriptors
+                    if (!bceResult.enhancementModifications().isEmpty()) {
+                        var modified = fr.vidocq.vauban.core.extensions.BceProcessor.applyEnhancements(
+                                descriptors, bceResult.enhancementModifications(), index);
+                        descriptors.clear();
+                        descriptors.addAll(modified);
+                    }
                 }
 
                 // Validate observer/disposer method parameters (CDI spec)
