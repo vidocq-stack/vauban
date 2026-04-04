@@ -1257,7 +1257,10 @@ public final class VaubanContainer implements AutoCloseable {
                 interceptorManager.setClassLoader(beanClass.getClassLoader());
 
                 var classBindings = interceptorManager.findBindingsOnClass(beanClass, interceptorManager::isInterceptorBinding);
-                
+
+                // Merge bindings added by Enhancement (not present on the class bytecode)
+                classBindings.addAll(bindings);
+
                 // Check if there are matching interceptors (class, method, or constructor level)
                 var matches = interceptorManager.resolveInterceptorDescriptors(classBindings);
                 if (matches.isEmpty()) {
@@ -2438,12 +2441,16 @@ public final class VaubanContainer implements AutoCloseable {
                     VaubanBeanManager.setCustomInterceptorBindingTypes(meta.getCustomInterceptorBindings());
                     VaubanBeanManager.setCustomStereotypeTypes(meta.getCustomStereotypes());
 
-                    // When not a bean archive, only discover classes added via ScannedClasses
-                    if (!isBeanArchive && !discoveryResult.scannedClasses().getAddedClasses().isEmpty()) {
-                        var allowedClasses = discoveryResult.scannedClasses().getAddedClasses().stream()
+                    // Classes added via ScannedClasses bypass annotation check
+                    if (!discoveryResult.scannedClasses().getAddedClasses().isEmpty()) {
+                        var scannedDotNames = discoveryResult.scannedClasses().getAddedClasses().stream()
                                 .map(DotName::of)
                                 .collect(java.util.stream.Collectors.toSet());
-                        discovery.setScannedClassesFilter(allowedClasses);
+                        discovery.setForcedBeanClasses(scannedDotNames);
+                        // When not a bean archive, also restrict discovery to scanned classes only
+                        if (!isBeanArchive) {
+                            discovery.setScannedClassesFilter(scannedDotNames);
+                        }
                     }
                 }
                 var descriptors = new ArrayList<>(discovery.discoverBeans());

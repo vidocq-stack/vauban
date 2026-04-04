@@ -173,19 +173,24 @@ public final class BceProcessor {
             method.setAccessible(true);
             var paramKind = detectEnhancementParamKind(method);
 
+            var withAnnotations = enhancement.withAnnotations();
+            var processedClasses = new java.util.HashSet<DotName>();
+
             // First try beans (normal CDI path)
-            boolean matched = false;
             for (var bean : beans) {
                 if (!matchesTypes(enhancement.types(), bean, classLoader)) continue;
-                matched = true;
+                if (!matchesAnnotations(withAnnotations, bean.beanClass(), classLoader)) continue;
+                processedClasses.add(bean.beanClass());
                 invokeEnhancement(method, bce, paramKind, bean.beanClass(), lookup, errors, modifications);
             }
 
-            // If no beans matched, fallback to archive classes (for BCE-only deployments like PriorityTest)
-            if (!matched && archiveClasses != null) {
+            // Also check archive classes for non-bean classes (e.g. added via ScannedClasses)
+            if (archiveClasses != null) {
                 for (var archiveClass : archiveClasses) {
-                    if (!matchesClass(enhancement.types(), enhancement.withSubtypes(), archiveClass, classLoader)) continue;
                     var className = DotName.of(archiveClass.getName());
+                    if (processedClasses.contains(className)) continue;
+                    if (!matchesClass(enhancement.types(), enhancement.withSubtypes(), archiveClass, classLoader)) continue;
+                    if (!matchesAnnotations(withAnnotations, archiveClass)) continue;
                     invokeEnhancement(method, bce, paramKind, className, lookup, errors, modifications);
                 }
             }
@@ -255,6 +260,37 @@ public final class BceProcessor {
                 if (type.isAssignableFrom(targetClass)) return true;
             } else {
                 if (type.equals(targetClass)) return true;
+            }
+        }
+        return false;
+    }
+
+    /** Check if a class has at least one of the required annotations (resolved via classLoader from DotName). */
+    private static boolean matchesAnnotations(Class<? extends java.lang.annotation.Annotation>[] withAnnotations,
+                                              DotName beanClass, ClassLoader classLoader) {
+        if (withAnnotations == null || withAnnotations.length == 0) return true;
+        try {
+            var clazz = classLoader.loadClass(beanClass.value());
+            return matchesAnnotations(withAnnotations, clazz);
+        } catch (ClassNotFoundException e) {
+            return false;
+        }
+    }
+
+    /** Check if a class has at least one of the required annotations (on class, methods, or fields). */
+    private static boolean matchesAnnotations(Class<? extends java.lang.annotation.Annotation>[] withAnnotations,
+                                              Class<?> targetClass) {
+        if (withAnnotations == null || withAnnotations.length == 0) return true;
+        for (var ann : withAnnotations) {
+            if (targetClass.isAnnotationPresent(ann)) return true;
+            for (var m : getDeclaredMethodsSafe(targetClass)) {
+                if (m.isAnnotationPresent(ann)) return true;
+            }
+            for (var f : targetClass.getDeclaredFields()) {
+                if (f.isAnnotationPresent(ann)) return true;
+            }
+            for (var c : targetClass.getDeclaredConstructors()) {
+                if (c.isAnnotationPresent(ann)) return true;
             }
         }
         return false;

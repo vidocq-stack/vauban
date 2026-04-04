@@ -87,9 +87,15 @@ public final class BeanDiscovery {
     }
 
     private Set<DotName> scannedClassesFilter = Set.of();
+    private Set<DotName> forcedBeanClasses = Set.of();
 
     public void setScannedClassesFilter(Set<DotName> filter) {
         this.scannedClassesFilter = filter;
+    }
+
+    /** Classes added via ScannedClasses that bypass bean-defining annotation check. */
+    public void setForcedBeanClasses(Set<DotName> forced) {
+        this.forcedBeanClasses = forced;
     }
 
     private boolean isAllowedByScannedClassesFilter(ClassInfo classInfo) {
@@ -107,7 +113,7 @@ public final class BeanDiscovery {
             if (isVetoed(classInfo)) continue;
             if (isDisabledAlternative(classInfo)) continue;
             if (!isBeanCandidate(classInfo)) continue;
-            if (!hasBeanDefiningAnnotation(classInfo)) {
+            if (!forcedBeanClasses.contains(classInfo.name()) && !hasBeanDefiningAnnotation(classInfo)) {
                 // Potential bean but no annotation in index, check reflection
                 if (!hasBeanDefiningAnnotationViaReflection(classInfo.name())) {
                     continue;
