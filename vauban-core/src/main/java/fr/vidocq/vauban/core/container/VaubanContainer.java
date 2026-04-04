@@ -666,7 +666,7 @@ public final class VaubanContainer implements AutoCloseable {
                     }
                     break;
                 }
-            } catch (jakarta.enterprise.inject.spi.DeploymentException e) {
+            } catch (jakarta.enterprise.inject.spi.DeploymentException | jakarta.enterprise.inject.spi.DefinitionException e) {
                 throw e;
             } catch (Exception e) {
                 // Skip
