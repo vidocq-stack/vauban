@@ -994,12 +994,8 @@ public final class VaubanContainer implements AutoCloseable {
                 hasExplicitQualifier = true;
             }
         }
-        // CDI spec: Event gets @Default if no explicit qualifiers, and @Any always
-        boolean hasDefault = quals.stream().anyMatch(q -> q.annotationType() == jakarta.enterprise.inject.Default.class);
+        // CDI spec: Event always has @Any
         boolean hasAny = quals.stream().anyMatch(q -> q.annotationType() == jakarta.enterprise.inject.Any.class);
-        if (!hasExplicitQualifier && !hasDefault) {
-            quals.add(jakarta.enterprise.inject.Default.Literal.INSTANCE);
-        }
         if (!hasAny) {
             quals.add(jakarta.enterprise.inject.Any.Literal.INSTANCE);
         }
