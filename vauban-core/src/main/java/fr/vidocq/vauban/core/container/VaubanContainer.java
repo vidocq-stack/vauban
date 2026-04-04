@@ -1261,10 +1261,19 @@ public final class VaubanContainer implements AutoCloseable {
                 // Merge bindings added by Enhancement (not present on the class bytecode)
                 classBindings.addAll(bindings);
 
-                // Register enhanced binding annotations for runtime getInterceptorBindings()
+                // Register ONLY enhancement-added binding annotations (not already on the class)
                 if (!descriptor.interceptorBindingAnnotations().isEmpty()) {
-                    interceptorManager.registerEnhancedBindings(
-                            descriptor.beanClass().value(), descriptor.interceptorBindingAnnotations());
+                    var classAnnotationTypes = new java.util.HashSet<String>();
+                    for (var ann : beanClass.getAnnotations()) {
+                        classAnnotationTypes.add(ann.annotationType().getName());
+                    }
+                    var enhancedOnly = descriptor.interceptorBindingAnnotations().stream()
+                            .filter(ann -> !classAnnotationTypes.contains(ann.annotationType().getName()))
+                            .toList();
+                    if (!enhancedOnly.isEmpty()) {
+                        interceptorManager.registerEnhancedBindings(
+                                descriptor.beanClass().value(), enhancedOnly);
+                    }
                 }
 
                 // Check if there are matching interceptors (class, method, or constructor level)
