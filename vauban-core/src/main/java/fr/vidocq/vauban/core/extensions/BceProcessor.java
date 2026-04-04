@@ -299,9 +299,16 @@ public final class BceProcessor {
                 continue;
             }
 
-            // Try matching against beans first
+            // Collect interceptor class names to avoid double-processing
+            var interceptorClassNames = new java.util.HashSet<String>();
+            for (var ic : interceptors) {
+                interceptorClassNames.add(ic.interceptorClass().value());
+            }
+
+            // Try matching against beans first (skip interceptors, handled below)
             boolean matched = false;
             for (var bean : beans) {
+                if (interceptorClassNames.contains(bean.beanClass().value())) continue;
                 if (!matchesTypes(registration.types(), bean, classLoader)) continue;
                 matched = true;
 
