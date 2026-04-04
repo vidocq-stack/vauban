@@ -106,7 +106,7 @@ public final class EventImpl<T> implements Event<T> {
     @Override
     public Event<T> select(Annotation... newQualifiers) {
         validateQualifiers(newQualifiers);
-        return new EventImpl<>(dispatcher, combineQualifiers(this.qualifiers, newQualifiers), injectionPoint);
+        return new EventImpl<>(dispatcher, combineQualifiers(this.qualifiers, newQualifiers), injectionPoint, this.selectedType);
     }
 
     @Override
