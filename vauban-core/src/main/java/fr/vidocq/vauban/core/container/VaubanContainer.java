@@ -100,7 +100,7 @@ public final class VaubanContainer implements AutoCloseable {
                             List<InterceptorDescriptor> interceptorDescriptors,
                             List<DisposerDescriptor> disposers,
                             Map<DotName, BeanFactory<?>> factories,
-                            Map<DotName, java.util.function.Consumer<Object>> syntheticDisposers,
+                            Map<DotName, java.util.function.BiConsumer<Object, CreationalContext<?>>> syntheticDisposers,
                             ClassLoader classLoader,
                             java.util.function.BiFunction<String, byte[], Class<?>> classDefiner) {
         this.index = index;
@@ -1651,7 +1651,7 @@ public final class VaubanContainer implements AutoCloseable {
                 var interceptedBean = new ManagedBean<>(descriptor, interceptedFactory, classLoader);
                 if (originalBean != null) {
                     interceptedBean.setInjector((java.util.function.BiConsumer) originalBean.getInjector());
-                    interceptedBean.setDestroyer((java.util.function.Consumer) originalBean.getDestroyer());
+                    interceptedBean.setDestroyer((java.util.function.BiConsumer) originalBean.getDestroyer());
                 }
                 interceptedBean.setInterceptorManager(this.interceptorManager);
                 beans.put(descriptor.id(), interceptedBean);
@@ -1754,7 +1754,7 @@ public final class VaubanContainer implements AutoCloseable {
                     var originalBean2 = (ManagedBean<?>) beans.get(descriptor.id());
                     if (originalBean2 != null) {
                         ib2.setInjector((java.util.function.BiConsumer) originalBean2.getInjector());
-                        ib2.setDestroyer((java.util.function.Consumer) originalBean2.getDestroyer());
+                        ib2.setDestroyer((java.util.function.BiConsumer) originalBean2.getDestroyer());
                     }
                     ib2.setInterceptorManager(this.interceptorManager);
                     beans.put(descriptor.id(), ib2);
@@ -1854,7 +1854,7 @@ public final class VaubanContainer implements AutoCloseable {
                     throw new jakarta.enterprise.inject.spi.DefinitionException(
                         "Multiple disposer methods for producer " + descriptor.id() + " in " + descriptor.beanClass());
                 }
-                bean.setDestroyer(instance -> callDisposer(instance, disposer));
+                bean.setDestroyer((instance, ctx) -> callDisposer(instance, disposer, ctx));
             }
         }
     }
@@ -1974,7 +1974,7 @@ public final class VaubanContainer implements AutoCloseable {
         }
     }
 
-    private void callDisposer(Object producedInstance, DisposerDescriptor disposer) {
+    private void callDisposer(Object producedInstance, DisposerDescriptor disposer, CreationalContext<?> creationalContext) {
         try {
             var declaringClass = loadClass(disposer.declaringClass().value());
 
@@ -1983,7 +1983,7 @@ public final class VaubanContainer implements AutoCloseable {
                         && method.getParameterCount() > disposer.parameterIndex()) {
                     method.setAccessible(true);
                     var bm = getBeanManager();
-                    var ctx = new fr.vidocq.vauban.core.context.CreationalContextImpl<>();
+                    var ctx = creationalContext != null ? creationalContext : new fr.vidocq.vauban.core.context.CreationalContextImpl<>();
                     try {
                         var declBeans = bm.getBeans(declaringClass);
                         var declBean = declBeans.isEmpty() ? null : bm.resolve(declBeans);
@@ -2741,7 +2741,7 @@ public final class VaubanContainer implements AutoCloseable {
                 var observers = new ArrayList<>(discovery.discoverObservers());
                 var interceptors = discovery.discoverInterceptors();
                 var disposers = discovery.discoverDisposerMethods();
-                var syntheticDisposers = new LinkedHashMap<DotName, java.util.function.Consumer<Object>>();
+                var syntheticDisposers = new LinkedHashMap<DotName, java.util.function.BiConsumer<Object, CreationalContext<?>>>();
 
                 // --- Build Compatible Extensions (BCE) — remaining phases ---
                 if (!bceClasses.isEmpty()) {
@@ -3014,7 +3014,7 @@ public final class VaubanContainer implements AutoCloseable {
                 fr.vidocq.vauban.core.extensions.VaubanSyntheticBeanBuilder<?> synBean,
                 List<BeanDescriptor> descriptors,
                 Map<DotName, BeanFactory<?>> factories,
-                Map<DotName, java.util.function.Consumer<Object>> syntheticDisposers) {
+                Map<DotName, java.util.function.BiConsumer<Object, CreationalContext<?>>> syntheticDisposers) {
             var beanClass = synBean.getBeanClass();
             var beanName = DotName.of(beanClass.getName());
 
@@ -3113,14 +3113,14 @@ public final class VaubanContainer implements AutoCloseable {
             // Register synthetic disposer if present
             var disposerClass = synBean.getDisposerClass();
             if (disposerClass != null) {
-                syntheticDisposers.put(syntheticKey, instance -> {
+                syntheticDisposers.put(syntheticKey, (instance, ctx) -> {
                     try {
                         @SuppressWarnings("unchecked")
                         var disposer = (jakarta.enterprise.inject.build.compatible.spi.SyntheticBeanDisposer<Object>)
                                 disposerClass.getDeclaredConstructor().newInstance();
                         var vaubanParams = new fr.vidocq.vauban.core.extensions.VaubanParameters(creatorParams);
                         var container = VaubanContainer.current();
-                        var lookup = new InstanceImpl<>(container, Object.class);
+                        var lookup = new InstanceImpl<>(container, Object.class, new Annotation[]{jakarta.enterprise.inject.Default.Literal.INSTANCE}, null, (fr.vidocq.vauban.core.context.CreationalContextImpl<?>) ctx);
                         disposer.dispose(instance, lookup, vaubanParams);
                     } catch (RuntimeException e) {
                         throw e;

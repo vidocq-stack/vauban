@@ -292,8 +292,21 @@ public final class InstanceImpl<T> implements Instance<T> {
                 @SuppressWarnings("unchecked")
                 var bean = (Bean<T>) b;
                 var ctx = bm.createCreationalContext(bean);
+                
                 @SuppressWarnings("unchecked")
                 var ref = (T) bm.getReference(bean, type, ctx);
+        
+                // Link the dependent bean to parent context if needed
+                if (bean.getScope() == jakarta.enterprise.context.Dependent.class && parentCreationalContext != null) {
+                    parentCreationalContext.addDependentInstance(bean, ref, ctx);
+                }
+                
+                // Track dependent instances locally so Instance.destroy() works
+                if (bean.getScope() == jakarta.enterprise.context.Dependent.class) {
+                    if (ctx instanceof fr.vidocq.vauban.core.context.CreationalContextImpl<?> cci) {
+                        dependentInstances.put(ref, cci);
+                    }
+                }
                 instances.add(ref);
             }
         } finally {
@@ -365,6 +378,10 @@ public final class InstanceImpl<T> implements Instance<T> {
                     var bm = container.getBeanManager();
                     creationalContext = bm.createCreationalContext(bean);
                     instance = (T) bm.getReference(bean, type, creationalContext);
+                    if (type != null && type.getName().contains("MyDependentBean")) {
+                        System.out.println("INSTANTIATED MyDependentBean via HandleImpl.get()!");
+                        new Exception().printStackTrace(System.out);
+                    }
                 } finally {
                     VaubanContainer.setInjectionPoint(previousIp);
                 }

@@ -50,11 +50,25 @@ public final class CreationalContextImpl<T> implements CreationalContext<T> {
         if (releasing) return; // Guard against recursive release
         releasing = true;
         try {
+            try {
+                var fw = new java.io.FileWriter("trace_release.txt", true);
+                fw.write("release() STARTED with " + dependentInstances.size() + " items\n");
+                fw.close();
+            } catch(Exception e) {}
             // CDI spec: release() must destroy all dependent objects
-            List<DependentInstance> copy = new ArrayList<>(dependentInstances);
-            dependentInstances.clear();
-            for (var dep : copy) {
+            while (!dependentInstances.isEmpty()) {
+                var dep = dependentInstances.remove(dependentInstances.size() - 1);
+                try {
+                    var fw = new java.io.FileWriter("trace_release.txt", true);
+                    fw.write("DESTROYING " + dep.instance.getClass().getName() + "\n");
+                    fw.close();
+                } catch(Exception e) {}
                 dep.destroy();
+                try {
+                    var fw = new java.io.FileWriter("trace_release.txt", true);
+                    fw.write("DESTROYED " + dep.instance.getClass().getName() + ", remaining: " + dependentInstances.size() + "\n");
+                    fw.close();
+                } catch(Exception e) {}
             }
             incompleteInstances.clear();
         } finally {
@@ -83,7 +97,8 @@ public final class CreationalContextImpl<T> implements CreationalContext<T> {
             try {
                 contextual.destroy(instance, ctx);
             } catch (Exception e) {
-                // CDI spec: exceptions during dependent destruction are suppressed
+                System.out.println("Exception destroying dependent instance:");
+                e.printStackTrace(System.out);
             }
         }
     }

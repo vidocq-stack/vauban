@@ -27,7 +27,7 @@ public final class ManagedBean<T> implements Bean<T> {
     private final Class<T> beanClass;
     private final ClassLoader classLoader;
     private BiConsumer<Object, CreationalContext<?>> injector;
-    private Consumer<Object> destroyer;
+    private BiConsumer<Object, CreationalContext<?>> destroyer;
     private fr.vidocq.vauban.core.interceptor.InterceptorManager interceptorManager;
     private volatile Set<Type> cachedTypes;
 
@@ -46,7 +46,7 @@ public final class ManagedBean<T> implements Bean<T> {
         return injector;
     }
 
-    public Consumer<Object> getDestroyer() {
+    public BiConsumer<Object, CreationalContext<?>> getDestroyer() {
         return destroyer;
     }
 
@@ -54,7 +54,7 @@ public final class ManagedBean<T> implements Bean<T> {
         this.injector = injector;
     }
 
-    public void setDestroyer(Consumer<Object> destroyer) {
+    public void setDestroyer(BiConsumer<Object, CreationalContext<?>> destroyer) {
         this.destroyer = destroyer;
     }
 
@@ -89,7 +89,7 @@ public final class ManagedBean<T> implements Bean<T> {
 
         if (destroyer != null) {
             try {
-                destroyer.accept(instance);
+                destroyer.accept(instance, creationalContext);
             } catch (Exception e) {
                 // CDI spec: exceptions in disposer methods are suppressed
             }

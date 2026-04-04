@@ -313,6 +313,11 @@ public final class ClassValidator {
                 errors.add("Parameter in " + className + "." + method.name()
                         + " cannot be both @Observes and @Disposes");
             }
+
+            if (isDisposer) {
+                validateTypeNotTypeVariableOrWildcard(param.type(), "Disposer parameter in",
+                        className + "." + method.name(), errors);
+            }
         }
 
         // Producer method return type validation
@@ -393,35 +398,39 @@ public final class ClassValidator {
         }
     }
 
-    /**
-     * Validates producer return types: cannot be TypeVariable, WildcardType,
-     * or arrays with type variable/wildcard component types.
-     */
-    private static void validateProducerType(TypeInfo type, String location, List<String> errors) {
+    private static void validateTypeNotTypeVariableOrWildcard(TypeInfo type, String kind, String location, List<String> errors) {
         if (type instanceof TypeInfo.TypeVariable) {
-            errors.add("Producer " + location + " has type variable return type");
+            errors.add(kind + " " + location + " has type variable type");
         }
         if (type instanceof TypeInfo.WildcardType) {
-            errors.add("Producer " + location + " has wildcard return type");
+            errors.add(kind + " " + location + " has wildcard type");
         }
         if (type instanceof TypeInfo.ParameterizedType pt) {
             for (var arg : pt.typeArguments()) {
                 if (arg instanceof TypeInfo.TypeVariable) {
-                    errors.add("Producer " + location + " has parameterized type with type variable");
+                    errors.add(kind + " " + location + " has parameterized type with type variable");
                 }
                 if (arg instanceof TypeInfo.WildcardType) {
-                    errors.add("Producer " + location + " has parameterized type with wildcard");
+                    errors.add(kind + " " + location + " has parameterized type with wildcard");
                 }
             }
         }
         if (type instanceof TypeInfo.ArrayType at) {
             if (at.componentType() instanceof TypeInfo.TypeVariable) {
-                errors.add("Producer " + location + " has array type with type variable component");
+                errors.add(kind + " " + location + " has array type with type variable component");
             }
             if (at.componentType() instanceof TypeInfo.WildcardType) {
-                errors.add("Producer " + location + " has array type with wildcard component");
+                errors.add(kind + " " + location + " has array type with wildcard component");
             }
         }
+    }
+
+    /**
+     * Validates producer return types: cannot be TypeVariable, WildcardType,
+     * or arrays with type variable/wildcard component types.
+     */
+    private static void validateProducerType(TypeInfo type, String location, List<String> errors) {
+        validateTypeNotTypeVariableOrWildcard(type, "Producer", location, errors);
     }
 
     /**
