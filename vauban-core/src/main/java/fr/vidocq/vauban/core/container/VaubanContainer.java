@@ -2876,19 +2876,36 @@ public final class VaubanContainer implements AutoCloseable {
             // Create factory using SyntheticBeanCreator
             var creatorClass = synBean.getCreatorClass();
             var params = synBean.getParams();
-            factories.put(syntheticKey, (BeanFactory<Object>) () -> {
-                try {
-                    @SuppressWarnings("unchecked")
-                    var creator = (jakarta.enterprise.inject.build.compatible.spi.SyntheticBeanCreator<Object>)
-                            creatorClass.getDeclaredConstructor().newInstance();
-                    var vaubanParams = new fr.vidocq.vauban.core.extensions.VaubanParameters(params);
-                    var container = VaubanContainer.current();
-                    var lookup = new InstanceImpl<>(container, Object.class);
-                    return creator.create(lookup, vaubanParams);
-                } catch (RuntimeException e) {
-                    throw e;
-                } catch (Exception e) {
-                    throw new jakarta.enterprise.inject.CreationException(e);
+            var isDependent = scope.equals(fr.vidocq.vauban.core.bean.model.ScopeInfo.DEPENDENT);
+            factories.put(syntheticKey, new BeanFactory<Object>() {
+                @Override
+                public Object create() { return create((CreationalContext<Object>) null); }
+                @Override
+                public Object create(CreationalContext<Object> ctx) {
+                    try {
+                        @SuppressWarnings("unchecked")
+                        var creator = (jakarta.enterprise.inject.build.compatible.spi.SyntheticBeanCreator<Object>)
+                                creatorClass.getDeclaredConstructor().newInstance();
+                        var vaubanParams = new fr.vidocq.vauban.core.extensions.VaubanParameters(params);
+                        var container = VaubanContainer.current();
+                        var previousIp = VaubanContainer.getCurrentInjectionPoint();
+                        if (previousIp == null && isDependent) {
+                            VaubanContainer.setInjectionPoint(VaubanInjectionPoint.EMPTY);
+                        }
+                        try {
+                            var parentCtx = ctx instanceof fr.vidocq.vauban.core.context.CreationalContextImpl<?> cci ? cci : null;
+                            var lookup = new InstanceImpl<>(container, Object.class, new Annotation[0], null, parentCtx);
+                            return creator.create(lookup, vaubanParams);
+                        } finally {
+                            if (previousIp == null && isDependent) {
+                                VaubanContainer.setInjectionPoint(previousIp);
+                            }
+                        }
+                    } catch (RuntimeException e) {
+                        throw e;
+                    } catch (Exception e) {
+                        throw new jakarta.enterprise.inject.CreationException(e);
+                    }
                 }
             });
 

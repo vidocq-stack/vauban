@@ -79,8 +79,6 @@ public final class InstanceImpl<T> implements Instance<T> {
         var previousIp = VaubanContainer.getCurrentInjectionPoint();
         if (injectionPoint != null) {
             VaubanContainer.setInjectionPoint(injectionPoint);
-        } else if (previousIp == null && bean.getScope() == jakarta.enterprise.context.Dependent.class) {
-            VaubanContainer.setInjectionPoint(VaubanInjectionPoint.EMPTY);
         }
         try {
             var ctx = bm.createCreationalContext(bean);
@@ -352,8 +350,6 @@ public final class InstanceImpl<T> implements Instance<T> {
                 var previousIp = VaubanContainer.getCurrentInjectionPoint();
                 if (injectionPoint != null) {
                     VaubanContainer.setInjectionPoint(injectionPoint);
-                } else if (previousIp == null && bean.getScope() == jakarta.enterprise.context.Dependent.class) {
-                    VaubanContainer.setInjectionPoint(VaubanInjectionPoint.EMPTY);
                 }
                 try {
                     var bm = container.getBeanManager();
