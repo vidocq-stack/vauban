@@ -1648,10 +1648,15 @@ public final class BeanDiscovery {
     private static List<java.lang.reflect.Method> getAllInheritedMethods(Class<?> clazz) {
         var result = new ArrayList<java.lang.reflect.Method>();
         var seen = new java.util.HashSet<String>();
-        // Skip the class itself (already handled by index-based discovery)
+        // Record methods declared in the concrete class to skip overridden inherited methods
+        for (var m : clazz.getDeclaredMethods()) {
+            seen.add(m.getName() + ":" + java.util.Arrays.toString(m.getParameterTypes()));
+        }
+        // Walk superclass hierarchy for inherited methods
         var current = clazz.getSuperclass();
         while (current != null && current != Object.class) {
             for (var m : current.getDeclaredMethods()) {
+                if (java.lang.reflect.Modifier.isPrivate(m.getModifiers())) continue;
                 var sig = m.getName() + ":" + java.util.Arrays.toString(m.getParameterTypes());
                 if (seen.add(sig)) {
                     result.add(m);

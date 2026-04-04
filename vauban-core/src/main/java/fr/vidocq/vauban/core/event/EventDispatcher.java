@@ -53,25 +53,7 @@ public final class EventDispatcher {
                 throw new IllegalArgumentException("Event type contains unresolvable type variable: " + eventTypeToMatch);
             }
         }
-        if (event.getClass().getName().contains("event.parameterized")) {
-            System.err.println("[PARAM-DEBUG] eventTypeToMatch=" + eventTypeToMatch + " class=" + eventTypeToMatch.getClass().getSimpleName());
-            System.err.println("[PARAM-DEBUG] selectedType=" + selectedType);
-            System.err.println("[PARAM-DEBUG] runtimeClass=" + event.getClass());
-            if (eventTypeToMatch instanceof java.lang.reflect.ParameterizedType ptm) {
-                System.err.println("[PARAM-DEBUG] eventTypeToMatch args:");
-                for (var a : ptm.getActualTypeArguments()) {
-                    System.err.println("[PARAM-DEBUG]   arg=" + a + " class=" + a.getClass().getSimpleName());
-                }
-            }
-        }
         var matching = findMatchingObservers(eventTypeToMatch, false, qualifierInstances, qualifiers);
-        if (event.getClass().getName().contains("event.parameterized")) {
-            System.err.println("[PARAM-DEBUG] matching=" + matching.size());
-            for (var obs : observers) {
-                boolean match = eventTypeMatches(obs, eventTypeToMatch);
-                System.err.println("[PARAM-DEBUG]  " + obs.methodName() + " type=" + obs.eventType() + " match=" + match);
-            }
-        }
         matching.sort(Comparator.comparingInt(ObserverDescriptor::priority));
         for (var observer : matching) {
             invokeObserver(observer, event, selectedType, eventInjectionPoint, qualifiers);
