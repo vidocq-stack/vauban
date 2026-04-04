@@ -86,7 +86,17 @@ public final class ManagedBean<T> implements Bean<T> {
     @Override
     public void destroy(T instance, CreationalContext<T> creationalContext) {
         if (instance == null) return;
-        
+
+        if (instance.getClass().getName().contains("Fox")) {
+            System.err.println("[DEBUG-DESTROY] Destroying " + instance.getClass().getName() + "@" + System.identityHashCode(instance) + " with ctx@" + System.identityHashCode(creationalContext));
+            if (creationalContext instanceof fr.vidocq.vauban.core.context.CreationalContextImpl<?> cc) {
+                System.err.println("[DEBUG-DESTROY]   ctx has " + cc.getDependentInstances().size() + " dependents");
+                for (var dep : cc.getDependentInstances()) {
+                    System.err.println("[DEBUG-DESTROY]     dep: " + dep.instance().getClass().getName() + "@" + System.identityHashCode(dep.instance()));
+                }
+            }
+        }
+
         // Call disposer method first (for producer beans)
         if (destroyer != null) {
             try {
