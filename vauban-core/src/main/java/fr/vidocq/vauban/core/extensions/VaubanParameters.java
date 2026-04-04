@@ -87,7 +87,6 @@ public final class VaubanParameters implements Parameters {
         if (member.isFloat()) return member.asFloat();
         if (member.isDouble()) return member.asDouble();
         if (member.isChar()) return member.asChar();
-        if (member.isString()) return member.asString();
         if (returnType.isEnum()) {
             @SuppressWarnings({"unchecked", "rawtypes"})
             var enumValue = member.asEnum((Class) returnType);
@@ -95,15 +94,20 @@ public final class VaubanParameters implements Parameters {
         }
         if (returnType == Class.class) {
             try {
-                var type = member.asType();
-                if (type instanceof jakarta.enterprise.lang.model.types.ClassType ct) {
-                    return Class.forName(ct.declaration().name());
+                if (member.isClass()) {
+                    var type = member.asType();
+                    if (type instanceof jakarta.enterprise.lang.model.types.ClassType ct) {
+                        return Class.forName(ct.declaration().name());
+                    }
+                } else if (member.isString()) {
+                    return Class.forName(member.asString());
                 }
                 return Object.class;
             } catch (Exception e) {
                 return Object.class;
             }
         }
+        if (member.isString()) return member.asString();
         if (returnType.isAnnotation()) {
             return createAnnotationProxy(returnType, member.asNestedAnnotation());
         }

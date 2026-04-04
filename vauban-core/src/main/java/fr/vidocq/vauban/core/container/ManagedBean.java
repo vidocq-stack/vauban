@@ -87,16 +87,6 @@ public final class ManagedBean<T> implements Bean<T> {
     public void destroy(T instance, CreationalContext<T> creationalContext) {
         if (instance == null) return;
 
-        if (instance.getClass().getName().contains("Fox")) {
-            System.err.println("[DEBUG-DESTROY] Destroying " + instance.getClass().getName() + "@" + System.identityHashCode(instance) + " with ctx@" + System.identityHashCode(creationalContext));
-            if (creationalContext instanceof fr.vidocq.vauban.core.context.CreationalContextImpl<?> cc) {
-                System.err.println("[DEBUG-DESTROY]   ctx has " + cc.getDependentInstances().size() + " dependents");
-                for (var dep : cc.getDependentInstances()) {
-                    System.err.println("[DEBUG-DESTROY]     dep: " + dep.instance().getClass().getName() + "@" + System.identityHashCode(dep.instance()));
-                }
-            }
-        }
-
         // Call disposer method first (for producer beans)
         if (destroyer != null) {
             try {
@@ -106,11 +96,12 @@ public final class ManagedBean<T> implements Bean<T> {
             }
         }
 
-        callPreDestroy(instance, creationalContext);
+        // CDI spec: @PreDestroy is only called on managed beans, not on producer products
+        if (descriptor.kind() == BeanDescriptor.BeanKind.MANAGED) {
+            callPreDestroy(instance, creationalContext);
+        }
 
         // CDI Spec 6.1: release dependent instances tracked by this creational context.
-        // Use a guard to prevent recursive release when this bean is itself being
-        // destroyed by its parent's release().
         if (creationalContext instanceof fr.vidocq.vauban.core.context.CreationalContextImpl<?> cc) {
             cc.release();
         }

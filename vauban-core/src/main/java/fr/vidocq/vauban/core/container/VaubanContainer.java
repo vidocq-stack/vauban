@@ -841,7 +841,6 @@ public final class VaubanContainer implements AutoCloseable {
                     var fieldType = field.getGenericType();
                     var resolvedBeans = bm.getBeans(fieldType, fieldQuals);
                     if (resolvedBeans.isEmpty()) {
-                        System.err.println("[DEBUG-INJ] EMPTY resolvedBeans for field " + field.getName() + " type=" + fieldType + " quals=" + java.util.Arrays.toString(fieldQuals) + " on " + instance.getClass().getName());
                         value = select(field.getType());
                     } else {
                         var resolved = bm.resolve(resolvedBeans);

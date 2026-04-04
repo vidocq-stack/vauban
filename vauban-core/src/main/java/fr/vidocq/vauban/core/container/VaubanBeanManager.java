@@ -125,7 +125,6 @@ public final class VaubanBeanManager implements BeanManager {
 
         // Ensure dependent instances are registered for cleanup in the provided context
         if (scope == jakarta.enterprise.context.Dependent.class && cc instanceof CreationalContextImpl<?> vcc && instance != null) {
-             System.err.println("[DEBUG-DEP] Registering dependent: " + instance.getClass().getName() + "@" + System.identityHashCode(instance) + " in ctx@" + System.identityHashCode(vcc));
              vcc.addDependentInstance(contextual, instance, cc);
         }
 
