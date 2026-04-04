@@ -3,6 +3,7 @@ package fr.vidocq.vauban.core.extensions;
 import fr.vidocq.vauban.core.bean.model.BeanDescriptor;
 import fr.vidocq.vauban.core.bean.model.InjectionPointInfo;
 import fr.vidocq.vauban.core.bean.model.InterceptorDescriptor;
+import fr.vidocq.vauban.core.bean.model.ObserverDescriptor;
 import fr.vidocq.vauban.core.bean.model.QualifierInstance;
 import fr.vidocq.vauban.core.langmodel.IndexLookup;
 import fr.vidocq.vauban.core.langmodel.VaubanAnnotationInfo;
@@ -735,6 +736,100 @@ public final class BceProcessor {
             result.add(applyClassConfigs(bean, configs, index));
         }
         return result;
+    }
+
+    /**
+     * Apply enhancement modifications to observer descriptors. Returns the modified list.
+     * Parameter-level modifications on observer method parameters update observer qualifiers.
+     * If removeAllAnnotations() was called on the observed parameter, the observer is removed entirely.
+     */
+    public static List<ObserverDescriptor> applyObserverEnhancements(
+            List<ObserverDescriptor> observers,
+            Map<DotName, List<VaubanClassConfig>> modifications) {
+
+        if (modifications.isEmpty()) return observers;
+
+        var result = new ArrayList<ObserverDescriptor>(observers.size());
+        for (var observer : observers) {
+            var configs = modifications.get(observer.declaringClass());
+            if (configs == null || configs.isEmpty()) {
+                result.add(observer);
+                continue;
+            }
+            var modified = applyObserverConfigs(observer, configs);
+            if (modified != null) {
+                result.add(modified);
+            }
+            // null means the observer was removed (removeAllAnnotations removed @Observes)
+        }
+        return result;
+    }
+
+    private static ObserverDescriptor applyObserverConfigs(ObserverDescriptor observer, List<VaubanClassConfig> configs) {
+        var qualifiers = new LinkedHashSet<>(observer.qualifiers());
+        boolean removed = false;
+
+        for (var config : configs) {
+            for (var methodConfig : config.getMethodConfigs()) {
+                if (!methodConfig.info().name().equals(observer.methodName())) continue;
+                if (!methodConfig.isModified()) continue;
+
+                for (var paramConfig : methodConfig.getParameterConfigs()) {
+                    if (!paramConfig.isModified()) continue;
+
+                    // Check if this is the first parameter (the observed event parameter)
+                    var paramIndex = methodConfig.getParameterConfigs().indexOf(paramConfig);
+                    if (paramIndex != 0) continue; // Observer event parameter is typically the first
+
+                    if (paramConfig.isAllAnnotationsRemoved()) {
+                        // removeAllAnnotations removes @Observes/@ObservesAsync too → observer is removed
+                        removed = true;
+                        qualifiers.clear();
+                    }
+
+                    // Apply remove predicates to existing qualifiers
+                    for (var predicate : paramConfig.getRemovePredicates()) {
+                        qualifiers.removeIf(q -> {
+                            var annInfo = qualifierToAnnotationInfo(q);
+                            return annInfo != null && predicate.test(annInfo);
+                        });
+                    }
+
+                    // Add new qualifier annotations
+                    boolean hasExplicit = false;
+                    for (var annClass : paramConfig.getAddedAnnotationClasses()) {
+                        var qName = DotName.of(annClass.getName());
+                        qualifiers.add(new QualifierInstance(qName, Map.of()));
+                        if (!qName.equals(QualifierInstance.ANY_NAME) && !qName.equals(QualifierInstance.NAMED_NAME)
+                                && !qName.equals(QualifierInstance.DEFAULT_NAME)) {
+                            hasExplicit = true;
+                        }
+                    }
+                    for (var annInfo : paramConfig.getAddedAnnotations()) {
+                        var qi = annotationInfoToQualifier(annInfo);
+                        qualifiers.add(qi);
+                        if (!qi.annotationName().equals(QualifierInstance.ANY_NAME)
+                                && !qi.annotationName().equals(QualifierInstance.NAMED_NAME)
+                                && !qi.annotationName().equals(QualifierInstance.DEFAULT_NAME)) {
+                            hasExplicit = true;
+                        }
+                    }
+                    if (hasExplicit) {
+                        qualifiers.removeIf(q -> q.annotationName().equals(QualifierInstance.DEFAULT_NAME));
+                    }
+                }
+            }
+        }
+
+        if (removed && qualifiers.isEmpty()) {
+            return null; // Observer removed
+        }
+
+        return new ObserverDescriptor(
+                observer.declaringClass(), observer.methodName(), observer.eventType(),
+                List.copyOf(qualifiers), observer.async(), observer.priority(),
+                observer.reception(), observer.transactionPhase(), observer.syntheticInvoker()
+        );
     }
 
     private static BeanDescriptor applyClassConfigs(BeanDescriptor bean, List<VaubanClassConfig> configs,

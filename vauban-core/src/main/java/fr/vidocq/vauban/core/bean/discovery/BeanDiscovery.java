@@ -854,6 +854,72 @@ public final class BeanDiscovery {
         return null;
     }
 
+    static java.lang.reflect.Type resolveReflectType(java.lang.reflect.Type type, Class<?> concreteClass) {
+        var mapping = buildReflectTypeVariableMapping(concreteClass);
+        return resolveReflectTypeWithMapping(type, mapping);
+    }
+
+    private static Map<java.lang.reflect.TypeVariable<?>, java.lang.reflect.Type> buildReflectTypeVariableMapping(Class<?> cls) {
+        var mapping = new java.util.HashMap<java.lang.reflect.TypeVariable<?>, java.lang.reflect.Type>();
+        Class<?> current = cls;
+        while (current != null && current != Object.class) {
+            var genericSuper = current.getGenericSuperclass();
+            if (genericSuper instanceof java.lang.reflect.ParameterizedType pt) {
+                var rawSuper = (Class<?>) pt.getRawType();
+                var typeParams = rawSuper.getTypeParameters();
+                var actualArgs = pt.getActualTypeArguments();
+                for (int i = 0; i < typeParams.length; i++) {
+                    var resolved = resolveReflectTypeWithMapping(actualArgs[i], mapping);
+                    mapping.put(typeParams[i], resolved);
+                }
+            }
+            current = current.getSuperclass();
+        }
+        return mapping;
+    }
+
+    private static java.lang.reflect.Type resolveReflectTypeWithMapping(
+            java.lang.reflect.Type type,
+            Map<java.lang.reflect.TypeVariable<?>, java.lang.reflect.Type> mapping) {
+        if (type instanceof java.lang.reflect.TypeVariable<?> tv) {
+            var resolved = mapping.get(tv);
+            return resolved != null ? resolved : type;
+        }
+        if (type instanceof java.lang.reflect.ParameterizedType pt) {
+            var args = pt.getActualTypeArguments();
+            var resolvedArgs = new java.lang.reflect.Type[args.length];
+            boolean changed = false;
+            for (int i = 0; i < args.length; i++) {
+                resolvedArgs[i] = resolveReflectTypeWithMapping(args[i], mapping);
+                if (resolvedArgs[i] != args[i]) changed = true;
+            }
+            if (!changed) return type;
+            return new ResolvedParamType((Class<?>) pt.getRawType(), resolvedArgs, pt.getOwnerType());
+        }
+        if (type instanceof java.lang.reflect.GenericArrayType gat) {
+            var resolvedComponent = resolveReflectTypeWithMapping(gat.getGenericComponentType(), mapping);
+            if (resolvedComponent instanceof Class<?> cc) {
+                return java.lang.reflect.Array.newInstance(cc, 0).getClass();
+            }
+            if (resolvedComponent != gat.getGenericComponentType()) {
+                return new ResolvedGenArrayType(resolvedComponent);
+            }
+        }
+        return type;
+    }
+
+    private record ResolvedParamType(Class<?> rawType, java.lang.reflect.Type[] typeArguments, java.lang.reflect.Type ownerType)
+            implements java.lang.reflect.ParameterizedType {
+        @Override public java.lang.reflect.Type[] getActualTypeArguments() { return typeArguments.clone(); }
+        @Override public java.lang.reflect.Type getRawType() { return rawType; }
+        @Override public java.lang.reflect.Type getOwnerType() { return ownerType; }
+    }
+
+    private record ResolvedGenArrayType(java.lang.reflect.Type componentType)
+            implements java.lang.reflect.GenericArrayType {
+        @Override public java.lang.reflect.Type getGenericComponentType() { return componentType; }
+    }
+
     Set<TypeInfo> computeProducerTypes(TypeInfo producerType) {
         var types = new LinkedHashSet<TypeInfo>();
         types.add(producerType);
@@ -1548,7 +1614,12 @@ public final class BeanDiscovery {
                                 priority = method.getAnnotation(jakarta.annotation.Priority.class).value();
                             }
 
-                            var eventType = new TypeInfo.ClassType(DotName.of(param.getType().getName()));
+                            // Resolve generic type with type variable substitution from the concrete bean class
+                            var paramIndex = java.util.List.of(method.getParameters()).indexOf(param);
+                            var genericParamType = method.getGenericParameterTypes()[paramIndex];
+                            var resolvedReflectType = resolveReflectType(genericParamType, clazz);
+                            var eventType = reflectTypeToTypeInfo(resolvedReflectType);
+                            if (eventType == null) eventType = new TypeInfo.ClassType(DotName.of(param.getType().getName()));
                             // Collect qualifier annotations from the parameter
                             var qualifiers = new ArrayList<QualifierInstance>();
                             for (var ann : param.getAnnotations()) {

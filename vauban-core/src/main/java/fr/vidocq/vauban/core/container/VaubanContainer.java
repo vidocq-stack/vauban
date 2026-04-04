@@ -2595,6 +2595,12 @@ public final class VaubanContainer implements AutoCloseable {
                         // Apply enhancement modifications to interceptor descriptors (e.g. @Priority)
                         interceptors = new ArrayList<>(fr.vidocq.vauban.core.extensions.BceProcessor.applyInterceptorEnhancements(
                                 interceptors, bceResult.enhancementModifications()));
+
+                        // Apply enhancement modifications to observer descriptors (parameter qualifier changes)
+                        var modifiedObservers = fr.vidocq.vauban.core.extensions.BceProcessor.applyObserverEnhancements(
+                                observers, bceResult.enhancementModifications());
+                        observers.clear();
+                        observers.addAll(modifiedObservers);
                     }
                 }
 

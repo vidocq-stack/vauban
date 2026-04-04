@@ -704,7 +704,7 @@ public final class ManagedBean<T> implements Bean<T> {
         // CDI spec: for generic bean class, add parameterized type with own type variables
         var typeParams = clazz.getTypeParameters();
         if (typeParams.length > 0) {
-            types.add(new ResolvedParameterizedType(clazz, typeParams));
+            types.add(new ResolvedParameterizedType(clazz, typeParams, clazz.getEnclosingClass()));
         } else {
             types.add(clazz);
         }
@@ -900,15 +900,19 @@ public final class ManagedBean<T> implements Bean<T> {
 
     @Override
     public Set<InjectionPoint> getInjectionPoints() {
-        // Use reflection to get accurate generic types for injection points
         var result = new LinkedHashSet<InjectionPoint>();
         try {
-            // Scan fields
+            var typeMapping = buildTypeVariableMapping(beanClass);
+
+            // Scan fields (walk hierarchy)
             Class<?> cls = beanClass;
             while (cls != null && cls != Object.class) {
                 for (var field : cls.getDeclaredFields()) {
                     if (field.isAnnotationPresent(jakarta.inject.Inject.class)) {
-                        result.add(new VaubanInjectionPoint(field, this));
+                        result.add(new VaubanInjectionPoint(
+                                resolveType(field.getGenericType(), typeMapping),
+                                VaubanInjectionPoint.extractQualifiersStatic(field),
+                                this, field));
                     }
                 }
                 cls = cls.getSuperclass();
@@ -920,25 +924,117 @@ public final class ManagedBean<T> implements Bean<T> {
                     var params = ctor.getParameters();
                     for (int i = 0; i < params.length; i++) {
                         var qualifiers = extractParamQualifiers(params[i]);
-                        result.add(new VaubanInjectionPoint(params[i], i, ctor, paramTypes[i], qualifiers, this));
+                        result.add(new VaubanInjectionPoint(params[i], i, ctor,
+                                resolveType(paramTypes[i], typeMapping), qualifiers, this));
                     }
                 }
             }
-            // Scan @Inject initializer methods
-            for (var method : beanClass.getDeclaredMethods()) {
-                if (method.isAnnotationPresent(jakarta.inject.Inject.class)) {
-                    var paramTypes = method.getGenericParameterTypes();
-                    var params = method.getParameters();
-                    for (int i = 0; i < params.length; i++) {
-                        var qualifiers = extractParamQualifiers(params[i]);
-                        result.add(new VaubanInjectionPoint(params[i], i, method, paramTypes[i], qualifiers, this));
+            // Scan @Inject initializer methods (walk hierarchy)
+            cls = beanClass;
+            while (cls != null && cls != Object.class) {
+                for (var method : cls.getDeclaredMethods()) {
+                    if (method.isAnnotationPresent(jakarta.inject.Inject.class)) {
+                        var paramTypes = method.getGenericParameterTypes();
+                        var params = method.getParameters();
+                        for (int i = 0; i < params.length; i++) {
+                            var qualifiers = extractParamQualifiers(params[i]);
+                            result.add(new VaubanInjectionPoint(params[i], i, method,
+                                    resolveType(paramTypes[i], typeMapping), qualifiers, this));
+                        }
                     }
                 }
+                cls = cls.getSuperclass();
             }
         } catch (Exception e) {
             // Fallback to empty set
         }
         return result;
+    }
+
+    private static Map<java.lang.reflect.TypeVariable<?>, Type> buildTypeVariableMapping(Class<?> beanClass) {
+        var mapping = new java.util.HashMap<java.lang.reflect.TypeVariable<?>, Type>();
+        Class<?> cls = beanClass;
+        while (cls != null && cls != Object.class) {
+            Type genericSuper = cls.getGenericSuperclass();
+            if (genericSuper instanceof java.lang.reflect.ParameterizedType pt) {
+                var rawSuper = (Class<?>) pt.getRawType();
+                var typeParams = rawSuper.getTypeParameters();
+                var actualArgs = pt.getActualTypeArguments();
+                for (int i = 0; i < typeParams.length; i++) {
+                    var resolved = resolveType(actualArgs[i], mapping);
+                    mapping.put(typeParams[i], resolved);
+                }
+            }
+            cls = cls.getSuperclass();
+        }
+        return mapping;
+    }
+
+    private static Type resolveType(Type type, Map<java.lang.reflect.TypeVariable<?>, Type> mapping) {
+        if (type instanceof java.lang.reflect.TypeVariable<?> tv) {
+            var resolved = mapping.get(tv);
+            return resolved != null ? resolved : type;
+        }
+        if (type instanceof java.lang.reflect.ParameterizedType pt) {
+            var args = pt.getActualTypeArguments();
+            var resolvedArgs = new Type[args.length];
+            boolean changed = false;
+            for (int i = 0; i < args.length; i++) {
+                resolvedArgs[i] = resolveType(args[i], mapping);
+                if (resolvedArgs[i] != args[i]) changed = true;
+            }
+            if (!changed) return type;
+            return new ResolvedParameterizedType((Class<?>) pt.getRawType(), resolvedArgs, pt.getOwnerType());
+        }
+        if (type instanceof java.lang.reflect.GenericArrayType gat) {
+            var resolvedComponent = resolveType(gat.getGenericComponentType(), mapping);
+            if (resolvedComponent instanceof Class<?> cc) {
+                return java.lang.reflect.Array.newInstance(cc, 0).getClass();
+            }
+            if (resolvedComponent != gat.getGenericComponentType()) {
+                return new ResolvedGenericArrayType(resolvedComponent);
+            }
+        }
+        return type;
+    }
+
+    private record ResolvedParameterizedType(Class<?> rawType, Type[] typeArguments, Type ownerType)
+            implements java.lang.reflect.ParameterizedType {
+        @Override public Type[] getActualTypeArguments() { return typeArguments.clone(); }
+        @Override public Type getRawType() { return rawType; }
+        @Override public Type getOwnerType() { return ownerType; }
+
+        @Override
+        public boolean equals(Object o) {
+            return o instanceof java.lang.reflect.ParameterizedType other
+                    && rawType.equals(other.getRawType())
+                    && java.util.Arrays.equals(typeArguments, other.getActualTypeArguments())
+                    && Objects.equals(ownerType, other.getOwnerType());
+        }
+
+        @Override
+        public int hashCode() {
+            return java.util.Arrays.hashCode(typeArguments) ^ rawType.hashCode();
+        }
+
+        @Override
+        public String toString() {
+            var sb = new StringBuilder(rawType.getName());
+            if (typeArguments.length > 0) {
+                sb.append('<');
+                for (int i = 0; i < typeArguments.length; i++) {
+                    if (i > 0) sb.append(", ");
+                    sb.append(typeArguments[i].getTypeName());
+                }
+                sb.append('>');
+            }
+            return sb.toString();
+        }
+    }
+
+    private record ResolvedGenericArrayType(Type componentType)
+            implements java.lang.reflect.GenericArrayType {
+        @Override public Type getGenericComponentType() { return componentType; }
     }
 
     private static Set<java.lang.annotation.Annotation> extractParamQualifiers(java.lang.reflect.Parameter param) {
@@ -985,26 +1081,4 @@ public final class ManagedBean<T> implements Bean<T> {
         }
     }
 
-    /**
-     * A simple ParameterizedType implementation for generic bean types.
-     */
-    private record ResolvedParameterizedType(Class<?> rawClass, Type[] typeArgs)
-            implements java.lang.reflect.ParameterizedType {
-        @Override public Type[] getActualTypeArguments() { return typeArgs.clone(); }
-        @Override public Type getRawType() { return rawClass; }
-        @Override public Type getOwnerType() { return rawClass.getEnclosingClass(); }
-        @Override public boolean equals(Object o) {
-            if (!(o instanceof java.lang.reflect.ParameterizedType other)) return false;
-            return rawClass.equals(other.getRawType())
-                    && java.util.Arrays.equals(typeArgs, other.getActualTypeArguments());
-        }
-        @Override public int hashCode() {
-            return java.util.Arrays.hashCode(typeArgs) ^ rawClass.hashCode();
-        }
-        @Override public String toString() {
-            return rawClass.getTypeName() + "<" +
-                    java.util.Arrays.stream(typeArgs).map(Type::getTypeName)
-                            .collect(java.util.stream.Collectors.joining(", ")) + ">";
-        }
-    }
 }

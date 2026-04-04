@@ -95,11 +95,37 @@ public final class VaubanObserverMethod<T> implements ObserverMethod<T> {
         };
     }
 
-    private record ResolvedParameterizedType(Class<?> rawType, Type[] typeArguments)
-            implements java.lang.reflect.ParameterizedType {
+    private static final class ResolvedParameterizedType implements java.lang.reflect.ParameterizedType {
+        private final Class<?> rawType;
+        private final Type[] typeArguments;
+        ResolvedParameterizedType(Class<?> rawType, Type[] typeArguments) {
+            this.rawType = rawType;
+            this.typeArguments = typeArguments;
+        }
         @Override public Type[] getActualTypeArguments() { return typeArguments.clone(); }
         @Override public Type getRawType() { return rawType; }
         @Override public Type getOwnerType() { return null; }
+        @Override public boolean equals(Object o) {
+            return o instanceof java.lang.reflect.ParameterizedType other
+                    && rawType.equals(other.getRawType())
+                    && java.util.Arrays.equals(typeArguments, other.getActualTypeArguments())
+                    && java.util.Objects.equals(null, other.getOwnerType());
+        }
+        @Override public int hashCode() {
+            return java.util.Arrays.hashCode(typeArguments) ^ rawType.hashCode();
+        }
+        @Override public String toString() {
+            var sb = new StringBuilder(rawType.getName());
+            if (typeArguments.length > 0) {
+                sb.append('<');
+                for (int i = 0; i < typeArguments.length; i++) {
+                    if (i > 0) sb.append(", ");
+                    sb.append(typeArguments[i].getTypeName());
+                }
+                sb.append('>');
+            }
+            return sb.toString();
+        }
     }
 
     private record ResolvedWildcardType(Type[] upperBounds, Type[] lowerBounds)

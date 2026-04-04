@@ -60,7 +60,9 @@ public final class VaubanInjectionPoint implements InjectionPoint {
         this.qualifiers = Set.copyOf(qualifiers);
         this.bean = bean;
         this.member = member;
-        this.annotated = new SimpleAnnotatedMember(member, type, qualifiers);
+        this.annotated = (member instanceof Field f)
+                ? new SimpleAnnotatedField(f, type, qualifiers)
+                : new SimpleAnnotatedMember(member, type, qualifiers);
     }
 
     /**
@@ -109,6 +111,10 @@ public final class VaubanInjectionPoint implements InjectionPoint {
     @Override
     public boolean isTransient() {
         return member instanceof Field f && Modifier.isTransient(f.getModifiers());
+    }
+
+    static Set<Annotation> extractQualifiersStatic(Field field) {
+        return extractQualifiers(field);
     }
 
     private static Set<Annotation> extractQualifiers(Field field) {
