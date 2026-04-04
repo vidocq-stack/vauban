@@ -43,12 +43,15 @@ public final class EventImpl<T> implements Event<T> {
             this.selectedType = selectedType;
         } else if (injectionPoint != null) {
             var ipType = injectionPoint.getType();
+            System.err.println("[VAUBAN-DEBUG-EVENTIMPL] ipType=" + ipType + " class=" + (ipType != null ? ipType.getClass().getSimpleName() : "null"));
             if (ipType instanceof java.lang.reflect.ParameterizedType pt
                     && pt.getRawType() == jakarta.enterprise.event.Event.class
                     && pt.getActualTypeArguments().length > 0) {
                 this.selectedType = pt.getActualTypeArguments()[0];
+                System.err.println("[VAUBAN-DEBUG-EVENTIMPL] extracted selectedType=" + this.selectedType);
             } else {
                 this.selectedType = null;
+                System.err.println("[VAUBAN-DEBUG-EVENTIMPL] no selectedType extracted");
             }
         } else {
             this.selectedType = null;

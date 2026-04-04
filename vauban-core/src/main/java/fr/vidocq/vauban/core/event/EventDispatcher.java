@@ -48,15 +48,30 @@ public final class EventDispatcher {
         if (selectedType != null) {
             eventTypeToMatch = resolveEventType(event.getClass(), selectedType);
             if (containsTypeVariable(eventTypeToMatch)) {
-                // If selectedType itself is fully resolved, use it directly
-                if (!containsTypeVariable(selectedType)) {
-                    eventTypeToMatch = selectedType;
-                } else {
-                    throw new IllegalArgumentException("Event type contains unresolvable type variable: " + eventTypeToMatch);
+                // Runtime class has type variables that could not be resolved from selectedType
+                // This means the runtime class introduced new type parameters -> IAE
+                throw new IllegalArgumentException("Event type contains unresolvable type variable: " + eventTypeToMatch);
+            }
+        }
+        if (event.getClass().getName().contains("event.parameterized")) {
+            System.err.println("[PARAM-DEBUG] eventTypeToMatch=" + eventTypeToMatch + " class=" + eventTypeToMatch.getClass().getSimpleName());
+            System.err.println("[PARAM-DEBUG] selectedType=" + selectedType);
+            System.err.println("[PARAM-DEBUG] runtimeClass=" + event.getClass());
+            if (eventTypeToMatch instanceof java.lang.reflect.ParameterizedType ptm) {
+                System.err.println("[PARAM-DEBUG] eventTypeToMatch args:");
+                for (var a : ptm.getActualTypeArguments()) {
+                    System.err.println("[PARAM-DEBUG]   arg=" + a + " class=" + a.getClass().getSimpleName());
                 }
             }
         }
         var matching = findMatchingObservers(eventTypeToMatch, false, qualifierInstances, qualifiers);
+        if (event.getClass().getName().contains("event.parameterized")) {
+            System.err.println("[PARAM-DEBUG] matching=" + matching.size());
+            for (var obs : observers) {
+                boolean match = eventTypeMatches(obs, eventTypeToMatch);
+                System.err.println("[PARAM-DEBUG]  " + obs.methodName() + " type=" + obs.eventType() + " match=" + match);
+            }
+        }
         matching.sort(Comparator.comparingInt(ObserverDescriptor::priority));
         for (var observer : matching) {
             invokeObserver(observer, event, selectedType, eventInjectionPoint, qualifiers);
@@ -291,65 +306,110 @@ public final class EventDispatcher {
     }
 
     private static java.lang.reflect.Type resolveEventType(Class<?> runtimeClass, java.lang.reflect.Type selectedType) {
-        if (runtimeClass.getTypeParameters().length == 0) {
-            return runtimeClass;
-        }
-        java.lang.reflect.Type resultType = runtimeClass;
         if (selectedType instanceof java.lang.reflect.ParameterizedType pt) {
             Class<?> selectedClass = resolveTypeToClass(pt.getRawType());
             if (selectedClass != null && selectedClass.isAssignableFrom(runtimeClass)) {
-                // Determine the generic mapping from selectedType to runtimeClass
-                resultType = mergeTypeHierarchy(runtimeClass, pt);
+                if (runtimeClass.getTypeParameters().length == 0) {
+                    // Runtime class has no type params (e.g. Baz extends Bar<List<Integer>>)
+                    // Use runtime class directly - its supertypes are fully resolved
+                    return runtimeClass;
+                }
+                if (runtimeClass.equals(selectedClass)) {
+                    // Same raw type - use selected type directly
+                    return selectedType;
+                }
+                // Runtime is a subclass with its own type params - merge
+                return mergeTypeHierarchy(runtimeClass, pt);
             }
         }
-        return resultType;
+        if (runtimeClass.getTypeParameters().length == 0) {
+            return runtimeClass;
+        }
+        return runtimeClass;
     }
 
     private static java.lang.reflect.Type mergeTypeHierarchy(Class<?> runtimeClass, java.lang.reflect.ParameterizedType selectedType) {
-        java.util.Map<java.lang.reflect.TypeVariable<?>, java.lang.reflect.Type> resolvedMap = new java.util.HashMap<>();
-        matchTypeParameters(runtimeClass, selectedType, resolvedMap);
-        
+        // Walk from runtimeClass up to selectedType's raw class, collecting type variable mappings
+        var resolvedMap = new java.util.HashMap<String, java.lang.reflect.Type>();
+        collectMappingsFromSelected(runtimeClass, selectedType, resolvedMap);
+
         var runtimeParams = runtimeClass.getTypeParameters();
         java.lang.reflect.Type[] resolvedArgs = new java.lang.reflect.Type[runtimeParams.length];
         for (int i = 0; i < runtimeParams.length; i++) {
-            java.lang.reflect.Type mapped = resolvedMap.get(runtimeParams[i]);
+            var key = runtimeClass.getName() + "#" + runtimeParams[i].getName();
+            java.lang.reflect.Type mapped = resolvedMap.get(key);
             resolvedArgs[i] = mapped != null ? mapped : runtimeParams[i];
         }
-        var result = new ParameterizedTypeImpl(runtimeClass, resolvedArgs, runtimeClass.getDeclaringClass());
-        return result;
+        return new ParameterizedTypeImpl(runtimeClass, resolvedArgs, runtimeClass.getDeclaringClass());
     }
 
-    private static void matchTypeParameters(java.lang.reflect.Type current, java.lang.reflect.ParameterizedType target, java.util.Map<java.lang.reflect.TypeVariable<?>, java.lang.reflect.Type> resolvedMap) {
-        Class<?> currentRaw = resolveTypeToClass(current);
-        if (currentRaw == null) return;
-        Class<?> targetRaw = resolveTypeToClass(target.getRawType());
-        if (targetRaw == null || !targetRaw.isAssignableFrom(currentRaw)) return;
-        
-        if (currentRaw.equals(targetRaw)) {
-            if (current instanceof java.lang.reflect.ParameterizedType cpt) {
-                var currentArgs = cpt.getActualTypeArguments();
-                var targetArgs = target.getActualTypeArguments();
-                for (int i = 0; i < currentArgs.length && i < targetArgs.length; i++) {
-                    if (currentArgs[i] instanceof java.lang.reflect.TypeVariable<?> tv) {
-                        resolvedMap.put(tv, targetArgs[i]);
-                    }
-                }
-            } else if (current instanceof Class<?> cc) {
-                var currentArgs = cc.getTypeParameters();
-                var targetArgs = target.getActualTypeArguments();
-                for (int i = 0; i < currentArgs.length && i < targetArgs.length; i++) {
-                    resolvedMap.put(currentArgs[i], targetArgs[i]);
+    private static void collectMappingsFromSelected(Class<?> runtimeClass, java.lang.reflect.ParameterizedType selectedType,
+            java.util.Map<String, java.lang.reflect.Type> resolvedMap) {
+        Class<?> selectedRaw = resolveTypeToClass(selectedType.getRawType());
+        if (selectedRaw == null) return;
+
+        // First, assign selectedType's type args to selectedRaw's type params
+        var selectedParams = selectedRaw.getTypeParameters();
+        var selectedArgs = selectedType.getActualTypeArguments();
+        var typeVarMap = new java.util.HashMap<String, java.lang.reflect.Type>();
+        for (int i = 0; i < selectedParams.length && i < selectedArgs.length; i++) {
+            typeVarMap.put(selectedRaw.getName() + "#" + selectedParams[i].getName(), selectedArgs[i]);
+        }
+
+        // Walk up from runtimeClass to selectedRaw, propagating type variable assignments
+        propagateDown(runtimeClass, selectedRaw, typeVarMap, resolvedMap);
+    }
+
+    private static boolean propagateDown(Class<?> current, Class<?> target,
+            java.util.Map<String, java.lang.reflect.Type> targetMap,
+            java.util.Map<String, java.lang.reflect.Type> resolvedMap) {
+        if (current == null || current == Object.class) return false;
+        if (current.equals(target)) {
+            // Copy target mappings to resolved
+            resolvedMap.putAll(targetMap);
+            return true;
+        }
+
+        // Try superclass
+        var genSuper = current.getGenericSuperclass();
+        if (genSuper != null) {
+            Class<?> superRaw = resolveTypeToClass(genSuper);
+            if (superRaw != null && target.isAssignableFrom(superRaw)) {
+                if (propagateDown(superRaw, target, targetMap, resolvedMap)) {
+                    mapCurrentFromSuper(current, genSuper, superRaw, resolvedMap);
+                    return true;
                 }
             }
-            return;
         }
-        
-        var superclass = currentRaw.getGenericSuperclass();
-        if (superclass != null) {
-            matchTypeParameters(superclass, target, resolvedMap);
+
+        // Try interfaces
+        for (var genIface : current.getGenericInterfaces()) {
+            Class<?> ifaceRaw = resolveTypeToClass(genIface);
+            if (ifaceRaw != null && target.isAssignableFrom(ifaceRaw)) {
+                if (propagateDown(ifaceRaw, target, targetMap, resolvedMap)) {
+                    mapCurrentFromSuper(current, genIface, ifaceRaw, resolvedMap);
+                    return true;
+                }
+            }
         }
-        for (var iface : currentRaw.getGenericInterfaces()) {
-            matchTypeParameters(iface, target, resolvedMap);
+        return false;
+    }
+
+    private static void mapCurrentFromSuper(Class<?> current, java.lang.reflect.Type genSuper, Class<?> superRaw,
+            java.util.Map<String, java.lang.reflect.Type> resolvedMap) {
+        // genSuper is e.g. Foo<B> where B is a TypeVariable of current, or Foo<List<Integer>> etc.
+        if (genSuper instanceof java.lang.reflect.ParameterizedType pt) {
+            var superParams = superRaw.getTypeParameters();
+            var superArgs = pt.getActualTypeArguments();
+            for (int i = 0; i < superParams.length && i < superArgs.length; i++) {
+                var superKey = superRaw.getName() + "#" + superParams[i].getName();
+                var resolvedValue = resolvedMap.get(superKey);
+                if (resolvedValue != null && superArgs[i] instanceof java.lang.reflect.TypeVariable<?> tv) {
+                    // tv belongs to current class - map it
+                    var currentKey = current.getName() + "#" + tv.getName();
+                    resolvedMap.put(currentKey, resolvedValue);
+                }
+            }
         }
     }
 
@@ -529,7 +589,7 @@ public final class EventDispatcher {
                                 }
                                 var paramQualifiers = extractQualifierAnnotations(params[i]);
                                 args[i] = new fr.vidocq.vauban.core.container.InstanceImpl<>(
-                                        container, instanceType, paramQualifiers, null);
+                                        container, instanceType, paramQualifiers, null, ctx);
                             } else {
                                 var paramQualifiers = extractQualifierAnnotations(params[i]);
                                 // Resolve generic type variables for inherited observer methods

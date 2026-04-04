@@ -1594,8 +1594,7 @@ public final class BeanDiscovery {
             // Check inherited methods via reflection (not in bytecode index)
             try {
                 var clazz = Class.forName(classInfo.name().value());
-                for (var method : clazz.getMethods()) {
-                    if (method.getDeclaringClass() == clazz) continue; // already handled above
+                for (var method : getAllInheritedMethods(clazz)) {
                     for (var param : method.getParameters()) {
                         if (param.isAnnotationPresent(jakarta.enterprise.event.Observes.class)
                                 || param.isAnnotationPresent(jakarta.enterprise.event.ObservesAsync.class)) {
@@ -1644,6 +1643,23 @@ public final class BeanDiscovery {
         }
 
         return List.copyOf(result);
+    }
+
+    private static List<java.lang.reflect.Method> getAllInheritedMethods(Class<?> clazz) {
+        var result = new ArrayList<java.lang.reflect.Method>();
+        var seen = new java.util.HashSet<String>();
+        // Skip the class itself (already handled by index-based discovery)
+        var current = clazz.getSuperclass();
+        while (current != null && current != Object.class) {
+            for (var m : current.getDeclaredMethods()) {
+                var sig = m.getName() + ":" + java.util.Arrays.toString(m.getParameterTypes());
+                if (seen.add(sig)) {
+                    result.add(m);
+                }
+            }
+            current = current.getSuperclass();
+        }
+        return result;
     }
 
     private void discoverObserversFromMethods(ClassInfo classInfo, List<MethodInfo> methods,

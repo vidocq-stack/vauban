@@ -276,7 +276,7 @@ public final class VaubanContainer implements AutoCloseable {
                 }
                 
                 var instance = constructor.newInstance(args);
-                injectFieldsByReflection(instance, ctx);
+                injectFieldsByReflection(instance, null, ctx);
                 // Call PostConstruct directly
                 java.lang.reflect.Method pc = null;
                 for (var m : instance.getClass().getDeclaredMethods()) {
@@ -779,7 +779,7 @@ public final class VaubanContainer implements AutoCloseable {
     }
 
     private void injectFields(Object instance, BeanDescriptor descriptor, CreationalContext<?> parentCtx) {
-        injectFieldsByReflection(instance, parentCtx);
+        injectFieldsByReflection(instance, descriptor, parentCtx);
 
         // 2. Call @Inject initializer methods
         callInitializerMethods(instance, parentCtx);
@@ -788,7 +788,7 @@ public final class VaubanContainer implements AutoCloseable {
         callPostConstruct(instance, descriptor, parentCtx);
     }
 
-    private void injectFieldsByReflection(Object instance, CreationalContext<?> parentCtx) {
+    private void injectFieldsByReflection(Object instance, BeanDescriptor descriptor, CreationalContext<?> parentCtx) {
         var beanClass = instance.getClass();
         var typeMapping = ManagedBean.buildTypeVariableMapping(beanClass);
         var clazz = beanClass;
@@ -848,7 +848,7 @@ public final class VaubanContainer implements AutoCloseable {
                 var ownerBean = findBeanForInstance(instance);
                 currentInjectionPoint.set(new VaubanInjectionPoint(field, ownerBean));
                 try {
-                    var fieldQuals = extractFieldQualifiers(field);
+                    var fieldQuals = extractFieldQualifiersWithEnhancement(field, descriptor);
                     Object value;
                     var bm = getBeanManager();
                     // Use generic type to preserve parameterized type info, resolving type variables
@@ -2132,6 +2132,95 @@ public final class VaubanContainer implements AutoCloseable {
         if (type == float.class) return (Class<T>) Float.class;
         if (type == double.class) return (Class<T>) Double.class;
         return type;
+    }
+
+    private static java.lang.annotation.Annotation[] extractFieldQualifiersWithEnhancement(
+            java.lang.reflect.Field field, BeanDescriptor descriptor) {
+        if (descriptor != null) {
+            for (var ip : descriptor.injectionPoints()) {
+                if (ip.kind() != fr.vidocq.vauban.core.bean.model.InjectionPointInfo.InjectionKind.FIELD) continue;
+                if (!ip.description().contains(field.getName())) continue;
+                return qualifierInstancesToAnnotations(ip.qualifiers());
+            }
+        }
+        return extractFieldQualifiers(field);
+    }
+
+    private static java.lang.annotation.Annotation[] qualifierInstancesToAnnotations(
+            java.util.Set<fr.vidocq.vauban.core.bean.model.QualifierInstance> qualifierInstances) {
+        var annotations = new java.util.ArrayList<java.lang.annotation.Annotation>();
+        for (var qi : qualifierInstances) {
+            var name = qi.annotationName().value();
+            if (name.equals("jakarta.enterprise.inject.Default")) {
+                annotations.add(jakarta.enterprise.inject.Default.Literal.INSTANCE);
+            } else if (name.equals("jakarta.enterprise.inject.Any")) {
+                annotations.add(jakarta.enterprise.inject.Any.Literal.INSTANCE);
+            } else if (name.equals("jakarta.inject.Named")) {
+                var nameValue = qi.members().get("value");
+                var strValue = nameValue instanceof fr.vidocq.vauban.indexer.model.AnnotationValue.StringVal sv
+                        ? sv.value() : "";
+                annotations.add(jakarta.enterprise.inject.literal.NamedLiteral.of(strValue));
+            } else {
+                try {
+                    @SuppressWarnings("unchecked")
+                    var annType = (Class<? extends java.lang.annotation.Annotation>)
+                            Thread.currentThread().getContextClassLoader().loadClass(name);
+                    annotations.add(createQualifierAnnotation(annType, qi.members()));
+                } catch (ClassNotFoundException e) {
+                    // Skip unloadable qualifier
+                }
+            }
+        }
+        if (annotations.isEmpty()) {
+            annotations.add(jakarta.enterprise.inject.Default.Literal.INSTANCE);
+        }
+        return annotations.toArray(new java.lang.annotation.Annotation[0]);
+    }
+
+    @SuppressWarnings("unchecked")
+    private static <A extends java.lang.annotation.Annotation> A createQualifierAnnotation(
+            Class<A> annType, java.util.Map<String, fr.vidocq.vauban.indexer.model.AnnotationValue> members) {
+        return (A) java.lang.reflect.Proxy.newProxyInstance(
+                annType.getClassLoader(),
+                new Class<?>[]{annType},
+                (proxy, method, args) -> {
+                    if ("annotationType".equals(method.getName())) return annType;
+                    if ("toString".equals(method.getName())) return "@" + annType.getName();
+                    if ("hashCode".equals(method.getName())) return 0;
+                    if ("equals".equals(method.getName())) {
+                        if (args[0] == null) return false;
+                        if (!annType.isInstance(args[0])) return false;
+                        // Compare all member values
+                        for (var m : annType.getDeclaredMethods()) {
+                            var expected = members.get(m.getName());
+                            var actual = m.invoke(args[0]);
+                            if (expected != null) {
+                                var expectedVal = annotationValueToObject(expected);
+                                if (!java.util.Objects.deepEquals(expectedVal, actual)) return false;
+                            }
+                        }
+                        return true;
+                    }
+                    // Return member value if present
+                    var memberVal = members.get(method.getName());
+                    if (memberVal != null) {
+                        return annotationValueToObject(memberVal);
+                    }
+                    // Return default value
+                    return method.getDefaultValue();
+                });
+    }
+
+    private static Object annotationValueToObject(fr.vidocq.vauban.indexer.model.AnnotationValue value) {
+        return switch (value) {
+            case fr.vidocq.vauban.indexer.model.AnnotationValue.StringVal sv -> sv.value();
+            case fr.vidocq.vauban.indexer.model.AnnotationValue.BooleanVal bv -> bv.value();
+            case fr.vidocq.vauban.indexer.model.AnnotationValue.IntVal iv -> iv.value();
+            case fr.vidocq.vauban.indexer.model.AnnotationValue.LongVal lv -> lv.value();
+            case fr.vidocq.vauban.indexer.model.AnnotationValue.DoubleVal dv -> dv.value();
+            case fr.vidocq.vauban.indexer.model.AnnotationValue.FloatVal fv -> fv.value();
+            default -> null;
+        };
     }
 
     private static java.lang.annotation.Annotation[] extractFieldQualifiers(java.lang.reflect.Field field) {
