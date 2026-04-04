@@ -532,9 +532,11 @@ public final class EventDispatcher {
                                         container, instanceType, paramQualifiers, null);
                             } else {
                                 var paramQualifiers = extractQualifierAnnotations(params[i]);
+                                // Resolve generic type variables for inherited observer methods
+                                var resolvedParamType = resolveObserverParamType(beanClass, method, i);
                                 var beans = paramQualifiers.length > 0
-                                        ? bm.getBeans(paramTypes[i], paramQualifiers)
-                                        : bm.getBeans(paramTypes[i]);
+                                        ? bm.getBeans(resolvedParamType, paramQualifiers)
+                                        : bm.getBeans(resolvedParamType);
                                 if (!beans.isEmpty()) {
                                     var bean = bm.resolve(beans);
                                     var ref = bm.getReference(bean, paramTypes[i], ctx);
@@ -612,6 +614,12 @@ public final class EventDispatcher {
         } catch (ClassNotFoundException e) {
             return null;
         }
+    }
+
+    private static java.lang.reflect.Type resolveObserverParamType(Class<?> beanClass, Method method, int paramIndex) {
+        var typeMapping = fr.vidocq.vauban.core.container.ManagedBean.buildTypeVariableMapping(beanClass);
+        var genericType = method.getGenericParameterTypes()[paramIndex];
+        return fr.vidocq.vauban.core.container.ManagedBean.resolveType(genericType, typeMapping);
     }
 
     private Method findMethod(Class<?> clazz, String name, Class<?> eventType) {

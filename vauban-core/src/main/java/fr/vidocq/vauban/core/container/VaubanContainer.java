@@ -789,7 +789,9 @@ public final class VaubanContainer implements AutoCloseable {
     }
 
     private void injectFieldsByReflection(Object instance, CreationalContext<?> parentCtx) {
-        var clazz = instance.getClass();
+        var beanClass = instance.getClass();
+        var typeMapping = ManagedBean.buildTypeVariableMapping(beanClass);
+        var clazz = beanClass;
         while (clazz != null && clazz != Object.class) {
             for (var field : clazz.getDeclaredFields()) {
                 if (!field.isAnnotationPresent(jakarta.inject.Inject.class)) continue;
@@ -808,7 +810,7 @@ public final class VaubanContainer implements AutoCloseable {
                 if (field.getType() == Instance.class
                         || field.getType() == jakarta.inject.Provider.class) {
                     Class<?> instanceType = Object.class;
-                    var genericType = field.getGenericType();
+                    var genericType = ManagedBean.resolveType(field.getGenericType(), typeMapping);
                     if (genericType instanceof ParameterizedType pt) {
                         var typeArg = pt.getActualTypeArguments()[0];
                         if (typeArg instanceof Class<?> c) {
@@ -849,8 +851,8 @@ public final class VaubanContainer implements AutoCloseable {
                     var fieldQuals = extractFieldQualifiers(field);
                     Object value;
                     var bm = getBeanManager();
-                    // Use generic type to preserve parameterized type info (e.g. Dao<Integer, String>)
-                    var fieldType = field.getGenericType();
+                    // Use generic type to preserve parameterized type info, resolving type variables
+                    var fieldType = ManagedBean.resolveType(field.getGenericType(), typeMapping);
                     var resolvedBeans = bm.getBeans(fieldType, fieldQuals);
                     if (resolvedBeans.isEmpty()) {
                         value = select(field.getType());
@@ -926,6 +928,7 @@ public final class VaubanContainer implements AutoCloseable {
             clazz = clazz.getSuperclass();
         }
         var ownerBean = findBeanForInstance(instance);
+        var typeMapping = ManagedBean.buildTypeVariableMapping(clazz);
         // Walk hierarchy to find all @Inject initializer methods
         var current = clazz;
         while (current != null && current != Object.class) {
@@ -934,7 +937,11 @@ public final class VaubanContainer implements AutoCloseable {
                 method.setAccessible(true);
                 try {
                     var paramTypes = method.getParameterTypes();
-                    var genericParamTypes = method.getGenericParameterTypes();
+                    var rawGenericParamTypes = method.getGenericParameterTypes();
+                    var genericParamTypes = new java.lang.reflect.Type[rawGenericParamTypes.length];
+                    for (int i = 0; i < rawGenericParamTypes.length; i++) {
+                        genericParamTypes[i] = ManagedBean.resolveType(rawGenericParamTypes[i], typeMapping);
+                    }
                     var params = method.getParameters();
                     var args = new Object[paramTypes.length];
                     var transientContexts = new java.util.ArrayList<CreationalContextImpl<?>>();

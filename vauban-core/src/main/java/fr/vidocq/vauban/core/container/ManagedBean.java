@@ -951,7 +951,7 @@ public final class ManagedBean<T> implements Bean<T> {
         return result;
     }
 
-    private static Map<java.lang.reflect.TypeVariable<?>, Type> buildTypeVariableMapping(Class<?> beanClass) {
+    public static Map<java.lang.reflect.TypeVariable<?>, Type> buildTypeVariableMapping(Class<?> beanClass) {
         var mapping = new java.util.HashMap<java.lang.reflect.TypeVariable<?>, Type>();
         Class<?> cls = beanClass;
         while (cls != null && cls != Object.class) {
@@ -970,7 +970,7 @@ public final class ManagedBean<T> implements Bean<T> {
         return mapping;
     }
 
-    private static Type resolveType(Type type, Map<java.lang.reflect.TypeVariable<?>, Type> mapping) {
+    public static Type resolveType(Type type, Map<java.lang.reflect.TypeVariable<?>, Type> mapping) {
         if (type instanceof java.lang.reflect.TypeVariable<?> tv) {
             var resolved = mapping.get(tv);
             return resolved != null ? resolved : type;
