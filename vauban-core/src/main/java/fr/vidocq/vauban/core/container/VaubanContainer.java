@@ -100,6 +100,7 @@ public final class VaubanContainer implements AutoCloseable {
                             List<InterceptorDescriptor> interceptorDescriptors,
                             List<DisposerDescriptor> disposers,
                             Map<DotName, BeanFactory<?>> factories,
+                            Map<DotName, java.util.function.Consumer<Object>> syntheticDisposers,
                             ClassLoader classLoader,
                             java.util.function.BiFunction<String, byte[], Class<?>> classDefiner) {
         this.index = index;
@@ -150,6 +151,17 @@ public final class VaubanContainer implements AutoCloseable {
 
         // Wire up disposer methods for producer beans
         wireDisposers(descriptors, disposers);
+
+        // Wire up synthetic bean disposers
+        for (var entry : syntheticDisposers.entrySet()) {
+            var syntheticKey = entry.getKey();
+            var destroyer = entry.getValue();
+            for (var beanEntry : beans.entrySet()) {
+                if (beanEntry.getKey().equals(new BeanId(syntheticKey.value()))) {
+                    beanEntry.getValue().setDestroyer(destroyer);
+                }
+            }
+        }
 
         this.beanManager = new VaubanBeanManager(this, contexts, beans.values(), eventDispatcher, interceptorManager);
         this.running = true;
@@ -880,6 +892,15 @@ public final class VaubanContainer implements AutoCloseable {
                 return bean;
             }
         }
+        // Check superclass for intercepted/proxied subclasses
+        var superClass = instanceClass.getSuperclass();
+        if (superClass != null && superClass != Object.class) {
+            for (var bean : beans.values()) {
+                if (bean.getBeanClass() == superClass) {
+                    return bean;
+                }
+            }
+        }
         return null;
     }
 
@@ -904,6 +925,7 @@ public final class VaubanContainer implements AutoCloseable {
         if (clazz.getName().contains("$$Intercepted")) {
             clazz = clazz.getSuperclass();
         }
+        var ownerBean = findBeanForInstance(instance);
         // Walk hierarchy to find all @Inject initializer methods
         var current = clazz;
         while (current != null && current != Object.class) {
@@ -920,10 +942,10 @@ public final class VaubanContainer implements AutoCloseable {
                         var paramQuals = extractParamQualifiers(params[i]);
                         if (params[i].isAnnotationPresent(jakarta.enterprise.inject.TransientReference.class)) {
                             var transientCtx = new CreationalContextImpl<>();
-                            args[i] = resolveParameter(paramTypes[i], genericParamTypes[i], transientCtx, paramQuals, method);
+                            args[i] = resolveParameter(paramTypes[i], genericParamTypes[i], transientCtx, paramQuals, method, ownerBean, params[i], i);
                             transientContexts.add(transientCtx);
                         } else {
-                            args[i] = resolveParameter(paramTypes[i], genericParamTypes[i], ctx, paramQuals, method);
+                            args[i] = resolveParameter(paramTypes[i], genericParamTypes[i], ctx, paramQuals, method, ownerBean, params[i], i);
                         }
                     }
                     method.invoke(instance, args);
@@ -1983,16 +2005,17 @@ public final class VaubanContainer implements AutoCloseable {
                     var paramTypes = injectCtor.getParameterTypes();
                     var genericParamTypes = injectCtor.getGenericParameterTypes();
                     var ctorParamsRefl = injectCtor.getParameters();
+                    var ctorOwnerBean = beans.get(descriptor.id());
                     var args = new Object[paramTypes.length];
                     var transientCtxs = new java.util.ArrayList<fr.vidocq.vauban.core.context.CreationalContextImpl<?>>();
                     for (int i = 0; i < paramTypes.length; i++) {
                         var pQuals = extractParamQualifiers(ctorParamsRefl[i]);
                         if (ctorParamsRefl[i].isAnnotationPresent(jakarta.enterprise.inject.TransientReference.class)) {
                             var transientCtx = new fr.vidocq.vauban.core.context.CreationalContextImpl<>();
-                            args[i] = resolveParameter(paramTypes[i], genericParamTypes[i], transientCtx, pQuals, injectCtor);
+                            args[i] = resolveParameter(paramTypes[i], genericParamTypes[i], transientCtx, pQuals, injectCtor, ctorOwnerBean, ctorParamsRefl[i], i);
                             transientCtxs.add(transientCtx);
                         } else {
-                            args[i] = resolveParameter(paramTypes[i], genericParamTypes[i], creationalCtx, pQuals, injectCtor);
+                            args[i] = resolveParameter(paramTypes[i], genericParamTypes[i], creationalCtx, pQuals, injectCtor, ctorOwnerBean, ctorParamsRefl[i], i);
                         }
                     }
 
@@ -2124,11 +2147,19 @@ public final class VaubanContainer implements AutoCloseable {
         return qualifiers.toArray(new java.lang.annotation.Annotation[0]);
     }
 
-    public Object resolveParameter(Class<?> paramType, java.lang.reflect.Type genericType, CreationalContext<?> ctx, java.lang.annotation.Annotation[] qualifiers, java.lang.reflect.Member member) {
+    public Object resolveParameter(Class<?> paramType, java.lang.reflect.Type genericType, CreationalContext<?> ctx,
+            java.lang.annotation.Annotation[] qualifiers, java.lang.reflect.Member member,
+            jakarta.enterprise.inject.spi.Bean<?> ownerBean, java.lang.reflect.Parameter param, int paramPosition) {
         if (paramType == Event.class) {
-            var eventIp = member != null
-                    ? new VaubanInjectionPoint(genericType, collectQualifierSet(qualifiers), null, member)
-                    : null;
+            VaubanInjectionPoint eventIp;
+            if (param != null && member instanceof java.lang.reflect.Executable exec) {
+                eventIp = new VaubanInjectionPoint(param, paramPosition, exec, genericType,
+                        collectQualifierSet(qualifiers), ownerBean);
+            } else if (member != null) {
+                eventIp = new VaubanInjectionPoint(genericType, collectQualifierSet(qualifiers), ownerBean, member);
+            } else {
+                eventIp = null;
+            }
             return new EventImpl<>(eventDispatcher, qualifiers, eventIp);
         }
         if (paramType == Instance.class || paramType == jakarta.inject.Provider.class) {
@@ -2137,16 +2168,21 @@ public final class VaubanContainer implements AutoCloseable {
                 var typeArg = pt.getActualTypeArguments()[0];
                 if (typeArg instanceof Class<?> c) instanceType = c;
             }
-            
+
             var qualSet = new java.util.HashSet<>(java.util.Arrays.asList(qualifiers));
             if (qualSet.isEmpty()) qualSet.add(jakarta.enterprise.inject.Default.Literal.INSTANCE);
-            
+
             var targetType = genericType;
             if (genericType instanceof ParameterizedType pt && pt.getActualTypeArguments().length > 0) {
                 targetType = pt.getActualTypeArguments()[0];
             }
-            var ip = new VaubanInjectionPoint(targetType, qualSet, null, member);
-            
+            VaubanInjectionPoint ip;
+            if (param != null && member instanceof java.lang.reflect.Executable exec) {
+                ip = new VaubanInjectionPoint(param, paramPosition, exec, targetType, qualSet, ownerBean);
+            } else {
+                ip = new VaubanInjectionPoint(targetType, qualSet, ownerBean, member);
+            }
+
             return new InstanceImpl<>(this, instanceType, ip).select(qualifiers);
         }
         if (BeanManager.class.isAssignableFrom(paramType)
@@ -2180,7 +2216,13 @@ public final class VaubanContainer implements AutoCloseable {
         if (resolved.getScope() == jakarta.enterprise.context.Dependent.class) {
              var qualSet = new java.util.HashSet<>(java.util.Arrays.asList(qualifiers));
              if (qualSet.isEmpty()) qualSet.add(jakarta.enterprise.inject.Default.Literal.INSTANCE);
-             currentInjectionPoint.set(new VaubanInjectionPoint(genericType, qualSet, null, member));
+             VaubanInjectionPoint depIp;
+             if (param != null && member instanceof java.lang.reflect.Executable exec) {
+                 depIp = new VaubanInjectionPoint(param, paramPosition, exec, genericType, qualSet, ownerBean);
+             } else {
+                 depIp = new VaubanInjectionPoint(genericType, qualSet, ownerBean, member);
+             }
+             currentInjectionPoint.set(depIp);
         }
         try {
             var pCtx = (ctx != null && resolved.getScope() == jakarta.enterprise.context.Dependent.class)
@@ -2192,16 +2234,20 @@ public final class VaubanContainer implements AutoCloseable {
         }
     }
 
+    public Object resolveParameter(Class<?> paramType, java.lang.reflect.Type genericType, CreationalContext<?> ctx, java.lang.annotation.Annotation[] qualifiers, java.lang.reflect.Member member) {
+        return resolveParameter(paramType, genericType, ctx, qualifiers, member, null, null, -1);
+    }
+
     public Object resolveParameter(Class<?> paramType, java.lang.reflect.Type genericType, CreationalContext<?> ctx, java.lang.annotation.Annotation[] qualifiers) {
-        return resolveParameter(paramType, genericType, ctx, qualifiers, null);
+        return resolveParameter(paramType, genericType, ctx, qualifiers, null, null, null, -1);
     }
 
     public Object resolveParameter(Class<?> paramType, java.lang.reflect.Type genericType, CreationalContext<?> ctx) {
-        return resolveParameter(paramType, genericType, ctx, new java.lang.annotation.Annotation[0], null);
+        return resolveParameter(paramType, genericType, ctx, new java.lang.annotation.Annotation[0], null, null, null, -1);
     }
 
     public Object resolveParameter(Class<?> paramType, java.lang.reflect.Type genericType) {
-        return resolveParameter(paramType, genericType, null, new java.lang.annotation.Annotation[0], null);
+        return resolveParameter(paramType, genericType, null, new java.lang.annotation.Annotation[0], null, null, null, -1);
     }
 
     private BeanFactory<?> createProducerFieldFactory(BeanDescriptor descriptor) {
@@ -2500,6 +2546,7 @@ public final class VaubanContainer implements AutoCloseable {
                 var observers = new ArrayList<>(discovery.discoverObservers());
                 var interceptors = discovery.discoverInterceptors();
                 var disposers = discovery.discoverDisposerMethods();
+                var syntheticDisposers = new LinkedHashMap<DotName, java.util.function.Consumer<Object>>();
 
                 // --- Build Compatible Extensions (BCE) — remaining phases ---
                 if (!bceClasses.isEmpty()) {
@@ -2530,7 +2577,7 @@ public final class VaubanContainer implements AutoCloseable {
 
                     // Register synthetic beans
                     for (var synBean : bceResult.syntheticBeans()) {
-                        registerSyntheticBean(synBean, descriptors, factories);
+                        registerSyntheticBean(synBean, descriptors, factories, syntheticDisposers);
                     }
 
                     // Register synthetic observers
@@ -2606,7 +2653,7 @@ public final class VaubanContainer implements AutoCloseable {
                         : (beanClasses.isEmpty()
                         ? Thread.currentThread().getContextClassLoader()
                         : beanClasses.getFirst().getClassLoader());
-                var container = new VaubanContainer(index, descriptors, observers, interceptors, disposers, factories, beanClassLoader, classDefiner);
+                var container = new VaubanContainer(index, descriptors, observers, interceptors, disposers, factories, syntheticDisposers, beanClassLoader, classDefiner);
 
                 // Register custom contexts from Build Compatible Extensions
                 if (discoveryResult != null) {
@@ -2765,7 +2812,8 @@ public final class VaubanContainer implements AutoCloseable {
         private static void registerSyntheticBean(
                 fr.vidocq.vauban.core.extensions.VaubanSyntheticBeanBuilder<?> synBean,
                 List<BeanDescriptor> descriptors,
-                Map<DotName, BeanFactory<?>> factories) {
+                Map<DotName, BeanFactory<?>> factories,
+                Map<DotName, java.util.function.Consumer<Object>> syntheticDisposers) {
             var beanClass = synBean.getBeanClass();
             var beanName = DotName.of(beanClass.getName());
 
@@ -2843,6 +2891,26 @@ public final class VaubanContainer implements AutoCloseable {
                     throw new jakarta.enterprise.inject.CreationException(e);
                 }
             });
+
+            // Register synthetic disposer if present
+            var disposerClass = synBean.getDisposerClass();
+            if (disposerClass != null) {
+                syntheticDisposers.put(syntheticKey, instance -> {
+                    try {
+                        @SuppressWarnings("unchecked")
+                        var disposer = (jakarta.enterprise.inject.build.compatible.spi.SyntheticBeanDisposer<Object>)
+                                disposerClass.getDeclaredConstructor().newInstance();
+                        var vaubanParams = new fr.vidocq.vauban.core.extensions.VaubanParameters(params);
+                        var container = VaubanContainer.current();
+                        var lookup = new InstanceImpl<>(container, Object.class);
+                        disposer.dispose(instance, lookup, vaubanParams);
+                    } catch (RuntimeException e) {
+                        throw e;
+                    } catch (Exception e) {
+                        // CDI spec: exceptions in disposer methods are suppressed
+                    }
+                });
+            }
         }
 
         /**

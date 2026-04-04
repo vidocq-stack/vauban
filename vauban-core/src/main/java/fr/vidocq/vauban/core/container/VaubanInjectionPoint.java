@@ -17,6 +17,10 @@ import java.util.Set;
  * Represents the metadata about a point where a bean is injected (field, parameter, etc.).
  */
 public final class VaubanInjectionPoint implements InjectionPoint {
+
+    static final VaubanInjectionPoint EMPTY = new VaubanInjectionPoint(
+            Object.class, Set.of(jakarta.enterprise.inject.Default.Literal.INSTANCE), null, null);
+
     private final Type type;
     private final Set<Annotation> qualifiers;
     private final Bean<?> bean;

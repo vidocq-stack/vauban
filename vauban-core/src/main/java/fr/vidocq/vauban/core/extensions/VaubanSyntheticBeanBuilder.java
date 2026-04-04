@@ -175,4 +175,5 @@ public final class VaubanSyntheticBeanBuilder<T> implements SyntheticBeanBuilder
     public int getPriority() { return priority; }
     public Map<String, Object> getParams() { return params; }
     public Class<? extends SyntheticBeanCreator<T>> getCreatorClass() { return creatorClass; }
+    public Class<? extends SyntheticBeanDisposer<T>> getDisposerClass() { return disposerClass; }
 }
