@@ -29,6 +29,8 @@ public final class ManagedBean<T> implements Bean<T> {
     private BiConsumer<Object, CreationalContext<?>> injector;
     private BiConsumer<Object, CreationalContext<?>> destroyer;
     private fr.vidocq.vauban.core.interceptor.InterceptorManager interceptorManager;
+    // Lazily computed immutable set, safe under volatile: computed once, read-only after
+    @SuppressWarnings("java:S3077")
     private volatile Set<Type> cachedTypes;
 
     public ManagedBean(BeanDescriptor descriptor, BeanFactory<T> factory, ClassLoader classLoader) {
@@ -71,11 +73,10 @@ public final class ManagedBean<T> implements Bean<T> {
         T instance = factory.create(creationalContext);
         
         // CDI spec: producer returning null for non-Dependent scope -> IllegalProductException
-        if (instance == null && descriptor.kind() != BeanDescriptor.BeanKind.MANAGED) {
-            if (!descriptor.scope().equals(fr.vidocq.vauban.core.bean.model.ScopeInfo.DEPENDENT)) {
-                throw new jakarta.enterprise.inject.IllegalProductException(
-                        "Producer " + descriptor.id() + " returned null for non-@Dependent bean");
-            }
+        if (instance == null && descriptor.kind() != BeanDescriptor.BeanKind.MANAGED
+                && !descriptor.scope().equals(fr.vidocq.vauban.core.bean.model.ScopeInfo.DEPENDENT)) {
+            throw new jakarta.enterprise.inject.IllegalProductException(
+                    "Producer " + descriptor.id() + " returned null for non-@Dependent bean");
         }
         if (instance != null && injector != null) {
             injector.accept(instance, creationalContext);
@@ -329,12 +330,11 @@ public final class ManagedBean<T> implements Bean<T> {
             } else if (t instanceof java.lang.reflect.ParameterizedType pt) {
                 if (isLegalParameterizedType(pt, allowedTypeVars)) {
                     result.add(t);
-                } else if (addRawForRemoved && pt.getRawType() instanceof Class<?> raw) {
+                } else if (addRawForRemoved && pt.getRawType() instanceof Class<?> raw
+                        && containsTypeVariable(pt)) {
                     // CDI spec 5.2.4: keep parameterized types with type variables for producers
                     // so that assignability can match type variable bounds against required types
-                    if (containsTypeVariable(pt)) {
-                        result.add(t);
-                    }
+                    result.add(t);
                 }
             } else if (t instanceof java.lang.reflect.GenericArrayType gat) {
                 if (!containsUnresolvedTypeVariable(gat)) {
@@ -349,9 +349,8 @@ public final class ManagedBean<T> implements Bean<T> {
     private static boolean containsTypeVariable(java.lang.reflect.ParameterizedType pt) {
         for (var arg : pt.getActualTypeArguments()) {
             if (arg instanceof java.lang.reflect.TypeVariable<?>) return true;
-            if (arg instanceof java.lang.reflect.ParameterizedType nested) {
-                if (containsTypeVariable(nested)) return true;
-            }
+            if (arg instanceof java.lang.reflect.ParameterizedType nested
+                    && containsTypeVariable(nested)) return true;
         }
         return false;
     }
@@ -359,12 +358,14 @@ public final class ManagedBean<T> implements Bean<T> {
     private static boolean isLegalParameterizedType(java.lang.reflect.ParameterizedType pt,
             Set<java.lang.reflect.TypeVariable<?>> allowedTypeVars) {
         for (var arg : pt.getActualTypeArguments()) {
-            if (arg instanceof java.lang.reflect.TypeVariable<?> tv) {
-                if (!allowedTypeVars.contains(tv)) return false;
+            if (arg instanceof java.lang.reflect.TypeVariable<?> tv
+                    && !allowedTypeVars.contains(tv)) {
+                return false;
             } else if (arg instanceof java.lang.reflect.WildcardType) {
                 return false;
-            } else if (arg instanceof java.lang.reflect.ParameterizedType nested) {
-                if (!isLegalParameterizedType(nested, allowedTypeVars)) return false;
+            } else if (arg instanceof java.lang.reflect.ParameterizedType nested
+                    && !isLegalParameterizedType(nested, allowedTypeVars)) {
+                return false;
             }
         }
         return true;

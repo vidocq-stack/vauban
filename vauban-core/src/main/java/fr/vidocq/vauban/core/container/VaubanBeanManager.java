@@ -26,8 +26,12 @@ import java.util.*;
  */
 public final class VaubanBeanManager implements BeanManager {
 
+    // Volatile immutable sets: assigned once at startup, read-only after — thread-safe by design
+    @SuppressWarnings("java:S3077")
     private static volatile Set<Class<? extends Annotation>> customQualifierTypes = Set.of();
+    @SuppressWarnings("java:S3077")
     private static volatile Set<Class<? extends Annotation>> customInterceptorBindingTypes = Set.of();
+    @SuppressWarnings("java:S3077")
     private static volatile Set<Class<? extends Annotation>> customStereotypeTypes = Set.of();
 
     public static void setCustomQualifierTypes(Set<Class<? extends Annotation>> types) {
@@ -189,9 +193,12 @@ public final class VaubanBeanManager implements BeanManager {
                     break;
                 }
                 // Built-in beans like Instance and Event match any parameterization of their raw type
-                if (bt instanceof Class<?> btClass && beanType instanceof java.lang.reflect.ParameterizedType reqPt
+                // Name comparison intentional: cross-classloader CDI type matching
+                @SuppressWarnings("java:S1872")
+                boolean rawMatch = bt instanceof Class<?> btClass && beanType instanceof java.lang.reflect.ParameterizedType reqPt
                         && reqPt.getRawType() instanceof Class<?> reqRaw
-                        && (btClass == reqRaw || btClass.getName().equals(reqRaw.getName()))) {
+                        && (btClass == reqRaw || btClass.getName().equals(reqRaw.getName()));
+                if (rawMatch) {
                     typeMatch = true;
                     break;
                 }
@@ -727,29 +734,26 @@ public final class VaubanBeanManager implements BeanManager {
                 typeMatch = true;
                 break;
             }
-            if (bt instanceof Class<?> btClass && requiredType instanceof Class<?> reqClass) {
+            if (bt instanceof Class<?> btClass && requiredType instanceof Class<?> reqClass
+                    && (btClass == reqClass || isPrimitiveWrapperMatch(btClass, reqClass))) {
                 // CDI assignability: requiredType must be assignable FROM beanType
                 // But ONLY consider bean types explicitly listed, plus Object
-                if (btClass == reqClass || isPrimitiveWrapperMatch(btClass, reqClass)) {
-                    typeMatch = true;
-                    break;
-                }
+                typeMatch = true;
+                break;
             }
             // Parameterized type matching
             if (bt instanceof java.lang.reflect.ParameterizedType beanPt
-                    && requiredType instanceof java.lang.reflect.ParameterizedType reqPt) {
-                if (typesMatch(beanPt, reqPt)) {
-                    typeMatch = true;
-                    break;
-                }
+                    && requiredType instanceof java.lang.reflect.ParameterizedType reqPt
+                    && typesMatch(beanPt, reqPt)) {
+                typeMatch = true;
+                break;
             }
             // Raw type requested, parameterized bean type
             if (requiredType instanceof Class<?> reqClass
-                    && bt instanceof java.lang.reflect.ParameterizedType beanPt) {
-                if (reqClass == beanPt.getRawType()) {
-                    typeMatch = true;
-                    break;
-                }
+                    && bt instanceof java.lang.reflect.ParameterizedType beanPt
+                    && reqClass == beanPt.getRawType()) {
+                typeMatch = true;
+                break;
             }
         }
         // Object always matches any bean type (implicit supertype)
@@ -844,6 +848,8 @@ public final class VaubanBeanManager implements BeanManager {
         return false;
     }
 
+    // Name comparison intentional throughout: CDI cross-classloader type matching
+    @SuppressWarnings("java:S1872")
     private static boolean typesMatch(Type beanType, Type requiredType) {
         if (beanType.equals(requiredType)) return true;
 

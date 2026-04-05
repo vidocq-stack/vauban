@@ -93,65 +93,63 @@ public final class DeploymentValidator {
 
         // Unproxyable beans with normal scope
         for (var bean : beans) {
-            if (bean.scope().isNormal()) {
-                // Validate that producer beans with primitive/array return types cannot be normal-scoped
-                if (bean.kind() == BeanDescriptor.BeanKind.PRODUCER_METHOD
-                        || bean.kind() == BeanDescriptor.BeanKind.PRODUCER_FIELD) {
-                    for (var type : bean.types()) {
-                        boolean isPrimitive = type instanceof TypeInfo.PrimitiveType
-                                || (type instanceof TypeInfo.ClassType ct && PRIMITIVE_NAMES.contains(ct.name().value()));
-                        if (isPrimitive) {
-                            errors.add(new ValidationError(
-                                    ValidationError.Kind.DEPLOYMENT_ERROR,
-                                    "Normal-scoped producer " + bean.id() + " has primitive return type " + type,
-                                    bean));
-                            break;
-                        }
+            // Validate that producer beans with primitive/array return types cannot be normal-scoped
+            if (bean.scope().isNormal()
+                    && (bean.kind() == BeanDescriptor.BeanKind.PRODUCER_METHOD
+                        || bean.kind() == BeanDescriptor.BeanKind.PRODUCER_FIELD)) {
+                for (var type : bean.types()) {
+                    boolean isPrimitive = type instanceof TypeInfo.PrimitiveType
+                            || (type instanceof TypeInfo.ClassType ct && PRIMITIVE_NAMES.contains(ct.name().value()));
+                    if (isPrimitive) {
+                        errors.add(new ValidationError(
+                                ValidationError.Kind.DEPLOYMENT_ERROR,
+                                "Normal-scoped producer " + bean.id() + " has primitive return type " + type,
+                                bean));
+                        break;
                     }
                 }
             }
 
             // CDI spec: Intercepted beans (any scope) cannot be final or have final methods
             // because interception is implemented via subclassing
-            if (!bean.interceptorBindingAnnotations().isEmpty() || !bean.interceptorBindings().isEmpty()) {
-                if (bean.kind() == BeanDescriptor.BeanKind.MANAGED && !bean.scope().isNormal()) {
-                    // Normal-scoped beans are already checked above; only check non-normal-scoped here
-                    try {
-                        var clazz = Class.forName(bean.beanClass().value(), false, Thread.currentThread().getContextClassLoader());
-                        if (clazz.isAnnotationPresent(jakarta.interceptor.Interceptor.class)) {
-                            // Interceptors themselves are not intercepted
+            if ((!bean.interceptorBindingAnnotations().isEmpty() || !bean.interceptorBindings().isEmpty())
+                    && bean.kind() == BeanDescriptor.BeanKind.MANAGED && !bean.scope().isNormal()) {
+                // Normal-scoped beans are already checked above; only check non-normal-scoped here
+                try {
+                    var clazz = Class.forName(bean.beanClass().value(), false, Thread.currentThread().getContextClassLoader());
+                    if (clazz.isAnnotationPresent(jakarta.interceptor.Interceptor.class)) {
+                        // Interceptors themselves are not intercepted
+                    } else {
+                        if (java.lang.reflect.Modifier.isFinal(clazz.getModifiers())) {
+                            errors.add(new ValidationError(
+                                    ValidationError.Kind.DEPLOYMENT_ERROR,
+                                    "Intercepted bean " + bean.beanClass()
+                                            + " cannot be final (interception requires subclassing)",
+                                    bean));
                         } else {
-                            if (java.lang.reflect.Modifier.isFinal(clazz.getModifiers())) {
-                                errors.add(new ValidationError(
-                                        ValidationError.Kind.DEPLOYMENT_ERROR,
-                                        "Intercepted bean " + bean.beanClass()
-                                                + " cannot be final (interception requires subclassing)",
-                                        bean));
-                            } else {
-                                Class<?> checkClass = clazz;
-                                boolean foundFinalMethod = false;
-                                while (checkClass != null && checkClass != Object.class && !foundFinalMethod) {
-                                    for (var method : checkClass.getDeclaredMethods()) {
-                                        if (java.lang.reflect.Modifier.isFinal(method.getModifiers())
-                                                && !java.lang.reflect.Modifier.isPrivate(method.getModifiers())
-                                                && !java.lang.reflect.Modifier.isStatic(method.getModifiers())) {
-                                            errors.add(new ValidationError(
-                                                    ValidationError.Kind.DEPLOYMENT_ERROR,
-                                                    "Intercepted bean " + bean.beanClass()
-                                                            + " has final method " + method.getName()
-                                                            + " (interception requires subclassing)",
-                                                    bean));
-                                            foundFinalMethod = true;
-                                            break;
-                                        }
+                            Class<?> checkClass = clazz;
+                            boolean foundFinalMethod = false;
+                            while (checkClass != null && checkClass != Object.class && !foundFinalMethod) {
+                                for (var method : checkClass.getDeclaredMethods()) {
+                                    if (java.lang.reflect.Modifier.isFinal(method.getModifiers())
+                                            && !java.lang.reflect.Modifier.isPrivate(method.getModifiers())
+                                            && !java.lang.reflect.Modifier.isStatic(method.getModifiers())) {
+                                        errors.add(new ValidationError(
+                                                ValidationError.Kind.DEPLOYMENT_ERROR,
+                                                "Intercepted bean " + bean.beanClass()
+                                                        + " has final method " + method.getName()
+                                                        + " (interception requires subclassing)",
+                                                bean));
+                                        foundFinalMethod = true;
+                                        break;
                                     }
-                                    checkClass = checkClass.getSuperclass();
                                 }
+                                checkClass = checkClass.getSuperclass();
                             }
                         }
-                    } catch (ClassNotFoundException e) {
-                        // skip
                     }
+                } catch (ClassNotFoundException e) {
+                    // skip
                 }
             }
         }

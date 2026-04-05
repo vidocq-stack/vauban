@@ -74,6 +74,7 @@ public final class VaubanInterceptor<T> implements Interceptor<T> {
         return false;
     }
 
+    @SuppressWarnings("java:S3011") // CDI spec requires reflective access
     @Override
     public Object intercept(InterceptionType type, T instance, InvocationContext ctx) throws Exception {
         if (type != InterceptionType.AROUND_INVOKE || descriptor.aroundInvokeMethod() == null) {

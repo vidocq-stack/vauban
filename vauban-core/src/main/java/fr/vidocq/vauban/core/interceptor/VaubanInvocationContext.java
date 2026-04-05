@@ -245,6 +245,7 @@ public final class VaubanInvocationContext implements InvocationContext {
         }
     }
 
+    @SuppressWarnings("java:S3011") // CDI spec requires reflective access
     @Override
     public Object proceed() throws Exception {
         try {
@@ -292,6 +293,7 @@ public final class VaubanInvocationContext implements InvocationContext {
      * Represents one interceptor in the chain.
      */
     public record InterceptorInvocation(Object target, Method method) {
+        @SuppressWarnings("java:S3011") // CDI spec requires reflective access
         public Object invoke(InvocationContext ctx) throws Exception {
             try {
                 method.setAccessible(true);

@@ -9,6 +9,8 @@ import java.util.Set;
  */
 public final class QualifierMatcher {
 
+    // Volatile immutable map: assigned once at startup, read-only after — thread-safe by design
+    @SuppressWarnings("java:S3077")
     private static volatile java.util.Map<String, Set<String>> customNonbindingMembers = java.util.Map.of();
 
     public static void setCustomNonbindingMembers(java.util.Map<String, Set<String>> nonbindingMembers) {

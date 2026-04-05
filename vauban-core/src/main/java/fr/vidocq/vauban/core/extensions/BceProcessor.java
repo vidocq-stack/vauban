@@ -45,6 +45,7 @@ public final class BceProcessor {
             Map<Class<?>, Object> bceInstances
     ) {}
 
+    @SuppressWarnings("java:S3011") // CDI spec requires reflective access
     public static DiscoveryResult processDiscovery(List<Class<?>> bceClasses, IndexLookup lookup) {
         var metaAnnotations = new VaubanMetaAnnotations(lookup);
         var scannedClasses = new VaubanScannedClasses();
@@ -141,6 +142,7 @@ public final class BceProcessor {
         return new Result(allSyntheticBeans, allSyntheticObservers, definitionErrors, deploymentErrors, allEnhancementMods);
     }
 
+    @SuppressWarnings("java:S3011") // CDI spec requires reflective access
     private static Object instantiateBce(Class<?> bceClass) throws Exception {
         var ctor = bceClass.getDeclaredConstructor();
         ctor.setAccessible(true);
@@ -166,6 +168,7 @@ public final class BceProcessor {
         return EnhancementParamKind.CLASS_CONFIG; // fallback
     }
 
+    @SuppressWarnings("java:S3011") // CDI spec requires reflective access
     private static void processEnhancement(Object bce, Class<?> bceClass,
                                            List<BeanDescriptor> beans,
                                            List<Class<?>> archiveClasses,
@@ -318,6 +321,7 @@ public final class BceProcessor {
     /**
      * Process @Registration methods — main phase for Invokers.
      */
+    @SuppressWarnings("java:S3011") // CDI spec requires reflective access
     private static void processRegistration(Object bce, Class<?> bceClass,
                                             List<BeanDescriptor> beans,
                                             List<fr.vidocq.vauban.core.bean.model.ObserverDescriptor> observers,
@@ -559,6 +563,7 @@ public final class BceProcessor {
             List<VaubanSyntheticObserverBuilder<?>> observers
     ) {}
 
+    @SuppressWarnings("java:S3011") // CDI spec requires reflective access
     private static SynthesisResult processSynthesis(Object bce, Class<?> bceClass,
                                                      VaubanTypes types,
                                                      List<String> errors) {
@@ -588,6 +593,7 @@ public final class BceProcessor {
     /**
      * Process @Validation methods — collect errors that cause DeploymentException.
      */
+    @SuppressWarnings("java:S3011") // CDI spec requires reflective access
     private static void processValidation(Object bce, Class<?> bceClass, VaubanTypes types, List<String> errors) {
         for (var method : getDeclaredMethodsSafe(bceClass)) {
             if (method.getAnnotation(Validation.class) == null) continue;

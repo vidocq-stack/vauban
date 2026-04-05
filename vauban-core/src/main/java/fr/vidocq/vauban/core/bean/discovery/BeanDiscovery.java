@@ -111,11 +111,10 @@ public final class BeanDiscovery {
             if (isVetoed(classInfo)) continue;
             if (isDisabledAlternative(classInfo)) continue;
             if (!isBeanCandidate(classInfo)) continue;
-            if (!forcedBeanClasses.contains(classInfo.name()) && !hasBeanDefiningAnnotation(classInfo)) {
+            if (!forcedBeanClasses.contains(classInfo.name()) && !hasBeanDefiningAnnotation(classInfo)
+                    && !hasBeanDefiningAnnotationViaReflection(classInfo.name())) {
                 // Potential bean but no annotation in index, check reflection
-                if (!hasBeanDefiningAnnotationViaReflection(classInfo.name())) {
-                    continue;
-                }
+                continue;
             }
 
             // Discover managed bean
@@ -310,10 +309,9 @@ public final class BeanDiscovery {
                         : Class.forName(stereotypeName.value());
                 if (annType.isAnnotationPresent(jakarta.enterprise.inject.Alternative.class)) return true;
                 for (var metaAnn : annType.getAnnotations()) {
-                    if (metaAnn.annotationType().isAnnotationPresent(jakarta.enterprise.inject.Stereotype.class)) {
-                        if (isAlternativeStereotype(DotName.of(metaAnn.annotationType().getName()), visited)) {
-                            return true;
-                        }
+                    if (metaAnn.annotationType().isAnnotationPresent(jakarta.enterprise.inject.Stereotype.class)
+                            && isAlternativeStereotype(DotName.of(metaAnn.annotationType().getName()), visited)) {
+                        return true;
                     }
                 }
             } catch (ClassNotFoundException e) { /* skip */ }
@@ -445,12 +443,11 @@ public final class BeanDiscovery {
                 collectBindingAnnotationsRecursively(superClass.getAnnotations(), superAnns, new java.util.HashSet<>());
                 for (var ann : superAnns) {
                     var type = ann.annotationType();
-                    if (type.isAnnotationPresent(java.lang.annotation.Inherited.class)) {
-                        // Only add if not already present on subclass (overriding)
-                        if (!collected.contains(type)) {
-                            annotations.add(ann);
-                            collected.add(type);
-                        }
+                    // Only add if inherited and not already present on subclass (overriding)
+                    if (type.isAnnotationPresent(java.lang.annotation.Inherited.class)
+                            && !collected.contains(type)) {
+                        annotations.add(ann);
+                        collected.add(type);
                     }
                 }
                 superClass = superClass.getSuperclass();
@@ -1144,10 +1141,9 @@ public final class BeanDiscovery {
         // Check stereotypes (direct + transitive)
         var allAnnotationNames = getAllAnnotationNames(classInfo);
         for (var annName : allAnnotationNames) {
-            if (isStereotype(annName)) {
-                if (hasNamedInStereotypeRecursive(annName, new java.util.HashSet<>())) {
-                    return decapitalize(classInfo.name().simpleName());
-                }
+            if (isStereotype(annName)
+                    && hasNamedInStereotypeRecursive(annName, new java.util.HashSet<>())) {
+                return decapitalize(classInfo.name().simpleName());
             }
         }
 
@@ -1244,10 +1240,9 @@ public final class BeanDiscovery {
             return result;
         }
         for (var item : arrayVal.values()) {
-            if (item instanceof fr.vidocq.vauban.indexer.model.AnnotationValue.AnnotationVal av) {
-                if (isQualifierAnnotation(av.annotation().name())) {
-                    result.add(QualifierInstance.from(av.annotation()));
-                }
+            if (item instanceof fr.vidocq.vauban.indexer.model.AnnotationValue.AnnotationVal av
+                    && isQualifierAnnotation(av.annotation().name())) {
+                result.add(QualifierInstance.from(av.annotation()));
             }
         }
         return result;

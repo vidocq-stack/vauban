@@ -32,11 +32,10 @@ public final class VaubanInjectionPoint implements InjectionPoint {
      */
     public VaubanInjectionPoint(Field field, Bean<?> bean) {
         Type t = field.getGenericType();
-        if (field.getType() == jakarta.enterprise.inject.Instance.class
-                || field.getType() == jakarta.inject.Provider.class) {
-            if (t instanceof java.lang.reflect.ParameterizedType pt) {
-                t = pt.getActualTypeArguments()[0];
-            }
+        if ((field.getType() == jakarta.enterprise.inject.Instance.class
+                || field.getType() == jakarta.inject.Provider.class)
+                && t instanceof java.lang.reflect.ParameterizedType pt) {
+            t = pt.getActualTypeArguments()[0];
         }
         this.type = t;
         this.qualifiers = extractQualifiers(field);

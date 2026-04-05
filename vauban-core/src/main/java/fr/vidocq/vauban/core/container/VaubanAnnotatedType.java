@@ -70,6 +70,7 @@ public final class VaubanAnnotatedType<T> implements AnnotatedType<T> {
     }
 
     @Override
+    @SuppressWarnings("java:S2259") // javaClass is guaranteed non-null by constructor requireNonNull
     public Set<Type> getTypeClosure() {
         var types = new LinkedHashSet<Type>();
         Class<?> current = javaClass;

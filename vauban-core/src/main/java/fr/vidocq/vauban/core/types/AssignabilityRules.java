@@ -58,15 +58,13 @@ public final class AssignabilityRules {
         // CDI spec: primitive types and their wrappers are considered identical
         if (requiredType instanceof PrimitiveType rp) {
             var wrapperName = PRIMITIVE_TO_WRAPPER.get(rp.kind().name());
-            if (wrapperName != null) {
-                if (beanType instanceof ClassType bc && bc.name().equals(wrapperName)) return true;
-            }
+            if (wrapperName != null
+                    && beanType instanceof ClassType bc && bc.name().equals(wrapperName)) return true;
         }
         if (beanType instanceof PrimitiveType bp) {
             var wrapperName = PRIMITIVE_TO_WRAPPER.get(bp.kind().name());
-            if (wrapperName != null) {
-                if (requiredType instanceof ClassType rc && rc.name().equals(wrapperName)) return true;
-            }
+            if (wrapperName != null
+                    && requiredType instanceof ClassType rc && rc.name().equals(wrapperName)) return true;
         }
 
         // Handle ClassType with primitive name (e.g. ClassType[name=boolean] <-> ClassType[name=java.lang.Boolean])
@@ -245,12 +243,10 @@ public final class AssignabilityRules {
                             : new ClassType(DotName.of("java.lang.Object"));
                 }
 
-                if (wildcard.lowerBound() != null) {
-                    if (!isAssignable(wildcard.lowerBound(), effectiveBeanArg)) yield false;
-                }
-                if (wildcard.upperBound() != null) {
-                    if (!isAssignable(effectiveBeanArg, wildcard.upperBound())) yield false;
-                }
+                if (wildcard.lowerBound() != null
+                        && !isAssignable(wildcard.lowerBound(), effectiveBeanArg)) yield false;
+                if (wildcard.upperBound() != null
+                        && !isAssignable(effectiveBeanArg, wildcard.upperBound())) yield false;
                 yield true;
             }
             case TypeVariable tv -> {

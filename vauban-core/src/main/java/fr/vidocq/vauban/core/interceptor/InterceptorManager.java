@@ -42,6 +42,8 @@ public final class InterceptorManager {
     }
 
     // Singleton reference for VaubanInvocationContext to access enhanced bindings
+    // Volatile reference: assigned once at container init, read-only after
+    @SuppressWarnings("java:S3077")
     private static volatile InterceptorManager currentInstance;
 
     public static InterceptorManager currentInstance() {
@@ -139,6 +141,7 @@ public final class InterceptorManager {
         return ann.annotationType().isAnnotationPresent(jakarta.enterprise.inject.Stereotype.class);
     }
 
+    @SuppressWarnings("java:S3011") // CDI spec requires reflective access
     private void addLifecycleInvocations(Class<?> clazz, Object target, Class<? extends java.lang.annotation.Annotation> annotation, List<VaubanInvocationContext.InterceptorInvocation> chain) {
         if (clazz == null || clazz == Object.class) return;
 
@@ -229,10 +232,9 @@ public final class InterceptorManager {
         for (var descriptor : interceptors) {
             if (!descriptor.enabled()) continue;
             if (allBindingNames.containsAll(descriptor.bindings()) && !descriptor.bindings().isEmpty()) {
-                if (!descriptor.bindingAnnotations().isEmpty() && !beanAnnotations.isEmpty()) {
-                    if (!bindingMembersMatch(descriptor.bindingAnnotations(), beanAnnotations)) {
-                        continue;
-                    }
+                if (!descriptor.bindingAnnotations().isEmpty() && !beanAnnotations.isEmpty()
+                        && !bindingMembersMatch(descriptor.bindingAnnotations(), beanAnnotations)) {
+                    continue;
                 }
                 matches.add(descriptor);
             }
@@ -265,10 +267,9 @@ public final class InterceptorManager {
         for (var descriptor : interceptors) {
             if (!descriptor.enabled()) continue;
             if (allBindings.containsAll(descriptor.bindings()) && !descriptor.bindings().isEmpty()) {
-                if (!descriptor.bindingAnnotations().isEmpty() && !currentBeanAnnotations.isEmpty()) {
-                    if (!bindingMembersMatch(descriptor.bindingAnnotations(), currentBeanAnnotations)) {
-                        continue;
-                    }
+                if (!descriptor.bindingAnnotations().isEmpty() && !currentBeanAnnotations.isEmpty()
+                        && !bindingMembersMatch(descriptor.bindingAnnotations(), currentBeanAnnotations)) {
+                    continue;
                 }
                 matches.add(descriptor);
             }
@@ -304,10 +305,9 @@ public final class InterceptorManager {
         for (var descriptor : interceptors) {
             if (!descriptor.enabled()) continue;
             if (allBindings.containsAll(descriptor.bindings()) && !descriptor.bindings().isEmpty()) {
-                if (!descriptor.bindingAnnotations().isEmpty() && !beanAnnotations.isEmpty()) {
-                    if (!bindingMembersMatch(descriptor.bindingAnnotations(), beanAnnotations)) {
-                        continue;
-                    }
+                if (!descriptor.bindingAnnotations().isEmpty() && !beanAnnotations.isEmpty()
+                        && !bindingMembersMatch(descriptor.bindingAnnotations(), beanAnnotations)) {
+                    continue;
                 }
                 matches.add(descriptor);
             }
@@ -444,10 +444,9 @@ public final class InterceptorManager {
         for (var descriptor : interceptors) {
             if (!descriptor.enabled()) continue;
             if (bindings.containsAll(descriptor.bindings()) && !descriptor.bindings().isEmpty()) {
-                if (!descriptor.bindingAnnotations().isEmpty() && !beanAnnotations.isEmpty()) {
-                    if (!bindingMembersMatch(descriptor.bindingAnnotations(), beanAnnotations)) {
-                        continue;
-                    }
+                if (!descriptor.bindingAnnotations().isEmpty() && !beanAnnotations.isEmpty()
+                        && !bindingMembersMatch(descriptor.bindingAnnotations(), beanAnnotations)) {
+                    continue;
                 }
                 matches.add(descriptor);
             }
@@ -485,10 +484,9 @@ public final class InterceptorManager {
             // An interceptor matches if all its bindings are present on the target
             if (methodBindings.containsAll(descriptor.bindings()) && !descriptor.bindings().isEmpty()) {
                 // Check binding member values if both sides have annotation instances
-                if (!descriptor.bindingAnnotations().isEmpty() && !beanAnnotations.isEmpty()) {
-                    if (!bindingMembersMatch(descriptor.bindingAnnotations(), beanAnnotations)) {
-                        continue;
-                    }
+                if (!descriptor.bindingAnnotations().isEmpty() && !beanAnnotations.isEmpty()
+                        && !bindingMembersMatch(descriptor.bindingAnnotations(), beanAnnotations)) {
+                    continue;
                 }
                 matches.add(descriptor);
             }
@@ -573,10 +571,9 @@ public final class InterceptorManager {
 
             if (containsAll && !descriptor.bindings().isEmpty()) {
                 // Check binding member values if available
-                if (!descriptor.bindingAnnotations().isEmpty() && !beanAnnotations.isEmpty()) {
-                    if (!bindingMembersMatch(descriptor.bindingAnnotations(), beanAnnotations)) {
-                        continue;
-                    }
+                if (!descriptor.bindingAnnotations().isEmpty() && !beanAnnotations.isEmpty()
+                        && !bindingMembersMatch(descriptor.bindingAnnotations(), beanAnnotations)) {
+                    continue;
                 }
                 matches.add(descriptor);
             }
@@ -707,6 +704,7 @@ public final class InterceptorManager {
         }
     }
 
+    @SuppressWarnings("java:S3011") // CDI spec requires reflective access
     private Method findAnnotatedMethod(Class<?> clazz, Class<? extends java.lang.annotation.Annotation> annotation) {
         var current = clazz;
         while (current != null && current != Object.class) {
