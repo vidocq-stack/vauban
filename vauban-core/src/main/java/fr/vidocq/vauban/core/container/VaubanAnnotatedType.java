@@ -27,7 +27,7 @@ public final class VaubanAnnotatedType<T> implements AnnotatedType<T> {
     private final Class<T> javaClass;
 
     public VaubanAnnotatedType(Class<T> javaClass) {
-        this.javaClass = javaClass;
+        this.javaClass = java.util.Objects.requireNonNull(javaClass, "javaClass must not be null");
     }
 
     @Override

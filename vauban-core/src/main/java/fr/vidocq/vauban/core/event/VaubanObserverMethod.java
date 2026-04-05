@@ -132,6 +132,14 @@ public final class VaubanObserverMethod<T> implements ObserverMethod<T> {
             implements java.lang.reflect.WildcardType {
         @Override public Type[] getUpperBounds() { return upperBounds.clone(); }
         @Override public Type[] getLowerBounds() { return lowerBounds.clone(); }
+        @Override public boolean equals(Object o) {
+            if (!(o instanceof java.lang.reflect.WildcardType other)) return false;
+            return java.util.Arrays.equals(upperBounds, other.getUpperBounds())
+                    && java.util.Arrays.equals(lowerBounds, other.getLowerBounds());
+        }
+        @Override public int hashCode() {
+            return java.util.Arrays.hashCode(upperBounds) ^ java.util.Arrays.hashCode(lowerBounds);
+        }
     }
 
     @SuppressWarnings("unchecked")

@@ -80,7 +80,7 @@ public final class InterceptorManager {
     }
 
     public static void $$endInterception() {
-        IS_INTERCEPTING.set(false);
+        IS_INTERCEPTING.remove();
         CURRENT_CHAIN.remove();
         CURRENT_BINDINGS.remove();
         CURRENT_CONTEXT.remove();

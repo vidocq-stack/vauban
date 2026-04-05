@@ -46,8 +46,6 @@ public final class BeanDiscovery {
     private static final DotName AROUND_INVOKE = DotName.of("jakarta.interceptor.AroundInvoke");
     private static final DotName INTERCEPTOR_BINDING = DotName.of("jakarta.interceptor.InterceptorBinding");
     private static final DotName AROUND_CONSTRUCT = DotName.of("jakarta.interceptor.AroundConstruct");
-    private static final DotName POST_CONSTRUCT = DotName.of("jakarta.annotation.PostConstruct");
-    private static final DotName PRE_DESTROY = DotName.of("jakarta.annotation.PreDestroy");
     private static final DotName DISPOSES = DotName.of("jakarta.enterprise.inject.Disposes");
     private static final DotName STEREOTYPE = DotName.of("jakarta.enterprise.inject.Stereotype");
 
@@ -832,7 +830,6 @@ public final class BeanDiscovery {
         }
         if (type instanceof java.lang.reflect.TypeVariable<?> tv) {
             if (!visited.add(tv)) {
-                System.out.println("ALREADY VISITED: " + tv.getName());
                 return new TypeInfo.TypeVariable(tv.getName(), java.util.List.of());
             }
             var bounds = new java.util.ArrayList<TypeInfo>();
@@ -842,7 +839,7 @@ public final class BeanDiscovery {
                     if (boundInfo != null) bounds.add(boundInfo);
                 }
             }
-            System.out.println("TV: " + tv.getName() + ", bounds size: " + bounds.size()); visited.remove(tv);
+            visited.remove(tv);
             return new TypeInfo.TypeVariable(tv.getName(), bounds);
         }
         if (type instanceof java.lang.reflect.WildcardType wt) {
@@ -913,6 +910,25 @@ public final class BeanDiscovery {
         @Override public java.lang.reflect.Type[] getActualTypeArguments() { return typeArguments.clone(); }
         @Override public java.lang.reflect.Type getRawType() { return rawType; }
         @Override public java.lang.reflect.Type getOwnerType() { return ownerType; }
+        @Override public boolean equals(Object o) {
+            if (!(o instanceof java.lang.reflect.ParameterizedType other)) return false;
+            return java.util.Objects.equals(rawType, other.getRawType())
+                    && java.util.Arrays.equals(typeArguments, other.getActualTypeArguments())
+                    && java.util.Objects.equals(ownerType, other.getOwnerType());
+        }
+        @Override public int hashCode() {
+            return java.util.Arrays.hashCode(typeArguments) ^ java.util.Objects.hashCode(rawType)
+                    ^ java.util.Objects.hashCode(ownerType);
+        }
+        @Override public String toString() {
+            if (typeArguments.length == 0) return rawType.getTypeName();
+            var sb = new StringBuilder(rawType.getTypeName()).append('<');
+            for (int i = 0; i < typeArguments.length; i++) {
+                if (i > 0) sb.append(", ");
+                sb.append(typeArguments[i].getTypeName());
+            }
+            return sb.append('>').toString();
+        }
     }
 
     private record ResolvedGenArrayType(java.lang.reflect.Type componentType)
@@ -1994,25 +2010,6 @@ public final class BeanDiscovery {
             // Check transitive bindings via reflection
             for (var metaAnn : annType.getAnnotations()) {
                 if (metaAnn.annotationType().isAnnotationPresent(jakarta.interceptor.InterceptorBinding.class)) {
-                    return true;
-                }
-            }
-            return false;
-        } catch (ClassNotFoundException e) {
-            return false;
-        }
-    }
-
-    private boolean hasInterceptorBindingViaReflection(DotName name) {
-        try {
-            var cl = Thread.currentThread().getContextClassLoader();
-            var clazz = cl != null ? Class.forName(name.value(), false, cl)
-                    : Class.forName(name.value());
-            if (!clazz.isAnnotationPresent(jakarta.interceptor.Interceptor.class)) {
-                return false;
-            }
-            for (var ann : clazz.getAnnotations()) {
-                if (ann.annotationType().isAnnotationPresent(jakarta.interceptor.InterceptorBinding.class)) {
                     return true;
                 }
             }

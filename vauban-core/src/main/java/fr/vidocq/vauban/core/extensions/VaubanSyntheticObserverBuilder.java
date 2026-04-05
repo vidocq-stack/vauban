@@ -166,5 +166,14 @@ public final class VaubanSyntheticObserverBuilder<T> implements SyntheticObserve
         @Override public java.lang.reflect.Type[] getActualTypeArguments() { return typeArguments; }
         @Override public java.lang.reflect.Type getRawType() { return rawType; }
         @Override public java.lang.reflect.Type getOwnerType() { return null; }
+        @Override public boolean equals(Object o) {
+            if (!(o instanceof java.lang.reflect.ParameterizedType other)) return false;
+            return java.util.Objects.equals(rawType, other.getRawType())
+                    && java.util.Arrays.equals(typeArguments, other.getActualTypeArguments())
+                    && other.getOwnerType() == null;
+        }
+        @Override public int hashCode() {
+            return java.util.Arrays.hashCode(typeArguments) ^ java.util.Objects.hashCode(rawType);
+        }
     }
 }

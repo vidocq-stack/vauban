@@ -50,25 +50,10 @@ public final class CreationalContextImpl<T> implements CreationalContext<T> {
         if (releasing) return; // Guard against recursive release
         releasing = true;
         try {
-            try {
-                var fw = new java.io.FileWriter("trace_release.txt", true);
-                fw.write("release() STARTED with " + dependentInstances.size() + " items\n");
-                fw.close();
-            } catch(Exception e) {}
             // CDI spec: release() must destroy all dependent objects
             while (!dependentInstances.isEmpty()) {
                 var dep = dependentInstances.remove(dependentInstances.size() - 1);
-                try {
-                    var fw = new java.io.FileWriter("trace_release.txt", true);
-                    fw.write("DESTROYING " + dep.instance.getClass().getName() + "\n");
-                    fw.close();
-                } catch(Exception e) {}
                 dep.destroy();
-                try {
-                    var fw = new java.io.FileWriter("trace_release.txt", true);
-                    fw.write("DESTROYED " + dep.instance.getClass().getName() + ", remaining: " + dependentInstances.size() + "\n");
-                    fw.close();
-                } catch(Exception e) {}
             }
             incompleteInstances.clear();
         } finally {

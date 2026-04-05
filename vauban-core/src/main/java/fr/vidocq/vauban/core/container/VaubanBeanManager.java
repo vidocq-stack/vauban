@@ -119,12 +119,16 @@ public final class VaubanBeanManager implements BeanManager {
         if (context == null) {
             context = getFirstContext(jakarta.enterprise.context.Dependent.class);
         }
-        
+        if (context == null) {
+            throw new jakarta.enterprise.context.ContextNotActiveException(
+                    "No active context for scope: " + scope.getName());
+        }
+
         @SuppressWarnings("unchecked")
         var contextual = (Contextual<Object>) bean;
         @SuppressWarnings("unchecked")
         var cc = (CreationalContext<Object>) ctx;
-        
+
         Object instance = context.get(contextual, cc);
 
         // Ensure dependent instances are registered for cleanup in the provided context

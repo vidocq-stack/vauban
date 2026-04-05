@@ -24,22 +24,11 @@ public final class ClassValidator {
     private static final DotName DISPOSES = DotName.of("jakarta.enterprise.inject.Disposes");
     private static final DotName NORMAL_SCOPE = DotName.of("jakarta.enterprise.context.NormalScope");
     private static final DotName SCOPE = DotName.of("jakarta.inject.Scope");
-    private static final DotName INTERCEPTOR_BINDING = DotName.of("jakarta.interceptor.InterceptorBinding");
     private static final DotName STEREOTYPE = DotName.of("jakarta.enterprise.inject.Stereotype");
     private static final DotName INTERCEPTOR = DotName.of("jakarta.interceptor.Interceptor");
     private static final DotName NAMED = DotName.of("jakarta.inject.Named");
     private static final DotName DEPENDENT = DotName.of("jakarta.enterprise.context.Dependent");
     private static final DotName PRIORITY = DotName.of("jakarta.annotation.Priority");
-
-    private static final DotName EVENT_TYPE = DotName.of("jakarta.enterprise.event.Event");
-    private static final DotName INSTANCE_TYPE = DotName.of("jakarta.enterprise.inject.Instance");
-
-    private static final Set<DotName> BUILT_IN_NORMAL_SCOPES = Set.of(
-            DotName.of("jakarta.enterprise.context.ApplicationScoped"),
-            DotName.of("jakarta.enterprise.context.RequestScoped"),
-            DotName.of("jakarta.enterprise.context.SessionScoped"),
-            DotName.of("jakarta.enterprise.context.ConversationScoped")
-    );
 
     private static final Set<DotName> BUILT_IN_SCOPES = Set.of(
             DotName.of("jakarta.enterprise.context.ApplicationScoped"),
@@ -201,7 +190,7 @@ public final class ClassValidator {
 
         // Validate each method
         for (var method : classInfo.methods()) {
-            validateMethod(method, classInfo, className, index, errors);
+            validateMethod(method, className, errors);
         }
 
         // Field validations
@@ -229,8 +218,8 @@ public final class ClassValidator {
         }
     }
 
-    private static void validateMethod(MethodInfo method, ClassInfo classInfo,
-            String className, VaubanIndex index, List<String> errors) {
+    private static void validateMethod(MethodInfo method,
+            String className, List<String> errors) {
         var params = method.parameters();
 
         long observesCount = params.stream()
@@ -383,21 +372,6 @@ public final class ClassValidator {
         }
     }
 
-    /**
-     * Validates that raw Event or Instance types are not used as injection points.
-     * CDI requires these to be parameterized.
-     */
-    private static void validateNoRawParameterizedType(TypeInfo type, String location, List<String> errors) {
-        if (type instanceof TypeInfo.ClassType ct) {
-            if (ct.name().equals(EVENT_TYPE)) {
-                errors.add("Raw Event type injected at " + location + " — must be parameterized");
-            }
-            if (ct.name().equals(INSTANCE_TYPE)) {
-                errors.add("Raw Instance type injected at " + location + " — must be parameterized");
-            }
-        }
-    }
-
     private static void validateTypeNotTypeVariableOrWildcard(TypeInfo type, String kind, String location, List<String> errors) {
         if (type instanceof TypeInfo.TypeVariable) {
             errors.add(kind + " " + location + " has type variable type");
@@ -423,14 +397,6 @@ public final class ClassValidator {
                 errors.add(kind + " " + location + " has array type with wildcard component");
             }
         }
-    }
-
-    /**
-     * Validates producer return types: cannot be TypeVariable, WildcardType,
-     * or arrays with type variable/wildcard component types.
-     */
-    private static void validateProducerType(TypeInfo type, String location, List<String> errors) {
-        validateTypeNotTypeVariableOrWildcard(type, "Producer", location, errors);
     }
 
     /**
@@ -501,43 +467,4 @@ public final class ClassValidator {
         return annotations.stream().anyMatch(a -> a.name().equals(name));
     }
 
-    private static boolean hasNormalScope(ClassInfo classInfo, VaubanIndex index) {
-        for (var a : classInfo.annotations()) {
-            if (isNormalScope(a.name(), index)) return true;
-            // Check stereotypes
-            if (isStereotype(a.name(), index)) {
-                var stereoClass = index.getClassByName(a.name());
-                if (stereoClass.isPresent()) {
-                    for (var sa : stereoClass.get().annotations()) {
-                        if (isNormalScope(sa.name(), index)) return true;
-                    }
-                }
-            }
-        }
-        return false;
-    }
-
-    private static boolean isNormalScope(DotName name, VaubanIndex index) {
-        if (BUILT_IN_NORMAL_SCOPES.contains(name)) return true;
-        var annClass = index.getClassByName(name);
-        return annClass.isPresent() && annClass.get().hasAnnotation(NORMAL_SCOPE);
-    }
-
-    private static boolean isInterceptorBinding(DotName name, VaubanIndex index) {
-        var annClass = index.getClassByName(name);
-        return annClass.isPresent() && annClass.get().hasAnnotation(INTERCEPTOR_BINDING);
-    }
-
-    private static boolean hasInterceptorBindings(ClassInfo classInfo, VaubanIndex index) {
-        for (var ann : classInfo.annotations()) {
-            if (isInterceptorBinding(ann.name(), index)) return true;
-            var annClass = index.getClassByName(ann.name());
-            if (annClass.isPresent() && annClass.get().hasAnnotation(STEREOTYPE)) {
-                for (var stereoAnn : annClass.get().annotations()) {
-                    if (isInterceptorBinding(stereoAnn.name(), index)) return true;
-                }
-            }
-        }
-        return false;
-    }
 }
