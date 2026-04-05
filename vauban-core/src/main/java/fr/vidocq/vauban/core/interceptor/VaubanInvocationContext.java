@@ -30,6 +30,7 @@ public final class VaubanInvocationContext implements InvocationContext {
      */
     @FunctionalInterface
     public interface TargetInvoker {
+        @SuppressWarnings("java:S112") // CDI spec: container exceptions propagate as RuntimeException
         Object invoke(Object target, Object[] params) throws Exception;
     }
 
@@ -293,7 +294,7 @@ public final class VaubanInvocationContext implements InvocationContext {
      * Represents one interceptor in the chain.
      */
     public record InterceptorInvocation(Object target, Method method) {
-        @SuppressWarnings("java:S3011") // CDI spec requires reflective access
+        @SuppressWarnings({"java:S3011", "java:S112"}) // CDI spec requires reflective access; container exceptions propagate as RuntimeException
         public Object invoke(InvocationContext ctx) throws Exception {
             try {
                 method.setAccessible(true);

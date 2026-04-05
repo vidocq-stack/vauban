@@ -10,7 +10,9 @@ import java.util.Map;
 import java.util.Set;
 
 public class TypeHierarchyResolver {
-    
+
+    private TypeHierarchyResolver() {}
+
     public static Set<Type> resolveAllSupertypes(Type type) {
         Set<Type> result = new LinkedHashSet<>();
         resolveInternal(type, new HashMap<>(), result);

@@ -34,6 +34,7 @@ public final class VaubanInvoker implements Invoker<Object, Object>, InvokerInfo
     }
 
     @Override
+    @SuppressWarnings("java:S112") // CDI spec: container exceptions propagate as RuntimeException
     public Object invoke(Object instance, Object[] arguments) throws Exception {
         var cdi = CDI.current();
         List<Runnable> cleanups = new ArrayList<>();

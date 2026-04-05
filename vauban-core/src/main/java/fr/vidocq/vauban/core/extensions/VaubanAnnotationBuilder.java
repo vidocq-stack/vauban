@@ -287,6 +287,7 @@ public final class VaubanAnnotationBuilder implements AnnotationBuilder {
         return new BuiltAnnotationInfo(annotationType, allMembers);
     }
 
+    @SuppressWarnings("java:S112") // CDI spec: container exceptions propagate as RuntimeException
     private AnnotationInfo convertAnnotation(Annotation annotation) {
         Class<? extends Annotation> type = annotation.annotationType();
         var builder = new VaubanAnnotationBuilder(type);

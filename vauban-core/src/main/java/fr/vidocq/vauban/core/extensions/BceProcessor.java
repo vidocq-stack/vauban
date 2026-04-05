@@ -92,6 +92,7 @@ public final class BceProcessor {
         return process(bceClasses, beans, List.of(), List.of(), index, classLoader, bceInstances, allArchiveClasses);
     }
 
+    @SuppressWarnings("java:S107") // CDI BCE processing requires multiple contextual parameters
     public static Result process(List<Class<?>> bceClasses,
                                  List<BeanDescriptor> beans,
                                  List<fr.vidocq.vauban.core.bean.model.ObserverDescriptor> observers,
@@ -142,7 +143,7 @@ public final class BceProcessor {
         return new Result(allSyntheticBeans, allSyntheticObservers, definitionErrors, deploymentErrors, allEnhancementMods);
     }
 
-    @SuppressWarnings("java:S3011") // CDI spec requires reflective access
+    @SuppressWarnings({"java:S3011", "java:S112"}) // CDI spec requires reflective access; container exceptions propagate as RuntimeException
     private static Object instantiateBce(Class<?> bceClass) throws Exception {
         var ctor = bceClass.getDeclaredConstructor();
         ctor.setAccessible(true);
@@ -168,7 +169,7 @@ public final class BceProcessor {
         return EnhancementParamKind.CLASS_CONFIG; // fallback
     }
 
-    @SuppressWarnings({"java:S3011", "java:S135"}) // CDI spec requires reflective access
+    @SuppressWarnings({"java:S3011", "java:S135", "java:S107"}) // CDI spec requires reflective access; BCE processing requires multiple contextual parameters
     private static void processEnhancement(Object bce, Class<?> bceClass,
                                            List<BeanDescriptor> beans,
                                            List<Class<?>> archiveClasses,
@@ -248,9 +249,9 @@ public final class BceProcessor {
                 }
             }
         } catch (Exception e) {
-            var cause = e instanceof java.lang.reflect.InvocationTargetException ite
-                    ? (ite.getCause() != null ? ite.getCause() : ite) : e;
-            errors.add("@Enhancement error: " + cause.getMessage());
+            var unwrapped = e instanceof java.lang.reflect.InvocationTargetException ite
+                    ? java.util.Objects.requireNonNullElse(ite.getCause(), ite) : e;
+            errors.add("@Enhancement error: " + unwrapped.getMessage());
         }
     }
 
@@ -305,6 +306,7 @@ public final class BceProcessor {
         return false;
     }
 
+    @SuppressWarnings("java:S112") // CDI spec: container exceptions propagate as RuntimeException
     private static void invokeWithArg(Method method, Object bce, Class<?> targetType, Object arg) throws Exception {
         var params = method.getParameters();
         var args = new Object[params.length];
@@ -321,7 +323,7 @@ public final class BceProcessor {
     /**
      * Process @Registration methods — main phase for Invokers.
      */
-    @SuppressWarnings({"java:S3011", "java:S135"}) // CDI spec requires reflective access
+    @SuppressWarnings({"java:S3011", "java:S135", "java:S107"}) // CDI spec requires reflective access; BCE processing requires multiple contextual parameters
     private static void processRegistration(Object bce, Class<?> bceClass,
                                             List<BeanDescriptor> beans,
                                             List<fr.vidocq.vauban.core.bean.model.ObserverDescriptor> observers,
@@ -790,7 +792,7 @@ public final class BceProcessor {
                 result.add(bean);
                 continue;
             }
-            result.add(applyClassConfigs(bean, configs, index));
+            result.add(applyClassConfigs(bean, configs));
         }
         return result;
     }
@@ -890,8 +892,7 @@ public final class BceProcessor {
         );
     }
 
-    private static BeanDescriptor applyClassConfigs(BeanDescriptor bean, List<VaubanClassConfig> configs,
-                                                     VaubanIndex index) {
+    private static BeanDescriptor applyClassConfigs(BeanDescriptor bean, List<VaubanClassConfig> configs) {
         var qualifiers = new LinkedHashSet<>(bean.qualifiers());
         var interceptorBindings = new LinkedHashSet<>(bean.interceptorBindings());
         var interceptorBindingAnnotations = new ArrayList<>(bean.interceptorBindingAnnotations());
@@ -1105,9 +1106,7 @@ public final class BceProcessor {
     private static Method[] getDeclaredMethodsSafe(Class<?> cls) {
         var methods = new ArrayList<Method>();
         for (var c = cls; c != null && c != Object.class; c = c.getSuperclass()) {
-            for (var m : c.getDeclaredMethods()) {
-                methods.add(m);
-            }
+            Collections.addAll(methods, c.getDeclaredMethods());
         }
         methods.sort(Comparator.comparingInt(BceProcessor::getMethodPriority));
         return methods.toArray(new Method[0]);

@@ -51,10 +51,6 @@ public final class InterceptorManager {
         return currentInstance;
     }
 
-    {
-        currentInstance = this;
-    }
-
     public static boolean $$isIntercepting() {
         return IS_INTERCEPTING.get();
     }
@@ -91,6 +87,7 @@ public final class InterceptorManager {
 
     public InterceptorManager(List<InterceptorDescriptor> interceptors) {
         this.interceptors = List.copyOf(interceptors);
+        currentInstance = this;
     }
 
     public void setInstanceFactory(BiFunction<InterceptorDescriptor, CreationalContext<?>, Object> factory) {
@@ -402,7 +399,7 @@ public final class InterceptorManager {
             var chain = resolveChain(allBindingNames, beanAnnotations, ctx);
 
             // CDI spec: target class @AroundInvoke methods are invoked last, after external interceptors
-            if (target != null && beanClass != null) {
+            if (target != null) {
                 addLifecycleInvocations(beanClass, target, jakarta.interceptor.AroundInvoke.class, chain);
             }
 
@@ -679,6 +676,7 @@ public final class InterceptorManager {
 
     private ClassLoader classLoader;
 
+    @SuppressWarnings("java:S112") // CDI spec: container exceptions propagate as RuntimeException
     public Object getOrCreateInstance(InterceptorDescriptor descriptor, CreationalContext<?> ctx) {
         if (instanceFactory != null) {
             return instanceFactory.apply(descriptor, ctx);

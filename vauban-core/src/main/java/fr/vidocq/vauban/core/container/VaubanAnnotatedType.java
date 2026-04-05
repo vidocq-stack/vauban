@@ -15,6 +15,7 @@ import java.lang.reflect.Modifier;
 import java.lang.reflect.Parameter;
 import java.lang.reflect.Type;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
@@ -22,6 +23,7 @@ import java.util.Set;
 /**
  * Reflection-based AnnotatedType implementation for Vauban.
  */
+@SuppressWarnings("java:S6206") // Cannot be a record: implements AnnotatedType with behavior
 public final class VaubanAnnotatedType<T> implements AnnotatedType<T> {
 
     private final Class<T> javaClass;
@@ -37,7 +39,7 @@ public final class VaubanAnnotatedType<T> implements AnnotatedType<T> {
 
     @Override
     public Type getBaseType() {
-        return javaClass;
+        return getJavaClass();
     }
 
     @Override
@@ -78,9 +80,7 @@ public final class VaubanAnnotatedType<T> implements AnnotatedType<T> {
             types.add(current);
             current = current.getSuperclass();
         }
-        for (var iface : javaClass.getInterfaces()) {
-            types.add(iface);
-        }
+        Collections.addAll(types, javaClass.getInterfaces());
         types.add(Object.class);
         return types;
     }

@@ -41,7 +41,7 @@ public final class VaubanInjectionPoint implements InjectionPoint {
         this.qualifiers = extractQualifiers(field);
         this.bean = bean;
         this.member = field;
-        this.annotated = new SimpleAnnotatedField(field, this.type, this.qualifiers);
+        this.annotated = new SimpleAnnotatedField(field, this.type);
     }
 
     /**
@@ -60,7 +60,7 @@ public final class VaubanInjectionPoint implements InjectionPoint {
         this.bean = bean;
         this.member = member;
         this.annotated = (member instanceof Field f)
-                ? new SimpleAnnotatedField(f, type, qualifiers)
+                ? new SimpleAnnotatedField(f, type)
                 : new SimpleAnnotatedMember(member, type, qualifiers);
     }
 
@@ -74,7 +74,7 @@ public final class VaubanInjectionPoint implements InjectionPoint {
         this.qualifiers = Set.copyOf(qualifiers);
         this.bean = bean;
         this.member = executable;
-        this.annotated = new SimpleAnnotatedParameter(param, position, executable, genericType, qualifiers);
+        this.annotated = new SimpleAnnotatedParameter(param, position, genericType);
     }
 
     @Override
@@ -196,7 +196,7 @@ public final class VaubanInjectionPoint implements InjectionPoint {
         private final Field field;
         private final Type type;
 
-        SimpleAnnotatedField(Field field, Type type, Set<Annotation> qualifiers) {
+        SimpleAnnotatedField(Field field, Type type) {
             this.field = field;
             this.type = type;
         }
@@ -249,8 +249,7 @@ public final class VaubanInjectionPoint implements InjectionPoint {
         private final int position;
         private final Type type;
 
-        SimpleAnnotatedParameter(java.lang.reflect.Parameter param, int position,
-                java.lang.reflect.Executable executable, Type type, Set<Annotation> qualifiers) {
+        SimpleAnnotatedParameter(java.lang.reflect.Parameter param, int position, Type type) {
             this.param = param;
             this.position = position;
             this.type = type;

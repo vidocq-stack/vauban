@@ -10,6 +10,7 @@ import java.util.Optional;
 /**
  * Provides index lookup for lang model implementations.
  */
+@SuppressWarnings("java:S6206") // Cannot be a record: provides mutable lookup behavior
 public final class IndexLookup {
 
     private final VaubanIndex index;

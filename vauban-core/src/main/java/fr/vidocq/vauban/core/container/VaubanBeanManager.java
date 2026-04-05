@@ -430,12 +430,12 @@ public final class VaubanBeanManager implements BeanManager {
 
     @Override
     public Object getInjectableReference(InjectionPoint ij, CreationalContext<?> ctx) {
-        var beans = getBeans(ij.getType(), ij.getQualifiers().toArray(new Annotation[0]));
-        if (beans.isEmpty()) {
+        var matchingBeans = getBeans(ij.getType(), ij.getQualifiers().toArray(new Annotation[0]));
+        if (matchingBeans.isEmpty()) {
             throw new jakarta.enterprise.inject.UnsatisfiedResolutionException(
                     "No bean for injection point: " + ij);
         }
-        var bean = resolve(beans);
+        var bean = resolve(matchingBeans);
         var previousIp = VaubanContainer.getCurrentInjectionPoint();
         VaubanContainer.setInjectionPoint(ij);
         try {
@@ -457,14 +457,14 @@ public final class VaubanBeanManager implements BeanManager {
 
     @Override
     public void validate(InjectionPoint injectionPoint) {
-        var beans = getBeans(injectionPoint.getType(),
+        var candidateBeans = getBeans(injectionPoint.getType(),
                 injectionPoint.getQualifiers().toArray(new Annotation[0]));
-        if (beans.isEmpty()) {
+        if (candidateBeans.isEmpty()) {
             throw new jakarta.enterprise.inject.UnsatisfiedResolutionException(
                     "Unsatisfied: " + injectionPoint);
         }
-        if (beans.size() > 1) {
-            var resolved = resolve(beans);
+        if (candidateBeans.size() > 1) {
+            var resolved = resolve(candidateBeans);
             if (resolved == null) {
                 throw new jakarta.enterprise.inject.AmbiguousResolutionException(
                         "Ambiguous: " + injectionPoint);
@@ -572,18 +572,14 @@ public final class VaubanBeanManager implements BeanManager {
     @Override
     public Set<Annotation> getInterceptorBindingDefinition(Class<? extends Annotation> bindingType) {
         var result = new LinkedHashSet<Annotation>();
-        for (var ann : bindingType.getAnnotations()) {
-            result.add(ann);
-        }
+        Collections.addAll(result, bindingType.getAnnotations());
         return result;
     }
 
     @Override
     public Set<Annotation> getStereotypeDefinition(Class<? extends Annotation> stereotype) {
         var result = new LinkedHashSet<Annotation>();
-        for (var ann : stereotype.getAnnotations()) {
-            result.add(ann);
-        }
+        Collections.addAll(result, stereotype.getAnnotations());
         return result;
     }
 
@@ -856,8 +852,9 @@ public final class VaubanBeanManager implements BeanManager {
         if (beanType.equals(requiredType)) return true;
 
         // Primitive <-> wrapper matching
-        if (requiredType instanceof Class<?> reqClass && beanType instanceof Class<?> btClass) {
-            if (isPrimitiveWrapperMatch(reqClass, btClass)) return true;
+        if (requiredType instanceof Class<?> reqClass && beanType instanceof Class<?> btClass
+                && isPrimitiveWrapperMatch(reqClass, btClass)) {
+            return true;
         }
 
         // CDI 4.1 Section 5.2.5: raw types must be identical
@@ -1012,7 +1009,7 @@ public final class VaubanBeanManager implements BeanManager {
         var result = new java.util.ArrayList<Type>();
         for (Type b : bounds) {
             if (b instanceof java.lang.reflect.TypeVariable<?> nested) {
-                for (Type nb : resolvedBounds(nested)) result.add(nb);
+                Collections.addAll(result, resolvedBounds(nested));
             } else if (b != Object.class) {
                 result.add(b);
             }

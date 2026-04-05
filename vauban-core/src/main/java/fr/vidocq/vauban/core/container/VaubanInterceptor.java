@@ -129,6 +129,7 @@ public final class VaubanInterceptor<T> implements Interceptor<T> {
     }
 
     @Override
+    @SuppressWarnings("java:S112") // CDI spec: container exceptions propagate as RuntimeException
     public T create(CreationalContext<T> creationalContext) {
         try {
             return interceptorClass.getDeclaredConstructor().newInstance();

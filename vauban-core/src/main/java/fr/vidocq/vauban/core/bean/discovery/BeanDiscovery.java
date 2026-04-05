@@ -1178,6 +1178,7 @@ public final class BeanDiscovery {
      * Returns annotations inherited from superclasses (those NOT declared directly on classInfo).
      * Uses Java reflection — Class.getAnnotations() handles @Inherited automatically per JLS.
      */
+    @SuppressWarnings("java:S1141") // Nested try needed for classloader fallback
     private List<java.lang.annotation.Annotation> getInheritedAnnotations(ClassInfo classInfo) {
         try {
             // Use TCCL first (TCK sets this to its custom ClassLoader), fallback to system
