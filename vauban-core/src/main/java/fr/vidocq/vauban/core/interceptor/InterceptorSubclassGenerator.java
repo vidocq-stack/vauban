@@ -1,7 +1,5 @@
 package fr.vidocq.vauban.core.interceptor;
 
-import fr.vidocq.vauban.indexer.model.DotName;
-
 import java.lang.classfile.ClassFile;
 import java.lang.classfile.CodeBuilder;
 import java.lang.constant.ClassDesc;
@@ -9,7 +7,6 @@ import java.lang.constant.ConstantDescs;
 import java.lang.constant.MethodTypeDesc;
 import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
-import java.util.Set;
 
 /**
  * Generates intercepted bean subclasses using the JDK 25 Class-File API.
@@ -26,7 +23,6 @@ public final class InterceptorSubclassGenerator {
     private static final ClassDesc CD_VaubanInvocationContext =
             ClassDesc.of("fr.vidocq.vauban.core.interceptor.VaubanInvocationContext");
     private static final ClassDesc CD_Set = ClassDesc.of("java.util.Set");
-    private static final ClassDesc CD_DotName = ClassDesc.of("fr.vidocq.vauban.indexer.model.DotName");
     private static final ClassDesc CD_Object = ConstantDescs.CD_Object;
     private static final ClassDesc CD_Method = ClassDesc.of("java.lang.reflect.Method");
     private static final ClassDesc CD_Constructor = ClassDesc.of("java.lang.reflect.Constructor");
@@ -45,7 +41,7 @@ public final class InterceptorSubclassGenerator {
      * @param bindings the interceptor bindings on this bean
      * @return the generated class name and bytecode
      */
-    public static GeneratedInterceptedClass generate(Class<?> beanClass, Set<DotName> bindings, Set<DotName> constructorBindings) {
+    public static GeneratedInterceptedClass generate(Class<?> beanClass) {
         String beanClassName = beanClass.getName();
         String subclassName = beanClassName + "$$Intercepted";
         boolean dump = false;
@@ -116,7 +112,7 @@ public final class InterceptorSubclassGenerator {
             var interceptedMethods = new java.util.LinkedHashSet<String>();
             for (var method : beanClass.getDeclaredMethods()) {
                 if (shouldIntercept(method)) {
-                    generateSuperBridge(clb, subclassCD, beanCD, method);
+                    generateSuperBridge(clb, beanCD, method);
                     generateInterceptedMethod(clb, subclassCD, beanCD, method);
                     interceptedMethods.add(method.getName() + java.util.Arrays.toString(method.getParameterTypes()));
                 }
@@ -128,7 +124,7 @@ public final class InterceptorSubclassGenerator {
                 var key = method.getName() + java.util.Arrays.toString(method.getParameterTypes());
                 if (interceptedMethods.contains(key)) continue; // already intercepted
                 if (shouldIntercept(method)) {
-                    generateSuperBridge(clb, subclassCD, beanCD, method);
+                    generateSuperBridge(clb, beanCD, method);
                     generateInterceptedMethod(clb, subclassCD, beanCD, method);
                     interceptedMethods.add(key);
                 }
@@ -143,7 +139,7 @@ public final class InterceptorSubclassGenerator {
      * to invoke the original method without infinite recursion.
      */
     private static void generateSuperBridge(java.lang.classfile.ClassBuilder clb,
-            ClassDesc subclassCD, ClassDesc beanCD, Method method) {
+            ClassDesc beanCD, Method method) {
         var returnCD = classDescOf(method.getReturnType());
         var paramCDs = new ClassDesc[method.getParameterCount()];
         for (int i = 0; i < paramCDs.length; i++) {
@@ -412,5 +408,17 @@ public final class InterceptorSubclassGenerator {
         return primitive;
     }
 
-    public record GeneratedInterceptedClass(String className, byte[] bytecode) {}
+    public record GeneratedInterceptedClass(String className, byte[] bytecode) {
+        @Override public boolean equals(Object o) {
+            return o instanceof GeneratedInterceptedClass g
+                    && className.equals(g.className)
+                    && java.util.Arrays.equals(bytecode, g.bytecode);
+        }
+        @Override public int hashCode() {
+            return className.hashCode() ^ java.util.Arrays.hashCode(bytecode);
+        }
+        @Override public String toString() {
+            return "GeneratedInterceptedClass[" + className + ", " + bytecode.length + " bytes]";
+        }
+    }
 }

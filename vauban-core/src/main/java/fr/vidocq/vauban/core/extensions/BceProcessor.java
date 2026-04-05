@@ -133,7 +133,8 @@ public final class BceProcessor {
                 processValidation(bce, bceClass, types, deploymentErrors);
 
             } catch (Exception e) {
-                deploymentErrors.add("BCE processing failed for " + bceClass.getName() + ": " + e.getMessage());
+                var className = bceClass != null ? bceClass.getName() : "unknown";
+                deploymentErrors.add("BCE processing failed for " + className + ": " + e.getMessage());
             }
         }
 
@@ -194,7 +195,7 @@ public final class BceProcessor {
                 for (var archiveClass : archiveClasses) {
                     var className = DotName.of(archiveClass.getName());
                     if (processedClasses.contains(className)) continue;
-                    if (!matchesClass(enhancement.types(), enhancement.withSubtypes(), archiveClass, classLoader)) continue;
+                    if (!matchesClass(enhancement.types(), enhancement.withSubtypes(), archiveClass)) continue;
                     if (!matchesAnnotations(withAnnotations, archiveClass)) continue;
                     invokeEnhancement(method, bce, paramKind, className, lookup, errors, modifications);
                 }
@@ -259,7 +260,7 @@ public final class BceProcessor {
     }
 
     /** Check if a class matches Enhancement types filter. */
-    private static boolean matchesClass(Class<?>[] types, boolean withSubtypes, Class<?> targetClass, ClassLoader classLoader) {
+    private static boolean matchesClass(Class<?>[] types, boolean withSubtypes, Class<?> targetClass) {
         for (var type : types) {
             if (withSubtypes) {
                 if (type.isAssignableFrom(targetClass)) return true;
@@ -335,7 +336,7 @@ public final class BceProcessor {
                 for (var observer : observers) {
                     if (!matchesObserverTypes(registration.types(), observer, classLoader)) continue;
                     var observerInfo = new VaubanBceObserverInfo(observer, lookup);
-                    invokeRegistrationMethodWithObserver(method, bce, observerInfo, classLoader, types, errors);
+                    invokeRegistrationMethodWithObserver(method, bce, observerInfo, types, errors);
                 }
                 continue;
             }
@@ -369,8 +370,7 @@ public final class BceProcessor {
             // If no beans matched and method doesn't use InvokerFactory, try archive classes
             if (!matched && allArchiveClasses != null && !usesInvokerFactory(method)) {
                 for (var archiveClass : allArchiveClasses) {
-                    if (!matchesClass(registration.types(), true, archiveClass, classLoader)) continue;
-                    matched = true;
+                    if (!matchesClass(registration.types(), true, archiveClass)) continue;
 
                     var className = DotName.of(archiveClass.getName());
                     var indexClass = lookup.getClass(className).orElse(null);
@@ -422,7 +422,7 @@ public final class BceProcessor {
     }
 
     private static void invokeRegistrationMethodWithObserver(Method method, Object bce,
-                                                              VaubanBceObserverInfo observerInfo, ClassLoader classLoader,
+                                                              VaubanBceObserverInfo observerInfo,
                                                               VaubanTypes types, List<String> errors) {
         var messages = new VaubanMessages();
         var params = method.getParameters();
@@ -517,7 +517,7 @@ public final class BceProcessor {
                         if (paramType.isAssignableFrom(beanClass)) {
                             matchCount++;
                         }
-                    } catch (ClassNotFoundException ignored) {
+                    } catch (ClassNotFoundException ignored) { // intentionally empty
                     }
                 }
 
@@ -928,7 +928,7 @@ public final class BceProcessor {
             // Field-level modifications -> update injection points
             for (var fieldConfig : config.getFieldConfigs()) {
                 if (!fieldConfig.isModified()) continue;
-                applyFieldEnhancement(fieldConfig, injectionPoints, index);
+                applyFieldEnhancement(fieldConfig, injectionPoints);
             }
 
             // Method-level modifications -> update interceptor bindings
@@ -939,7 +939,7 @@ public final class BceProcessor {
                 // Parameter-level modifications -> update observer/injection qualifiers
                 for (var paramConfig : methodConfig.getParameterConfigs()) {
                     if (!paramConfig.isModified()) continue;
-                    applyParameterEnhancement(paramConfig, methodConfig.info().name(), injectionPoints);
+                    applyParameterEnhancement();
                 }
             }
         }
@@ -959,8 +959,7 @@ public final class BceProcessor {
     }
 
     private static void applyFieldEnhancement(VaubanFieldConfig fieldConfig,
-                                               List<InjectionPointInfo> injectionPoints,
-                                               VaubanIndex index) {
+                                               List<InjectionPointInfo> injectionPoints) {
         String fieldName = fieldConfig.info().name();
 
         for (int i = 0; i < injectionPoints.size(); i++) {
@@ -1016,14 +1015,14 @@ public final class BceProcessor {
                 try {
                     var proxy = createAnnotationProxy(built);
                     if (proxy != null) interceptorBindingAnnotations.add(proxy);
-                } catch (Exception ignored) {}
+                } catch (Exception ignored) {
+                    // intentionally empty
+                }
             }
         }
     }
 
-    private static void applyParameterEnhancement(VaubanParameterConfig paramConfig,
-                                                    String methodName,
-                                                    List<InjectionPointInfo> injectionPoints) {
+    private static void applyParameterEnhancement() {
         // Parameter modifications affect observer qualifiers, handled via observer descriptors
         // For now this is mainly used by ChangeObserverQualifierTest which modifies observer parameters
         // The actual observer modification happens in the observer discovery phase

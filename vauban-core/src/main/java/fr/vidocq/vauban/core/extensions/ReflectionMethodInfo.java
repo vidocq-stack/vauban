@@ -15,11 +15,9 @@ import java.util.function.Predicate;
 final class ReflectionMethodInfo implements jakarta.enterprise.lang.model.declarations.MethodInfo {
 
     private final Method method;
-    private final Class<?> declaringClass;
 
     ReflectionMethodInfo(Method method, Class<?> declaringClass) {
         this.method = method;
-        this.declaringClass = declaringClass;
     }
 
     @Override

@@ -70,8 +70,8 @@ public final class RequestContext implements AlterableContext {
         for (var entry : new HashMap<>(map).entrySet()) {
             destroy(entry.getKey());
         }
-        map.clear();
-        active.set(false);
+        instances.remove();
+        active.remove();
     }
 
     private void checkActive() {

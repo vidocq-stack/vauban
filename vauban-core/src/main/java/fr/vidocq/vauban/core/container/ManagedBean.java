@@ -449,7 +449,7 @@ public final class ManagedBean<T> implements Bean<T> {
                 case fr.vidocq.vauban.indexer.model.TypeInfo.PrimitiveType ptt -> {
                     types.add(primitiveClass(ptt.kind()));
                 }
-                default -> {}
+                default -> { /* intentionally empty */ }
             }
         }
         types.add(Object.class);

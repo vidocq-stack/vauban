@@ -160,5 +160,17 @@ public final class RuntimeClientProxyGenerator {
         }
     }
 
-    public record GeneratedProxy(String className, byte[] bytecode) {}
+    public record GeneratedProxy(String className, byte[] bytecode) {
+        @Override public boolean equals(Object o) {
+            return o instanceof GeneratedProxy g
+                    && className.equals(g.className)
+                    && java.util.Arrays.equals(bytecode, g.bytecode);
+        }
+        @Override public int hashCode() {
+            return className.hashCode() ^ java.util.Arrays.hashCode(bytecode);
+        }
+        @Override public String toString() {
+            return "GeneratedProxy[" + className + ", " + bytecode.length + " bytes]";
+        }
+    }
 }

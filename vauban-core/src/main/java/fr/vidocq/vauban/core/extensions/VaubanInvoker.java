@@ -101,7 +101,11 @@ public final class VaubanInvoker implements Invoker<Object, Object>, InvokerInfo
             }
         } finally {
             for (var cleanup : cleanups) {
-                try { cleanup.run(); } catch (Exception ignored) {}
+                try {
+                    cleanup.run();
+                } catch (Exception ignored) {
+                    // intentionally empty
+                }
             }
         }
     }

@@ -39,7 +39,7 @@ public final class VaubanClassInfo implements jakarta.enterprise.lang.model.decl
     @Override
     public jakarta.enterprise.lang.model.declarations.PackageInfo packageInfo() {
         String pkg = indexClass.name().packageName();
-        return pkg.isEmpty() ? null : new VaubanPackageInfo(pkg, lookup);
+        return pkg.isEmpty() ? null : new VaubanPackageInfo(pkg);
     }
 
     @Override

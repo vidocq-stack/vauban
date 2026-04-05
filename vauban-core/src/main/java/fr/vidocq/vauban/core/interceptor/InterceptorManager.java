@@ -362,9 +362,6 @@ public final class InterceptorManager {
      */
     public List<VaubanInvocationContext.InterceptorInvocation> resolveChainForMethod(
             Set<DotName> classBindings, java.lang.reflect.Method method, Object target, CreationalContext<?> ctx) {
-        // If we are currently in AroundConstruct, reuse its context if none provided
-        var effectiveCtx = ctx != null ? ctx : $$getAroundConstructContext();
-        
         Class<?> beanClass = null;
         if (method != null) {
             // Use the target class if available, as class-level bindings on the bean
@@ -398,7 +395,7 @@ public final class InterceptorManager {
             allBindingNames.addAll(classBindings);
             
             var beanAnnotations = new java.util.ArrayList<>(bindingsMap.values());
-            var chain = resolveChain(allBindingNames, beanAnnotations, target, ctx);
+            var chain = resolveChain(allBindingNames, beanAnnotations, ctx);
 
             // CDI spec: target class @AroundInvoke methods are invoked last, after external interceptors
             if (target != null && beanClass != null) {
@@ -471,20 +468,15 @@ public final class InterceptorManager {
      * Find interceptors that apply to a bean method based on binding annotations.
      */
     public List<VaubanInvocationContext.InterceptorInvocation> resolveChain(
-            Set<DotName> methodBindings, List<java.lang.annotation.Annotation> beanAnnotations, CreationalContext<?> ctx) {
-        return resolveChain(methodBindings, beanAnnotations, null, ctx);
-    }
-
-    public List<VaubanInvocationContext.InterceptorInvocation> resolveChain(
             Set<DotName> methodBindings, CreationalContext<?> ctx) {
-        return resolveChain(methodBindings, List.of(), null, ctx);
+        return resolveChain(methodBindings, List.of(), ctx);
     }
 
     /**
      * Find interceptors with member value comparison.
      */
     public List<VaubanInvocationContext.InterceptorInvocation> resolveChain(
-            Set<DotName> methodBindings, List<java.lang.annotation.Annotation> beanAnnotations, Object target, CreationalContext<?> ctx) {
+            Set<DotName> methodBindings, List<java.lang.annotation.Annotation> beanAnnotations, CreationalContext<?> ctx) {
         var effectiveCtx = ctx != null ? ctx : $$getAroundConstructContext();
         var matches = new ArrayList<InterceptorDescriptor>();
 
@@ -713,26 +705,6 @@ public final class InterceptorManager {
         } catch (Exception e) {
             throw new RuntimeException("Failed to create interceptor: " + className, e);
         }
-    }
-
-    private Method findAroundInvokeMethod(Class<?> clazz, String methodName) {
-        if (methodName == null) {
-            // Fallback: search for any @AroundInvoke method in the class hierarchy
-            return findAnnotatedMethod(clazz, jakarta.interceptor.AroundInvoke.class);
-        }
-        // Search by name in class hierarchy
-        var current = clazz;
-        while (current != null && current != Object.class) {
-            for (var method : current.getDeclaredMethods()) {
-                if (method.getName().equals(methodName)) {
-                    method.setAccessible(true);
-                    return method;
-                }
-            }
-            current = current.getSuperclass();
-        }
-        // Still not found — try by @AroundInvoke annotation
-        return findAnnotatedMethod(clazz, jakarta.interceptor.AroundInvoke.class);
     }
 
     private Method findAnnotatedMethod(Class<?> clazz, Class<? extends java.lang.annotation.Annotation> annotation) {

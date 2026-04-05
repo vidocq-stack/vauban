@@ -1457,7 +1457,7 @@ public final class VaubanContainer implements AutoCloseable {
                 
                 // Generate the intercepted subclass
                 var generated = fr.vidocq.vauban.core.interceptor.InterceptorSubclassGenerator
-                        .generate(beanClass, classBindings, descriptor.constructorBindings());
+                        .generate(beanClass);
 
                 try {
                     Class<?> interceptedClass;
@@ -1663,7 +1663,7 @@ public final class VaubanContainer implements AutoCloseable {
                     // MethodHandles.privateLookupIn may fail for custom classloaders
                     // Fallback: define class via bean's classloader directly
                     var generated2 = fr.vidocq.vauban.core.interceptor.InterceptorSubclassGenerator
-                            .generate(beanClass, bindings, descriptor.constructorBindings());
+                            .generate(beanClass);
                     
                     Class<?> interceptedClass2;
                     try {

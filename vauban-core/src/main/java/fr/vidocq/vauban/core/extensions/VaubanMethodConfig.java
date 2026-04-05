@@ -49,7 +49,9 @@ public final class VaubanMethodConfig implements MethodConfig {
         try {
             addedAnnotations.add(annotation.annotationType());
             addedAnnotationInstances.add(annotation);
-        } catch (Exception ignored) {}
+        } catch (Exception ignored) {
+            // intentionally empty
+        }
         return this;
     }
 

@@ -1,6 +1,5 @@
 package fr.vidocq.vauban.core.langmodel.declarations;
 
-import fr.vidocq.vauban.core.langmodel.IndexLookup;
 import jakarta.enterprise.lang.model.AnnotationInfo;
 
 import java.lang.annotation.Annotation;
@@ -11,11 +10,9 @@ import java.util.function.Predicate;
 public final class VaubanPackageInfo implements jakarta.enterprise.lang.model.declarations.PackageInfo {
 
     private final String packageName;
-    private final IndexLookup lookup;
 
-    public VaubanPackageInfo(String packageName, IndexLookup lookup) {
+    public VaubanPackageInfo(String packageName) {
         this.packageName = packageName;
-        this.lookup = lookup;
     }
 
     @Override

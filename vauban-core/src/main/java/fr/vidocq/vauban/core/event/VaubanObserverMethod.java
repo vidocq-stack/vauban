@@ -140,6 +140,13 @@ public final class VaubanObserverMethod<T> implements ObserverMethod<T> {
         @Override public int hashCode() {
             return java.util.Arrays.hashCode(upperBounds) ^ java.util.Arrays.hashCode(lowerBounds);
         }
+        @Override public String toString() {
+            if (lowerBounds.length > 0) {
+                return "? super " + lowerBounds[0].getTypeName();
+            }
+            if (upperBounds.length == 1 && upperBounds[0] == Object.class) return "?";
+            return "? extends " + upperBounds[0].getTypeName();
+        }
     }
 
     @SuppressWarnings("unchecked")

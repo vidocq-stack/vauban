@@ -175,5 +175,14 @@ public final class VaubanSyntheticObserverBuilder<T> implements SyntheticObserve
         @Override public int hashCode() {
             return java.util.Arrays.hashCode(typeArguments) ^ java.util.Objects.hashCode(rawType);
         }
+        @Override public String toString() {
+            if (typeArguments.length == 0) return rawType.getTypeName();
+            var sb = new StringBuilder(rawType.getTypeName()).append('<');
+            for (int i = 0; i < typeArguments.length; i++) {
+                if (i > 0) sb.append(", ");
+                sb.append(typeArguments[i].getTypeName());
+            }
+            return sb.append('>').toString();
+        }
     }
 }

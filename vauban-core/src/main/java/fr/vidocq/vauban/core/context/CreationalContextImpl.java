@@ -82,8 +82,8 @@ public final class CreationalContextImpl<T> implements CreationalContext<T> {
             try {
                 contextual.destroy(instance, ctx);
             } catch (Exception e) {
-                System.out.println("Exception destroying dependent instance:");
-                e.printStackTrace(System.out);
+                System.Logger logger = System.getLogger(DependentInstance.class.getName());
+                logger.log(System.Logger.Level.WARNING, "Exception destroying dependent instance", e);
             }
         }
     }

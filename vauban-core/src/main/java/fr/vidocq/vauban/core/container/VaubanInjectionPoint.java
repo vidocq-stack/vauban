@@ -196,12 +196,10 @@ public final class VaubanInjectionPoint implements InjectionPoint {
     private static final class SimpleAnnotatedField implements jakarta.enterprise.inject.spi.AnnotatedField<Object> {
         private final Field field;
         private final Type type;
-        private final Set<Annotation> qualifiers;
 
         SimpleAnnotatedField(Field field, Type type, Set<Annotation> qualifiers) {
             this.field = field;
             this.type = type;
-            this.qualifiers = qualifiers;
         }
 
         @Override public Field getJavaMember() { return field; }
@@ -250,17 +248,13 @@ public final class VaubanInjectionPoint implements InjectionPoint {
     private static final class SimpleAnnotatedParameter implements jakarta.enterprise.inject.spi.AnnotatedParameter<Object> {
         private final java.lang.reflect.Parameter param;
         private final int position;
-        private final java.lang.reflect.Executable executable;
         private final Type type;
-        private final Set<Annotation> qualifiers;
 
         SimpleAnnotatedParameter(java.lang.reflect.Parameter param, int position,
                 java.lang.reflect.Executable executable, Type type, Set<Annotation> qualifiers) {
             this.param = param;
             this.position = position;
-            this.executable = executable;
             this.type = type;
-            this.qualifiers = qualifiers;
         }
 
         @Override public int getPosition() { return position; }
