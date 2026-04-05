@@ -17,7 +17,7 @@ import java.util.function.Predicate;
 /**
  * Manages interceptor resolution and instance lifecycle.
  */
-@SuppressWarnings("java:S100") // $$ methods are CDI container conventions for generated code
+@SuppressWarnings({"java:S100", "java:S3776"}) // $$ methods are CDI container conventions for generated code
 public final class InterceptorManager {
 
     private static final String INTERCEPTED_SUFFIX = "$$Intercepted";

@@ -15,6 +15,7 @@ import java.util.Set;
 /**
  * Validates a CDI deployment. Reports all errors at once (don't fail fast).
  */
+@SuppressWarnings("java:S3776") // CDI container logic has inherent complexity
 public final class DeploymentValidator {
 
     private static final String MSG_OF_TYPE = " of type ";

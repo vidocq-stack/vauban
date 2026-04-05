@@ -7,6 +7,7 @@ import java.util.Set;
 /**
  * Matches qualifier instances following CDI rules.
  */
+@SuppressWarnings("java:S3776") // CDI container logic has inherent complexity
 public final class QualifierMatcher {
 
     // Volatile immutable map: assigned once at startup, read-only after — thread-safe by design

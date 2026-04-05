@@ -26,6 +26,7 @@ import java.util.stream.Collectors;
  * Processes Build Compatible Extensions (BCE) — CDI 4.1 spec chapter 28.
  * Handles @Enhancement, @Registration, and @Synthesis phases.
  */
+@SuppressWarnings("java:S3776") // CDI container logic has inherent complexity
 public final class BceProcessor {
 
     private static final String MSG_REGISTRATION_ERROR = "@Registration error: ";

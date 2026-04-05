@@ -16,6 +16,7 @@ import java.lang.reflect.Modifier;
  * non-final, non-static method is overridden to invoke the interceptor chain
  * via {@link VaubanInvocationContext}.
  */
+@SuppressWarnings("java:S3776") // CDI container logic has inherent complexity
 public final class InterceptorSubclassGenerator {
 
     private static final ClassDesc CD_InterceptorManager =

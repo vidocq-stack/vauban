@@ -11,6 +11,7 @@ import java.lang.reflect.Modifier;
 import java.util.ArrayList;
 import java.util.List;
 
+@SuppressWarnings("java:S3776") // CDI container logic has inherent complexity
 public final class VaubanInvokerFactory implements InvokerFactory {
 
     private final ClassLoader classLoader;

@@ -8,6 +8,7 @@ import java.util.Map;
 /**
  * Simple implementation of {@link Parameters} backed by a Map.
  */
+@SuppressWarnings("java:S3776") // CDI container logic has inherent complexity
 public final class VaubanParameters implements Parameters {
 
     private final Map<String, Object> params;

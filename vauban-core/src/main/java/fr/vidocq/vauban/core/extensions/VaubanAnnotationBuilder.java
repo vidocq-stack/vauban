@@ -16,6 +16,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
+@SuppressWarnings("java:S3776") // CDI container logic has inherent complexity
 public final class VaubanAnnotationBuilder implements AnnotationBuilder {
 
     private final Class<? extends Annotation> annotationType;

@@ -13,6 +13,7 @@ import java.util.concurrent.CompletionStage;
 /**
  * Implementation of {@link Event} backed by {@link EventDispatcher}.
  */
+@SuppressWarnings("java:S3776") // CDI container logic has inherent complexity
 public final class EventImpl<T> implements Event<T> {
 
     private static final String MSG_EVENT_NULL = "Event object must not be null";

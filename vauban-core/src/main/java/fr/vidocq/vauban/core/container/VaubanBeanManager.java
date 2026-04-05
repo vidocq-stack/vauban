@@ -24,6 +24,7 @@ import java.util.*;
  * Minimal BeanManager implementation for Vauban.
  * Only the essential methods are functional; the rest throw UnsupportedOperationException.
  */
+@SuppressWarnings("java:S3776") // CDI container logic has inherent complexity
 public final class VaubanBeanManager implements BeanManager {
 
     // Volatile immutable sets: assigned once at startup, read-only after — thread-safe by design

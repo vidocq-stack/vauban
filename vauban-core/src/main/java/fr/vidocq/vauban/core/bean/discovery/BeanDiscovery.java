@@ -11,6 +11,7 @@ import java.util.Comparator;
  * Main orchestrator for CDI bean discovery.
  * Scans the index and discovers all beans using "annotated" discovery mode (CDI 4.1 default).
  */
+@SuppressWarnings("java:S3776") // CDI container logic has inherent complexity
 public final class BeanDiscovery {
 
     // Known scope annotations

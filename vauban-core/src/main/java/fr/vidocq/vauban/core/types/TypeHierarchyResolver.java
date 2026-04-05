@@ -9,6 +9,7 @@ import java.util.LinkedHashSet;
 import java.util.Map;
 import java.util.Set;
 
+@SuppressWarnings("java:S3776") // CDI container logic has inherent complexity
 public class TypeHierarchyResolver {
 
     private TypeHierarchyResolver() {}

@@ -15,6 +15,7 @@ import java.util.Set;
  * Validates CDI class-level rules before bean discovery.
  * These rules detect invalid CDI constructs that should cause a DefinitionException.
  */
+@SuppressWarnings("java:S3776") // CDI container logic has inherent complexity
 public final class ClassValidator {
 
     private static final DotName INJECT = DotName.of("jakarta.inject.Inject");

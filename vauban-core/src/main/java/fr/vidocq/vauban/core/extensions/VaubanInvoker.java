@@ -14,7 +14,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
 
-@SuppressWarnings({"unchecked", "java:S3011"}) // CDI spec requires reflective access
+@SuppressWarnings({"unchecked", "java:S3011", "java:S3776"}) // CDI spec requires reflective access
 public final class VaubanInvoker implements Invoker<Object, Object>, InvokerInfo {
 
     private final Method method;

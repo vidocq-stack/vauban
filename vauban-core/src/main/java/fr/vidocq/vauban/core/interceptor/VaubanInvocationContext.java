@@ -13,6 +13,7 @@ import java.util.Set;
  * Vauban implementation of {@link InvocationContext}.
  * Chains interceptors and ultimately invokes the target method.
  */
+@SuppressWarnings("java:S3776") // CDI container logic has inherent complexity
 public final class VaubanInvocationContext implements InvocationContext {
 
     private static final String MSG_BUT_GOT = " but got ";

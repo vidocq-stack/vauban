@@ -16,6 +16,7 @@ import java.util.Set;
  * at an injection point, following CDI spec rules for
  * raw types, parameterized types, and wildcards.
  */
+@SuppressWarnings("java:S3776") // CDI container logic has inherent complexity
 public final class AssignabilityRules {
 
     private static final String JAVA_LANG_OBJECT = "java.lang.Object";
