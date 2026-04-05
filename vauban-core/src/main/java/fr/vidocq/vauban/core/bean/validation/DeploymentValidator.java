@@ -17,6 +17,10 @@ import java.util.Set;
  */
 public final class DeploymentValidator {
 
+    private static final String MSG_OF_TYPE = " of type ";
+    private static final String PREFIX_NORMAL_SCOPED = "Normal-scoped bean ";
+    private static final String PREFIX_JAKARTA_INJECT = "jakarta.enterprise.inject.";
+
     private final List<BeanDescriptor> beans;
     private final BeanResolver resolver;
 
@@ -59,7 +63,7 @@ public final class DeploymentValidator {
                     errors.add(new ValidationError(
                             ValidationError.Kind.DEFINITION_ERROR,
                             "Illegal injection of built-in metadata type with type variable or raw type: "
-                                    + ip.description() + " of type " + ip.requiredType(),
+                                    + ip.description() + MSG_OF_TYPE + ip.requiredType(),
                             bean));
                     continue;
                 }
@@ -70,13 +74,13 @@ public final class DeploymentValidator {
                     case UNSATISFIED -> errors.add(new ValidationError(
                             ValidationError.Kind.UNSATISFIED_DEPENDENCY,
                             "Unsatisfied dependency: " + ip.description() +
-                                    " of type " + ip.requiredType() +
+                                    MSG_OF_TYPE + ip.requiredType() +
                                     " with qualifiers " + ip.qualifiers(),
                             bean));
                     case AMBIGUOUS -> errors.add(new ValidationError(
                             ValidationError.Kind.AMBIGUOUS_DEPENDENCY,
                             "Ambiguous dependency: " + ip.description() +
-                                    " of type " + ip.requiredType() +
+                                    MSG_OF_TYPE + ip.requiredType() +
                                     ". Matching beans: " + result.beans().stream()
                                     .map(b -> b.beanClass().value()).toList(),
                             bean));
@@ -248,12 +252,12 @@ public final class DeploymentValidator {
         if (type instanceof TypeInfo.PrimitiveType) {
             errors.add(new ValidationError(
                     ValidationError.Kind.DEPLOYMENT_ERROR,
-                    "Normal-scoped bean " + bean.beanClass() + " cannot have primitive type " + type,
+                    PREFIX_NORMAL_SCOPED + bean.beanClass() + " cannot have primitive type " + type,
                     contextBean));
         } else if (type instanceof TypeInfo.ArrayType) {
             errors.add(new ValidationError(
                     ValidationError.Kind.DEPLOYMENT_ERROR,
-                    "Normal-scoped bean " + bean.beanClass() + " cannot have array type " + type,
+                    PREFIX_NORMAL_SCOPED + bean.beanClass() + " cannot have array type " + type,
                     contextBean));
         } else if (type instanceof TypeInfo.ClassType ct) {
             try {
@@ -261,7 +265,7 @@ public final class DeploymentValidator {
                 if (java.lang.reflect.Modifier.isFinal(clazz.getModifiers())) {
                     errors.add(new ValidationError(
                             ValidationError.Kind.DEPLOYMENT_ERROR,
-                            "Normal-scoped bean " + bean.beanClass() + " cannot be a final class",
+                            PREFIX_NORMAL_SCOPED + bean.beanClass() + " cannot be a final class",
                             contextBean));
                 } else {
                     boolean hasNoArgCtor = false;
@@ -274,7 +278,7 @@ public final class DeploymentValidator {
                     if (!hasNoArgCtor) {
                         errors.add(new ValidationError(
                                 ValidationError.Kind.DEPLOYMENT_ERROR,
-                                "Normal-scoped bean " + bean.beanClass() + " must have a non-private no-arg constructor",
+                                PREFIX_NORMAL_SCOPED + bean.beanClass() + " must have a non-private no-arg constructor",
                                 contextBean));
                     }
                     
@@ -287,7 +291,7 @@ public final class DeploymentValidator {
                                     && !java.lang.reflect.Modifier.isStatic(method.getModifiers())) {
                                 errors.add(new ValidationError(
                                         ValidationError.Kind.DEPLOYMENT_ERROR,
-                                        "Normal-scoped bean " + bean.beanClass() + " has final method " + method.getName(),
+                                        PREFIX_NORMAL_SCOPED + bean.beanClass() + " has final method " + method.getName(),
                                         contextBean));
                                 proxyFinalFound = true;
                                 break;

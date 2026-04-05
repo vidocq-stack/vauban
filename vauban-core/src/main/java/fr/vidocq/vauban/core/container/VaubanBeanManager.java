@@ -52,6 +52,9 @@ public final class VaubanBeanManager implements BeanManager {
 
     private final VaubanContainer container;
     private final Map<Class<? extends Annotation>, List<Context>> contexts;
+    private static final String MSG_NOT_IMPLEMENTED = "Not yet implemented";
+    private static final String MSG_NOT_A_QUALIFIER = "Not a qualifier: ";
+
     private final Collection<ManagedBean<?>> beans;
     private final EventDispatcher eventDispatcher;
     private final InterceptorManager interceptorManager;
@@ -606,13 +609,13 @@ public final class VaubanBeanManager implements BeanManager {
     @Override
     @SuppressWarnings("deprecation")
     public ELResolver getELResolver() {
-        throw new IllegalStateException("Not yet implemented");
+        throw new IllegalStateException(MSG_NOT_IMPLEMENTED);
     }
 
     @Override
     @SuppressWarnings("deprecation")
     public ExpressionFactory wrapExpressionFactory(ExpressionFactory expressionFactory) {
-        throw new IllegalStateException("Not yet implemented");
+        throw new IllegalStateException(MSG_NOT_IMPLEMENTED);
     }
 
     @Override
@@ -622,7 +625,7 @@ public final class VaubanBeanManager implements BeanManager {
 
     @Override
     public <T> InjectionTargetFactory<T> getInjectionTargetFactory(AnnotatedType<T> annotatedType) {
-        throw new IllegalStateException("Not yet implemented");
+        throw new IllegalStateException(MSG_NOT_IMPLEMENTED);
     }
 
     @Override
@@ -675,12 +678,12 @@ public final class VaubanBeanManager implements BeanManager {
 
     @Override
     public <T extends Extension> T getExtension(Class<T> extensionClass) {
-        throw new IllegalStateException("Not yet implemented");
+        throw new IllegalStateException(MSG_NOT_IMPLEMENTED);
     }
 
     @Override
     public <T> InterceptionFactory<T> createInterceptionFactory(CreationalContext<T> ctx, Class<T> clazz) {
-        throw new IllegalStateException("Not yet implemented");
+        throw new IllegalStateException(MSG_NOT_IMPLEMENTED);
     }
 
     @Override
@@ -710,12 +713,12 @@ public final class VaubanBeanManager implements BeanManager {
         // Validate all qualifiers
         for (var q : requiredQualifiers) {
             if (!isQualifier(q.annotationType())) {
-                throw new IllegalArgumentException("Not a qualifier: " + q.annotationType());
+                throw new IllegalArgumentException(MSG_NOT_A_QUALIFIER + q.annotationType());
             }
         }
         for (var q : beanQualifiers) {
             if (!isQualifier(q.annotationType())) {
-                throw new IllegalArgumentException("Not a qualifier: " + q.annotationType());
+                throw new IllegalArgumentException(MSG_NOT_A_QUALIFIER + q.annotationType());
             }
         }
 
@@ -798,12 +801,12 @@ public final class VaubanBeanManager implements BeanManager {
         }
         for (var q : specifiedQualifiers) {
             if (!isQualifier(q.annotationType())) {
-                throw new IllegalArgumentException("Not a qualifier: " + q.annotationType());
+                throw new IllegalArgumentException(MSG_NOT_A_QUALIFIER + q.annotationType());
             }
         }
         for (var q : observedEventQualifiers) {
             if (!isQualifier(q.annotationType())) {
-                throw new IllegalArgumentException("Not a qualifier: " + q.annotationType());
+                throw new IllegalArgumentException(MSG_NOT_A_QUALIFIER + q.annotationType());
             }
         }
         if (containsTypeVariable(specifiedType)) {

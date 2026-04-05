@@ -15,6 +15,8 @@ import java.util.Set;
  */
 public final class VaubanInvocationContext implements InvocationContext {
 
+    private static final String MSG_BUT_GOT = " but got ";
+
     private Object target;
     private final Method method;
     private Object[] parameters;
@@ -112,7 +114,7 @@ public final class VaubanInvocationContext implements InvocationContext {
                 var expectedTypes = originalMethod.getParameterTypes();
                 if (params.length != expectedTypes.length) {
                     throw new IllegalArgumentException(
-                            "Wrong number of parameters: expected " + expectedTypes.length + " but got " + params.length);
+                            "Wrong number of parameters: expected " + expectedTypes.length + MSG_BUT_GOT + params.length);
                 }
                 // Validate parameter types
                 for (int i = 0; i < params.length; i++) {
@@ -125,7 +127,7 @@ public final class VaubanInvocationContext implements InvocationContext {
                     if (!isAssignableTo(params[i].getClass(), expectedTypes[i])) {
                         throw new IllegalArgumentException(
                                 "Parameter " + i + " type mismatch: expected " + expectedTypes[i].getName()
-                                        + " but got " + params[i].getClass().getName());
+                                        + MSG_BUT_GOT + params[i].getClass().getName());
                     }
                 }
             }
@@ -133,7 +135,7 @@ public final class VaubanInvocationContext implements InvocationContext {
             var expectedTypes = constructor.getParameterTypes();
             if (params.length != expectedTypes.length) {
                 throw new IllegalArgumentException(
-                        "Wrong number of parameters: expected " + expectedTypes.length + " but got " + params.length);
+                        "Wrong number of parameters: expected " + expectedTypes.length + MSG_BUT_GOT + params.length);
             }
             // Validate parameter types
             for (int i = 0; i < params.length; i++) {
@@ -146,7 +148,7 @@ public final class VaubanInvocationContext implements InvocationContext {
                 if (!isAssignableTo(params[i].getClass(), expectedTypes[i])) {
                     throw new IllegalArgumentException(
                             "Parameter " + i + " type mismatch: expected " + expectedTypes[i].getName()
-                                    + " but got " + params[i].getClass().getName());
+                                    + MSG_BUT_GOT + params[i].getClass().getName());
                 }
             }
         }

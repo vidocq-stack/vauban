@@ -34,7 +34,7 @@ public final class BuiltInBean<T> implements Bean<T> {
     }
 
     @Override public T create(CreationalContext<T> ctx) { return supplier.get(); }
-    @Override public void destroy(T instance, CreationalContext<T> ctx) {}
+    @Override public void destroy(T instance, CreationalContext<T> ctx) { /* Built-in beans have no destruction lifecycle */ }
     @Override public Class<?> getBeanClass() { return beanClass; }
     @Override public Set<Type> getTypes() { return types; }
     @Override public Set<Annotation> getQualifiers() { return qualifiers; }

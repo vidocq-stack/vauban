@@ -49,6 +49,13 @@ public final class BeanDiscovery {
     private static final DotName DISPOSES = DotName.of("jakarta.enterprise.inject.Disposes");
     private static final DotName STEREOTYPE = DotName.of("jakarta.enterprise.inject.Stereotype");
 
+    private static final String PREFIX_JAVA_ANNOTATION = "java.lang.annotation.";
+    private static final String PREFIX_JAKARTA_INTERCEPTOR = "jakarta.interceptor.";
+    private static final String PREFIX_JAKARTA_INJECT = "jakarta.enterprise.inject.";
+    private static final String JAVA_LANG_OBJECT = "java.lang.Object";
+    private static final String PARAM_PREFIX = "parameter ";
+    private static final String MEMBER_VALUE = "value";
+
     private final VaubanIndex index;
     private Set<DotName> customQualifiers = Set.of();
     private Set<DotName> customInterceptorBindings = Set.of();
@@ -383,9 +390,9 @@ public final class BeanDiscovery {
             return true;
         }
         String val = annotationName.value();
-        if (val.startsWith("java.lang.annotation.") ||
-            val.startsWith("jakarta.interceptor.") ||
-            val.startsWith("jakarta.enterprise.inject.") ||
+        if (val.startsWith(PREFIX_JAVA_ANNOTATION) ||
+            val.startsWith(PREFIX_JAKARTA_INTERCEPTOR) ||
+            val.startsWith(PREFIX_JAKARTA_INJECT) ||
             val.startsWith("jakarta.inject.")) {
             return false;
         }
@@ -522,7 +529,7 @@ public final class BeanDiscovery {
 
         // Bindings from superclasses (inherited bindings)
         var superClass = classInfo.superName();
-        var objectName = DotName.of("java.lang.Object");
+        var objectName = DotName.of(JAVA_LANG_OBJECT);
         while (superClass != null && !superClass.equals(objectName)) {
             var superInfo = index.getClassByName(superClass);
             if (superInfo.isPresent()) {
@@ -632,7 +639,7 @@ public final class BeanDiscovery {
             var paramQualifiers = computeInjectionPointQualifiers(param.annotations());
             injectionPoints.add(new InjectionPointInfo(
                     param.type(), paramQualifiers, InjectionPointInfo.InjectionKind.METHOD_PARAMETER,
-                    "parameter " + i + " of " + declaringClass.name().simpleName() + "." + method.name() + "()"
+                    PARAM_PREFIX + i + " of " + declaringClass.name().simpleName() + "." + method.name() + "()"
             ));
         }
 
@@ -711,7 +718,7 @@ public final class BeanDiscovery {
                 .findFirst();
         if (typedAnn.isPresent()) {
             var restrictedRawTypes = new LinkedHashSet<DotName>();
-            var value = typedAnn.get().member("value");
+            var value = typedAnn.get().member(MEMBER_VALUE);
             if (value instanceof fr.vidocq.vauban.indexer.model.AnnotationValue.ArrayVal av) {
                 for (var v : av.values()) {
                     if (v instanceof fr.vidocq.vauban.indexer.model.AnnotationValue.ClassVal cv) {
@@ -741,7 +748,7 @@ public final class BeanDiscovery {
                 }
                 if (!found) restrictedTypes.add(new TypeInfo.ClassType(rawName));
             }
-            restrictedTypes.add(new TypeInfo.ClassType(DotName.of("java.lang.Object")));
+            restrictedTypes.add(new TypeInfo.ClassType(DotName.of(JAVA_LANG_OBJECT)));
             return restrictedTypes;
         }
         var types = new LinkedHashSet<TypeInfo>();
@@ -769,7 +776,7 @@ public final class BeanDiscovery {
                 .collect(java.util.stream.Collectors.toSet());
         types.removeIf(t -> t instanceof TypeInfo.ClassType ct && rawNamesWithParams.contains(ct.name()));
         
-        types.add(new TypeInfo.ClassType(DotName.of("java.lang.Object")));
+        types.add(new TypeInfo.ClassType(DotName.of(JAVA_LANG_OBJECT)));
         return types;
     }
 
@@ -779,7 +786,7 @@ public final class BeanDiscovery {
         if (classInfo.isEmpty()) return;
         var info = classInfo.get();
 
-        if (info.superName() != null && !"java.lang.Object".equals(info.superName().value())) {
+        if (info.superName() != null && !JAVA_LANG_OBJECT.equals(info.superName().value())) {
             collectBeanTypes(info.superName(), types);
         }
         for (var iface : info.interfaces()) {
@@ -984,7 +991,7 @@ public final class BeanDiscovery {
             }
         }
         
-        types.add(new TypeInfo.ClassType(DotName.of("java.lang.Object")));
+        types.add(new TypeInfo.ClassType(DotName.of(JAVA_LANG_OBJECT)));
         return types;
     }
 
@@ -994,7 +1001,7 @@ public final class BeanDiscovery {
                 .findFirst();
         if (typedAnn.isPresent()) {
             var restrictedTypes = new LinkedHashSet<TypeInfo>();
-            var value = typedAnn.get().member("value");
+            var value = typedAnn.get().member(MEMBER_VALUE);
             if (value instanceof fr.vidocq.vauban.indexer.model.AnnotationValue.ArrayVal av) {
                 for (var v : av.values()) {
                     if (v instanceof fr.vidocq.vauban.indexer.model.AnnotationValue.ClassVal cv) {
@@ -1004,7 +1011,7 @@ public final class BeanDiscovery {
             } else if (value instanceof fr.vidocq.vauban.indexer.model.AnnotationValue.ClassVal cv) {
                 restrictedTypes.add(new TypeInfo.ClassType(cv.className()));
             }
-            restrictedTypes.add(new TypeInfo.ClassType(DotName.of("java.lang.Object")));
+            restrictedTypes.add(new TypeInfo.ClassType(DotName.of(JAVA_LANG_OBJECT)));
             return restrictedTypes;
         }
         return computeProducerTypes(producerType);
@@ -1075,7 +1082,7 @@ public final class BeanDiscovery {
             if (q.annotationName().equals(QualifierInstance.NAMED_NAME) && q.members().isEmpty()) {
                 // @Named without value → default to field/parameter name
                 result.add(new QualifierInstance(QualifierInstance.NAMED_NAME,
-                        java.util.Map.of("value", new fr.vidocq.vauban.indexer.model.AnnotationValue.StringVal(defaultName))));
+                        java.util.Map.of(MEMBER_VALUE, new fr.vidocq.vauban.indexer.model.AnnotationValue.StringVal(defaultName))));
             } else {
                 result.add(q);
             }
@@ -1237,7 +1244,7 @@ public final class BeanDiscovery {
     private List<QualifierInstance> unwrapRepeatableQualifiers(AnnotationInfo ann) {
         var result = new java.util.ArrayList<QualifierInstance>();
         // Check if this annotation's value() contains repeatable qualifier annotations
-        var valueMember = ann.member("value");
+        var valueMember = ann.member(MEMBER_VALUE);
         if (!(valueMember instanceof fr.vidocq.vauban.indexer.model.AnnotationValue.ArrayVal arrayVal)) {
             return result;
         }
@@ -1516,7 +1523,7 @@ public final class BeanDiscovery {
                 points.add(new InjectionPointInfo(
                         resolvedType, computeInjectionPointQualifiers(param.annotations()),
                         InjectionPointInfo.InjectionKind.CONSTRUCTOR_PARAMETER,
-                        "parameter " + i + " of " + classInfo.name().simpleName() + "()"
+                        PARAM_PREFIX + i + " of " + classInfo.name().simpleName() + "()"
                 ));
             }
         }
@@ -1556,7 +1563,7 @@ public final class BeanDiscovery {
                     points.add(new InjectionPointInfo(
                             resolvedType, computeInjectionPointQualifiers(param.annotations()),
                             InjectionPointInfo.InjectionKind.METHOD_PARAMETER,
-                            "parameter " + i + " of " + classInfo.name().simpleName() + "." + method.name() + "()"
+                            PARAM_PREFIX + i + " of " + classInfo.name().simpleName() + "." + method.name() + "()"
                     ));
                 }
             }
@@ -1568,7 +1575,7 @@ public final class BeanDiscovery {
     private int extractPriority(List<AnnotationInfo> annotations) {
         for (var ann : annotations) {
             if (ann.name().equals(PRIORITY)) {
-                var value = ann.member("value");
+                var value = ann.member(MEMBER_VALUE);
                 if (value instanceof AnnotationValue.IntVal iv) return iv.value();
             }
         }
@@ -1605,7 +1612,7 @@ public final class BeanDiscovery {
     private String extractName(List<AnnotationInfo> annotations, String defaultName) {
         for (var ann : annotations) {
             if (ann.name().equals(NAMED)) {
-                var value = ann.member("value");
+                var value = ann.member(MEMBER_VALUE);
                 if (value instanceof AnnotationValue.StringVal sv && !sv.value().isEmpty()) {
                     return sv.value();
                 }
@@ -1979,9 +1986,9 @@ public final class BeanDiscovery {
             return true;
         }
         String val = annotationName.value();
-        if (val.startsWith("java.lang.annotation.") ||
-            val.startsWith("jakarta.interceptor.") ||
-            val.startsWith("jakarta.enterprise.inject.") ||
+        if (val.startsWith(PREFIX_JAVA_ANNOTATION) ||
+            val.startsWith(PREFIX_JAKARTA_INTERCEPTOR) ||
+            val.startsWith(PREFIX_JAKARTA_INJECT) ||
             val.startsWith("jakarta.inject.")) {
             // These are never interceptor bindings themselves for application beans
             return false;
@@ -2025,7 +2032,7 @@ public final class BeanDiscovery {
             collectBindingsRecursively(current, bindings, visited);
             // Check superclass from index
             var superName = current.superName();
-            if (superName != null && !superName.value().equals("java.lang.Object")) {
+            if (superName != null && !superName.value().equals(JAVA_LANG_OBJECT)) {
                 current = index.getClassByName(superName).orElse(null);
             } else {
                 current = null;
@@ -2045,9 +2052,9 @@ public final class BeanDiscovery {
                     if (isInterceptorBinding(DotName.of(annType.getName()))) {
                         // EXPLICITLY SKIP built-in Jakarta/Java annotations in the final set
                         String val = annType.getName();
-                        if (!val.startsWith("java.lang.annotation.") && 
-                            !val.startsWith("jakarta.interceptor.") && 
-                            !val.startsWith("jakarta.enterprise.inject.")) {
+                        if (!val.startsWith(PREFIX_JAVA_ANNOTATION) && 
+                            !val.startsWith(PREFIX_JAKARTA_INTERCEPTOR) && 
+                            !val.startsWith(PREFIX_JAKARTA_INJECT)) {
                             bindings.add(DotName.of(val));
                         }
                     }

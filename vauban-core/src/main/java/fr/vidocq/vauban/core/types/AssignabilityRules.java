@@ -18,6 +18,8 @@ import java.util.Set;
  */
 public final class AssignabilityRules {
 
+    private static final String JAVA_LANG_OBJECT = "java.lang.Object";
+
     private final VaubanIndex index;
 
     public AssignabilityRules(VaubanIndex index) {
@@ -117,12 +119,12 @@ public final class AssignabilityRules {
                     for (TypeInfo arg : bean.typeArguments()) {
                         if (arg instanceof TypeVariable tv) {
                             for (TypeInfo bound : tv.bounds()) {
-                                if (bound instanceof ClassType ct && !ct.name().value().equals("java.lang.Object")) {
+                                if (bound instanceof ClassType ct && !ct.name().value().equals(JAVA_LANG_OBJECT)) {
                                     yield false;
                                 }
                             }
                         } else if (arg instanceof ClassType ct) {
-                            if (!ct.name().value().equals("java.lang.Object")) {
+                            if (!ct.name().value().equals(JAVA_LANG_OBJECT)) {
                                 yield false;
                             }
                         } else {
@@ -161,12 +163,12 @@ public final class AssignabilityRules {
                     for (TypeInfo arg : bean.typeArguments()) {
                         if (arg instanceof TypeVariable tv) {
                             for (TypeInfo bound : tv.bounds()) {
-                                if (bound instanceof ClassType ct && !ct.name().value().equals("java.lang.Object")) {
+                                if (bound instanceof ClassType ct && !ct.name().value().equals(JAVA_LANG_OBJECT)) {
                                     yield false;
                                 }
                             }
                         } else if (arg instanceof ClassType ct) {
-                            if (!ct.name().value().equals("java.lang.Object")) {
+                            if (!ct.name().value().equals(JAVA_LANG_OBJECT)) {
                                 yield false;
                             }
                         } else {
@@ -239,7 +241,7 @@ public final class AssignabilityRules {
                 TypeInfo effectiveBeanArg = beanArg;
                 if (beanArg instanceof WildcardType bw) {
                     effectiveBeanArg = bw.upperBound() != null ? bw.upperBound()
-                            : new ClassType(DotName.of("java.lang.Object"));
+                            : new ClassType(DotName.of(JAVA_LANG_OBJECT));
                 }
 
                 if (wildcard.lowerBound() != null
@@ -319,7 +321,7 @@ public final class AssignabilityRules {
      */
     boolean isSubtypeOf(DotName subName, DotName superName) {
         if (subName.equals(superName)) return true;
-        if ("java.lang.Object".equals(superName.value())) return true;
+        if (JAVA_LANG_OBJECT.equals(superName.value())) return true;
 
         var visited = new HashSet<DotName>();
         return isSubtypeOfRecursive(subName, superName, visited);

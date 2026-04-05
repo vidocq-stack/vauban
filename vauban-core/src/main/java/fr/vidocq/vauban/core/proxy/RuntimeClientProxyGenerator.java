@@ -23,6 +23,7 @@ public final class RuntimeClientProxyGenerator {
 
     private static final ClassDesc CD_Supplier = ClassDesc.of("java.util.function.Supplier");
     private static final ClassDesc CD_Object = ConstantDescs.CD_Object;
+    private static final String FIELD_DELEGATE = "$$delegate";
 
     private static final java.util.concurrent.atomic.AtomicLong PROXY_COUNTER =
             new java.util.concurrent.atomic.AtomicLong();
@@ -45,7 +46,7 @@ public final class RuntimeClientProxyGenerator {
             clb.withSuperclass(beanCD);
 
             // Field: private Supplier delegate
-            clb.withField("$$delegate", CD_Supplier, ClassFile.ACC_PRIVATE);
+            clb.withField(FIELD_DELEGATE, CD_Supplier, ClassFile.ACC_PRIVATE);
 
             // Constructor: public Proxy() { super(); }
             clb.withMethodBody(
@@ -67,7 +68,7 @@ public final class RuntimeClientProxyGenerator {
                     cob -> {
                         cob.aload(0);
                         cob.aload(1);
-                        cob.putfield(proxyCD, "$$delegate", CD_Supplier);
+                        cob.putfield(proxyCD, FIELD_DELEGATE, CD_Supplier);
                         cob.return_();
                     });
 
@@ -117,7 +118,7 @@ public final class RuntimeClientProxyGenerator {
                 cob -> {
                     // ((BeanClass) this.$$delegate.get())
                     cob.aload(0);
-                    cob.getfield(proxyCD, "$$delegate", CD_Supplier);
+                    cob.getfield(proxyCD, FIELD_DELEGATE, CD_Supplier);
                     cob.invokeinterface(CD_Supplier, "get",
                             MethodTypeDesc.of(CD_Object));
                     cob.checkcast(beanCD);

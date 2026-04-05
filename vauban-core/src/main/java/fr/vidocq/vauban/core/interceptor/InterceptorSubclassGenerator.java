@@ -32,6 +32,11 @@ public final class InterceptorSubclassGenerator {
     private static final ClassDesc CD_CreationalContext = ClassDesc.of("jakarta.enterprise.context.spi.CreationalContext");
     private static final ClassDesc CD_TargetInvoker = ClassDesc.of("fr.vidocq.vauban.core.interceptor.VaubanInvocationContext$TargetInvoker");
 
+    private static final String FIELD_MANAGER = "$$manager";
+    private static final String FIELD_BINDINGS = "$$bindings";
+    private static final String FIELD_CONTEXT = "$$context";
+    private static final String METHOD_VALUEOF = "valueOf";
+
     private InterceptorSubclassGenerator() {}
 
     /**
@@ -53,10 +58,10 @@ public final class InterceptorSubclassGenerator {
             clb.withSuperclass(beanCD);
 
             // Fields
-            clb.withField("$$manager", CD_InterceptorManager, ClassFile.ACC_PRIVATE);
-            clb.withField("$$bindings", CD_Set, ClassFile.ACC_PRIVATE);
+            clb.withField(FIELD_MANAGER, CD_InterceptorManager, ClassFile.ACC_PRIVATE);
+            clb.withField(FIELD_BINDINGS, CD_Set, ClassFile.ACC_PRIVATE);
             clb.withField("$$constructorBindings", CD_Set, ClassFile.ACC_PRIVATE);
-            clb.withField("$$context", CD_CreationalContext, ClassFile.ACC_PRIVATE);
+            clb.withField(FIELD_CONTEXT, CD_CreationalContext, ClassFile.ACC_PRIVATE);
 
             // Constructors: for each non-private constructor in super class, generate one here
             for (var constructor : beanClass.getDeclaredConstructors()) {
@@ -90,16 +95,16 @@ public final class InterceptorSubclassGenerator {
                     cob -> {
                         cob.aload(0);
                         cob.aload(1);
-                        cob.putfield(subclassCD, "$$manager", CD_InterceptorManager);
+                        cob.putfield(subclassCD, FIELD_MANAGER, CD_InterceptorManager);
                         cob.aload(0);
                         cob.aload(2);
-                        cob.putfield(subclassCD, "$$bindings", CD_Set);
+                        cob.putfield(subclassCD, FIELD_BINDINGS, CD_Set);
                         cob.aload(0);
                         cob.aload(3);
                         cob.putfield(subclassCD, "$$constructorBindings", CD_Set);
                         cob.aload(0);
                         cob.aload(4);
-                        cob.putfield(subclassCD, "$$context", CD_CreationalContext);
+                        cob.putfield(subclassCD, FIELD_CONTEXT, CD_CreationalContext);
                         
                         // If there are @PostConstruct methods, call them via interceptor manager?
                         // Actually lifecycle methods are handled by VaubanContainer separately.
@@ -190,7 +195,7 @@ public final class InterceptorSubclassGenerator {
                 cob -> {
                     // If manager is null (pre-init), call super directly
                     cob.aload(0);
-                    cob.getfield(subclassCD, "$$manager", CD_InterceptorManager);
+                    cob.getfield(subclassCD, FIELD_MANAGER, CD_InterceptorManager);
                     var intercepted = cob.newLabel();
                     cob.ifnonnull(intercepted);
 
@@ -242,13 +247,13 @@ public final class InterceptorSubclassGenerator {
 
                     // Resolve chain (with method-level bindings + target class @AroundInvoke)
                     cob.aload(0);
-                    cob.getfield(subclassCD, "$$manager", CD_InterceptorManager);
+                    cob.getfield(subclassCD, FIELD_MANAGER, CD_InterceptorManager);
                     cob.aload(0);
-                    cob.getfield(subclassCD, "$$bindings", CD_Set);
+                    cob.getfield(subclassCD, FIELD_BINDINGS, CD_Set);
                     cob.aload(mSlot); // pass the $$super$ Method for binding resolution
                     cob.aload(0);     // pass this for target class @AroundInvoke
                     cob.aload(0);
-                    cob.getfield(subclassCD, "$$context", CD_CreationalContext);
+                    cob.getfield(subclassCD, FIELD_CONTEXT, CD_CreationalContext);
                     cob.invokevirtual(CD_InterceptorManager, "resolveChainForMethod",
                             MethodTypeDesc.of(CD_List, CD_Set, CD_Method, CD_Object, CD_CreationalContext));
                     int cSlot = aSlot + 1;
@@ -273,7 +278,7 @@ public final class InterceptorSubclassGenerator {
 
                     // Cache any interceptor instances created during AroundConstruct
                     cob.aload(0);
-                    cob.getfield(subclassCD, "$$manager", CD_InterceptorManager);
+                    cob.getfield(subclassCD, FIELD_MANAGER, CD_InterceptorManager);
                     cob.invokestatic(CD_InterceptorManager, "$$getAroundConstructContext", MethodTypeDesc.of(CD_CreationalContext));
                     cob.invokevirtual(CD_InterceptorManager, "shareInstances", MethodTypeDesc.of(ConstantDescs.CD_void, CD_CreationalContext));
 
@@ -299,25 +304,25 @@ public final class InterceptorSubclassGenerator {
         return switch (type.getName()) {
             case "boolean", "byte", "char", "short", "int" -> {
                 cob.iload(slot);
-                cob.invokestatic(wrapperCD, "valueOf",
+                cob.invokestatic(wrapperCD, METHOD_VALUEOF,
                         MethodTypeDesc.of(wrapperCD, classDescOf(type)));
                 yield slot + 1;
             }
             case "long" -> {
                 cob.lload(slot);
-                cob.invokestatic(wrapperCD, "valueOf",
+                cob.invokestatic(wrapperCD, METHOD_VALUEOF,
                         MethodTypeDesc.of(wrapperCD, classDescOf(type)));
                 yield slot + 2;
             }
             case "float" -> {
                 cob.fload(slot);
-                cob.invokestatic(wrapperCD, "valueOf",
+                cob.invokestatic(wrapperCD, METHOD_VALUEOF,
                         MethodTypeDesc.of(wrapperCD, classDescOf(type)));
                 yield slot + 1;
             }
             case "double" -> {
                 cob.dload(slot);
-                cob.invokestatic(wrapperCD, "valueOf",
+                cob.invokestatic(wrapperCD, METHOD_VALUEOF,
                         MethodTypeDesc.of(wrapperCD, classDescOf(type)));
                 yield slot + 2;
             }

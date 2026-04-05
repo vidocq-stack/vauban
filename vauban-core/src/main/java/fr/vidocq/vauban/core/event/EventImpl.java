@@ -15,6 +15,8 @@ import java.util.concurrent.CompletionStage;
  */
 public final class EventImpl<T> implements Event<T> {
 
+    private static final String MSG_EVENT_NULL = "Event object must not be null";
+
     private final EventDispatcher dispatcher;
     private final Annotation[] qualifiers;
     private final jakarta.enterprise.inject.spi.InjectionPoint injectionPoint;
@@ -62,7 +64,7 @@ public final class EventImpl<T> implements Event<T> {
     @Override
     public void fire(T event) {
         if (event == null) {
-            throw new IllegalArgumentException("Event object must not be null");
+            throw new IllegalArgumentException(MSG_EVENT_NULL);
         }
         // CDI spec: if the selected event type contains unresolvable type variables, throw IAE
         if (selectedType != null && containsTypeVariable(selectedType)) {
@@ -85,7 +87,7 @@ public final class EventImpl<T> implements Event<T> {
     @Override
     public <U extends T> CompletionStage<U> fireAsync(U event) {
         if (event == null) {
-            throw new IllegalArgumentException("Event object must not be null");
+            throw new IllegalArgumentException(MSG_EVENT_NULL);
         }
         return dispatcher.fireAsync(event, qualifiers);
     }
@@ -93,7 +95,7 @@ public final class EventImpl<T> implements Event<T> {
     @Override
     public <U extends T> CompletionStage<U> fireAsync(U event, NotificationOptions options) {
         if (event == null) {
-            throw new IllegalArgumentException("Event object must not be null");
+            throw new IllegalArgumentException(MSG_EVENT_NULL);
         }
         var executor = options != null ? options.getExecutor() : null;
         @SuppressWarnings("unchecked")

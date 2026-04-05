@@ -20,6 +20,9 @@ import java.util.function.Predicate;
 @SuppressWarnings("java:S100") // $$ methods are CDI container conventions for generated code
 public final class InterceptorManager {
 
+    private static final String INTERCEPTED_SUFFIX = "$$Intercepted";
+    private static final String SUPER_PREFIX = "$$super$";
+
     private final List<InterceptorDescriptor> interceptors;
     private final Map<DotName, Object> interceptorInstances = new LinkedHashMap<>();
     private BiFunction<InterceptorDescriptor, CreationalContext<?>, Object> instanceFactory;
@@ -198,14 +201,14 @@ public final class InterceptorManager {
         if (method == null) return List.of();
         
         Class<?> beanClass = method.getDeclaringClass();
-        if (beanClass.getName().contains("$$Intercepted")) {
+        if (beanClass.getName().contains(INTERCEPTED_SUFFIX)) {
             beanClass = beanClass.getSuperclass();
         }
 
         var bindingsMap = collectAllBindings(beanClass);
         var methodName = method.getName();
-        if (methodName.startsWith("$$super$")) {
-            methodName = methodName.substring("$$super$".length());
+        if (methodName.startsWith(SUPER_PREFIX)) {
+            methodName = methodName.substring(SUPER_PREFIX.length());
         }
         
         var current = beanClass;
@@ -245,7 +248,7 @@ public final class InterceptorManager {
     public List<InterceptorDescriptor> resolveInterceptorDescriptorsAroundConstruct(
             Set<DotName> classBindings, java.lang.reflect.Constructor<?> constructor, Class<?> beanClass,
             List<java.lang.annotation.Annotation> beanAnnotations) {
-        if (beanClass.getName().contains("$$Intercepted")) {
+        if (beanClass.getName().contains(INTERCEPTED_SUFFIX)) {
             beanClass = beanClass.getSuperclass();
         }
         
@@ -283,7 +286,7 @@ public final class InterceptorManager {
     @SuppressWarnings("java:S135")
     public List<VaubanInvocationContext.InterceptorInvocation> resolveAroundConstructChain(
             Set<DotName> classBindings, java.lang.reflect.Constructor<?> constructor, Class<?> beanClass, CreationalContext<?> ctx) {
-        if (beanClass.getName().contains("$$Intercepted")) {
+        if (beanClass.getName().contains(INTERCEPTED_SUFFIX)) {
             beanClass = beanClass.getSuperclass();
         }
         
@@ -368,15 +371,15 @@ public final class InterceptorManager {
             // Use the target class if available, as class-level bindings on the bean
             // apply to all its methods, including those inherited from superclasses.
             beanClass = target != null ? target.getClass() : method.getDeclaringClass();
-            if (beanClass.getName().contains("$$Intercepted")) {
+            if (beanClass.getName().contains(INTERCEPTED_SUFFIX)) {
                 beanClass = beanClass.getSuperclass();
             }
 
             var bindingsMap = collectAllBindings(beanClass);
 
             var methodName = method.getName();
-            if (methodName.startsWith("$$super$")) {
-                methodName = methodName.substring("$$super$".length());
+            if (methodName.startsWith(SUPER_PREFIX)) {
+                methodName = methodName.substring(SUPER_PREFIX.length());
             }
             var current = beanClass;
             while (current != null && current != Object.class) {
@@ -415,7 +418,7 @@ public final class InterceptorManager {
     public List<VaubanInvocationContext.InterceptorInvocation> resolveChainForConstructor(
             Set<DotName> classBindings, Set<DotName> constructorBindings, java.lang.reflect.Constructor<?> constructor, CreationalContext<?> ctx) {
         Class<?> beanClass = constructor.getDeclaringClass();
-        if (beanClass.getName().contains("$$Intercepted")) {
+        if (beanClass.getName().contains(INTERCEPTED_SUFFIX)) {
             beanClass = beanClass.getSuperclass();
         }
         

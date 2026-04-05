@@ -28,6 +28,8 @@ import java.util.stream.Collectors;
  */
 public final class BceProcessor {
 
+    private static final String MSG_REGISTRATION_ERROR = "@Registration error: ";
+
     /**
      * Result of BCE processing: synthetic bean definitions and collected errors.
      */
@@ -451,11 +453,11 @@ public final class BceProcessor {
             if (cause instanceof IllegalStateException ise) {
                 errors.add(ise.getMessage());
             } else {
-                errors.add("@Registration error: "
+                errors.add(MSG_REGISTRATION_ERROR
                         + (cause != null ? cause.getMessage() : e.getMessage()));
             }
         } catch (Exception e) {
-            errors.add("@Registration error: " + e.getMessage());
+            errors.add(MSG_REGISTRATION_ERROR + e.getMessage());
         }
 
         if (messages.hasErrors()) {
@@ -478,11 +480,11 @@ public final class BceProcessor {
             if (cause instanceof IllegalStateException ise) {
                 errors.add(ise.getMessage());
             } else {
-                errors.add("@Registration error: "
+                errors.add(MSG_REGISTRATION_ERROR
                         + (cause != null ? cause.getMessage() : e.getMessage()));
             }
         } catch (Exception e) {
-            errors.add("@Registration error: " + e.getMessage());
+            errors.add(MSG_REGISTRATION_ERROR + e.getMessage());
         }
 
         if (messages.hasErrors()) {

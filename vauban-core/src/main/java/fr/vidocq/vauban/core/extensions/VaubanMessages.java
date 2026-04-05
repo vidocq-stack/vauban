@@ -16,29 +16,30 @@ public final class VaubanMessages implements Messages {
 
     private final List<String> errors = new ArrayList<>();
 
+    // info() and warn() are intentionally no-op: only errors are collected for deployment validation
     @Override
-    public void info(String message) { }
+    public void info(String message) { /* no-op */ }
 
     @Override
-    public void info(String message, AnnotationTarget target) { }
+    public void info(String message, AnnotationTarget target) { /* no-op */ }
 
     @Override
-    public void info(String message, BeanInfo bean) { }
+    public void info(String message, BeanInfo bean) { /* no-op */ }
 
     @Override
-    public void info(String message, ObserverInfo observer) { }
+    public void info(String message, ObserverInfo observer) { /* no-op */ }
 
     @Override
-    public void warn(String message) { }
+    public void warn(String message) { /* no-op */ }
 
     @Override
-    public void warn(String message, AnnotationTarget target) { }
+    public void warn(String message, AnnotationTarget target) { /* no-op */ }
 
     @Override
-    public void warn(String message, BeanInfo bean) { }
+    public void warn(String message, BeanInfo bean) { /* no-op */ }
 
     @Override
-    public void warn(String message, ObserverInfo observer) { }
+    public void warn(String message, ObserverInfo observer) { /* no-op */ }
 
     @Override
     public void error(String message) {
