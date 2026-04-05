@@ -17,7 +17,7 @@ public final class TypeMapper {
 
     public static Type map(TypeInfo typeInfo, IndexLookup lookup) {
         return switch (typeInfo) {
-            case TypeInfo.VoidType v -> VaubanVoidType.INSTANCE;
+            case TypeInfo.VoidType _ -> VaubanVoidType.INSTANCE;
             case TypeInfo.PrimitiveType p -> new VaubanPrimitiveType(p);
             case TypeInfo.ClassType c -> new VaubanClassType(c.name(), lookup);
             case TypeInfo.ArrayType a -> mapArray(a, lookup);

@@ -103,6 +103,7 @@ public final class BeanDiscovery {
     /**
      * Discovers all beans in the index using "annotated" discovery mode (CDI 4.1 default).
      */
+    @SuppressWarnings("java:S135")
     public List<BeanDescriptor> discoverBeans() {
         var beans = new ArrayList<BeanDescriptor>();
 
@@ -1617,6 +1618,7 @@ public final class BeanDiscovery {
      * Discovers all observer methods in the index.
      * An observer method has a parameter annotated with {@code @Observes} or {@code @ObservesAsync}.
      */
+    @SuppressWarnings("java:S135")
     public List<ObserverDescriptor> discoverObservers() {
         var result = new ArrayList<ObserverDescriptor>();
 
@@ -1810,6 +1812,7 @@ public final class BeanDiscovery {
      * A disposer method has exactly one parameter annotated with {@code @Disposes}.
 
      */
+    @SuppressWarnings("java:S135")
     public List<DisposerDescriptor> discoverDisposerMethods() {
         var disposers = new ArrayList<DisposerDescriptor>();
 

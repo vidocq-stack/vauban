@@ -17,6 +17,7 @@ import java.util.function.Predicate;
 /**
  * Manages interceptor resolution and instance lifecycle.
  */
+@SuppressWarnings("java:S100") // $$ methods are CDI container conventions for generated code
 public final class InterceptorManager {
 
     private final List<InterceptorDescriptor> interceptors;
@@ -194,6 +195,7 @@ public final class InterceptorManager {
         return matches;
     }
 
+    @SuppressWarnings("java:S135")
     public List<InterceptorDescriptor> resolveInterceptorDescriptorsForMethod(
             Set<DotName> classBindings, java.lang.reflect.Method method) {
         if (method == null) return List.of();
@@ -242,6 +244,7 @@ public final class InterceptorManager {
         return matches;
     }
 
+    @SuppressWarnings("java:S135")
     public List<InterceptorDescriptor> resolveInterceptorDescriptorsAroundConstruct(
             Set<DotName> classBindings, java.lang.reflect.Constructor<?> constructor, Class<?> beanClass,
             List<java.lang.annotation.Annotation> beanAnnotations) {
@@ -280,6 +283,7 @@ public final class InterceptorManager {
     /**
      * Resolve the interceptor chain for a constructor.
      */
+    @SuppressWarnings("java:S135")
     public List<VaubanInvocationContext.InterceptorInvocation> resolveAroundConstructChain(
             Set<DotName> classBindings, java.lang.reflect.Constructor<?> constructor, Class<?> beanClass, CreationalContext<?> ctx) {
         if (beanClass.getName().contains("$$Intercepted")) {
@@ -437,6 +441,7 @@ public final class InterceptorManager {
         return chain;
     }
 
+    @SuppressWarnings("java:S135")
     private List<VaubanInvocationContext.InterceptorInvocation> resolveChainAroundConstruct(
             Set<DotName> bindings, List<java.lang.annotation.Annotation> beanAnnotations, CreationalContext<?> ctx) {
         var effectiveCtx = ctx != null ? ctx : $$getAroundConstructContext();
@@ -474,6 +479,7 @@ public final class InterceptorManager {
     /**
      * Find interceptors with member value comparison.
      */
+    @SuppressWarnings("java:S135")
     public List<VaubanInvocationContext.InterceptorInvocation> resolveChain(
             Set<DotName> methodBindings, List<java.lang.annotation.Annotation> beanAnnotations, CreationalContext<?> ctx) {
         var effectiveCtx = ctx != null ? ctx : $$getAroundConstructContext();
@@ -559,6 +565,7 @@ public final class InterceptorManager {
         return resolveLifecycleChain(methodBindings, lifecycleAnnotation, List.of(), ctx);
     }
 
+    @SuppressWarnings("java:S135")
     public List<VaubanInvocationContext.InterceptorInvocation> resolveLifecycleChain(
             Set<DotName> methodBindings, Class<? extends java.lang.annotation.Annotation> lifecycleAnnotation,
             List<java.lang.annotation.Annotation> beanAnnotations, CreationalContext<?> ctx) {

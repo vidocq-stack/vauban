@@ -96,8 +96,7 @@ public final class RuntimeClientProxyGenerator {
         if (method.isBridge()) return false;
         if (method.getName().startsWith("$$")) return false;
         if (method.getName().equals("finalize") && method.getParameterCount() == 0) return false;
-        if (method.getName().equals("clone") && method.getParameterCount() == 0) return false;
-        return true;
+        return !(method.getName().equals("clone") && method.getParameterCount() == 0);
     }
 
     private static void generateProxyMethod(java.lang.classfile.ClassBuilder clb,

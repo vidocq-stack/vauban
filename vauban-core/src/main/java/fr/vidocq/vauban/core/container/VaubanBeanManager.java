@@ -143,6 +143,7 @@ public final class VaubanBeanManager implements BeanManager {
         return instance;
     }
 
+    @SuppressWarnings({"java:S135", "java:S1199"})
     @Override
     public Set<Bean<?>> getBeans(Type beanType, Annotation... qualifiers) {
         // CDI spec: primitive types and wrappers are identical
@@ -700,6 +701,7 @@ public final class VaubanBeanManager implements BeanManager {
         return new InstanceImpl<>(container, Object.class);
     }
 
+    @SuppressWarnings("java:S135")
     @Override
     public boolean isMatchingBean(Set<Type> beanTypes, Set<Annotation> beanQualifiers,
                                   Type requiredType, Set<Annotation> requiredQualifiers) {
@@ -1035,6 +1037,7 @@ public final class VaubanBeanManager implements BeanManager {
         return true;
     }
 
+    @SuppressWarnings("java:S135")
     private static boolean upperBoundAssignableToOrFrom(Type type, java.lang.reflect.TypeVariable<?> tv) {
         Type[] otherBounds = (type instanceof java.lang.reflect.TypeVariable<?> otherTv)
                 ? otherTv.getBounds() : new Type[]{ type };
@@ -1142,6 +1145,7 @@ public final class VaubanBeanManager implements BeanManager {
      * CDI qualifier matching: two qualifiers are equal if they have the same type
      * and all non-@Nonbinding members have the same values.
      */
+    @SuppressWarnings("java:S135")
     private static boolean qualifierEquals(Annotation a, Annotation b) {
         if (!a.annotationType().equals(b.annotationType())) return false;
         // If annotation has no members, type equality is sufficient

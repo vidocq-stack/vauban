@@ -1,7 +1,6 @@
 package fr.vidocq.vauban.core.types;
 
 import fr.vidocq.vauban.indexer.VaubanIndex;
-import fr.vidocq.vauban.indexer.model.ClassInfo;
 import fr.vidocq.vauban.indexer.model.DotName;
 import fr.vidocq.vauban.indexer.model.TypeInfo;
 import fr.vidocq.vauban.indexer.model.TypeInfo.*;

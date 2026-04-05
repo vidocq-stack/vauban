@@ -262,7 +262,7 @@ public final class ManagedBean<T> implements Bean<T> {
             // Synthetic beans use the types from the descriptor directly
             types = getProducerTypes();
         } else {
-            types = new LinkedHashSet<Type>();
+            types = new LinkedHashSet<>();
             collectTypes(beanClass, types);
             types.add(Object.class);
             // Check if @Typed restricts the bean types
@@ -330,7 +330,7 @@ public final class ManagedBean<T> implements Bean<T> {
             } else if (t instanceof java.lang.reflect.ParameterizedType pt) {
                 if (isLegalParameterizedType(pt, allowedTypeVars)) {
                     result.add(t);
-                } else if (addRawForRemoved && pt.getRawType() instanceof Class<?> raw
+                } else if (addRawForRemoved && pt.getRawType() instanceof Class<?>
                         && containsTypeVariable(pt)) {
                     // CDI spec 5.2.4: keep parameterized types with type variables for producers
                     // so that assignability can match type variable bounds against required types
@@ -686,7 +686,7 @@ public final class ManagedBean<T> implements Bean<T> {
     }
 
     private static boolean containsUnresolvedTypeVariable(Type type) {
-        if (type instanceof java.lang.reflect.TypeVariable<?>) return true;
+        if (type instanceof java.lang.reflect.TypeVariable<?> _) return true;
         if (type instanceof java.lang.reflect.ParameterizedType pt) {
             for (var arg : pt.getActualTypeArguments()) {
                 if (containsUnresolvedTypeVariable(arg)) return true;

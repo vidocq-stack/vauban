@@ -22,19 +22,19 @@ public final class VaubanAnnotationMember implements AnnotationMember {
     @Override
     public Kind kind() {
         return switch (indexValue) {
-            case fr.vidocq.vauban.indexer.model.AnnotationValue.BooleanVal v -> Kind.BOOLEAN;
-            case fr.vidocq.vauban.indexer.model.AnnotationValue.ByteVal v -> Kind.BYTE;
-            case fr.vidocq.vauban.indexer.model.AnnotationValue.ShortVal v -> Kind.SHORT;
-            case fr.vidocq.vauban.indexer.model.AnnotationValue.IntVal v -> Kind.INT;
-            case fr.vidocq.vauban.indexer.model.AnnotationValue.LongVal v -> Kind.LONG;
-            case fr.vidocq.vauban.indexer.model.AnnotationValue.FloatVal v -> Kind.FLOAT;
-            case fr.vidocq.vauban.indexer.model.AnnotationValue.DoubleVal v -> Kind.DOUBLE;
-            case fr.vidocq.vauban.indexer.model.AnnotationValue.CharVal v -> Kind.CHAR;
-            case fr.vidocq.vauban.indexer.model.AnnotationValue.StringVal v -> Kind.STRING;
-            case fr.vidocq.vauban.indexer.model.AnnotationValue.EnumVal v -> Kind.ENUM;
-            case fr.vidocq.vauban.indexer.model.AnnotationValue.ClassVal v -> Kind.CLASS;
-            case fr.vidocq.vauban.indexer.model.AnnotationValue.AnnotationVal v -> Kind.NESTED_ANNOTATION;
-            case fr.vidocq.vauban.indexer.model.AnnotationValue.ArrayVal v -> Kind.ARRAY;
+            case fr.vidocq.vauban.indexer.model.AnnotationValue.BooleanVal _ -> Kind.BOOLEAN;
+            case fr.vidocq.vauban.indexer.model.AnnotationValue.ByteVal _ -> Kind.BYTE;
+            case fr.vidocq.vauban.indexer.model.AnnotationValue.ShortVal _ -> Kind.SHORT;
+            case fr.vidocq.vauban.indexer.model.AnnotationValue.IntVal _ -> Kind.INT;
+            case fr.vidocq.vauban.indexer.model.AnnotationValue.LongVal _ -> Kind.LONG;
+            case fr.vidocq.vauban.indexer.model.AnnotationValue.FloatVal _ -> Kind.FLOAT;
+            case fr.vidocq.vauban.indexer.model.AnnotationValue.DoubleVal _ -> Kind.DOUBLE;
+            case fr.vidocq.vauban.indexer.model.AnnotationValue.CharVal _ -> Kind.CHAR;
+            case fr.vidocq.vauban.indexer.model.AnnotationValue.StringVal _ -> Kind.STRING;
+            case fr.vidocq.vauban.indexer.model.AnnotationValue.EnumVal _ -> Kind.ENUM;
+            case fr.vidocq.vauban.indexer.model.AnnotationValue.ClassVal _ -> Kind.CLASS;
+            case fr.vidocq.vauban.indexer.model.AnnotationValue.AnnotationVal _ -> Kind.NESTED_ANNOTATION;
+            case fr.vidocq.vauban.indexer.model.AnnotationValue.ArrayVal _ -> Kind.ARRAY;
         };
     }
 

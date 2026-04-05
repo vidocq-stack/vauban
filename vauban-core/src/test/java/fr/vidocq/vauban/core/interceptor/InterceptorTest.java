@@ -17,6 +17,7 @@ import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.*;
 
+@SuppressWarnings("java:S2187") // Test scaffold — helpers and data classes for future tests
 @DisplayName("Interceptor support")
 class InterceptorTest {
 

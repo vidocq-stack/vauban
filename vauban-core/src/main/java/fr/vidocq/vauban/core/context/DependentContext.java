@@ -17,8 +17,7 @@ public final class DependentContext implements Context {
     @SuppressWarnings("unchecked")
     public <T> T get(Contextual<T> contextual, CreationalContext<T> creationalContext) {
         if (creationalContext == null) return null;
-        T instance = contextual.create(creationalContext);
-        return instance;
+        return contextual.create(creationalContext);
     }
 
     @Override

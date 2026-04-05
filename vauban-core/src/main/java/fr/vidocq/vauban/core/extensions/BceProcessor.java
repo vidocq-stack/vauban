@@ -168,7 +168,7 @@ public final class BceProcessor {
         return EnhancementParamKind.CLASS_CONFIG; // fallback
     }
 
-    @SuppressWarnings("java:S3011") // CDI spec requires reflective access
+    @SuppressWarnings({"java:S3011", "java:S135"}) // CDI spec requires reflective access
     private static void processEnhancement(Object bce, Class<?> bceClass,
                                            List<BeanDescriptor> beans,
                                            List<Class<?>> archiveClasses,
@@ -321,7 +321,7 @@ public final class BceProcessor {
     /**
      * Process @Registration methods — main phase for Invokers.
      */
-    @SuppressWarnings("java:S3011") // CDI spec requires reflective access
+    @SuppressWarnings({"java:S3011", "java:S135"}) // CDI spec requires reflective access
     private static void processRegistration(Object bce, Class<?> bceClass,
                                             List<BeanDescriptor> beans,
                                             List<fr.vidocq.vauban.core.bean.model.ObserverDescriptor> observers,
@@ -822,6 +822,7 @@ public final class BceProcessor {
         return result;
     }
 
+    @SuppressWarnings("java:S135")
     private static ObserverDescriptor applyObserverConfigs(ObserverDescriptor observer, List<VaubanClassConfig> configs) {
         var qualifiers = new LinkedHashSet<>(observer.qualifiers());
         boolean removed = false;
@@ -964,6 +965,7 @@ public final class BceProcessor {
         );
     }
 
+    @SuppressWarnings("java:S135")
     private static void applyFieldEnhancement(VaubanFieldConfig fieldConfig,
                                                List<InjectionPointInfo> injectionPoints) {
         String fieldName = fieldConfig.info().name();

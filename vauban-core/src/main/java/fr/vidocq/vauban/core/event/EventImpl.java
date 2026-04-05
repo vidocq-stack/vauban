@@ -87,9 +87,7 @@ public final class EventImpl<T> implements Event<T> {
         if (event == null) {
             throw new IllegalArgumentException("Event object must not be null");
         }
-        @SuppressWarnings("unchecked")
-        var stage = (CompletionStage<U>) dispatcher.fireAsync(event, qualifiers);
-        return stage;
+        return dispatcher.fireAsync(event, qualifiers);
     }
 
     @Override

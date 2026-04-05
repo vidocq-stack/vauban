@@ -41,11 +41,10 @@ public final class InterceptorSubclassGenerator {
      * @param bindings the interceptor bindings on this bean
      * @return the generated class name and bytecode
      */
+    @SuppressWarnings("java:S135")
     public static GeneratedInterceptedClass generate(Class<?> beanClass) {
         String beanClassName = beanClass.getName();
         String subclassName = beanClassName + "$$Intercepted";
-        boolean dump = false;
-
         ClassDesc subclassCD = classDescOf(subclassName);
         ClassDesc beanCD = classDescOf(beanClass);
 
@@ -170,8 +169,7 @@ public final class InterceptorSubclassGenerator {
         // CDI spec: @Inject initializer methods are NOT intercepted
         if (method.isAnnotationPresent(jakarta.inject.Inject.class)) return false;
         // Target class interceptor methods (@AroundInvoke etc.) are not business methods
-        if (method.isAnnotationPresent(jakarta.interceptor.AroundInvoke.class)) return false;
-        return true;
+        return !method.isAnnotationPresent(jakarta.interceptor.AroundInvoke.class);
     }
 
     private static void generateInterceptedMethod(

@@ -165,7 +165,6 @@ public final class VaubanClassConfig implements ClassConfig {
             return true;
         }
         if (methodConfigs.stream().anyMatch(VaubanMethodConfig::isModified)) return true;
-        if (fieldConfigs.stream().anyMatch(VaubanFieldConfig::isModified)) return true;
-        return false;
+        return fieldConfigs.stream().anyMatch(VaubanFieldConfig::isModified);
     }
 }

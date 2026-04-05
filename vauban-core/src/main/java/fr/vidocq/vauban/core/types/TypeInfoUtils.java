@@ -80,7 +80,7 @@ public final class TypeInfoUtils {
         if (type == null) return null;
         try {
             return switch (type) {
-                case VoidType v -> void.class;
+                case VoidType _ -> void.class;
                 case PrimitiveType p -> switch (p.kind()) {
                     case BOOLEAN -> boolean.class;
                     case BYTE -> byte.class;

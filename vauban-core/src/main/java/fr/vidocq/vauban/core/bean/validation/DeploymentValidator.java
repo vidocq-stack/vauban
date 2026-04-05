@@ -25,6 +25,7 @@ public final class DeploymentValidator {
         this.resolver = Objects.requireNonNull(resolver);
     }
 
+    @SuppressWarnings("java:S135")
     public List<ValidationError> validate() {
         var errors = new ArrayList<ValidationError>();
 
