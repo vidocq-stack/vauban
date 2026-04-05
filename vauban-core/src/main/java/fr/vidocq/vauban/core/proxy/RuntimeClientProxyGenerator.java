@@ -48,7 +48,7 @@ public final class RuntimeClientProxyGenerator {
             // Field: private Supplier delegate
             clb.withField(FIELD_DELEGATE, CD_Supplier, ClassFile.ACC_PRIVATE);
 
-            // Constructor: public Proxy() { super(); }
+            // Generate no-arg constructor calling super
             clb.withMethodBody(
                     ConstantDescs.INIT_NAME,
                     MethodTypeDesc.of(ConstantDescs.CD_void),

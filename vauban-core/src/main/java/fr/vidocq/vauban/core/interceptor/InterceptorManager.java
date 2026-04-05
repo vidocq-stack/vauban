@@ -88,6 +88,7 @@ public final class InterceptorManager {
         CURRENT_CONTEXT.remove();
     }
 
+    @SuppressWarnings("java:S3010") // Static singleton set in constructor — single container instance by design
     public InterceptorManager(List<InterceptorDescriptor> interceptors) {
         this.interceptors = List.copyOf(interceptors);
         currentInstance = this;

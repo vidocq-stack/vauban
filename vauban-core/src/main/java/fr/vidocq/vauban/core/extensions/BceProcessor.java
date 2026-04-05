@@ -783,8 +783,7 @@ public final class BceProcessor {
      */
     public static List<BeanDescriptor> applyEnhancements(
             List<BeanDescriptor> descriptors,
-            Map<DotName, List<VaubanClassConfig>> modifications,
-            VaubanIndex index) {
+            Map<DotName, List<VaubanClassConfig>> modifications) {
 
         if (modifications.isEmpty()) return descriptors;
 

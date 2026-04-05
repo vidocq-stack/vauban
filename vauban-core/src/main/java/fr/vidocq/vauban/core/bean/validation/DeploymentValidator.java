@@ -20,7 +20,7 @@ public final class DeploymentValidator {
 
     private static final String MSG_OF_TYPE = " of type ";
     private static final String PREFIX_NORMAL_SCOPED = "Normal-scoped bean ";
-    private static final String PREFIX_JAKARTA_INJECT = "jakarta.enterprise.inject.";
+    private static final String BEAN_TYPE_NAME = "jakarta.enterprise.inject.spi.Bean";
 
     private final List<BeanDescriptor> beans;
     private final BeanResolver resolver;
@@ -320,7 +320,7 @@ public final class DeploymentValidator {
     );
 
     private static final Set<String> METADATA_BUILT_IN_TYPES = Set.of(
-            "jakarta.enterprise.inject.spi.Bean",
+            BEAN_TYPE_NAME,
             "jakarta.enterprise.inject.spi.Interceptor",
             "jakarta.enterprise.inject.spi.Decorator",
             "jakarta.enterprise.inject.spi.EventMetadata"
@@ -379,7 +379,7 @@ public final class DeploymentValidator {
             return true;
         }
 
-        boolean isInterceptedBean = rawType.equals("jakarta.enterprise.inject.spi.Bean") && hasInterceptedQualifier(ip);
+        boolean isInterceptedBean = rawType.equals(BEAN_TYPE_NAME) && hasInterceptedQualifier(ip);
         boolean isInterceptorType = rawType.equals("jakarta.enterprise.inject.spi.Interceptor");
         boolean isDecoratorType = rawType.equals("jakarta.enterprise.inject.spi.Decorator");
 
@@ -415,7 +415,7 @@ public final class DeploymentValidator {
         }
 
         // Bean<X> (without @Intercepted): X must match the declaring bean class
-        if (rawType.equals("jakarta.enterprise.inject.spi.Bean")) {
+        if (rawType.equals(BEAN_TYPE_NAME)) {
             return !typeArgMatchesBeanClass(typeArgs, bean);
         }
 

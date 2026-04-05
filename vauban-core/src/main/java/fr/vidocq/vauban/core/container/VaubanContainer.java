@@ -2792,7 +2792,7 @@ public final class VaubanContainer implements AutoCloseable {
                     // Apply enhancement modifications to bean descriptors
                     if (!bceResult.enhancementModifications().isEmpty()) {
                         var modified = fr.vidocq.vauban.core.extensions.BceProcessor.applyEnhancements(
-                                descriptors, bceResult.enhancementModifications(), index);
+                                descriptors, bceResult.enhancementModifications());
                         descriptors.clear();
                         descriptors.addAll(modified);
 
