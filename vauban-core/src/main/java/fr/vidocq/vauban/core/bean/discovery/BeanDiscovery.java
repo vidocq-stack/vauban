@@ -1734,7 +1734,7 @@ public final class BeanDiscovery {
                         // Try to get the parameterized type via reflection
                         var eventType = resolveObserverParamType(
                                 classInfo.name().value(), method.name(),
-                                method.parameters().indexOf(param), param.type());
+                                method.parameters().indexOf(param), method.parameters(), param.type());
 
                         result.add(new ObserverDescriptor(
                                 classInfo.name(),
@@ -1752,23 +1752,42 @@ public final class BeanDiscovery {
         }
     }
 
+    private String getBaseTypeName(TypeInfo t) {
+        if (t instanceof fr.vidocq.vauban.indexer.model.TypeInfo.ClassType ct) return ct.name().value();
+        if (t instanceof fr.vidocq.vauban.indexer.model.TypeInfo.ParameterizedType pt) return pt.rawType().value();
+        if (t instanceof fr.vidocq.vauban.indexer.model.TypeInfo.ArrayType at) return getBaseTypeName(at.componentType()) + "[]";
+        return "";
+    }
+
     /**
      * Resolve the observer parameter type to a ParameterizedType via reflection if possible.
      */
-    private TypeInfo resolveObserverParamType(String className, String methodName, int paramIndex, TypeInfo fallback) {
+    private TypeInfo resolveObserverParamType(String className, String methodName, int paramIndex, java.util.List<fr.vidocq.vauban.indexer.model.ParameterInfo> params, TypeInfo fallback) {
         try {
             var cl = Thread.currentThread().getContextClassLoader();
             var clazz = cl != null ? Class.forName(className, false, cl)
                     : Class.forName(className);
             for (var m : clazz.getDeclaredMethods()) {
-                if (m.getName().equals(methodName)) {
-                    var genericParamTypes = m.getGenericParameterTypes();
-                    if (paramIndex < genericParamTypes.length) {
-                        var genericType = genericParamTypes[paramIndex];
-                        var resolved = reflectTypeToTypeInfo(genericType);
-                        if (resolved != null) return resolved;
+                if (m.getName().equals(methodName) && m.getParameterCount() == params.size()) {
+                    boolean match = true;
+                    for (int i = 0; i < m.getParameterTypes().length; i++) {
+                        var pClass = m.getParameterTypes()[i];
+                        var pTypeName = pClass.isArray() ? pClass.getName() : pClass.getName().replace('$', '.');
+                        String infoTypeName = getBaseTypeName(params.get(i).type());
+                        // Simple name check since rawName() might differ slightly for nested classes
+                        if (!infoTypeName.isEmpty() && !pTypeName.equals(infoTypeName) && !pClass.getSimpleName().equals(infoTypeName.substring(infoTypeName.lastIndexOf('.') + 1))) {
+                            match = false;
+                            break;
+                        }
                     }
-                    break;
+                    if (match) {
+                        var genericParamTypes = m.getGenericParameterTypes();
+                        if (paramIndex < genericParamTypes.length) {
+                            var genericType = genericParamTypes[paramIndex];
+                            var resolved = reflectTypeToTypeInfo(genericType);
+                            if (resolved != null) return resolved;
+                        }
+                    }
                 }
             }
         } catch (Exception e) { /* fallback */ }

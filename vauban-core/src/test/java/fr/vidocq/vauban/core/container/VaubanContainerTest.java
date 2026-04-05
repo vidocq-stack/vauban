@@ -70,6 +70,7 @@ class VaubanContainerTest {
         public String process(int id) { return repository.findById(id); }
     }
 
+    @SuppressWarnings("BuilderMissingRequiredFields")
     @Nested
     @DisplayName("bootstrap et shutdown")
     class Lifecycle {

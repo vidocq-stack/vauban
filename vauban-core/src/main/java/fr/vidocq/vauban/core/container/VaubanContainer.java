@@ -2152,7 +2152,17 @@ public final class VaubanContainer implements AutoCloseable {
                     ManagedBean<?> declBean = findManagedBeanByClass(descriptor.beanClass());
                     boolean isDependent = declBean != null
                             && declBean.getScope() == jakarta.enterprise.context.Dependent.class;
-                    var declaringInstance = selectByBeanClass(declaringClass);
+                    // For @Dependent declaring beans, track the CreationalContext so dependents
+                    // (like @Inject fields) are properly destroyed when the declaring bean is destroyed
+                    var declCtx = new fr.vidocq.vauban.core.context.CreationalContextImpl<>();
+                    Object declaringInstance;
+                    if (isDependent && declBean != null) {
+                        @SuppressWarnings("unchecked")
+                        var castBean = (ManagedBean<Object>) (ManagedBean<?>) declBean;
+                        declaringInstance = castBean.create(declCtx);
+                    } else {
+                        declaringInstance = selectByBeanClass(declaringClass);
+                    }
 
                     for (var method : declaringClass.getDeclaredMethods()) {
                         if (method.getName().equals(methodName)) {
@@ -2181,8 +2191,7 @@ public final class VaubanContainer implements AutoCloseable {
                                 if (isDependent && declaringInstance != null) {
                                     @SuppressWarnings("unchecked")
                                     var castBean = (ManagedBean<Object>) (ManagedBean<?>) declBean;
-                                    castBean.destroy(declaringInstance,
-                                            new fr.vidocq.vauban.core.context.CreationalContextImpl<>());
+                                    castBean.destroy(declaringInstance, declCtx);
                                 }
                             }
                         }

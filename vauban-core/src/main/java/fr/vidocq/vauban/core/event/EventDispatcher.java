@@ -110,7 +110,12 @@ public final class EventDispatcher {
             if (asyncOnly && !observer.async()) continue;
             if (!asyncOnly && observer.async()) continue;
 
-            if (!eventTypeMatches(observer, eventType)) continue;
+            System.out.println("DEBUG EVENT: Checking " + observer.declaringClass().value() + "." + observer.methodName() + " with observer.eventType=" + observer.eventType() + " against eventTypeToMatch " + eventType);
+
+            if (!eventTypeMatches(observer, eventType)) {
+                System.out.println("DEBUG EVENT: Mismatch on eventType for " + observer.methodName());
+                continue;
+            }
 
             boolean qualMatch;
             if (eventQualifierAnnotations != null && eventQualifierAnnotations.length > 0) {
@@ -119,7 +124,10 @@ public final class EventDispatcher {
                 qualMatch = observerQualifiersMatch(observer.qualifiers(), eventQualifiers);
             }
             if (qualMatch) {
+                System.out.println("DEBUG EVENT: MATCHED " + observer.methodName() + " with observer.eventType=" + observer.eventType());
                 result.add(observer);
+            } else {
+                System.out.println("DEBUG EVENT: Mismatch on qualifiers for " + observer.methodName());
             }
         }
         return result;
@@ -401,6 +409,70 @@ public final class EventDispatcher {
         }
     }
 
+    /**
+     * CDI spec: EventMetadata.getType() returns the runtime class of the event object
+     * with type variables resolved. When the runtime class differs from the selected type's
+     * raw type (e.g., ArrayList fired through Event&lt;List&lt;...&gt;&gt;), we resolve
+     * the runtime class's type parameters from the selected type.
+     */
+    private static java.lang.reflect.Type resolveRuntimeEventType(Object event, java.lang.reflect.Type selectedType) {
+        if (selectedType == null) return event.getClass();
+        Class<?> runtimeClass = event.getClass();
+        if (!(selectedType instanceof java.lang.reflect.ParameterizedType selectedPT)) return selectedType;
+        Class<?> selectedRaw = (Class<?>) selectedPT.getRawType();
+        if (runtimeClass == selectedRaw) return selectedType;
+
+        var runtimeTypeParams = runtimeClass.getTypeParameters();
+        if (runtimeTypeParams.length == 0) return runtimeClass;
+
+        // Find the generic supertype of runtimeClass that matches selectedRaw
+        java.lang.reflect.ParameterizedType matchingSupertype = findGenericSupertype(runtimeClass, selectedRaw);
+        if (matchingSupertype == null) return selectedType;
+
+        // Map type variables from the matching supertype to the selected type's actual args
+        var varMap = new java.util.HashMap<String, java.lang.reflect.Type>();
+        var supertypeArgs = matchingSupertype.getActualTypeArguments();
+        var selectedArgs = selectedPT.getActualTypeArguments();
+        for (int i = 0; i < supertypeArgs.length && i < selectedArgs.length; i++) {
+            if (supertypeArgs[i] instanceof java.lang.reflect.TypeVariable<?> tv) {
+                varMap.put(tv.getName(), selectedArgs[i]);
+            }
+        }
+
+        var resolvedArgs = new java.lang.reflect.Type[runtimeTypeParams.length];
+        for (int i = 0; i < runtimeTypeParams.length; i++) {
+            resolvedArgs[i] = varMap.getOrDefault(runtimeTypeParams[i].getName(), Object.class);
+        }
+        return new ParameterizedTypeImpl(runtimeClass, resolvedArgs, null);
+    }
+
+    private static java.lang.reflect.ParameterizedType findGenericSupertype(Class<?> clazz, Class<?> targetRaw) {
+        for (var iface : clazz.getGenericInterfaces()) {
+            if (iface instanceof java.lang.reflect.ParameterizedType pt && pt.getRawType() == targetRaw) {
+                return pt;
+            }
+        }
+        if (clazz.getGenericSuperclass() instanceof java.lang.reflect.ParameterizedType pt
+                && pt.getRawType() == targetRaw) {
+            return pt;
+        }
+        // Recurse through supertypes
+        for (var iface : clazz.getGenericInterfaces()) {
+            Class<?> rawIface = (iface instanceof java.lang.reflect.ParameterizedType pt)
+                    ? (Class<?>) pt.getRawType()
+                    : (iface instanceof Class<?> c ? c : null);
+            if (rawIface != null && targetRaw.isAssignableFrom(rawIface)) {
+                var result = findGenericSupertype(rawIface, targetRaw);
+                if (result != null) return result;
+            }
+        }
+        var superclass = clazz.getSuperclass();
+        if (superclass != null && targetRaw.isAssignableFrom(superclass)) {
+            return findGenericSupertype(superclass, targetRaw);
+        }
+        return null;
+    }
+
     private static class ParameterizedTypeImpl implements java.lang.reflect.ParameterizedType {
         private final Class<?> rawType;
         private final java.lang.reflect.Type[] actualTypeArguments;
@@ -414,7 +486,32 @@ public final class EventDispatcher {
         @Override public java.lang.reflect.Type[] getActualTypeArguments() { return actualTypeArguments; }
         @Override public java.lang.reflect.Type getRawType() { return rawType; }
         @Override public java.lang.reflect.Type getOwnerType() { return ownerType; }
-        @Override public String toString() { return rawType.getName() + "<...>"; }
+
+        @Override
+        public boolean equals(Object o) {
+            if (!(o instanceof java.lang.reflect.ParameterizedType other)) return false;
+            return java.util.Objects.equals(rawType, other.getRawType())
+                    && java.util.Arrays.equals(actualTypeArguments, other.getActualTypeArguments())
+                    && java.util.Objects.equals(ownerType, other.getOwnerType());
+        }
+
+        @Override
+        public int hashCode() {
+            return java.util.Arrays.hashCode(actualTypeArguments)
+                    ^ java.util.Objects.hashCode(rawType)
+                    ^ java.util.Objects.hashCode(ownerType);
+        }
+
+        @Override
+        public String toString() {
+            if (actualTypeArguments.length == 0) return rawType.getTypeName();
+            var sb = new StringBuilder(rawType.getTypeName()).append('<');
+            for (int i = 0; i < actualTypeArguments.length; i++) {
+                if (i > 0) sb.append(", ");
+                sb.append(actualTypeArguments[i].getTypeName());
+            }
+            return sb.append('>').toString();
+        }
     }
 
     private boolean observerQualifiersMatch(List<QualifierInstance> observerQualifiers,
@@ -555,6 +652,7 @@ public final class EventDispatcher {
                                 metaQualifiers.add(jakarta.enterprise.inject.Any.Literal.INSTANCE);
                                 final java.util.Set<java.lang.annotation.Annotation> immutableQualifiers =
                                         java.util.Set.copyOf(metaQualifiers);
+                                final java.lang.reflect.Type resolvedType = resolveRuntimeEventType(eventObj, selectedEventType);
                                 args[i] = new jakarta.enterprise.inject.spi.EventMetadata() {
                                     @Override public java.util.Set<java.lang.annotation.Annotation> getQualifiers() {
                                         return immutableQualifiers;
@@ -563,7 +661,7 @@ public final class EventDispatcher {
                                         return eventInjectionPoint;
                                     }
                                     @Override public java.lang.reflect.Type getType() {
-                                        return selectedEventType != null ? selectedEventType : eventObj.getClass();
+                                        return resolvedType;
                                     }
                                 };
                             } else if (paramTypes[i] == jakarta.enterprise.inject.Instance.class
@@ -596,7 +694,9 @@ public final class EventDispatcher {
                             }
                         }
                         try {
+                            System.out.println("DEBUG EVENT: invoking " + method + " on " + beanInstance + " with args: " + java.util.Arrays.toString(args));
                             method.invoke(beanInstance, args);
+                            System.out.println("DEBUG EVENT: invoke successful");
                         } finally {
                             ctx.release();
                         }
@@ -604,6 +704,8 @@ public final class EventDispatcher {
                 } finally {
                     if (beanCtx != null) beanCtx.release();
                 }
+            } else {
+                System.out.println("DEBUG EVENT: findMethod returned null for " + observer.methodName() + " eventClass " + event.getClass());
             }
         } catch (java.lang.reflect.InvocationTargetException e) {
             var cause = e.getCause();

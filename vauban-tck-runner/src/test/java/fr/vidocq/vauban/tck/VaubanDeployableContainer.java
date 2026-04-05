@@ -60,14 +60,15 @@ public class VaubanDeployableContainer implements DeployableContainer<VaubanCont
                             if (jarEntry.getName().endsWith(".class")
                                     && !jarEntry.getName().contains("module-info")) {
                                 var bytes = jarIs.readAllBytes();
-                                try {
-                                    var classInfo = ClassFileScanner.scan(bytes);
-                                    var className = classInfo.name().value();
-                                    classBytecodeMap.put(className, bytes);
-                                    classNames.add(className);
-                                } catch (Exception e) {
-                                    // Skip malformed class files
-                                }
+                try {
+                    var classInfo = ClassFileScanner.scan(bytes);
+                    var className = classInfo.name().value();
+                    classBytecodeMap.put(className, bytes);
+                    classNames.add(className);
+                } catch (Exception e) {
+                    System.out.println("Failed to scan class in JAR: " + e.getMessage());
+                    e.printStackTrace();
+                }
                             }
                             jarEntry = jarIs.getNextJarEntry();
                         }
@@ -126,7 +127,8 @@ public class VaubanDeployableContainer implements DeployableContainer<VaubanCont
                 classBytecodeMap.put(className, bytes);
                 classNames.add(className);
             } catch (Exception e) {
-                // Skip malformed class files
+                System.out.println("Failed to scan direct class: " + e.getMessage());
+                e.printStackTrace();
             }
         } catch (Exception e) {
             // Skip unreadable assets
