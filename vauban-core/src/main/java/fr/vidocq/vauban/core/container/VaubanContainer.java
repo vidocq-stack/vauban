@@ -94,6 +94,7 @@ public final class VaubanContainer implements AutoCloseable {
     private final ClassLoader classLoader;
     private final java.util.function.BiFunction<String, byte[], Class<?>> classDefiner;
     private final VaubanLookup vaubanLookup;
+    final BeanLifecycle beanLifecycle;
     final DisposerInvoker disposerInvoker;
     private final BeanInjector beanInjector;
     private volatile boolean running;
@@ -151,6 +152,7 @@ public final class VaubanContainer implements AutoCloseable {
         this.interceptorManager = new InterceptorManager(interceptorDescriptors);
         this.interceptorManager.setVaubanLookup(vaubanLookup);
         this.interceptorManager.setInstanceFactory((descriptor, ctx) -> getOrCreateInterceptorInstance(descriptor, ctx));
+        this.beanLifecycle = new BeanLifecycle(interceptorManager, vaubanLookup);
 
         // Wrap intercepted beans with generated subclasses
         wrapInterceptedBeans(descriptors, factories);
@@ -738,9 +740,9 @@ public final class VaubanContainer implements AutoCloseable {
         if (instance.getClass().isAnnotationPresent(jakarta.interceptor.Interceptor.class)) return;
 
         var allBindings = new java.util.LinkedHashSet<DotName>();
-        var beanBindings = (descriptor != null) ? descriptor.interceptorBindings() : findInterceptorBindings(instance);
+        var beanBindings = (descriptor != null) ? descriptor.interceptorBindings() : beanLifecycle.findInterceptorBindings(instance);
         if (beanBindings == null || beanBindings.isEmpty()) {
-            beanBindings = findInterceptorBindings(instance);
+            beanBindings = beanLifecycle.findInterceptorBindings(instance);
         }
         if (beanBindings != null) {
             allBindings.addAll(beanBindings);
@@ -802,173 +804,7 @@ public final class VaubanContainer implements AutoCloseable {
     }
 
     private void callPostConstruct(Object instance, BeanDescriptor descriptor, CreationalContext<?> ctx) {
-        // CDI spec: Interceptor instances are not intercepted
-        if (instance.getClass().isAnnotationPresent(jakarta.interceptor.Interceptor.class)) {
-            // CDI spec: @PostConstruct on an interceptor can be a lifecycle interceptor (takes InvocationContext)
-            // or a PostConstruct callback for the interceptor instance itself (no args).
-            java.lang.reflect.Method pc = null;
-            for (var m : instance.getClass().getDeclaredMethods()) {
-                if (m.isAnnotationPresent(jakarta.annotation.PostConstruct.class) && m.getParameterCount() == 0) {
-                    pc = m;
-                    break;
-                }
-            }
-            if (pc != null) {
-                try {
-                    vaubanLookup.invokeMethod(instance, pc);
-                } catch (Exception e) {
-                    throw new RuntimeException("@PostConstruct on interceptor instance failed: " + pc, e);
-                }
-            }
-            return;
-        }
-
-        // Find all @PostConstruct methods in the bean hierarchy (respecting override rules)
-        var postConstructMethods = collectLifecycleMethodsInHierarchy(instance.getClass(), jakarta.annotation.PostConstruct.class);
-
-        // Check for lifecycle interceptors on the bean
-        java.util.Set<fr.vidocq.vauban.indexer.model.DotName> beanBindings = (descriptor != null) ? descriptor.interceptorBindings() : findInterceptorBindings(instance);
-        // Fallback: check via reflection if descriptor bindings are empty
-        if ((beanBindings == null || beanBindings.isEmpty()) && interceptorManager.hasInterceptors()) {
-            beanBindings = findInterceptorBindings(instance);
-        }
-        if (beanBindings != null && !beanBindings.isEmpty() && interceptorManager.hasInterceptors()) {
-            interceptorManager.setClassLoader(instance.getClass().getClassLoader());
-            var bindingAnns = (descriptor != null && !descriptor.interceptorBindingAnnotations().isEmpty())
-                    ? new java.util.ArrayList<java.lang.annotation.Annotation>(descriptor.interceptorBindingAnnotations())
-                    : new java.util.ArrayList<java.lang.annotation.Annotation>(collectBindingAnnotations(instance));
-            var lifecycleChain = interceptorManager.resolveLifecycleChain(
-                    beanBindings, jakarta.annotation.PostConstruct.class, bindingAnns, ctx);
-            if (!lifecycleChain.isEmpty()) {
-                var bindingAnnotations = new java.util.LinkedHashSet<java.lang.annotation.Annotation>(bindingAnns);
-                final var pcMethods = postConstructMethods;
-                var invocationCtx = new fr.vidocq.vauban.core.interceptor.VaubanInvocationContext(
-                        instance, null, new Object[0], lifecycleChain,
-                        (target, params) -> {
-                            for (var m : pcMethods) {
-                                vaubanLookup.invokeMethod(target, m);
-                            }
-                            return null;
-                        });
-                invocationCtx.setInterceptorBindings(bindingAnnotations);
-                try {
-                    invocationCtx.proceed();
-                } catch (Throwable e) {
-                    if (e instanceof RuntimeException re) throw re;
-                    if (e instanceof Error err) throw err;
-                    throw new RuntimeException("Lifecycle interceptor failed", e);
-                }
-                return;
-            }
-        }
-
-        // No interceptors — call @PostConstruct directly
-        for (var pcMethod : postConstructMethods) {
-            try {
-                vaubanLookup.invokeMethod(instance, pcMethod);
-            } catch (Exception e) {
-                throw new RuntimeException("@PostConstruct failed: " + pcMethod, e);
-            }
-        }
-    }
-
-    /**
-     * Collect all lifecycle methods in a class hierarchy, respecting override rules.
-     * Superclass methods come first. If a subclass overrides a method WITHOUT the
-     * lifecycle annotation, the callback is disabled.
-     */
-    private static java.util.List<java.lang.reflect.Method> collectLifecycleMethodsInHierarchy(
-            Class<?> clazz, Class<? extends java.lang.annotation.Annotation> annotation) {
-        // Skip intercepted subclass
-        if (clazz.getName().contains("$$Intercepted") || clazz.getName().contains("$$Proxy")) {
-            clazz = clazz.getSuperclass();
-        }
-        var result = new java.util.ArrayList<java.lang.reflect.Method>();
-        collectLifecycleMethodsRecursive(clazz, annotation, result);
-        return result;
-    }
-
-    private static void collectLifecycleMethodsRecursive(Class<?> clazz,
-            Class<? extends java.lang.annotation.Annotation> annotation,
-            java.util.List<java.lang.reflect.Method> result) {
-        if (clazz == null || clazz == Object.class) return;
-        // Process superclass first (CDI spec: superclass methods called first)
-        collectLifecycleMethodsRecursive(clazz.getSuperclass(), annotation, result);
-        for (var method : clazz.getDeclaredMethods()) {
-            if (method.isAnnotationPresent(annotation)) {
-                // Remove any superclass method with the same signature (override)
-                result.removeIf(m -> m.getName().equals(method.getName())
-                        && java.util.Arrays.equals(m.getParameterTypes(), method.getParameterTypes()));
-                result.add(method);
-            } else {
-                // If subclass overrides WITHOUT annotation, disable the callback
-                result.removeIf(m -> m.getName().equals(method.getName())
-                        && java.util.Arrays.equals(m.getParameterTypes(), method.getParameterTypes()));
-            }
-        }
-    }
-
-    /**
-     * Collect transitive interceptor binding annotations from meta-annotations.
-     */
-    private static void collectTransitiveBindings(Set<java.lang.annotation.Annotation> annotations,
-            Set<DotName> dotNames) {
-        var toAdd = new java.util.LinkedHashSet<java.lang.annotation.Annotation>();
-        for (var ann : annotations) {
-            collectTransitiveMeta(ann.annotationType(), toAdd, annotations, dotNames);
-        }
-        annotations.addAll(toAdd);
-    }
-
-    private static void collectTransitiveMeta(Class<? extends java.lang.annotation.Annotation> annType,
-            Set<java.lang.annotation.Annotation> toAdd,
-            Set<java.lang.annotation.Annotation> existing, Set<DotName> dotNames) {
-        for (var meta : annType.getAnnotations()) {
-            if (meta.annotationType().isAnnotationPresent(jakarta.interceptor.InterceptorBinding.class)
-                    && !existing.contains(meta) && !toAdd.contains(meta)) {
-                toAdd.add(meta);
-                dotNames.add(DotName.of(meta.annotationType().getName()));
-                collectTransitiveMeta(meta.annotationType(), toAdd, existing, dotNames);
-            }
-        }
-    }
-
-    /**
-     * Find interceptor bindings on a bean instance (from its class or superclass).
-     */
-    private Set<DotName> findInterceptorBindings(Object instance) {
-        var bindings = new java.util.LinkedHashSet<DotName>();
-        var clazz = instance.getClass();
-        if (clazz.getName().contains("$$Intercepted")) {
-            clazz = clazz.getSuperclass();
-        }
-        var annotations = new java.util.LinkedHashSet<java.lang.annotation.Annotation>();
-        for (var ann : clazz.getAnnotations()) {
-            if (ann.annotationType().isAnnotationPresent(jakarta.interceptor.InterceptorBinding.class)) {
-                bindings.add(DotName.of(ann.annotationType().getName()));
-                annotations.add(ann);
-            }
-        }
-        // Collect transitive bindings
-        collectTransitiveBindings(annotations, bindings);
-        return bindings;
-    }
-
-    private Set<java.lang.annotation.Annotation> collectBindingAnnotations(Object instance) {
-        var clazz = instance.getClass();
-        if (clazz.getName().contains("$$Intercepted") || clazz.getName().contains("$$Proxy")) {
-            clazz = clazz.getSuperclass();
-        }
-        var annotations = new java.util.LinkedHashSet<java.lang.annotation.Annotation>();
-        var dotNames = new java.util.LinkedHashSet<DotName>();
-        for (var ann : clazz.getAnnotations()) {
-            if (ann.annotationType().isAnnotationPresent(jakarta.interceptor.InterceptorBinding.class)) {
-                annotations.add(ann);
-                dotNames.add(DotName.of(ann.annotationType().getName()));
-            }
-        }
-        collectTransitiveBindings(annotations, dotNames);
-        return annotations;
+        beanLifecycle.callPostConstruct(instance, descriptor, ctx);
     }
 
     /**
@@ -1233,7 +1069,7 @@ public final class VaubanContainer implements AutoCloseable {
                         for (var ann : bindingAnnotations) {
                             fullBindings.add(DotName.of(ann.annotationType().getName()));
                         }
-                        collectTransitiveBindings(bindingAnnotations, fullBindings);
+                        BeanLifecycle.collectTransitiveBindings(bindingAnnotations, fullBindings);
 
                         // Resolve AroundConstruct chain
                         var constructChain = mgr.resolveAroundConstructChain(bds, targetCtor, finalBeanClass, (jakarta.enterprise.context.spi.CreationalContext<?>) creationalCtx);
