@@ -33,14 +33,8 @@ public final class VaubanInvoker implements Invoker<Object, Object>, InvokerInfo
         makeAccessibleSafe(method);
     }
 
-    @SuppressWarnings("java:S3011") // CDI spec requires reflective access
     private static void makeAccessibleSafe(java.lang.reflect.AccessibleObject member) {
-        try {
-            member.setAccessible(true);
-        } catch (Exception e) {
-            throw new RuntimeException("Cannot access member: " + member
-                    + ". Ensure the module opens the package to fr.vidocq.vauban.core", e);
-        }
+        member.trySetAccessible();
     }
 
     @Override

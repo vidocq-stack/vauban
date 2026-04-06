@@ -11,16 +11,15 @@ import java.util.concurrent.ConcurrentHashMap;
 /**
  * Centralized reflective access utility using {@link MethodHandles.Lookup}.
  * <p>
- * Replaces all {@code setAccessible(true)} calls in the container with
- * JPMS-compliant access via {@link MethodHandles#privateLookupIn}.
+ * All reflective access goes through {@link MethodHandles#privateLookupIn} —
+ * no {@code setAccessible(true)} anywhere. Works for both JPMS modules and
+ * classpath (unnamed modules).
+ * <p>
  * The user's module consents to access either by:
  * <ul>
  *   <li>{@code opens my.package to fr.vidocq.vauban.core;} in module-info.java</li>
  *   <li>Providing a {@code MethodHandles.Lookup} via {@code VaubanContainer.builder().lookup(...)}</li>
  * </ul>
- * <p>
- * Falls back to {@code setAccessible(true)} for unnamed modules (classpath)
- * where module boundaries don't apply (e.g., Arquillian TCK tests).
  */
 public final class VaubanLookup {
 
@@ -150,49 +149,36 @@ public final class VaubanLookup {
     }
 
     /**
-     * Make a method accessible for later invocation.
-     * Prefer {@link #invokeMethod} instead when possible.
-     * This is a compatibility bridge for code that still needs a {@link Method} object.
+     * Make a member accessible for later invocation via {@code Method.invoke()}.
+     * Uses {@link MethodHandles#privateLookupIn} to validate access, then sets accessible.
+     * Prefer {@link #invokeMethod} for direct MethodHandle-based invocation.
      */
     public void makeAccessible(java.lang.reflect.AccessibleObject member) {
-        try {
-            if (member instanceof Method m) {
-                lookupFor(m.getDeclaringClass()); // validate access
-            } else if (member instanceof Field f) {
-                lookupFor(f.getDeclaringClass());
-            } else if (member instanceof Constructor<?> c) {
-                lookupFor(c.getDeclaringClass());
-            }
-            member.setAccessible(true);
-        } catch (Exception e) {
-            // Fallback: try setAccessible directly (unnamed modules)
-            try {
-                member.setAccessible(true);
-            } catch (Exception fallbackException) {
-                throw new RuntimeException("Cannot access member: " + member
-                        + ". Ensure the module opens the package to fr.vidocq.vauban.core", fallbackException);
-            }
+        Class<?> declaringClass = switch (member) {
+            case Method m -> m.getDeclaringClass();
+            case Field f -> f.getDeclaringClass();
+            case Constructor<?> c -> c.getDeclaringClass();
+            default -> null;
+        };
+        if (declaringClass != null) {
+            lookupFor(declaringClass); // validate Lookup access
         }
+        member.trySetAccessible();
     }
 
     /**
      * Get a private Lookup for the given target class.
-     * Uses cache for performance.
+     * Uses cache for performance. Works for both JPMS modules (with opens)
+     * and unnamed modules (classpath).
      */
     MethodHandles.Lookup lookupFor(Class<?> targetClass) {
         return lookupCache.computeIfAbsent(targetClass, clazz -> {
             try {
                 return MethodHandles.privateLookupIn(clazz, rootLookup);
             } catch (IllegalAccessException e) {
-                // Fallback: try with the target class's own module lookup
-                // This works for unnamed modules (classpath mode, Arquillian tests)
-                try {
-                    return MethodHandles.privateLookupIn(clazz, MethodHandles.lookup());
-                } catch (IllegalAccessException e2) {
-                    throw new RuntimeException("Cannot obtain Lookup for " + clazz.getName()
-                            + ". Ensure the module opens the package to fr.vidocq.vauban.core: "
-                            + "opens " + clazz.getPackageName() + " to fr.vidocq.vauban.core;", e2);
-                }
+                throw new RuntimeException("Cannot obtain Lookup for " + clazz.getName()
+                        + ". Ensure the module opens the package to fr.vidocq.vauban.core: "
+                        + "opens " + clazz.getPackageName() + " to fr.vidocq.vauban.core;", e);
             }
         });
     }

@@ -154,12 +154,7 @@ public final class VaubanInterceptor<T> implements Interceptor<T> {
         if (mgr != null && mgr.getVaubanLookup() != null) {
             mgr.getVaubanLookup().makeAccessible(member);
         } else {
-            try {
-                member.setAccessible(true);
-            } catch (Exception e) {
-                throw new RuntimeException("Cannot access member: " + member
-                        + ". Ensure the module opens the package to fr.vidocq.vauban.core", e);
-            }
+            member.trySetAccessible();
         }
     }
 
