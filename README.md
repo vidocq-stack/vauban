@@ -59,7 +59,20 @@ sdk env install
 mvn clean verify
 ```
 
-### Utilisation programmatique
+### Deux modes d'utilisation
+
+Vauban propose deux approches pour declarer les beans :
+
+| Mode | Quand l'utiliser | Beans declares via |
+|------|-----------------|-------------------|
+| **Programmatique** | Tests unitaires, microservices, scripts | `addBeanClass()` — chaque bean est liste explicitement |
+| **Annotation processor** | Applications Maven classiques | Scan automatique a la compilation via `vauban-processor` |
+
+> **Note** : il n'y a pas de scan automatique du classpath au runtime. Le builder `VaubanContainer.builder()` ne prend que les classes ajoutees explicitement. Le scan "magique" est fait a la compilation par le processeur d'annotations (`vauban-processor`).
+
+### Utilisation programmatique (tests, scripts)
+
+Les beans sont declares un par un — ideal pour les tests unitaires ou l'on controle precisement le perimetre :
 
 ```java
 import fr.vidocq.vauban.core.container.VaubanContainer;
@@ -100,6 +113,9 @@ public class MonRepository {
 ```
 
 ### Tests avec JUnit 6
+
+`@AddBeans` declare explicitement les classes a inclure dans le conteneur de test.
+C'est voulu : dans un test unitaire, on maitrise exactement le perimetre d'injection — pas de scan classpath implicite, pas de bean inattendu.
 
 ```java
 @VaubanTest
