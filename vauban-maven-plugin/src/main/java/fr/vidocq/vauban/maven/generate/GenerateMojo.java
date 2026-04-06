@@ -50,11 +50,13 @@ public class GenerateMojo extends AbstractMojo {
         try {
             var dependencyJars = collectDependencyJars();
             var projectClasses = outputDirectory.toPath();
+            var classLoader = buildClassLoader(dependencyJars, projectClasses);
 
             var config = new VaubanGenerator.Config(
                     dependencyJars,
                     projectClasses,
-                    projectClasses // write beans.list alongside compiled classes
+                    projectClasses, // write generated files alongside compiled classes
+                    classLoader
             );
 
             var result = VaubanGenerator.generate(config);
@@ -66,9 +68,11 @@ public class GenerateMojo extends AbstractMojo {
 
             // Log results
             if (result.discoveredBeanClasses().isEmpty()) {
-                log.info("Vauban: no CDI beans discovered in dependencies");
+                log.info("Vauban: no CDI beans discovered");
             } else {
-                log.info("Vauban: discovered " + result.discoveredBeanClasses().size() + " CDI beans");
+                log.info("Vauban: discovered " + result.discoveredBeanClasses().size() + " CDI beans, "
+                        + "generated " + result.generatedProxies().size() + " proxies, "
+                        + result.generatedInterceptors().size() + " interceptor subclasses");
                 for (var beanClass : result.discoveredBeanClasses()) {
                     log.debug("  " + beanClass);
                 }
@@ -88,5 +92,18 @@ public class GenerateMojo extends AbstractMojo {
             }
         }
         return jars;
+    }
+
+    private java.net.URLClassLoader buildClassLoader(List<Path> jars, Path projectClasses)
+            throws java.net.MalformedURLException {
+        var urls = new ArrayList<java.net.URL>();
+        urls.add(projectClasses.toUri().toURL());
+        for (var jar : jars) {
+            urls.add(jar.toUri().toURL());
+        }
+        return new java.net.URLClassLoader(
+                urls.toArray(java.net.URL[]::new),
+                getClass().getClassLoader()
+        );
     }
 }

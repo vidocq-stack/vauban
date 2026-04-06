@@ -24,20 +24,27 @@ public final class RuntimeClientProxyGenerator {
     private static final ClassDesc CD_Supplier = ClassDesc.of("java.util.function.Supplier");
     private static final ClassDesc CD_Object = ConstantDescs.CD_Object;
     private static final String FIELD_DELEGATE = "$$delegate";
-
-    private static final java.util.concurrent.atomic.AtomicLong PROXY_COUNTER =
-            new java.util.concurrent.atomic.AtomicLong();
+    private static final String PROXY_SUFFIX = "_ClientProxy";
 
     private RuntimeClientProxyGenerator() {}
 
     /**
+     * Returns the deterministic proxy class name for a given bean class.
+     * Useful for build-time pre-generation: the runtime will look for this exact name.
+     */
+    public static String proxyClassName(Class<?> beanClass) {
+        return beanClass.getName() + PROXY_SUFFIX;
+    }
+
+    /**
      * Generate a client proxy class for the given bean class.
+     * The generated class name is deterministic: {@code BeanClass_ClientProxy}.
      *
      * @param beanClass the bean class to proxy
      * @return the generated class name and bytecode
      */
     public static GeneratedProxy generate(Class<?> beanClass) {
-        String proxyClassName = beanClass.getName() + "_ClientProxy" + PROXY_COUNTER.incrementAndGet();
+        String proxyClassName = proxyClassName(beanClass);
         ClassDesc proxyCD = ClassDesc.of(proxyClassName);
         ClassDesc beanCD = ClassDesc.of(beanClass.getName());
 

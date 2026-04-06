@@ -136,6 +136,69 @@ class VaubanGeneratorTest {
         assertTrue(result.warnings().getFirst().contains("non-existent"));
     }
 
+    @Test
+    @DisplayName("generates deterministic client proxy .class for normal-scoped beans")
+    void shouldGenerateProxyForNormalScopedBeans() throws Exception {
+        // Write .class files to a directory to create a ClassLoader
+        var classesDir = tempDir.resolve("classes");
+        writeClassToDir(classesDir, "com.proxy.NormalBean", CD_APP_SCOPED);
+        writeClassToDir(classesDir, "com.proxy.DependentBean", CD_DEPENDENT);
+
+        // Also create a JAR with the same classes (for scanning)
+        var jarPath = createTestJar("proxy-lib.jar",
+                new TestClass("com.proxy.NormalBean", CD_APP_SCOPED),
+                new TestClass("com.proxy.DependentBean", CD_DEPENDENT));
+
+        var outputDir = tempDir.resolve("output");
+        var cl = new java.net.URLClassLoader(new java.net.URL[]{classesDir.toUri().toURL()});
+
+        var config = new VaubanGenerator.Config(List.of(jarPath), null, outputDir, cl);
+        var result = VaubanGenerator.generate(config);
+
+        // Proxy generated only for normal-scoped (@ApplicationScoped) bean
+        assertEquals(1, result.generatedProxies().size());
+        assertTrue(result.generatedProxies().getFirst().contains("NormalBean"));
+        assertTrue(result.generatedProxies().getFirst().endsWith("_ClientProxy"));
+
+        // Verify .class file exists
+        var proxyClassFile = outputDir.resolve("com/proxy/NormalBean_ClientProxy.class");
+        assertTrue(Files.exists(proxyClassFile), "Proxy .class file should be generated");
+        assertTrue(Files.size(proxyClassFile) > 0, "Proxy .class file should not be empty");
+
+        // No proxy for @Dependent (not normal-scoped)
+        assertTrue(result.generatedProxies().stream()
+                .noneMatch(n -> n.contains("DependentBean")));
+    }
+
+    @Test
+    @DisplayName("proxy naming is deterministic across multiple runs")
+    void shouldHaveDeterministicProxyNames() throws Exception {
+        var classesDir = tempDir.resolve("classes");
+        writeClassToDir(classesDir, "com.det.MyService", CD_APP_SCOPED);
+
+        var jarPath = createTestJar("det-lib.jar",
+                new TestClass("com.det.MyService", CD_APP_SCOPED));
+
+        var cl = new java.net.URLClassLoader(new java.net.URL[]{classesDir.toUri().toURL()});
+
+        var output1 = tempDir.resolve("run1");
+        var output2 = tempDir.resolve("run2");
+
+        var result1 = VaubanGenerator.generate(new VaubanGenerator.Config(List.of(jarPath), null, output1, cl));
+        var result2 = VaubanGenerator.generate(new VaubanGenerator.Config(List.of(jarPath), null, output2, cl));
+
+        // Same name in both runs
+        assertEquals(result1.generatedProxies(), result2.generatedProxies());
+        assertEquals("com.det.MyService_ClientProxy", result1.generatedProxies().getFirst());
+    }
+
+    private void writeClassToDir(Path classesDir, String className, ClassDesc annotation) throws IOException {
+        var classBytes = generateClassWithAnnotation(className, annotation);
+        var classFile = classesDir.resolve(className.replace('.', '/') + ".class");
+        Files.createDirectories(classFile.getParent());
+        Files.write(classFile, classBytes);
+    }
+
     // --- Test helpers ---
 
     private record TestClass(String className, ClassDesc annotationDesc) {}

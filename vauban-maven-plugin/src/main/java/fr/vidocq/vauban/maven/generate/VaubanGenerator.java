@@ -2,8 +2,10 @@ package fr.vidocq.vauban.maven.generate;
 
 import fr.vidocq.vauban.core.bean.discovery.BeanDiscovery;
 import fr.vidocq.vauban.core.bean.model.BeanDescriptor;
+import fr.vidocq.vauban.core.bean.model.BeanDescriptor.BeanKind;
+import fr.vidocq.vauban.core.interceptor.InterceptorSubclassGenerator;
+import fr.vidocq.vauban.core.proxy.RuntimeClientProxyGenerator;
 import fr.vidocq.vauban.indexer.IndexBuilder;
-import fr.vidocq.vauban.indexer.model.ClassInfo;
 import fr.vidocq.vauban.indexer.scanner.ClassFileScanner;
 import fr.vidocq.vauban.indexer.scanner.JarScanner;
 
@@ -15,12 +17,11 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * Core build-time logic for CDI bean discovery across dependency JARs.
+ * Core build-time logic for CDI bean discovery and code generation.
  * <p>
  * Scans dependency JARs and project classes, runs CDI bean discovery,
- * and writes a {@code META-INF/vauban-beans.list} file listing all
- * discovered bean class names. This file is read at runtime by
- * {@code VaubanContainer.Builder.scanClasspath()}.
+ * pre-generates client proxies and interceptor subclasses, and writes
+ * a {@code META-INF/vauban-beans.list} file for runtime discovery.
  * <p>
  * This class has no Maven dependency and is independently testable.
  */
@@ -32,17 +33,24 @@ public final class VaubanGenerator {
     /**
      * Configuration for the generator.
      *
-     * @param dependencyJars   JAR files to scan for CDI beans
+     * @param dependencyJars    JAR files to scan for CDI beans
      * @param projectClassesDir project's compiled classes directory (may be null)
-     * @param outputDir         where to write META-INF/vauban-beans.list
+     * @param outputDir         where to write generated files
+     * @param classLoader       ClassLoader with all deps + project classes for proxy generation (may be null to skip generation)
      */
     public record Config(
             List<Path> dependencyJars,
             Path projectClassesDir,
-            Path outputDir
+            Path outputDir,
+            ClassLoader classLoader
     ) {
         public Config {
             dependencyJars = List.copyOf(dependencyJars);
+        }
+
+        /** Config without ClassLoader — discovery only, no proxy generation. */
+        public Config(List<Path> dependencyJars, Path projectClassesDir, Path outputDir) {
+            this(dependencyJars, projectClassesDir, outputDir, null);
         }
     }
 
@@ -50,10 +58,10 @@ public final class VaubanGenerator {
 
     /**
      * Scan dependencies and project classes, discover CDI beans,
-     * and write the bean list file.
+     * generate proxies/interceptor subclasses, and write the bean list file.
      *
      * @param config generation configuration
-     * @return result with discovered beans and any warnings
+     * @return result with discovered beans, generated classes, and warnings
      * @throws IOException if scanning or writing fails
      */
     public static GenerationResult generate(Config config) throws IOException {
@@ -82,7 +90,7 @@ public final class VaubanGenerator {
         // 3. Build merged index
         var index = indexBuilder.build();
         if (index.size() == 0) {
-            return new GenerationResult(List.of(), warnings);
+            return new GenerationResult(List.of(), List.of(), List.of(), warnings);
         }
 
         // 4. Run CDI bean discovery
@@ -102,7 +110,48 @@ public final class VaubanGenerator {
             writeBeansList(config.outputDir(), beanClassNames);
         }
 
-        return new GenerationResult(beanClassNames, warnings);
+        // 7. Pre-generate proxies and interceptor subclasses (if ClassLoader provided)
+        var generatedProxies = new ArrayList<String>();
+        var generatedInterceptors = new ArrayList<String>();
+
+        if (config.classLoader() != null) {
+            for (var bean : beans) {
+                var className = bean.beanClass().value();
+                Class<?> clazz;
+                try {
+                    clazz = Class.forName(className, false, config.classLoader());
+                } catch (ClassNotFoundException e) {
+                    warnings.add("Cannot load class for generation: " + className);
+                    continue;
+                }
+
+                // Client proxy for normal-scoped beans
+                if (bean.scope().isNormal()) {
+                    try {
+                        var generated = RuntimeClientProxyGenerator.generate(clazz);
+                        writeClassFile(config.outputDir(), generated.className(), generated.bytecode());
+                        generatedProxies.add(generated.className());
+                    } catch (Exception e) {
+                        warnings.add("Failed to generate proxy for " + className + ": " + e.getMessage());
+                    }
+                }
+
+                // Interceptor subclass for managed beans with interceptor bindings
+                if (bean.kind() == BeanKind.MANAGED
+                        && !bean.interceptorBindings().isEmpty()
+                        && !java.lang.reflect.Modifier.isFinal(clazz.getModifiers())) {
+                    try {
+                        var generated = InterceptorSubclassGenerator.generate(clazz);
+                        writeClassFile(config.outputDir(), generated.className(), generated.bytecode());
+                        generatedInterceptors.add(generated.className());
+                    } catch (Exception e) {
+                        warnings.add("Failed to generate interceptor subclass for " + className + ": " + e.getMessage());
+                    }
+                }
+            }
+        }
+
+        return new GenerationResult(beanClassNames, generatedProxies, generatedInterceptors, warnings);
     }
 
     private static void scanClassesDirectory(Path classesDir, IndexBuilder indexBuilder,
@@ -132,5 +181,11 @@ public final class VaubanGenerator {
         lines.addAll(beanClassNames);
 
         Files.write(beansListFile, lines, StandardCharsets.UTF_8);
+    }
+
+    private static void writeClassFile(Path outputDir, String className, byte[] bytecode) throws IOException {
+        var classFilePath = outputDir.resolve(className.replace('.', '/') + ".class");
+        Files.createDirectories(classFilePath.getParent());
+        Files.write(classFilePath, bytecode);
     }
 }
