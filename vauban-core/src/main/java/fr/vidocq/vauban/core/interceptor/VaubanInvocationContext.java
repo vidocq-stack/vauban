@@ -310,13 +310,17 @@ public final class VaubanInvocationContext implements InvocationContext {
             }
         }
     }
-    @SuppressWarnings("java:S3011") // CDI spec requires reflective access
     private static void makeAccessibleSafe(java.lang.reflect.AccessibleObject member) {
-        try {
-            member.setAccessible(true);
-        } catch (Exception e) {
-            throw new RuntimeException("Cannot access member: " + member
-                    + ". Ensure the module opens the package to fr.vidocq.vauban.core", e);
+        var mgr = InterceptorManager.currentInstance();
+        if (mgr != null && mgr.getVaubanLookup() != null) {
+            mgr.getVaubanLookup().makeAccessible(member);
+        } else {
+            try {
+                member.setAccessible(true);
+            } catch (Exception e) {
+                throw new RuntimeException("Cannot access member: " + member
+                        + ". Ensure the module opens the package to fr.vidocq.vauban.core", e);
+            }
         }
     }
 

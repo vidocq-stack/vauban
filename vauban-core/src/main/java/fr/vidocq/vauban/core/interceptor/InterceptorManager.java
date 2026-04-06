@@ -26,6 +26,7 @@ public final class InterceptorManager {
     private final List<InterceptorDescriptor> interceptors;
     private final Map<DotName, Object> interceptorInstances = new LinkedHashMap<>();
     private BiFunction<InterceptorDescriptor, CreationalContext<?>, Object> instanceFactory;
+    private fr.vidocq.vauban.core.container.VaubanLookup vaubanLookup;
 
     private static final ThreadLocal<Boolean> IS_INTERCEPTING = ThreadLocal.withInitial(() -> false);
     private static final ThreadLocal<List<VaubanInvocationContext.InterceptorInvocation>> CURRENT_CHAIN = new ThreadLocal<>();
@@ -92,6 +93,14 @@ public final class InterceptorManager {
     public InterceptorManager(List<InterceptorDescriptor> interceptors) {
         this.interceptors = List.copyOf(interceptors);
         currentInstance = this;
+    }
+
+    public void setVaubanLookup(fr.vidocq.vauban.core.container.VaubanLookup lookup) {
+        this.vaubanLookup = lookup;
+    }
+
+    public fr.vidocq.vauban.core.container.VaubanLookup getVaubanLookup() {
+        return vaubanLookup;
     }
 
     public void setInstanceFactory(BiFunction<InterceptorDescriptor, CreationalContext<?>, Object> factory) {
@@ -728,13 +737,16 @@ public final class InterceptorManager {
         return null;
     }
 
-    @SuppressWarnings("java:S3011") // CDI spec requires reflective access
-    private static void makeAccessibleSafe(java.lang.reflect.AccessibleObject member) {
-        try {
-            member.setAccessible(true);
-        } catch (Exception e) {
-            throw new RuntimeException("Cannot access member: " + member
-                    + ". Ensure the module opens the package to fr.vidocq.vauban.core", e);
+    private void makeAccessibleSafe(java.lang.reflect.AccessibleObject member) {
+        if (vaubanLookup != null) {
+            vaubanLookup.makeAccessible(member);
+        } else {
+            try {
+                member.setAccessible(true);
+            } catch (Exception e) {
+                throw new RuntimeException("Cannot access member: " + member
+                        + ". Ensure the module opens the package to fr.vidocq.vauban.core", e);
+            }
         }
     }
 

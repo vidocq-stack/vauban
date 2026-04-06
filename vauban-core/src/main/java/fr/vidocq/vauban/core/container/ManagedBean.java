@@ -26,6 +26,7 @@ public final class ManagedBean<T> implements Bean<T> {
     private final BeanFactory<T> factory;
     private final Class<T> beanClass;
     private final ClassLoader classLoader;
+    private final VaubanLookup vaubanLookup;
     private BiConsumer<Object, CreationalContext<?>> injector;
     private BiConsumer<Object, CreationalContext<?>> destroyer;
     private fr.vidocq.vauban.core.interceptor.InterceptorManager interceptorManager;
@@ -33,10 +34,11 @@ public final class ManagedBean<T> implements Bean<T> {
     @SuppressWarnings("java:S3077")
     private volatile Set<Type> cachedTypes;
 
-    public ManagedBean(BeanDescriptor descriptor, BeanFactory<T> factory, ClassLoader classLoader) {
+    public ManagedBean(BeanDescriptor descriptor, BeanFactory<T> factory, ClassLoader classLoader, VaubanLookup vaubanLookup) {
         this.descriptor = Objects.requireNonNull(descriptor);
         this.factory = Objects.requireNonNull(factory);
         this.classLoader = Objects.requireNonNull(classLoader);
+        this.vaubanLookup = vaubanLookup;
         try {
             this.beanClass = (Class<T>) Class.forName(descriptor.beanClass().value(), true, classLoader);
         } catch (ClassNotFoundException e) {
@@ -130,8 +132,7 @@ public final class ManagedBean<T> implements Bean<T> {
                             instance, null, new Object[0], chain,
                             (target, params) -> {
                                 for (var m : pdMethods) {
-                                    m.setAccessible(true);
-                                    m.invoke(target);
+                                    vaubanLookup.invokeMethod(target, m);
                                 }
                                 return null;
                             });
@@ -148,8 +149,7 @@ public final class ManagedBean<T> implements Bean<T> {
         // No interceptors — call directly
         for (var pdMethod : preDestroyMethods) {
             try {
-                pdMethod.setAccessible(true);
-                pdMethod.invoke(instance);
+                vaubanLookup.invokeMethod(instance, pdMethod);
             } catch (Exception e) {
                 // CDI spec says exceptions in @PreDestroy are caught, not propagated
             }

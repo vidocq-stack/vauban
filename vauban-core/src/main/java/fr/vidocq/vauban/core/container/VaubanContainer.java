@@ -137,7 +137,7 @@ public final class VaubanContainer implements AutoCloseable {
                 continue;
             }
             if (factory != null) {
-                beans.put(descriptor.id(), new ManagedBean<>(descriptor, factory, classLoader));
+                beans.put(descriptor.id(), new ManagedBean<>(descriptor, factory, classLoader, vaubanLookup));
             }
         }
 
@@ -145,6 +145,7 @@ public final class VaubanContainer implements AutoCloseable {
         this.resolver = new BeanResolver(descriptors, interceptorDescriptors, assignability);
         this.eventDispatcher = new EventDispatcher(observers, this);
         this.interceptorManager = new InterceptorManager(interceptorDescriptors);
+        this.interceptorManager.setVaubanLookup(vaubanLookup);
         this.interceptorManager.setInstanceFactory((descriptor, ctx) -> getOrCreateInterceptorInstance(descriptor, ctx));
 
         // Wrap intercepted beans with generated subclasses
@@ -1647,7 +1648,7 @@ public final class VaubanContainer implements AutoCloseable {
 
                 // Update the bean with the new factory
                 var originalBean = (ManagedBean<?>) beans.get(descriptor.id());
-                var interceptedBean = new ManagedBean<>(descriptor, interceptedFactory, classLoader);
+                var interceptedBean = new ManagedBean<>(descriptor, interceptedFactory, classLoader, vaubanLookup);
                 if (originalBean != null) {
                     interceptedBean.setInjector((java.util.function.BiConsumer) originalBean.getInjector());
                     interceptedBean.setDestroyer((java.util.function.BiConsumer) originalBean.getDestroyer());
@@ -1748,7 +1749,7 @@ public final class VaubanContainer implements AutoCloseable {
                         }
                     }
                 };
-                    var ib2 = new ManagedBean<>(descriptor, f2, classLoader);
+                    var ib2 = new ManagedBean<>(descriptor, f2, classLoader, vaubanLookup);
                     var originalBean2 = (ManagedBean<?>) beans.get(descriptor.id());
                     if (originalBean2 != null) {
                         ib2.setInjector((java.util.function.BiConsumer) originalBean2.getInjector());
