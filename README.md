@@ -59,33 +59,67 @@ sdk env install
 mvn clean verify
 ```
 
-### Deux modes d'utilisation
+### Trois facons de declarer les beans
 
-Vauban propose deux approches pour declarer les beans :
+| Mode | Quand l'utiliser | API |
+|------|-----------------|-----|
+| **`scanLocal()`** | Application standard | Scanne le package de l'appelant + sous-packages |
+| **`scanPackage()` + `scanClasspath()`** | Multi-modules, dependances CDI | Scan explicite + beans des JARs (via `vauban-maven-plugin`) |
+| **`addBeanClass()`** | Tests unitaires | Chaque bean est liste a la main — perimetre chirurgical |
 
-| Mode | Quand l'utiliser | Beans declares via |
-|------|-----------------|-------------------|
-| **Programmatique** | Tests unitaires, microservices, scripts | `addBeanClass()` — chaque bean est liste explicitement |
-| **Annotation processor** | Applications Maven classiques | Scan automatique a la compilation via `vauban-processor` |
-
-> **Note** : il n'y a pas de scan automatique du classpath au runtime. Le builder `VaubanContainer.builder()` ne prend que les classes ajoutees explicitement. Le scan "magique" est fait a la compilation par le processeur d'annotations (`vauban-processor`).
-
-### Utilisation programmatique (tests, scripts)
-
-Les beans sont declares un par un — ideal pour les tests unitaires ou l'on controle precisement le perimetre :
+### Application standard (`scanLocal`)
 
 ```java
 import fr.vidocq.vauban.core.container.VaubanContainer;
 
+// Scanne automatiquement le package de l'appelant (com.example.**)
 var container = VaubanContainer.builder()
-    .addBeanClass(MonService.class)
-    .addBeanClass(MonRepository.class)
+    .scanLocal()
     .build();
 
 var service = container.select(MonService.class);
 service.traiter(42);
-
 container.close();
+```
+
+### Multi-modules avec dependances CDI (`scanClasspath`)
+
+Les beans dans les JARs de dependances sont decouverts au build par `vauban-maven-plugin`
+et listes dans `META-INF/vauban-beans.list`. Au runtime, `scanClasspath()` les charge.
+
+```xml
+<!-- pom.xml -->
+<plugin>
+  <groupId>fr.vidocq.vauban</groupId>
+  <artifactId>vauban-maven-plugin</artifactId>
+  <executions>
+    <execution>
+      <goals><goal>generate</goal></goals>
+    </execution>
+  </executions>
+</plugin>
+```
+
+```java
+var container = VaubanContainer.builder()
+    .scanClasspath()                    // beans des dependances (JARs)
+    .scanPackage("com.example.app")     // beans locaux
+    .build();
+```
+
+> Le plugin `vauban:generate` pre-genere aussi les client proxies (`_ClientProxy`)
+> et les sous-classes interceptees (`$$Intercepted`) avec un nommage deterministe.
+> Au runtime, ces classes sont trouvees sur le classpath sans regeneration.
+
+### Tests unitaires (`addBeanClass`)
+
+Perimetre controle — pas de scan implicite, pas de bean inattendu :
+
+```java
+var container = VaubanContainer.builder()
+    .addBeanClass(MonService.class)
+    .addBeanClass(MonRepository.class)
+    .build();
 ```
 
 ### Beans CDI
@@ -115,7 +149,7 @@ public class MonRepository {
 ### Tests avec JUnit 6
 
 `@AddBeans` declare explicitement les classes a inclure dans le conteneur de test.
-C'est voulu : dans un test unitaire, on maitrise exactement le perimetre d'injection — pas de scan classpath implicite, pas de bean inattendu.
+Perimetre controle — pas de scan implicite, pas de bean inattendu.
 
 ```java
 @VaubanTest
@@ -189,8 +223,8 @@ vauban/
 ├── vauban-indexer        Indexeur de bytecode (remplace Jandex), zero dependance
 ├── vauban-api            API publique Vauban
 ├── vauban-core           Runtime du conteneur CDI 4.1 Lite
-├── vauban-processor      Processeur d'annotations + generation de code
-├── vauban-maven-plugin   Plugin Maven (indexation, analyse JPMS)
+├── vauban-processor      Processeur d'annotations (compile-time)
+├── vauban-maven-plugin   Plugin Maven : scan deps, pre-generation proxies/intercepteurs
 ├── vauban-junit          Extension JUnit 6 pour tests CDI
 ├── vauban-tck-runner     Runner CDI TCK 4.1 (774/774)
 └── vauban-test-suite     Suite de tests d'integration
@@ -358,9 +392,34 @@ class MonServiceTest {
 
 ### vauban-maven-plugin
 
-**Role** : Plugin Maven pour l'indexation des dependances et l'analyse JPMS au build.
+**Role** : Build-time CDI bean discovery, pre-generation de proxies et intercepteurs, analyse JPMS.
 
-Utilise uniquement `vauban-indexer` pour scanner les JARs de dependances.
+| Classe | Role |
+|--------|------|
+| `VaubanGenerator` | Core : scan JARs → index → discover → genere proxies/intercepteurs → ecrit `vauban-beans.list` |
+| `GenerateMojo` | Goal Maven `vauban:generate`, phase `process-classes` |
+| `ModuleAnalyzer` | Analyse JPMS (modules explicites/automatiques, split packages) |
+
+**Goal `generate`** :
+1. Scanne les JARs de dependances (`JarScanner`) + classes du projet
+2. Lance `BeanDiscovery` sur l'index fusionne
+3. Pre-genere les client proxies (`_ClientProxy`) pour les beans normal-scoped
+4. Pre-genere les sous-classes interceptees (`$$Intercepted`) pour les beans avec bindings
+5. Ecrit `META-INF/vauban-beans.list` (un nom de classe par ligne)
+
+Les .class generes ont un nommage deterministe — le runtime les trouve via `loadClass()` sans regeneration.
+
+```xml
+<plugin>
+  <groupId>fr.vidocq.vauban</groupId>
+  <artifactId>vauban-maven-plugin</artifactId>
+  <executions>
+    <execution>
+      <goals><goal>generate</goal></goals>
+    </execution>
+  </executions>
+</plugin>
+```
 
 ### vauban-tck-runner
 
@@ -455,16 +514,22 @@ sdk env install
 mvn clean verify
 ```
 
-### Programmatic Usage
+### Three Ways to Declare Beans
 
 ```java
+// 1. Auto-scan caller's package (standard apps)
+var container = VaubanContainer.builder().scanLocal().build();
+
+// 2. Multi-module with dependency JARs (requires vauban-maven-plugin)
 var container = VaubanContainer.builder()
-    .addBeanClass(MyService.class)
-    .addBeanClass(MyRepository.class)
+    .scanClasspath()                 // beans from dependency JARs
+    .scanPackage("com.example.app")  // local beans
     .build();
 
-var service = container.select(MyService.class);
-container.close();
+// 3. Explicit (unit tests — surgical control)
+var container = VaubanContainer.builder()
+    .addBeanClass(MyService.class)
+    .build();
 ```
 
 ### Testing with JUnit 6
@@ -500,12 +565,28 @@ CDI Full TCK:  not targeted (future vauban-full module)
 |--------|---------|
 | `vauban-indexer` | Bytecode scanner and class indexer (replaces Jandex, zero dependencies) |
 | `vauban-api` | Public API facade |
-| `vauban-core` | CDI 4.1 Lite container runtime |
-| `vauban-processor` | Annotation processor + code generation |
-| `vauban-maven-plugin` | Maven plugin for dependency indexing |
-| `vauban-junit` | JUnit 6 integration for CDI tests |
+| `vauban-core` | CDI 4.1 Lite container runtime (`scanLocal`, `scanPackage`, `scanClasspath`) |
+| `vauban-processor` | Annotation processor (compile-time scan + code generation) |
+| `vauban-maven-plugin` | Build-time: dependency scan, proxy/interceptor pre-generation (`vauban:generate`) |
+| `vauban-junit` | JUnit 6 integration for CDI tests (`@VaubanTest`, `@AddBeans`) |
 | `vauban-tck-runner` | CDI TCK 4.1 runner (774/774) |
 | `vauban-test-suite` | Integration test suite |
+
+### Build Pipeline
+
+```
+mvn process-classes (vauban:generate)
+  ├── Scan dependency JARs + project classes
+  ├── BeanDiscovery on merged index
+  ├── Pre-generate _ClientProxy + $$Intercepted .class files (deterministic names)
+  └── Write META-INF/vauban-beans.list
+
+Runtime (VaubanContainer)
+  ├── scanClasspath() → reads beans lists from all JARs
+  ├── scanLocal() / scanPackage() → discovers local classes
+  ├── Finds pre-generated proxies/interceptors via loadClass()
+  └── Fallback: generates at runtime if not pre-generated
+```
 
 ### Architecture
 
