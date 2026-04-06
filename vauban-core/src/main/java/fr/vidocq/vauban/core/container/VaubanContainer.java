@@ -95,6 +95,7 @@ public final class VaubanContainer implements AutoCloseable {
     private final java.util.function.BiFunction<String, byte[], Class<?>> classDefiner;
     private final VaubanLookup vaubanLookup;
     final DisposerInvoker disposerInvoker;
+    private final BeanInjector beanInjector;
     private volatile boolean running;
 
     public VaubanLookup getVaubanLookup() {
@@ -115,6 +116,7 @@ public final class VaubanContainer implements AutoCloseable {
         this.classDefiner = classDefiner;
         this.vaubanLookup = vaubanLookup;
         this.disposerInvoker = new DisposerInvoker(this, vaubanLookup);
+        this.beanInjector = new BeanInjector(this, vaubanLookup);
         this.applicationContext = new ApplicationContext();
         this.requestContext = new RequestContext();
         this.dependentContext = new DependentContext();
@@ -279,7 +281,7 @@ public final class VaubanContainer implements AutoCloseable {
                 }
 
                 var instance = vaubanLookup.newInstance(constructor, args);
-                injectFieldsByReflection(instance, null, ctx);
+                beanInjector.injectFieldsByReflection(instance, null, ctx);
                 // Call PostConstruct directly
                 java.lang.reflect.Method pc = null;
                 for (var m : instance.getClass().getDeclaredMethods()) {
@@ -700,10 +702,10 @@ public final class VaubanContainer implements AutoCloseable {
     }
 
     private void injectFields(Object instance, BeanDescriptor descriptor, CreationalContext<?> parentCtx) {
-        injectFieldsByReflection(instance, descriptor, parentCtx);
+        beanInjector.injectFieldsByReflection(instance, descriptor, parentCtx);
 
         // 2. Call @Inject initializer methods
-        callInitializerMethods(instance, parentCtx);
+        beanInjector.callInitializerMethods(instance, parentCtx);
 
         // 3. Call @PostConstruct
         callPostConstruct(instance, descriptor, parentCtx);
@@ -712,7 +714,7 @@ public final class VaubanContainer implements AutoCloseable {
         eagerCreateInterceptors(instance, descriptor, parentCtx);
     }
 
-    private boolean hasMethodOrClassInterceptors(ManagedBean<?> mb) {
+    boolean hasMethodOrClassInterceptors(ManagedBean<?> mb) {
         var classBindings = mb.descriptor().interceptorBindings();
         if (classBindings != null && !classBindings.isEmpty()
                 && !interceptorManager.resolveInterceptorDescriptors(classBindings).isEmpty()) {
@@ -762,116 +764,10 @@ public final class VaubanContainer implements AutoCloseable {
         }
     }
 
-    private void injectFieldsByReflection(Object instance, BeanDescriptor descriptor, CreationalContext<?> parentCtx) {
-        var beanClass = instance.getClass();
-        var typeMapping = ManagedBean.buildTypeVariableMapping(beanClass);
-        var clazz = beanClass;
-        while (clazz != null && clazz != Object.class) {
-            for (var field : clazz.getDeclaredFields()) {
-                if (!field.isAnnotationPresent(jakarta.inject.Inject.class)) continue;
-                try {
-
-                // Handle InjectionPoint injection — the dependent bean receives the
-                // InjectionPoint that describes WHERE it was injected (set by the caller).
-                // CDI spec: null if not being injected (programmatic lookup).
-                if (field.getType() == InjectionPoint.class) {
-                    vaubanLookup.setField(instance, field, currentInjectionPoint.get());
-                    continue;
-                }
-
-                // Handle Instance<T> and Provider<T> injection
-                if (field.getType() == Instance.class
-                        || field.getType() == jakarta.inject.Provider.class) {
-                    Class<?> instanceType = Object.class;
-                    var genericType = ManagedBean.resolveType(field.getGenericType(), typeMapping);
-                    if (genericType instanceof ParameterizedType pt) {
-                        var typeArg = pt.getActualTypeArguments()[0];
-                        if (typeArg instanceof Class<?> c) {
-                            instanceType = c;
-                        }
-                    }
-                    // Pass field qualifiers to Instance for proper resolution
-                    var fieldQualifiers = QualifierHelper.extractFieldQualifiers(field);
-                    var ownerBean = findBeanForInstance(instance);
-                    var ip = new VaubanInjectionPoint(field, ownerBean);
-                    vaubanLookup.setField(instance, field, new InstanceImpl<>(this, instanceType, fieldQualifiers, ip));
-                    continue;
-                }
-
-                // Handle BeanManager / BeanContainer injection
-                if (BeanManager.class.isAssignableFrom(field.getType())
-                        || field.getType() == jakarta.enterprise.inject.spi.BeanContainer.class) {
-                    vaubanLookup.setField(instance, field, getBeanManager());
-                    continue;
-                }
-
-                // Handle Event<T> injection — capture qualifiers and InjectionPoint
-                if (field.getType() == Event.class) {
-                    var eventQualifiers = QualifierHelper.collectEventQualifiers(field.getAnnotations());
-                    var ownerBean = findBeanForInstance(instance);
-                    var eventIp = new VaubanInjectionPoint(field, ownerBean);
-                    vaubanLookup.setField(instance, field, new EventImpl<>(eventDispatcher, eventQualifiers, eventIp));
-                    continue;
-                }
-
-                // Set the current InjectionPoint before resolving the dependency.
-                // This allows @Dependent beans to @Inject InjectionPoint and discover
-                // where they were injected.
-                var previousIp = currentInjectionPoint.get();
-                var ownerBean = findBeanForInstance(instance);
-                currentInjectionPoint.set(new VaubanInjectionPoint(field, ownerBean));
-                try {
-                    var fieldQuals = QualifierHelper.extractFieldQualifiersWithEnhancement(field, descriptor);
-                    Object value;
-                    var bm = getBeanManager();
-                    // Use generic type to preserve parameterized type info, resolving type variables
-                    var fieldType = ManagedBean.resolveType(field.getGenericType(), typeMapping);
-                    var resolvedBeans = bm.getBeans(fieldType, fieldQuals);
-                    if (resolvedBeans.isEmpty()) {
-                        value = select(field.getType());
-                    } else {
-                        var resolved = bm.resolve(resolvedBeans);
-                        boolean needsFreshCtx = resolved instanceof ManagedBean<?> mb
-                                && resolved.getScope() == jakarta.enterprise.context.Dependent.class
-                                && mb.descriptor().kind() == BeanDescriptor.BeanKind.MANAGED
-                                && interceptorManager != null && interceptorManager.hasInterceptors()
-                                && hasMethodOrClassInterceptors(mb);
-                        var ctx = (parentCtx != null
-                                && resolved.getScope() == jakarta.enterprise.context.Dependent.class
-                                && !needsFreshCtx)
-                                ? parentCtx
-                                : bm.createCreationalContext(resolved);
-                        value = bm.getReference(resolved, fieldType, ctx);
-                        if (needsFreshCtx
-                                && parentCtx instanceof fr.vidocq.vauban.core.context.CreationalContextImpl<?> parentVCtx
-                                && value != null) {
-                            parentVCtx.addDependentInstance(resolved, value, ctx);
-                        }
-                    }
-                    // CDI spec: don't set null on primitive fields
-                    if (value != null || !field.getType().isPrimitive()) {
-                        vaubanLookup.setField(instance, field, value);
-                    }
-                } finally {
-                    currentInjectionPoint.set(previousIp);
-                }
-            } catch (jakarta.enterprise.inject.IllegalProductException | jakarta.enterprise.inject.UnproxyableResolutionException e) {
-                throw e;
-            } catch (Exception e) {
-                if (e.getCause() instanceof jakarta.enterprise.inject.IllegalProductException ipe) throw ipe;
-                // Skip fields that can't be resolved (may not be CDI beans)
-                System.err.println("INJECTION FAILED FOR " + field.getName() + " ON " + instance.getClass() + " : " + e.getMessage());
-                e.printStackTrace();
-            }
-            }
-            clazz = clazz.getSuperclass();
-        }
-    }
-
     /**
      * Find the ManagedBean corresponding to the given instance's class.
      */
-    private ManagedBean<?> findBeanForInstance(Object instance) {
+    ManagedBean<?> findBeanForInstance(Object instance) {
         var instanceClass = instance.getClass();
         for (var bean : beans.values()) {
             if (bean.getBeanClass() == instanceClass) {
@@ -904,53 +800,6 @@ public final class VaubanContainer implements AutoCloseable {
     public ManagedBean<?> findManagedBeanByExactClass(Class<?> beanClass) {
         return findManagedBeanByClass(DotName.of(beanClass.getName()));
     }
-
-    private void callInitializerMethods(Object instance, CreationalContext<?> ctx) {
-        var clazz = instance.getClass();
-        // Skip intercepted subclass — look at the actual bean class
-        if (clazz.getName().contains("$$Intercepted")) {
-            clazz = clazz.getSuperclass();
-        }
-        var ownerBean = findBeanForInstance(instance);
-        var typeMapping = ManagedBean.buildTypeVariableMapping(clazz);
-        // Walk hierarchy to find all @Inject initializer methods
-        var current = clazz;
-        while (current != null && current != Object.class) {
-            for (var method : current.getDeclaredMethods()) {
-                if (method.isAnnotationPresent(jakarta.inject.Inject.class)) {
-                try {
-                    var paramTypes = method.getParameterTypes();
-                    var rawGenericParamTypes = method.getGenericParameterTypes();
-                    var genericParamTypes = new java.lang.reflect.Type[rawGenericParamTypes.length];
-                    for (int i = 0; i < rawGenericParamTypes.length; i++) {
-                        genericParamTypes[i] = ManagedBean.resolveType(rawGenericParamTypes[i], typeMapping);
-                    }
-                    var params = method.getParameters();
-                    var args = new Object[paramTypes.length];
-                    var transientContexts = new java.util.ArrayList<CreationalContextImpl<?>>();
-                    for (int i = 0; i < paramTypes.length; i++) {
-                        var paramQuals = QualifierHelper.extractParamQualifiers(params[i]);
-                        if (params[i].isAnnotationPresent(jakarta.enterprise.inject.TransientReference.class)) {
-                            var transientCtx = new CreationalContextImpl<>();
-                            args[i] = resolveParameter(paramTypes[i], genericParamTypes[i], transientCtx, paramQuals, method, ownerBean, params[i], i);
-                            transientContexts.add(transientCtx);
-                        } else {
-                            args[i] = resolveParameter(paramTypes[i], genericParamTypes[i], ctx, paramQuals, method, ownerBean, params[i], i);
-                        }
-                    }
-                    vaubanLookup.invokeMethod(instance, method, args);
-                    for (var tc : transientContexts) {
-                        tc.release();
-                    }
-                } catch (Exception e) {
-                    throw new RuntimeException("Failed to call initializer method: " + method.getName(), e);
-                }
-                }
-            }
-            current = current.getSuperclass();
-        }
-    }
-
 
     private void callPostConstruct(Object instance, BeanDescriptor descriptor, CreationalContext<?> ctx) {
         // CDI spec: Interceptor instances are not intercepted
