@@ -5,6 +5,7 @@
     <description>Build-time CDI bean discovery and proxy generation</description>
     <groupId>fr.vidocq.vauban</groupId>
     <artifactId>vauban-maven-plugin</artifactId>
+    <version>0.1.0-SNAPSHOT</version>
     <goalPrefix>vauban</goalPrefix>
     <isolatedRealm>false</isolatedRealm>
     <inheritedByDefault>true</inheritedByDefault>

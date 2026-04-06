@@ -18,12 +18,14 @@ public final class JarScanner {
             var entries = jar.entries();
             while (entries.hasMoreElements()) {
                 var entry = entries.nextElement();
-                if (entry.getName().endsWith(".class") && !entry.isDirectory()) {
+                var name = entry.getName();
+                if (name.endsWith(".class") && !entry.isDirectory()
+                        && !name.equals("module-info.class") && !name.endsWith("/module-info.class")) {
                     try (var is = jar.getInputStream(entry)) {
                         var bytes = is.readAllBytes();
                         classes.add(ClassFileScanner.scan(bytes));
-                    } catch (Exception e) {
-                        // Skip malformed class files
+                    } catch (Exception | Error e) {
+                        // Skip malformed class files and module-info
                     }
                 }
             }

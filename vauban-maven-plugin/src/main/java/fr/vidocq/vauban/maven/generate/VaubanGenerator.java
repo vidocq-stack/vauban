@@ -159,11 +159,12 @@ public final class VaubanGenerator {
         Files.walkFileTree(classesDir, new SimpleFileVisitor<>() {
             @Override
             public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) {
-                if (file.toString().endsWith(".class")) {
+                var fileName = file.getFileName().toString();
+                if (fileName.endsWith(".class") && !fileName.equals("module-info.class")) {
                     try {
                         var bytes = Files.readAllBytes(file);
                         indexBuilder.add(ClassFileScanner.scan(bytes));
-                    } catch (Exception e) {
+                    } catch (Exception | Error e) {
                         warnings.add("Failed to scan " + file.getFileName() + ": " + e.getMessage());
                     }
                 }

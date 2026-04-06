@@ -1,0 +1,61 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.1.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.1.0 http://maven.apache.org/xsd/maven-4.1.0.xsd">
+    <modelVersion>4.1.0</modelVersion>
+
+    <parent>
+        <groupId>fr.vidocq.vauban</groupId>
+        <artifactId>vauban-examples</artifactId>
+    </parent>
+
+    <artifactId>example-app</artifactId>
+    <name>Vauban :: Examples :: Application</name>
+    <description>Multi-module CDI application with Vauban — uses beans from example-lib</description>
+
+    <dependencies>
+        <!-- CDI library dependency (standard JAR with CDI beans) -->
+        <dependency>
+            <groupId>fr.vidocq.vauban</groupId>
+            <artifactId>example-lib</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+
+        <!-- Vauban CDI container runtime -->
+        <dependency>
+            <groupId>fr.vidocq.vauban</groupId>
+            <artifactId>vauban-core</artifactId>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <plugins>
+            <!-- Vauban: scan dependencies for CDI beans, pre-generate proxies -->
+            <plugin>
+                <groupId>fr.vidocq.vauban</groupId>
+                <artifactId>vauban-maven-plugin</artifactId>
+                <version>${project.version}</version>
+                <executions>
+                    <execution>
+                        <goals>
+                            <goal>generate</goal>
+                        </goals>
+                    </execution>
+                </executions>
+            </plugin>
+
+            <!-- Package as executable JAR -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-jar-plugin</artifactId>
+                <configuration>
+                    <archive>
+                        <manifest>
+                            <mainClass>fr.vidocq.example.app.Main</mainClass>
+                        </manifest>
+                    </archive>
+                </configuration>
+            </plugin>
+        </plugins>
+    </build>
+</project>

@@ -2559,7 +2559,9 @@ public final class VaubanContainer implements AutoCloseable {
          * Add a bean class. The container will scan it and create a default factory.
          */
         public Builder addBeanClass(Class<?> beanClass) {
-            beanClasses.add(beanClass);
+            if (!beanClasses.contains(beanClass)) {
+                beanClasses.add(beanClass);
+            }
             return this;
         }
 

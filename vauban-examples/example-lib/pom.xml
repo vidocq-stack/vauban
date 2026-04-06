@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.1.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.1.0 http://maven.apache.org/xsd/maven-4.1.0.xsd">
+    <modelVersion>4.1.0</modelVersion>
+
+    <parent>
+        <groupId>fr.vidocq.vauban</groupId>
+        <artifactId>vauban-examples</artifactId>
+    </parent>
+
+    <artifactId>example-lib</artifactId>
+    <name>Vauban :: Examples :: Library</name>
+    <description>A standard CDI library — no Vauban dependency, just Jakarta CDI API</description>
+
+    <dependencies>
+        <!-- Standard CDI API — this is what any CDI library depends on -->
+        <dependency>
+            <groupId>jakarta.enterprise</groupId>
+            <artifactId>jakarta.enterprise.cdi-api</artifactId>
+            <scope>provided</scope>
+        </dependency>
+    </dependencies>
+</project>
