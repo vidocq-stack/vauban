@@ -2586,6 +2586,88 @@ public final class VaubanContainer implements AutoCloseable {
         }
 
         /**
+         * Scan the caller's package (and sub-packages) for CDI bean classes and add them.
+         * Uses stack walking to determine the calling class's package.
+         * <p>Example:
+         * <pre>{@code
+         * // In com.example.MyApp — scans com.example.**
+         * VaubanContainer.builder().scanLocal().build();
+         * }</pre>
+         */
+        public Builder scanLocal() {
+            var callerClass = StackWalker.getInstance(StackWalker.Option.RETAIN_CLASS_REFERENCE)
+                    .walk(frames -> frames
+                            .map(StackWalker.StackFrame::getDeclaringClass)
+                            .filter(c -> c != VaubanContainer.class && c != Builder.class)
+                            .findFirst()
+                            .orElseThrow(() -> new IllegalStateException("Cannot determine caller package")));
+            return scanPackage(callerClass.getPackageName());
+        }
+
+        /**
+         * Scan all classes in the given package (and sub-packages) for CDI bean annotations
+         * and add them as bean classes.
+         *
+         * @param packageName the root package to scan (e.g. "com.example")
+         */
+        public Builder scanPackage(String packageName) {
+            var cl = this.classLoader != null ? this.classLoader
+                    : Thread.currentThread().getContextClassLoader();
+            var packagePath = packageName.replace('.', '/');
+            try {
+                var resources = cl.getResources(packagePath);
+                while (resources.hasMoreElements()) {
+                    var url = resources.nextElement();
+                    if ("file".equals(url.getProtocol())) {
+                        scanDirectory(java.nio.file.Path.of(url.toURI()), packageName, cl);
+                    } else if ("jar".equals(url.getProtocol())) {
+                        scanJarEntries(url, packagePath, cl);
+                    }
+                }
+            } catch (Exception e) {
+                throw new RuntimeException("Failed to scan package: " + packageName, e);
+            }
+            return this;
+        }
+
+        private void scanDirectory(java.nio.file.Path dir, String packageName, ClassLoader cl) throws Exception {
+            if (!java.nio.file.Files.isDirectory(dir)) return;
+            try (var stream = java.nio.file.Files.walk(dir)) {
+                stream.filter(p -> p.toString().endsWith(".class"))
+                        .forEach(p -> {
+                            var relative = dir.relativize(p).toString();
+                            var className = packageName + "." + relative
+                                    .replace(java.io.File.separatorChar, '.')
+                                    .replace(".class", "");
+                            tryAddBeanClass(className, cl);
+                        });
+            }
+        }
+
+        private void scanJarEntries(java.net.URL jarUrl, String packagePath, ClassLoader cl) throws Exception {
+            var connection = (java.net.JarURLConnection) jarUrl.openConnection();
+            try (var jarFile = connection.getJarFile()) {
+                jarFile.entries().asIterator().forEachRemaining(entry -> {
+                    var name = entry.getName();
+                    if (name.startsWith(packagePath) && name.endsWith(".class")) {
+                        var className = name.replace('/', '.').replace(".class", "");
+                        tryAddBeanClass(className, cl);
+                    }
+                });
+            }
+        }
+
+        private void tryAddBeanClass(String className, ClassLoader cl) {
+            try {
+                var clazz = Class.forName(className, false, cl);
+                if (clazz.isAnnotation() || clazz.isInterface() || clazz.isSynthetic()) return;
+                addBeanClass(clazz);
+            } catch (ClassNotFoundException | NoClassDefFoundError e) {
+                // Skip unloadable classes
+            }
+        }
+
+        /**
          * Scan the classpath for {@code META-INF/vauban-beans.list} files and add
          * all listed bean classes. These files are generated at build time by the
          * {@code vauban-maven-plugin:generate} goal.
