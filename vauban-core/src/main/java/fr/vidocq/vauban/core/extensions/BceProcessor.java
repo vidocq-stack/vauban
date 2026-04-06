@@ -60,7 +60,7 @@ public final class BceProcessor {
                 bceInstances.put(bceClass, bce);
                 for (var method : getDeclaredMethodsSafe(bceClass)) {
                     if (method.getAnnotation(Discovery.class) == null) continue;
-                    method.setAccessible(true);
+                    makeAccessibleSafe(method);
 
                     var params = method.getParameters();
                     var args = new Object[params.length];
@@ -146,10 +146,20 @@ public final class BceProcessor {
         return new Result(allSyntheticBeans, allSyntheticObservers, definitionErrors, deploymentErrors, allEnhancementMods);
     }
 
+    @SuppressWarnings("java:S3011") // CDI spec requires reflective access
+    private static void makeAccessibleSafe(java.lang.reflect.AccessibleObject member) {
+        try {
+            member.setAccessible(true);
+        } catch (Exception e) {
+            throw new RuntimeException("Cannot access member: " + member
+                    + ". Ensure the module opens the package to fr.vidocq.vauban.core", e);
+        }
+    }
+
     @SuppressWarnings({"java:S3011", "java:S112"}) // CDI spec requires reflective access; container exceptions propagate as RuntimeException
     private static Object instantiateBce(Class<?> bceClass) throws Exception {
         var ctor = bceClass.getDeclaredConstructor();
-        ctor.setAccessible(true);
+        makeAccessibleSafe(ctor);
         return ctor.newInstance();
     }
 
@@ -183,7 +193,7 @@ public final class BceProcessor {
             var enhancement = method.getAnnotation(Enhancement.class);
             if (enhancement == null) continue;
 
-            method.setAccessible(true);
+            makeAccessibleSafe(method);
             var paramKind = detectEnhancementParamKind(method);
 
             var withAnnotations = enhancement.withAnnotations();
@@ -339,7 +349,7 @@ public final class BceProcessor {
             var registration = method.getAnnotation(Registration.class);
             if (registration == null) continue;
 
-            method.setAccessible(true);
+            makeAccessibleSafe(method);
 
             if (hasObserverInfoParam(method)) {
                 for (var observer : observers) {
@@ -578,7 +588,7 @@ public final class BceProcessor {
             var synthesis = method.getAnnotation(Synthesis.class);
             if (synthesis == null) continue;
 
-            method.setAccessible(true);
+            makeAccessibleSafe(method);
 
             var args = resolveSynthesisArgs(method, components, types);
 
@@ -603,7 +613,7 @@ public final class BceProcessor {
         for (var method : getDeclaredMethodsSafe(bceClass)) {
             if (method.getAnnotation(Validation.class) == null) continue;
 
-            method.setAccessible(true);
+            makeAccessibleSafe(method);
             var messages = new VaubanMessages();
             var params = method.getParameters();
             var args = new Object[params.length];

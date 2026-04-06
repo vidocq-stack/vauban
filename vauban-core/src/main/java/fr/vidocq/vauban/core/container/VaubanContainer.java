@@ -93,7 +93,12 @@ public final class VaubanContainer implements AutoCloseable {
     private final VaubanBeanManager beanManager;
     private final ClassLoader classLoader;
     private final java.util.function.BiFunction<String, byte[], Class<?>> classDefiner;
+    private final VaubanLookup vaubanLookup;
     private volatile boolean running;
+
+    public VaubanLookup getVaubanLookup() {
+        return vaubanLookup;
+    }
 
     private VaubanContainer(VaubanIndex index, List<BeanDescriptor> descriptors,
                             List<ObserverDescriptor> observers,
@@ -102,10 +107,12 @@ public final class VaubanContainer implements AutoCloseable {
                             Map<DotName, BeanFactory<?>> factories,
                             Map<DotName, java.util.function.BiConsumer<Object, CreationalContext<?>>> syntheticDisposers,
                             ClassLoader classLoader,
-                            java.util.function.BiFunction<String, byte[], Class<?>> classDefiner) {
+                            java.util.function.BiFunction<String, byte[], Class<?>> classDefiner,
+                            VaubanLookup vaubanLookup) {
         this.index = index;
         this.classLoader = classLoader;
         this.classDefiner = classDefiner;
+        this.vaubanLookup = vaubanLookup;
         this.applicationContext = new ApplicationContext();
         this.requestContext = new RequestContext();
         this.dependentContext = new DependentContext();
@@ -248,7 +255,6 @@ public final class VaubanContainer implements AutoCloseable {
                     }
                 }
                 
-                constructor.setAccessible(true);
                 var paramTypes = constructor.getParameterTypes();
                 var genericParamTypes = constructor.getGenericParameterTypes();
                 var params = constructor.getParameters();
@@ -268,15 +274,15 @@ public final class VaubanContainer implements AutoCloseable {
                         args[i] = resolveParameter(paramTypes[i], genericParamTypes[i], ctx);
                     }
                 }
-                
-                var instance = constructor.newInstance(args);
+
+                var instance = vaubanLookup.newInstance(constructor, args);
                 injectFieldsByReflection(instance, null, ctx);
                 // Call PostConstruct directly
                 java.lang.reflect.Method pc = null;
                 for (var m : instance.getClass().getDeclaredMethods()) {
                     if (m.isAnnotationPresent(jakarta.annotation.PostConstruct.class)) { pc = m; break; }
                 }
-                if (pc != null) { pc.setAccessible(true); pc.invoke(instance); }
+                if (pc != null) { vaubanLookup.invokeMethod(instance, pc); }
                 
                 if (ctx instanceof CreationalContextImpl<?> vCtx) {
                     vCtx.addInterceptorInstance(className, instance);
@@ -312,7 +318,6 @@ public final class VaubanContainer implements AutoCloseable {
                 }
             }
             
-            constructor.setAccessible(true);
             var paramTypes = constructor.getParameterTypes();
             var genericParamTypes = constructor.getGenericParameterTypes();
             var params = constructor.getParameters();
@@ -333,7 +338,7 @@ public final class VaubanContainer implements AutoCloseable {
                 }
             }
 
-            var instance = constructor.newInstance(args);
+            var instance = vaubanLookup.newInstance(constructor, args);
 
             // Dependency injection on the interceptor instance
             injectFields(instance, null, (CreationalContext<Object>) ctx);
@@ -857,14 +862,13 @@ public final class VaubanContainer implements AutoCloseable {
         while (clazz != null && clazz != Object.class) {
             for (var field : clazz.getDeclaredFields()) {
                 if (!field.isAnnotationPresent(jakarta.inject.Inject.class)) continue;
-                field.setAccessible(true);
                 try {
 
                 // Handle InjectionPoint injection — the dependent bean receives the
                 // InjectionPoint that describes WHERE it was injected (set by the caller).
                 // CDI spec: null if not being injected (programmatic lookup).
                 if (field.getType() == InjectionPoint.class) {
-                    field.set(instance, currentInjectionPoint.get());
+                    vaubanLookup.setField(instance, field, currentInjectionPoint.get());
                     continue;
                 }
 
@@ -883,14 +887,14 @@ public final class VaubanContainer implements AutoCloseable {
                     var fieldQualifiers = extractFieldQualifiers(field);
                     var ownerBean = findBeanForInstance(instance);
                     var ip = new VaubanInjectionPoint(field, ownerBean);
-                    field.set(instance, new InstanceImpl<>(this, instanceType, fieldQualifiers, ip));
+                    vaubanLookup.setField(instance, field, new InstanceImpl<>(this, instanceType, fieldQualifiers, ip));
                     continue;
                 }
 
                 // Handle BeanManager / BeanContainer injection
                 if (BeanManager.class.isAssignableFrom(field.getType())
                         || field.getType() == jakarta.enterprise.inject.spi.BeanContainer.class) {
-                    field.set(instance, getBeanManager());
+                    vaubanLookup.setField(instance, field, getBeanManager());
                     continue;
                 }
 
@@ -899,7 +903,7 @@ public final class VaubanContainer implements AutoCloseable {
                     var eventQualifiers = collectEventQualifiers(field.getAnnotations());
                     var ownerBean = findBeanForInstance(instance);
                     var eventIp = new VaubanInjectionPoint(field, ownerBean);
-                    field.set(instance, new EventImpl<>(eventDispatcher, eventQualifiers, eventIp));
+                    vaubanLookup.setField(instance, field, new EventImpl<>(eventDispatcher, eventQualifiers, eventIp));
                     continue;
                 }
 
@@ -939,7 +943,7 @@ public final class VaubanContainer implements AutoCloseable {
                     }
                     // CDI spec: don't set null on primitive fields
                     if (value != null || !field.getType().isPrimitive()) {
-                        field.set(instance, value);
+                        vaubanLookup.setField(instance, field, value);
                     }
                 } finally {
                     currentInjectionPoint.set(previousIp);
@@ -1007,7 +1011,6 @@ public final class VaubanContainer implements AutoCloseable {
         while (current != null && current != Object.class) {
             for (var method : current.getDeclaredMethods()) {
                 if (method.isAnnotationPresent(jakarta.inject.Inject.class)) {
-                method.setAccessible(true);
                 try {
                     var paramTypes = method.getParameterTypes();
                     var rawGenericParamTypes = method.getGenericParameterTypes();
@@ -1028,7 +1031,7 @@ public final class VaubanContainer implements AutoCloseable {
                             args[i] = resolveParameter(paramTypes[i], genericParamTypes[i], ctx, paramQuals, method, ownerBean, params[i], i);
                         }
                     }
-                    method.invoke(instance, args);
+                    vaubanLookup.invokeMethod(instance, method, args);
                     for (var tc : transientContexts) {
                         tc.release();
                     }
@@ -1127,8 +1130,7 @@ public final class VaubanContainer implements AutoCloseable {
             }
             if (pc != null) {
                 try {
-                    pc.setAccessible(true);
-                    pc.invoke(instance);
+                    vaubanLookup.invokeMethod(instance, pc);
                 } catch (Exception e) {
                     throw new RuntimeException("@PostConstruct on interceptor instance failed: " + pc, e);
                 }
@@ -1159,8 +1161,7 @@ public final class VaubanContainer implements AutoCloseable {
                         instance, null, new Object[0], lifecycleChain,
                         (target, params) -> {
                             for (var m : pcMethods) {
-                                m.setAccessible(true);
-                                m.invoke(target);
+                                vaubanLookup.invokeMethod(target, m);
                             }
                             return null;
                         });
@@ -1179,8 +1180,7 @@ public final class VaubanContainer implements AutoCloseable {
         // No interceptors — call @PostConstruct directly
         for (var pcMethod : postConstructMethods) {
             try {
-                pcMethod.setAccessible(true);
-                pcMethod.invoke(instance);
+                vaubanLookup.invokeMethod(instance, pcMethod);
             } catch (Exception e) {
                 throw new RuntimeException("@PostConstruct failed: " + pcMethod, e);
             }
@@ -1622,8 +1622,7 @@ public final class VaubanContainer implements AutoCloseable {
                         }
                         if (subclassCtor == null) subclassCtor = finalInterceptedClass.getDeclaredConstructors()[0];
                         
-                        subclassCtor.setAccessible(true);
-                        var instance = subclassCtor.newInstance(finalArgs);
+                        var instance = vaubanLookup.newInstance(subclassCtor, finalArgs);
                         
                         // Initialize interceptor fields
                         var initMethod = finalInterceptedClass.getMethod("$$init",
@@ -1734,8 +1733,7 @@ public final class VaubanContainer implements AutoCloseable {
                         // Resolve which constructor to use
                         var ctor2 = finalInterceptedClass.getDeclaredConstructor();
                         Object[] finalArgs2 = new Object[0];
-                        ctor2.setAccessible(true);
-                        var inst = ctor2.newInstance(finalArgs2);
+                        var inst = vaubanLookup.newInstance(ctor2, finalArgs2);
                                 finalInterceptedClass.getMethod("$$init",
                                         fr.vidocq.vauban.core.interceptor.InterceptorManager.class,
                                         java.util.Set.class,
@@ -1981,13 +1979,13 @@ public final class VaubanContainer implements AutoCloseable {
             for (var method : declaringClass.getDeclaredMethods()) {
                 if (method.getName().equals(disposer.methodName())
                         && method.getParameterCount() > disposer.parameterIndex()) {
-                    method.setAccessible(true);
                     var bm = getBeanManager();
                     var ctx = creationalContext != null ? creationalContext : new fr.vidocq.vauban.core.context.CreationalContextImpl<>();
                     try {
                         var declBeans = bm.getBeans(declaringClass);
                         var declBean = declBeans.isEmpty() ? null : bm.resolve(declBeans);
-                        var declaringInstance = java.lang.reflect.Modifier.isStatic(method.getModifiers())
+                        var isStatic = java.lang.reflect.Modifier.isStatic(method.getModifiers());
+                        var declaringInstance = isStatic
                                 ? null : (declBean != null
                                         ? bm.getReference(declBean, declaringClass, ctx)
                                         : selectByBeanClass(declaringClass));
@@ -2021,7 +2019,11 @@ public final class VaubanContainer implements AutoCloseable {
                                 // Best effort for other params
                             }
                         }
-                        method.invoke(declaringInstance, args);
+                        if (isStatic) {
+                            vaubanLookup.invokeStaticMethod(method, args);
+                        } else {
+                            vaubanLookup.invokeMethod(declaringInstance, method, args);
+                        }
                     } finally {
                         ctx.release();
                     }
@@ -2111,22 +2113,17 @@ public final class VaubanContainer implements AutoCloseable {
 
                     final var finalCtor = injectCtor;
                     final var finalArgs = args;
-                    finalCtor.setAccessible(true);
 
                     Object result;
                     if (constructCtx != null) {
-                        result = finalCtor.newInstance(finalArgs);
+                        result = vaubanLookup.newInstance(finalCtor, finalArgs);
                     } else {
-                        result = finalCtor.newInstance(finalArgs);
+                        result = vaubanLookup.newInstance(finalCtor, finalArgs);
                     }
                     for (var tc : transientCtxs) {
                         tc.release();
                     }
                     return result;
-                } catch (java.lang.reflect.InvocationTargetException e) {
-                    var cause = e.getCause();
-                    if (cause instanceof RuntimeException re) throw re;
-                    throw new jakarta.enterprise.inject.CreationException(cause);
                 } catch (RuntimeException e) {
                     throw e;
                 } catch (Exception e) {
@@ -2166,11 +2163,10 @@ public final class VaubanContainer implements AutoCloseable {
 
                     for (var method : declaringClass.getDeclaredMethods()) {
                         if (method.getName().equals(methodName)) {
-                            method.setAccessible(true);
                             var transientCtx = new fr.vidocq.vauban.core.context.CreationalContextImpl<>();
                             try {
                                 if (method.getParameterCount() == 0) {
-                                    return method.invoke(declaringInstance);
+                                    return vaubanLookup.invokeMethod(declaringInstance, method);
                                 }
                                 var paramTypes = method.getParameterTypes();
                                 var genericParamTypes = method.getGenericParameterTypes();
@@ -2184,7 +2180,7 @@ public final class VaubanContainer implements AutoCloseable {
                                         args[i] = resolveParameter(paramTypes[i], genericParamTypes[i], ctx != null ? ctx : transientCtx, qualifiers, method);
                                     }
                                 }
-                                return method.invoke(declaringInstance, args);
+                                return vaubanLookup.invokeMethod(declaringInstance, method, args);
                             } finally {
                                 transientCtx.release();
                                 // CDI spec: destroy @Dependent declaring bean after producer method completes
@@ -2197,12 +2193,6 @@ public final class VaubanContainer implements AutoCloseable {
                         }
                     }
                     throw new RuntimeException("Producer method not found: " + methodName + " in " + descriptor.beanClass());
-                } catch (java.lang.reflect.InvocationTargetException e) {
-                    // Unwrap the target exception — CDI spec says producer exceptions propagate as-is
-                    var cause = e.getCause();
-                    if (cause instanceof RuntimeException re) throw re;
-                    if (cause instanceof Error err) throw err;
-                    throw new jakarta.enterprise.inject.CreationException(cause);
                 } catch (RuntimeException e) {
                     throw e;
                 } catch (Exception e) {
@@ -2474,8 +2464,7 @@ public final class VaubanContainer implements AutoCloseable {
                     var declaringInstance = selectByBeanClass(declaringClass);
                     try {
                         var field = declaringClass.getDeclaredField(fieldName);
-                        field.setAccessible(true);
-                        return field.get(declaringInstance);
+                        return vaubanLookup.getField(declaringInstance, field);
                     } finally {
                         // CDI spec: @Dependent declaring bean must be destroyed after producer field access
                         if (isDependent && declaringInstance != null) {
@@ -2548,7 +2537,16 @@ public final class VaubanContainer implements AutoCloseable {
         private final Map<DotName, BeanFactory<?>> factories = new LinkedHashMap<>();
         private java.util.function.BiFunction<String, byte[], Class<?>> classDefiner;
         private ClassLoader classLoader;
+        private java.lang.invoke.MethodHandles.Lookup lookup;
         private boolean isBeanArchive = true;
+        private VaubanLookup builderLookup;
+
+        private VaubanLookup getBuilderLookup() {
+            if (builderLookup == null) {
+                builderLookup = new VaubanLookup(lookup != null ? lookup : java.lang.invoke.MethodHandles.lookup());
+            }
+            return builderLookup;
+        }
 
         public Builder beanArchive(boolean isBeanArchive) {
             this.isBeanArchive = isBeanArchive;
@@ -2582,6 +2580,20 @@ public final class VaubanContainer implements AutoCloseable {
             return this;
         }
 
+        /**
+         * Provide a {@link java.lang.invoke.MethodHandles.Lookup} from the user's module.
+         * This enables JPMS-compliant access to private bean members without
+         * {@code setAccessible(true)}. The lookup should be obtained via
+         * {@code MethodHandles.lookup()} in the user's code.
+         *
+         * <p>If not provided, {@link #scanLocal()} will auto-capture one from the caller.
+         * For classpath mode (unnamed modules), a default lookup is used.
+         */
+        public Builder lookup(java.lang.invoke.MethodHandles.Lookup lookup) {
+            this.lookup = lookup;
+            return this;
+        }
+
         public <T> Builder addFactory(Class<T> beanClass, BeanFactory<T> factory) {
             factories.put(DotName.of(beanClass.getName()), factory);
             return this;
@@ -2603,6 +2615,16 @@ public final class VaubanContainer implements AutoCloseable {
                             .filter(c -> c != VaubanContainer.class && c != Builder.class)
                             .findFirst()
                             .orElseThrow(() -> new IllegalStateException("Cannot determine caller package")));
+            // Auto-capture a Lookup from the caller's module if not already set
+            if (this.lookup == null) {
+                try {
+                    this.lookup = java.lang.invoke.MethodHandles.privateLookupIn(
+                            callerClass, java.lang.invoke.MethodHandles.lookup());
+                } catch (IllegalAccessException e) {
+                    // Fallback: use default lookup (unnamed modules / classpath)
+                    this.lookup = java.lang.invoke.MethodHandles.lookup();
+                }
+            }
             return scanPackage(callerClass.getPackageName());
         }
 
@@ -2722,15 +2744,10 @@ public final class VaubanContainer implements AutoCloseable {
                 // version after discovery if @Inject constructor is found
                 if (!factories.containsKey(DotName.of(clazz.getName()))) {
                     var beanClass2 = clazz;
+                    var lkp = getBuilderLookup();
                     factories.put(DotName.of(clazz.getName()), () -> {
                         try {
-                            var ctor = beanClass2.getDeclaredConstructor();
-                            ctor.setAccessible(true);
-                            return ctor.newInstance();
-                        } catch (java.lang.reflect.InvocationTargetException e) {
-                            var cause = e.getCause();
-                            if (cause instanceof RuntimeException re) throw re;
-                            throw new jakarta.enterprise.inject.CreationException(cause);
+                            return lkp.newInstance(beanClass2);
                         } catch (RuntimeException e) {
                             throw e;
                         } catch (Exception e) {
@@ -2772,15 +2789,10 @@ public final class VaubanContainer implements AutoCloseable {
                             }
                         }
                         if (!factories.containsKey(DotName.of(className))) {
+                            var lkp = getBuilderLookup();
                             factories.put(DotName.of(className), () -> {
                                 try {
-                                    var ctor = cls.getDeclaredConstructor();
-                                    ctor.setAccessible(true);
-                                    return ctor.newInstance();
-                                } catch (java.lang.reflect.InvocationTargetException e) {
-                                    var cause = e.getCause();
-                                    if (cause instanceof RuntimeException re) throw re;
-                                    throw new jakarta.enterprise.inject.CreationException(cause);
+                                    return lkp.newInstance(cls);
                                 } catch (RuntimeException e) {
                                     throw e;
                                 } catch (Exception e) {
@@ -2979,15 +2991,14 @@ public final class VaubanContainer implements AutoCloseable {
                         : (beanClasses.isEmpty()
                         ? Thread.currentThread().getContextClassLoader()
                         : beanClasses.getFirst().getClassLoader());
-                var container = new VaubanContainer(index, descriptors, observers, interceptors, disposers, factories, syntheticDisposers, beanClassLoader, classDefiner);
+                var vaubanLookup = getBuilderLookup();
+                var container = new VaubanContainer(index, descriptors, observers, interceptors, disposers, factories, syntheticDisposers, beanClassLoader, classDefiner, vaubanLookup);
 
                 // Register custom contexts from Build Compatible Extensions
                 if (discoveryResult != null) {
                     for (var reg : discoveryResult.metaAnnotations().getCustomContexts()) {
                         try {
-                            var ctor = reg.contextClass().getDeclaredConstructor();
-                            ctor.setAccessible(true);
-                            var ctx = (jakarta.enterprise.context.spi.Context) ctor.newInstance();
+                            var ctx = (jakarta.enterprise.context.spi.Context) vaubanLookup.newInstance(reg.contextClass());
                             container.contexts.computeIfAbsent(reg.scopeAnnotation(), k -> new java.util.ArrayList<>()).add(ctx);
                         } catch (Exception e) {
                             // Skip context if instantiation fails

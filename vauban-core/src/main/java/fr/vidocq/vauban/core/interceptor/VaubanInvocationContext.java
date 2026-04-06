@@ -262,7 +262,7 @@ public final class VaubanInvocationContext implements InvocationContext {
                         if (target == null) {
                             return invocation.method().invoke(null, this);
                         } else {
-                            invocation.method().setAccessible(true);
+                            makeAccessibleSafe(invocation.method());
                             invocation.method().invoke(target, this);
                             return null;
                         }
@@ -277,7 +277,7 @@ public final class VaubanInvocationContext implements InvocationContext {
                         return constructor != null ? null : result;
                     }
                     if (method != null) {
-                        method.setAccessible(true);
+                        makeAccessibleSafe(method);
                         return method.invoke(target, parameters);
                     }
                     return null;
@@ -300,7 +300,7 @@ public final class VaubanInvocationContext implements InvocationContext {
         @SuppressWarnings({"java:S3011", "java:S112"}) // CDI spec requires reflective access; container exceptions propagate as RuntimeException
         public Object invoke(InvocationContext ctx) throws Exception {
             try {
-                method.setAccessible(true);
+                makeAccessibleSafe(method);
                 return method.invoke(target, ctx);
             } catch (java.lang.reflect.InvocationTargetException e) {
                 var cause = e.getCause();
@@ -310,6 +310,16 @@ public final class VaubanInvocationContext implements InvocationContext {
             }
         }
     }
+    @SuppressWarnings("java:S3011") // CDI spec requires reflective access
+    private static void makeAccessibleSafe(java.lang.reflect.AccessibleObject member) {
+        try {
+            member.setAccessible(true);
+        } catch (Exception e) {
+            throw new RuntimeException("Cannot access member: " + member
+                    + ". Ensure the module opens the package to fr.vidocq.vauban.core", e);
+        }
+    }
+
     public static VaubanInvocationContext dummy() {
         return dummy(new Object[0]);
     }

@@ -63,10 +63,11 @@ public final class VaubanExtension
 
     @SuppressWarnings("java:S3011") // CDI spec requires reflective access
     private void injectFields(Object instance, VaubanContainer container) throws IllegalAccessException {
+        var lookup = container.getVaubanLookup();
         var fields = collectInjectableFields(instance.getClass());
         for (var field : fields) {
             var bean = container.select(field.getType());
-            field.setAccessible(true);
+            lookup.makeAccessible(field);
             field.set(instance, bean);
         }
     }

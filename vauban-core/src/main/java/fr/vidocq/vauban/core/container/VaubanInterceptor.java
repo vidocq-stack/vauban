@@ -84,7 +84,7 @@ public final class VaubanInterceptor<T> implements Interceptor<T> {
         if (aroundInvoke == null) {
             throw new IllegalStateException("AroundInvoke method not found: " + descriptor.aroundInvokeMethod());
         }
-        aroundInvoke.setAccessible(true);
+        makeAccessibleSafe(aroundInvoke);
         return aroundInvoke.invoke(instance, ctx);
     }
 
@@ -147,6 +147,16 @@ public final class VaubanInterceptor<T> implements Interceptor<T> {
 
     public InterceptorDescriptor descriptor() {
         return descriptor;
+    }
+
+    @SuppressWarnings("java:S3011") // CDI spec requires reflective access
+    private static void makeAccessibleSafe(java.lang.reflect.AccessibleObject member) {
+        try {
+            member.setAccessible(true);
+        } catch (Exception e) {
+            throw new RuntimeException("Cannot access member: " + member
+                    + ". Ensure the module opens the package to fr.vidocq.vauban.core", e);
+        }
     }
 
     private Method findAroundInvokeMethod() {

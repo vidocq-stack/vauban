@@ -7,6 +7,8 @@ import fr.vidocq.vauban.core.container.VaubanContainer;
 import fr.vidocq.vauban.indexer.model.DotName;
 import fr.vidocq.vauban.indexer.model.TypeInfo;
 
+import fr.vidocq.vauban.core.container.VaubanLookup;
+
 import java.lang.annotation.Annotation;
 import java.lang.reflect.Method;
 import java.util.*;
@@ -615,7 +617,7 @@ public final class EventDispatcher {
 
             var method = findMethod(beanClass, observer.methodName(), event.getClass());
             if (method != null) {
-                method.setAccessible(true);
+                container.getVaubanLookup().makeAccessible(method);
                 var bm = container.getBeanManager();
                 var exactBean = container.findManagedBeanByExactClass(beanClass);
                 boolean declaringIsDependent = exactBean != null
