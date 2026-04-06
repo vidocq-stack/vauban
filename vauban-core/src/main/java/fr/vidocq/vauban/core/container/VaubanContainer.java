@@ -80,7 +80,7 @@ public final class VaubanContainer implements AutoCloseable {
         currentInjectionPoint.set(ip);
     }
 
-    private final Map<BeanId, ManagedBean<?>> beans = new LinkedHashMap<>();
+    final Map<BeanId, ManagedBean<?>> beans = new LinkedHashMap<>();
     final Map<Class<? extends Annotation>, List<Context>> contexts = new ConcurrentHashMap<>();
     private static final ThreadLocal<Set<String>> beansBeingCreated = ThreadLocal.withInitial(java.util.HashSet::new);
     private final ApplicationContext applicationContext;
@@ -94,6 +94,7 @@ public final class VaubanContainer implements AutoCloseable {
     private final ClassLoader classLoader;
     private final java.util.function.BiFunction<String, byte[], Class<?>> classDefiner;
     private final VaubanLookup vaubanLookup;
+    final DisposerInvoker disposerInvoker;
     private volatile boolean running;
 
     public VaubanLookup getVaubanLookup() {
@@ -113,6 +114,7 @@ public final class VaubanContainer implements AutoCloseable {
         this.classLoader = classLoader;
         this.classDefiner = classDefiner;
         this.vaubanLookup = vaubanLookup;
+        this.disposerInvoker = new DisposerInvoker(this, vaubanLookup);
         this.applicationContext = new ApplicationContext();
         this.requestContext = new RequestContext();
         this.dependentContext = new DependentContext();
@@ -158,7 +160,7 @@ public final class VaubanContainer implements AutoCloseable {
         }
 
         // Wire up disposer methods for producer beans
-        wireDisposers(descriptors, disposers);
+        disposerInvoker.wireDisposers(descriptors, disposers);
 
         // Wire up synthetic bean disposers
         for (var entry : syntheticDisposers.entrySet()) {
@@ -608,102 +610,6 @@ public final class VaubanContainer implements AutoCloseable {
         }
     }
 
-    /**
-     * CDI spec: validate disposer method parameters (other than @Disposes) can be resolved.
-     */
-    static void validateDisposerParameters(
-            java.util.List<fr.vidocq.vauban.core.bean.model.DisposerDescriptor> disposers,
-            java.util.List<fr.vidocq.vauban.core.bean.model.BeanDescriptor> descriptors,
-            fr.vidocq.vauban.indexer.VaubanIndex index) {
-        var assignability = new fr.vidocq.vauban.core.types.AssignabilityRules(index);
-        var tempResolver = new fr.vidocq.vauban.core.bean.resolution.BeanResolver(
-                descriptors, java.util.List.of(), assignability);
-
-        for (var disposer : disposers) {
-            try {
-                var cl = Thread.currentThread().getContextClassLoader();
-                var clazz = Class.forName(disposer.declaringClass().value(), false, cl);
-                for (var method : clazz.getDeclaredMethods()) {
-                    if (!method.getName().equals(disposer.methodName())) continue;
-                    for (int pi = 0; pi < method.getParameterCount(); pi++) {
-                        var param = method.getParameters()[pi];
-                        if (param.isAnnotationPresent(jakarta.enterprise.inject.Disposes.class)) continue;
-                        var paramType = param.getType();
-                        var paramTypeName = paramType.getName();
-                        // CDI spec: Bean<X> in disposer must use wildcard (Bean<?>), not concrete type
-                        if (paramTypeName.equals("jakarta.enterprise.inject.spi.Bean")) {
-                            var genericType = method.getGenericParameterTypes()[pi];
-                            if (genericType instanceof java.lang.reflect.ParameterizedType pt
-                                    && pt.getActualTypeArguments().length > 0
-                                    && !(pt.getActualTypeArguments()[0] instanceof java.lang.reflect.WildcardType)) {
-                                throw new jakarta.enterprise.inject.spi.DefinitionException(
-                                    "Disposer method " + disposer.declaringClass().simpleName() + "." + disposer.methodName()
-                                    + "(): Bean parameter must use wildcard type (Bean<?>), not concrete type");
-                            }
-                            continue;
-                        }
-                        if (paramTypeName.equals("jakarta.enterprise.inject.spi.BeanManager")
-                                || paramTypeName.equals("jakarta.enterprise.inject.spi.BeanContainer")
-                                || paramTypeName.equals("jakarta.enterprise.inject.spi.InjectionPoint")
-                                || paramTypeName.equals("jakarta.enterprise.inject.Instance")
-                                || paramTypeName.equals("jakarta.inject.Provider")
-                                || paramTypeName.equals("jakarta.enterprise.event.Event")) continue;
-                        var ip = new fr.vidocq.vauban.core.bean.model.InjectionPointInfo(
-                                new fr.vidocq.vauban.indexer.model.TypeInfo.ClassType(
-                                        fr.vidocq.vauban.indexer.model.DotName.of(paramType.getName())),
-                                java.util.Set.of(new fr.vidocq.vauban.core.bean.model.QualifierInstance(
-                                        fr.vidocq.vauban.indexer.model.DotName.of("jakarta.enterprise.inject.Default"),
-                                        java.util.Map.of()),
-                                        new fr.vidocq.vauban.core.bean.model.QualifierInstance(
-                                        fr.vidocq.vauban.indexer.model.DotName.of("jakarta.enterprise.inject.Any"),
-                                        java.util.Map.of())),
-                                fr.vidocq.vauban.core.bean.model.InjectionPointInfo.InjectionKind.METHOD_PARAMETER,
-                                "disposer parameter " + param.getName());
-                        var result = tempResolver.resolveInjectionPoint(ip);
-                        if (result.status() == fr.vidocq.vauban.core.bean.resolution.BeanResolver.ResolutionResult.Status.UNSATISFIED) {
-                            throw new jakarta.enterprise.inject.spi.DeploymentException(
-                                    "Disposer method " + disposer.declaringClass().simpleName() + "." + disposer.methodName()
-                                            + "(): unsatisfied dependency for parameter of type " + paramType.getName());
-                        } else if (result.status() == fr.vidocq.vauban.core.bean.resolution.BeanResolver.ResolutionResult.Status.AMBIGUOUS) {
-                            throw new jakarta.enterprise.inject.spi.DeploymentException(
-                                    "Disposer method " + disposer.declaringClass().simpleName() + "." + disposer.methodName()
-                                            + "(): ambiguous dependency for parameter of type " + paramType.getName());
-                        }
-                    }
-                    break;
-                }
-            } catch (jakarta.enterprise.inject.spi.DeploymentException | jakarta.enterprise.inject.spi.DefinitionException e) {
-                throw e;
-            } catch (Exception e) {
-                // Skip
-            }
-        }
-    }
-
-    /**
-     * CDI spec: validate disposer method definitions.
-     * - Multiple disposer methods for the same producer in the same class → DefinitionException
-     * - Disposer method with no matching producer in the same class → DefinitionException
-     */
-    private static void validateDisposerMethodDefinitions(
-            java.util.List<fr.vidocq.vauban.core.bean.model.DisposerDescriptor> disposers,
-            java.util.List<fr.vidocq.vauban.core.bean.model.BeanDescriptor> descriptors) {
-        // Group disposers by declaring class + disposed type
-        var disposersByKey = new java.util.HashMap<String, java.util.List<fr.vidocq.vauban.core.bean.model.DisposerDescriptor>>();
-        for (var disposer : disposers) {
-            var key = disposer.declaringClass().value() + "#" + disposer.disposedType();
-            disposersByKey.computeIfAbsent(key, k -> new java.util.ArrayList<>()).add(disposer);
-        }
-        for (var entry : disposersByKey.entrySet()) {
-            if (entry.getValue().size() > 1) {
-                throw new jakarta.enterprise.inject.spi.DefinitionException(
-                        "Multiple disposer methods for the same producer type: " + entry.getKey());
-            }
-        }
-
-        // Note: unresolved disposer method check (no matching producer) is deferred
-        // because the test framework may define producers in separate bean archives.
-    }
 
     private static Class<?> wrapPrimitive(Class<?> p) {
         if (p == int.class) return Integer.class;
@@ -1696,272 +1602,6 @@ public final class VaubanContainer implements AutoCloseable {
                 e.printStackTrace();
             }
 
-        }
-    }
-
-    private void wireDisposers(List<BeanDescriptor> descriptors, List<DisposerDescriptor> disposers) {
-        for (var descriptor : descriptors) {
-            if (descriptor.kind() != BeanDescriptor.BeanKind.PRODUCER_METHOD
-                    && descriptor.kind() != BeanDescriptor.BeanKind.PRODUCER_FIELD) {
-                continue;
-            }
-
-            var bean = beans.get(descriptor.id());
-            if (bean == null) continue;
-
-            // Find a matching disposer: same declaring class, matching disposed type and qualifiers
-            for (var disposer : disposers) {
-                if (!disposer.declaringClass().equals(descriptor.beanClass())) continue;
-
-                // Check if the disposed type matches any of the producer bean types
-                boolean typeMatches = false;
-                for (var bt : descriptor.types()) {
-                    if (bt.equals(disposer.disposedType())) {
-                        typeMatches = true;
-                        break;
-                    }
-                    if (bt instanceof TypeInfo.ClassType btCt
-                            && disposer.disposedType() instanceof TypeInfo.ClassType dCt
-                            && btCt.name().equals(dCt.name())) {
-                        typeMatches = true;
-                        break;
-                    }
-                }
-                // Fallback: use reflection for assignability (index may lack type info)
-                if (!typeMatches && disposer.disposedType() instanceof TypeInfo.ClassType dCt) {
-                    try {
-                        var cl = Thread.currentThread().getContextClassLoader();
-                        var disposedClass = Class.forName(dCt.name().value(), false, cl);
-                        for (var bt : descriptor.types()) {
-                            String btName = null;
-                            if (bt instanceof TypeInfo.ClassType btCt) btName = btCt.name().value();
-                            else if (bt instanceof TypeInfo.ParameterizedType pt) btName = pt.rawType().value();
-                            if (btName != null) {
-                                var beanTypeClass = Class.forName(btName, false, cl);
-                                if (disposedClass.isAssignableFrom(beanTypeClass)) {
-                                    typeMatches = true;
-                                    break;
-                                }
-                            }
-                        }
-                    } catch (ClassNotFoundException e) { /* skip */ }
-                }
-                if (!typeMatches) continue;
-
-                // CDI spec: disposer qualifiers must match producer qualifiers
-                // Special case: @Any EXPLICITLY on disposer param matches ALL producers of same type
-                boolean disposerHasExplicitAny = hasExplicitAnyOnDisposerParam(disposer);
-                boolean qualifiersMatch;
-                if (disposerHasExplicitAny) {
-                    // @Any disposer matches any producer regardless of its qualifiers
-                    qualifiersMatch = true;
-                } else {
-                    // Use annotation names for matching (members from index may be incomplete)
-                    // Then verify via reflection for exact member values
-                    var disposerQualNames = disposer.qualifiers().stream()
-                            .filter(q -> !q.isDefault() && !q.isAny())
-                            .map(q -> q.annotationName())
-                            .collect(java.util.stream.Collectors.toSet());
-                    var producerQualNames = descriptor.qualifiers().stream()
-                            .filter(q -> !q.isDefault() && !q.isAny())
-                            .map(q -> q.annotationName())
-                            .collect(java.util.stream.Collectors.toSet());
-                    if (disposerQualNames.isEmpty()) {
-                        qualifiersMatch = producerQualNames.isEmpty();
-                    } else if (!producerQualNames.containsAll(disposerQualNames)) {
-                        qualifiersMatch = false;
-                    } else {
-                        // Annotation names match — verify via reflection for exact member values
-                        qualifiersMatch = verifyDisposerQualifiersViaReflection(descriptor, disposer);
-                    }
-                }
-                if (!qualifiersMatch) continue;
-
-                if (bean.getDestroyer() != null) {
-                    // CDI spec: multiple disposer methods for same producer → DefinitionException
-                    throw new jakarta.enterprise.inject.spi.DefinitionException(
-                        "Multiple disposer methods for producer " + descriptor.id() + " in " + descriptor.beanClass());
-                }
-                bean.setDestroyer((instance, ctx) -> callDisposer(instance, disposer, ctx));
-            }
-        }
-    }
-
-    private boolean matchesDisposerType(BeanDescriptor descriptor, DisposerDescriptor disposer) {
-        for (var bt : descriptor.types()) {
-            if (bt.equals(disposer.disposedType())) return true;
-            if (bt instanceof TypeInfo.ClassType btCt
-                    && disposer.disposedType() instanceof TypeInfo.ClassType dCt
-                    && btCt.name().equals(dCt.name())) {
-                return true;
-            }
-        }
-        if (disposer.disposedType() instanceof TypeInfo.ClassType dCt) {
-            try {
-                var cl = Thread.currentThread().getContextClassLoader();
-                var disposedClass = Class.forName(dCt.name().value(), false, cl);
-                for (var bt : descriptor.types()) {
-                    String btName = null;
-                    if (bt instanceof TypeInfo.ClassType btCt2) btName = btCt2.name().value();
-                    else if (bt instanceof TypeInfo.ParameterizedType pt) btName = pt.rawType().value();
-                    if (btName != null) {
-                        var beanTypeClass = Class.forName(btName, false, cl);
-                        if (disposedClass.isAssignableFrom(beanTypeClass)) return true;
-                    }
-                }
-            } catch (ClassNotFoundException e) { /* skip */ }
-        }
-        return false;
-    }
-
-    /** Returns true if @Any was EXPLICITLY declared on the disposer parameter (not just auto-added). */
-    private boolean hasExplicitAnyOnDisposerParam(DisposerDescriptor disposer) {
-        try {
-            var cl = Thread.currentThread().getContextClassLoader();
-            var declaringClass = Class.forName(disposer.declaringClass().value(), false, cl);
-            for (var method : declaringClass.getDeclaredMethods()) {
-                if (method.getName().equals(disposer.methodName())
-                        && method.getParameterCount() > disposer.parameterIndex()) {
-                    for (var ann : method.getParameters()[disposer.parameterIndex()].getAnnotations()) {
-                        if (ann.annotationType() == jakarta.enterprise.inject.Any.class) return true;
-                    }
-                    return false;
-                }
-            }
-        } catch (Exception e) { /* ignore */ }
-        return false;
-    }
-
-    /**
-     * Use reflection to compare qualifier annotation values between a producer and disposer.
-     * The index may not capture annotation member values, so we use the actual Java annotations.
-     */
-    private boolean verifyDisposerQualifiersViaReflection(BeanDescriptor producer, DisposerDescriptor disposer) {
-        try {
-            var cl = Thread.currentThread().getContextClassLoader();
-            var declaringClass = Class.forName(producer.beanClass().value(), false, cl);
-
-            // Find producer method/field annotations
-            java.lang.annotation.Annotation[] producerAnnotations = null;
-            var producerId = producer.id().value();
-            if (producer.kind() == BeanDescriptor.BeanKind.PRODUCER_METHOD) {
-                var methodName = producerId.contains("#") ? producerId.substring(producerId.indexOf('#') + 1) : null;
-                if (methodName != null) {
-                    for (var m : declaringClass.getDeclaredMethods()) {
-                        if (m.getName().equals(methodName) && m.isAnnotationPresent(jakarta.enterprise.inject.Produces.class)) {
-                            producerAnnotations = m.getAnnotations();
-                            break;
-                        }
-                    }
-                }
-            } else if (producer.kind() == BeanDescriptor.BeanKind.PRODUCER_FIELD) {
-                var fieldName = producerId.contains(".") ? producerId.substring(producerId.lastIndexOf('.') + 1) : null;
-                if (fieldName != null) {
-                    try {
-                        var f = declaringClass.getDeclaredField(fieldName);
-                        producerAnnotations = f.getAnnotations();
-                    } catch (NoSuchFieldException e) { /* skip */ }
-                }
-            }
-
-            if (producerAnnotations == null) return true; // Can't verify, assume match
-
-            // Find disposer method parameter annotations
-            java.lang.annotation.Annotation[] disposerParamAnnotations = null;
-            for (var m : declaringClass.getDeclaredMethods()) {
-                if (m.getName().equals(disposer.methodName()) && m.getParameterCount() > disposer.parameterIndex()) {
-                    disposerParamAnnotations = m.getParameterAnnotations()[disposer.parameterIndex()];
-                    break;
-                }
-            }
-
-            if (disposerParamAnnotations == null) return true;
-
-            // Compare qualifier annotations between producer and disposer
-            for (var dAnn : disposerParamAnnotations) {
-                if (!dAnn.annotationType().isAnnotationPresent(jakarta.inject.Qualifier.class)
-                        && dAnn.annotationType() != jakarta.enterprise.inject.Default.class
-                        && dAnn.annotationType() != jakarta.enterprise.inject.Any.class) continue;
-                if (dAnn.annotationType() == jakarta.enterprise.inject.Default.class
-                        || dAnn.annotationType() == jakarta.enterprise.inject.Any.class
-                        || dAnn.annotationType() == jakarta.enterprise.inject.Disposes.class) continue;
-
-                // Find matching annotation on producer
-                boolean found = false;
-                for (var pAnn : producerAnnotations) {
-                    if (pAnn.annotationType() == dAnn.annotationType() && pAnn.equals(dAnn)) {
-                        found = true;
-                        break;
-                    }
-                }
-                if (!found) return false;
-            }
-            return true;
-        } catch (Exception e) {
-            return true; // Can't verify, assume match
-        }
-    }
-
-    private void callDisposer(Object producedInstance, DisposerDescriptor disposer, CreationalContext<?> creationalContext) {
-        try {
-            var declaringClass = loadClass(disposer.declaringClass().value());
-
-            for (var method : declaringClass.getDeclaredMethods()) {
-                if (method.getName().equals(disposer.methodName())
-                        && method.getParameterCount() > disposer.parameterIndex()) {
-                    var bm = getBeanManager();
-                    var ctx = creationalContext != null ? creationalContext : new fr.vidocq.vauban.core.context.CreationalContextImpl<>();
-                    try {
-                        var declBeans = bm.getBeans(declaringClass);
-                        var declBean = declBeans.isEmpty() ? null : bm.resolve(declBeans);
-                        var isStatic = java.lang.reflect.Modifier.isStatic(method.getModifiers());
-                        var declaringInstance = isStatic
-                                ? null : (declBean != null
-                                        ? bm.getReference(declBean, declaringClass, ctx)
-                                        : selectByBeanClass(declaringClass));
-                        var paramTypes = method.getParameterTypes();
-                        var args = new Object[method.getParameterCount()];
-                        args[disposer.parameterIndex()] = producedInstance;
-                        for (int i = 0; i < paramTypes.length; i++) {
-                            if (i == disposer.parameterIndex()) continue;
-                            try {
-                                if (paramTypes[i] == BeanManager.class) {
-                                    args[i] = getBeanManager();
-                                } else if (paramTypes[i] == Event.class) {
-                                    var eventIp = new VaubanInjectionPoint(method.getGenericParameterTypes()[i],
-                                            QualifierHelper.collectQualifierSet(method.getParameters()[i].getAnnotations()), null, method);
-                                    args[i] = new EventImpl<>(eventDispatcher, QualifierHelper.collectEventQualifiers(method.getParameters()[i].getAnnotations()), eventIp);
-                                } else if (paramTypes[i] == Instance.class) {
-                                    Class<?> instanceType = Object.class;
-                                    var genericType = method.getGenericParameterTypes()[i];
-                                    if (genericType instanceof ParameterizedType pt) {
-                                        var typeArg = pt.getActualTypeArguments()[0];
-                                        if (typeArg instanceof Class<?> c) instanceType = c;
-                                    }
-                                    var ip = new VaubanInjectionPoint(genericType, java.util.Set.of(jakarta.enterprise.inject.Default.Literal.INSTANCE), null, method);
-                                    args[i] = new InstanceImpl<>(this, instanceType, ip);
-                                } else {
-                                    var beans = bm.getBeans(paramTypes[i]);
-                                    var bean = beans.isEmpty() ? null : bm.resolve(beans);
-                                    args[i] = bean != null ? bm.getReference(bean, paramTypes[i], ctx) : select(paramTypes[i]);
-                                }
-                            } catch (Exception e) {
-                                // Best effort for other params
-                            }
-                        }
-                        if (isStatic) {
-                            vaubanLookup.invokeStaticMethod(method, args);
-                        } else {
-                            vaubanLookup.invokeMethod(declaringInstance, method, args);
-                        }
-                    } finally {
-                        ctx.release();
-                    }
-                    return;
-                }
-            }
-        } catch (Exception e) {
-            // CDI spec: exceptions in disposer methods are suppressed
         }
     }
 

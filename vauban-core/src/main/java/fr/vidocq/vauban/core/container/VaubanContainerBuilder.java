@@ -430,9 +430,9 @@ public final class VaubanContainerBuilder {
 
             // Validate observer/disposer method parameters (CDI spec)
             VaubanContainer.validateObserverParameters(observers, descriptors, index);
-            VaubanContainer.validateDisposerParameters(disposers, descriptors, index);
+            DisposerInvoker.validateDisposerParameters(disposers, descriptors, index);
             // Validate disposer method definitions (CDI 4.1 Section 3.5)
-            validateDisposerDefinitions(disposers, descriptors);
+            DisposerInvoker.validateDisposerDefinitions(disposers, descriptors);
 
 
             // Validate deployment — throw if there are errors
@@ -502,67 +502,6 @@ public final class VaubanContainerBuilder {
         } finally {
             Thread.currentThread().setContextClassLoader(previousCl);
         }
-    }
-
-    /**
-     * Validates disposer method definitions (CDI 4.1 Section 3.5).
-     * - Each disposer must match at least one producer bean in the same declaring class
-     * - Multiple disposers for the same producer in the same class are DefinitionException
-     */
-    private static void validateDisposerDefinitions(
-            List<DisposerDescriptor> disposers,
-            List<BeanDescriptor> descriptors) {
-        var producerBeans = descriptors.stream()
-                .filter(d -> d.kind() == BeanDescriptor.BeanKind.PRODUCER_METHOD
-                        || d.kind() == BeanDescriptor.BeanKind.PRODUCER_FIELD)
-                .toList();
-
-        // CDI spec: Each disposer must have a matching producer in the same bean class
-        for (var disposer : disposers) {
-            boolean found = false;
-            for (var producer : producerBeans) {
-                // Disposer must be in the same declaring class as the producer
-                if (!producer.beanClass().equals(disposer.declaringClass())
-                        && !producerDeclaredIn(producer, disposer.declaringClass())) {
-                    continue;
-                }
-                if (disposerMatchesProducerType(disposer, producer)) {
-                    found = true;
-                    break;
-                }
-            }
-            if (!found) {
-                // Only throw if the disposer is in a bean class (not a non-bean utility class)
-                boolean isInBeanClass = descriptors.stream()
-                        .anyMatch(d -> d.beanClass().equals(disposer.declaringClass())
-                                && d.kind() == BeanDescriptor.BeanKind.MANAGED);
-                if (isInBeanClass) {
-                    throw new jakarta.enterprise.inject.spi.DefinitionException(
-                            "Disposer method " + disposer.declaringClass().value() + "." + disposer.methodName()
-                                    + "(): no matching producer found for disposed type " + disposer.disposedType());
-                }
-            }
-        }
-
-    }
-
-    private static boolean producerDeclaredIn(BeanDescriptor producer, DotName declaringClass) {
-        // Check if the producer's ID references this declaring class
-        return producer.id().value().startsWith(declaringClass.value());
-    }
-
-    private static boolean disposerMatchesProducerType(DisposerDescriptor disposer, BeanDescriptor producer) {
-        for (var producerType : producer.types()) {
-            if (producerType instanceof TypeInfo.ClassType ct
-                    && disposer.disposedType() instanceof TypeInfo.ClassType dt
-                    && ct.name().equals(dt.name())) {
-                return true;
-            }
-            if (producerType.equals(disposer.disposedType())) {
-                return true;
-            }
-        }
-        return false;
     }
 
     @SuppressWarnings({"unchecked", "rawtypes"})
