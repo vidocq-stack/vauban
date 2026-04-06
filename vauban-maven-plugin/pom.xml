@@ -10,14 +10,38 @@
     </parent>
 
     <artifactId>vauban-maven-plugin</artifactId>
-    <!-- packaging maven-plugin differe a Phase 9 : maven-plugin-plugin ne supporte pas encore JDK 25 class files -->
+    <packaging>maven-plugin</packaging>
     <name>Vauban :: Maven Plugin</name>
-    <description>Maven plugin for dependency indexing and JPMS analysis</description>
+    <description>Build-time CDI bean discovery, proxy generation, and JPMS analysis</description>
 
     <dependencies>
         <dependency>
             <groupId>fr.vidocq.vauban</groupId>
             <artifactId>vauban-indexer</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>fr.vidocq.vauban</groupId>
+            <artifactId>vauban-core</artifactId>
+        </dependency>
+
+        <!-- Maven Plugin API (provided by Maven at runtime) -->
+        <dependency>
+            <groupId>org.apache.maven</groupId>
+            <artifactId>maven-plugin-api</artifactId>
+            <version>3.9.9</version>
+            <scope>provided</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.apache.maven</groupId>
+            <artifactId>maven-core</artifactId>
+            <version>3.9.9</version>
+            <scope>provided</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.apache.maven.plugin-tools</groupId>
+            <artifactId>maven-plugin-annotations</artifactId>
+            <version>3.15.1</version>
+            <scope>provided</scope>
         </dependency>
 
         <dependency>
@@ -26,4 +50,25 @@
             <scope>test</scope>
         </dependency>
     </dependencies>
+
+    <build>
+        <plugins>
+            <!-- Skip maven-plugin-plugin descriptor generation (JDK 25 incompatible)
+                 Hand-written plugin.xml is in src/main/resources/META-INF/maven/ -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-plugin-plugin</artifactId>
+                <version>3.15.1</version>
+                <configuration>
+                    <skipErrorNoDescriptorsFound>true</skipErrorNoDescriptorsFound>
+                </configuration>
+                <executions>
+                    <execution>
+                        <id>default-descriptor</id>
+                        <phase>none</phase>
+                    </execution>
+                </executions>
+            </plugin>
+        </plugins>
+    </build>
 </project>

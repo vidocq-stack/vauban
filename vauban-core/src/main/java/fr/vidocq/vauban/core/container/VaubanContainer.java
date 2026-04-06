@@ -2585,6 +2585,38 @@ public final class VaubanContainer implements AutoCloseable {
             return this;
         }
 
+        /**
+         * Scan the classpath for {@code META-INF/vauban-beans.list} files and add
+         * all listed bean classes. These files are generated at build time by the
+         * {@code vauban-maven-plugin:generate} goal.
+         */
+        public Builder scanClasspath() {
+            var cl = this.classLoader != null ? this.classLoader
+                    : Thread.currentThread().getContextClassLoader();
+            try {
+                var urls = cl.getResources("META-INF/vauban-beans.list");
+                while (urls.hasMoreElements()) {
+                    var url = urls.nextElement();
+                    try (var reader = new java.io.BufferedReader(
+                            new java.io.InputStreamReader(url.openStream(), java.nio.charset.StandardCharsets.UTF_8))) {
+                        reader.lines()
+                                .map(String::strip)
+                                .filter(line -> !line.isEmpty() && !line.startsWith("#"))
+                                .forEach(className -> {
+                                    try {
+                                        addBeanClass(Class.forName(className, false, cl));
+                                    } catch (ClassNotFoundException e) {
+                                        // Bean class not on classpath — skip silently
+                                    }
+                                });
+                    }
+                }
+            } catch (java.io.IOException e) {
+                throw new RuntimeException("Failed to scan classpath for vauban-beans.list", e);
+            }
+            return this;
+        }
+
         public VaubanContainer build() {
             var indexBuilder = new IndexBuilder();
 
