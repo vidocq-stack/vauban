@@ -440,12 +440,12 @@ public final class VaubanBeanManager implements BeanManager {
                     "No bean for injection point: " + ij);
         }
         var bean = resolve(matchingBeans);
-        var previousIp = VaubanContainer.getCurrentInjectionPoint();
-        VaubanContainer.setInjectionPoint(ij);
         try {
-            return getReference(bean, ij.getType(), ctx);
-        } finally {
-            VaubanContainer.setInjectionPoint(previousIp);
+            return VaubanContainer.callWithInjectionPoint(ij, () -> getReference(bean, ij.getType(), ctx));
+        } catch (RuntimeException e) {
+            throw e;
+        } catch (Exception e) {
+            throw new RuntimeException(e);
         }
     }
 

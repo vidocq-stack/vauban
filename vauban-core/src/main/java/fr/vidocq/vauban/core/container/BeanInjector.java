@@ -66,10 +66,8 @@ final class BeanInjector {
                     continue;
                 }
 
-                var previousIp = VaubanContainer.getCurrentInjectionPoint();
                 var ownerBean = container.findBeanForInstance(instance);
-                VaubanContainer.setInjectionPoint(new VaubanInjectionPoint(field, ownerBean));
-                try {
+                VaubanContainer.withInjectionPoint(new VaubanInjectionPoint(field, ownerBean), () -> {
                     var fieldQuals = QualifierHelper.extractFieldQualifiersWithEnhancement(field, descriptor);
                     Object value;
                     var bm = container.getBeanManager();
@@ -99,9 +97,7 @@ final class BeanInjector {
                     if (value != null || !field.getType().isPrimitive()) {
                         vaubanLookup.setField(instance, field, value);
                     }
-                } finally {
-                    VaubanContainer.setInjectionPoint(previousIp);
-                }
+                });
             } catch (jakarta.enterprise.inject.IllegalProductException | jakarta.enterprise.inject.UnproxyableResolutionException e) {
                 throw e;
             } catch (Exception e) {

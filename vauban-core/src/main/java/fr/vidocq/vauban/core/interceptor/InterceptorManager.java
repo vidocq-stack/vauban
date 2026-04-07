@@ -28,10 +28,9 @@ public final class InterceptorManager {
     private BiFunction<InterceptorDescriptor, CreationalContext<?>, Object> instanceFactory;
     private fr.vidocq.vauban.core.container.VaubanLookup vaubanLookup;
 
-    private static final ThreadLocal<Boolean> IS_INTERCEPTING = ThreadLocal.withInitial(() -> false);
-    private static final ThreadLocal<List<VaubanInvocationContext.InterceptorInvocation>> CURRENT_CHAIN = new ThreadLocal<>();
-    private static final ThreadLocal<Set<DotName>> CURRENT_BINDINGS = new ThreadLocal<>();
-    private static final ThreadLocal<CreationalContext<?>> CURRENT_CONTEXT = new ThreadLocal<>();
+    public record InterceptionState(List<VaubanInvocationContext.InterceptorInvocation> chain, Set<DotName> bindings, CreationalContext<?> ctx) {}
+
+    private static final ScopedValue<InterceptionState> INTERCEPTION = ScopedValue.newInstance();
 
     // Enhanced interceptor binding annotations added via BCE Enhancement (not present in bytecode)
     private final Map<String, List<java.lang.annotation.Annotation>> enhancedBindings = new LinkedHashMap<>();
@@ -56,37 +55,34 @@ public final class InterceptorManager {
     }
 
     public static boolean $$isIntercepting() {
-        return IS_INTERCEPTING.get();
+        return INTERCEPTION.isBound();
     }
 
     public static List<VaubanInvocationContext.InterceptorInvocation> $$getAroundConstructChain() {
-        return CURRENT_CHAIN.get();
+        return INTERCEPTION.get().chain();
     }
 
     public static Set<DotName> $$getAroundConstructBindings() {
-        return CURRENT_BINDINGS.get();
+        return INTERCEPTION.get().bindings();
     }
 
     public static CreationalContext<?> $$getAroundConstructContext() {
-        return CURRENT_CONTEXT.get();
+        return INTERCEPTION.isBound() ? INTERCEPTION.get().ctx() : null;
     }
 
-    public static void $$beginInterception(List<VaubanInvocationContext.InterceptorInvocation> chain, Set<DotName> bindings) {
-        $$beginInterception(chain, bindings, null);
+    public static void $$runIntercepted(List<VaubanInvocationContext.InterceptorInvocation> chain, Set<DotName> bindings, CreationalContext<?> ctx, Runnable action) {
+        ScopedValue.where(INTERCEPTION, new InterceptionState(chain, bindings, ctx)).run(action);
     }
 
-    public static void $$beginInterception(List<VaubanInvocationContext.InterceptorInvocation> chain, Set<DotName> bindings, CreationalContext<?> ctx) {
-        IS_INTERCEPTING.set(true);
-        CURRENT_CHAIN.set(chain);
-        CURRENT_BINDINGS.set(bindings);
-        CURRENT_CONTEXT.set(ctx);
-    }
-
-    public static void $$endInterception() {
-        IS_INTERCEPTING.remove();
-        CURRENT_CHAIN.remove();
-        CURRENT_BINDINGS.remove();
-        CURRENT_CONTEXT.remove();
+    @SuppressWarnings("unchecked")
+    public static <R> R $$callIntercepted(List<VaubanInvocationContext.InterceptorInvocation> chain, Set<DotName> bindings, CreationalContext<?> ctx, ScopedValue.CallableOp<R, Exception> action) throws Exception {
+        try {
+            return ScopedValue.where(INTERCEPTION, new InterceptionState(chain, bindings, ctx)).call(action);
+        } catch (Exception e) {
+            throw e;
+        } catch (Throwable t) {
+            throw new RuntimeException(t);
+        }
     }
 
     @SuppressWarnings("java:S3010") // Static singleton set in constructor — single container instance by design

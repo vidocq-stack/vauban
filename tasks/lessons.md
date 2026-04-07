@@ -1,8 +1,8 @@
 # Lessons Learned
 
-## 1. Pas de preview features
+## 1. Pas de preview features sauf APIs finalisees JDK 25
 **Contexte**: L'utilisateur a explicitement refuse `--enable-preview`.
-**Regle**: Utiliser uniquement les APIs finalisees du JDK 25. Pas de Stable Values (JEP 502), Scoped Values (JEP 506), ni Structured Concurrency (JEP 505). Utiliser des implementations classiques (`ConcurrentHashMap`, `ThreadLocal`, etc.).
+**Regle**: Utiliser uniquement les APIs finalisees du JDK 25. `ScopedValue` (JEP 487) est finalise en JDK 25 et doit etre utilise a la place de `ThreadLocal` pour la compatibilite virtual threads. Pas de Stable Values (JEP 502), ni Structured Concurrency (JEP 505).
 
 ## 2. Maven 4 RC est acceptable
 **Contexte**: L'utilisateur veut Maven 4.0.0-rc-5, pas Maven 3.9.

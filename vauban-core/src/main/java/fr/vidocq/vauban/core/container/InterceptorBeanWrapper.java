@@ -19,7 +19,7 @@ import java.util.function.BiFunction;
 
 final class InterceptorBeanWrapper {
 
-    private static final ThreadLocal<Boolean> isCreatingInterceptor = ThreadLocal.withInitial(() -> false);
+    private static final ScopedValue<Boolean> IS_CREATING_INTERCEPTOR = ScopedValue.newInstance();
 
     private final VaubanContainer container;
     private final VaubanLookup vaubanLookup;
@@ -79,7 +79,7 @@ final class InterceptorBeanWrapper {
             }
         } catch (Exception e) { /* fallback to manual creation */ }
 
-        if (isCreatingInterceptor.get()) {
+        if (IS_CREATING_INTERCEPTOR.orElse(false)) {
             try {
                 var clazz = container.loadClass(className);
 
@@ -122,44 +122,45 @@ final class InterceptorBeanWrapper {
                 throw new jakarta.enterprise.inject.CreationException(e);
             }
         }
-        isCreatingInterceptor.set(true);
         try {
-            var clazz = container.loadClass(className);
+            return ScopedValue.where(IS_CREATING_INTERCEPTOR, true).call(() -> {
+                var clazz = container.loadClass(className);
 
-            java.lang.reflect.Constructor<?> constructor = findConstructor(clazz);
+                java.lang.reflect.Constructor<?> constructor = findConstructor(clazz);
 
-            var paramTypes = constructor.getParameterTypes();
-            var genericParamTypes = constructor.getGenericParameterTypes();
-            var params = constructor.getParameters();
-            var args = new Object[paramTypes.length];
-            for (int i = 0; i < paramTypes.length; i++) {
-                var paramQuals = QualifierHelper.extractParamQualifiers(params[i]);
-                if (paramQuals.length > 0) {
-                    var bm = container.getBeanManager();
-                    var beans2 = bm.getBeans(paramTypes[i], paramQuals);
-                    if (!beans2.isEmpty()) {
-                        var resolved = bm.resolve(beans2);
-                        args[i] = bm.getReference(resolved, paramTypes[i], ctx);
+                var paramTypes = constructor.getParameterTypes();
+                var genericParamTypes = constructor.getGenericParameterTypes();
+                var params = constructor.getParameters();
+                var args = new Object[paramTypes.length];
+                for (int i = 0; i < paramTypes.length; i++) {
+                    var paramQuals = QualifierHelper.extractParamQualifiers(params[i]);
+                    if (paramQuals.length > 0) {
+                        var bm = container.getBeanManager();
+                        var beans2 = bm.getBeans(paramTypes[i], paramQuals);
+                        if (!beans2.isEmpty()) {
+                            var resolved = bm.resolve(beans2);
+                            args[i] = bm.getReference(resolved, paramTypes[i], ctx);
+                        } else {
+                            args[i] = container.resolveParameter(paramTypes[i], genericParamTypes[i], ctx);
+                        }
                     } else {
                         args[i] = container.resolveParameter(paramTypes[i], genericParamTypes[i], ctx);
                     }
-                } else {
-                    args[i] = container.resolveParameter(paramTypes[i], genericParamTypes[i], ctx);
                 }
-            }
 
-            var instance = vaubanLookup.newInstance(constructor, args);
-            container.injectFields(instance, null, (CreationalContext<Object>) ctx);
-            container.callPostConstruct(instance, null, ctx);
+                var instance = vaubanLookup.newInstance(constructor, args);
+                container.injectFields(instance, null, (CreationalContext<Object>) ctx);
+                container.callPostConstruct(instance, null, ctx);
 
-            if (ctx instanceof CreationalContextImpl<?> vCtx) {
-                vCtx.addInterceptorInstance(className, instance);
-                vCtx.pushInterceptor(instance);
-            } else if (ctx != null) {
-                ((CreationalContext<Object>) ctx).push(instance);
-            }
+                if (ctx instanceof CreationalContextImpl<?> vCtx) {
+                    vCtx.addInterceptorInstance(className, instance);
+                    vCtx.pushInterceptor(instance);
+                } else if (ctx != null) {
+                    ((CreationalContext<Object>) ctx).push(instance);
+                }
 
-            return instance;
+                return instance;
+            });
         } catch (Exception e) {
             System.err.println("CRITICAL: Failed to create interceptor " + descriptor.interceptorClass());
             e.printStackTrace();
@@ -168,8 +169,6 @@ final class InterceptorBeanWrapper {
                 ite.getTargetException().printStackTrace();
             }
             throw new jakarta.enterprise.inject.CreationException("Failed to create interceptor: " + descriptor.interceptorClass(), e);
-        } finally {
-            isCreatingInterceptor.set(false);
         }
     }
 
@@ -602,14 +601,13 @@ final class InterceptorBeanWrapper {
                             var ctx2 = new fr.vidocq.vauban.core.interceptor.VaubanInvocationContext(
                                     null, null, finalTargetCtor, finalArgs, constructChain,
                                     (target, params) -> {
-                                        mgr.$$beginInterception(java.util.Collections.emptyList(), bds, (jakarta.enterprise.context.spi.CreationalContext<?>) (Object) creationalCtx);
-                                        try {
+                                        var result = new Object[1];
+                                        InterceptorManager.$$runIntercepted(java.util.Collections.emptyList(), bds, (jakarta.enterprise.context.spi.CreationalContext<?>) (Object) creationalCtx, () -> {
                                             var instance = create((fr.vidocq.vauban.core.interceptor.VaubanInvocationContext) fr.vidocq.vauban.core.interceptor.VaubanInvocationContext.dummy(params), (jakarta.enterprise.context.spi.CreationalContext<Object>) (Object) creationalCtx);
                                             box[0] = instance;
-                                            return instance;
-                                        } finally {
-                                            mgr.$$endInterception();
-                                        }
+                                            result[0] = instance;
+                                        });
+                                        return result[0];
                                     });
                             ctx2.setInterceptorBindings(bindingAnnotations);
                             try {
@@ -720,14 +718,13 @@ final class InterceptorBeanWrapper {
                                     var invocationCtx = new fr.vidocq.vauban.core.interceptor.VaubanInvocationContext(
                                             null, null, originalCtor2, new Object[originalCtor2.getParameterCount()], constructChain2,
                                             (target, params) -> {
-                                                mgr2.$$beginInterception(java.util.Collections.emptyList(), bds2, ctx);
-                                                try {
+                                                var result2 = new Object[1];
+                                                InterceptorManager.$$runIntercepted(java.util.Collections.emptyList(), bds2, ctx, () -> {
                                                     var instance = ((fr.vidocq.vauban.core.BeanFactory<Object>) this).create((fr.vidocq.vauban.core.interceptor.VaubanInvocationContext) fr.vidocq.vauban.core.interceptor.VaubanInvocationContext.dummy(params), ctx);
                                                     box2[0] = instance;
-                                                    return instance;
-                                                } finally {
-                                                    mgr2.$$endInterception();
-                                                }
+                                                    result2[0] = instance;
+                                                });
+                                                return result2[0];
                                             });
                                     try {
                                         invocationCtx.proceed();

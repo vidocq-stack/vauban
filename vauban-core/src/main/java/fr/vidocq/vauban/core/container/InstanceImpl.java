@@ -83,11 +83,7 @@ public final class InstanceImpl<T> implements Instance<T> {
         @SuppressWarnings("unchecked")
         var bean = (Bean<T>) bm.resolve(beans);
 
-        var previousIp = VaubanContainer.getCurrentInjectionPoint();
-        if (injectionPoint != null) {
-            VaubanContainer.setInjectionPoint(injectionPoint);
-        }
-        try {
+        ScopedValue.CallableOp<T, RuntimeException> action = () -> {
             var ctx = bm.createCreationalContext(bean);
             @SuppressWarnings("unchecked")
             var ref = (T) bm.getReference(bean, type, ctx);
@@ -98,9 +94,11 @@ public final class InstanceImpl<T> implements Instance<T> {
                 }
             }
             return ref;
-        } finally {
-            VaubanContainer.setInjectionPoint(previousIp);
+        };
+        if (injectionPoint != null) {
+            return ScopedValue.where(VaubanContainer.CURRENT_INJECTION_POINT, injectionPoint).call(action);
         }
+        return action.call();
     }
 
     @Override
@@ -283,24 +281,20 @@ public final class InstanceImpl<T> implements Instance<T> {
         var beans = getEffectiveBeans();
         var instances = new ArrayList<T>();
         
-        var previousIp = VaubanContainer.getCurrentInjectionPoint();
-        if (injectionPoint != null) {
-            VaubanContainer.setInjectionPoint(injectionPoint);
-        }
-        try {
+        Runnable populateInstances = () -> {
             for (var b : beans) {
                 @SuppressWarnings("unchecked")
                 var bean = (Bean<T>) b;
                 var ctx = bm.createCreationalContext(bean);
-                
+
                 @SuppressWarnings("unchecked")
                 var ref = (T) bm.getReference(bean, type, ctx);
-        
+
                 // Link the dependent bean to parent context if needed
                 if (bean.getScope() == jakarta.enterprise.context.Dependent.class && parentCreationalContext != null) {
                     parentCreationalContext.addDependentInstance(bean, ref, ctx);
                 }
-                
+
                 // Track dependent instances locally so Instance.destroy() works
                 if (bean.getScope() == jakarta.enterprise.context.Dependent.class) {
                     if (ctx instanceof fr.vidocq.vauban.core.context.CreationalContextImpl<?> cci) {
@@ -309,8 +303,11 @@ public final class InstanceImpl<T> implements Instance<T> {
                 }
                 instances.add(ref);
             }
-        } finally {
-            VaubanContainer.setInjectionPoint(previousIp);
+        };
+        if (injectionPoint != null) {
+            ScopedValue.where(VaubanContainer.CURRENT_INJECTION_POINT, injectionPoint).run(populateInstances);
+        } else {
+            populateInstances.run();
         }
         return instances.iterator();
     }
@@ -370,20 +367,15 @@ public final class InstanceImpl<T> implements Instance<T> {
                 throw new IllegalStateException("Handle has been destroyed");
             }
             if (instance == null) {
-                var previousIp = VaubanContainer.getCurrentInjectionPoint();
-                if (injectionPoint != null) {
-                    VaubanContainer.setInjectionPoint(injectionPoint);
-                }
-                try {
+                Runnable resolve = () -> {
                     var bm = container.getBeanManager();
                     creationalContext = bm.createCreationalContext(bean);
                     instance = (T) bm.getReference(bean, type, creationalContext);
-                    if (type != null && type.getName().contains("MyDependentBean")) {
-                        System.out.println("INSTANTIATED MyDependentBean via HandleImpl.get()!");
-                        new Exception().printStackTrace(System.out);
-                    }
-                } finally {
-                    VaubanContainer.setInjectionPoint(previousIp);
+                };
+                if (injectionPoint != null) {
+                    ScopedValue.where(VaubanContainer.CURRENT_INJECTION_POINT, injectionPoint).run(resolve);
+                } else {
+                    resolve.run();
                 }
             }
             return instance;

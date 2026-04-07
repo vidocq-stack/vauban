@@ -251,7 +251,7 @@ public class MultilingualService {
 | Scope | Annotation | Comportement |
 |---|---|---|
 | Application | `@ApplicationScoped` | Une instance par conteneur (singleton) |
-| Request | `@RequestScoped` | Une instance par requete (ThreadLocal) |
+| Request | `@RequestScoped` | Une instance par requete (ScopedValue) |
 | Dependent | `@Dependent` | Nouvelle instance a chaque injection |
 | Singleton | `@Singleton` | Identique a Application (pseudo-scope) |
 

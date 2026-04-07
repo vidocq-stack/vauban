@@ -656,19 +656,15 @@ public final class VaubanContainerBuilder {
                             creatorClass.getDeclaredConstructor().newInstance();
                     var vaubanParams = new fr.vidocq.vauban.core.extensions.VaubanParameters(creatorParams);
                     var container = VaubanContainer.current();
-                    var previousIp = VaubanContainer.getCurrentInjectionPoint();
-                    if (previousIp == null && isDependent) {
-                        VaubanContainer.setInjectionPoint(VaubanInjectionPoint.EMPTY);
-                    }
-                    try {
+                    ScopedValue.CallableOp<Object, Exception> createAction = () -> {
                         var parentCtx = ctx instanceof fr.vidocq.vauban.core.context.CreationalContextImpl<?> cci ? cci : null;
                         var lookup = new InstanceImpl<>(container, Object.class, new Annotation[0], null, parentCtx);
                         return creator.create(lookup, vaubanParams);
-                    } finally {
-                        if (previousIp == null && isDependent) {
-                            VaubanContainer.setInjectionPoint(previousIp);
-                        }
+                    };
+                    if (VaubanContainer.getCurrentInjectionPoint() == null && isDependent) {
+                        return VaubanContainer.callWithInjectionPoint(VaubanInjectionPoint.EMPTY, createAction);
                     }
+                    return createAction.call();
                 } catch (RuntimeException e) {
                     throw e;
                 } catch (Exception e) {

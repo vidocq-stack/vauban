@@ -47,12 +47,6 @@ import java.util.concurrent.ConcurrentHashMap;
  */
 public final class VaubanContainer implements AutoCloseable {
 
-    /**
-     * ThreadLocal tracking the current injection point. When a @Dependent bean is being
-     * created as a dependency, this holds the InjectionPoint of the field/parameter
-     * that triggered the creation. The dependent bean can then @Inject InjectionPoint
-     * to discover where it was injected.
-     */
     private static volatile VaubanContainer currentInstance;
 
     /**
@@ -62,25 +56,39 @@ public final class VaubanContainer implements AutoCloseable {
         return currentInstance;
     }
 
-    private static final ThreadLocal<InjectionPoint> currentInjectionPoint = new ThreadLocal<>();
+    static final ScopedValue<InjectionPoint> CURRENT_INJECTION_POINT = ScopedValue.newInstance();
 
     /**
      * Returns the current injection point (used by built-in InjectionPoint bean).
      */
     static InjectionPoint getCurrentInjectionPoint() {
-        return currentInjectionPoint.get();
+        return CURRENT_INJECTION_POINT.isBound() ? CURRENT_INJECTION_POINT.get() : null;
     }
 
     /**
-     * Sets the current injection point (used by Instance.get()).
+     * Runs an action with the given injection point bound.
      */
-    static void setInjectionPoint(InjectionPoint ip) {
-        currentInjectionPoint.set(ip);
+    static void withInjectionPoint(InjectionPoint ip, Runnable action) {
+        ScopedValue.where(CURRENT_INJECTION_POINT, ip).run(action);
+    }
+
+    /**
+     * Calls an action with the given injection point bound and returns its result.
+     */
+    @SuppressWarnings("unchecked")
+    static <T> T callWithInjectionPoint(InjectionPoint ip, ScopedValue.CallableOp<T, Exception> action) throws Exception {
+        try {
+            return ScopedValue.where(CURRENT_INJECTION_POINT, ip).call(action);
+        } catch (Exception e) {
+            throw e;
+        } catch (Throwable t) {
+            throw new RuntimeException(t);
+        }
     }
 
     final Map<BeanId, ManagedBean<?>> beans = new LinkedHashMap<>();
     final Map<Class<? extends Annotation>, List<Context>> contexts = new ConcurrentHashMap<>();
-    private static final ThreadLocal<Set<String>> beansBeingCreated = ThreadLocal.withInitial(java.util.HashSet::new);
+    private static final ScopedValue<Set<String>> BEANS_BEING_CREATED = ScopedValue.newInstance();
     private final ApplicationContext applicationContext;
     private final RequestContext requestContext;
     private final DependentContext dependentContext;
@@ -391,29 +399,40 @@ public final class VaubanContainer implements AutoCloseable {
     @SuppressWarnings("unchecked")
     public Object selectByBeanClass(Class<?> beanClass) {
         var className = beanClass.getName();
-        var creating = beansBeingCreated.get();
-        if (creating.contains(className)) {
+        var creating = BEANS_BEING_CREATED.isBound() ? BEANS_BEING_CREATED.get() : null;
+        if (creating != null && creating.contains(className)) {
             return null;
         }
-        creating.add(className);
-        try {
-            var dotName = DotName.of(className);
-            for (var bean : beans.values()) {
-                if (bean.descriptor().beanClass().equals(dotName)) {
-                    return getDirectInstance((ManagedBean<Object>) (ManagedBean<?>) bean);
-                }
-            }
-            // Fallback: exact class match (for intercepted subclasses where getBeanClass differs from dotName)
-            for (var bean : beans.values()) {
-                if (bean.getBeanClass() == beanClass) {
-                    return getDirectInstance((ManagedBean<Object>) (ManagedBean<?>) bean);
-                }
-            }
-            throw new jakarta.enterprise.inject.UnsatisfiedResolutionException(
-                    "No bean found for class: " + beanClass.getName());
-        } finally {
-            creating.remove(className);
+        // Ensure a mutable set is bound for cycle detection
+        if (creating == null) {
+            creating = new java.util.HashSet<>();
         }
+        creating.add(className);
+        final var currentCreating = creating;
+        ScopedValue.CallableOp<Object, RuntimeException> lookup = () -> {
+            var dotName = DotName.of(className);
+            try {
+                for (var bean : beans.values()) {
+                    if (bean.descriptor().beanClass().equals(dotName)) {
+                        return getDirectInstance((ManagedBean<Object>) (ManagedBean<?>) bean);
+                    }
+                }
+                // Fallback: exact class match (for intercepted subclasses where getBeanClass differs from dotName)
+                for (var bean : beans.values()) {
+                    if (bean.getBeanClass() == beanClass) {
+                        return getDirectInstance((ManagedBean<Object>) (ManagedBean<?>) bean);
+                    }
+                }
+                throw new jakarta.enterprise.inject.UnsatisfiedResolutionException(
+                        "No bean found for class: " + beanClass.getName());
+            } finally {
+                currentCreating.remove(className);
+            }
+        };
+        if (!BEANS_BEING_CREATED.isBound()) {
+            return ScopedValue.where(BEANS_BEING_CREATED, currentCreating).call(lookup);
+        }
+        return lookup.call();
     }
 
     /**
@@ -738,9 +757,9 @@ public final class VaubanContainer implements AutoCloseable {
         }
         if (paramType == jakarta.enterprise.inject.spi.InjectionPoint.class) {
             // CDI spec: InjectionPoint is null for beans not being injected (programmatic lookup)
-            return currentInjectionPoint.get();
+            return getCurrentInjectionPoint();
         }
-        
+
         var bm = getBeanManager();
         var beansFound = bm.getBeans(genericType, qualifiers);
         if (beansFound.isEmpty()) {
@@ -748,14 +767,10 @@ public final class VaubanContainer implements AutoCloseable {
         }
         var resolved = bm.resolve(beansFound);
         if (resolved == null) {
-            // Primitive injection point cannot be null, but bm.resolve() returns null for empty or ambiguous?
-            // Wait, getBeans was not empty, so bm.resolve should return something.
-            // But just in case, or if it returns null...
             return select(paramType);
         }
-        
+
         // Handle InjectionPoint for @Dependent beans
-        var previousIp = currentInjectionPoint.get();
         if (resolved.getScope() == jakarta.enterprise.context.Dependent.class) {
              var qualSet = new java.util.HashSet<>(java.util.Arrays.asList(qualifiers));
              if (qualSet.isEmpty()) qualSet.add(jakarta.enterprise.inject.Default.Literal.INSTANCE);
@@ -765,20 +780,27 @@ public final class VaubanContainer implements AutoCloseable {
              } else {
                  depIp = new VaubanInjectionPoint(genericType, qualSet, ownerBean, member);
              }
-             currentInjectionPoint.set(depIp);
+             try {
+                 return callWithInjectionPoint(depIp, () -> {
+                     var pCtx = (ctx != null) ? ctx : bm.createCreationalContext(resolved);
+                     var value = bm.getReference(resolved, genericType, pCtx);
+                     if (value == null && paramType.isPrimitive()) {
+                         return primitiveDefault(paramType);
+                     }
+                     return value;
+                 });
+             } catch (RuntimeException e) {
+                 throw e;
+             } catch (Exception e) {
+                 throw new RuntimeException(e);
+             }
         }
-        try {
-            var pCtx = (ctx != null && resolved.getScope() == jakarta.enterprise.context.Dependent.class)
-                    ? ctx
-                    : bm.createCreationalContext(resolved);
-            var value = bm.getReference(resolved, genericType, pCtx);
-            if (value == null && paramType.isPrimitive()) {
-                return primitiveDefault(paramType);
-            }
-            return value;
-        } finally {
-            currentInjectionPoint.set(previousIp);
+        var pCtx = bm.createCreationalContext(resolved);
+        var value = bm.getReference(resolved, genericType, pCtx);
+        if (value == null && paramType.isPrimitive()) {
+            return primitiveDefault(paramType);
         }
+        return value;
     }
 
     public Object resolveParameter(Class<?> paramType, java.lang.reflect.Type genericType, CreationalContext<?> ctx, java.lang.annotation.Annotation[] qualifiers, java.lang.reflect.Member member) {

@@ -12,9 +12,21 @@ public final class RequestContext implements AlterableContext {
 
     private record ContextualInstance(Object instance, CreationalContext<?> ctx) {}
 
-    private final ThreadLocal<Map<Contextual<?>, ContextualInstance>> instances =
-        ThreadLocal.withInitial(HashMap::new);
-    private final ThreadLocal<Boolean> active = ThreadLocal.withInitial(() -> false);
+    static final class RequestContextState {
+        final Map<Contextual<?>, ContextualInstance> instances = new HashMap<>();
+        boolean active = false;
+    }
+
+    private static final ScopedValue<RequestContextState> STATE = ScopedValue.newInstance();
+
+    // Fallback for imperative activate/deactivate (e.g., TCK, container shutdown)
+    private RequestContextState fallbackState;
+
+    private RequestContextState getState() {
+        if (STATE.isBound()) return STATE.get();
+        if (fallbackState == null) fallbackState = new RequestContextState();
+        return fallbackState;
+    }
 
     @Override
     public Class<? extends Annotation> getScope() {
@@ -25,7 +37,8 @@ public final class RequestContext implements AlterableContext {
     @SuppressWarnings("unchecked")
     public <T> T get(Contextual<T> contextual, CreationalContext<T> creationalContext) {
         checkActive();
-        var ci = instances.get().get(contextual);
+        var state = getState();
+        var ci = state.instances.get(contextual);
         if (ci != null) {
             return (T) ci.instance();
         }
@@ -33,7 +46,7 @@ public final class RequestContext implements AlterableContext {
             return null;
         }
         var instance = contextual.create(creationalContext);
-        instances.get().put(contextual, new ContextualInstance(instance, creationalContext));
+        state.instances.put(contextual, new ContextualInstance(instance, creationalContext));
         return instance;
     }
 
@@ -41,19 +54,19 @@ public final class RequestContext implements AlterableContext {
     @SuppressWarnings("unchecked")
     public <T> T get(Contextual<T> contextual) {
         checkActive();
-        var ci = instances.get().get(contextual);
+        var ci = getState().instances.get(contextual);
         return ci != null ? (T) ci.instance() : null;
     }
 
     @Override
     public boolean isActive() {
-        return active.get();
+        return getState().active;
     }
 
     @Override
     @SuppressWarnings("unchecked")
     public void destroy(Contextual<?> contextual) {
-        var ci = instances.get().remove(contextual);
+        var ci = getState().instances.remove(contextual);
         if (ci != null) {
             ((Contextual<Object>) contextual).destroy(ci.instance(), (CreationalContext<Object>) ci.ctx());
             ci.ctx().release();
@@ -61,17 +74,33 @@ public final class RequestContext implements AlterableContext {
     }
 
     public void activate() {
-        active.set(true);
-        instances.get().clear();
+        var state = getState();
+        state.active = true;
+        state.instances.clear();
     }
 
     public void deactivate() {
-        var map = instances.get();
-        for (var entry : new HashMap<>(map).entrySet()) {
+        var state = getState();
+        for (var entry : new HashMap<>(state.instances).entrySet()) {
             destroy(entry.getKey());
         }
-        instances.remove();
-        active.remove();
+        state.instances.clear();
+        state.active = false;
+    }
+
+    /**
+     * Runs an action within a request scope using ScopedValue.
+     * Preferred API for virtual thread compatibility.
+     */
+    public void runInScope(Runnable action) {
+        ScopedValue.where(STATE, new RequestContextState()).run(() -> {
+            activate();
+            try {
+                action.run();
+            } finally {
+                deactivate();
+            }
+        });
     }
 
     private void checkActive() {
