@@ -6,7 +6,7 @@
 
 <p align="center">
   <strong>Conteneur CDI 4.1 natif Java Modules</strong><br>
-  <a href="https://jakarta.ee/specifications/cdi/4.1/">CDI 4.1</a> | JDK 25 | JPMS | Zero reflexion
+  <a href="https://jakarta.ee/specifications/cdi/4.1/">CDI 4.1</a> | JDK 25 | JPMS | Virtual Threads | Zero reflexion
 </p>
 
 <p align="center">
@@ -38,6 +38,7 @@ Vauban est une implementation de [Jakarta CDI 4.1](https://jakarta.ee/specificat
 
 - **JPMS-first** : chaque composant est un module Java explicite (`module-info.java`)
 - **Zero reflexion** : generation de code statique via l'API Class-File du JDK 25
+- **Virtual threads ready** : `ScopedValue` (JEP 487) au lieu de `ThreadLocal` partout
 - **Dependances minimales** : l'indexeur n'a aucune dependance externe
 - **Build Compatible Extensions** : modele d'extensions CDI 4.1 Lite
 
@@ -217,6 +218,30 @@ public class MonService {
 ---
 
 ## Architecture
+
+> Documentation detaillee avec diagrammes Mermaid : [docs/architecture.md](docs/architecture.md)
+
+```mermaid
+graph TB
+    subgraph "Build-time"
+        PROC[vauban-processor<br/><i>APT</i>]
+        PLUGIN[vauban-maven-plugin<br/><i>Scan & pre-gen</i>]
+    end
+    subgraph "Runtime"
+        API[vauban-api] --> CORE[vauban-core<br/><i>CDI 4.1 Lite</i>]
+        CORE --> IDX[vauban-indexer<br/><i>Zero dep</i>]
+    end
+    subgraph "Testing"
+        JUNIT[vauban-junit<br/><i>JUnit 6</i>]
+        TCK[vauban-tck-runner<br/><i>774/774</i>]
+    end
+    PROC --> CORE
+    PLUGIN --> CORE
+    JUNIT --> CORE
+    TCK --> CORE
+    CORE --> JDK[JDK 25<br/><i>Class-File API</i>]
+    style CORE fill:#e1f5fe,stroke:#0288d1,stroke-width:2px
+```
 
 ```
 vauban/
@@ -551,6 +576,10 @@ class MyServiceTest {
 ### CDI Lite Features
 
 Managed beans, field/constructor/method injection, qualifiers, producers, disposers, events (sync & async), stereotypes, alternatives, `Instance<T>`, `InjectionPoint`, `@Typed`, `@Vetoed`, observer priority, `@Nonbinding`, interceptors (`@AroundInvoke`, `@AroundConstruct`), client proxies, Build Compatible Extensions, `@TransientReference`, `EventMetadata`.
+
+### Virtual Thread Ready
+
+All internal thread-local state uses JDK 25 `ScopedValue` (JEP 487) instead of `ThreadLocal` — no memory leaks with virtual threads, automatic scope inheritance, structured concurrency compatible.
 
 ### TCK Validation
 

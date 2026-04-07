@@ -277,13 +277,21 @@ public class MockPaymentService implements PaymentService {
 
 L'alternative avec la plus haute `@Priority` est selectionnee automatiquement.
 
-## Limitations actuelles
+## Compatibilite virtual threads
 
-- **Intercepteurs** : le manager existe mais l'integration runtime n'est pas encore complete
-- **Client proxies** : les beans `@ApplicationScoped` ne sont pas proxies (pas de lazy loading)
-- **Build Compatible Extensions** : structure en place, pas encore fonctionnelle
-- **Decorateurs** : non supportes
-- **Conversation scope** : non supporte
+Vauban utilise `ScopedValue` (JDK 25, JEP 487) au lieu de `ThreadLocal` pour tout
+l'etat interne lie aux threads. Cela le rend compatible avec les virtual threads sans
+fuite memoire ni probleme d'heritage de contexte.
+
+## Limitations actuelles (CDI Full)
+
+Vauban implemente CDI 4.1 **Lite** a 100% (774/774 tests TCK). Les fonctionnalites CDI Full
+ne sont pas encore supportees :
+
+- **Decorateurs** (`@Decorator`)
+- **Conversation scope** (`@ConversationScoped`)
+- **Portable Extensions** (`Extension` SPI)
+- **Expression Language** (EL integration)
 
 ## Ressources
 
