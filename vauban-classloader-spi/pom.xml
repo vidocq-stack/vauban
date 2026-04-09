@@ -9,16 +9,11 @@
         <artifactId>vauban-parent</artifactId>
     </parent>
 
-    <artifactId>vauban-indexer</artifactId>
-    <name>Vauban :: Indexer</name>
-    <description>Class indexer using JDK Class-File API, zero external dependencies</description>
+    <artifactId>vauban-classloader-spi</artifactId>
+    <name>Vauban :: ClassLoader SPI</name>
+    <description>Plugin SPI for custom class loading strategies (encrypted JARs, remote loading, etc.)</description>
 
     <dependencies>
-        <dependency>
-            <groupId>fr.vidocq.vauban</groupId>
-            <artifactId>vauban-classloader-spi</artifactId>
-            <optional>true</optional>
-        </dependency>
         <dependency>
             <groupId>org.junit.jupiter</groupId>
             <artifactId>junit-jupiter</artifactId>

@@ -32,4 +32,47 @@ public final class JarScanner {
         }
         return classes;
     }
+
+    /**
+     * Scan an archive using byte source plugins for custom formats (e.g., encrypted SJARs).
+     * Falls back to standard JAR scanning if no plugin handles the path.
+     *
+     * @param archivePath path to the archive
+     * @param plugins     list of plugins to try (ordered by priority)
+     * @param context     plugin context providing keys and configuration
+     * @return list of discovered class metadata
+     */
+    public static List<ClassInfo> scan(Path archivePath,
+                                       List<fr.vidocq.vauban.classloader.spi.ByteSourcePlugin> plugins,
+                                       fr.vidocq.vauban.classloader.spi.PluginContext context) throws IOException {
+        if (plugins != null) {
+            for (var plugin : plugins) {
+                if (plugin.handles(archivePath)) {
+                    return scanWithPlugin(archivePath, plugin, context);
+                }
+            }
+        }
+        return scan(archivePath);
+    }
+
+    private static List<ClassInfo> scanWithPlugin(
+            Path archivePath,
+            fr.vidocq.vauban.classloader.spi.ByteSourcePlugin plugin,
+            fr.vidocq.vauban.classloader.spi.PluginContext context) throws IOException {
+        var classes = new ArrayList<ClassInfo>();
+        try (var reader = plugin.open(archivePath, context)) {
+            for (var entry : reader.classEntries()) {
+                if (entry.equals("module-info.class") || entry.endsWith("/module-info.class")) {
+                    continue;
+                }
+                try {
+                    var bytes = reader.readClass(entry);
+                    classes.add(ClassFileScanner.scan(bytes));
+                } catch (Exception | Error e) {
+                    // Skip malformed class files
+                }
+            }
+        }
+        return classes;
+    }
 }

@@ -32,6 +32,8 @@ public final class VaubanContainerBuilder {
     private java.lang.invoke.MethodHandles.Lookup lookup;
     private boolean isBeanArchive = true;
     private VaubanLookup builderLookup;
+    private final List<fr.vidocq.vauban.classloader.spi.ByteSourcePlugin> byteSourcePlugins = new ArrayList<>();
+    private fr.vidocq.vauban.classloader.spi.PluginContext pluginContext;
 
     private VaubanLookup getBuilderLookup() {
         if (builderLookup == null) {
@@ -213,6 +215,98 @@ public final class VaubanContainerBuilder {
             throw new RuntimeException("Failed to scan classpath for vauban-beans.list", e);
         }
         return this;
+    }
+
+    /**
+     * Register a byte source plugin for custom archive formats (e.g., encrypted SJARs).
+     */
+    public VaubanContainerBuilder addByteSourcePlugin(fr.vidocq.vauban.classloader.spi.ByteSourcePlugin plugin) {
+        byteSourcePlugins.add(plugin);
+        return this;
+    }
+
+    /**
+     * Set the plugin context providing keys and configuration for byte source plugins.
+     */
+    public VaubanContainerBuilder pluginContext(fr.vidocq.vauban.classloader.spi.PluginContext context) {
+        this.pluginContext = context;
+        return this;
+    }
+
+    /**
+     * Scan an SJAR (Secure JAR) file for CDI bean classes.
+     * Requires a byte source plugin that handles .sjar files and
+     * a plugin context with the decryption key.
+     *
+     * @param sjarPath path to the .sjar file
+     */
+    public VaubanContainerBuilder scanSjar(java.nio.file.Path sjarPath) {
+        loadPluginsIfNeeded();
+        var ctx = getPluginContext();
+        var cl = this.classLoader != null ? this.classLoader
+                : Thread.currentThread().getContextClassLoader();
+
+        for (var plugin : byteSourcePlugins) {
+            if (plugin.handles(sjarPath)) {
+                try (var reader = plugin.open(sjarPath, ctx)) {
+                    // Create an SjarClassLoader for these classes
+                    var sjarClassLoader = createPluginClassLoader(reader, cl);
+                    for (var entry : reader.classEntries()) {
+                        var className = entry.replace('/', '.').replace(".class", "");
+                        tryAddBeanClass(className, sjarClassLoader);
+                    }
+                } catch (IOException e) {
+                    throw new RuntimeException("Failed to scan SJAR: " + sjarPath, e);
+                }
+                return this;
+            }
+        }
+        throw new IllegalStateException("No plugin can handle: " + sjarPath
+                + ". Register a ByteSourcePlugin or add vauban-sjar to the module path.");
+    }
+
+    private void loadPluginsIfNeeded() {
+        if (byteSourcePlugins.isEmpty()) {
+            java.util.ServiceLoader.load(fr.vidocq.vauban.classloader.spi.ByteSourcePlugin.class)
+                    .forEach(byteSourcePlugins::add);
+            byteSourcePlugins.sort(java.util.Comparator.comparingInt(
+                    fr.vidocq.vauban.classloader.spi.ByteSourcePlugin::priority));
+        }
+    }
+
+    private fr.vidocq.vauban.classloader.spi.PluginContext getPluginContext() {
+        if (pluginContext != null) return pluginContext;
+        return fr.vidocq.vauban.classloader.spi.PluginContext.empty();
+    }
+
+    private static ClassLoader createPluginClassLoader(
+            fr.vidocq.vauban.classloader.spi.ArchiveReader reader, ClassLoader parent) throws IOException {
+        // Build an in-memory classloader with decrypted bytes
+        var classBytes = new java.util.concurrent.ConcurrentHashMap<String, byte[]>();
+        for (var entry : reader.classEntries()) {
+            var className = entry.replace('/', '.').replace(".class", "");
+            classBytes.put(className, reader.readClass(entry));
+        }
+        return new ClassLoader(parent) {
+            @Override
+            protected Class<?> findClass(String name) throws ClassNotFoundException {
+                var bytes = classBytes.get(name);
+                if (bytes != null) {
+                    return defineClass(name, bytes, 0, bytes.length);
+                }
+                throw new ClassNotFoundException(name);
+            }
+
+            @Override
+            public java.io.InputStream getResourceAsStream(String name) {
+                if (name.endsWith(".class")) {
+                    var cn = name.replace('/', '.').replace(".class", "");
+                    var bytes = classBytes.get(cn);
+                    if (bytes != null) return new java.io.ByteArrayInputStream(bytes);
+                }
+                return super.getResourceAsStream(name);
+            }
+        };
     }
 
     public VaubanContainer build() {

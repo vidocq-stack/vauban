@@ -92,6 +92,16 @@
                 <artifactId>vauban-junit</artifactId>
                 <version>${project.version}</version>
             </dependency>
+            <dependency>
+                <groupId>fr.vidocq.vauban</groupId>
+                <artifactId>vauban-classloader-spi</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>fr.vidocq.vauban</groupId>
+                <artifactId>vauban-sjar</artifactId>
+                <version>${project.version}</version>
+            </dependency>
         </dependencies>
     </dependencyManagement>
 

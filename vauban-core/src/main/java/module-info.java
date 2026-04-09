@@ -1,9 +1,12 @@
 module fr.vidocq.vauban.core {
     requires transitive fr.vidocq.vauban.api;
     requires fr.vidocq.vauban.indexer;
+    requires static fr.vidocq.vauban.classloader.spi;
     requires transitive jakarta.cdi.lang.model;
     requires jakarta.el;
     requires jdk.unsupported;
+
+    uses fr.vidocq.vauban.classloader.spi.ByteSourcePlugin;
 
     exports fr.vidocq.vauban.core;
     exports fr.vidocq.vauban.core.container;

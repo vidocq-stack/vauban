@@ -9,15 +9,14 @@
         <artifactId>vauban-parent</artifactId>
     </parent>
 
-    <artifactId>vauban-indexer</artifactId>
-    <name>Vauban :: Indexer</name>
-    <description>Class indexer using JDK Class-File API, zero external dependencies</description>
+    <artifactId>vauban-sjar</artifactId>
+    <name>Vauban :: SJAR (Secure JAR)</name>
+    <description>Encrypted JAR support for Vauban CDI container — AES-256-GCM class encryption</description>
 
     <dependencies>
         <dependency>
             <groupId>fr.vidocq.vauban</groupId>
             <artifactId>vauban-classloader-spi</artifactId>
-            <optional>true</optional>
         </dependency>
         <dependency>
             <groupId>org.junit.jupiter</groupId>
