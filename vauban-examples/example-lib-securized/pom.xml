@@ -28,13 +28,21 @@
 
     <build>
         <plugins>
-            <!-- Encrypt internal classes in the JAR after packaging -->
             <plugin>
                 <groupId>fr.vidocq.vauban</groupId>
                 <artifactId>vauban-maven-plugin</artifactId>
                 <version>${project.version}</version>
                 <executions>
+                    <!-- 1. Generate vauban-beans.list (BEFORE encryption) -->
                     <execution>
+                        <id>generate-beans-list</id>
+                        <goals>
+                            <goal>generate</goal>
+                        </goals>
+                    </execution>
+                    <!-- 2. Encrypt internal classes in the JAR -->
+                    <execution>
+                        <id>encrypt</id>
                         <goals>
                             <goal>encrypt</goal>
                         </goals>

@@ -8,9 +8,11 @@ import fr.vidocq.vauban.core.container.VaubanContainer;
  * <p>Demonstrates:
  * <ul>
  *   <li>Plain beans from example-lib</li>
- *   <li>Encrypted beans from example-lib-securized (auto-detected via marker file)</li>
+ *   <li>Encrypted beans from example-lib-securized</li>
  *   <li>Cross-library injection — WelcomeService uses both</li>
  * </ul>
+ *
+ * <p>Works both from IDE (target/classes, no encryption) and from JARs (encrypted).
  */
 @SuppressWarnings("java:S106")
 public class Main {
@@ -19,7 +21,9 @@ public class Main {
         var name = args.length > 0 ? args[0] : "Vauban";
 
         try (var container = VaubanContainer.builder()
-                .scanClasspath()
+                .scanPackage("fr.vidocq.example.app")
+                .scanPackage("fr.vidocq.example.lib")
+                .scanPackage("fr.vidocq.example.securized")
                 .build()) {
 
             var welcome = container.select(WelcomeService.class);

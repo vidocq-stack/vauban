@@ -51,7 +51,8 @@ public final class VaubanContainerBuilder {
      * Add a bean class. The container will scan it and create a default factory.
      */
     public VaubanContainerBuilder addBeanClass(Class<?> beanClass) {
-        if (!beanClasses.contains(beanClass)) {
+        // Idempotent by class name (not identity) — same class from different ClassLoaders is deduplicated
+        if (beanClasses.stream().noneMatch(c -> c.getName().equals(beanClass.getName()))) {
             beanClasses.add(beanClass);
         }
         return this;
@@ -177,6 +178,9 @@ public final class VaubanContainerBuilder {
 
     private void tryAddBeanClass(String className, ClassLoader cl) {
         try {
+            // Skip generated proxies and interceptor subclasses
+            if (className.contains("_ClientProxy") || className.contains("$Intercepted")
+                    || className.contains("$$")) return;
             var clazz = Class.forName(className, false, cl);
             if (clazz.isAnnotation() || clazz.isInterface() || clazz.isSynthetic()) return;
             addBeanClass(clazz);
