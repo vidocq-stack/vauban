@@ -68,17 +68,20 @@ public final class VaubanGenerator {
         var indexBuilder = new IndexBuilder();
         var warnings = new ArrayList<String>();
 
-        // 1. Scan dependency JARs
-        for (var jar : config.dependencyJars()) {
-            if (!Files.isRegularFile(jar)) {
-                warnings.add("Skipping non-existent JAR: " + jar);
-                continue;
-            }
-            try {
-                var classInfos = JarScanner.scan(jar);
-                indexBuilder.addAll(classInfos);
-            } catch (IOException e) {
-                warnings.add("Failed to scan JAR " + jar.getFileName() + ": " + e.getMessage());
+        // 1. Scan dependency JARs and class directories
+        for (var dep : config.dependencyJars()) {
+            if (Files.isDirectory(dep)) {
+                // Reactor dependency — scan classes directory
+                scanClassesDirectory(dep, indexBuilder, warnings);
+            } else if (Files.isRegularFile(dep)) {
+                try {
+                    var classInfos = JarScanner.scan(dep);
+                    indexBuilder.addAll(classInfos);
+                } catch (IOException e) {
+                    warnings.add("Failed to scan JAR " + dep.getFileName() + ": " + e.getMessage());
+                }
+            } else {
+                warnings.add("Skipping non-existent dependency: " + dep);
             }
         }
 
