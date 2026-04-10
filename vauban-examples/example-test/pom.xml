@@ -13,6 +13,11 @@
     <name>Vauban :: Examples :: Integration Tests</name>
     <description>Integration tests verifying CDI container with plain and encrypted (SJAR) beans</description>
 
+    <properties>
+        <!-- Same demo key as example-lib-securized — in production, use env/keystore -->
+        <vauban.sjar.key>a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2</vauban.sjar.key>
+    </properties>
+
     <dependencies>
         <!-- Plain CDI library -->
         <dependency>
@@ -60,11 +65,9 @@
                 <configuration>
                     <!-- Pass the SJAR key and path to the test JVM -->
                     <systemPropertyVariables>
-                        <vauban.sjar.key>${env.VAUBAN_SJAR_KEY}</vauban.sjar.key>
+                        <vauban.sjar.key>${vauban.sjar.key}</vauban.sjar.key>
                         <sjar.path>${project.basedir}/../example-lib-securized/target/example-lib-securized-${project.version}.sjar</sjar.path>
                     </systemPropertyVariables>
-                    <!-- Tests that need SJAR are skipped if key not set -->
-                    <groups>${test.groups}</groups>
                 </configuration>
             </plugin>
         </plugins>
