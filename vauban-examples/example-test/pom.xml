@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.1.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.1.0 http://maven.apache.org/xsd/maven-4.1.0.xsd">
+    <modelVersion>4.1.0</modelVersion>
+
+    <parent>
+        <groupId>fr.vidocq.vauban</groupId>
+        <artifactId>vauban-examples</artifactId>
+    </parent>
+
+    <artifactId>example-test</artifactId>
+    <name>Vauban :: Examples :: Integration Tests</name>
+    <description>Integration tests verifying CDI container with plain and encrypted (SJAR) beans</description>
+
+    <dependencies>
+        <!-- Plain CDI library -->
+        <dependency>
+            <groupId>fr.vidocq.vauban</groupId>
+            <artifactId>example-lib</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+
+        <!-- Securized library (JAR form for build, encrypted at test time) -->
+        <dependency>
+            <groupId>fr.vidocq.vauban</groupId>
+            <artifactId>example-lib-securized</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+
+        <!-- Vauban CDI container -->
+        <dependency>
+            <groupId>fr.vidocq.vauban</groupId>
+            <artifactId>vauban-core</artifactId>
+        </dependency>
+
+        <!-- SJAR support -->
+        <dependency>
+            <groupId>fr.vidocq.vauban</groupId>
+            <artifactId>vauban-sjar</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>fr.vidocq.vauban</groupId>
+            <artifactId>vauban-classloader-spi</artifactId>
+        </dependency>
+
+        <!-- JUnit 6 -->
+        <dependency>
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter</artifactId>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+</project>
