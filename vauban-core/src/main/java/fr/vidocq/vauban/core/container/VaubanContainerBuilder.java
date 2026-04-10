@@ -310,13 +310,17 @@ public final class VaubanContainerBuilder {
     }
 
     private ClassLoader buildCompositeClassLoader() {
-        if (beanClasses.isEmpty()) return Thread.currentThread().getContextClassLoader();
+        if (beanClasses.isEmpty()) {
+            return this.classLoader != null ? this.classLoader
+                    : Thread.currentThread().getContextClassLoader();
+        }
         // Collect unique ClassLoaders from all bean classes
         var loaders = new java.util.LinkedHashSet<ClassLoader>();
+        if (this.classLoader != null) loaders.add(this.classLoader);
         for (var clazz : beanClasses) {
             if (clazz.getClassLoader() != null) loaders.add(clazz.getClassLoader());
         }
-        if (loaders.size() <= 1) return beanClasses.getFirst().getClassLoader();
+        if (loaders.size() <= 1) return loaders.iterator().next();
         // Composite ClassLoader that delegates to all bean ClassLoaders
         var loaderList = java.util.List.copyOf(loaders);
         return new ClassLoader(loaderList.getFirst()) {
@@ -597,9 +601,7 @@ public final class VaubanContainerBuilder {
                 throw new jakarta.enterprise.inject.spi.DeploymentException(msg.toString());
             }
 
-            var beanClassLoader = this.classLoader != null
-                    ? this.classLoader
-                    : discoveryClassLoader;
+            var beanClassLoader = discoveryClassLoader;
             var vaubanLookup = getBuilderLookup();
             var container = new VaubanContainer(index, descriptors, observers, interceptors, disposers, factories, syntheticDisposers, beanClassLoader, classDefiner, vaubanLookup);
 

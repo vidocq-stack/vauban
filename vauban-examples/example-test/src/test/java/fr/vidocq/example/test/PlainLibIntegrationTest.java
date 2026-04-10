@@ -1,28 +1,19 @@
 package fr.vidocq.example.test;
 
-import fr.vidocq.example.lib.GreetingService;
-import fr.vidocq.example.lib.TimeService;
 import fr.vidocq.vauban.core.container.VaubanContainer;
+import fr.vidocq.vauban.indexer.scanner.JarScanner;
 import org.junit.jupiter.api.AfterEach;
-import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.*;
 
 /**
- * Tests CDI container with plain (unencrypted) library beans.
+ * Simulates loading example-lib from its actual JAR file.
+ * Scans the JAR, discovers beans, and verifies injection works.
  */
 class PlainLibIntegrationTest {
 
     private VaubanContainer container;
-
-    @BeforeEach
-    void setUp() {
-        container = VaubanContainer.builder()
-                .addBeanClass(GreetingService.class)
-                .addBeanClass(TimeService.class)
-                .build();
-    }
 
     @AfterEach
     void tearDown() {
@@ -30,15 +21,35 @@ class PlainLibIntegrationTest {
     }
 
     @Test
-    void greetingServiceWorks() {
-        var service = container.select(GreetingService.class);
-        assertEquals("Bonjour, Vauban !", service.greet("Vauban"));
-    }
+    void loadBeansFromJar() throws Exception {
+        var jarPath = TestJarHelper.plainLibJar();
+        var cl = TestJarHelper.buildClassLoader(jarPath);
 
-    @Test
-    void timeServiceReturnsSomething() {
-        var service = container.select(TimeService.class);
-        assertNotNull(service.now());
-        assertTrue(service.now().matches("\\d{2}:\\d{2}:\\d{2}"));
+        // Discover beans from the JAR (same as vauban-maven-plugin would do)
+        var classInfos = JarScanner.scan(jarPath);
+        assertFalse(classInfos.isEmpty(), "JAR should contain classes");
+
+        // Build container with discovered beans
+        var builder = VaubanContainer.builder().classLoader(cl);
+        for (var ci : classInfos) {
+            var cls = Class.forName(ci.name().value(), false, cl);
+            if (!cls.isInterface() && !cls.isAnnotation()) {
+                builder.addBeanClass(cls);
+            }
+        }
+        container = builder.build();
+
+        // Verify beans via their types
+        var greetingClass = cl.loadClass("fr.vidocq.example.lib.GreetingService");
+        var greeting = container.select(greetingClass);
+        assertNotNull(greeting);
+        var result = greetingClass.getMethod("greet", String.class).invoke(greeting, "Vauban");
+        assertEquals("Bonjour, Vauban !", result);
+
+        var timeClass = cl.loadClass("fr.vidocq.example.lib.TimeService");
+        var time = container.select(timeClass);
+        var now = (String) timeClass.getMethod("now").invoke(time);
+        assertNotNull(now);
+        assertTrue(now.matches("\\d{2}:\\d{2}:\\d{2}"));
     }
 }

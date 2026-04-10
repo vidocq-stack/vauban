@@ -1,24 +1,22 @@
 package fr.vidocq.example.test;
 
-import fr.vidocq.example.lib.GreetingService;
-import fr.vidocq.example.lib.TimeService;
 import fr.vidocq.example.securized.api.CryptoService;
 import fr.vidocq.example.securized.api.LicenseValidator;
 import fr.vidocq.vauban.core.container.VaubanContainer;
+import fr.vidocq.vauban.indexer.scanner.JarScanner;
 import fr.vidocq.vauban.sjar.SjarKeyProvider;
 import fr.vidocq.vauban.sjar.SjarPlugin;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 
-import javax.crypto.spec.SecretKeySpec;
-import java.nio.file.Path;
-import java.util.HexFormat;
-
 import static org.junit.jupiter.api.Assertions.*;
 
 /**
- * Tests CDI container with BOTH plain and encrypted beans simultaneously.
- * WelcomeService injects GreetingService (plain) + CryptoService (encrypted impl).
+ * Simulates a real application that loads beans from BOTH:
+ * - example-lib (plain JAR, scanned with JarScanner)
+ * - example-lib-securized (encrypted JAR, loaded via SjarPlugin)
+ *
+ * This is the closest simulation of what happens in production.
  */
 class CrossLibIntegrationTest {
 
@@ -30,31 +28,72 @@ class CrossLibIntegrationTest {
     }
 
     @Test
-    void plainAndEncryptedBeansCoexist() throws Exception {
-        container = buildMixedContainer();
+    void fullApplicationSimulation() throws Exception {
+        var plainJar = TestJarHelper.plainLibJar();
+        var securizedJar = TestJarHelper.securizedLibJar();
+        var key = TestJarHelper.encryptionKey();
 
-        var greeting = container.select(GreetingService.class);
-        assertEquals("Bonjour, Vauban !", greeting.greet("Vauban"));
+        // Build a classloader with the plain JAR (as a real app would)
+        var cl = TestJarHelper.buildClassLoader(plainJar);
 
+        // Discover plain beans from JAR
+        var builder = VaubanContainer.builder().classLoader(cl);
+        for (var ci : JarScanner.scan(plainJar)) {
+            var cls = Class.forName(ci.name().value(), false, cl);
+            if (!cls.isInterface() && !cls.isAnnotation()) {
+                builder.addBeanClass(cls);
+            }
+        }
+
+        // Add encrypted beans
+        builder.addByteSourcePlugin(new SjarPlugin())
+               .pluginContext(SjarKeyProvider.withKey(key))
+               .scanSjar(securizedJar);
+
+        container = builder.build();
+
+        // Plain beans work — loaded from JAR
+        var greetingClass = cl.loadClass("fr.vidocq.example.lib.GreetingService");
+        var greeting = container.select(greetingClass);
+        var greetResult = greetingClass.getMethod("greet", String.class).invoke(greeting, "CDI");
+        assertEquals("Bonjour, CDI !", greetResult);
+
+        // Encrypted beans work — loaded from encrypted JAR
         var crypto = container.select(CryptoService.class);
+        assertNotNull(crypto);
         assertEquals("test", crypto.decode(crypto.encode("test")));
 
         var validator = container.select(LicenseValidator.class);
         assertTrue(validator.isValid("VAUBAN-12345678"));
     }
 
-    private VaubanContainer buildMixedContainer() throws Exception {
-        var jarPath = Path.of("../example-lib-securized/target/example-lib-securized-0.1.0-SNAPSHOT.jar");
-        var hexKey = System.getProperty("vauban.sjar.key",
-                "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2");
-        var key = new SecretKeySpec(HexFormat.of().parseHex(hexKey), "AES");
+    @Test
+    void encryptedAndPlainBeansCommunicate() throws Exception {
+        var plainJar = TestJarHelper.plainLibJar();
+        var securizedJar = TestJarHelper.securizedLibJar();
+        var key = TestJarHelper.encryptionKey();
 
-        return VaubanContainer.builder()
-                .addBeanClass(GreetingService.class)
-                .addBeanClass(TimeService.class)
-                .addByteSourcePlugin(new SjarPlugin())
-                .pluginContext(SjarKeyProvider.withKey(key))
-                .scanSjar(jarPath)
-                .build();
+        var cl = TestJarHelper.buildClassLoader(plainJar);
+        var builder = VaubanContainer.builder().classLoader(cl);
+        for (var ci : JarScanner.scan(plainJar)) {
+            var cls = Class.forName(ci.name().value(), false, cl);
+            if (!cls.isInterface() && !cls.isAnnotation()) {
+                builder.addBeanClass(cls);
+            }
+        }
+        builder.addByteSourcePlugin(new SjarPlugin())
+               .pluginContext(SjarKeyProvider.withKey(key))
+               .scanSjar(securizedJar);
+
+        container = builder.build();
+
+        // Use CryptoService (encrypted) to encode a message from GreetingService (plain)
+        var greetingClass = cl.loadClass("fr.vidocq.example.lib.GreetingService");
+        var greeting = container.select(greetingClass);
+        var message = (String) greetingClass.getMethod("greet", String.class).invoke(greeting, "Mix");
+
+        var crypto = container.select(CryptoService.class);
+        var encoded = crypto.encode(message);
+        assertEquals(message, crypto.decode(encoded));
     }
 }

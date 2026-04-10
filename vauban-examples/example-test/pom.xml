@@ -11,14 +11,14 @@
 
     <artifactId>example-test</artifactId>
     <name>Vauban :: Examples :: Integration Tests</name>
-    <description>Integration tests verifying CDI container with plain and encrypted beans</description>
+    <description>Integration tests simulating a real application launch with plain and encrypted JARs</description>
 
     <properties>
-        <!-- Same demo key as example-lib-securized -->
         <vauban.sjar.key>a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2</vauban.sjar.key>
     </properties>
 
     <dependencies>
+        <!-- Compile-time: we need the exported API types to write the tests -->
         <dependency>
             <groupId>fr.vidocq.vauban</groupId>
             <artifactId>example-lib</artifactId>
@@ -29,11 +29,8 @@
             <artifactId>example-lib-securized</artifactId>
             <version>${project.version}</version>
         </dependency>
-        <dependency>
-            <groupId>fr.vidocq.vauban</groupId>
-            <artifactId>example-app</artifactId>
-            <version>${project.version}</version>
-        </dependency>
+
+        <!-- Vauban runtime -->
         <dependency>
             <groupId>fr.vidocq.vauban</groupId>
             <artifactId>vauban-core</artifactId>
@@ -46,10 +43,28 @@
             <groupId>fr.vidocq.vauban</groupId>
             <artifactId>vauban-classloader-spi</artifactId>
         </dependency>
+
         <dependency>
             <groupId>org.junit.jupiter</groupId>
             <artifactId>junit-jupiter</artifactId>
             <scope>test</scope>
         </dependency>
     </dependencies>
+
+    <build>
+        <plugins>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <configuration>
+                    <systemPropertyVariables>
+                        <!-- Paths to the actual JARs built by sibling modules -->
+                        <jar.example.lib>${project.basedir}/../example-lib/target/example-lib-${project.version}.jar</jar.example.lib>
+                        <jar.example.securized>${project.basedir}/../example-lib-securized/target/example-lib-securized-${project.version}.jar</jar.example.securized>
+                        <vauban.sjar.key>${vauban.sjar.key}</vauban.sjar.key>
+                    </systemPropertyVariables>
+                </configuration>
+            </plugin>
+        </plugins>
+    </build>
 </project>
