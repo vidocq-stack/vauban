@@ -11,39 +11,9 @@
 
     <artifactId>example-test</artifactId>
     <name>Vauban :: Examples :: Integration Tests</name>
-    <description>Integration tests simulating a real application launch with plain and encrypted JARs</description>
-
-    <properties>
-        <vauban.sjar.key>a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2</vauban.sjar.key>
-    </properties>
+    <description>End-to-end tests: launches example-app as a Java process with real JARs and verifies stdout</description>
 
     <dependencies>
-        <!-- Compile-time: we need the exported API types to write the tests -->
-        <dependency>
-            <groupId>fr.vidocq.vauban</groupId>
-            <artifactId>example-lib</artifactId>
-            <version>${project.version}</version>
-        </dependency>
-        <dependency>
-            <groupId>fr.vidocq.vauban</groupId>
-            <artifactId>example-lib-securized</artifactId>
-            <version>${project.version}</version>
-        </dependency>
-
-        <!-- Vauban runtime -->
-        <dependency>
-            <groupId>fr.vidocq.vauban</groupId>
-            <artifactId>vauban-core</artifactId>
-        </dependency>
-        <dependency>
-            <groupId>fr.vidocq.vauban</groupId>
-            <artifactId>vauban-sjar</artifactId>
-        </dependency>
-        <dependency>
-            <groupId>fr.vidocq.vauban</groupId>
-            <artifactId>vauban-classloader-spi</artifactId>
-        </dependency>
-
         <dependency>
             <groupId>org.junit.jupiter</groupId>
             <artifactId>junit-jupiter</artifactId>
@@ -58,10 +28,21 @@
                 <artifactId>maven-surefire-plugin</artifactId>
                 <configuration>
                     <systemPropertyVariables>
-                        <!-- Paths to the actual JARs built by sibling modules -->
+                        <java.executable>${java.home}/bin/java</java.executable>
+                        <jar.example.app>${project.basedir}/../example-app/target/example-app-${project.version}.jar</jar.example.app>
                         <jar.example.lib>${project.basedir}/../example-lib/target/example-lib-${project.version}.jar</jar.example.lib>
                         <jar.example.securized>${project.basedir}/../example-lib-securized/target/example-lib-securized-${project.version}.jar</jar.example.securized>
-                        <vauban.sjar.key>${vauban.sjar.key}</vauban.sjar.key>
+                        <jar.vauban.core>${project.basedir}/../../vauban-core/target/vauban-core-${project.version}.jar</jar.vauban.core>
+                        <jar.vauban.api>${project.basedir}/../../vauban-api/target/vauban-api-${project.version}.jar</jar.vauban.api>
+                        <jar.vauban.indexer>${project.basedir}/../../vauban-indexer/target/vauban-indexer-${project.version}.jar</jar.vauban.indexer>
+                        <jar.vauban.sjar>${project.basedir}/../../vauban-sjar/target/vauban-sjar-${project.version}.jar</jar.vauban.sjar>
+                        <jar.vauban.classloader.spi>${project.basedir}/../../vauban-classloader-spi/target/vauban-classloader-spi-${project.version}.jar</jar.vauban.classloader.spi>
+                        <jar.jakarta.cdi>${settings.localRepository}/jakarta/enterprise/jakarta.enterprise.cdi-api/4.1.0/jakarta.enterprise.cdi-api-4.1.0.jar</jar.jakarta.cdi>
+                        <jar.jakarta.annotation>${settings.localRepository}/jakarta/annotation/jakarta.annotation-api/3.0.0/jakarta.annotation-api-3.0.0.jar</jar.jakarta.annotation>
+                        <jar.jakarta.el>${settings.localRepository}/jakarta/el/jakarta.el-api/6.0.0/jakarta.el-api-6.0.0.jar</jar.jakarta.el>
+                        <jar.jakarta.interceptor>${settings.localRepository}/jakarta/interceptor/jakarta.interceptor-api/2.2.0/jakarta.interceptor-api-2.2.0.jar</jar.jakarta.interceptor>
+                        <jar.jakarta.inject>${settings.localRepository}/jakarta/inject/jakarta.inject-api/2.0.1/jakarta.inject-api-2.0.1.jar</jar.jakarta.inject>
+                        <jar.jakarta.lang.model>${settings.localRepository}/jakarta/enterprise/jakarta.enterprise.lang-model/4.1.0/jakarta.enterprise.lang-model-4.1.0.jar</jar.jakarta.lang.model>
                     </systemPropertyVariables>
                 </configuration>
             </plugin>

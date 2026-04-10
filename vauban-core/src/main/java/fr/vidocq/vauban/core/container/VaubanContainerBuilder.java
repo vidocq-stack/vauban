@@ -197,6 +197,11 @@ public final class VaubanContainerBuilder {
     public VaubanContainerBuilder scanClasspath() {
         var cl = this.classLoader != null ? this.classLoader
                 : Thread.currentThread().getContextClassLoader();
+
+        // 1. Auto-detect encrypted JARs on the classpath and register them
+        scanEncryptedJarsOnClasspath(cl);
+
+        // 2. Read vauban-beans.list files from all JARs/directories
         try {
             var urls = cl.getResources("META-INF/vauban-beans.list");
             while (urls.hasMoreElements()) {
@@ -206,19 +211,40 @@ public final class VaubanContainerBuilder {
                     reader.lines()
                             .map(String::strip)
                             .filter(line -> !line.isEmpty() && !line.startsWith("#"))
-                            .forEach(className -> {
-                                try {
-                                    addBeanClass(Class.forName(className, false, cl));
-                                } catch (ClassNotFoundException e) {
-                                    // Bean class not on classpath — skip silently
-                                }
-                            });
+                            .forEach(className -> tryAddBeanClass(className, cl));
                 }
             }
         } catch (java.io.IOException e) {
             throw new RuntimeException("Failed to scan classpath for vauban-beans.list", e);
         }
         return this;
+    }
+
+    /**
+     * Scan the classpath for JARs containing {@code META-INF/vauban.encrypted}
+     * and automatically load their encrypted classes via the plugin system.
+     */
+    private void scanEncryptedJarsOnClasspath(ClassLoader cl) {
+        try {
+            var markers = cl.getResources("META-INF/vauban.encrypted");
+            while (markers.hasMoreElements()) {
+                var markerUrl = markers.nextElement().toString();
+                // Extract JAR path from "jar:file:/path/to/lib.jar!/META-INF/vauban.encrypted"
+                if (markerUrl.startsWith("jar:file:")) {
+                    var jarPath = java.nio.file.Path.of(
+                            markerUrl.substring("jar:file:".length(), markerUrl.indexOf('!')));
+                    // Use scanSjar to load beans from this encrypted JAR
+                    try {
+                        loadPluginsIfNeeded();
+                        scanSjar(jarPath);
+                    } catch (Exception e) {
+                        // Skip if no plugin or no key configured — beans will be skipped
+                    }
+                }
+            }
+        } catch (java.io.IOException e) {
+            // Classpath scan failure — non-fatal, encrypted JARs just won't be auto-detected
+        }
     }
 
     /**
@@ -280,7 +306,13 @@ public final class VaubanContainerBuilder {
 
     private fr.vidocq.vauban.classloader.spi.PluginContext getPluginContext() {
         if (pluginContext != null) return pluginContext;
-        return fr.vidocq.vauban.classloader.spi.PluginContext.empty();
+        // Try to create a default key provider (resolves from env/system properties)
+        try {
+            var providerClass = Class.forName("fr.vidocq.vauban.sjar.SjarKeyProvider");
+            return (fr.vidocq.vauban.classloader.spi.PluginContext) providerClass.getDeclaredConstructor().newInstance();
+        } catch (Exception e) {
+            return fr.vidocq.vauban.classloader.spi.PluginContext.empty();
+        }
     }
 
     private static ClassLoader createPluginClassLoader(

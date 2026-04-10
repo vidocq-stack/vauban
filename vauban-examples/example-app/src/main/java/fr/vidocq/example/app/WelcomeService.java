@@ -18,14 +18,23 @@ import jakarta.inject.Inject;
 @ApplicationScoped
 public class WelcomeService {
 
-    @Inject
-    GreetingService greetingService;
+    private final GreetingService greetingService;
+    private final TimeService timeService;
+    private final CryptoService cryptoService;
+
+    // CDI proxy requires a no-arg constructor
+    protected WelcomeService() {
+        this.greetingService = null;
+        this.timeService = null;
+        this.cryptoService = null;
+    }
 
     @Inject
-    TimeService timeService;
-
-    @Inject
-    CryptoService cryptoService;
+    public WelcomeService(GreetingService greetingService, TimeService timeService, CryptoService cryptoService) {
+        this.greetingService = greetingService;
+        this.timeService = timeService;
+        this.cryptoService = cryptoService;
+    }
 
     public String welcome(String name) {
         return greetingService.greet(name) + " Il est " + timeService.now() + ".";
