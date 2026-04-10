@@ -20,4 +20,25 @@
             <scope>provided</scope>
         </dependency>
     </dependencies>
+
+    <build>
+        <plugins>
+            <!-- Encrypt the JAR into an SJAR after packaging -->
+            <plugin>
+                <groupId>fr.vidocq.vauban</groupId>
+                <artifactId>vauban-maven-plugin</artifactId>
+                <version>${project.version}</version>
+                <executions>
+                    <execution>
+                        <goals>
+                            <goal>encrypt</goal>
+                        </goals>
+                        <configuration>
+                            <keyAlias>example-securized-key</keyAlias>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+        </plugins>
+    </build>
 </project>

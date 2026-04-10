@@ -1,45 +1,50 @@
 package fr.vidocq.example.test;
 
 import fr.vidocq.vauban.core.container.VaubanContainer;
-import fr.vidocq.vauban.sjar.SjarEncryptor;
 import fr.vidocq.vauban.sjar.SjarKeyProvider;
 import fr.vidocq.vauban.sjar.SjarPlugin;
 import org.junit.jupiter.api.AfterEach;
-import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.io.TempDir;
 
 import javax.crypto.SecretKey;
-import java.net.URI;
+import javax.crypto.spec.SecretKeySpec;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.HexFormat;
 
 import static org.junit.jupiter.api.Assertions.*;
 
 /**
  * Tests CDI container with encrypted (SJAR) library beans.
- * The test encrypts the example-lib-securized JAR on the fly, then loads it via scanSjar().
+ * The SJAR is built by the vauban-maven-plugin:encrypt goal during
+ * example-lib-securized's build — this test consumes the pre-built artifact.
  */
 class SecurizedLibIntegrationTest {
 
-    @TempDir
-    Path tempDir;
-
     private VaubanContainer container;
-    private SecretKey key;
-    private Path sjarPath;
+    private static SecretKey key;
+    private static Path sjarPath;
 
-    @BeforeEach
-    void setUp() throws Exception {
-        key = SjarKeyProvider.generateKey();
+    @BeforeAll
+    static void findSjar() {
+        // Key from VAUBAN_SJAR_KEY env or system property (same one used at build time)
+        var hexKey = System.getenv(SjarKeyProvider.ENV_KEY);
+        if (hexKey == null) hexKey = System.getProperty("vauban.sjar.key");
+        assertNotNull(hexKey, "VAUBAN_SJAR_KEY env or -Dvauban.sjar.key must be set");
+        key = new SecretKeySpec(HexFormat.of().parseHex(hexKey.strip()), "AES");
 
-        // Find the example-lib-securized JAR on the classpath
-        var jarPath = findSecurizedJar();
-        sjarPath = tempDir.resolve("securized.sjar");
-
-        // Encrypt it
-        SjarEncryptor.encrypt(jarPath, sjarPath, key, "test-key");
-        assertTrue(Files.exists(sjarPath));
+        // The SJAR is built by maven in example-lib-securized/target/
+        var sjarProp = System.getProperty("sjar.path");
+        if (sjarProp != null) {
+            sjarPath = Path.of(sjarProp);
+        } else {
+            // Convention: sibling module target directory
+            sjarPath = Path.of("../example-lib-securized/target/example-lib-securized-0.1.0-SNAPSHOT.sjar");
+        }
+        assertTrue(Files.exists(sjarPath),
+                "Pre-built SJAR not found at " + sjarPath.toAbsolutePath()
+                        + ". Run 'mvn package -Dvauban.sjar.key=<hex>' on example-lib-securized first.");
     }
 
     @AfterEach
@@ -48,17 +53,15 @@ class SecurizedLibIntegrationTest {
     }
 
     @Test
-    void loadEncryptedBeans() throws Exception {
+    void loadEncryptedBeans() {
         container = VaubanContainer.builder()
                 .addByteSourcePlugin(new SjarPlugin())
                 .pluginContext(SjarKeyProvider.withKey(key))
                 .scanSjar(sjarPath)
                 .build();
 
-        // CryptoService is @ApplicationScoped in the encrypted lib
         var cryptoService = container.select(
-                Class.forName("fr.vidocq.example.securized.CryptoService", true,
-                        Thread.currentThread().getContextClassLoader()));
+                loadClass("fr.vidocq.example.securized.CryptoService"));
         assertNotNull(cryptoService);
     }
 
@@ -70,11 +73,9 @@ class SecurizedLibIntegrationTest {
                 .scanSjar(sjarPath)
                 .build();
 
-        var cryptoClass = Class.forName("fr.vidocq.example.securized.CryptoService", true,
-                Thread.currentThread().getContextClassLoader());
+        var cryptoClass = loadClass("fr.vidocq.example.securized.CryptoService");
         var service = container.select(cryptoClass);
 
-        // Use reflection to call encode/decode since we load from SJAR classloader
         var encodeMethod = cryptoClass.getMethod("encode", String.class);
         var decodeMethod = cryptoClass.getMethod("decode", String.class);
 
@@ -94,8 +95,7 @@ class SecurizedLibIntegrationTest {
                 .scanSjar(sjarPath)
                 .build();
 
-        var validatorClass = Class.forName("fr.vidocq.example.securized.LicenseValidator", true,
-                Thread.currentThread().getContextClassLoader());
+        var validatorClass = loadClass("fr.vidocq.example.securized.LicenseValidator");
         var validator = container.select(validatorClass);
 
         var isValidMethod = validatorClass.getMethod("isValid", String.class);
@@ -109,50 +109,12 @@ class SecurizedLibIntegrationTest {
         assertTrue(trialKey.startsWith("VAUBAN-TRIAL-"));
     }
 
-    private Path findSecurizedJar() throws Exception {
-        // The securized lib JAR is on the test classpath as a Maven dependency
-        var resource = getClass().getClassLoader().getResource(
-                "fr/vidocq/example/securized/CryptoService.class");
-        if (resource == null) {
-            throw new IllegalStateException(
-                    "example-lib-securized not found on classpath. Run 'mvn install' first.");
+    private static Class<?> loadClass(String name) {
+        try {
+            return Class.forName(name, true, Thread.currentThread().getContextClassLoader());
+        } catch (ClassNotFoundException e) {
+            fail("Class not found (should be loaded from SJAR): " + name);
+            return null; // unreachable
         }
-
-        var url = resource.toString();
-        if (url.startsWith("jar:file:")) {
-            // Extract JAR path from "jar:file:/path/to/jar!/class/path"
-            var jarUrl = url.substring("jar:file:".length(), url.indexOf('!'));
-            return Path.of(jarUrl);
-        } else if (url.startsWith("file:")) {
-            // Classes directory — create a JAR from it
-            var classesDir = Path.of(URI.create(url.substring(0,
-                    url.indexOf("fr/vidocq/example/securized/"))));
-            return createJarFromClasses(classesDir);
-        }
-        throw new IllegalStateException("Cannot locate securized JAR from: " + url);
-    }
-
-    private Path createJarFromClasses(Path classesDir) throws Exception {
-        var jarPath = tempDir.resolve("securized-classes.jar");
-        var manifest = new java.util.jar.Manifest();
-        manifest.getMainAttributes().putValue("Manifest-Version", "1.0");
-
-        try (var jos = new java.util.jar.JarOutputStream(Files.newOutputStream(jarPath), manifest)) {
-            try (var walk = Files.walk(classesDir)) {
-                walk.filter(p -> p.toString().endsWith(".class"))
-                        .forEach(p -> {
-                            try {
-                                var entryName = classesDir.relativize(p).toString()
-                                        .replace(java.io.File.separatorChar, '/');
-                                jos.putNextEntry(new java.util.jar.JarEntry(entryName));
-                                jos.write(Files.readAllBytes(p));
-                                jos.closeEntry();
-                            } catch (Exception e) {
-                                throw new RuntimeException(e);
-                            }
-                        });
-            }
-        }
-        return jarPath;
     }
 }

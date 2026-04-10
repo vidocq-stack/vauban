@@ -23,6 +23,10 @@
             <groupId>fr.vidocq.vauban</groupId>
             <artifactId>vauban-core</artifactId>
         </dependency>
+        <dependency>
+            <groupId>fr.vidocq.vauban</groupId>
+            <artifactId>vauban-sjar</artifactId>
+        </dependency>
 
         <!-- Maven Plugin API (provided by Maven at runtime) -->
         <dependency>

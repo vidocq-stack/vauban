@@ -48,5 +48,68 @@
                 </requirement>
             </requirements>
         </mojo>
+        <mojo>
+            <goal>encrypt</goal>
+            <description>Encrypt the project JAR into an SJAR (Secure JAR) with AES-256-GCM</description>
+            <implementation>fr.vidocq.vauban.maven.generate.EncryptMojo</implementation>
+            <language>java</language>
+            <instantiationStrategy>per-lookup</instantiationStrategy>
+            <phase>package</phase>
+            <threadSafe>true</threadSafe>
+            <parameters>
+                <parameter>
+                    <name>project</name>
+                    <type>org.apache.maven.project.MavenProject</type>
+                    <required>true</required>
+                    <editable>false</editable>
+                    <description>The Maven project</description>
+                </parameter>
+                <parameter>
+                    <name>keyAlias</name>
+                    <type>java.lang.String</type>
+                    <required>false</required>
+                    <editable>true</editable>
+                    <description>Key alias stored in SJAR metadata</description>
+                </parameter>
+                <parameter>
+                    <name>sjarKey</name>
+                    <type>java.lang.String</type>
+                    <required>false</required>
+                    <editable>true</editable>
+                    <description>Hex-encoded AES-256 key (64 chars)</description>
+                </parameter>
+                <parameter>
+                    <name>skip</name>
+                    <type>boolean</type>
+                    <required>false</required>
+                    <editable>true</editable>
+                    <description>Skip SJAR encryption</description>
+                </parameter>
+                <parameter>
+                    <name>buildDirectory</name>
+                    <type>java.io.File</type>
+                    <required>false</required>
+                    <editable>false</editable>
+                    <description>Build directory</description>
+                </parameter>
+            </parameters>
+            <configuration>
+                <project implementation="org.apache.maven.project.MavenProject"
+                         default-value="${project}"/>
+                <keyAlias implementation="java.lang.String"
+                          default-value="default">${vauban.sjar.keyAlias}</keyAlias>
+                <sjarKey implementation="java.lang.String">${vauban.sjar.key}</sjarKey>
+                <skip implementation="boolean"
+                      default-value="false">${vauban.sjar.skip}</skip>
+                <buildDirectory implementation="java.io.File"
+                                default-value="${project.build.directory}"/>
+            </configuration>
+            <requirements>
+                <requirement>
+                    <role>org.apache.maven.project.MavenProject</role>
+                    <field-name>project</field-name>
+                </requirement>
+            </requirements>
+        </mojo>
     </mojos>
 </plugin>
