@@ -13,6 +13,11 @@
     <name>Vauban :: Examples :: Application</name>
     <description>Multi-module CDI application with Vauban — uses beans from example-lib</description>
 
+    <properties>
+        <!-- Same demo key as example-lib-securized -->
+        <vauban.sjar.key>a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2</vauban.sjar.key>
+    </properties>
+
     <dependencies>
         <!-- CDI library dependency (standard JAR with CDI beans) -->
         <dependency>
@@ -21,10 +26,23 @@
             <version>${project.version}</version>
         </dependency>
 
+        <!-- Securized CDI library (encrypted beans) -->
+        <dependency>
+            <groupId>fr.vidocq.vauban</groupId>
+            <artifactId>example-lib-securized</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+
         <!-- Vauban CDI container runtime -->
         <dependency>
             <groupId>fr.vidocq.vauban</groupId>
             <artifactId>vauban-core</artifactId>
+        </dependency>
+
+        <!-- SJAR support for encrypted beans -->
+        <dependency>
+            <groupId>fr.vidocq.vauban</groupId>
+            <artifactId>vauban-sjar</artifactId>
         </dependency>
     </dependencies>
 

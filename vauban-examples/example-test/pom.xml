@@ -33,6 +33,13 @@
             <version>${project.version}</version>
         </dependency>
 
+        <!-- Application module (WelcomeService using both libs) -->
+        <dependency>
+            <groupId>fr.vidocq.vauban</groupId>
+            <artifactId>example-app</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+
         <!-- Vauban CDI container -->
         <dependency>
             <groupId>fr.vidocq.vauban</groupId>

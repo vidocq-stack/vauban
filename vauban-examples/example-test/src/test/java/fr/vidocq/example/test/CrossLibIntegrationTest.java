@@ -1,7 +1,10 @@
 package fr.vidocq.example.test;
 
+import fr.vidocq.example.app.WelcomeService;
 import fr.vidocq.example.lib.GreetingService;
 import fr.vidocq.example.lib.TimeService;
+import fr.vidocq.example.securized.CryptoService;
+import fr.vidocq.example.securized.LicenseValidator;
 import fr.vidocq.vauban.core.container.VaubanContainer;
 import fr.vidocq.vauban.sjar.SjarKeyProvider;
 import fr.vidocq.vauban.sjar.SjarPlugin;
@@ -19,7 +22,8 @@ import static org.junit.jupiter.api.Assertions.*;
 
 /**
  * Tests CDI container with BOTH plain and encrypted beans loaded simultaneously.
- * Demonstrates that Vauban can compose beans from regular JARs and SJARs in the same container.
+ * WelcomeService from example-app injects beans from both example-lib (plain)
+ * and example-lib-securized (encrypted SJAR).
  */
 class CrossLibIntegrationTest {
 
@@ -47,35 +51,65 @@ class CrossLibIntegrationTest {
     }
 
     @Test
-    void mixPlainAndEncryptedBeans() throws Exception {
-        container = VaubanContainer.builder()
+    void plainBeansWork() {
+        container = buildMixedContainer();
+
+        var greeting = container.select(GreetingService.class);
+        assertEquals("Bonjour, Vauban !", greeting.greet("Vauban"));
+
+        var time = container.select(TimeService.class);
+        assertNotNull(time.now());
+    }
+
+    @Test
+    void encryptedBeansWork() {
+        container = buildMixedContainer();
+
+        var crypto = container.select(CryptoService.class);
+        var encoded = crypto.encode("test");
+        assertEquals("test", crypto.decode(encoded));
+
+        var validator = container.select(LicenseValidator.class);
+        assertTrue(validator.isValid("VAUBAN-12345678"));
+        assertFalse(validator.isValid("INVALID"));
+    }
+
+    @Test
+    void welcomeServiceUsesPlainBeans() {
+        container = buildMixedContainer();
+
+        var welcome = container.select(WelcomeService.class);
+        var result = welcome.welcome("CDI");
+        assertTrue(result.startsWith("Bonjour, CDI !"));
+        assertTrue(result.contains("Il est"));
+    }
+
+    @Test
+    void welcomeServiceUsesEncryptedBeans() {
+        container = buildMixedContainer();
+
+        var welcome = container.select(WelcomeService.class);
+        var crypto = container.select(CryptoService.class);
+
+        var encoded = welcome.welcomeEncoded("CDI");
+        assertNotNull(encoded);
+
+        // Decode and verify content
+        var decoded = crypto.decode(encoded);
+        assertTrue(decoded.startsWith("Bonjour, CDI !"));
+    }
+
+    private VaubanContainer buildMixedContainer() {
+        return VaubanContainer.builder()
                 // Plain beans
                 .addBeanClass(GreetingService.class)
                 .addBeanClass(TimeService.class)
-                // Encrypted beans
+                // App bean (uses both libs)
+                .addBeanClass(WelcomeService.class)
+                // Encrypted beans from SJAR
                 .addByteSourcePlugin(new SjarPlugin())
                 .pluginContext(SjarKeyProvider.withKey(key))
                 .scanSjar(sjarPath)
                 .build();
-
-        // Plain beans work
-        var greeting = container.select(GreetingService.class);
-        assertNotNull(greeting);
-        assertEquals("Bonjour, Vauban !", greeting.greet("Vauban"));
-
-        var time = container.select(TimeService.class);
-        assertNotNull(time);
-        assertNotNull(time.now());
-
-        // Encrypted beans work
-        var cryptoClass = Class.forName("fr.vidocq.example.securized.CryptoService", true,
-                Thread.currentThread().getContextClassLoader());
-        var crypto = container.select(cryptoClass);
-        assertNotNull(crypto);
-
-        var encodeMethod = cryptoClass.getMethod("encode", String.class);
-        var decodeMethod = cryptoClass.getMethod("decode", String.class);
-        var encoded = (String) encodeMethod.invoke(crypto, "mixed");
-        assertEquals("mixed", decodeMethod.invoke(crypto, encoded));
     }
 }
