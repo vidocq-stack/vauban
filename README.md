@@ -245,14 +245,17 @@ graph TB
 
 ```
 vauban/
-├── vauban-indexer        Indexeur de bytecode (remplace Jandex), zero dependance
-├── vauban-api            API publique Vauban
-├── vauban-core           Runtime du conteneur CDI 4.1 Lite
-├── vauban-processor      Processeur d'annotations (compile-time)
-├── vauban-maven-plugin   Plugin Maven : scan deps, pre-generation proxies/intercepteurs
-├── vauban-junit          Extension JUnit 6 pour tests CDI
-├── vauban-tck-runner     Runner CDI TCK 4.1 (774/774)
-└── vauban-test-suite     Suite de tests d'integration
+├── vauban-indexer            Indexeur de bytecode (remplace Jandex), zero dependance
+├── vauban-api                API publique Vauban
+├── vauban-core               Runtime du conteneur CDI 4.1 Lite
+├── vauban-processor          Processeur d'annotations (compile-time)
+├── vauban-maven-plugin       Plugin Maven : scan, generation, chiffrement, distribution
+├── vauban-classloader-spi    SPI pour plugins de chargement de classes (extensible)
+├── vauban-sjar               Chiffrement in-JAR AES-256-GCM (implementation du SPI)
+├── vauban-junit              Extension JUnit 6 pour tests CDI
+├── vauban-tck-runner         Runner CDI TCK 4.1 (774/774)
+├── vauban-test-suite         Suite de tests d'integration
+└── vauban-examples           Exemples multi-modules (plain + chiffre + distribution)
 ```
 
 ---
@@ -415,32 +418,74 @@ class MonServiceTest {
 
 **Module JPMS** : `fr.vidocq.vauban.junit` — depend de `org.junit.jupiter.api`.
 
+### vauban-classloader-spi
+
+**Role** : SPI extensible pour le chargement de classes depuis des sources custom (JARs chiffres, archives distantes, etc.).
+
+| Interface | Role |
+|-----------|------|
+| `ByteSourcePlugin` | Declare le format d'archive gere (protocol, handles, open) |
+| `ArchiveReader` | Fournit les bytes (dechiffres) des classes d'une archive |
+| `PluginContext` | Fournit les cles et la configuration aux plugins |
+
+**Plugins multiples** : le systeme supporte plusieurs plugins simultanes, decouverts via `ServiceLoader` et tries par priorite. Le premier plugin dont `handles()` retourne `true` gagne.
+
+**Module JPMS** : `fr.vidocq.vauban.classloader.spi`
+
+### vauban-sjar
+
+**Role** : Implementation du SPI pour le chiffrement in-JAR AES-256-GCM.
+
+| Classe | Role |
+|--------|------|
+| `SjarEncryptor` | Chiffre les classes internes d'un JAR modulaire in-place |
+| `SjarPlugin` | Implementation `ByteSourcePlugin` — detecte `META-INF/vauban.encrypted` |
+| `SjarArchiveReader` | Lit et dechiffre les `.class.enc` avec cache memoire |
+| `SjarKeyProvider` | Resolution de cles (env, keystore, programmatique) |
+| `SjarClassLoader` | ClassLoader custom pour les classes chiffrees |
+
+Le chiffrement est guide par `module-info.class` :
+- Packages `exports`/`opens` → en clair (compilable)
+- Tous les autres packages → chiffres (`.class.enc`)
+- `META-INF/vauban.encrypted` → metadonnees JSON
+
+Documentation complete : [vauban-sjar/README.md](vauban-sjar/README.md)
+
+**Module JPMS** : `fr.vidocq.vauban.sjar` — fournit `ByteSourcePlugin` via `ServiceLoader`.
+
 ### vauban-maven-plugin
 
-**Role** : Build-time CDI bean discovery, pre-generation de proxies et intercepteurs, analyse JPMS.
+**Role** : Build-time CDI bean discovery, pre-generation de proxies, chiffrement de classes, et packaging de distribution.
 
 | Classe | Role |
 |--------|------|
 | `VaubanGenerator` | Core : scan JARs → index → discover → genere proxies/intercepteurs → ecrit `vauban-beans.list` |
-| `GenerateMojo` | Goal Maven `vauban:generate`, phase `process-classes` |
+| `GenerateMojo` | Goal `vauban:generate`, phase `process-classes` |
+| `EncryptMojo` | Goal `vauban:encrypt`, phase `package` — chiffre les classes internes |
+| `DistMojo` | Goal `vauban:dist`, phase `package` — ZIP de distribution avec scripts |
 | `ModuleAnalyzer` | Analyse JPMS (modules explicites/automatiques, split packages) |
 
-**Goal `generate`** :
-1. Scanne les JARs de dependances (`JarScanner`) + classes du projet
-2. Lance `BeanDiscovery` sur l'index fusionne
-3. Pre-genere les client proxies (`_ClientProxy`) pour les beans normal-scoped
-4. Pre-genere les sous-classes interceptees (`$$Intercepted`) pour les beans avec bindings
-5. Ecrit `META-INF/vauban-beans.list` (un nom de classe par ligne)
-
-Les .class generes ont un nommage deterministe — le runtime les trouve via `loadClass()` sans regeneration.
+| Goal | Phase | Description |
+|------|-------|-------------|
+| `vauban:generate` | process-classes | Scan deps + projet, decouverte CDI, pre-generation proxies, ecriture `vauban-beans.list` |
+| `vauban:encrypt` | package | Chiffrement AES-256-GCM des classes internes (base sur `module-info`) |
+| `vauban:dist` | package | ZIP de distribution avec `bin/run.sh`, `bin/run.cmd` et `lib/*.jar` |
 
 ```xml
 <plugin>
   <groupId>fr.vidocq.vauban</groupId>
   <artifactId>vauban-maven-plugin</artifactId>
   <executions>
+    <execution><goals><goal>generate</goal></goals></execution>
     <execution>
-      <goals><goal>generate</goal></goals>
+      <id>encrypt</id>
+      <goals><goal>encrypt</goal></goals>
+      <configuration><keyAlias>my-key</keyAlias></configuration>
+    </execution>
+    <execution>
+      <id>dist</id>
+      <goals><goal>dist</goal></goals>
+      <configuration><mainClass>com.example.Main</mainClass></configuration>
     </execution>
   </executions>
 </plugin>
@@ -604,10 +649,13 @@ CDI Full TCK:  not targeted (future vauban-full module)
 | `vauban-api` | Public API facade |
 | `vauban-core` | CDI 4.1 Lite container runtime (`scanLocal`, `scanPackage`, `scanClasspath`) |
 | `vauban-processor` | Annotation processor (compile-time scan + code generation) |
-| `vauban-maven-plugin` | Build-time: dependency scan, proxy/interceptor pre-generation (`vauban:generate`) |
+| `vauban-classloader-spi` | Plugin SPI for custom class loading (encrypted JARs, remote sources, etc.) |
+| `vauban-sjar` | In-JAR AES-256-GCM encryption based on `module-info.class` directives |
+| `vauban-maven-plugin` | Goals: `generate` (CDI scan), `encrypt` (in-JAR encryption), `dist` (distribution ZIP) |
 | `vauban-junit` | JUnit 6 integration for CDI tests (`@VaubanTest`, `@AddBeans`) |
 | `vauban-tck-runner` | CDI TCK 4.1 runner (774/774) |
 | `vauban-test-suite` | Integration test suite |
+| `vauban-examples` | Multi-module examples (plain lib + encrypted lib + app + E2E tests) |
 
 ### Build Pipeline
 
