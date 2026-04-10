@@ -49,9 +49,15 @@
                 <version>${project.version}</version>
                 <executions>
                     <execution>
-                        <goals>
-                            <goal>generate</goal>
-                        </goals>
+                        <id>generate</id>
+                        <goals><goal>generate</goal></goals>
+                    </execution>
+                    <execution>
+                        <id>dist</id>
+                        <goals><goal>dist</goal></goals>
+                        <configuration>
+                            <mainClass>fr.vidocq.example.app.Main</mainClass>
+                        </configuration>
                     </execution>
                 </executions>
             </plugin>

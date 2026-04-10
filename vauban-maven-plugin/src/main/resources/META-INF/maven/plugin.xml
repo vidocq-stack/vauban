@@ -102,5 +102,86 @@
                 </requirement>
             </requirements>
         </mojo>
+        <mojo>
+            <goal>dist</goal>
+            <description>Package the application as a distribution ZIP with launch scripts and all dependency JARs</description>
+            <implementation>fr.vidocq.vauban.maven.generate.DistMojo</implementation>
+            <language>java</language>
+            <instantiationStrategy>per-lookup</instantiationStrategy>
+            <phase>package</phase>
+            <requiresDependencyResolution>compile+runtime</requiresDependencyResolution>
+            <threadSafe>true</threadSafe>
+            <parameters>
+                <parameter>
+                    <name>project</name>
+                    <type>org.apache.maven.project.MavenProject</type>
+                    <required>true</required>
+                    <editable>false</editable>
+                    <description>The Maven project</description>
+                </parameter>
+                <parameter>
+                    <name>mainClass</name>
+                    <type>java.lang.String</type>
+                    <required>true</required>
+                    <editable>true</editable>
+                    <description>Fully qualified main class name</description>
+                </parameter>
+                <parameter>
+                    <name>distName</name>
+                    <type>java.lang.String</type>
+                    <required>false</required>
+                    <editable>true</editable>
+                    <description>Root directory name inside the ZIP</description>
+                </parameter>
+                <parameter>
+                    <name>scriptName</name>
+                    <type>java.lang.String</type>
+                    <required>false</required>
+                    <editable>true</editable>
+                    <description>Name of the launch scripts (default: run)</description>
+                </parameter>
+                <parameter>
+                    <name>jvmArgs</name>
+                    <type>java.lang.String</type>
+                    <required>false</required>
+                    <editable>true</editable>
+                    <description>Additional JVM arguments</description>
+                </parameter>
+                <parameter>
+                    <name>skip</name>
+                    <type>boolean</type>
+                    <required>false</required>
+                    <editable>true</editable>
+                    <description>Skip distribution packaging</description>
+                </parameter>
+                <parameter>
+                    <name>buildDirectory</name>
+                    <type>java.io.File</type>
+                    <required>false</required>
+                    <editable>false</editable>
+                    <description>Build directory</description>
+                </parameter>
+            </parameters>
+            <configuration>
+                <project implementation="org.apache.maven.project.MavenProject"
+                         default-value="${project}"/>
+                <mainClass implementation="java.lang.String">${vauban.dist.mainClass}</mainClass>
+                <distName implementation="java.lang.String">${vauban.dist.name}</distName>
+                <scriptName implementation="java.lang.String"
+                            default-value="run">${vauban.dist.scriptName}</scriptName>
+                <jvmArgs implementation="java.lang.String"
+                         default-value="">${vauban.dist.jvmArgs}</jvmArgs>
+                <skip implementation="boolean"
+                      default-value="false">${vauban.dist.skip}</skip>
+                <buildDirectory implementation="java.io.File"
+                                default-value="${project.build.directory}"/>
+            </configuration>
+            <requirements>
+                <requirement>
+                    <role>org.apache.maven.project.MavenProject</role>
+                    <field-name>project</field-name>
+                </requirement>
+            </requirements>
+        </mojo>
     </mojos>
 </plugin>

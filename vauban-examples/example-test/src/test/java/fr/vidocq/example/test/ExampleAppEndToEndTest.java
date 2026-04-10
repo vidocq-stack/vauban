@@ -123,6 +123,64 @@ class ExampleAppEndToEndTest {
         }
     }
 
+    @Test
+    void distributionZipLaunches() throws Exception {
+        var zipPath = System.getProperty("dist.zip");
+        assertNotNull(zipPath, "dist.zip system property not set");
+        assertTrue(Files.exists(Path.of(zipPath)), "Distribution ZIP not found: " + zipPath);
+
+        // Unzip to temp directory
+        var tempDir = Files.createTempDirectory("vauban-dist-test");
+        try {
+            unzip(Path.of(zipPath), tempDir);
+
+            // Find the run.sh script
+            var runScript = Files.walk(tempDir)
+                    .filter(p -> p.getFileName().toString().equals("run.sh"))
+                    .findFirst()
+                    .orElseThrow(() -> new AssertionError("run.sh not found in distribution"));
+
+            var javaExe = System.getProperty("java.executable",
+                    ProcessHandle.current().info().command().orElse("java"));
+
+            // Launch via run.sh with JAVA_HOME pointing to our JDK
+            var pb = new ProcessBuilder("bash", runScript.toString(), "DistTest");
+            pb.environment().put("VAUBAN_SJAR_KEY", DEMO_KEY);
+            pb.environment().put("PATH", Path.of(javaExe).getParent() + ":" + System.getenv("PATH"));
+            var process = pb.start();
+
+            var stdout = new String(process.getInputStream().readAllBytes());
+            var stderr = new String(process.getErrorStream().readAllBytes());
+            process.waitFor(30, TimeUnit.SECONDS);
+
+            assertEquals(0, process.exitValue(),
+                    "Distribution run.sh should succeed. stderr:\n" + stderr);
+            assertTrue(stdout.contains("Bonjour, DistTest"),
+                    "Should contain greeting. Got:\n" + stdout);
+            assertTrue(stdout.contains("Encoded:"),
+                    "Should contain encoded line. Got:\n" + stdout);
+        } finally {
+            // Cleanup
+            Files.walk(tempDir).sorted(java.util.Comparator.reverseOrder())
+                    .forEach(p -> { try { Files.delete(p); } catch (IOException ignored) {} });
+        }
+    }
+
+    private static void unzip(Path zipFile, Path destDir) throws IOException {
+        try (var zis = new java.util.zip.ZipInputStream(Files.newInputStream(zipFile))) {
+            java.util.zip.ZipEntry entry;
+            while ((entry = zis.getNextEntry()) != null) {
+                var path = destDir.resolve(entry.getName());
+                if (entry.isDirectory()) {
+                    Files.createDirectories(path);
+                } else {
+                    Files.createDirectories(path.getParent());
+                    Files.copy(zis, path);
+                }
+            }
+        }
+    }
+
     private ProcessResult runApp(String name) throws IOException, InterruptedException {
         var javaExe = System.getProperty("java.executable",
                 ProcessHandle.current().info().command().orElse("java"));
