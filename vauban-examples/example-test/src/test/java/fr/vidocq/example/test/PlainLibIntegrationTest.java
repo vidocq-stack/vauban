@@ -30,27 +30,15 @@ class PlainLibIntegrationTest {
     }
 
     @Test
-    void greetingServiceIsResolvable() {
+    void greetingServiceWorks() {
         var service = container.select(GreetingService.class);
-        assertNotNull(service);
         assertEquals("Bonjour, Vauban !", service.greet("Vauban"));
     }
 
     @Test
     void timeServiceReturnsSomething() {
         var service = container.select(TimeService.class);
-        assertNotNull(service);
-        var time = service.now();
-        assertNotNull(time);
-        assertTrue(time.matches("\\d{2}:\\d{2}:\\d{2}"));
-    }
-
-    @Test
-    void multipleTimeServiceInstancesAreDifferent() {
-        var s1 = container.select(TimeService.class);
-        var s2 = container.select(TimeService.class);
-        // @Dependent — but selected from container they may be same proxy
-        assertNotNull(s1);
-        assertNotNull(s2);
+        assertNotNull(service.now());
+        assertTrue(service.now().matches("\\d{2}:\\d{2}:\\d{2}"));
     }
 }

@@ -6,22 +6,31 @@ import fr.vidocq.vauban.classloader.spi.PluginContext;
 
 import java.io.IOException;
 import java.nio.file.Path;
+import java.util.jar.JarFile;
 
 /**
- * Plugin for Secure JAR (.sjar) files with AES-256-GCM encrypted class entries.
+ * Plugin that handles JARs with encrypted internal classes.
+ * Detects the {@code META-INF/vauban.encrypted} marker file to determine
+ * if a JAR contains encrypted classes.
  */
 public final class SjarPlugin implements ByteSourcePlugin {
 
-    static final String SJAR_EXTENSION = ".sjar";
-
     @Override
     public String protocol() {
-        return "sjar";
+        return "vauban-encrypted";
     }
 
     @Override
     public boolean handles(Path archivePath) {
-        return archivePath.getFileName().toString().endsWith(SJAR_EXTENSION);
+        var fileName = archivePath.getFileName().toString();
+        if (!fileName.endsWith(".jar") && !fileName.endsWith(".sjar")) return false;
+
+        // Check for the encryption marker inside the JAR
+        try (var jar = new JarFile(archivePath.toFile())) {
+            return jar.getEntry(SjarMetadata.METADATA_ENTRY) != null;
+        } catch (IOException e) {
+            return false;
+        }
     }
 
     @Override

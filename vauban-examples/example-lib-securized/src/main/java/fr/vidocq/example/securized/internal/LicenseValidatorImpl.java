@@ -1,16 +1,18 @@
-package fr.vidocq.example.securized;
+package fr.vidocq.example.securized.internal;
 
+import fr.vidocq.example.securized.api.LicenseValidator;
 import jakarta.enterprise.context.Dependent;
 
 /**
- * A @Dependent-scoped bean simulating license validation logic.
- * The encryption protects this business logic from reverse engineering.
+ * Internal implementation of {@link LicenseValidator}.
+ * Contains the validation logic — encrypted to protect business rules.
  */
 @Dependent
-public class LicenseValidator {
+public class LicenseValidatorImpl implements LicenseValidator {
 
     private static final String VALID_PREFIX = "VAUBAN-";
 
+    @Override
     public boolean isValid(String licenseKey) {
         if (licenseKey == null || licenseKey.isBlank()) {
             return false;
@@ -18,6 +20,7 @@ public class LicenseValidator {
         return licenseKey.startsWith(VALID_PREFIX) && licenseKey.length() >= 12;
     }
 
+    @Override
     public String generateTrial() {
         return VALID_PREFIX + "TRIAL-" + System.currentTimeMillis() % 10000;
     }

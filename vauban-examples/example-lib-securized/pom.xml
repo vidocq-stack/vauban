@@ -11,10 +11,10 @@
 
     <artifactId>example-lib-securized</artifactId>
     <name>Vauban :: Examples :: Securized Library</name>
-    <description>CDI library with encrypted beans — distributed as .sjar (Secure JAR)</description>
+    <description>Modular CDI library with encrypted internal classes — single standard JAR</description>
 
     <properties>
-        <!-- Demo key for the example — in production, use VAUBAN_SJAR_KEY env or a keystore -->
+        <!-- Demo key — in production, use VAUBAN_SJAR_KEY env or a keystore -->
         <vauban.sjar.key>a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2</vauban.sjar.key>
     </properties>
 
@@ -28,7 +28,7 @@
 
     <build>
         <plugins>
-            <!-- Encrypt the JAR into an SJAR after packaging -->
+            <!-- Encrypt internal classes in the JAR after packaging -->
             <plugin>
                 <groupId>fr.vidocq.vauban</groupId>
                 <artifactId>vauban-maven-plugin</artifactId>
@@ -44,13 +44,6 @@
                     </execution>
                 </executions>
             </plugin>
-
-            <!--
-                Note: the plain JAR is still installed for compile-time type resolution
-                (reactor and downstream modules need it to compile against).
-                In production, split into an API module (interfaces) + SJAR (impl).
-                The SJAR (classifier=sjar) is the runtime artifact with encrypted classes.
-            -->
         </plugins>
     </build>
 </project>

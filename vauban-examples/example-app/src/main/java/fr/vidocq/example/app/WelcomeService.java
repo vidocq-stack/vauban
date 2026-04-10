@@ -2,7 +2,7 @@ package fr.vidocq.example.app;
 
 import fr.vidocq.example.lib.GreetingService;
 import fr.vidocq.example.lib.TimeService;
-import fr.vidocq.example.securized.CryptoService;
+import fr.vidocq.example.securized.api.CryptoService;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 
@@ -10,9 +10,10 @@ import jakarta.inject.Inject;
  * Application bean that injects beans from both libraries:
  * <ul>
  *   <li>{@link GreetingService} and {@link TimeService} from example-lib (plain JAR)</li>
- *   <li>{@link CryptoService} from example-lib-securized (encrypted SJAR)</li>
+ *   <li>{@link CryptoService} from example-lib-securized (encrypted internals)</li>
  * </ul>
- * Demonstrates cross-JAR CDI injection with mixed plain and encrypted sources.
+ * Compiles against the exported API interface; at runtime Vauban decrypts
+ * and injects the internal implementation class.
  */
 @ApplicationScoped
 public class WelcomeService {
@@ -31,7 +32,6 @@ public class WelcomeService {
     }
 
     public String welcomeEncoded(String name) {
-        var message = welcome(name);
-        return cryptoService.encode(message);
+        return cryptoService.encode(welcome(name));
     }
 }

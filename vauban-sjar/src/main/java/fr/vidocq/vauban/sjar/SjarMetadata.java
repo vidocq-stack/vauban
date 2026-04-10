@@ -6,15 +6,18 @@ import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.Base64;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.Map;
+import java.util.Set;
 
 /**
- * Represents the SJAR-METADATA.json file inside a .sjar archive.
- * Minimal JSON serialization without external dependencies.
+ * Represents the {@code META-INF/vauban.encrypted} marker file inside a JAR.
+ * Contains encryption metadata: which entries are encrypted, which packages are clear,
+ * and the module name.
  */
 public final class SjarMetadata {
 
-    static final String METADATA_ENTRY = "META-INF/SJAR-METADATA.json";
+    public static final String METADATA_ENTRY = "META-INF/vauban.encrypted";
     static final int VERSION = 1;
     static final String ALGORITHM = "AES/GCM/NoPadding";
     static final int KEY_LENGTH = 256;
@@ -23,72 +26,94 @@ public final class SjarMetadata {
 
     private final String keyAlias;
     private final Map<String, EntryMetadata> entries;
+    private final Set<String> clearPackages;
+    private final String moduleName;
 
-    public SjarMetadata(String keyAlias, Map<String, EntryMetadata> entries) {
+    public SjarMetadata(String keyAlias, Map<String, EntryMetadata> entries,
+                        Set<String> clearPackages, String moduleName) {
         this.keyAlias = keyAlias;
         this.entries = Map.copyOf(entries);
+        this.clearPackages = Set.copyOf(clearPackages);
+        this.moduleName = moduleName;
     }
 
-    public String keyAlias() {
-        return keyAlias;
-    }
+    public String keyAlias() { return keyAlias; }
+    public Map<String, EntryMetadata> entries() { return entries; }
+    public Set<String> clearPackages() { return clearPackages; }
+    public String moduleName() { return moduleName; }
 
-    public Map<String, EntryMetadata> entries() {
-        return entries;
-    }
-
-    public record EntryMetadata(byte[] iv, int originalSize) {
+    public record EntryMetadata(byte[] iv, int originalSize, String originalEntry) {
         public String ivBase64() {
             return Base64.getEncoder().encodeToString(iv);
         }
     }
 
-    /**
-     * Serialize to JSON (minimal, no dependencies).
-     */
     public void writeTo(OutputStream out) throws IOException {
         var sb = new StringBuilder();
         sb.append("{\n");
         sb.append("  \"version\": ").append(VERSION).append(",\n");
         sb.append("  \"algorithm\": \"").append(ALGORITHM).append("\",\n");
-        sb.append("  \"keyLength\": ").append(KEY_LENGTH).append(",\n");
         sb.append("  \"keyAlias\": \"").append(escapeJson(keyAlias)).append("\",\n");
-        sb.append("  \"ivLength\": ").append(IV_LENGTH).append(",\n");
-        sb.append("  \"tagLength\": ").append(TAG_LENGTH).append(",\n");
-        sb.append("  \"entries\": {\n");
+        sb.append("  \"moduleName\": \"").append(escapeJson(moduleName)).append("\",\n");
 
+        // Clear packages
+        sb.append("  \"clearPackages\": [");
+        var cpIt = clearPackages.iterator();
+        while (cpIt.hasNext()) {
+            sb.append("\"").append(escapeJson(cpIt.next())).append("\"");
+            if (cpIt.hasNext()) sb.append(", ");
+        }
+        sb.append("],\n");
+
+        // Encrypted entries
+        sb.append("  \"encryptedEntries\": {\n");
         var it = entries.entrySet().iterator();
         while (it.hasNext()) {
             var entry = it.next();
             var meta = entry.getValue();
             sb.append("    \"").append(escapeJson(entry.getKey())).append("\": {");
             sb.append(" \"iv\": \"").append(meta.ivBase64()).append("\",");
-            sb.append(" \"originalSize\": ").append(meta.originalSize());
+            sb.append(" \"originalSize\": ").append(meta.originalSize()).append(",");
+            sb.append(" \"originalEntry\": \"").append(escapeJson(meta.originalEntry())).append("\"");
             sb.append(" }");
             if (it.hasNext()) sb.append(",");
             sb.append("\n");
         }
-
         sb.append("  }\n");
         sb.append("}\n");
         out.write(sb.toString().getBytes(StandardCharsets.UTF_8));
     }
 
-    /**
-     * Parse from JSON (minimal parser, handles only our format).
-     */
     public static SjarMetadata readFrom(InputStream in) throws IOException {
         var json = new String(in.readAllBytes(), StandardCharsets.UTF_8);
         var keyAlias = extractStringValue(json, "keyAlias");
-        var entries = new LinkedHashMap<String, EntryMetadata>();
+        var moduleName = extractStringValue(json, "moduleName");
 
-        var entriesStart = json.indexOf("\"entries\"");
+        // Parse clearPackages array
+        var clearPackages = new LinkedHashSet<String>();
+        var cpStart = json.indexOf("\"clearPackages\"");
+        if (cpStart >= 0) {
+            var bracketStart = json.indexOf('[', cpStart);
+            var bracketEnd = json.indexOf(']', bracketStart);
+            var block = json.substring(bracketStart + 1, bracketEnd);
+            int pos = 0;
+            while (pos < block.length()) {
+                var qs = block.indexOf('"', pos);
+                if (qs < 0) break;
+                var qe = block.indexOf('"', qs + 1);
+                clearPackages.add(block.substring(qs + 1, qe));
+                pos = qe + 1;
+            }
+        }
+
+        // Parse encryptedEntries
+        var entries = new LinkedHashMap<String, EntryMetadata>();
+        var entriesStart = json.indexOf("\"encryptedEntries\"");
         if (entriesStart >= 0) {
-            var braceStart = json.indexOf('{', entriesStart + 9);
+            var braceStart = json.indexOf('{', entriesStart + 18);
             var braceEnd = findMatchingBrace(json, braceStart);
             var entriesBlock = json.substring(braceStart + 1, braceEnd);
 
-            // Parse each entry
             int pos = 0;
             while (pos < entriesBlock.length()) {
                 var nameStart = entriesBlock.indexOf('"', pos);
@@ -102,13 +127,14 @@ public final class SjarMetadata {
 
                 var iv = Base64.getDecoder().decode(extractStringValue(entryBlock, "iv"));
                 var originalSize = extractIntValue(entryBlock, "originalSize");
+                var originalEntry = extractStringValue(entryBlock, "originalEntry");
 
-                entries.put(entryName, new EntryMetadata(iv, originalSize));
+                entries.put(entryName, new EntryMetadata(iv, originalSize, originalEntry));
                 pos = entryBraceEnd + 1;
             }
         }
 
-        return new SjarMetadata(keyAlias, entries);
+        return new SjarMetadata(keyAlias, entries, clearPackages, moduleName);
     }
 
     private static String extractStringValue(String json, String key) {

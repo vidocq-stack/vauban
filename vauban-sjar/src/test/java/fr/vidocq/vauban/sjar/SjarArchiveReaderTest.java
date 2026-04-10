@@ -3,6 +3,7 @@ package fr.vidocq.vauban.sjar;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import java.lang.classfile.ClassFile;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.jar.JarEntry;
@@ -17,136 +18,118 @@ class SjarArchiveReaderTest {
     Path tempDir;
 
     @Test
-    void readsClassEntriesFromSjar() throws Exception {
+    void readsAllClassEntries() throws Exception {
         var key = SjarKeyProvider.generateKey();
-        var jarPath = createTestJarWithClasses();
-        var sjarPath = tempDir.resolve("test.sjar");
-
-        SjarEncryptor.encrypt(jarPath, sjarPath, key, "test-key");
+        var jarPath = createModularJar();
+        SjarEncryptor.encryptJar(jarPath, key, "test");
 
         var ctx = SjarKeyProvider.withKey(key);
-        try (var reader = new SjarArchiveReader(sjarPath, ctx)) {
+        try (var reader = new SjarArchiveReader(jarPath, ctx)) {
             var entries = reader.classEntries();
-            assertFalse(entries.isEmpty());
-            assertTrue(entries.stream().allMatch(e -> e.endsWith(".class")));
-            assertTrue(entries.stream().noneMatch(e -> e.contains(".enc")));
+            // Should have both clear and encrypted entries (as original names)
+            assertTrue(entries.contains("com/example/api/Service.class"));
+            assertTrue(entries.contains("com/example/internal/Impl.class"));
+            assertFalse(entries.stream().anyMatch(e -> e.contains(".enc")));
         }
     }
 
     @Test
-    void decryptsClassBytesCorrectly() throws Exception {
+    void decryptsEncryptedClass() throws Exception {
         var key = SjarKeyProvider.generateKey();
-        var classBytes = new byte[]{
-                (byte) 0xCA, (byte) 0xFE, (byte) 0xBA, (byte) 0xBE,
-                0x00, 0x00, 0x00, 0x41, 0x00, 0x02,
-                0x07, 0x00, 0x01,
-                0x00, 0x21, 0x00, 0x01, 0x00, 0x01,
-                0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00
-        };
-        var jarPath = createJarWithBytes("com/example/Foo.class", classBytes);
-        var sjarPath = tempDir.resolve("test.sjar");
+        var jarPath = createModularJar();
+        var originalBytes = readEntry(jarPath, "com/example/internal/Impl.class");
 
-        SjarEncryptor.encrypt(jarPath, sjarPath, key, "test-key");
+        SjarEncryptor.encryptJar(jarPath, key, "test");
 
         var ctx = SjarKeyProvider.withKey(key);
-        try (var reader = new SjarArchiveReader(sjarPath, ctx)) {
-            var decrypted = reader.readClass("com/example/Foo.class");
-            assertArrayEquals(classBytes, decrypted);
+        try (var reader = new SjarArchiveReader(jarPath, ctx)) {
+            var decrypted = reader.readClass("com/example/internal/Impl.class");
+            assertArrayEquals(originalBytes, decrypted);
+        }
+    }
+
+    @Test
+    void readsClearClassDirectly() throws Exception {
+        var key = SjarKeyProvider.generateKey();
+        var jarPath = createModularJar();
+        var originalBytes = readEntry(jarPath, "com/example/api/Service.class");
+
+        SjarEncryptor.encryptJar(jarPath, key, "test");
+
+        var ctx = SjarKeyProvider.withKey(key);
+        try (var reader = new SjarArchiveReader(jarPath, ctx)) {
+            var bytes = reader.readClass("com/example/api/Service.class");
+            assertArrayEquals(originalBytes, bytes);
+        }
+    }
+
+    @Test
+    void readsModuleInfo() throws Exception {
+        var key = SjarKeyProvider.generateKey();
+        var jarPath = createModularJar();
+
+        SjarEncryptor.encryptJar(jarPath, key, "test");
+
+        var ctx = SjarKeyProvider.withKey(key);
+        try (var reader = new SjarArchiveReader(jarPath, ctx)) {
+            var moduleInfo = reader.moduleInfo();
+            assertTrue(moduleInfo.isPresent());
         }
     }
 
     @Test
     void cachesDecryptedBytes() throws Exception {
         var key = SjarKeyProvider.generateKey();
-        var jarPath = createTestJarWithClasses();
-        var sjarPath = tempDir.resolve("test.sjar");
-
-        SjarEncryptor.encrypt(jarPath, sjarPath, key, "test-key");
+        var jarPath = createModularJar();
+        SjarEncryptor.encryptJar(jarPath, key, "test");
 
         var ctx = SjarKeyProvider.withKey(key);
-        try (var reader = new SjarArchiveReader(sjarPath, ctx)) {
-            var entries = reader.classEntries();
-            var firstEntry = entries.getFirst();
-
-            // Read twice — should return same bytes (cached)
-            var bytes1 = reader.readClass(firstEntry);
-            var bytes2 = reader.readClass(firstEntry);
-            assertSame(bytes1, bytes2, "Cache should return the same array instance");
+        try (var reader = new SjarArchiveReader(jarPath, ctx)) {
+            var b1 = reader.readClass("com/example/internal/Impl.class");
+            var b2 = reader.readClass("com/example/internal/Impl.class");
+            assertSame(b1, b2);
         }
     }
 
-    @Test
-    void readsNonClassResources() throws Exception {
-        var key = SjarKeyProvider.generateKey();
-        var jarPath = createTestJarWithClasses();
-        var sjarPath = tempDir.resolve("test.sjar");
+    private Path createModularJar() throws Exception {
+        var jarPath = tempDir.resolve("modular.jar");
+        var manifest = new Manifest();
+        manifest.getMainAttributes().putValue("Manifest-Version", "1.0");
+        try (var jos = new JarOutputStream(Files.newOutputStream(jarPath), manifest)) {
+            jos.putNextEntry(new JarEntry("module-info.class"));
+            jos.write(ClassFile.of().buildModule(
+                    java.lang.classfile.attribute.ModuleAttribute.of(
+                            java.lang.constant.ModuleDesc.of("com.example"),
+                            mb -> {
+                                mb.requires(java.lang.constant.ModuleDesc.of("java.base"), 0, null);
+                                mb.exports(java.lang.constant.PackageDesc.ofInternalName("com/example/api"), 0);
+                            }),
+                    mb -> {}));
+            jos.closeEntry();
 
-        SjarEncryptor.encrypt(jarPath, sjarPath, key, "test-key");
+            jos.putNextEntry(new JarEntry("com/example/api/Service.class"));
+            jos.write(fakeClassBytes());
+            jos.closeEntry();
 
-        var ctx = SjarKeyProvider.withKey(key);
-        try (var reader = new SjarArchiveReader(sjarPath, ctx)) {
-            var resource = reader.readResource("META-INF/beans.xml");
-            assertTrue(resource.isPresent());
-            assertEquals("<beans/>", new String(resource.get()));
+            jos.putNextEntry(new JarEntry("com/example/internal/Impl.class"));
+            jos.write(fakeClassBytes());
+            jos.closeEntry();
         }
+        return jarPath;
     }
 
-    @Test
-    void missingMetadataThrows() {
-        var badJar = tempDir.resolve("bad.sjar");
-        assertThrows(Exception.class, () -> {
-            // Create a plain JAR renamed to .sjar (no metadata)
-            var manifest = new Manifest();
-            manifest.getMainAttributes().putValue("Manifest-Version", "1.0");
-            try (var jos = new JarOutputStream(Files.newOutputStream(badJar), manifest)) {
-                jos.putNextEntry(new JarEntry("dummy.txt"));
-                jos.write("test".getBytes());
-                jos.closeEntry();
+    private byte[] readEntry(Path jarPath, String name) throws Exception {
+        try (var jar = new java.util.jar.JarFile(jarPath.toFile())) {
+            try (var is = jar.getInputStream(jar.getEntry(name))) {
+                return is.readAllBytes();
             }
-            var ctx = SjarKeyProvider.withKey(SjarKeyProvider.generateKey());
-            new SjarArchiveReader(badJar, ctx);
-        });
-    }
-
-    private Path createTestJarWithClasses() throws Exception {
-        var jarPath = tempDir.resolve("input.jar");
-        var manifest = new Manifest();
-        manifest.getMainAttributes().putValue("Manifest-Version", "1.0");
-
-        try (var jos = new JarOutputStream(Files.newOutputStream(jarPath), manifest)) {
-            jos.putNextEntry(new JarEntry("com/example/Foo.class"));
-            jos.write(fakeClassBytes());
-            jos.closeEntry();
-
-            jos.putNextEntry(new JarEntry("com/example/Bar.class"));
-            jos.write(fakeClassBytes());
-            jos.closeEntry();
-
-            jos.putNextEntry(new JarEntry("META-INF/beans.xml"));
-            jos.write("<beans/>".getBytes());
-            jos.closeEntry();
         }
-        return jarPath;
-    }
-
-    private Path createJarWithBytes(String entryName, byte[] bytes) throws Exception {
-        var jarPath = tempDir.resolve("custom.jar");
-        var manifest = new Manifest();
-        manifest.getMainAttributes().putValue("Manifest-Version", "1.0");
-
-        try (var jos = new JarOutputStream(Files.newOutputStream(jarPath), manifest)) {
-            jos.putNextEntry(new JarEntry(entryName));
-            jos.write(bytes);
-            jos.closeEntry();
-        }
-        return jarPath;
     }
 
     private byte[] fakeClassBytes() {
         return new byte[]{
                 (byte) 0xCA, (byte) 0xFE, (byte) 0xBA, (byte) 0xBE,
-                0x00, 0x00, 0x00, 0x41, 0x00, 0x02,
-                0x07, 0x00, 0x01,
+                0x00, 0x00, 0x00, 0x41, 0x00, 0x02, 0x07, 0x00, 0x01,
                 0x00, 0x21, 0x00, 0x01, 0x00, 0x01,
                 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00
         };

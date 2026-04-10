@@ -11,42 +11,33 @@
 
     <artifactId>example-test</artifactId>
     <name>Vauban :: Examples :: Integration Tests</name>
-    <description>Integration tests verifying CDI container with plain and encrypted (SJAR) beans</description>
+    <description>Integration tests verifying CDI container with plain and encrypted beans</description>
 
     <properties>
-        <!-- Same demo key as example-lib-securized — in production, use env/keystore -->
+        <!-- Same demo key as example-lib-securized -->
         <vauban.sjar.key>a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2</vauban.sjar.key>
     </properties>
 
     <dependencies>
-        <!-- Plain CDI library -->
         <dependency>
             <groupId>fr.vidocq.vauban</groupId>
             <artifactId>example-lib</artifactId>
             <version>${project.version}</version>
         </dependency>
-
-        <!-- Securized library (JAR form for build, encrypted at test time) -->
         <dependency>
             <groupId>fr.vidocq.vauban</groupId>
             <artifactId>example-lib-securized</artifactId>
             <version>${project.version}</version>
         </dependency>
-
-        <!-- Application module (WelcomeService using both libs) -->
         <dependency>
             <groupId>fr.vidocq.vauban</groupId>
             <artifactId>example-app</artifactId>
             <version>${project.version}</version>
         </dependency>
-
-        <!-- Vauban CDI container -->
         <dependency>
             <groupId>fr.vidocq.vauban</groupId>
             <artifactId>vauban-core</artifactId>
         </dependency>
-
-        <!-- SJAR support -->
         <dependency>
             <groupId>fr.vidocq.vauban</groupId>
             <artifactId>vauban-sjar</artifactId>
@@ -55,28 +46,10 @@
             <groupId>fr.vidocq.vauban</groupId>
             <artifactId>vauban-classloader-spi</artifactId>
         </dependency>
-
-        <!-- JUnit 6 -->
         <dependency>
             <groupId>org.junit.jupiter</groupId>
             <artifactId>junit-jupiter</artifactId>
             <scope>test</scope>
         </dependency>
     </dependencies>
-
-    <build>
-        <plugins>
-            <plugin>
-                <groupId>org.apache.maven.plugins</groupId>
-                <artifactId>maven-surefire-plugin</artifactId>
-                <configuration>
-                    <!-- Pass the SJAR key and path to the test JVM -->
-                    <systemPropertyVariables>
-                        <vauban.sjar.key>${vauban.sjar.key}</vauban.sjar.key>
-                        <sjar.path>${project.basedir}/../example-lib-securized/target/example-lib-securized-${project.version}.sjar</sjar.path>
-                    </systemPropertyVariables>
-                </configuration>
-            </plugin>
-        </plugins>
-    </build>
 </project>

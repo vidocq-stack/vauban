@@ -5,17 +5,30 @@ import javax.crypto.SecretKey;
 import javax.crypto.spec.GCMParameterSpec;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.lang.classfile.ClassFile;
+import java.lang.classfile.attribute.ModuleAttribute;
+import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
 import java.security.GeneralSecurityException;
 import java.security.SecureRandom;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
+import java.util.Set;
+import java.util.jar.JarEntry;
 import java.util.jar.JarFile;
-import java.util.jar.Manifest;
+import java.util.jar.JarOutputStream;
 import java.util.zip.ZipEntry;
-import java.util.zip.ZipOutputStream;
 
 /**
- * Encrypts a standard JAR into a Secure JAR (.sjar) with AES-256-GCM encryption.
+ * Encrypts internal classes of a modular JAR in-place using AES-256-GCM.
+ *
+ * <p>Classes in {@code exports} and {@code opens} packages (from {@code module-info.class})
+ * remain in clear text for compilation. All other classes are encrypted and renamed
+ * to {@code .class.enc}. A {@code META-INF/vauban.encrypted} marker file stores metadata.
+ *
+ * <p>The result is a standard JAR that is compilable (exported types visible),
+ * distributable via Maven, and has internal implementation classes protected.
  */
 public final class SjarEncryptor {
 
@@ -24,71 +37,131 @@ public final class SjarEncryptor {
     private SjarEncryptor() {}
 
     /**
-     * Encrypt a JAR file into an SJAR file.
+     * Encrypt a modular JAR in-place. Classes in exported/opened packages stay clear;
+     * all other classes are encrypted.
      *
-     * @param inputJar  path to the source JAR
-     * @param outputSjar path to the output SJAR
-     * @param key        AES-256 secret key
-     * @param keyAlias   key alias stored in metadata
+     * @param jarPath  path to the modular JAR (overwritten in-place)
+     * @param key      AES-256 secret key
+     * @param keyAlias key alias stored in metadata
+     * @throws IllegalArgumentException if the JAR has no module-info.class
      */
-    public static void encrypt(Path inputJar, Path outputSjar, SecretKey key, String keyAlias)
+    public static void encryptJar(Path jarPath, SecretKey key, String keyAlias)
             throws IOException, GeneralSecurityException {
 
-        var entries = new LinkedHashMap<String, SjarMetadata.EntryMetadata>();
+        Set<String> clearPackages;
+        String moduleName;
 
-        try (var jar = new JarFile(inputJar.toFile());
-             var zipOut = new ZipOutputStream(java.nio.file.Files.newOutputStream(outputSjar))) {
+        // 1. Parse module-info.class to determine clear packages
+        try (var jar = new JarFile(jarPath.toFile())) {
+            var moduleEntry = jar.getEntry("module-info.class");
+            if (moduleEntry == null) {
+                throw new IllegalArgumentException(
+                        "JAR has no module-info.class — only modular JARs can be encrypted: " + jarPath);
+            }
+            try (var is = jar.getInputStream(moduleEntry)) {
+                var result = parseModuleInfo(is.readAllBytes());
+                clearPackages = result.clearPackages();
+                moduleName = result.moduleName();
+            }
+        }
 
-            // Write manifest
-            var manifest = jar.getManifest();
-            if (manifest == null) manifest = new Manifest();
-            manifest.getMainAttributes().putValue("Vauban-Encryption", SjarMetadata.ALGORITHM);
-            manifest.getMainAttributes().putValue("Vauban-Key-Alias", keyAlias);
+        // 2. Build encrypted JAR into temp file
+        var tempJar = Files.createTempFile("vauban-enc-", ".jar");
+        var encryptedEntries = new LinkedHashMap<String, SjarMetadata.EntryMetadata>();
 
-            zipOut.putNextEntry(new ZipEntry("META-INF/MANIFEST.MF"));
-            manifest.write(zipOut);
-            zipOut.closeEntry();
+        try (var src = new JarFile(jarPath.toFile());
+             var out = new JarOutputStream(Files.newOutputStream(tempJar))) {
 
-            // Process all entries
-            var jarEntries = jar.entries();
-            while (jarEntries.hasMoreElements()) {
-                var entry = jarEntries.nextElement();
+            var srcEntries = src.entries();
+            while (srcEntries.hasMoreElements()) {
+                var entry = srcEntries.nextElement();
                 var name = entry.getName();
 
-                // Skip manifest (already written) and directories
-                if (name.equals("META-INF/MANIFEST.MF") || entry.isDirectory()) continue;
+                if (entry.isDirectory()) {
+                    out.putNextEntry(new JarEntry(name));
+                    out.closeEntry();
+                    continue;
+                }
 
-                try (var is = jar.getInputStream(entry)) {
+                try (var is = src.getInputStream(entry)) {
                     var bytes = is.readAllBytes();
 
-                    if (name.endsWith(".class")) {
-                        // Encrypt class files
-                        var encryptedName = name + ".enc";
+                    if (shouldEncrypt(name, clearPackages)) {
+                        var encName = name + ".enc";
                         var iv = generateIv();
-                        var encryptedBytes = encryptBytes(bytes, key, iv);
+                        var encrypted = encryptBytes(bytes, key, iv);
 
-                        entries.put(encryptedName, new SjarMetadata.EntryMetadata(iv, bytes.length));
+                        encryptedEntries.put(encName,
+                                new SjarMetadata.EntryMetadata(iv, bytes.length, name));
 
-                        zipOut.putNextEntry(new ZipEntry(encryptedName));
-                        zipOut.write(encryptedBytes);
-                        zipOut.closeEntry();
+                        out.putNextEntry(new ZipEntry(encName));
+                        out.write(encrypted);
+                        out.closeEntry();
                     } else {
-                        // Copy non-class resources as-is
-                        zipOut.putNextEntry(new ZipEntry(name));
-                        zipOut.write(bytes);
-                        zipOut.closeEntry();
+                        out.putNextEntry(new ZipEntry(name));
+                        out.write(bytes);
+                        out.closeEntry();
                     }
                 }
             }
 
-            // Write metadata
-            var metadata = new SjarMetadata(keyAlias, entries);
-            zipOut.putNextEntry(new ZipEntry(SjarMetadata.METADATA_ENTRY));
-            var metadataBytes = new ByteArrayOutputStream();
-            metadata.writeTo(metadataBytes);
-            zipOut.write(metadataBytes.toByteArray());
-            zipOut.closeEntry();
+            // Write encryption marker
+            var metadata = new SjarMetadata(keyAlias, encryptedEntries, clearPackages, moduleName);
+            out.putNextEntry(new ZipEntry(SjarMetadata.METADATA_ENTRY));
+            var metaBytes = new ByteArrayOutputStream();
+            metadata.writeTo(metaBytes);
+            out.write(metaBytes.toByteArray());
+            out.closeEntry();
         }
+
+        // 3. Replace original JAR
+        Files.move(tempJar, jarPath, StandardCopyOption.REPLACE_EXISTING);
+    }
+
+    /**
+     * Legacy method: encrypt a JAR into a separate output file (for backward compatibility).
+     */
+    public static void encrypt(Path inputJar, Path outputJar, SecretKey key, String keyAlias)
+            throws IOException, GeneralSecurityException {
+        Files.copy(inputJar, outputJar, StandardCopyOption.REPLACE_EXISTING);
+        encryptJar(outputJar, key, keyAlias);
+    }
+
+    static boolean shouldEncrypt(String entryName, Set<String> clearPackages) {
+        // Never encrypt non-class files, module-info, or META-INF
+        if (!entryName.endsWith(".class")) return false;
+        if (entryName.equals("module-info.class")) return false;
+        if (entryName.startsWith("META-INF/")) return false;
+
+        // Determine the package of this class
+        var lastSlash = entryName.lastIndexOf('/');
+        if (lastSlash < 0) return false; // default package — don't encrypt
+        var packagePath = entryName.substring(0, lastSlash);
+
+        // Check if the package (or a parent) is in clear packages
+        return !clearPackages.contains(packagePath);
+    }
+
+    record ModuleInfoResult(String moduleName, Set<String> clearPackages) {}
+
+    static ModuleInfoResult parseModuleInfo(byte[] moduleInfoBytes) {
+        var classModel = ClassFile.of().parse(moduleInfoBytes);
+        var clearPackages = new LinkedHashSet<String>();
+        String moduleName = "unknown";
+
+        for (var attr : classModel.attributes()) {
+            if (attr instanceof ModuleAttribute ma) {
+                moduleName = ma.moduleName().name().stringValue();
+                for (var export : ma.exports()) {
+                    clearPackages.add(export.exportedPackage().name().stringValue());
+                }
+                for (var open : ma.opens()) {
+                    clearPackages.add(open.openedPackage().name().stringValue());
+                }
+            }
+        }
+
+        return new ModuleInfoResult(moduleName, clearPackages);
     }
 
     static byte[] encryptBytes(byte[] plaintext, SecretKey key, byte[] iv)

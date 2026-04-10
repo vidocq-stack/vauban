@@ -309,6 +309,35 @@ public final class VaubanContainerBuilder {
         };
     }
 
+    private ClassLoader buildCompositeClassLoader() {
+        if (beanClasses.isEmpty()) return Thread.currentThread().getContextClassLoader();
+        // Collect unique ClassLoaders from all bean classes
+        var loaders = new java.util.LinkedHashSet<ClassLoader>();
+        for (var clazz : beanClasses) {
+            if (clazz.getClassLoader() != null) loaders.add(clazz.getClassLoader());
+        }
+        if (loaders.size() <= 1) return beanClasses.getFirst().getClassLoader();
+        // Composite ClassLoader that delegates to all bean ClassLoaders
+        var loaderList = java.util.List.copyOf(loaders);
+        return new ClassLoader(loaderList.getFirst()) {
+            @Override
+            protected Class<?> findClass(String name) throws ClassNotFoundException {
+                for (var loader : loaderList) {
+                    try { return loader.loadClass(name); } catch (ClassNotFoundException ignored) { }
+                }
+                throw new ClassNotFoundException(name);
+            }
+            @Override
+            public java.io.InputStream getResourceAsStream(String name) {
+                for (var loader : loaderList) {
+                    var is = loader.getResourceAsStream(name);
+                    if (is != null) return is;
+                }
+                return super.getResourceAsStream(name);
+            }
+        };
+    }
+
     public VaubanContainer build() {
         var indexBuilder = new IndexBuilder();
 
@@ -343,15 +372,11 @@ public final class VaubanContainerBuilder {
             }
         }
 
-        // Set TCCL to the bean class's ClassLoader so BeanDiscovery can
-        // resolve inherited annotations via reflection on TCK archive classes
+        // Set TCCL to a ClassLoader that can resolve classes from ALL sources
+        // (plain beans + encrypted SJAR beans may use different ClassLoaders)
         var previousCl = Thread.currentThread().getContextClassLoader();
-        ClassLoader discoveryClassLoader = !beanClasses.isEmpty()
-                ? beanClasses.getFirst().getClassLoader()
-                : Thread.currentThread().getContextClassLoader();
-        if (!beanClasses.isEmpty()) {
-            Thread.currentThread().setContextClassLoader(discoveryClassLoader);
-        }
+        ClassLoader discoveryClassLoader = buildCompositeClassLoader();
+        Thread.currentThread().setContextClassLoader(discoveryClassLoader);
 
         // --- @Discovery phase (BCE) — runs BEFORE bean discovery ---
         var bceClasses = beanClasses.stream()
@@ -572,11 +597,9 @@ public final class VaubanContainerBuilder {
                 throw new jakarta.enterprise.inject.spi.DeploymentException(msg.toString());
             }
 
-            var beanClassLoader = this.classLoader != null 
+            var beanClassLoader = this.classLoader != null
                     ? this.classLoader
-                    : (beanClasses.isEmpty()
-                    ? Thread.currentThread().getContextClassLoader()
-                    : beanClasses.getFirst().getClassLoader());
+                    : discoveryClassLoader;
             var vaubanLookup = getBuilderLookup();
             var container = new VaubanContainer(index, descriptors, observers, interceptors, disposers, factories, syntheticDisposers, beanClassLoader, classDefiner, vaubanLookup);
 

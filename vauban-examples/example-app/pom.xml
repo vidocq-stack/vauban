@@ -11,36 +11,21 @@
 
     <artifactId>example-app</artifactId>
     <name>Vauban :: Examples :: Application</name>
-    <description>Multi-module CDI application with Vauban — uses beans from example-lib</description>
-
-    <properties>
-        <!-- Same demo key as example-lib-securized -->
-        <vauban.sjar.key>a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2</vauban.sjar.key>
-    </properties>
+    <description>Multi-module CDI application — uses beans from plain and encrypted libraries</description>
 
     <dependencies>
-        <!-- CDI library dependency (standard JAR with CDI beans) -->
+        <!-- Plain CDI library -->
         <dependency>
             <groupId>fr.vidocq.vauban</groupId>
             <artifactId>example-lib</artifactId>
             <version>${project.version}</version>
         </dependency>
 
-        <!-- Securized CDI library — compile against plain classes (reactor),
-             at runtime the SJAR is loaded via scanSjar() -->
+        <!-- Encrypted CDI library — single JAR with clear exports + encrypted internals -->
         <dependency>
             <groupId>fr.vidocq.vauban</groupId>
             <artifactId>example-lib-securized</artifactId>
             <version>${project.version}</version>
-        </dependency>
-        <!-- SJAR artifact for runtime (classifier=sjar) -->
-        <dependency>
-            <groupId>fr.vidocq.vauban</groupId>
-            <artifactId>example-lib-securized</artifactId>
-            <version>${project.version}</version>
-            <classifier>sjar</classifier>
-            <type>sjar</type>
-            <scope>runtime</scope>
         </dependency>
 
         <!-- Vauban CDI container runtime -->
@@ -49,7 +34,7 @@
             <artifactId>vauban-core</artifactId>
         </dependency>
 
-        <!-- SJAR support for encrypted beans -->
+        <!-- Encrypted JAR support (auto-detects META-INF/vauban.encrypted) -->
         <dependency>
             <groupId>fr.vidocq.vauban</groupId>
             <artifactId>vauban-sjar</artifactId>
@@ -58,7 +43,6 @@
 
     <build>
         <plugins>
-            <!-- Vauban: scan dependencies for CDI beans, pre-generate proxies -->
             <plugin>
                 <groupId>fr.vidocq.vauban</groupId>
                 <artifactId>vauban-maven-plugin</artifactId>
@@ -71,8 +55,6 @@
                     </execution>
                 </executions>
             </plugin>
-
-            <!-- Package as executable JAR -->
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-jar-plugin</artifactId>

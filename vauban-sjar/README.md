@@ -1,130 +1,104 @@
-# Vauban SJAR — Secure JAR Encryption
+# Vauban SJAR — In-JAR Class Encryption
 
-SJAR (Secure JAR) provides AES-256-GCM encryption for Java class files, allowing
-distribution of CDI bean libraries with protected bytecode.
+Encrypts internal classes of a **modular JAR** in-place using AES-256-GCM.
+Exported/opened packages stay in clear text for compilation; all other packages
+are encrypted. The result is a single, standard JAR that is compilable,
+distributable via Maven, and has its internals protected.
 
 ## How It Works
 
-An `.sjar` file is a standard ZIP archive where `.class` entries are individually
-encrypted with AES-256-GCM. Non-class resources (META-INF/*, etc.) remain unencrypted.
-A `META-INF/SJAR-METADATA.json` file stores encryption metadata (algorithm, IVs, key alias).
+The encryption is driven by `module-info.class`:
+
+- `exports` packages → **clear** (needed for compilation)
+- `opens` packages → **clear** (needed for reflection)
+- `module-info.class`, `META-INF/*` → **clear**
+- **Everything else** → encrypted (`.class` → `.class.enc`)
+
+A marker file `META-INF/vauban.encrypted` stores the metadata (algorithm, IVs,
+key alias, list of encrypted entries, clear packages).
 
 ```
-my-library.sjar
-  META-INF/
-    MANIFEST.MF                     # Standard manifest
-    SJAR-METADATA.json              # Encryption metadata (unencrypted)
-  com/example/MyBean.class.enc      # Encrypted class [12B IV][ciphertext+GCM tag]
-  META-INF/beans.xml                # Resources preserved as-is
+my-library.jar
+  module-info.class                      # clear — module system
+  META-INF/vauban.encrypted              # metadata
+  com/example/api/MyService.class        # clear — exported
+  com/example/internal/Impl.class.enc    # encrypted
 ```
 
 ## Quick Start
 
-### 1. Generate a key
+### 1. Structure your module
 
-```bash
-# Using the CLI tool
-java -m fr.vidocq.vauban.sjar generate-key
-# Output: a4b2c1d3e5f6...  (64 hex chars = 256 bits)
-
-# Or programmatically
-SecretKey key = SjarKeyProvider.generateKey();
+```java
+module com.example.mylib {
+    exports com.example.mylib.api;       // public API — stays clear
+    // com.example.mylib.internal → encrypted automatically
+}
 ```
 
-### 2. Encrypt a JAR at build time (Maven plugin)
+### 2. Generate a key
 
-Add to your `pom.xml`:
+```bash
+java -m fr.vidocq.vauban.sjar generate-key
+# Output: a4b2c1d3e5f6...  (64 hex chars = 256 bits)
+```
+
+### 3. Encrypt at build time (Maven plugin)
 
 ```xml
 <plugin>
     <groupId>fr.vidocq.vauban</groupId>
     <artifactId>vauban-maven-plugin</artifactId>
-    <version>${vauban.version}</version>
     <executions>
         <execution>
             <goals><goal>encrypt</goal></goals>
             <configuration>
-                <keyAlias>my-app-key</keyAlias>
+                <keyAlias>my-key</keyAlias>
             </configuration>
         </execution>
     </executions>
 </plugin>
 ```
 
-Then build with the key:
-
 ```bash
-export VAUBAN_SJAR_KEY=a4b2c1d3e5f6...
-mvn package
-# Produces: target/my-library-1.0.sjar (attached as classifier "encrypted")
+mvn package -Dvauban.sjar.key=a4b2c1d3...
+# The JAR is encrypted in-place — one artifact, standard Maven
 ```
 
-The key can also be passed as a Maven property: `-Dvauban.sjar.key=a4b2c1d3...`
+### 4. Consumers compile normally
 
-### 3. Encrypt programmatically
-
-```java
-SecretKey key = SjarKeyProvider.generateKey();
-SjarEncryptor.encrypt(
-    Path.of("my-library.jar"),
-    Path.of("my-library.sjar"),
-    key,
-    "my-key-alias"
-);
+```xml
+<!-- Just a regular dependency — exported types are visible -->
+<dependency>
+    <groupId>com.example</groupId>
+    <artifactId>mylib</artifactId>
+    <version>1.0</version>
+</dependency>
 ```
 
-### 4. Load encrypted beans at runtime
+### 5. Load encrypted beans at runtime
 
 ```java
 var container = VaubanContainer.builder()
     .addByteSourcePlugin(new SjarPlugin())
     .pluginContext(SjarKeyProvider.withKey(key))
-    .scanSjar(Path.of("my-library.sjar"))
+    .scanSjar(Path.of("mylib.jar"))
     .build();
-
-// Beans from the SJAR are available like regular CDI beans
-var myBean = container.select(MyBean.class);
 ```
-
-If `vauban-sjar` is on the module path, the `SjarPlugin` is auto-discovered via
-`ServiceLoader` and `addByteSourcePlugin()` is not needed.
 
 ## Key Management
 
-Keys are resolved in this order:
-
 | Source | Configuration | Use case |
 |--------|--------------|----------|
-| Environment variable | `VAUBAN_SJAR_KEY` (hex) | CI/CD pipelines |
 | System property | `-Dvauban.sjar.key` (hex) | Maven builds |
-| Java Keystore | `-Dvauban.sjar.keystore=path -Dvauban.sjar.keypassword=pass` | Production |
-| Programmatic | `SjarKeyProvider.withKey(secretKey)` | Custom vaults (HashiCorp, AWS KMS) |
-
-## CLI Tool
-
-```bash
-# Encrypt a JAR
-export VAUBAN_SJAR_KEY=<64-hex-chars>
-java -m fr.vidocq.vauban.sjar encrypt --input app.jar --output app.sjar --key-alias mykey
-
-# Generate a random AES-256 key
-java -m fr.vidocq.vauban.sjar generate-key
-```
-
-## SPI Plugin Architecture
-
-SJAR is built on Vauban's classloader plugin SPI (`vauban-classloader-spi`).
-Custom archive formats can be implemented by providing:
-
-- `ByteSourcePlugin` — declares what file extensions it handles
-- `ArchiveReader` — reads and decrypts class entries
-- `PluginContext` — provides keys and configuration
+| Environment variable | `VAUBAN_SJAR_KEY` (hex) | CI/CD pipelines |
+| Java Keystore | `-Dvauban.sjar.keystore=path` | Production |
+| Programmatic | `SjarKeyProvider.withKey(key)` | Custom vaults |
 
 ## Security Notes
 
-- **AES-256-GCM** provides both confidentiality and integrity (authenticated encryption)
-- Each class entry has a unique 12-byte IV (never reused)
-- Decrypted bytes are cached **in memory only** — never written to disk
-- **Limitation**: once loaded by the JVM, class bytecode is accessible via `jmap`,
-  Java agents (JVMTI), or heap dumps. SJAR protects against static analysis of
-  distributed artifacts, not runtime memory inspection.
+- **AES-256-GCM**: authenticated encryption (confidentiality + integrity)
+- Each class has a unique 12-byte IV
+- Decrypted bytes cached in memory only — never written to disk
+- **Limitation**: protects against static analysis of distributed JARs,
+  not against runtime memory inspection (jmap, JVMTI agents)
