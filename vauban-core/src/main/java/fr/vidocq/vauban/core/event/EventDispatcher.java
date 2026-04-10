@@ -23,12 +23,22 @@ public final class EventDispatcher {
             "float", float.class, "double", double.class
     );
 
+    private static final String PROP_USE_PLATFORM_THREADS = "VaubanUsePlatformThreadsForAsyncEvents";
+    private static final String ENV_USE_PLATFORM_THREADS = "VAUBAN_USE_PLATFORM_THREADS_FOR_ASYNC_EVENTS";
+
     private final List<ObserverDescriptor> observers;
     private final VaubanContainer container;
+    private final java.util.concurrent.Executor defaultAsyncExecutor;
 
     public EventDispatcher(List<ObserverDescriptor> observers, VaubanContainer container) {
         this.observers = List.copyOf(observers);
         this.container = Objects.requireNonNull(container);
+        boolean usePlatformThreads = Boolean.parseBoolean(
+                System.getProperty(PROP_USE_PLATFORM_THREADS,
+                        System.getenv().getOrDefault(ENV_USE_PLATFORM_THREADS, "false")));
+        this.defaultAsyncExecutor = usePlatformThreads
+                ? null  // null → CompletableFuture uses ForkJoinPool.commonPool()
+                : java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor();
     }
 
     public <T> void fire(T event, Annotation... qualifiers) {
@@ -95,8 +105,9 @@ public final class EventDispatcher {
             }
             return event;
         };
-        return executor != null
-                ? CompletableFuture.supplyAsync(task, executor)
+        var effectiveExecutor = executor != null ? executor : defaultAsyncExecutor;
+        return effectiveExecutor != null
+                ? CompletableFuture.supplyAsync(task, effectiveExecutor)
                 : CompletableFuture.supplyAsync(task);
     }
 

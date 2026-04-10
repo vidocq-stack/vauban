@@ -250,6 +250,41 @@ flowchart TD
 
 ---
 
+## Evenements asynchrones
+
+```mermaid
+sequenceDiagram
+    participant App as Application
+    participant E as Event&lt;T&gt;
+    participant ED as EventDispatcher
+    participant VT as Virtual Thread
+    participant O1 as Observer 1
+    participant O2 as Observer 2
+
+    App->>E: fireAsync(event)
+    E->>ED: fireAsync(event, null)
+    ED->>VT: supplyAsync(task, virtualThreadExecutor)
+    activate VT
+    Note over VT: Virtual thread demarre
+    VT->>O1: invokeObserver()
+    O1-->>VT: ok
+    VT->>O2: invokeObserver()
+    O2-->>VT: ok
+    VT-->>App: CompletionStage&lt;T&gt;
+    deactivate VT
+```
+
+Par defaut, les observers `@ObservesAsync` sont executes sur un **virtual thread** via
+`Executors.newVirtualThreadPerTaskExecutor()`. Ce comportement est configurable — voir
+[docs/configuration.md](configuration.md).
+
+**Priorite de l'executor :**
+1. `NotificationOptions.ofExecutor(customExecutor)` — passe par l'utilisateur
+2. Virtual thread executor — defaut Vauban
+3. `ForkJoinPool.commonPool()` — si `VaubanUsePlatformThreadsForAsyncEvents=true`
+
+---
+
 ## Chaine d'interception
 
 ```mermaid

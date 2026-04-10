@@ -505,6 +505,14 @@ CDI Full TCK :  non cible (futur module vauban-full)
 | **CDI Lite** | Managed beans, injection, events, producers, intercepteurs, BCE | **100% TCK** |
 | **CDI Full** | + Portable Extensions, decorators, conversation scope, EL | Futur (`vauban-full`) |
 
+## Documentation
+
+| Document | Contenu |
+|----------|---------|
+| [docs/architecture.md](docs/architecture.md) | Architecture, diagrammes Mermaid, sequences de demarrage |
+| [docs/configuration.md](docs/configuration.md) | Reference des proprietes de configuration |
+| [docs/getting-started.md](docs/getting-started.md) | Guide de demarrage rapide |
+
 ## Qualite
 
 - **SonarQube** : 0 issue (0 bug, 0 vulnerabilite, 0 code smell ouvert)
