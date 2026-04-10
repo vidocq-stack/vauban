@@ -44,6 +44,13 @@
                     </execution>
                 </executions>
             </plugin>
+
+            <!--
+                Note: the plain JAR is still installed for compile-time type resolution
+                (reactor and downstream modules need it to compile against).
+                In production, split into an API module (interfaces) + SJAR (impl).
+                The SJAR (classifier=sjar) is the runtime artifact with encrypted classes.
+            -->
         </plugins>
     </build>
 </project>

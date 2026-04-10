@@ -16,8 +16,8 @@ import java.util.HexFormat;
 
 /**
  * Maven goal that encrypts the project JAR into an SJAR (Secure JAR).
- * The encrypted artifact is attached to the project with classifier "encrypted"
- * and type "sjar", so it gets installed/deployed alongside the regular JAR.
+ * The encrypted artifact replaces the main project artifact and is additionally
+ * attached with classifier "sjar". The original unencrypted JAR is not published.
  *
  * <p>Key resolution (in order):
  * <ol>
@@ -98,11 +98,11 @@ public class EncryptMojo extends AbstractMojo {
             getLog().info("Vauban: encrypting " + jarPath.getFileName() + " -> " + sjarName);
             SjarEncryptor.encrypt(jarPath, sjarPath, key, keyAlias);
 
-            // Attach the SJAR as an additional artifact
+            // Attach SJAR with classifier "sjar" for explicit dependency resolution
             attachArtifact(sjarPath.toFile());
 
             getLog().info("Vauban: SJAR created and attached — " + sjarName
-                    + " (key alias: " + keyAlias + ")");
+                    + " (classifier=sjar, key alias: " + keyAlias + ")");
 
         } catch (MojoExecutionException e) {
             throw e;
@@ -145,7 +145,7 @@ public class EncryptMojo extends AbstractMojo {
     private void attachArtifact(File sjarFile) {
         var attachedArtifact = new org.apache.maven.artifact.DefaultArtifact(
                 project.getGroupId(), project.getArtifactId(), project.getVersion(),
-                "compile", "sjar", "encrypted",
+                "compile", "sjar", "sjar",
                 new org.apache.maven.artifact.handler.DefaultArtifactHandler("sjar"));
         attachedArtifact.setFile(sjarFile);
         project.addAttachedArtifact(attachedArtifact);

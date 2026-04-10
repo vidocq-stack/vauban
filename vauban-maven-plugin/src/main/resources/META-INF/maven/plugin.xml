@@ -50,7 +50,7 @@
         </mojo>
         <mojo>
             <goal>encrypt</goal>
-            <description>Encrypt the project JAR into an SJAR (Secure JAR) with AES-256-GCM</description>
+            <description>Encrypt the project JAR into an SJAR (Secure JAR) with AES-256-GCM. The plain JAR is removed and replaced by the SJAR as main artifact. An additional classified artifact (classifier=sjar, type=sjar) is attached for explicit dependency resolution.</description>
             <implementation>fr.vidocq.vauban.maven.generate.EncryptMojo</implementation>
             <language>java</language>
             <instantiationStrategy>per-lookup</instantiationStrategy>

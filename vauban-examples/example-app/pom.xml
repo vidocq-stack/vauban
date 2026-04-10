@@ -26,11 +26,21 @@
             <version>${project.version}</version>
         </dependency>
 
-        <!-- Securized CDI library (encrypted beans) -->
+        <!-- Securized CDI library — compile against plain classes (reactor),
+             at runtime the SJAR is loaded via scanSjar() -->
         <dependency>
             <groupId>fr.vidocq.vauban</groupId>
             <artifactId>example-lib-securized</artifactId>
             <version>${project.version}</version>
+        </dependency>
+        <!-- SJAR artifact for runtime (classifier=sjar) -->
+        <dependency>
+            <groupId>fr.vidocq.vauban</groupId>
+            <artifactId>example-lib-securized</artifactId>
+            <version>${project.version}</version>
+            <classifier>sjar</classifier>
+            <type>sjar</type>
+            <scope>runtime</scope>
         </dependency>
 
         <!-- Vauban CDI container runtime -->
