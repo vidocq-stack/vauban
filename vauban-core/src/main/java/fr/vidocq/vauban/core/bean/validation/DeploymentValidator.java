@@ -263,7 +263,10 @@ public final class DeploymentValidator {
         } else if (type instanceof TypeInfo.ClassType ct) {
             try {
                 var clazz = Class.forName(ct.name().value(), false, Thread.currentThread().getContextClassLoader());
-                if (java.lang.reflect.Modifier.isFinal(clazz.getModifiers())) {
+                // Interfaces are always proxyable — skip class-level checks
+                if (clazz.isInterface()) {
+                    // no further checks needed
+                } else if (java.lang.reflect.Modifier.isFinal(clazz.getModifiers())) {
                     errors.add(new ValidationError(
                             ValidationError.Kind.DEPLOYMENT_ERROR,
                             PREFIX_NORMAL_SCOPED + bean.beanClass() + " cannot be a final class",
