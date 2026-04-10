@@ -229,21 +229,30 @@ public final class VaubanContainerBuilder {
             var markers = cl.getResources("META-INF/vauban.encrypted");
             while (markers.hasMoreElements()) {
                 var markerUrl = markers.nextElement().toString();
-                // Extract JAR path from "jar:file:/path/to/lib.jar!/META-INF/vauban.encrypted"
                 if (markerUrl.startsWith("jar:file:")) {
                     var jarPath = java.nio.file.Path.of(
                             markerUrl.substring("jar:file:".length(), markerUrl.indexOf('!')));
-                    // Use scanSjar to load beans from this encrypted JAR
                     try {
                         loadPluginsIfNeeded();
                         scanSjar(jarPath);
+                    } catch (SecurityException e) {
+                        System.err.println("[WARN] Vauban: cannot decrypt encrypted JAR " + jarPath.getFileName()
+                                + " — " + e.getMessage());
+                        System.err.println("[WARN] Vauban: set VAUBAN_SJAR_KEY environment variable "
+                                + "or call builder.pluginContext() with the decryption key.");
+                        System.err.println("[WARN] Vauban: beans from this JAR will NOT be available.");
+                    } catch (IllegalStateException e) {
+                        System.err.println("[WARN] Vauban: encrypted JAR " + jarPath.getFileName()
+                                + " found but no ByteSourcePlugin available.");
+                        System.err.println("[WARN] Vauban: add vauban-sjar to the classpath/module path.");
                     } catch (Exception e) {
-                        // Skip if no plugin or no key configured — beans will be skipped
+                        System.err.println("[WARN] Vauban: failed to load encrypted JAR "
+                                + jarPath.getFileName() + " — " + e.getMessage());
                     }
                 }
             }
         } catch (java.io.IOException e) {
-            // Classpath scan failure — non-fatal, encrypted JARs just won't be auto-detected
+            // Classpath scan failure — non-fatal
         }
     }
 
