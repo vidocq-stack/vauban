@@ -203,17 +203,23 @@ final class InterceptorBeanWrapper {
                     throw new jakarta.enterprise.inject.UnproxyableResolutionException("Normal scoped bean " + beanClass.getName() + " has final method " + method.getName());
                 }
             }
-            boolean hasNoArgCtor = false;
-            boolean hasAnyCtor = false;
+            // CDI 4.1: no-arg constructor is NOT required — proxy calls super with default values.
+            // However, a bean with ONLY a private no-arg constructor is still unproxyable.
+            boolean hasPrivateNoArgCtor = false;
+            boolean hasNonPrivateNoArgCtor = false;
             for (var ctor : beanClass.getDeclaredConstructors()) {
-                hasAnyCtor = true;
-                if (ctor.getParameterCount() == 0 && !java.lang.reflect.Modifier.isPrivate(ctor.getModifiers())) {
-                    hasNoArgCtor = true;
-                    break;
+                if (ctor.getParameterCount() == 0) {
+                    if (java.lang.reflect.Modifier.isPrivate(ctor.getModifiers())) {
+                        hasPrivateNoArgCtor = true;
+                    } else {
+                        hasNonPrivateNoArgCtor = true;
+                    }
                 }
             }
-            if (hasAnyCtor && !hasNoArgCtor) {
-                throw new jakarta.enterprise.inject.UnproxyableResolutionException("Normal scoped bean " + beanClass.getName() + " has no non-private no-arg constructor");
+            if (hasPrivateNoArgCtor && !hasNonPrivateNoArgCtor) {
+                throw new jakarta.enterprise.inject.UnproxyableResolutionException(
+                        "Normal scoped bean " + beanClass.getName()
+                                + " has only a private no-arg constructor");
             }
 
             try {
@@ -315,30 +321,14 @@ final class InterceptorBeanWrapper {
         }
     }
 
-    @SuppressWarnings({"unchecked", "removal"})
     Class<?> loadOrDefineClassRobustly(Class<?> targetClass, String className, byte[] bytecode) throws Exception {
         try {
             return targetClass.getClassLoader().loadClass(className);
         } catch (ClassNotFoundException cnfe) {
-            try {
-                var lookup = java.lang.invoke.MethodHandles.privateLookupIn(targetClass, java.lang.invoke.MethodHandles.lookup());
-                return lookup.defineClass(bytecode);
-            } catch (IllegalAccessException e) {
-                try {
-                    java.lang.reflect.Field f = sun.misc.Unsafe.class.getDeclaredField("theUnsafe");
-                    f.setAccessible(true);
-                    sun.misc.Unsafe unsafe = (sun.misc.Unsafe) f.get(null);
-
-                    java.lang.reflect.Field implLookupField = java.lang.invoke.MethodHandles.Lookup.class.getDeclaredField("IMPL_LOOKUP");
-                    long offset = unsafe.staticFieldOffset(implLookupField);
-                    java.lang.invoke.MethodHandles.Lookup trustedLookup = (java.lang.invoke.MethodHandles.Lookup) unsafe.getObject(java.lang.invoke.MethodHandles.Lookup.class, offset);
-
-                    return trustedLookup.in(targetClass).defineClass(bytecode);
-                } catch (Exception unsafeEx) {
-                    e.addSuppressed(unsafeEx);
-                    throw e;
-                }
-            }
+            // Use the container's VaubanLookup which has the user-provided root Lookup
+            // (no sun.misc.Unsafe needed — addReads + privateLookupIn handles JPMS)
+            var lookup = vaubanLookup.lookupFor(targetClass);
+            return lookup.defineClass(bytecode);
         }
     }
 
@@ -412,26 +402,20 @@ final class InterceptorBeanWrapper {
                     }
                 }
 
-                boolean hasAccessibleNoArgCtor = false;
+                // CDI 4.1: no-arg constructor is NOT required for intercepted beans.
+                // However, a bean with ONLY a private no-arg constructor is still unproxyable.
+                boolean hasPrivateNoArgCtor2 = false;
                 for (var ctor : beanClass.getDeclaredConstructors()) {
                     if (ctor.getParameterCount() == 0
-                            && !java.lang.reflect.Modifier.isPrivate(ctor.getModifiers())) {
-                        hasAccessibleNoArgCtor = true;
+                            && java.lang.reflect.Modifier.isPrivate(ctor.getModifiers())) {
+                        hasPrivateNoArgCtor2 = true;
                         break;
                     }
                 }
-                if (!hasAccessibleNoArgCtor) {
-                    boolean hasPrivateNoArgCtor = false;
-                    try {
-                        beanClass.getDeclaredConstructor();
-                        hasPrivateNoArgCtor = true;
-                    } catch (NoSuchMethodException e) { /* no no-arg ctor at all */ }
-
-                    if (hasPrivateNoArgCtor) {
-                        throw new jakarta.enterprise.inject.spi.DeploymentException(
-                                "Intercepted bean " + beanClass.getName()
-                                        + " has only private no-arg constructor (unproxyable)");
-                    }
+                if (hasPrivateNoArgCtor2) {
+                    throw new jakarta.enterprise.inject.spi.DeploymentException(
+                            "Intercepted bean " + beanClass.getName()
+                                    + " has only private no-arg constructor (unproxyable)");
                 }
 
                 interceptorManager.setClassLoader(beanClass.getClassLoader());

@@ -174,6 +174,12 @@ public final class VaubanLookup {
     MethodHandles.Lookup lookupFor(Class<?> targetClass) {
         return lookupCache.computeIfAbsent(targetClass, clazz -> {
             try {
+                // Ensure vauban.core can read the target module (required for JPMS)
+                Module vaubanModule = VaubanLookup.class.getModule();
+                Module targetModule = clazz.getModule();
+                if (!vaubanModule.canRead(targetModule)) {
+                    vaubanModule.addReads(targetModule);
+                }
                 return MethodHandles.privateLookupIn(clazz, rootLookup);
             } catch (IllegalAccessException e) {
                 throw new RuntimeException("Cannot obtain Lookup for " + clazz.getName()

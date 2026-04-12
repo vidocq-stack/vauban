@@ -55,15 +55,26 @@ public final class RuntimeClientProxyGenerator {
             // Field: private Supplier delegate
             clb.withField(FIELD_DELEGATE, CD_Supplier, ClassFile.ACC_PRIVATE);
 
-            // Generate no-arg constructor calling super
+            // Generate no-arg constructor calling the simplest available super constructor
+            // CDI 4.1: beans with only @Inject constructors (no no-arg) must still be proxyable
+            var superCtor = findSimplestConstructor(beanClass);
+            var superParamCDs = new ClassDesc[superCtor.getParameterCount()];
+            for (int i = 0; i < superParamCDs.length; i++) {
+                superParamCDs[i] = superCtor.getParameterTypes()[i].describeConstable()
+                        .orElse(ClassDesc.of(superCtor.getParameterTypes()[i].getName()));
+            }
+            var superCtorType = MethodTypeDesc.of(ConstantDescs.CD_void, superParamCDs);
             clb.withMethodBody(
                     ConstantDescs.INIT_NAME,
                     MethodTypeDesc.of(ConstantDescs.CD_void),
                     ClassFile.ACC_PUBLIC,
                     cob -> {
                         cob.aload(0);
-                        cob.invokespecial(beanCD, ConstantDescs.INIT_NAME,
-                                MethodTypeDesc.of(ConstantDescs.CD_void));
+                        // Push default values for each super constructor parameter
+                        for (var paramCD : superParamCDs) {
+                            pushDefault(cob, paramCD);
+                        }
+                        cob.invokespecial(beanCD, ConstantDescs.INIT_NAME, superCtorType);
                         cob.return_();
                     });
 
@@ -94,6 +105,39 @@ public final class RuntimeClientProxyGenerator {
         });
 
         return new GeneratedProxy(proxyClassName, bytecode);
+    }
+
+    /**
+     * Find the simplest non-private constructor (fewest parameters).
+     * Prefers no-arg, then smallest parameter count.
+     */
+    private static java.lang.reflect.Constructor<?> findSimplestConstructor(Class<?> beanClass) {
+        java.lang.reflect.Constructor<?> best = null;
+        for (var ctor : beanClass.getDeclaredConstructors()) {
+            if (java.lang.reflect.Modifier.isPrivate(ctor.getModifiers())) continue;
+            if (best == null || ctor.getParameterCount() < best.getParameterCount()) {
+                best = ctor;
+            }
+        }
+        if (best != null) return best;
+        // All constructors are private — use the first one (proxy generation will still work
+        // since the proxy class is in the same package)
+        return beanClass.getDeclaredConstructors()[0];
+    }
+
+    /**
+     * Push a default value for the given type onto the stack.
+     * null for references, 0 for numerics, false for boolean.
+     */
+    private static void pushDefault(CodeBuilder cob, ClassDesc paramCD) {
+        String desc = paramCD.descriptorString();
+        switch (desc.charAt(0)) {
+            case 'Z', 'B', 'C', 'S', 'I' -> cob.iconst_0();
+            case 'J' -> cob.lconst_0();
+            case 'F' -> cob.fconst_0();
+            case 'D' -> cob.dconst_0();
+            default -> cob.aconst_null();
+        }
     }
 
     private static boolean shouldProxy(Method method) {
