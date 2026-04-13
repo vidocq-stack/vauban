@@ -412,7 +412,11 @@ public final class BeanDiscovery {
         }
     }
 
-    private BeanDescriptor buildManagedBean(ClassInfo classInfo) {
+    /**
+     * Build a managed bean descriptor for a given class.
+     * Public for use by post-Enhancement bean creation (classes promoted to beans via BCE).
+     */
+    public BeanDescriptor buildManagedBean(ClassInfo classInfo) {
         var id = BeanId.of(classInfo.name());
         var types = computeBeanTypes(classInfo);
         var qualifiers = computeQualifiersWithStereotypes(classInfo);

@@ -584,6 +584,29 @@ public final class VaubanContainerBuilder {
                     descriptors.clear();
                     descriptors.addAll(modified);
 
+                    // Create beans for non-bean classes that gained a scope via Enhancement
+                    // (e.g. @Path classes that receive @RequestScoped from a BCE)
+                    var existingBeanClasses = descriptors.stream()
+                            .map(BeanDescriptor::beanClass)
+                            .collect(java.util.stream.Collectors.toSet());
+                    for (var entry : bceResult.enhancementModifications().entrySet()) {
+                        if (existingBeanClasses.contains(entry.getKey())) continue;
+                        var enhancedScope = extractEnhancedScope(entry.getValue());
+                        if (enhancedScope == null) continue;
+                        var classInfo = index.getClassByName(entry.getKey()).orElse(null);
+                        if (classInfo == null) continue;
+                        var newBean = discovery.buildManagedBean(classInfo);
+                        // Override scope: buildManagedBean reads the original index (no Enhancement),
+                        // so replace with the scope added by Enhancement
+                        newBean = new BeanDescriptor(
+                                newBean.id(), newBean.beanClass(), newBean.kind(), newBean.types(),
+                                newBean.qualifiers(), enhancedScope, newBean.isAlternative(),
+                                newBean.priority(), newBean.injectionPoints(), newBean.name(),
+                                newBean.interceptorBindings(), newBean.constructorBindings(),
+                                newBean.interceptorBindingAnnotations());
+                        descriptors.add(newBean);
+                    }
+
                     // Apply enhancement modifications to interceptor descriptors (e.g. @Priority)
                     interceptors = new ArrayList<>(fr.vidocq.vauban.core.extensions.BceProcessor.applyInterceptorEnhancements(
                             interceptors, bceResult.enhancementModifications()));
@@ -666,6 +689,41 @@ public final class VaubanContainerBuilder {
         } finally {
             Thread.currentThread().setContextClassLoader(previousCl);
         }
+    }
+
+    /**
+     * Extract the scope added by Enhancement, if any. Returns null if no scope was added.
+     */
+    private static fr.vidocq.vauban.core.bean.model.ScopeInfo extractEnhancedScope(
+            java.util.List<fr.vidocq.vauban.core.extensions.VaubanClassConfig> configs) {
+        for (var config : configs) {
+            for (var ann : config.getAddedAnnotations()) {
+                if (ann.isAnnotationPresent(jakarta.enterprise.context.NormalScope.class)) {
+                    return new fr.vidocq.vauban.core.bean.model.ScopeInfo(
+                            DotName.of(ann.getName()), true);
+                }
+                if (ann.isAnnotationPresent(jakarta.inject.Scope.class)) {
+                    return new fr.vidocq.vauban.core.bean.model.ScopeInfo(
+                            DotName.of(ann.getName()), false);
+                }
+                // Explicit well-known scope check (for annotations without meta-annotations)
+                String name = ann.getName();
+                if (name.equals("jakarta.enterprise.context.RequestScoped")
+                        || name.equals("jakarta.enterprise.context.ApplicationScoped")
+                        || name.equals("jakarta.enterprise.context.SessionScoped")
+                        || name.equals("jakarta.enterprise.context.ConversationScoped")) {
+                    return new fr.vidocq.vauban.core.bean.model.ScopeInfo(
+                            DotName.of(name), true);
+                }
+                if (name.equals("jakarta.enterprise.context.Dependent")) {
+                    return fr.vidocq.vauban.core.bean.model.ScopeInfo.DEPENDENT;
+                }
+                if (name.equals("jakarta.inject.Singleton")) {
+                    return fr.vidocq.vauban.core.bean.model.ScopeInfo.SINGLETON;
+                }
+            }
+        }
+        return null;
     }
 
     @SuppressWarnings({"unchecked", "rawtypes"})

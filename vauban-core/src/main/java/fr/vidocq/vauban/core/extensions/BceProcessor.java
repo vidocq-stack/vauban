@@ -273,6 +273,8 @@ public final class BceProcessor {
     /** Check if a class matches Enhancement types filter. */
     private static boolean matchesClass(Class<?>[] types, boolean withSubtypes, Class<?> targetClass) {
         for (var type : types) {
+            // Object.class is the CDI default wildcard — matches all types
+            if (type == Object.class) return true;
             if (withSubtypes) {
                 if (type.isAssignableFrom(targetClass)) return true;
             } else {
