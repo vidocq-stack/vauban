@@ -3,6 +3,8 @@ package fr.vidocq.vauban.maven.generate;
 import fr.vidocq.vauban.core.bean.discovery.BeanDiscovery;
 import fr.vidocq.vauban.core.bean.model.BeanDescriptor;
 import fr.vidocq.vauban.core.bean.model.BeanDescriptor.BeanKind;
+import fr.vidocq.vauban.core.enrichment.EnrichmentConfig;
+import fr.vidocq.vauban.core.enrichment.IndexEnricher;
 import fr.vidocq.vauban.core.interceptor.InterceptorSubclassGenerator;
 import fr.vidocq.vauban.core.proxy.RuntimeClientProxyGenerator;
 import fr.vidocq.vauban.indexer.IndexBuilder;
@@ -10,11 +12,13 @@ import fr.vidocq.vauban.indexer.scanner.ClassFileScanner;
 import fr.vidocq.vauban.indexer.scanner.JarScanner;
 
 import java.io.IOException;
+import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.*;
 import java.nio.file.attribute.BasicFileAttributes;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.jar.JarFile;
 
 /**
  * Core build-time logic for CDI bean discovery and code generation.
@@ -95,6 +99,10 @@ public final class VaubanGenerator {
         if (index.size() == 0) {
             return new GenerationResult(List.of(), List.of(), List.of(), warnings);
         }
+
+        // 3b. Load enrichment config and enrich the index
+        var enrichmentConfig = loadEnrichmentConfig(config, warnings);
+        index = IndexEnricher.enrich(index, enrichmentConfig);
 
         // 4. Run CDI bean discovery
         var discovery = new BeanDiscovery(index);
@@ -191,5 +199,40 @@ public final class VaubanGenerator {
         var classFilePath = outputDir.resolve(className.replace('.', '/') + ".class");
         Files.createDirectories(classFilePath.getParent());
         Files.write(classFilePath, bytecode);
+    }
+
+    private static final String PROPERTIES_FILE = "vauban-apt.properties";
+
+    private static EnrichmentConfig loadEnrichmentConfig(Config config, List<String> warnings) {
+        var merged = EnrichmentConfig.empty();
+
+        // Load from project classes directory
+        if (config.projectClassesDir() != null) {
+            var propsFile = config.projectClassesDir().resolve(PROPERTIES_FILE);
+            if (Files.isRegularFile(propsFile)) {
+                try (var is = Files.newInputStream(propsFile)) {
+                    merged = merged.merge(EnrichmentConfig.load(is));
+                } catch (IOException e) {
+                    warnings.add("Failed to read " + PROPERTIES_FILE + " from project: " + e.getMessage());
+                }
+            }
+        }
+
+        // Load from dependency JARs
+        for (var dep : config.dependencyJars()) {
+            if (!Files.isRegularFile(dep) || !dep.toString().endsWith(".jar")) continue;
+            try (var jar = new JarFile(dep.toFile())) {
+                var entry = jar.getEntry(PROPERTIES_FILE);
+                if (entry != null) {
+                    try (InputStream is = jar.getInputStream(entry)) {
+                        merged = merged.merge(EnrichmentConfig.load(is));
+                    }
+                }
+            } catch (IOException e) {
+                warnings.add("Failed to read " + PROPERTIES_FILE + " from " + dep.getFileName() + ": " + e.getMessage());
+            }
+        }
+
+        return merged;
     }
 }
