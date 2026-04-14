@@ -402,12 +402,15 @@ flowchart TD
     subgraph "Compile-time (vauban-processor)"
         APT[Annotation Processing] --> EF[BeanFactory&lt;T&gt;]
         APT --> CP[ClientProxy]
+        APT --> LIST_APT[vauban-beans.list]
+        PROPS[vauban-apt.properties] -.->|enrichissement| APT
     end
 
     subgraph "Build-time (vauban-maven-plugin)"
         SCAN[Scan JARs] --> PRE_CP[Pre-gen ClientProxy]
         SCAN --> PRE_INT[Pre-gen $$Intercepted]
         SCAN --> LIST[vauban-beans.list]
+        PROPS2[vauban-apt.properties] -.->|enrichissement| SCAN
     end
 
     subgraph "Runtime (vauban-core)"
@@ -431,8 +434,12 @@ flowchart TD
 
 **Trois niveaux de generation :**
 
-1. **Compile-time** (`vauban-processor`) : APT genere les factories pour les beans du module courant
+1. **Compile-time** (`vauban-processor`) : APT genere factories, proxies et `vauban-beans.list` pour les beans du module courant
 2. **Build-time** (`vauban-maven-plugin`) : pre-genere proxies et intercepteurs pour les beans des JARs de dependances
 3. **Runtime** (`vauban-core`) : genere a la volee si pas pre-genere (fallback)
 
 Tous utilisent `java.lang.classfile.ClassFile` — **zero dependance bytecode externe** (pas d'ASM, pas de ByteBuddy).
+
+**Enrichissement compile-time** : le fichier `vauban-apt.properties` permet de promouvoir des
+classes non-CDI en beans (ex: `@Path` → `@RequestScoped`) sans BCE. Lu par l'APT et le Maven plugin.
+Voir [docs/configuration.md](configuration.md#enrichissement-de-beans--vauban-aptproperties).
