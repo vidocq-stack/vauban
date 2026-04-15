@@ -9,8 +9,6 @@ import fr.vidocq.vauban.core.bean.model.BeanDescriptor;
 import fr.vidocq.vauban.core.bean.model.ScopeInfo;
 import fr.vidocq.vauban.core.bean.resolution.BeanResolver;
 import fr.vidocq.vauban.core.bean.validation.DeploymentValidator;
-import fr.vidocq.vauban.core.enrichment.EnrichmentConfig;
-import fr.vidocq.vauban.core.enrichment.IndexEnricher;
 import fr.vidocq.vauban.core.extensions.BceProcessor;
 import fr.vidocq.vauban.core.extensions.SyntheticMetadataSerializer;
 import fr.vidocq.vauban.core.extensions.VaubanClassConfig;
@@ -53,11 +51,9 @@ public class VaubanProcessor extends AbstractProcessor {
             "jakarta.enterprise.inject.Produces"
     );
 
-    private static final String PROPERTIES_FILE = "vauban-apt.properties";
     private static final String BEANS_LIST_PATH = "META-INF/vauban-beans.list";
 
     private boolean processed = false;
-    private EnrichmentConfig enrichmentConfig = EnrichmentConfig.empty();
     private List<Class<?>> discoveredBceClasses;
     private Set<String> bceAnnotationTypes = Set.of();
 
@@ -72,7 +68,6 @@ public class VaubanProcessor extends AbstractProcessor {
     @Override
     public synchronized void init(ProcessingEnvironment processingEnv) {
         super.init(processingEnv);
-        loadEnrichmentConfig();
         // Discover BCEs early so their @Enhancement(withAnnotations=...) annotations
         // are included in getSupportedAnnotationTypes(). Without this, classes annotated
         // with e.g. @Path would never be seen by the APT roundEnv.
@@ -84,7 +79,8 @@ public class VaubanProcessor extends AbstractProcessor {
     @Override
     public Set<String> getSupportedAnnotationTypes() {
         var types = new LinkedHashSet<>(CDI_ANNOTATIONS);
-        types.addAll(enrichmentConfig.triggerAnnotationNames());
+        // Trigger annotations derived from BCE @Enhancement(withAnnotations=...)
+        // Replaces vauban-apt.properties — the BCE declares its own triggers
         types.addAll(bceAnnotationTypes);
         return Set.copyOf(types);
     }
@@ -131,9 +127,6 @@ public class VaubanProcessor extends AbstractProcessor {
 
         var index = indexBuilder.build();
         if (index.size() == 0) return false;
-
-        // Enrich index with synthetic scope annotations from vauban-apt.properties
-        index = IndexEnricher.enrich(index, enrichmentConfig);
 
         // --- BCE: Use extensions discovered in init() ---
         var aptClassLoader = VaubanProcessor.class.getClassLoader();
@@ -380,23 +373,6 @@ public class VaubanProcessor extends AbstractProcessor {
     }
 
     // --- File writing ---
-
-    private void loadEnrichmentConfig() {
-        try {
-            var resource = processingEnv.getFiler().getResource(
-                    StandardLocation.CLASS_OUTPUT, "", PROPERTIES_FILE);
-            try (var is = resource.openInputStream()) {
-                enrichmentConfig = EnrichmentConfig.load(is);
-                if (!enrichmentConfig.rules().isEmpty()) {
-                    processingEnv.getMessager().printMessage(Diagnostic.Kind.NOTE,
-                            "[Vauban] Loaded " + enrichmentConfig.rules().size()
-                                    + " enrichment rules from " + PROPERTIES_FILE);
-                }
-            }
-        } catch (IOException ignored) {
-            enrichmentConfig = EnrichmentConfig.empty();
-        }
-    }
 
     private void writeBeansList(List<BeanDescriptor> beans) {
         var beanClassNames = beans.stream()

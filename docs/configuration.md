@@ -11,88 +11,13 @@ La propriete systeme prend toujours priorite sur la variable d'environnement equ
 
 ---
 
-## Enrichissement de beans : `vauban-apt.properties`
+## Enrichissement de beans via Build Compatible Extensions (BCE)
 
-> **Alternative zero-code aux Build Compatible Extensions.**
-> Depuis que Vauban execute les BCEs a la compilation, le meme resultat peut etre
-> obtenu avec une BCE `@Enhancement`. `vauban-apt.properties` reste utile quand on
-> veut un enrichissement **sans ecrire de code Java** — une seule ligne de config
-> suffit. Pour des cas plus complexes (qualifier, interceptor binding, synthese),
-> utiliser une BCE.
-
-| Approche | Avantage | Limite |
-|----------|---------|-------|
-| `vauban-apt.properties` | Zero-code, une ligne par regle | Scope uniquement |
-| BCE `@Enhancement` | Standard CDI, toute modification possible | Necessite une classe Java |
-
-Vauban permet de promouvoir des classes non-CDI en beans CDI a la compilation,
-sans ecrire de Build Compatible Extension. Le fichier `vauban-apt.properties`
-dans `src/main/resources/` definit des regles d'enrichissement.
-
-### Format
-
-```properties
-# Chaque regle associe une annotation declencheur a un scope CDI
-# Format : enrich.<annotation-fqcn>=<scope-fqcn>
-enrich.jakarta.ws.rs.Path=jakarta.enterprise.context.RequestScoped
-enrich.jakarta.ws.rs.ext.Provider=jakarta.enterprise.context.ApplicationScoped
-enrich.jakarta.websocket.server.ServerEndpoint=jakarta.enterprise.context.Dependent
-```
-
-**Cle** : `enrich.` + nom complet de l'annotation declencheur  
-**Valeur** : nom complet du scope CDI a appliquer
-
-### Fonctionnement
-
-```mermaid
-flowchart LR
-    PROPS["vauban-apt.properties<br/><code>enrich.@Path = @RequestScoped</code>"] --> APT
-    SRC["@Path<br/>HelloResource.java"] --> APT
-
-    subgraph "Compilation (javac)"
-        APT[VaubanProcessor] --> IDX[IndexEnricher]
-        IDX --> |"ajoute @RequestScoped<br/>dans l'index"| BD[BeanDiscovery]
-        BD --> GEN[Generation]
-    end
-
-    GEN --> FAC["HelloResource_Factory.class"]
-    GEN --> PROXY["HelloResource_ClientProxy.class"]
-    GEN --> LIST["META-INF/vauban-beans.list"]
-
-    style PROPS fill:#fff3e0,stroke:#f57c00
-    style IDX fill:#e8f5e9,stroke:#2e7d32
-```
-
-1. **APT** (`VaubanProcessor`) lit `vauban-apt.properties` depuis `target/classes`
-2. Les annotations trigger (ex: `@Path`) sont ajoutees aux `@SupportedAnnotationTypes`
-3. `IndexEnricher` ajoute le scope synthetique au `ClassInfo` dans l'index
-4. `BeanDiscovery` voit la classe comme un bean CDI standard
-5. Les factories, proxies et `vauban-beans.list` sont generes normalement
-
-### Regles
-
-- Une classe **deja annotee** avec un scope CDI (`@ApplicationScoped`, `@RequestScoped`, etc.)
-  n'est **pas modifiee** — le scope explicite a toujours priorite.
-- L'annotation trigger (ex: `@Path`) doit etre presente sur le **classpath de compilation**.
-  Vauban n'a pas besoin de dependre de JAX-RS ; c'est le projet utilisateur qui apporte la dependance.
-- Si plusieurs regles matchent une meme classe, la **premiere regle** (ordre du fichier properties) gagne.
-- Le fichier est **optionnel** : sans `vauban-apt.properties`, le comportement est identique a avant.
-
-### Scopes supportes
-
-| Scope | `isNormal` | Proxy genere ? |
-|-------|-----------|----------------|
-| `jakarta.enterprise.context.ApplicationScoped` | `true` | Oui |
-| `jakarta.enterprise.context.RequestScoped` | `true` | Oui |
-| `jakarta.enterprise.context.SessionScoped` | `true` | Oui |
-| `jakarta.enterprise.context.Dependent` | `false` | Non |
-| `jakarta.inject.Singleton` | `false` | Non |
-| Scope custom | `true` (defaut) | Oui |
+Vauban permet de promouvoir des classes non-CDI en beans CDI grace aux BCEs
+`@Enhancement`. Le mecanisme est **standard CDI 4.1** et fonctionne a la fois
+a la compilation (APT) et au runtime (fallback pour les JARs non pre-traites).
 
 ### Prerequis : `vauban-processor` en dependance `provided`
-
-Pour que l'enrichissement (et les BCEs) fonctionnent a la compilation, le
-processeur doit etre sur le classpath d'annotation processing :
 
 ```xml
 <dependency>
@@ -103,46 +28,69 @@ processeur doit etre sur le classpath d'annotation processing :
 ```
 
 > **IDE** : l'annotation processing doit etre active (IntelliJ : Settings →
-> Compiler → Annotation Processors → Enable). Sans ca, l'enrichissement
-> et les BCEs ne s'executent qu'au runtime (fallback).
+> Compiler → Annotation Processors → Enable). Sans ca, les BCEs ne s'executent
+> qu'au runtime (fallback).
 
-### Pipeline APT + Maven plugin
+### Exemple : JAX-RS avec CDI
 
-Le fichier `vauban-apt.properties` est lu par **les deux** :
+Une BCE ajoute automatiquement `@RequestScoped` aux classes `@Path` sans scope :
 
-| Phase | Outil | Traite |
-|-------|-------|--------|
-| Compilation (`javac`) | `VaubanProcessor` (APT) | Classes du module courant |
-| Post-compilation (`process-classes`) | `VaubanGenerator` (Maven plugin) | JARs de dependances |
-
-Le Maven plugin est intelligent : il **ne re-traite pas** les classes deja traitees par l'APT
-(detection via `META-INF/vauban-beans.list` existant), et ne regenere pas les proxies deja sur disque.
-
-### Exemple complet : JAX-RS avec CDI
-
-**`src/main/resources/vauban-apt.properties`** :
-```properties
-enrich.jakarta.ws.rs.Path=jakarta.enterprise.context.RequestScoped
-```
-
-**`src/main/java/com/example/HelloResource.java`** :
 ```java
-@Path("/hello")
-public class HelloResource {
+public class RestScopeExtension implements BuildCompatibleExtension {
 
-    @Inject
-    GreetingService greetingService;
-
-    @GET
-    public String hello() {
-        return greetingService.greet();
+    @Enhancement(types = Object.class, withAnnotations = Path.class)
+    public void addDefaultScope(ClassConfig clazz) {
+        // Ne pas ecraser un scope explicite
+        if (!hasScope(clazz)) {
+            clazz.addAnnotation(RequestScoped.class);
+        }
     }
 }
 ```
 
-Sans `vauban-apt.properties`, cette classe n'est pas un bean CDI (pas de scope).
-Avec la regle d'enrichissement, elle recoit automatiquement `@RequestScoped` a la compilation
-et devient un bean CDI injectable avec proxy — sans BCE, sans `RestScopeExtension`.
+Enregistree dans `META-INF/services/jakarta.enterprise.inject.build.compatible.spi.BuildCompatibleExtension`.
+
+### Fonctionnement
+
+```mermaid
+flowchart TD
+    subgraph "Compilation (APT)"
+        SL[ServiceLoader] -->|decouvre BCE| PROC[VaubanProcessor]
+        PROC -->|"extrait @Enhancement(withAnnotations=Path)"| TYPES["getSupportedAnnotationTypes<br/>inclut @Path"]
+        TYPES -->|"javac scanne les @Path"| IDX[Index]
+        IDX --> BCE_C["BCE @Enhancement<br/>ajoute @RequestScoped"]
+        BCE_C --> GEN[Factories + Proxies + beans.list]
+    end
+
+    subgraph "Runtime (fallback pour JARs non pre-traites)"
+        SCAN[scanClasspath] --> CHECK{JAR a le marqueur<br/>vauban-bce-processed ?}
+        CHECK -->|Oui| SKIP[Skip BCE — charger metadata]
+        CHECK -->|Non| BCE_R["processEnhancementOnly<br/>@Enhancement pour ces classes"]
+        BCE_R --> DISC[BeanDiscovery normale]
+    end
+
+    style BCE_C fill:#e8f5e9,stroke:#2e7d32
+    style BCE_R fill:#fff3e0,stroke:#f57c00
+    style SKIP fill:#e3f2fd,stroke:#1565c0
+```
+
+**A la compilation** : le `VaubanProcessor` decouvre les BCEs via ServiceLoader, extrait
+les `@Enhancement(withAnnotations=...)` pour inclure ces annotations dans les types
+supportes, et execute les 5 phases BCE. Les classes `@Path` sont scannees, enrichies,
+et generees normalement.
+
+**Au runtime** : pour les JARs de dependances sans marqueur `vauban-bce-processed`,
+le conteneur execute `processEnhancementOnly()` — une version allegee qui n'execute
+que les methodes `@Enhancement` des BCEs. Les classes enrichies sont integrees dans
+l'index avant `BeanDiscovery`. Performance : < 1ms pour des dizaines de beans.
+
+### Regles
+
+- Une classe **deja annotee** avec un scope CDI n'est **pas modifiee** par l'Enhancement
+- L'annotation trigger (ex: `@Path`) doit etre sur le **classpath**
+- Les BCEs sont executees dans l'ordre de `@Priority` (par defaut APPLICATION + 500)
+- Le marqueur `META-INF/vauban-bce-processed` est **par source** (JAR/repertoire) : un JAR
+  pre-traite est skippe, un JAR tiers sans marqueur est enrichi au runtime
 
 ---
 

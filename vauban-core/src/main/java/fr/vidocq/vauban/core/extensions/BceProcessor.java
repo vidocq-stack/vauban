@@ -32,6 +32,38 @@ public final class BceProcessor {
     private static final String MSG_REGISTRATION_ERROR = "@Registration error: ";
 
     /**
+     * Runs only the {@code @Enhancement} phase of the BCE lifecycle for the given classes.
+     * Used at runtime for beans loaded from JARs that were not pre-processed at compile time
+     * (no {@code META-INF/vauban-bce-processed} marker).
+     *
+     * @param bceClasses     BCE extension classes (must already be instantiated or instantiable)
+     * @param archiveClasses non-bean classes to enhance (e.g. {@code @Path} without scope)
+     * @param index          the current VaubanIndex
+     * @param classLoader    ClassLoader for type resolution
+     * @return enhancement modifications keyed by class DotName
+     */
+    public static Map<DotName, List<VaubanClassConfig>> processEnhancementOnly(
+            List<Class<?>> bceClasses,
+            List<Class<?>> archiveClasses,
+            VaubanIndex index,
+            ClassLoader classLoader) {
+        var lookup = new IndexLookup(index);
+        var modifications = new HashMap<DotName, List<VaubanClassConfig>>();
+        var errors = new ArrayList<String>();
+
+        for (var bceClass : bceClasses) {
+            try {
+                var bce = instantiateBce(bceClass);
+                processEnhancement(bce, bceClass, List.of(), archiveClasses, lookup, classLoader, errors, modifications);
+            } catch (Exception e) {
+                // Enhancement-only errors are non-fatal
+            }
+        }
+
+        return modifications;
+    }
+
+    /**
      * Result of BCE processing: synthetic bean definitions and collected errors.
      */
     public record Result(

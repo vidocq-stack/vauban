@@ -26,6 +26,7 @@ public final class VaubanContainerBuilder {
 
 
     private final List<Class<?>> beanClasses = new ArrayList<>();
+    private final Set<String> bceProcessedSources = new java.util.HashSet<>();
     private final Map<DotName, BeanFactory<?>> factories = new LinkedHashMap<>();
     private java.util.function.BiFunction<String, byte[], Class<?>> classDefiner;
     private ClassLoader classLoader;
@@ -190,6 +191,37 @@ public final class VaubanContainerBuilder {
     }
 
     /**
+     * Extracts the JAR/directory root from a resource URL.
+     * E.g. "jar:file:/path/to/my.jar!/META-INF/marker" → "file:/path/to/my.jar"
+     *      "file:/path/to/classes/META-INF/marker" → "file:/path/to/classes/"
+     */
+    private static String extractSourceRoot(String resourceUrl, String resourcePath) {
+        // jar:file:/path/to/my.jar!/META-INF/...
+        if (resourceUrl.startsWith("jar:")) {
+            int bangIdx = resourceUrl.indexOf('!');
+            return bangIdx > 0 ? resourceUrl.substring(4, bangIdx) : resourceUrl;
+        }
+        // file:/path/to/classes/META-INF/...
+        int idx = resourceUrl.indexOf(resourcePath);
+        return idx > 0 ? resourceUrl.substring(0, idx) : resourceUrl;
+    }
+
+    /**
+     * Checks whether a class comes from a source that was already BCE-processed at compile time.
+     */
+    private boolean isClassFromBceProcessedSource(Class<?> clazz) {
+        try {
+            var codeSource = clazz.getProtectionDomain().getCodeSource();
+            if (codeSource == null) return false;
+            var location = codeSource.getLocation();
+            if (location == null) return false;
+            return bceProcessedSources.contains(location.toString());
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    /**
      * Scan the classpath for {@code META-INF/vauban-beans.list} files and add
      * all listed bean classes. These files are generated at build time by the
      * {@code vauban-maven-plugin:generate} goal.
@@ -201,7 +233,17 @@ public final class VaubanContainerBuilder {
         // 1. Auto-detect encrypted JARs on the classpath and register them
         scanEncryptedJarsOnClasspath(cl);
 
-        // 2. Read vauban-beans.list files from all JARs/directories
+        // 2. Track which classpath sources have the BCE-processed marker
+        try {
+            var markerUrls = cl.getResources(
+                    fr.vidocq.vauban.core.extensions.SyntheticMetadataSerializer.BCE_PROCESSED_MARKER);
+            while (markerUrls.hasMoreElements()) {
+                bceProcessedSources.add(extractSourceRoot(markerUrls.nextElement().toString(),
+                        fr.vidocq.vauban.core.extensions.SyntheticMetadataSerializer.BCE_PROCESSED_MARKER));
+            }
+        } catch (java.io.IOException ignored) {}
+
+        // 3. Read vauban-beans.list files from all JARs/directories
         try {
             var urls = cl.getResources("META-INF/vauban-beans.list");
             while (urls.hasMoreElements()) {
@@ -218,7 +260,7 @@ public final class VaubanContainerBuilder {
             throw new RuntimeException("Failed to scan classpath for vauban-beans.list", e);
         }
 
-        // 3. Read vauban-all-classes.list for non-bean archive classes (needed by BCE @Enhancement)
+        // 4. Read vauban-all-classes.list for non-bean archive classes (needed by BCE @Enhancement)
         try {
             var urls = cl.getResources("META-INF/vauban-all-classes.list");
             while (urls.hasMoreElements()) {
@@ -231,9 +273,7 @@ public final class VaubanContainerBuilder {
                             .forEach(className -> tryAddBeanClass(className, cl));
                 }
             }
-        } catch (java.io.IOException e) {
-            // Non-fatal: BCE @Enhancement may not process all archive classes
-        }
+        } catch (java.io.IOException ignored) {}
         return this;
     }
 
@@ -444,14 +484,22 @@ public final class VaubanContainerBuilder {
         ClassLoader discoveryClassLoader = buildCompositeClassLoader();
         Thread.currentThread().setContextClassLoader(discoveryClassLoader);
 
-        // --- Check if BCEs were already processed at compile time (APT) ---
-        boolean bceAlreadyProcessed = discoveryClassLoader.getResource(
-                fr.vidocq.vauban.core.extensions.SyntheticMetadataSerializer.BCE_PROCESSED_MARKER) != null;
-
-        // --- @Discovery phase (BCE) — runs BEFORE bean discovery ---
-        var bceClasses = bceAlreadyProcessed ? List.<Class<?>>of() : beanClasses.stream()
+        // --- Identify BCE classes and unprocessed archive classes ---
+        var bceClasses = beanClasses.stream()
                 .filter(c -> ReflectionValidator.isBuildCompatibleExtension(c))
                 .toList();
+
+        // Classes from sources WITHOUT vauban-bce-processed marker need runtime @Enhancement
+        var unprocessedArchiveClasses = beanClasses.stream()
+                .filter(c -> !ReflectionValidator.isBuildCompatibleExtension(c))
+                .filter(c -> !isClassFromBceProcessedSource(c))
+                .toList();
+
+        // If ALL sources are pre-processed, skip full BCE lifecycle (only load synthetic metadata)
+        boolean allSourcesProcessed = unprocessedArchiveClasses.isEmpty() && !bceProcessedSources.isEmpty();
+        if (allSourcesProcessed) {
+            bceClasses = List.of(); // skip full BCE
+        }
 
         fr.vidocq.vauban.core.extensions.BceProcessor.DiscoveryResult discoveryResult = null;
         if (!bceClasses.isEmpty()) {
@@ -512,6 +560,41 @@ public final class VaubanContainerBuilder {
                     msg.append("  - ").append(error).append("\n");
                 }
                 throw new jakarta.enterprise.inject.spi.DefinitionException(msg.toString());
+            }
+
+            // --- Run @Enhancement for classes from unprocessed sources (JARs without BCE marker) ---
+            if (!unprocessedArchiveClasses.isEmpty() && !bceClasses.isEmpty()) {
+                var allBceClasses = beanClasses.stream()
+                        .filter(c -> ReflectionValidator.isBuildCompatibleExtension(c))
+                        .toList();
+                var enhMods = fr.vidocq.vauban.core.extensions.BceProcessor.processEnhancementOnly(
+                        allBceClasses, unprocessedArchiveClasses, index,
+                        beanClasses.isEmpty() ? discoveryClassLoader : beanClasses.getFirst().getClassLoader());
+
+                // Apply enhancement modifications: rebuild index with synthetic annotations
+                if (!enhMods.isEmpty()) {
+                    var enrichedBuilder = new IndexBuilder();
+                    for (var classInfo : index.getKnownClasses()) {
+                        var mods = enhMods.get(classInfo.name());
+                        if (mods != null) {
+                            // Apply added annotations to the indexed ClassInfo
+                            var newAnnotations = new java.util.ArrayList<>(classInfo.annotations());
+                            for (var config : mods) {
+                                for (var ann : config.getAddedAnnotations()) {
+                                    newAnnotations.add(new fr.vidocq.vauban.indexer.model.AnnotationInfo(
+                                            DotName.of(ann.getName()), java.util.Map.of()));
+                                }
+                            }
+                            enrichedBuilder.add(new fr.vidocq.vauban.indexer.model.ClassInfo(
+                                    classInfo.name(), classInfo.superName(), classInfo.interfaces(),
+                                    classInfo.accessFlags(), classInfo.fields(), classInfo.methods(),
+                                    newAnnotations, classInfo.kind()));
+                        } else {
+                            enrichedBuilder.add(classInfo);
+                        }
+                    }
+                    index = enrichedBuilder.build();
+                }
             }
 
             var discovery = new BeanDiscovery(index);
@@ -641,7 +724,7 @@ public final class VaubanContainerBuilder {
             }
 
             // Load synthetic beans/observers from APT-generated metadata (if BCE was processed at compile time)
-            if (bceAlreadyProcessed) {
+            if (!bceProcessedSources.isEmpty()) {
                 loadSyntheticMetadataFromApt(discoveryClassLoader, descriptors, factories, syntheticDisposers, observers);
             }
 

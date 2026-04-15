@@ -432,7 +432,7 @@ flowchart TD
         APT[Annotation Processing] --> EF[BeanFactory&lt;T&gt;]
         APT --> CP[ClientProxy]
         APT --> LIST_APT[vauban-beans.list]
-        PROPS[vauban-apt.properties] -.->|enrichissement| APT
+        BCE_APT[BCE @Enhancement] -.->|enrichissement| APT
     end
 
     subgraph "Build-time (vauban-maven-plugin)"
@@ -440,7 +440,7 @@ flowchart TD
         SCAN --> PRE_INT[Pre-gen $$Intercepted]
         SCAN --> LIST[vauban-beans.list]
         SCAN --> ALL[vauban-all-classes.list]
-        PROPS2[vauban-apt.properties] -.->|enrichissement| SCAN
+        BCE_RT[BCE @Enhancement] -.->|runtime fallback| SCAN
     end
 
     subgraph "Runtime (vauban-core)"
@@ -470,9 +470,10 @@ flowchart TD
 
 Tous utilisent `java.lang.classfile.ClassFile` — **zero dependance bytecode externe** (pas d'ASM, pas de ByteBuddy).
 
-**Enrichissement compile-time** : le fichier `vauban-apt.properties` permet de promouvoir des
-classes non-CDI en beans (ex: `@Path` → `@RequestScoped`) sans BCE. Lu par l'APT et le Maven plugin.
-Voir [docs/configuration.md](configuration.md#enrichissement-de-beans--vauban-aptproperties).
+**Enrichissement via BCE** : les `@Enhancement` des Build Compatible Extensions promeuvent des
+classes non-CDI en beans (ex: `@Path` → `@RequestScoped`). Execute a la compilation (APT) pour
+le module courant, et au runtime pour les JARs de dependances sans marqueur.
+Voir [docs/configuration.md](configuration.md#enrichissement-de-beans-via-build-compatible-extensions-bce).
 
 ---
 
@@ -482,9 +483,8 @@ Voir [docs/configuration.md](configuration.md#enrichissement-de-beans--vauban-ap
 |---------|-----------|---------|--------|
 | `vauban-beans.list` | APT + Maven plugin | Noms des beans CDI decouverts | `VaubanContainerBuilder.scanClasspath()` |
 | `vauban-all-classes.list` | Maven plugin | **Toutes** les classes scannees (beans + non-beans) | `VaubanContainerBuilder.scanClasspath()` |
-| `vauban-bce-processed` | APT (si BCEs executees) | Marqueur vide | `VaubanContainerBuilder.build()` — skip BCE runtime |
+| `vauban-bce-processed` | APT (si BCEs executees) | Marqueur (per JAR/repertoire) | `VaubanContainerBuilder` — skip BCE pour cette source |
 | `vauban-synthetic-metadata.properties` | APT (si @Synthesis) | Beans/observers synthetiques serialises | `VaubanContainerBuilder.build()` |
-| `vauban-apt.properties` | Utilisateur | Regles d'enrichissement annotation → scope | APT + Maven plugin |
 
 **Pourquoi `vauban-all-classes.list` ?**
 
