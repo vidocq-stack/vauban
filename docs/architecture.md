@@ -479,7 +479,6 @@ flowchart TD
         SCAN[Scan JARs] --> PRE_CP[Pre-gen ClientProxy]
         SCAN --> PRE_INT[Pre-gen $$Intercepted]
         SCAN --> LIST[vauban-beans.list]
-        SCAN --> ALL[vauban-all-classes.list]
         BCE_MV[BCE @Enhancement] -.->|enrichissement| SCAN
     end
 
@@ -521,15 +520,10 @@ Voir [docs/configuration.md](configuration.md#enrichissement-de-beans-via-build-
 
 | Fichier | Genere par | Contenu | Lu par |
 |---------|-----------|---------|--------|
-| `vauban-beans.list` | APT + Maven plugin | Noms des beans CDI decouverts | `VaubanContainerBuilder.scanClasspath()` |
-| `vauban-all-classes.list` | Maven plugin | **Toutes** les classes scannees (beans + non-beans) | `VaubanContainerBuilder.scanClasspath()` |
+| `vauban-beans.list` | APT + Maven plugin | Noms des beans CDI decouverts (y compris ceux promus par BCE) | `VaubanContainerBuilder.scanClasspath()` |
 | `vauban-bce-processed` | APT (si BCEs executees) | Marqueur (per JAR/repertoire) | `VaubanContainerBuilder` — skip BCE pour cette source |
 | `vauban-synthetic-metadata.properties` | APT (si @Synthesis) | Beans/observers synthetiques serialises | `VaubanContainerBuilder.build()` |
 
-**Pourquoi `vauban-all-classes.list` ?**
-
-Les BCEs `@Enhancement` peuvent cibler des classes qui ne sont pas (encore) des beans CDI
-(ex: `@Path` sans scope). Ces classes doivent etre chargees et indexees pour que le
-`BceProcessor` les passe a l'extension. `vauban-beans.list` ne contient que les beans
-decouverts — `vauban-all-classes.list` comble ce manque en listant toutes les classes
-du deploiement.
+Les classes promues par BCE `@Enhancement` (ex: `@Path` → `@RequestScoped`) sont
+directement incluses dans `vauban-beans.list` car l'APT et le Maven plugin executent
+les BCEs avant `BeanDiscovery`. Pas besoin de liste separee.
