@@ -66,6 +66,29 @@ class BceCompileTimeTest {
         }
     }
 
+    /**
+     * BCE de test avec @Synthesis qui cree un bean synthetique.
+     */
+    public static class TestSynthesisBce implements BuildCompatibleExtension {
+        @Synthesis
+        public void createSyntheticBean(SyntheticComponents components) {
+            components.addBean(String.class)
+                    .createWith(TestStringCreator.class)
+                    .scope(ApplicationScoped.class)
+                    .withParam("value", "synthetic-hello");
+        }
+    }
+
+    /** SyntheticBeanCreator for test — creates a String bean. */
+    public static class TestStringCreator
+            implements jakarta.enterprise.inject.build.compatible.spi.SyntheticBeanCreator<String> {
+        @Override
+        public String create(jakarta.enterprise.inject.Instance<Object> lookup,
+                             jakarta.enterprise.inject.build.compatible.spi.Parameters params) {
+            return params.get("value", String.class);
+        }
+    }
+
     // ---- Helper: compile avec le processeur et une BCE injectee ----
 
     private CompilationResult compileWithBce(List<Class<?>> bceClasses, String... sources) throws IOException {
@@ -291,6 +314,35 @@ class BceCompileTimeTest {
                 "Factory should be generated for promoted bean");
         assertTrue(result.hasFile("HelloResource_ClientProxy.class"),
                 "Client proxy should be generated (RequestScoped is normal-scoped)");
+    }
+
+    @Test
+    @DisplayName("@Synthesis BCE serialise les beans synthetiques dans le metadata file")
+    void shouldSerializeSyntheticBeanMetadata() throws IOException {
+        var result = compileWithBce(
+                List.of(TestSynthesisBce.class),
+                """
+                import jakarta.enterprise.context.ApplicationScoped;
+
+                @ApplicationScoped
+                public class RealBean {
+                    public String hello() { return "hello"; }
+                }
+                """
+        );
+
+        assertTrue(result.success(), "Compilation should succeed. Messages: " + result.messages());
+
+        // Le fichier de metadata synthetique doit etre ecrit
+        assertTrue(result.hasFile(SyntheticMetadataSerializer.METADATA_PATH),
+                "Synthetic metadata file should be written when @Synthesis creates beans");
+
+        // Lire et verifier le contenu
+        var metadataContent = result.readFile(SyntheticMetadataSerializer.METADATA_PATH);
+        assertTrue(metadataContent.contains("bean.count=1"),
+                "Should contain exactly 1 synthetic bean");
+        assertTrue(metadataContent.contains(TestStringCreator.class.getName()),
+                "Should reference the creator class");
     }
 
     // ---- Utility methods (same as VaubanProcessorTest) ----
