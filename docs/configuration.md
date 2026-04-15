@@ -89,6 +89,23 @@ flowchart LR
 | `jakarta.inject.Singleton` | `false` | Non |
 | Scope custom | `true` (defaut) | Oui |
 
+### Prerequis : `vauban-processor` en dependance `provided`
+
+Pour que l'enrichissement (et les BCEs) fonctionnent a la compilation, le
+processeur doit etre sur le classpath d'annotation processing :
+
+```xml
+<dependency>
+    <groupId>fr.vidocq.vauban</groupId>
+    <artifactId>vauban-processor</artifactId>
+    <scope>provided</scope>
+</dependency>
+```
+
+> **IDE** : l'annotation processing doit etre active (IntelliJ : Settings →
+> Compiler → Annotation Processors → Enable). Sans ca, l'enrichissement
+> et les BCEs ne s'executent qu'au runtime (fallback).
+
 ### Pipeline APT + Maven plugin
 
 Le fichier `vauban-apt.properties` est lu par **les deux** :

@@ -24,6 +24,14 @@ Ajoutez les dependances Vauban dans votre `pom.xml` :
         <version>0.1.0-SNAPSHOT</version>
     </dependency>
 
+    <!-- APT : generation compile-time (factories, proxies, BCE) -->
+    <dependency>
+        <groupId>fr.vidocq.vauban</groupId>
+        <artifactId>vauban-processor</artifactId>
+        <version>0.1.0-SNAPSHOT</version>
+        <scope>provided</scope>
+    </dependency>
+
     <!-- Tests JUnit 6 -->
     <dependency>
         <groupId>fr.vidocq.vauban</groupId>
@@ -32,6 +40,49 @@ Ajoutez les dependances Vauban dans votre `pom.xml` :
         <scope>test</scope>
     </dependency>
 </dependencies>
+```
+
+### Annotation Processing (APT)
+
+`vauban-processor` est un **annotation processor** qui s'execute pendant `javac`.
+Il genere les factories, client proxies, `vauban-beans.list`, et execute les
+Build Compatible Extensions a la compilation. Le scope `provided` suffit car le
+processeur n'est necessaire qu'a la compilation, pas au runtime.
+
+> **Important** : pensez a **activer l'annotation processing** dans votre IDE !
+
+| IDE | Configuration |
+|-----|--------------|
+| **IntelliJ IDEA** | Settings → Build → Compiler → Annotation Processors → **Enable annotation processing** + **Obtain processors from project classpath** |
+| **Eclipse** | Project Properties → Java Compiler → Annotation Processing → **Enable** |
+| **VS Code** (Java Extension) | L'APT est active par defaut via Maven |
+
+Si l'APT n'est pas active, les factories et proxies ne sont pas pre-generes.
+Vauban fonctionne quand meme (fallback runtime) mais :
+- Les BCEs ne s'executent pas a la compilation (erreurs detectees au deploiement)
+- Le demarrage est plus lent (generation runtime au lieu de compile-time)
+- Les erreurs de type CDI ne sont pas reportees dans l'IDE
+
+### Maven Plugin (optionnel)
+
+Pour les projets multi-modules, le plugin Maven genere les proxies et la bean list
+pour les **JARs de dependances** (l'APT ne traite que le module courant) :
+
+```xml
+<build>
+    <plugins>
+        <plugin>
+            <groupId>fr.vidocq.vauban</groupId>
+            <artifactId>vauban-maven-plugin</artifactId>
+            <version>0.1.0-SNAPSHOT</version>
+            <executions>
+                <execution>
+                    <goals><goal>generate</goal></goals>
+                </execution>
+            </executions>
+        </plugin>
+    </plugins>
+</build>
 ```
 
 ## 2. Ecrire un bean CDI
