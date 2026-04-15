@@ -208,10 +208,73 @@ public final class BceProcessor {
                     if (processedClasses.contains(className)) continue;
                     if (!matchesClass(enhancement.types(), enhancement.withSubtypes(), archiveClass)) continue;
                     if (!matchesAnnotations(withAnnotations, archiveClass)) continue;
+                    processedClasses.add(className);
                     invokeEnhancement(method, bce, paramKind, className, lookup, errors, modifications);
                 }
             }
+
+            // Third path: index-based matching for classes not loadable via ClassLoader
+            // (e.g. classes being compiled in APT that are in the index but not on the classpath)
+            if (lookup.index() != null) {
+                var withAnnotationNames = new java.util.HashSet<DotName>();
+                for (var ann : withAnnotations) {
+                    withAnnotationNames.add(DotName.of(ann.getName()));
+                }
+                boolean isObjectWildcard = enhancement.types().length == 1
+                        && enhancement.types()[0] == Object.class;
+
+                for (var classInfo : lookup.index().getKnownClasses()) {
+                    if (processedClasses.contains(classInfo.name())) continue;
+                    // Type matching: Object.class wildcard matches everything
+                    if (!isObjectWildcard && !matchesClassByIndex(enhancement.types(),
+                            enhancement.withSubtypes(), classInfo, lookup)) continue;
+                    // Annotation matching via index
+                    if (!withAnnotationNames.isEmpty()
+                            && !matchesAnnotationsByIndex(withAnnotationNames, classInfo)) continue;
+                    processedClasses.add(classInfo.name());
+                    invokeEnhancement(method, bce, paramKind, classInfo.name(), lookup, errors, modifications);
+                }
+            }
         }
+    }
+
+    /** Index-based annotation matching: checks class, methods, fields, and constructors. */
+    private static boolean matchesAnnotationsByIndex(Set<DotName> annotationNames,
+                                                      fr.vidocq.vauban.indexer.model.ClassInfo classInfo) {
+        for (var ann : annotationNames) {
+            if (classInfo.hasAnnotation(ann)) return true;
+            for (var m : classInfo.methods()) {
+                if (m.annotations().stream().anyMatch(a -> a.name().equals(ann))) return true;
+            }
+            for (var f : classInfo.fields()) {
+                if (f.annotations().stream().anyMatch(a -> a.name().equals(ann))) return true;
+            }
+        }
+        return false;
+    }
+
+    /** Index-based type matching using class hierarchy from the index. */
+    private static boolean matchesClassByIndex(Class<?>[] types, boolean withSubtypes,
+                                                fr.vidocq.vauban.indexer.model.ClassInfo classInfo,
+                                                IndexLookup lookup) {
+        for (var type : types) {
+            if (type == Object.class) return true;
+            var typeName = DotName.of(type.getName());
+            if (typeName.equals(classInfo.name())) return true;
+            if (withSubtypes) {
+                // Walk superclass chain
+                var current = classInfo;
+                while (current != null && current.superName() != null) {
+                    if (typeName.equals(current.superName())) return true;
+                    current = lookup.getClass(current.superName()).orElse(null);
+                }
+                // Check interfaces
+                for (var iface : classInfo.interfaces()) {
+                    if (typeName.equals(iface)) return true;
+                }
+            }
+        }
+        return false;
     }
 
     private static void invokeEnhancement(Method method, Object bce, EnhancementParamKind paramKind,

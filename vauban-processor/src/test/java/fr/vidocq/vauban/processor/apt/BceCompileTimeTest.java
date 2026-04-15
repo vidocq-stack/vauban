@@ -5,7 +5,6 @@ import fr.vidocq.vauban.processor.VaubanProcessor;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.enterprise.context.RequestScoped;
 import jakarta.enterprise.inject.build.compatible.spi.*;
-import jakarta.enterprise.lang.model.declarations.ClassInfo;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -42,31 +41,16 @@ class BceCompileTimeTest {
     @TempDir
     Path tempDir;
 
-    // ---- Annotation source compiled alongside test beans ----
-
-    private static final String MY_MARKER_SOURCE = """
-            import java.lang.annotation.*;
-            @Retention(RetentionPolicy.RUNTIME)
-            @Target(ElementType.TYPE)
-            public @interface MyMarker {}
-            """;
-
-    // ---- BCE de test : ajoute @RequestScoped aux classes annotees @MyMarker ----
+    // ---- BCE de test : ajoute @RequestScoped aux classes annotees @jakarta.inject.Named ----
 
     /**
-     * Annotation marker — must match the one compiled from MY_MARKER_SOURCE.
-     * Loaded via the APT classloader at runtime.
-     */
-    @java.lang.annotation.Retention(java.lang.annotation.RetentionPolicy.RUNTIME)
-    @java.lang.annotation.Target(java.lang.annotation.ElementType.TYPE)
-    public @interface MyMarker {}
-
-    /**
-     * BCE de test qui ajoute @RequestScoped a toute classe annotee @MyMarker.
+     * BCE de test qui ajoute @RequestScoped a toute classe annotee @Named.
+     * Utilise @Named (jakarta.inject) car cette annotation est sur le classpath
+     * partage entre le test et la compilation in-process.
      * Simule le pattern RestScopeExtension qui ajoute @RequestScoped aux @Path.
      */
     public static class TestEnhancementBce implements BuildCompatibleExtension {
-        @Enhancement(types = Object.class, withAnnotations = MyMarker.class)
+        @Enhancement(types = Object.class, withAnnotations = jakarta.inject.Named.class)
         public void addScope(ClassConfig clazz) {
             clazz.addAnnotation(RequestScoped.class);
         }
@@ -165,15 +149,15 @@ class BceCompileTimeTest {
     @DisplayName("@Enhancement BCE modifie un bean existant — la BCE s'execute a la compilation")
     void shouldExecuteEnhancementOnExistingBean() throws IOException {
         // Le bean a deja @Dependent (pseudo-scope). La BCE ajoute @RequestScoped (normal-scope).
-        // Si l'Enhancement s'execute, le bean devrait avoir un client proxy genere.
+        // @Named est le trigger de la BCE de test.
         var result = compileWithBce(
                 List.of(TestEnhancementBce.class),
-                MY_MARKER_SOURCE,
                 """
                 import jakarta.enterprise.context.Dependent;
+                import jakarta.inject.Named;
 
                 @Dependent
-                @MyMarker
+                @Named
                 public class EnhancedService {
                     public String hello() { return "hello"; }
                 }
@@ -182,16 +166,13 @@ class BceCompileTimeTest {
 
         assertTrue(result.success(), "Compilation should succeed. Messages: " + result.messages());
 
-        // Le bean doit etre genere
         assertTrue(result.hasFile("EnhancedService_Factory.class"),
                 "Factory should be generated");
 
-        // Le bean doit apparaitre dans vauban-beans.list
         var beansList = result.readBeansList();
         assertTrue(beansList.contains("EnhancedService"),
                 "Enhanced bean should appear in vauban-beans.list");
 
-        // Le marqueur BCE doit etre present
         assertTrue(result.hasFile(SyntheticMetadataSerializer.BCE_PROCESSED_MARKER),
                 "BCE processed marker should be written");
     }
@@ -241,12 +222,12 @@ class BceCompileTimeTest {
     void shouldNotOverrideExistingScope() throws IOException {
         var result = compileWithBce(
                 List.of(TestEnhancementBce.class),
-                MY_MARKER_SOURCE,
                 """
                 import jakarta.enterprise.context.ApplicationScoped;
+                import jakarta.inject.Named;
 
                 @ApplicationScoped
-                @MyMarker
+                @Named
                 public class AlreadyScopedBean {
                     public String hello() { return "hello"; }
                 }
@@ -255,7 +236,6 @@ class BceCompileTimeTest {
 
         assertTrue(result.success(), "Compilation should succeed. Messages: " + result.messages());
 
-        // Le bean doit etre dans la liste (il a deja @ApplicationScoped)
         var beansList = result.readBeansList();
         assertTrue(beansList.contains("AlreadyScopedBean"),
                 "Already-scoped bean should still be in beans list");
@@ -279,6 +259,38 @@ class BceCompileTimeTest {
         assertTrue(result.success(), "Compilation with @Discovery BCE should succeed");
         assertTrue(result.hasFile("MyHelper_Factory.class"),
                 "Bean should still be discovered normally");
+    }
+
+    @Test
+    @DisplayName("BCE @Enhancement promeut une classe sans scope CDI — seule @Named, pas de scope")
+    void shouldPromoteNonBeanClassViaBceEnhancement() throws IOException {
+        // HelloResource n'a que @Named (pas de scope CDI).
+        // La BCE TestEnhancementBce ajoute @RequestScoped via @Enhancement(withAnnotations=Named).
+        // L'APT doit scanner @Named (extraite des BCE withAnnotations),
+        // indexer HelloResource, et la BCE doit la promouvoir en bean.
+        var result = compileWithBce(
+                List.of(TestEnhancementBce.class),
+                """
+                import jakarta.inject.Named;
+
+                @Named
+                public class HelloResource {
+                    public String hello() { return "hello"; }
+                }
+                """
+        );
+
+        assertTrue(result.success(), "Compilation should succeed. Messages: " + result.messages());
+
+        // La BCE a ajoute @RequestScoped → HelloResource est un bean normal-scoped
+        var beansList = result.readBeansList();
+        assertTrue(beansList.contains("HelloResource"),
+                "Non-CDI class promoted by BCE should appear in vauban-beans.list. Beans: " + beansList);
+
+        assertTrue(result.hasFile("HelloResource_Factory.class"),
+                "Factory should be generated for promoted bean");
+        assertTrue(result.hasFile("HelloResource_ClientProxy.class"),
+                "Client proxy should be generated (RequestScoped is normal-scoped)");
     }
 
     // ---- Utility methods (same as VaubanProcessorTest) ----

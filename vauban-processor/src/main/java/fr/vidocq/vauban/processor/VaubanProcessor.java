@@ -58,6 +58,8 @@ public class VaubanProcessor extends AbstractProcessor {
 
     private boolean processed = false;
     private EnrichmentConfig enrichmentConfig = EnrichmentConfig.empty();
+    private List<Class<?>> discoveredBceClasses;
+    private Set<String> bceAnnotationTypes = Set.of();
 
     /** Visible for testing — allows injecting BCE classes without ServiceLoader. */
     public List<Class<?>> overrideBceClasses;
@@ -71,13 +73,39 @@ public class VaubanProcessor extends AbstractProcessor {
     public synchronized void init(ProcessingEnvironment processingEnv) {
         super.init(processingEnv);
         loadEnrichmentConfig();
+        // Discover BCEs early so their @Enhancement(withAnnotations=...) annotations
+        // are included in getSupportedAnnotationTypes(). Without this, classes annotated
+        // with e.g. @Path would never be seen by the APT roundEnv.
+        var cl = VaubanProcessor.class.getClassLoader();
+        discoveredBceClasses = overrideBceClasses != null ? overrideBceClasses : discoverBceClasses(cl);
+        bceAnnotationTypes = extractBceAnnotationTypes(discoveredBceClasses);
     }
 
     @Override
     public Set<String> getSupportedAnnotationTypes() {
         var types = new LinkedHashSet<>(CDI_ANNOTATIONS);
         types.addAll(enrichmentConfig.triggerAnnotationNames());
+        types.addAll(bceAnnotationTypes);
         return Set.copyOf(types);
+    }
+
+    /**
+     * Extracts annotation class names from BCE @Enhancement(withAnnotations=...) declarations.
+     * These must be in getSupportedAnnotationTypes() so the APT roundEnv includes the annotated classes.
+     */
+    private static Set<String> extractBceAnnotationTypes(List<Class<?>> bceClasses) {
+        var types = new LinkedHashSet<String>();
+        for (var bceClass : bceClasses) {
+            for (var method : bceClass.getDeclaredMethods()) {
+                var enhancement = method.getAnnotation(
+                        jakarta.enterprise.inject.build.compatible.spi.Enhancement.class);
+                if (enhancement == null) continue;
+                for (var ann : enhancement.withAnnotations()) {
+                    types.add(ann.getName());
+                }
+            }
+        }
+        return types;
     }
 
     @Override
@@ -107,9 +135,9 @@ public class VaubanProcessor extends AbstractProcessor {
         // Enrich index with synthetic scope annotations from vauban-apt.properties
         index = IndexEnricher.enrich(index, enrichmentConfig);
 
-        // --- BCE: Discover extensions via ServiceLoader (or test override) ---
+        // --- BCE: Use extensions discovered in init() ---
         var aptClassLoader = VaubanProcessor.class.getClassLoader();
-        var bceClasses = overrideBceClasses != null ? overrideBceClasses : discoverBceClasses(aptClassLoader);
+        var bceClasses = discoveredBceClasses;
         BceProcessor.DiscoveryResult discoveryResult = null;
 
         if (!bceClasses.isEmpty()) {
