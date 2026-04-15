@@ -192,6 +192,66 @@ class VaubanGeneratorTest {
         assertEquals("com.det.MyService_ClientProxy", result1.generatedProxies().getFirst());
     }
 
+    @Test
+    @DisplayName("BCE @Enhancement enriches non-CDI classes from dependency JARs")
+    void shouldEnrichNonCdiBeanViaBceEnhancement() throws Exception {
+        // Create a JAR with a @Named class (no CDI scope) — simulates an external JAR
+        // Using @Named as trigger because jakarta.ws.rs.Path is not on the maven-plugin classpath
+        var namedCD = ClassDesc.of("jakarta.inject.Named");
+        var jarPath = createTestJar("external-lib.jar",
+                new TestClass("com.external.HelloResource", namedCD),
+                new TestClass("com.external.PlainHelper", null)
+        );
+
+        // Also write classes to a directory for ClassLoader
+        var classesDir = tempDir.resolve("classes");
+        writeClassToDir(classesDir, "com.external.HelloResource", namedCD);
+        writeClassToDir(classesDir, "com.external.PlainHelper", null);
+
+        // Create a BCE service file in the classesDir so ServiceLoader finds it
+        var svcDir = classesDir.resolve("META-INF/services");
+        Files.createDirectories(svcDir);
+        Files.writeString(svcDir.resolve(
+                "jakarta.enterprise.inject.build.compatible.spi.BuildCompatibleExtension"),
+                TestNamedScopeBce.class.getName());
+
+        var outputDir = tempDir.resolve("output");
+        // ClassLoader must include test classes (for BCE) + generated classes
+        var testClassesUrl = TestNamedScopeBce.class.getProtectionDomain().getCodeSource().getLocation();
+        var cl = new java.net.URLClassLoader(new java.net.URL[]{
+                classesDir.toUri().toURL(), testClassesUrl});
+
+        var config = new VaubanGenerator.Config(List.of(jarPath), null, outputDir, cl);
+        var result = VaubanGenerator.generate(config);
+
+        // HelloResource should be discovered as a bean (promoted by BCE @Enhancement)
+        assertTrue(result.discoveredBeanClasses().contains("com.external.HelloResource"),
+                "BCE-enriched @Named class should be in beans list. Found: " + result.discoveredBeanClasses());
+
+        // PlainHelper should NOT be a bean (no annotation)
+        assertFalse(result.discoveredBeanClasses().contains("com.external.PlainHelper"),
+                "PlainHelper without any annotation should not be a bean");
+
+        // Proxy should be generated (RequestScoped is normal-scoped)
+        assertTrue(result.generatedProxies().stream()
+                        .anyMatch(p -> p.contains("HelloResource")),
+                "Client proxy should be generated for promoted @RequestScoped bean. Proxies: " + result.generatedProxies());
+    }
+
+    /**
+     * BCE de test : ajoute @RequestScoped aux classes @Named sans scope CDI.
+     * Utilise @Named car jakarta.ws.rs.Path n'est pas sur le classpath maven-plugin.
+     */
+    public static class TestNamedScopeBce
+            implements jakarta.enterprise.inject.build.compatible.spi.BuildCompatibleExtension {
+        @jakarta.enterprise.inject.build.compatible.spi.Enhancement(
+                types = Object.class,
+                withAnnotations = jakarta.inject.Named.class)
+        public void addScope(jakarta.enterprise.inject.build.compatible.spi.ClassConfig clazz) {
+            clazz.addAnnotation(jakarta.enterprise.context.RequestScoped.class);
+        }
+    }
+
     private void writeClassToDir(Path classesDir, String className, ClassDesc annotation) throws IOException {
         var classBytes = generateClassWithAnnotation(className, annotation);
         var classFile = classesDir.resolve(className.replace('.', '/') + ".class");
