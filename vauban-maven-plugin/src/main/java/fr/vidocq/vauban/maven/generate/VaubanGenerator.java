@@ -145,11 +145,46 @@ public final class VaubanGenerator {
             writeAllClassesList(config.outputDir(), allClassNames);
         }
 
-        // 4. Run CDI bean discovery on newly-scanned classes
+        // 4. Run BCE @Enhancement for non-pre-processed classes (if ClassLoader available)
+        if (config.classLoader() != null) {
+            var bceClasses = discoverBceClasses(config.classLoader());
+            if (!bceClasses.isEmpty()) {
+                var archiveClasses = loadArchiveClasses(index, config.classLoader());
+                var enhMods = fr.vidocq.vauban.core.extensions.BceProcessor.processEnhancementOnly(
+                        bceClasses, archiveClasses, index, config.classLoader());
+
+                if (!enhMods.isEmpty()) {
+                    // Rebuild index with synthetic scope annotations from Enhancement
+                    var enrichedBuilder = new IndexBuilder();
+                    for (var classInfo : index.getKnownClasses()) {
+                        var mods = enhMods.get(classInfo.name());
+                        if (mods != null) {
+                            var newAnnotations = new java.util.ArrayList<>(classInfo.annotations());
+                            for (var mod : mods) {
+                                for (var ann : mod.getAddedAnnotations()) {
+                                    newAnnotations.add(new fr.vidocq.vauban.indexer.model.AnnotationInfo(
+                                            fr.vidocq.vauban.indexer.model.DotName.of(ann.getName()),
+                                            java.util.Map.of()));
+                                }
+                            }
+                            enrichedBuilder.add(new fr.vidocq.vauban.indexer.model.ClassInfo(
+                                    classInfo.name(), classInfo.superName(), classInfo.interfaces(),
+                                    classInfo.accessFlags(), classInfo.fields(), classInfo.methods(),
+                                    newAnnotations, classInfo.kind()));
+                        } else {
+                            enrichedBuilder.add(classInfo);
+                        }
+                    }
+                    index = enrichedBuilder.build();
+                }
+            }
+        }
+
+        // 5. Run CDI bean discovery on enriched index
         var discovery = new BeanDiscovery(index);
         var beans = discovery.discoverBeans();
 
-        // 5. Partition: already-known vs newly-discovered
+        // 6. Partition: already-known vs newly-discovered
         var newBeans = new ArrayList<BeanDescriptor>();
         var allBeanClassNames = new LinkedHashSet<>(alreadyKnownBeans);
 
@@ -163,12 +198,12 @@ public final class VaubanGenerator {
 
         var sortedBeanClassNames = allBeanClassNames.stream().sorted().toList();
 
-        // 6. Write merged META-INF/vauban-beans.list (only if we have new beans to add)
+        // 7. Write merged META-INF/vauban-beans.list (only if we have new beans to add)
         if (!newBeans.isEmpty() || !projectAlreadyProcessed) {
             writeBeansList(config.outputDir(), sortedBeanClassNames);
         }
 
-        // 7. Pre-generate proxies and interceptor subclasses (if ClassLoader provided)
+        // 8. Pre-generate proxies and interceptor subclasses (if ClassLoader provided)
         //    Skip classes whose proxy/interceptor already exists on disk
         var generatedProxies = new ArrayList<String>();
         var generatedInterceptors = new ArrayList<String>();
@@ -321,4 +356,24 @@ public final class VaubanGenerator {
         Files.write(classFilePath, bytecode);
     }
 
+    private static List<Class<?>> discoverBceClasses(ClassLoader cl) {
+        var bceClasses = new ArrayList<Class<?>>();
+        try {
+            java.util.ServiceLoader.load(
+                    jakarta.enterprise.inject.build.compatible.spi.BuildCompatibleExtension.class, cl)
+                    .forEach(ext -> bceClasses.add(ext.getClass()));
+        } catch (Exception ignored) {}
+        return bceClasses;
+    }
+
+    private static List<Class<?>> loadArchiveClasses(
+            fr.vidocq.vauban.indexer.VaubanIndex index, ClassLoader cl) {
+        var classes = new ArrayList<Class<?>>();
+        for (var classInfo : index.getKnownClasses()) {
+            try {
+                classes.add(Class.forName(classInfo.name().value(), false, cl));
+            } catch (ClassNotFoundException ignored) {}
+        }
+        return classes;
+    }
 }
