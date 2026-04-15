@@ -3,6 +3,8 @@ module fr.vidocq.vauban.processor {
     requires fr.vidocq.vauban.indexer;
     requires java.compiler;
 
+    uses jakarta.enterprise.inject.build.compatible.spi.BuildCompatibleExtension;
+
     exports fr.vidocq.vauban.processor;
     exports fr.vidocq.vauban.processor.apt;
     exports fr.vidocq.vauban.processor.codegen;

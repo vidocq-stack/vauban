@@ -389,8 +389,37 @@ flowchart LR
     style V fill:#f3e5f5,stroke:#6a1b9a
 ```
 
-Les extensions BCE sont executees dans `BceProcessor` pendant le `build()` du conteneur.
-Elles permettent de modifier les beans, ajouter des beans synthetiques, et valider le deploiement
+Les extensions BCE sont executees **a la compilation** par le `VaubanProcessor` (APT),
+puis skippees au runtime grace au marqueur `META-INF/vauban-bce-processed`.
+Si l'APT n'a pas tourne (pas de marqueur), les BCEs s'executent au boot du conteneur (fallback).
+
+```mermaid
+flowchart TD
+    subgraph "Compilation (APT)"
+        SL[ServiceLoader] --> |"decouvre BCEs"| PROC[VaubanProcessor]
+        PROC --> |"execute les 5 phases"| BCE[BceProcessor]
+        BCE --> META["META-INF/vauban-bce-processed<br/>+ vauban-synthetic-metadata.properties"]
+    end
+
+    subgraph "Runtime (boot conteneur)"
+        CHECK{Marqueur<br/>present?}
+        CHECK -->|Oui| LOAD["Charger metadata<br/>synthetique"]
+        CHECK -->|Non| RUN["Executer BCEs<br/>(fallback)"]
+    end
+
+    META --> CHECK
+
+    style META fill:#fff3e0,stroke:#f57c00
+    style CHECK fill:#e3f2fd,stroke:#1565c0
+```
+
+**Avantages de l'execution compile-time :**
+
+- Erreurs BCE detectees a la compilation (pas au deploiement)
+- Demarrage plus rapide (phases deja executees)
+- Beans synthetiques pre-calcules et serialises
+
+Les BCEs permettent de modifier les beans, ajouter des beans synthetiques, et valider le deploiement
 sans utiliser les Portable Extensions (CDI Full).
 
 ---

@@ -427,8 +427,12 @@ public final class VaubanContainerBuilder {
         ClassLoader discoveryClassLoader = buildCompositeClassLoader();
         Thread.currentThread().setContextClassLoader(discoveryClassLoader);
 
+        // --- Check if BCEs were already processed at compile time (APT) ---
+        boolean bceAlreadyProcessed = discoveryClassLoader.getResource(
+                fr.vidocq.vauban.core.extensions.SyntheticMetadataSerializer.BCE_PROCESSED_MARKER) != null;
+
         // --- @Discovery phase (BCE) — runs BEFORE bean discovery ---
-        var bceClasses = beanClasses.stream()
+        var bceClasses = bceAlreadyProcessed ? List.<Class<?>>of() : beanClasses.stream()
                 .filter(c -> ReflectionValidator.isBuildCompatibleExtension(c))
                 .toList();
 
@@ -619,6 +623,11 @@ public final class VaubanContainerBuilder {
                 }
             }
 
+            // Load synthetic beans/observers from APT-generated metadata (if BCE was processed at compile time)
+            if (bceAlreadyProcessed) {
+                loadSyntheticMetadataFromApt(discoveryClassLoader, descriptors, factories, syntheticDisposers, observers);
+            }
+
             // Validate observer/disposer method parameters (CDI spec)
             VaubanContainer.validateObserverParameters(observers, descriptors, index);
             DisposerInvoker.validateDisposerParameters(disposers, descriptors, index);
@@ -688,6 +697,97 @@ public final class VaubanContainerBuilder {
             return container;
         } finally {
             Thread.currentThread().setContextClassLoader(previousCl);
+        }
+    }
+
+    /**
+     * Load synthetic beans/observers from APT-generated metadata.
+     * Called when BCE was already processed at compile time.
+     */
+    @SuppressWarnings({"unchecked", "rawtypes"})
+    private void loadSyntheticMetadataFromApt(ClassLoader cl,
+                                               List<BeanDescriptor> descriptors,
+                                               Map<DotName, BeanFactory<?>> factories,
+                                               Map<DotName, java.util.function.BiConsumer<Object, CreationalContext<?>>> syntheticDisposers,
+                                               List<fr.vidocq.vauban.core.bean.model.ObserverDescriptor> observers) {
+        try {
+            var urls = cl.getResources(fr.vidocq.vauban.core.extensions.SyntheticMetadataSerializer.METADATA_PATH);
+            while (urls.hasMoreElements()) {
+                var url = urls.nextElement();
+                try (var is = url.openStream()) {
+                    var props = new java.util.Properties();
+                    props.load(new java.io.InputStreamReader(is, java.nio.charset.StandardCharsets.UTF_8));
+
+                    var beanDescriptors = fr.vidocq.vauban.core.extensions.SyntheticMetadataSerializer.readBeans(props);
+                    for (var synDesc : beanDescriptors) {
+                        try {
+                            var beanClass = Class.forName(synDesc.beanClassName(), false, cl);
+                            var builder = new fr.vidocq.vauban.core.extensions.VaubanSyntheticBeanBuilder(beanClass);
+
+                            if (synDesc.creatorClassName() != null) {
+                                builder.createWith((Class) Class.forName(synDesc.creatorClassName(), false, cl));
+                            }
+                            if (synDesc.disposerClassName() != null) {
+                                builder.disposeWith((Class) Class.forName(synDesc.disposerClassName(), false, cl));
+                            }
+                            if (synDesc.scopeAnnotation() != null) {
+                                builder.scope((Class) Class.forName(synDesc.scopeAnnotation(), false, cl));
+                            }
+                            for (var typeName : synDesc.types()) {
+                                try {
+                                    builder.type(Class.forName(typeName, false, cl));
+                                } catch (ClassNotFoundException ignored) {}
+                            }
+                            for (var qualName : synDesc.qualifiers()) {
+                                try {
+                                    builder.qualifier((Class) Class.forName(qualName, false, cl));
+                                } catch (ClassNotFoundException ignored) {}
+                            }
+                            if (synDesc.name() != null) builder.name(synDesc.name());
+                            builder.alternative(synDesc.alternative());
+                            builder.priority(synDesc.priority());
+
+                            // Restore params
+                            for (var paramEntry : synDesc.params().entrySet()) {
+                                var decoded = fr.vidocq.vauban.core.extensions.SyntheticMetadataSerializer.decodeParam(paramEntry.getValue());
+                                if (decoded instanceof String s) builder.withParam(paramEntry.getKey(), s);
+                                else if (decoded instanceof Boolean b) builder.withParam(paramEntry.getKey(), b);
+                                else if (decoded instanceof Integer i) builder.withParam(paramEntry.getKey(), i);
+                                else if (decoded instanceof Long l) builder.withParam(paramEntry.getKey(), l);
+                                else if (decoded instanceof Double d) builder.withParam(paramEntry.getKey(), d);
+                            }
+
+                            registerSyntheticBean(builder, descriptors, factories, syntheticDisposers);
+                        } catch (ClassNotFoundException e) {
+                            // Synthetic bean class not found — skip
+                        }
+                    }
+
+                    var observerDescriptors = fr.vidocq.vauban.core.extensions.SyntheticMetadataSerializer.readObservers(props);
+                    for (var synDesc : observerDescriptors) {
+                        try {
+                            var eventClass = Class.forName(synDesc.eventTypeName(), false, cl);
+                            var builder = new fr.vidocq.vauban.core.extensions.VaubanSyntheticObserverBuilder(eventClass);
+                            if (synDesc.observerClassName() != null) {
+                                builder.observeWith((Class) Class.forName(synDesc.observerClassName(), false, cl));
+                            }
+                            for (var qualName : synDesc.qualifiers()) {
+                                try {
+                                    builder.qualifier((Class) Class.forName(qualName, false, cl));
+                                } catch (ClassNotFoundException ignored) {}
+                            }
+                            builder.priority(synDesc.priority());
+                            builder.async(synDesc.async());
+
+                            observers.add(buildSyntheticObserver(builder));
+                        } catch (ClassNotFoundException e) {
+                            // Synthetic observer class not found — skip
+                        }
+                    }
+                }
+            }
+        } catch (java.io.IOException e) {
+            // No metadata file or read error — skip
         }
     }
 

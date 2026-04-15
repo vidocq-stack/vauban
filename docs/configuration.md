@@ -13,6 +13,18 @@ La propriete systeme prend toujours priorite sur la variable d'environnement equ
 
 ## Enrichissement de beans : `vauban-apt.properties`
 
+> **Alternative zero-code aux Build Compatible Extensions.**
+> Depuis que Vauban execute les BCEs a la compilation, le meme resultat peut etre
+> obtenu avec une BCE `@Enhancement`. `vauban-apt.properties` reste utile quand on
+> veut un enrichissement **sans ecrire de code Java** — une seule ligne de config
+> suffit. Pour des cas plus complexes (qualifier, interceptor binding, synthese),
+> utiliser une BCE.
+
+| Approche | Avantage | Limite |
+|----------|---------|-------|
+| `vauban-apt.properties` | Zero-code, une ligne par regle | Scope uniquement |
+| BCE `@Enhancement` | Standard CDI, toute modification possible | Necessite une classe Java |
+
 Vauban permet de promouvoir des classes non-CDI en beans CDI a la compilation,
 sans ecrire de Build Compatible Extension. Le fichier `vauban-apt.properties`
 dans `src/main/resources/` definit des regles d'enrichissement.

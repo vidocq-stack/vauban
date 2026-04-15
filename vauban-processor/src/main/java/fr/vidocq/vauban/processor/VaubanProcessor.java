@@ -6,15 +6,21 @@ import fr.vidocq.vauban.processor.codegen.factory.BeanFactoryGenerator;
 import fr.vidocq.vauban.processor.codegen.proxy.ClientProxyGenerator;
 import fr.vidocq.vauban.core.bean.discovery.BeanDiscovery;
 import fr.vidocq.vauban.core.bean.model.BeanDescriptor;
+import fr.vidocq.vauban.core.bean.model.ScopeInfo;
 import fr.vidocq.vauban.core.bean.resolution.BeanResolver;
 import fr.vidocq.vauban.core.bean.validation.DeploymentValidator;
 import fr.vidocq.vauban.core.enrichment.EnrichmentConfig;
 import fr.vidocq.vauban.core.enrichment.IndexEnricher;
+import fr.vidocq.vauban.core.extensions.BceProcessor;
+import fr.vidocq.vauban.core.extensions.SyntheticMetadataSerializer;
+import fr.vidocq.vauban.core.extensions.VaubanClassConfig;
+import fr.vidocq.vauban.core.langmodel.IndexLookup;
 import fr.vidocq.vauban.core.types.AssignabilityRules;
 import fr.vidocq.vauban.indexer.IndexBuilder;
-import fr.vidocq.vauban.indexer.model.ClassInfo;
 import fr.vidocq.vauban.indexer.model.DotName;
+import fr.vidocq.vauban.indexer.scanner.ClassFileScanner;
 
+import jakarta.enterprise.inject.build.compatible.spi.BuildCompatibleExtension;
 import javax.annotation.processing.*;
 import javax.lang.model.SourceVersion;
 import javax.lang.model.element.*;
@@ -23,14 +29,19 @@ import javax.tools.StandardLocation;
 import java.io.*;
 import java.nio.charset.StandardCharsets;
 import java.util.*;
+import java.util.stream.Collectors;
 
 /**
  * Annotation processor that discovers CDI beans at compile time,
- * generates bean factories, client proxies, and a {@code META-INF/vauban-beans.list}.
+ * runs Build Compatible Extensions (BCE), generates bean factories,
+ * client proxies, and a {@code META-INF/vauban-beans.list}.
  *
- * <p>Supports bean enrichment via {@code vauban-apt.properties}: classes annotated
- * with a trigger annotation (e.g. {@code @Path}) receive a CDI scope automatically,
- * promoting them to managed beans without requiring a Build Compatible Extension.</p>
+ * <p>Supports bean enrichment via {@code vauban-apt.properties} and
+ * BCE execution ({@code @Discovery}, {@code @Enhancement}, {@code @Registration},
+ * {@code @Synthesis}, {@code @Validation}) at compile time.</p>
+ *
+ * <p>When BCEs are processed, a marker file {@code META-INF/vauban-bce-processed}
+ * is written so the runtime container skips re-executing them.</p>
  */
 public class VaubanProcessor extends AbstractProcessor {
 
@@ -47,6 +58,9 @@ public class VaubanProcessor extends AbstractProcessor {
 
     private boolean processed = false;
     private EnrichmentConfig enrichmentConfig = EnrichmentConfig.empty();
+
+    /** Visible for testing — allows injecting BCE classes without ServiceLoader. */
+    public List<Class<?>> overrideBceClasses;
 
     @Override
     public SourceVersion getSupportedSourceVersion() {
@@ -80,7 +94,6 @@ public class VaubanProcessor extends AbstractProcessor {
                 if (element instanceof TypeElement typeElement) {
                     indexBuilder.add(scanner.scan(typeElement));
                 } else if (element.getEnclosingElement() instanceof TypeElement enclosing) {
-                    // Producer methods/fields - add the enclosing class
                     if (!indexBuilder.contains(DotName.of(enclosing.getQualifiedName().toString()))) {
                         indexBuilder.add(scanner.scan(enclosing));
                     }
@@ -94,11 +107,86 @@ public class VaubanProcessor extends AbstractProcessor {
         // Enrich index with synthetic scope annotations from vauban-apt.properties
         index = IndexEnricher.enrich(index, enrichmentConfig);
 
+        // --- BCE: Discover extensions via ServiceLoader (or test override) ---
+        var aptClassLoader = VaubanProcessor.class.getClassLoader();
+        var bceClasses = overrideBceClasses != null ? overrideBceClasses : discoverBceClasses(aptClassLoader);
+        BceProcessor.DiscoveryResult discoveryResult = null;
+
+        if (!bceClasses.isEmpty()) {
+            // --- @Discovery phase ---
+            var lookup = new IndexLookup(index);
+            discoveryResult = BceProcessor.processDiscovery(bceClasses, lookup);
+
+            // Add scanned classes to the index
+            for (var className : discoveryResult.scannedClasses().getAddedClasses()) {
+                var bytes = loadClassBytes(className, aptClassLoader);
+                if (bytes != null) {
+                    try {
+                        indexBuilder.add(ClassFileScanner.scan(bytes));
+                    } catch (Exception e) {
+                        // Class scan failed — skip
+                    }
+                }
+            }
+            index = indexBuilder.build();
+        }
+
         // Run bean discovery
         var discovery = new BeanDiscovery(index);
-        var beans = discovery.discoverBeans();
 
-        if (beans.isEmpty()) return false;
+        // Apply @Discovery meta-annotations to BeanDiscovery
+        if (discoveryResult != null) {
+            applyDiscoveryResult(discovery, discoveryResult);
+        }
+
+        var beans = new ArrayList<>(discovery.discoverBeans());
+
+        if (beans.isEmpty() && bceClasses.isEmpty()) return false;
+
+        // --- BCE: remaining phases (@Enhancement → @Validation) ---
+        boolean bceProcessed = false;
+        if (!bceClasses.isEmpty()) {
+            var archiveClasses = loadArchiveClasses(index, aptClassLoader);
+            var observers = discovery.discoverObservers();
+            var interceptors = discovery.discoverInterceptors();
+
+            var bceResult = BceProcessor.process(bceClasses, beans,
+                    observers, interceptors,
+                    index, aptClassLoader,
+                    discoveryResult.bceInstances(), archiveClasses);
+
+            // Report BCE errors as compilation errors
+            boolean hasErrors = false;
+            for (var err : bceResult.definitionErrors()) {
+                processingEnv.getMessager().printMessage(Diagnostic.Kind.ERROR,
+                        "[Vauban BCE] " + err);
+                hasErrors = true;
+            }
+            for (var err : bceResult.deploymentErrors()) {
+                processingEnv.getMessager().printMessage(Diagnostic.Kind.ERROR,
+                        "[Vauban BCE] " + err);
+                hasErrors = true;
+            }
+
+            if (hasErrors) return true;
+
+            // Apply enhancement modifications
+            if (!bceResult.enhancementModifications().isEmpty()) {
+                var modified = BceProcessor.applyEnhancements(beans, bceResult.enhancementModifications());
+                beans.clear();
+                beans.addAll(modified);
+
+                // Promote non-beans that gained a scope via Enhancement
+                promoteEnhancedClasses(beans, bceResult.enhancementModifications(), index, discovery);
+            }
+
+            // Serialize synthetic beans/observers for runtime
+            if (!bceResult.syntheticBeans().isEmpty() || !bceResult.syntheticObservers().isEmpty()) {
+                writeSyntheticMetadata(bceResult.syntheticBeans(), bceResult.syntheticObservers());
+            }
+
+            bceProcessed = true;
+        }
 
         // Validate deployment
         var assignability = new AssignabilityRules(index);
@@ -106,7 +194,6 @@ public class VaubanProcessor extends AbstractProcessor {
         var validator = new DeploymentValidator(beans, resolver);
         var errors = validator.validate();
 
-        // Report validation errors as compilation errors
         for (var error : errors) {
             processingEnv.getMessager().printMessage(Diagnostic.Kind.ERROR,
                 "[Vauban] " + error.message());
@@ -120,10 +207,8 @@ public class VaubanProcessor extends AbstractProcessor {
                 var classInfo = index.getClassByName(bean.beanClass()).orElse(null);
                 if (classInfo == null) continue;
 
-                // Generate factory
                 generateClass(BeanFactoryGenerator.generate(classInfo));
 
-                // Generate proxy for normal-scoped beans
                 if (bean.scope().isNormal()) {
                     generateClass(ClientProxyGenerator.generate(classInfo));
                 }
@@ -133,8 +218,140 @@ public class VaubanProcessor extends AbstractProcessor {
         // Write META-INF/vauban-beans.list
         writeBeansList(beans);
 
+        // Write BCE processed marker
+        if (bceProcessed) {
+            writeBceProcessedMarker();
+        }
+
         return true;
     }
+
+    // --- BCE Discovery ---
+
+    private List<Class<?>> discoverBceClasses(ClassLoader cl) {
+        var bceClasses = new ArrayList<Class<?>>();
+        try {
+            ServiceLoader.load(BuildCompatibleExtension.class, cl)
+                    .forEach(ext -> bceClasses.add(ext.getClass()));
+        } catch (Exception e) {
+            // ServiceLoader failed — no BCEs
+            processingEnv.getMessager().printMessage(Diagnostic.Kind.NOTE,
+                    "[Vauban] BCE discovery via ServiceLoader: " + e.getMessage());
+        }
+        if (!bceClasses.isEmpty()) {
+            processingEnv.getMessager().printMessage(Diagnostic.Kind.NOTE,
+                    "[Vauban] Discovered " + bceClasses.size() + " Build Compatible Extension(s)");
+        }
+        return bceClasses;
+    }
+
+    private void applyDiscoveryResult(BeanDiscovery discovery, BceProcessor.DiscoveryResult discoveryResult) {
+        var meta = discoveryResult.metaAnnotations();
+        discovery.setCustomQualifiers(
+                meta.getCustomQualifiers().stream()
+                        .map(c -> DotName.of(c.getName()))
+                        .collect(Collectors.toSet()));
+        discovery.setCustomInterceptorBindings(
+                meta.getCustomInterceptorBindings().stream()
+                        .map(c -> DotName.of(c.getName()))
+                        .collect(Collectors.toSet()));
+        discovery.setCustomStereotypes(
+                meta.getCustomStereotypes().stream()
+                        .map(c -> DotName.of(c.getName()))
+                        .collect(Collectors.toSet()));
+
+        var stereotypeAnns = new HashMap<DotName, Set<Class<? extends java.lang.annotation.Annotation>>>();
+        for (var entry : meta.getStereotypeAnnotations().entrySet()) {
+            stereotypeAnns.put(DotName.of(entry.getKey().getName()), entry.getValue());
+        }
+        discovery.setCustomStereotypeAnnotations(stereotypeAnns);
+        discovery.setCustomNonbindingMembers(meta.getNonbindingMembersPerQualifier());
+
+        if (!discoveryResult.scannedClasses().getAddedClasses().isEmpty()) {
+            var scannedDotNames = discoveryResult.scannedClasses().getAddedClasses().stream()
+                    .map(DotName::of)
+                    .collect(Collectors.toSet());
+            discovery.setForcedBeanClasses(scannedDotNames);
+        }
+    }
+
+    private void promoteEnhancedClasses(List<BeanDescriptor> beans,
+                                         Map<DotName, List<VaubanClassConfig>> modifications,
+                                         fr.vidocq.vauban.indexer.VaubanIndex index,
+                                         BeanDiscovery discovery) {
+        var existingBeanClasses = beans.stream()
+                .map(BeanDescriptor::beanClass)
+                .collect(Collectors.toSet());
+
+        for (var entry : modifications.entrySet()) {
+            if (existingBeanClasses.contains(entry.getKey())) continue;
+            var enhancedScope = extractEnhancedScope(entry.getValue());
+            if (enhancedScope == null) continue;
+            var classInfo = index.getClassByName(entry.getKey()).orElse(null);
+            if (classInfo == null) continue;
+
+            var newBean = discovery.buildManagedBean(classInfo);
+            newBean = new BeanDescriptor(
+                    newBean.id(), newBean.beanClass(), newBean.kind(), newBean.types(),
+                    newBean.qualifiers(), enhancedScope, newBean.isAlternative(),
+                    newBean.priority(), newBean.injectionPoints(), newBean.name(),
+                    newBean.interceptorBindings(), newBean.constructorBindings(),
+                    newBean.interceptorBindingAnnotations());
+            beans.add(newBean);
+        }
+    }
+
+    private static ScopeInfo extractEnhancedScope(List<VaubanClassConfig> configs) {
+        for (var config : configs) {
+            for (var ann : config.getAddedAnnotations()) {
+                if (ann.isAnnotationPresent(jakarta.enterprise.context.NormalScope.class)) {
+                    return new ScopeInfo(DotName.of(ann.getName()), true);
+                }
+                if (ann.isAnnotationPresent(jakarta.inject.Scope.class)) {
+                    return new ScopeInfo(DotName.of(ann.getName()), false);
+                }
+                String name = ann.getName();
+                if (name.equals("jakarta.enterprise.context.RequestScoped")
+                        || name.equals("jakarta.enterprise.context.ApplicationScoped")
+                        || name.equals("jakarta.enterprise.context.SessionScoped")
+                        || name.equals("jakarta.enterprise.context.ConversationScoped")) {
+                    return new ScopeInfo(DotName.of(name), true);
+                }
+                if (name.equals("jakarta.enterprise.context.Dependent")) {
+                    return ScopeInfo.DEPENDENT;
+                }
+                if (name.equals("jakarta.inject.Singleton")) {
+                    return ScopeInfo.SINGLETON;
+                }
+            }
+        }
+        return null;
+    }
+
+    // --- Utility methods ---
+
+    private List<Class<?>> loadArchiveClasses(fr.vidocq.vauban.indexer.VaubanIndex index, ClassLoader cl) {
+        var classes = new ArrayList<Class<?>>();
+        for (var classInfo : index.getKnownClasses()) {
+            try {
+                classes.add(Class.forName(classInfo.name().value(), false, cl));
+            } catch (ClassNotFoundException ignored) {
+                // Class not on processor classpath — skip
+            }
+        }
+        return classes;
+    }
+
+    private byte[] loadClassBytes(String className, ClassLoader cl) {
+        var resourceName = className.replace('.', '/') + ".class";
+        try (var is = cl.getResourceAsStream(resourceName)) {
+            return is != null ? is.readAllBytes() : null;
+        } catch (IOException e) {
+            return null;
+        }
+    }
+
+    // --- File writing ---
 
     private void loadEnrichmentConfig() {
         try {
@@ -149,7 +366,6 @@ public class VaubanProcessor extends AbstractProcessor {
                 }
             }
         } catch (IOException ignored) {
-            // No properties file — enrichment disabled, this is expected
             enrichmentConfig = EnrichmentConfig.empty();
         }
     }
@@ -176,6 +392,37 @@ public class VaubanProcessor extends AbstractProcessor {
         } catch (IOException e) {
             processingEnv.getMessager().printMessage(Diagnostic.Kind.WARNING,
                     "[Vauban] Failed to write " + BEANS_LIST_PATH + ": " + e.getMessage());
+        }
+    }
+
+    private void writeSyntheticMetadata(
+            List<fr.vidocq.vauban.core.extensions.VaubanSyntheticBeanBuilder<?>> syntheticBeans,
+            List<fr.vidocq.vauban.core.extensions.VaubanSyntheticObserverBuilder<?>> syntheticObservers) {
+        try {
+            var resource = processingEnv.getFiler().createResource(
+                    StandardLocation.CLASS_OUTPUT, "", SyntheticMetadataSerializer.METADATA_PATH);
+            try (var os = resource.openOutputStream()) {
+                SyntheticMetadataSerializer.write(syntheticBeans, syntheticObservers, os);
+            }
+            processingEnv.getMessager().printMessage(Diagnostic.Kind.NOTE,
+                    "[Vauban] Serialized " + syntheticBeans.size() + " synthetic bean(s), "
+                            + syntheticObservers.size() + " synthetic observer(s)");
+        } catch (IOException e) {
+            processingEnv.getMessager().printMessage(Diagnostic.Kind.WARNING,
+                    "[Vauban] Failed to write synthetic metadata: " + e.getMessage());
+        }
+    }
+
+    private void writeBceProcessedMarker() {
+        try {
+            var resource = processingEnv.getFiler().createResource(
+                    StandardLocation.CLASS_OUTPUT, "", SyntheticMetadataSerializer.BCE_PROCESSED_MARKER);
+            try (var os = resource.openOutputStream()) {
+                os.write("# BCE phases executed at compile time by VaubanProcessor\n".getBytes(StandardCharsets.UTF_8));
+            }
+        } catch (IOException e) {
+            processingEnv.getMessager().printMessage(Diagnostic.Kind.WARNING,
+                    "[Vauban] Failed to write BCE marker: " + e.getMessage());
         }
     }
 
