@@ -255,7 +255,7 @@ flowchart TD
 ```mermaid
 sequenceDiagram
     participant App as Application
-    participant E as Event&lt;T&gt;
+    participant E as Event
     participant ED as EventDispatcher
     participant VT as Virtual Thread
     participant O1 as Observer 1
@@ -270,7 +270,7 @@ sequenceDiagram
     O1-->>VT: ok
     VT->>O2: invokeObserver()
     O2-->>VT: ok
-    VT-->>App: CompletionStage&lt;T&gt;
+    VT-->>App: CompletionStage
     deactivate VT
 ```
 
@@ -389,35 +389,75 @@ flowchart LR
     style V fill:#f3e5f5,stroke:#6a1b9a
 ```
 
-Les extensions BCE sont executees **a la compilation** par le `VaubanProcessor` (APT),
-puis skippees au runtime grace au marqueur `META-INF/vauban-bce-processed`.
-Si l'APT n'a pas tourne (pas de marqueur), les BCEs s'executent au boot du conteneur (fallback).
+Les extensions BCE sont executees a **trois niveaux** : compilation (APT), build-time (Maven plugin),
+et runtime (fallback). Le marqueur `META-INF/vauban-bce-processed` est **per-source** (JAR/repertoire).
+
+### Decouverte et execution a la compilation (APT)
 
 ```mermaid
 flowchart TD
-    subgraph "Compilation (APT)"
-        SL[ServiceLoader] --> |"decouvre BCEs"| PROC[VaubanProcessor]
-        PROC --> |"execute les 5 phases"| BCE[BceProcessor]
-        BCE --> META["META-INF/vauban-bce-processed<br/>+ vauban-synthetic-metadata.properties"]
+    subgraph "init()"
+        SL["ServiceLoader<br/>BuildCompatibleExtension"] --> BCE_LIST["Liste des BCEs"]
+        BCE_LIST --> EXTRACT["Extraction des<br/>@Enhancement(withAnnotations=...)"]
+        EXTRACT --> TYPES["getSupportedAnnotationTypes<br/>CDI annotations + triggers BCE"]
     end
 
-    subgraph "Runtime (boot conteneur)"
-        CHECK{Marqueur<br/>present?}
-        CHECK -->|Oui| LOAD["Charger metadata<br/>synthetique"]
-        CHECK -->|Non| RUN["Executer BCEs<br/>(fallback)"]
+    subgraph "process()"
+        SCAN["javac scanne les classes<br/>avec annotations supportees"] --> IDX["IndexBuilder → VaubanIndex"]
+        IDX --> DISCOVERY["@Discovery<br/>ScannedClasses, MetaAnnotations"]
+        DISCOVERY --> BEAN_DISC["BeanDiscovery"]
+        BEAN_DISC --> ALL_PHASES["BceProcessor.process()<br/>@Enhancement → @Registration<br/>→ @Synthesis → @Validation"]
+        ALL_PHASES --> PROMOTE["Promouvoir non-beans<br/>enrichis en beans"]
+        PROMOTE --> GEN["Generer factories + proxies<br/>+ vauban-beans.list"]
+        GEN --> MARKER["Ecrire vauban-bce-processed<br/>+ synthetic-metadata"]
     end
 
-    META --> CHECK
-
-    style META fill:#fff3e0,stroke:#f57c00
-    style CHECK fill:#e3f2fd,stroke:#1565c0
+    style EXTRACT fill:#e8f5e9,stroke:#2e7d32
+    style ALL_PHASES fill:#fff3e0,stroke:#f57c00
+    style MARKER fill:#e3f2fd,stroke:#1565c0
 ```
 
-**Avantages de l'execution compile-time :**
+**Etape cle** : dans `init()`, le processeur decouvre les BCEs via ServiceLoader et extrait
+les annotations trigger de leurs methodes `@Enhancement(withAnnotations=...)`. Ces annotations
+(ex: `@Path`) sont ajoutees aux `getSupportedAnnotationTypes()` pour que `javac` scanne les
+classes correspondantes. Sans cette etape, les classes `@Path` sans scope CDI seraient invisibles.
+
+**Matching index-based** : les classes en cours de compilation ne sont pas chargeables via
+`Class.forName()`. Le `BceProcessor.processEnhancement()` utilise un troisieme chemin de
+matching base sur `ClassInfo.hasAnnotation()` dans l'index, en complement du matching
+reflection pour les classes deja chargees.
+
+### Execution au build-time (Maven plugin)
+
+Le `VaubanGenerator` decouvre aussi les BCEs via ServiceLoader sur le ClassLoader fourni
+et appelle `BceProcessor.processEnhancementOnly()` pour enrichir l'index avant `BeanDiscovery`.
+Cela permet de pre-generer les proxies pour les classes `@Path` de JARs externes.
+
+### Execution au runtime (fallback par source)
+
+```mermaid
+flowchart TD
+    SCAN["scanClasspath()"] --> TRACK["Tracker les sources<br/>avec/sans marqueur<br/>vauban-bce-processed"]
+    TRACK --> CHECK{"Toutes les sources<br/>pre-traitees ?"}
+    CHECK -->|Oui| SKIP["Skip BCE complet<br/>Charger synthetic metadata"]
+    CHECK -->|Non| PARTIAL["processEnhancementOnly<br/>pour les classes<br/>des sources sans marqueur"]
+    PARTIAL --> ENRICH["Enrichir l'index<br/>avec scopes synthetiques"]
+    ENRICH --> DISC["BeanDiscovery<br/>sur index enrichi"]
+
+    style SKIP fill:#e3f2fd,stroke:#1565c0
+    style PARTIAL fill:#fff3e0,stroke:#f57c00
+```
+
+Le conteneur verifie **par source** (JAR/repertoire) la presence du marqueur. Les sources
+pre-traitees sont skippees ; les sources sans marqueur (JARs tiers) recoivent `@Enhancement`
+au runtime. Performance : < 1ms pour des dizaines de beans.
+
+### Avantages
 
 - Erreurs BCE detectees a la compilation (pas au deploiement)
 - Demarrage plus rapide (phases deja executees)
 - Beans synthetiques pre-calcules et serialises
+- JARs tiers sans marqueur enrichis automatiquement au runtime
 
 Les BCEs permettent de modifier les beans, ajouter des beans synthetiques, et valider le deploiement
 sans utiliser les Portable Extensions (CDI Full).
@@ -440,7 +480,7 @@ flowchart TD
         SCAN --> PRE_INT[Pre-gen $$Intercepted]
         SCAN --> LIST[vauban-beans.list]
         SCAN --> ALL[vauban-all-classes.list]
-        BCE_RT[BCE @Enhancement] -.->|runtime fallback| SCAN
+        BCE_MV[BCE @Enhancement] -.->|enrichissement| SCAN
     end
 
     subgraph "Runtime (vauban-core)"
