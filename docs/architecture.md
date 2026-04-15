@@ -439,6 +439,7 @@ flowchart TD
         SCAN[Scan JARs] --> PRE_CP[Pre-gen ClientProxy]
         SCAN --> PRE_INT[Pre-gen $$Intercepted]
         SCAN --> LIST[vauban-beans.list]
+        SCAN --> ALL[vauban-all-classes.list]
         PROPS2[vauban-apt.properties] -.->|enrichissement| SCAN
     end
 
@@ -472,3 +473,23 @@ Tous utilisent `java.lang.classfile.ClassFile` — **zero dependance bytecode ex
 **Enrichissement compile-time** : le fichier `vauban-apt.properties` permet de promouvoir des
 classes non-CDI en beans (ex: `@Path` → `@RequestScoped`) sans BCE. Lu par l'APT et le Maven plugin.
 Voir [docs/configuration.md](configuration.md#enrichissement-de-beans--vauban-aptproperties).
+
+---
+
+## Fichiers META-INF generes
+
+| Fichier | Genere par | Contenu | Lu par |
+|---------|-----------|---------|--------|
+| `vauban-beans.list` | APT + Maven plugin | Noms des beans CDI decouverts | `VaubanContainerBuilder.scanClasspath()` |
+| `vauban-all-classes.list` | Maven plugin | **Toutes** les classes scannees (beans + non-beans) | `VaubanContainerBuilder.scanClasspath()` |
+| `vauban-bce-processed` | APT (si BCEs executees) | Marqueur vide | `VaubanContainerBuilder.build()` — skip BCE runtime |
+| `vauban-synthetic-metadata.properties` | APT (si @Synthesis) | Beans/observers synthetiques serialises | `VaubanContainerBuilder.build()` |
+| `vauban-apt.properties` | Utilisateur | Regles d'enrichissement annotation → scope | APT + Maven plugin |
+
+**Pourquoi `vauban-all-classes.list` ?**
+
+Les BCEs `@Enhancement` peuvent cibler des classes qui ne sont pas (encore) des beans CDI
+(ex: `@Path` sans scope). Ces classes doivent etre chargees et indexees pour que le
+`BceProcessor` les passe a l'extension. `vauban-beans.list` ne contient que les beans
+decouverts — `vauban-all-classes.list` comble ce manque en listant toutes les classes
+du deploiement.
