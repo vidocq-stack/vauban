@@ -217,6 +217,23 @@ public final class VaubanContainerBuilder {
         } catch (java.io.IOException e) {
             throw new RuntimeException("Failed to scan classpath for vauban-beans.list", e);
         }
+
+        // 3. Read vauban-all-classes.list for non-bean archive classes (needed by BCE @Enhancement)
+        try {
+            var urls = cl.getResources("META-INF/vauban-all-classes.list");
+            while (urls.hasMoreElements()) {
+                var url = urls.nextElement();
+                try (var reader = new java.io.BufferedReader(
+                        new java.io.InputStreamReader(url.openStream(), java.nio.charset.StandardCharsets.UTF_8))) {
+                    reader.lines()
+                            .map(String::strip)
+                            .filter(line -> !line.isEmpty() && !line.startsWith("#"))
+                            .forEach(className -> tryAddBeanClass(className, cl));
+                }
+            }
+        } catch (java.io.IOException e) {
+            // Non-fatal: BCE @Enhancement may not process all archive classes
+        }
         return this;
     }
 
