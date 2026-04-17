@@ -97,6 +97,17 @@ class RuntimeClientProxyGeneratorTest {
         public String getState() { return state; }
     }
 
+    /**
+     * Bean qui hérite d'une classe parent située dans un package différent
+     * et surcharge une méthode {@code protected}. Reproduit exactement le
+     * cas {@code HttpServlet.doGet} — sans le fix MethodHandle, la classe
+     * proxy générée échoue au {@code VerifyError} au chargement.
+     */
+    public static class ProtectedBean extends fr.vidocq.vauban.core.proxy.sub.BaseWithProtected {
+        @Override protected String protectedEcho(String value) { return "impl:" + value; }
+        @Override protected int protectedSum(int a, int b) { return super.protectedSum(a, b) * 10; }
+    }
+
     // -----------------------------------------------------------------------
     // Utilitaires
     // -----------------------------------------------------------------------
@@ -130,6 +141,60 @@ class RuntimeClientProxyGeneratorTest {
     // -----------------------------------------------------------------------
     // Tests
     // -----------------------------------------------------------------------
+
+    @Nested
+    @DisplayName("methodes protected heritees d'un autre package")
+    class ProtectedMethodCrossPackage {
+
+        @Test
+        @DisplayName("le proxy d'un bean avec methode protected cross-package se charge sans VerifyError")
+        void shouldLoadProxyWithoutVerifyError() throws Exception {
+            var proxy = RuntimeClientProxyGenerator.generate(ProtectedBean.class);
+            Object instance = instantiateProxy(proxy);
+            assertNotNull(instance);
+        }
+
+        @Test
+        @DisplayName("l'appel d'une methode protected delegue a l'instance contextuelle")
+        void shouldDelegateProtectedEchoToContextualInstance() throws Exception {
+            var proxy = RuntimeClientProxyGenerator.generate(ProtectedBean.class);
+            Object instance = instantiateProxy(proxy);
+            var realBean = new ProtectedBean();
+            setDelegate(instance, () -> realBean);
+
+            Method echo = ProtectedBean.class.getDeclaredMethod("protectedEcho", String.class);
+            echo.setAccessible(true);
+            String result = (String) echo.invoke(instance, "alice");
+            assertEquals("impl:alice", result);
+        }
+
+        @Test
+        @DisplayName("l'appel d'une methode protected avec primitives fonctionne")
+        void shouldHandlePrimitivesOnProtectedMethod() throws Exception {
+            var proxy = RuntimeClientProxyGenerator.generate(ProtectedBean.class);
+            Object instance = instantiateProxy(proxy);
+            var realBean = new ProtectedBean();
+            setDelegate(instance, () -> realBean);
+
+            Method sum = ProtectedBean.class.getDeclaredMethod("protectedSum", int.class, int.class);
+            sum.setAccessible(true);
+            int result = (int) sum.invoke(instance, 3, 4);
+            // (3+4)*10 = 70 — prouve que la methode impl est bien appelee, pas la base.
+            assertEquals(70, result);
+        }
+
+        @Test
+        @DisplayName("l'appel d'une methode publique du meme bean reste via invokevirtual (pas de regression)")
+        void shouldStillUseInvokevirtualForPublicMethods() throws Exception {
+            var proxy = RuntimeClientProxyGenerator.generate(ProtectedBean.class);
+            Object instance = instantiateProxy(proxy);
+            var realBean = new ProtectedBean();
+            setDelegate(instance, () -> realBean);
+
+            Method greet = ProtectedBean.class.getMethod("publicGreeting", String.class);
+            assertEquals("hello bob", greet.invoke(instance, "bob"));
+        }
+    }
 
     @Nested
     @DisplayName("nommage du proxy")
