@@ -52,6 +52,7 @@ public class VaubanProcessor extends AbstractProcessor {
     );
 
     private static final String BEANS_LIST_PATH = "META-INF/vauban-beans.list";
+    private static final String BCE_RUNTIME_LIST_PATH = "META-INF/vauban-bce-runtime.list";
 
     private boolean processed = false;
     private List<Class<?>> discoveredBceClasses;
@@ -199,6 +200,10 @@ public class VaubanProcessor extends AbstractProcessor {
 
                 // Promote non-beans that gained a scope via Enhancement
                 promoteEnhancedClasses(beans, bceResult.enhancementModifications(), index, discovery);
+
+                // Write the runtime replay list so the runtime container knows
+                // which BCEs to re-execute on which classes (bug #7).
+                writeBceRuntimeList(bceResult.enhancementModifications());
             }
 
             // Serialize synthetic beans/observers for runtime
@@ -396,6 +401,34 @@ public class VaubanProcessor extends AbstractProcessor {
         } catch (IOException e) {
             processingEnv.getMessager().printMessage(Diagnostic.Kind.WARNING,
                     "[Vauban] Failed to write " + BEANS_LIST_PATH + ": " + e.getMessage());
+        }
+    }
+
+    private void writeBceRuntimeList(Map<DotName, List<VaubanClassConfig>> modifications) {
+        var entries = new TreeSet<String>();
+        for (var entry : modifications.entrySet()) {
+            var targetFqn = entry.getKey().value();
+            for (var config : entry.getValue()) {
+                if (!config.isModified()) continue;
+                var bce = config.getSourceBce();
+                if (bce == null) continue;
+                entries.add(bce.getName() + ";" + targetFqn);
+            }
+        }
+        if (entries.isEmpty()) return;
+
+        try {
+            var resource = processingEnv.getFiler().createResource(
+                    StandardLocation.CLASS_OUTPUT, "", BCE_RUNTIME_LIST_PATH);
+            try (var writer = new PrintWriter(resource.openOutputStream(), false, StandardCharsets.UTF_8)) {
+                writer.println("# Vauban BCE runtime replay list — generated at compile time by APT");
+                for (var line : entries) {
+                    writer.println(line);
+                }
+            }
+        } catch (IOException e) {
+            processingEnv.getMessager().printMessage(Diagnostic.Kind.WARNING,
+                    "[Vauban] Failed to write " + BCE_RUNTIME_LIST_PATH + ": " + e.getMessage());
         }
     }
 

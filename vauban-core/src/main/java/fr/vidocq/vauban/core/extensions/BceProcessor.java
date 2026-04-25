@@ -64,6 +64,45 @@ public final class BceProcessor {
     }
 
     /**
+     * Replay {@code @Enhancement} for a precise list of (BCE, target) pairs.
+     * Used at runtime to rejoin BCE-applied modifications declared in
+     * {@code META-INF/vauban-bce-runtime.list} for pre-processed JARs whose
+     * bytecode has NOT been rewritten (the APT only inscribes the marker).
+     *
+     * <p>Bypasses all class/annotation matching: the APT has already determined
+     * which classes match. Each (bce, target) pair is invoked directly.
+     *
+     * @param replayPairs ordered list of (bceClass, targetClass) pairs
+     * @param index       current VaubanIndex (must contain {@code targetClass})
+     * @return enhancement modifications keyed by target DotName
+     */
+    public static Map<DotName, List<VaubanClassConfig>> replayEnhancementForTargets(
+            List<Map.Entry<Class<?>, Class<?>>> replayPairs,
+            VaubanIndex index) {
+        var lookup = new IndexLookup(index);
+        var modifications = new HashMap<DotName, List<VaubanClassConfig>>();
+        var errors = new ArrayList<String>();
+
+        for (var pair : replayPairs) {
+            var bceClass = pair.getKey();
+            var targetName = DotName.of(pair.getValue().getName());
+            try {
+                var bce = instantiateBce(bceClass);
+                for (var method : getDeclaredMethodsSafe(bceClass)) {
+                    if (method.getAnnotation(Enhancement.class) == null) continue;
+                    makeAccessibleSafe(method);
+                    var paramKind = detectEnhancementParamKind(method);
+                    invokeEnhancement(method, bce, paramKind, targetName, lookup, errors, modifications);
+                }
+            } catch (Exception e) {
+                // Replay errors are non-fatal — skip pair
+            }
+        }
+
+        return modifications;
+    }
+
+    /**
      * Result of BCE processing: synthetic bean definitions and collected errors.
      */
     public record Result(
@@ -320,6 +359,7 @@ public final class BceProcessor {
             switch (paramKind) {
                 case CLASS_CONFIG -> {
                     var classConfig = new VaubanClassConfig(vaubanClassInfo);
+                    classConfig.setSourceBce(bce.getClass());
                     invokeWithArg(method, bce, ClassConfig.class, classConfig);
                     if (classConfig.isModified()) {
                         modifications.computeIfAbsent(className, k -> new ArrayList<>()).add(classConfig);
@@ -329,6 +369,7 @@ public final class BceProcessor {
                         jakarta.enterprise.lang.model.declarations.ClassInfo.class, vaubanClassInfo);
                 case METHOD_CONFIG -> {
                     var classConfig = new VaubanClassConfig(vaubanClassInfo);
+                    classConfig.setSourceBce(bce.getClass());
                     for (var mc : classConfig.methods()) invokeWithArg(method, bce, MethodConfig.class, mc);
                     if (classConfig.isModified()) {
                         modifications.computeIfAbsent(className, k -> new ArrayList<>()).add(classConfig);
@@ -340,6 +381,7 @@ public final class BceProcessor {
                 }
                 case FIELD_CONFIG -> {
                     var classConfig = new VaubanClassConfig(vaubanClassInfo);
+                    classConfig.setSourceBce(bce.getClass());
                     for (var fc : classConfig.fields()) invokeWithArg(method, bce, FieldConfig.class, fc);
                     if (classConfig.isModified()) {
                         modifications.computeIfAbsent(className, k -> new ArrayList<>()).add(classConfig);
@@ -1015,9 +1057,13 @@ public final class BceProcessor {
                 interceptorBindingAnnotations.clear();
             }
 
-            // Class-level annotation additions
+            // Class-level annotation additions — only annotations that are actually
+            // qualifiers should land in the qualifier set. Scopes / stereotypes /
+            // bean-defining annotations are handled separately (index rebuild + scope
+            // re-extraction) so they must not pollute qualifiers nor evict @Default.
             boolean classHasExplicit = false;
             for (var ann : config.getAddedAnnotations()) {
+                if (!isQualifierAnnotation(ann)) continue;
                 var qName = DotName.of(ann.getName());
                 qualifiers.add(new QualifierInstance(qName, Map.of()));
                 if (!qName.equals(QualifierInstance.ANY_NAME) && !qName.equals(QualifierInstance.NAMED_NAME)) {
@@ -1025,6 +1071,7 @@ public final class BceProcessor {
                 }
             }
             for (var annInfo : config.getAddedAnnotationInfos()) {
+                if (!isQualifierAnnotationInfo(annInfo)) continue;
                 var qi = annotationInfoToQualifier(annInfo);
                 qualifiers.add(qi);
                 if (!qi.annotationName().equals(QualifierInstance.ANY_NAME)
@@ -1138,6 +1185,28 @@ public final class BceProcessor {
         // Parameter modifications affect observer qualifiers, handled via observer descriptors
         // For now this is mainly used by ChangeObserverQualifierTest which modifies observer parameters
         // The actual observer modification happens in the observer discovery phase
+    }
+
+    private static boolean isQualifierAnnotation(Class<? extends Annotation> ann) {
+        return ann.isAnnotationPresent(jakarta.inject.Qualifier.class)
+                || ann == jakarta.enterprise.inject.Default.class
+                || ann == jakarta.enterprise.inject.Any.class
+                || ann == jakarta.inject.Named.class;
+    }
+
+    private static boolean isQualifierAnnotationInfo(AnnotationInfo annInfo) {
+        try {
+            var cl = Thread.currentThread().getContextClassLoader();
+            @SuppressWarnings("unchecked")
+            var clazz = (Class<? extends Annotation>) (cl != null
+                    ? Class.forName(annInfo.name(), false, cl)
+                    : Class.forName(annInfo.name()));
+            return isQualifierAnnotation(clazz);
+        } catch (ClassNotFoundException e) {
+            // Unknown annotation: treat as qualifier to keep prior behaviour for cases
+            // where the annotation is not on the runtime classpath.
+            return true;
+        }
     }
 
     private static QualifierInstance annotationInfoToQualifier(AnnotationInfo annInfo) {

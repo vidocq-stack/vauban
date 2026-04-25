@@ -21,6 +21,7 @@ public final class VaubanClassConfig implements ClassConfig {
     private final List<AnnotationInfo> addedAnnotationInfos = new ArrayList<>();
     private final List<Predicate<AnnotationInfo>> removePredicates = new ArrayList<>();
     private boolean allAnnotationsRemoved;
+    private Class<?> sourceBce;
 
     // For meta-annotation use (Discovery phase - qualifiers, interceptor bindings, stereotypes)
     private final Class<? extends Annotation> annotationType;
@@ -157,6 +158,14 @@ public final class VaubanClassConfig implements ClassConfig {
 
     public List<VaubanFieldConfig> getFieldConfigs() {
         return List.copyOf(fieldConfigs);
+    }
+
+    public Class<?> getSourceBce() {
+        return sourceBce;
+    }
+
+    public void setSourceBce(Class<?> sourceBce) {
+        this.sourceBce = sourceBce;
     }
 
     public boolean isModified() {

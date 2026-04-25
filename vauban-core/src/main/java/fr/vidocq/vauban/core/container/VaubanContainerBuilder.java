@@ -4,7 +4,6 @@ import fr.vidocq.vauban.core.BeanFactory;
 import fr.vidocq.vauban.core.bean.discovery.BeanDiscovery;
 import fr.vidocq.vauban.core.bean.model.BeanDescriptor;
 import fr.vidocq.vauban.core.bean.model.BeanId;
-import fr.vidocq.vauban.core.bean.model.DisposerDescriptor;
 import fr.vidocq.vauban.core.bean.model.ObserverDescriptor;
 import fr.vidocq.vauban.core.bean.model.QualifierInstance;
 import fr.vidocq.vauban.core.bean.resolution.BeanResolver;
@@ -204,6 +203,55 @@ public final class VaubanContainerBuilder {
         // file:/path/to/classes/META-INF/...
         int idx = resourceUrl.indexOf(resourcePath);
         return idx > 0 ? resourceUrl.substring(0, idx) : resourceUrl;
+    }
+
+    /**
+     * Loads {@code META-INF/vauban-bce-runtime.list} from every source on the classpath.
+     * Each non-comment line has the format {@code <bceFqn>;<targetFqn>}. Pairs whose
+     * BCE class or target class cannot be resolved are skipped silently (partial JARs,
+     * stripped distributions, etc.).
+     */
+    private static List<Map.Entry<Class<?>, Class<?>>> loadRuntimeReplayList(ClassLoader cl) {
+        var pairs = new ArrayList<Map.Entry<Class<?>, Class<?>>>();
+        try {
+            var urls = cl.getResources("META-INF/vauban-bce-runtime.list");
+            while (urls.hasMoreElements()) {
+                parseRuntimeListResource(urls.nextElement(), cl, pairs);
+            }
+        } catch (IOException _) {
+            // classpath scan failure — non-fatal
+        }
+        return pairs;
+    }
+
+    private static void parseRuntimeListResource(java.net.URL url, ClassLoader cl,
+                                                  List<Map.Entry<Class<?>, Class<?>>> pairs) {
+        try (var reader = new java.io.BufferedReader(
+                new java.io.InputStreamReader(url.openStream(), java.nio.charset.StandardCharsets.UTF_8))) {
+            String line;
+            while ((line = reader.readLine()) != null) {
+                line = line.strip();
+                if (line.isEmpty() || line.startsWith("#")) continue;
+                int sep = line.indexOf(';');
+                if (sep <= 0 || sep == line.length() - 1) continue;
+                var pair = resolvePair(line.substring(0, sep).strip(),
+                        line.substring(sep + 1).strip(), cl);
+                if (pair != null) pairs.add(pair);
+            }
+        } catch (IOException _) {
+            // unreadable resource — skip
+        }
+    }
+
+    private static Map.Entry<Class<?>, Class<?>> resolvePair(String bceFqn, String targetFqn, ClassLoader cl) {
+        try {
+            return java.util.Map.entry(
+                    Class.forName(bceFqn, false, cl),
+                    Class.forName(targetFqn, false, cl));
+        } catch (ClassNotFoundException | NoClassDefFoundError _) {
+            // partial classpath — skip pair
+            return null;
+        }
     }
 
     /**
@@ -481,10 +529,16 @@ public final class VaubanContainerBuilder {
                 .filter(c -> !isClassFromBceProcessedSource(c))
                 .toList();
 
-        // If ALL sources are pre-processed, skip full BCE lifecycle (only load synthetic metadata)
+        // Load (bceFqn, targetFqn) pairs from META-INF/vauban-bce-runtime.list
+        // Pre-processed JARs ship this list so the runtime can replay BCE @Enhancement
+        // on a precise set of classes (no re-scan, no full BCE lifecycle).
+        var runtimeReplayPairs = loadRuntimeReplayList(discoveryClassLoader);
+
+        // If ALL sources are pre-processed AND we have a replay list, skip full BCE
+        // lifecycle (cleaner: BCEs from pre-processed JARs are already digested).
         boolean allSourcesProcessed = unprocessedArchiveClasses.isEmpty() && !bceProcessedSources.isEmpty();
         if (allSourcesProcessed) {
-            bceClasses = List.of(); // skip full BCE
+            bceClasses = List.of();
         }
 
         fr.vidocq.vauban.core.extensions.BceProcessor.DiscoveryResult discoveryResult = null;
@@ -548,39 +602,52 @@ public final class VaubanContainerBuilder {
                 throw new jakarta.enterprise.inject.spi.DefinitionException(msg.toString());
             }
 
-            // --- Run @Enhancement for classes from unprocessed sources (JARs without BCE marker) ---
-            if (!unprocessedArchiveClasses.isEmpty() && !bceClasses.isEmpty()) {
-                var allBceClasses = beanClasses.stream()
-                        .filter(c -> ReflectionValidator.isBuildCompatibleExtension(c))
-                        .toList();
-                var enhMods = fr.vidocq.vauban.core.extensions.BceProcessor.processEnhancementOnly(
-                        allBceClasses, unprocessedArchiveClasses, index,
-                        beanClasses.isEmpty() ? discoveryClassLoader : beanClasses.getFirst().getClassLoader());
+            // --- Collect Enhancement modifications: full BCE for unprocessed JARs +
+            //     targeted replay for pre-processed JARs (vauban-bce-runtime.list) ---
+            var combinedEnhMods = new java.util.HashMap<DotName, List<fr.vidocq.vauban.core.extensions.VaubanClassConfig>>();
 
-                // Apply enhancement modifications: rebuild index with synthetic annotations
-                if (!enhMods.isEmpty()) {
-                    var enrichedBuilder = new IndexBuilder();
-                    for (var classInfo : index.getKnownClasses()) {
-                        var mods = enhMods.get(classInfo.name());
-                        if (mods != null) {
-                            // Apply added annotations to the indexed ClassInfo
-                            var newAnnotations = new java.util.ArrayList<>(classInfo.annotations());
-                            for (var config : mods) {
-                                for (var ann : config.getAddedAnnotations()) {
-                                    newAnnotations.add(new fr.vidocq.vauban.indexer.model.AnnotationInfo(
-                                            DotName.of(ann.getName()), java.util.Map.of()));
-                                }
+            // BCEs available for the full Enhancement scan = explicit beanClasses BCEs
+            // + BCEs declared in the runtime-list (they live in pre-processed JARs).
+            var fullBceClasses = new java.util.LinkedHashSet<>(bceClasses);
+            for (var pair : runtimeReplayPairs) {
+                fullBceClasses.add(pair.getKey());
+            }
+
+            if (!unprocessedArchiveClasses.isEmpty() && !fullBceClasses.isEmpty()) {
+                var enhMods = fr.vidocq.vauban.core.extensions.BceProcessor.processEnhancementOnly(
+                        List.copyOf(fullBceClasses), unprocessedArchiveClasses, index,
+                        beanClasses.isEmpty() ? discoveryClassLoader : beanClasses.getFirst().getClassLoader());
+                enhMods.forEach((k, v) -> combinedEnhMods.computeIfAbsent(k, _ -> new ArrayList<>()).addAll(v));
+            }
+
+            if (!runtimeReplayPairs.isEmpty()) {
+                var replayMods = fr.vidocq.vauban.core.extensions.BceProcessor.replayEnhancementForTargets(
+                        runtimeReplayPairs, index);
+                replayMods.forEach((k, v) -> combinedEnhMods.computeIfAbsent(k, _ -> new ArrayList<>()).addAll(v));
+            }
+
+            // Rebuild index with synthetic annotations added by Enhancement (full or replay)
+            if (!combinedEnhMods.isEmpty()) {
+                var enrichedBuilder = new IndexBuilder();
+                for (var classInfo : index.getKnownClasses()) {
+                    var mods = combinedEnhMods.get(classInfo.name());
+                    if (mods != null) {
+                        var newAnnotations = new java.util.ArrayList<>(classInfo.annotations());
+                        for (var config : mods) {
+                            for (var ann : config.getAddedAnnotations()) {
+                                newAnnotations.add(new fr.vidocq.vauban.indexer.model.AnnotationInfo(
+                                        DotName.of(ann.getName()), java.util.Map.of()));
                             }
-                            enrichedBuilder.add(new fr.vidocq.vauban.indexer.model.ClassInfo(
-                                    classInfo.name(), classInfo.superName(), classInfo.interfaces(),
-                                    classInfo.accessFlags(), classInfo.fields(), classInfo.methods(),
-                                    newAnnotations, classInfo.kind()));
-                        } else {
-                            enrichedBuilder.add(classInfo);
                         }
+                        enrichedBuilder.add(new fr.vidocq.vauban.indexer.model.ClassInfo(
+                                classInfo.name(), classInfo.superName(), classInfo.interfaces(),
+                                classInfo.accessFlags(), classInfo.fields(), classInfo.methods(),
+                                newAnnotations, classInfo.kind()));
+                    } else {
+                        enrichedBuilder.add(classInfo);
                     }
-                    index = enrichedBuilder.build();
                 }
+                index = enrichedBuilder.build();
             }
 
             var discovery = new BeanDiscovery(index);
@@ -636,7 +703,7 @@ public final class VaubanContainerBuilder {
                         bceClasses, descriptors, observers, interceptors, index,
                         beanClasses.isEmpty() ? Thread.currentThread().getContextClassLoader()
                                 : beanClasses.getFirst().getClassLoader(),
-                        discoveryResult != null ? discoveryResult.bceInstances() : null,
+                        discoveryResult.bceInstances(),
                         nonBceClasses);
 
                 // BCE definition errors → DefinitionException
@@ -667,46 +734,46 @@ public final class VaubanContainerBuilder {
                     observers.add(buildSyntheticObserver(synObs));
                 }
 
-                // Apply enhancement modifications to bean descriptors
-                if (!bceResult.enhancementModifications().isEmpty()) {
-                    var modified = fr.vidocq.vauban.core.extensions.BceProcessor.applyEnhancements(
-                            descriptors, bceResult.enhancementModifications());
-                    descriptors.clear();
-                    descriptors.addAll(modified);
+                // Merge BCE enhancement modifications into the combined map (replay + full)
+                bceResult.enhancementModifications().forEach((k, v) ->
+                        combinedEnhMods.computeIfAbsent(k, _ -> new ArrayList<>()).addAll(v));
+            }
 
-                    // Create beans for non-bean classes that gained a scope via Enhancement
-                    // (e.g. @Path classes that receive @RequestScoped from a BCE)
-                    var existingBeanClasses = descriptors.stream()
-                            .map(BeanDescriptor::beanClass)
-                            .collect(java.util.stream.Collectors.toSet());
-                    for (var entry : bceResult.enhancementModifications().entrySet()) {
-                        if (existingBeanClasses.contains(entry.getKey())) continue;
-                        var enhancedScope = extractEnhancedScope(entry.getValue());
-                        if (enhancedScope == null) continue;
-                        var classInfo = index.getClassByName(entry.getKey()).orElse(null);
-                        if (classInfo == null) continue;
-                        var newBean = discovery.buildManagedBean(classInfo);
-                        // Override scope: buildManagedBean reads the original index (no Enhancement),
-                        // so replace with the scope added by Enhancement
-                        newBean = new BeanDescriptor(
-                                newBean.id(), newBean.beanClass(), newBean.kind(), newBean.types(),
-                                newBean.qualifiers(), enhancedScope, newBean.isAlternative(),
-                                newBean.priority(), newBean.injectionPoints(), newBean.name(),
-                                newBean.interceptorBindings(), newBean.constructorBindings(),
-                                newBean.interceptorBindingAnnotations());
-                        descriptors.add(newBean);
-                    }
+            // Apply ALL enhancement modifications (replay + full BCE) to descriptors
+            if (!combinedEnhMods.isEmpty()) {
+                var modified = fr.vidocq.vauban.core.extensions.BceProcessor.applyEnhancements(
+                        descriptors, combinedEnhMods);
+                descriptors.clear();
+                descriptors.addAll(modified);
 
-                    // Apply enhancement modifications to interceptor descriptors (e.g. @Priority)
-                    interceptors = new ArrayList<>(fr.vidocq.vauban.core.extensions.BceProcessor.applyInterceptorEnhancements(
-                            interceptors, bceResult.enhancementModifications()));
-
-                    // Apply enhancement modifications to observer descriptors (parameter qualifier changes)
-                    var modifiedObservers = fr.vidocq.vauban.core.extensions.BceProcessor.applyObserverEnhancements(
-                            observers, bceResult.enhancementModifications());
-                    observers.clear();
-                    observers.addAll(modifiedObservers);
+                // Create beans for non-bean classes that gained a scope via Enhancement
+                // (e.g. @Path classes that receive @RequestScoped from a BCE)
+                var existingBeanClasses = descriptors.stream()
+                        .map(BeanDescriptor::beanClass)
+                        .collect(java.util.stream.Collectors.toSet());
+                for (var entry : combinedEnhMods.entrySet()) {
+                    if (existingBeanClasses.contains(entry.getKey())) continue;
+                    var enhancedScope = extractEnhancedScope(entry.getValue());
+                    if (enhancedScope == null) continue;
+                    var classInfo = index.getClassByName(entry.getKey()).orElse(null);
+                    if (classInfo == null) continue;
+                    var newBean = discovery.buildManagedBean(classInfo);
+                    newBean = new BeanDescriptor(
+                            newBean.id(), newBean.beanClass(), newBean.kind(), newBean.types(),
+                            newBean.qualifiers(), enhancedScope, newBean.isAlternative(),
+                            newBean.priority(), newBean.injectionPoints(), newBean.name(),
+                            newBean.interceptorBindings(), newBean.constructorBindings(),
+                            newBean.interceptorBindingAnnotations());
+                    descriptors.add(newBean);
                 }
+
+                interceptors = new ArrayList<>(fr.vidocq.vauban.core.extensions.BceProcessor.applyInterceptorEnhancements(
+                        interceptors, combinedEnhMods));
+
+                var modifiedObservers = fr.vidocq.vauban.core.extensions.BceProcessor.applyObserverEnhancements(
+                        observers, combinedEnhMods);
+                observers.clear();
+                observers.addAll(modifiedObservers);
             }
 
             // Load synthetic beans/observers from APT-generated metadata (if BCE was processed at compile time)
@@ -790,7 +857,6 @@ public final class VaubanContainerBuilder {
      * Load synthetic beans/observers from APT-generated metadata.
      * Called when BCE was already processed at compile time.
      */
-    @SuppressWarnings({"unchecked", "rawtypes"})
     private void loadSyntheticMetadataFromApt(ClassLoader cl,
                                                List<BeanDescriptor> descriptors,
                                                Map<DotName, BeanFactory<?>> factories,
@@ -799,81 +865,112 @@ public final class VaubanContainerBuilder {
         try {
             var urls = cl.getResources(fr.vidocq.vauban.core.extensions.SyntheticMetadataSerializer.METADATA_PATH);
             while (urls.hasMoreElements()) {
-                var url = urls.nextElement();
-                try (var is = url.openStream()) {
-                    var props = new java.util.Properties();
-                    props.load(new java.io.InputStreamReader(is, java.nio.charset.StandardCharsets.UTF_8));
-
-                    var beanDescriptors = fr.vidocq.vauban.core.extensions.SyntheticMetadataSerializer.readBeans(props);
-                    for (var synDesc : beanDescriptors) {
-                        try {
-                            var beanClass = Class.forName(synDesc.beanClassName(), false, cl);
-                            var builder = new fr.vidocq.vauban.core.extensions.VaubanSyntheticBeanBuilder(beanClass);
-
-                            if (synDesc.creatorClassName() != null) {
-                                builder.createWith((Class) Class.forName(synDesc.creatorClassName(), false, cl));
-                            }
-                            if (synDesc.disposerClassName() != null) {
-                                builder.disposeWith((Class) Class.forName(synDesc.disposerClassName(), false, cl));
-                            }
-                            if (synDesc.scopeAnnotation() != null) {
-                                builder.scope((Class) Class.forName(synDesc.scopeAnnotation(), false, cl));
-                            }
-                            for (var typeName : synDesc.types()) {
-                                try {
-                                    builder.type(Class.forName(typeName, false, cl));
-                                } catch (ClassNotFoundException ignored) {}
-                            }
-                            for (var qualName : synDesc.qualifiers()) {
-                                try {
-                                    builder.qualifier((Class) Class.forName(qualName, false, cl));
-                                } catch (ClassNotFoundException ignored) {}
-                            }
-                            if (synDesc.name() != null) builder.name(synDesc.name());
-                            builder.alternative(synDesc.alternative());
-                            builder.priority(synDesc.priority());
-
-                            // Restore params
-                            for (var paramEntry : synDesc.params().entrySet()) {
-                                var decoded = fr.vidocq.vauban.core.extensions.SyntheticMetadataSerializer.decodeParam(paramEntry.getValue());
-                                if (decoded instanceof String s) builder.withParam(paramEntry.getKey(), s);
-                                else if (decoded instanceof Boolean b) builder.withParam(paramEntry.getKey(), b);
-                                else if (decoded instanceof Integer i) builder.withParam(paramEntry.getKey(), i);
-                                else if (decoded instanceof Long l) builder.withParam(paramEntry.getKey(), l);
-                                else if (decoded instanceof Double d) builder.withParam(paramEntry.getKey(), d);
-                            }
-
-                            registerSyntheticBean(builder, descriptors, factories, syntheticDisposers);
-                        } catch (ClassNotFoundException e) {
-                            // Synthetic bean class not found — skip
-                        }
-                    }
-
-                    var observerDescriptors = fr.vidocq.vauban.core.extensions.SyntheticMetadataSerializer.readObservers(props);
-                    for (var synDesc : observerDescriptors) {
-                        try {
-                            var eventClass = Class.forName(synDesc.eventTypeName(), false, cl);
-                            var builder = new fr.vidocq.vauban.core.extensions.VaubanSyntheticObserverBuilder(eventClass);
-                            if (synDesc.observerClassName() != null) {
-                                builder.observeWith((Class) Class.forName(synDesc.observerClassName(), false, cl));
-                            }
-                            for (var qualName : synDesc.qualifiers()) {
-                                try {
-                                    builder.qualifier((Class) Class.forName(qualName, false, cl));
-                                } catch (ClassNotFoundException ignored) {}
-                            }
-                            builder.priority(synDesc.priority());
-                            builder.async(synDesc.async());
-
-                            observers.add(buildSyntheticObserver(builder));
-                        } catch (ClassNotFoundException e) {
-                            // Synthetic observer class not found — skip
-                        }
-                    }
-                }
+                loadMetadataResource(urls.nextElement(), cl, descriptors, factories, syntheticDisposers, observers);
             }
-        } catch (java.io.IOException e) {
+        } catch (java.io.IOException _) {
             // No metadata file or read error — skip
+        }
+    }
+
+    private void loadMetadataResource(java.net.URL url, ClassLoader cl,
+                                       List<BeanDescriptor> descriptors,
+                                       Map<DotName, BeanFactory<?>> factories,
+                                       Map<DotName, java.util.function.BiConsumer<Object, CreationalContext<?>>> syntheticDisposers,
+                                       List<fr.vidocq.vauban.core.bean.model.ObserverDescriptor> observers) {
+        try (var is = url.openStream()) {
+            var props = new java.util.Properties();
+            props.load(new java.io.InputStreamReader(is, java.nio.charset.StandardCharsets.UTF_8));
+
+            for (var synDesc : fr.vidocq.vauban.core.extensions.SyntheticMetadataSerializer.readBeans(props)) {
+                registerAptBean(synDesc, cl, descriptors, factories, syntheticDisposers);
+            }
+            for (var synDesc : fr.vidocq.vauban.core.extensions.SyntheticMetadataSerializer.readObservers(props)) {
+                registerAptObserver(synDesc, cl, observers);
+            }
+        } catch (java.io.IOException _) {
+            // unreadable resource — skip
+        }
+    }
+
+    @SuppressWarnings({"unchecked", "rawtypes"})
+    private void registerAptBean(fr.vidocq.vauban.core.extensions.SyntheticBeanDescriptor synDesc,
+                                  ClassLoader cl,
+                                  List<BeanDescriptor> descriptors,
+                                  Map<DotName, BeanFactory<?>> factories,
+                                  Map<DotName, java.util.function.BiConsumer<Object, CreationalContext<?>>> syntheticDisposers) {
+        try {
+            var beanClass = Class.forName(synDesc.beanClassName(), false, cl);
+            var builder = new fr.vidocq.vauban.core.extensions.VaubanSyntheticBeanBuilder(beanClass);
+
+            if (synDesc.creatorClassName() != null) {
+                builder.createWith((Class) Class.forName(synDesc.creatorClassName(), false, cl));
+            }
+            if (synDesc.disposerClassName() != null) {
+                builder.disposeWith((Class) Class.forName(synDesc.disposerClassName(), false, cl));
+            }
+            if (synDesc.scopeAnnotation() != null) {
+                builder.scope((Class) Class.forName(synDesc.scopeAnnotation(), false, cl));
+            }
+            for (var typeName : synDesc.types()) {
+                resolveOptionalClass(typeName, cl, builder::type);
+            }
+            for (var qualName : synDesc.qualifiers()) {
+                resolveOptionalClass(qualName, cl, c -> builder.qualifier((Class) c));
+            }
+            if (synDesc.name() != null) builder.name(synDesc.name());
+            builder.alternative(synDesc.alternative());
+            builder.priority(synDesc.priority());
+
+            for (var paramEntry : synDesc.params().entrySet()) {
+                applyParam(builder, paramEntry.getKey(), paramEntry.getValue());
+            }
+
+            registerSyntheticBean(builder, descriptors, factories, syntheticDisposers);
+        } catch (ClassNotFoundException _) {
+            // Synthetic bean class not found — skip
+        }
+    }
+
+    @SuppressWarnings({"unchecked", "rawtypes"})
+    private void registerAptObserver(fr.vidocq.vauban.core.extensions.SyntheticObserverDescriptor synDesc,
+                                      ClassLoader cl,
+                                      List<fr.vidocq.vauban.core.bean.model.ObserverDescriptor> observers) {
+        try {
+            var eventClass = Class.forName(synDesc.eventTypeName(), false, cl);
+            var builder = new fr.vidocq.vauban.core.extensions.VaubanSyntheticObserverBuilder(eventClass);
+            if (synDesc.observerClassName() != null) {
+                builder.observeWith(Class.forName(synDesc.observerClassName(), false, cl));
+            }
+            for (var qualName : synDesc.qualifiers()) {
+                resolveOptionalClass(qualName, cl, c -> builder.qualifier((Class) c));
+            }
+            builder.priority(synDesc.priority());
+            builder.async(synDesc.async());
+
+            observers.add(buildSyntheticObserver(builder));
+        } catch (ClassNotFoundException _) {
+            // Synthetic observer class not found — skip
+        }
+    }
+
+    private static void resolveOptionalClass(String fqn, ClassLoader cl, java.util.function.Consumer<Class<?>> sink) {
+        try {
+            sink.accept(Class.forName(fqn, false, cl));
+        } catch (ClassNotFoundException _) {
+            // silently skip: classpath partial, JAR may not include this class
+        }
+    }
+
+    private static void applyParam(fr.vidocq.vauban.core.extensions.VaubanSyntheticBeanBuilder builder,
+                                    String key, String encoded) {
+        var decoded = fr.vidocq.vauban.core.extensions.SyntheticMetadataSerializer.decodeParam(encoded);
+        switch (decoded) {
+            case String s -> builder.withParam(key, s);
+            case Boolean b -> builder.withParam(key, b);
+            case Integer i -> builder.withParam(key, i);
+            case Long l -> builder.withParam(key, l);
+            case Double d -> builder.withParam(key, d);
+            default -> { /* unsupported decoded type — ignored */ }
         }
     }
 
