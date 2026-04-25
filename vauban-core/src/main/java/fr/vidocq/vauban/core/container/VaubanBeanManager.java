@@ -626,7 +626,71 @@ public final class VaubanBeanManager implements BeanManager {
 
     @Override
     public <T> InjectionTargetFactory<T> getInjectionTargetFactory(AnnotatedType<T> annotatedType) {
-        throw new IllegalStateException(MSG_NOT_IMPLEMENTED);
+        return bean -> new InjectionTarget<T>() {
+            @Override
+            @SuppressWarnings("unchecked")
+            public T produce(CreationalContext<T> ctx) {
+                Class<T> clazz = annotatedType.getJavaClass();
+                java.lang.reflect.Constructor<T> injectCtor = null;
+                for (var ctor : clazz.getDeclaredConstructors()) {
+                    if (ctor.isAnnotationPresent(jakarta.inject.Inject.class)) {
+                        injectCtor = (java.lang.reflect.Constructor<T>) ctor;
+                        break;
+                    }
+                }
+                try {
+                    if (injectCtor == null) {
+                        return container.getVaubanLookup().newInstance(clazz);
+                    }
+                    var paramTypes = injectCtor.getParameterTypes();
+                    var genericParamTypes = injectCtor.getGenericParameterTypes();
+                    var params = injectCtor.getParameters();
+                    var args = new Object[paramTypes.length];
+                    for (int i = 0; i < paramTypes.length; i++) {
+                        var quals = QualifierHelper.extractParamQualifiers(params[i]);
+                        args[i] = container.resolveParameter(paramTypes[i], genericParamTypes[i], ctx, quals, injectCtor, null, params[i], i);
+                    }
+                    return clazz.cast(container.getVaubanLookup().newInstance(injectCtor, args));
+                } catch (RuntimeException e) {
+                    throw e;
+                } catch (Exception e) {
+                    throw new jakarta.enterprise.inject.CreationException(e);
+                }
+            }
+
+            @Override
+            public void inject(T instance, CreationalContext<T> ctx) {
+                container.beanInjector().injectFieldsByReflection(instance, null, ctx);
+                container.beanInjector().callInitializerMethods(instance, ctx);
+            }
+
+            @Override
+            public void postConstruct(T instance) {
+                container.beanLifecycle.callPostConstruct(instance, null, null);
+            }
+
+            @Override
+            public void preDestroy(T instance) {
+                for (var m : BeanLifecycle.collectLifecycleMethodsInHierarchy(
+                        instance.getClass(), jakarta.annotation.PreDestroy.class)) {
+                    try {
+                        container.getVaubanLookup().invokeMethod(instance, m);
+                    } catch (Exception e) {
+                        throw new RuntimeException("@PreDestroy failed: " + m, e);
+                    }
+                }
+            }
+
+            @Override
+            public void dispose(T instance) {
+                // no-op: lifecycle managed by the caller
+            }
+
+            @Override
+            public java.util.Set<InjectionPoint> getInjectionPoints() {
+                return java.util.Set.of();
+            }
+        };
     }
 
     @Override
