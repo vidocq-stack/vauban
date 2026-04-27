@@ -25,7 +25,7 @@
 **Regle**: Toujours prefixer les commandes Maven avec `export MAVEN_HOME=~/.sdkman/candidates/maven/4.0.0-rc-5 && export PATH="$MAVEN_HOME/bin:$PATH" &&` pour garantir Maven 4.
 
 ## 7. Conflit de noms AnnotationValue entre model et JDK
-**Contexte**: Phase 1 - `fr.vidocq.vauban.indexer.model.AnnotationValue` et `java.lang.classfile.AnnotationValue` ont le meme nom simple.
+**Contexte**: Phase 1 - `io.vidocq.vauban.indexer.model.AnnotationValue` et `java.lang.classfile.AnnotationValue` ont le meme nom simple.
 **Regle**: Dans `ClassFileScanner`, utiliser des FQN pour les references a `java.lang.classfile.AnnotationValue` et ses sous-types. Ne pas utiliser d'import wildcard pour les deux packages.
 
 ## 8. API Class-File JDK 25 : symbol vs raw
@@ -38,7 +38,7 @@
 
 ## 10. Conflits de noms CDI lang model vs indexer model
 **Contexte**: Phase 2 - Les interfaces CDI (`ClassInfo`, `FieldInfo`, `MethodInfo`, `AnnotationInfo`) ont les memes noms simples que nos records indexer.
-**Regle**: Dans les implementations du lang model, utiliser des FQN ou des imports precis. Ne jamais importer en wildcard les deux packages. Prefixer `jakarta.enterprise.lang.model.declarations.ClassInfo` et `fr.vidocq.vauban.indexer.model.ClassInfo` explicitement.
+**Regle**: Dans les implementations du lang model, utiliser des FQN ou des imports precis. Ne jamais importer en wildcard les deux packages. Prefixer `jakarta.enterprise.lang.model.declarations.ClassInfo` et `io.vidocq.vauban.indexer.model.ClassInfo` explicitement.
 
 ## 11. Ne pas supposer l'origine des commits
 **Contexte**: Les commits "Missing file to commit" etaient de l'utilisateur, pas des agents.

@@ -1,7 +1,7 @@
-module fr.vidocq.vauban.junit {
-    requires transitive fr.vidocq.vauban.core;
+module io.vidocq.vauban.junit {
+    requires transitive io.vidocq.vauban.core;
     requires transitive org.junit.jupiter.api;
     requires jakarta.inject;
 
-    exports fr.vidocq.vauban.junit;
+    exports io.vidocq.vauban.junit;
 }

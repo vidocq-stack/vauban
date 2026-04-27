@@ -71,7 +71,7 @@ mvn clean verify
 ### Application standard (`scanLocal`)
 
 ```java
-import fr.vidocq.vauban.core.container.VaubanContainer;
+import io.vidocq.vauban.core.container.VaubanContainer;
 
 // Scanne automatiquement le package de l'appelant (com.example.**)
 var container = VaubanContainer.builder()
@@ -91,7 +91,7 @@ et listes dans `META-INF/vauban-beans.list`. Au runtime, `scanClasspath()` les c
 ```xml
 <!-- pom.xml -->
 <plugin>
-  <groupId>fr.vidocq.vauban</groupId>
+  <groupId>io.vidocq.vauban</groupId>
   <artifactId>vauban-maven-plugin</artifactId>
   <executions>
     <execution>
@@ -279,7 +279,7 @@ Produit un `VaubanIndex` immutable contenant les metadonnees de toutes les class
 | `TypeInfo` | Representation des types (class, parameterized, wildcard, type variable, array) |
 | `DotName` | Nom qualifie interne (`jakarta.inject.Inject`) |
 
-**Module JPMS** : `fr.vidocq.vauban.indexer` — zero dependance externe.
+**Module JPMS** : `io.vidocq.vauban.indexer` — zero dependance externe.
 
 ```java
 var index = new IndexBuilder()
@@ -296,7 +296,7 @@ var beans = index.getAnnotatedClasses(DotName.of("jakarta.enterprise.context.App
 
 Fournit la facade `Vauban` et re-exporte les contrats CDI 4.1.
 
-**Module JPMS** : `fr.vidocq.vauban.api` — depend de Jakarta CDI API (transitif).
+**Module JPMS** : `io.vidocq.vauban.api` — depend de Jakarta CDI API (transitif).
 
 ### vauban-core
 
@@ -367,7 +367,7 @@ Generes via l'API Class-File — zero reflexion a l'execution :
 - Matching des bindings par nom + valeurs membres
 - Support des bindings herites et transitifs (via stereotypes)
 
-**Module JPMS** : `fr.vidocq.vauban.core` — fournit `CDIProvider` et `BuildServices`.
+**Module JPMS** : `io.vidocq.vauban.core` — fournit `CDIProvider` et `BuildServices`.
 
 ### vauban-processor
 
@@ -386,7 +386,7 @@ Generes via l'API Class-File — zero reflexion a l'execution :
 3. `BeanDiscovery` + `DeploymentValidator`
 4. Generation bytecode via Class-File API pour chaque bean manage
 
-**Module JPMS** : `fr.vidocq.vauban.processor` — depend de `java.compiler`.
+**Module JPMS** : `io.vidocq.vauban.processor` — depend de `java.compiler`.
 
 ### vauban-junit
 
@@ -416,7 +416,7 @@ class MonServiceTest {
 }
 ```
 
-**Module JPMS** : `fr.vidocq.vauban.junit` — depend de `org.junit.jupiter.api`.
+**Module JPMS** : `io.vidocq.vauban.junit` — depend de `org.junit.jupiter.api`.
 
 ### vauban-classloader-spi
 
@@ -430,7 +430,7 @@ class MonServiceTest {
 
 **Plugins multiples** : le systeme supporte plusieurs plugins simultanes, decouverts via `ServiceLoader` et tries par priorite. Le premier plugin dont `handles()` retourne `true` gagne.
 
-**Module JPMS** : `fr.vidocq.vauban.classloader.spi`
+**Module JPMS** : `io.vidocq.vauban.classloader.spi`
 
 ### vauban-sjar
 
@@ -451,7 +451,7 @@ Le chiffrement est guide par `module-info.class` :
 
 Documentation complete : [vauban-sjar/README.md](vauban-sjar/README.md)
 
-**Module JPMS** : `fr.vidocq.vauban.sjar` — fournit `ByteSourcePlugin` via `ServiceLoader`.
+**Module JPMS** : `io.vidocq.vauban.sjar` — fournit `ByteSourcePlugin` via `ServiceLoader`.
 
 ### vauban-maven-plugin
 
@@ -473,7 +473,7 @@ Documentation complete : [vauban-sjar/README.md](vauban-sjar/README.md)
 
 ```xml
 <plugin>
-  <groupId>fr.vidocq.vauban</groupId>
+  <groupId>io.vidocq.vauban</groupId>
   <artifactId>vauban-maven-plugin</artifactId>
   <executions>
     <execution><goals><goal>generate</goal></goals></execution>

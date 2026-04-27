@@ -5,7 +5,7 @@
     <modelVersion>4.1.0</modelVersion>
 
     <parent>
-        <groupId>fr.vidocq.vauban</groupId>
+        <groupId>io.vidocq.vauban</groupId>
         <artifactId>vauban-parent</artifactId>
     </parent>
 
@@ -16,15 +16,15 @@
 
     <dependencies>
         <dependency>
-            <groupId>fr.vidocq.vauban</groupId>
+            <groupId>io.vidocq.vauban</groupId>
             <artifactId>vauban-indexer</artifactId>
         </dependency>
         <dependency>
-            <groupId>fr.vidocq.vauban</groupId>
+            <groupId>io.vidocq.vauban</groupId>
             <artifactId>vauban-core</artifactId>
         </dependency>
         <dependency>
-            <groupId>fr.vidocq.vauban</groupId>
+            <groupId>io.vidocq.vauban</groupId>
             <artifactId>vauban-sjar</artifactId>
         </dependency>
 

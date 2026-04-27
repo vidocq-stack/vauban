@@ -5,7 +5,7 @@
     <modelVersion>4.1.0</modelVersion>
 
     <parent>
-        <groupId>fr.vidocq.vauban</groupId>
+        <groupId>io.vidocq.vauban</groupId>
         <artifactId>vauban-parent</artifactId>
     </parent>
 
@@ -34,11 +34,11 @@
     <dependencies>
         <!-- Vauban -->
         <dependency>
-            <groupId>fr.vidocq.vauban</groupId>
+            <groupId>io.vidocq.vauban</groupId>
             <artifactId>vauban-core</artifactId>
         </dependency>
         <dependency>
-            <groupId>fr.vidocq.vauban</groupId>
+            <groupId>io.vidocq.vauban</groupId>
             <artifactId>vauban-indexer</artifactId>
         </dependency>
 
@@ -140,10 +140,10 @@
                             <enableAssertions>true</enableAssertions>
                             <systemPropertyVariables>
                                 <org.jboss.cdi.tck.cdiCoreMode>true</org.jboss.cdi.tck.cdiCoreMode>
-                                <org.jboss.cdi.tck.spi.Beans>fr.vidocq.vauban.tck.VaubanBeans</org.jboss.cdi.tck.spi.Beans>
-                                <org.jboss.cdi.tck.spi.Contexts>fr.vidocq.vauban.tck.VaubanContexts</org.jboss.cdi.tck.spi.Contexts>
-                                <org.jboss.cdi.tck.spi.Contextuals>fr.vidocq.vauban.tck.VaubanContextuals</org.jboss.cdi.tck.spi.Contextuals>
-                                <org.jboss.cdi.tck.spi.CreationalContexts>fr.vidocq.vauban.tck.VaubanCreationalContexts</org.jboss.cdi.tck.spi.CreationalContexts>
+                                <org.jboss.cdi.tck.spi.Beans>io.vidocq.vauban.tck.VaubanBeans</org.jboss.cdi.tck.spi.Beans>
+                                <org.jboss.cdi.tck.spi.Contexts>io.vidocq.vauban.tck.VaubanContexts</org.jboss.cdi.tck.spi.Contexts>
+                                <org.jboss.cdi.tck.spi.Contextuals>io.vidocq.vauban.tck.VaubanContextuals</org.jboss.cdi.tck.spi.Contextuals>
+                                <org.jboss.cdi.tck.spi.CreationalContexts>io.vidocq.vauban.tck.VaubanCreationalContexts</org.jboss.cdi.tck.spi.CreationalContexts>
                                 <org.jboss.cdi.tck.libraryDirectory>${project.build.directory}/dependency/lib</org.jboss.cdi.tck.libraryDirectory>
                             </systemPropertyVariables>
                             <excludedGroups>integration,javaee-full,se,cdi-full</excludedGroups>

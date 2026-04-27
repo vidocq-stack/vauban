@@ -5,7 +5,7 @@
     <modelVersion>4.1.0</modelVersion>
 
     <parent>
-        <groupId>fr.vidocq.vauban</groupId>
+        <groupId>io.vidocq.vauban</groupId>
         <artifactId>vauban-examples</artifactId>
     </parent>
 
@@ -16,27 +16,27 @@
     <dependencies>
         <!-- Plain CDI library -->
         <dependency>
-            <groupId>fr.vidocq.vauban</groupId>
+            <groupId>io.vidocq.vauban</groupId>
             <artifactId>example-lib</artifactId>
             <version>${project.version}</version>
         </dependency>
 
         <!-- Encrypted CDI library — single JAR with clear exports + encrypted internals -->
         <dependency>
-            <groupId>fr.vidocq.vauban</groupId>
+            <groupId>io.vidocq.vauban</groupId>
             <artifactId>example-lib-securized</artifactId>
             <version>${project.version}</version>
         </dependency>
 
         <!-- Vauban CDI container runtime -->
         <dependency>
-            <groupId>fr.vidocq.vauban</groupId>
+            <groupId>io.vidocq.vauban</groupId>
             <artifactId>vauban-core</artifactId>
         </dependency>
 
         <!-- Encrypted JAR support (auto-detects META-INF/vauban.encrypted) -->
         <dependency>
-            <groupId>fr.vidocq.vauban</groupId>
+            <groupId>io.vidocq.vauban</groupId>
             <artifactId>vauban-sjar</artifactId>
         </dependency>
     </dependencies>
@@ -44,7 +44,7 @@
     <build>
         <plugins>
             <plugin>
-                <groupId>fr.vidocq.vauban</groupId>
+                <groupId>io.vidocq.vauban</groupId>
                 <artifactId>vauban-maven-plugin</artifactId>
                 <version>${project.version}</version>
                 <executions>

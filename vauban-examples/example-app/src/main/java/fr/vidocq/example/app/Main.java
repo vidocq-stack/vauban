@@ -1,6 +1,6 @@
 package fr.vidocq.example.app;
 
-import fr.vidocq.vauban.core.container.VaubanContainer;
+import io.vidocq.vauban.core.container.VaubanContainer;
 
 /**
  * Entry point for the Vauban CDI example application.

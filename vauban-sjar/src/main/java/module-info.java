@@ -1,9 +1,9 @@
-module fr.vidocq.vauban.sjar {
-    requires fr.vidocq.vauban.classloader.spi;
+module io.vidocq.vauban.sjar {
+    requires io.vidocq.vauban.classloader.spi;
 
-    exports fr.vidocq.vauban.sjar;
-    exports fr.vidocq.vauban.sjar.cli;
+    exports io.vidocq.vauban.sjar;
+    exports io.vidocq.vauban.sjar.cli;
 
-    provides fr.vidocq.vauban.classloader.spi.ByteSourcePlugin
-            with fr.vidocq.vauban.sjar.SjarPlugin;
+    provides io.vidocq.vauban.classloader.spi.ByteSourcePlugin
+            with io.vidocq.vauban.sjar.SjarPlugin;
 }

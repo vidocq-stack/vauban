@@ -1,0 +1,130 @@
+package io.vidocq.vauban.core.extensions;
+
+import io.vidocq.vauban.core.langmodel.IndexLookup;
+import io.vidocq.vauban.core.langmodel.types.VaubanArrayType;
+import io.vidocq.vauban.core.langmodel.types.VaubanClassType;
+import io.vidocq.vauban.core.langmodel.types.VaubanParameterizedType;
+import io.vidocq.vauban.core.langmodel.types.VaubanPrimitiveType;
+import io.vidocq.vauban.core.langmodel.types.VaubanVoidType;
+import io.vidocq.vauban.core.langmodel.types.VaubanWildcardType;
+import io.vidocq.vauban.indexer.model.DotName;
+import jakarta.enterprise.inject.build.compatible.spi.Types;
+import jakarta.enterprise.lang.model.declarations.ClassInfo;
+import jakarta.enterprise.lang.model.types.ArrayType;
+import jakarta.enterprise.lang.model.types.ClassType;
+import jakarta.enterprise.lang.model.types.ParameterizedType;
+import jakarta.enterprise.lang.model.types.PrimitiveType;
+import jakarta.enterprise.lang.model.types.Type;
+import jakarta.enterprise.lang.model.types.VoidType;
+import jakarta.enterprise.lang.model.types.WildcardType;
+
+import java.util.Arrays;
+import java.util.List;
+import java.util.Map;
+
+public final class VaubanTypes implements Types {
+
+    private static final Map<Class<?>, PrimitiveType.PrimitiveKind> PRIMITIVE_MAP = Map.of(
+            boolean.class, PrimitiveType.PrimitiveKind.BOOLEAN,
+            byte.class, PrimitiveType.PrimitiveKind.BYTE,
+            char.class, PrimitiveType.PrimitiveKind.CHAR,
+            short.class, PrimitiveType.PrimitiveKind.SHORT,
+            int.class, PrimitiveType.PrimitiveKind.INT,
+            long.class, PrimitiveType.PrimitiveKind.LONG,
+            float.class, PrimitiveType.PrimitiveKind.FLOAT,
+            double.class, PrimitiveType.PrimitiveKind.DOUBLE
+    );
+
+    private final IndexLookup lookup;
+
+    public VaubanTypes(IndexLookup lookup) {
+        this.lookup = lookup;
+    }
+
+    @Override
+    public Type of(Class<?> clazz) {
+        if (clazz == void.class) {
+            return ofVoid();
+        }
+        if (clazz.isPrimitive()) {
+            return ofPrimitive(PRIMITIVE_MAP.get(clazz));
+        }
+        if (clazz.isArray()) {
+            int dimensions = 0;
+            var component = clazz;
+            while (component.isArray()) {
+                dimensions++;
+                component = component.getComponentType();
+            }
+            return ofArray(of(component), dimensions);
+        }
+        return ofClass(clazz.getName());
+    }
+
+    @Override
+    public VoidType ofVoid() {
+        return VaubanVoidType.INSTANCE;
+    }
+
+    @Override
+    public PrimitiveType ofPrimitive(PrimitiveType.PrimitiveKind kind) {
+        return new VaubanPrimitiveType(kind);
+    }
+
+    @Override
+    public ClassType ofClass(String name) {
+        var dotName = DotName.of(name);
+        if (lookup.getClass(dotName).isEmpty()) {
+            return null;
+        }
+        return new VaubanClassType(dotName, lookup);
+    }
+
+    @Override
+    public ClassType ofClass(ClassInfo clazz) {
+        return new VaubanClassType(DotName.of(clazz.name()), lookup);
+    }
+
+    @Override
+    public ArrayType ofArray(Type elementType, int dimensions) {
+        var result = elementType;
+        for (int i = 0; i < dimensions; i++) {
+            result = new VaubanArrayType(result);
+        }
+        return (ArrayType) result;
+    }
+
+    @Override
+    public ParameterizedType parameterized(Class<?> genericType, Class<?>... typeArguments) {
+        var typeArgs = Arrays.stream(typeArguments)
+                .map(this::of)
+                .toList();
+        return new VaubanParameterizedType(DotName.of(genericType.getName()), typeArgs, lookup);
+    }
+
+    @Override
+    public ParameterizedType parameterized(Class<?> genericType, Type... typeArguments) {
+        return new VaubanParameterizedType(DotName.of(genericType.getName()), List.of(typeArguments), lookup);
+    }
+
+    @Override
+    public ParameterizedType parameterized(ClassType genericType, Type... typeArguments) {
+        var dotName = (genericType instanceof VaubanClassType vct) ? vct.dotName() : DotName.of(genericType.declaration().name());
+        return new VaubanParameterizedType(dotName, List.of(typeArguments), lookup);
+    }
+
+    @Override
+    public WildcardType wildcardWithUpperBound(Type upperBound) {
+        return new VaubanWildcardType(upperBound, null);
+    }
+
+    @Override
+    public WildcardType wildcardWithLowerBound(Type lowerBound) {
+        return new VaubanWildcardType(null, lowerBound);
+    }
+
+    @Override
+    public WildcardType wildcardUnbounded() {
+        return new VaubanWildcardType(ofClass(Object.class.getName()), null);
+    }
+}

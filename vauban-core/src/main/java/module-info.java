@@ -1,32 +1,32 @@
-module fr.vidocq.vauban.core {
-    requires transitive fr.vidocq.vauban.api;
-    requires fr.vidocq.vauban.indexer;
-    requires static fr.vidocq.vauban.classloader.spi;
+module io.vidocq.vauban.core {
+    requires transitive io.vidocq.vauban.api;
+    requires io.vidocq.vauban.indexer;
+    requires static io.vidocq.vauban.classloader.spi;
     requires transitive jakarta.cdi.lang.model;
     requires jakarta.el;
     requires jdk.unsupported;
 
-    uses fr.vidocq.vauban.classloader.spi.ByteSourcePlugin;
+    uses io.vidocq.vauban.classloader.spi.ByteSourcePlugin;
 
-    exports fr.vidocq.vauban.core;
-    exports fr.vidocq.vauban.core.container;
-    exports fr.vidocq.vauban.core.langmodel;
-    exports fr.vidocq.vauban.core.langmodel.declarations;
-    exports fr.vidocq.vauban.core.langmodel.types;
-    exports fr.vidocq.vauban.core.types;
-    exports fr.vidocq.vauban.core.bean.model;
-    exports fr.vidocq.vauban.core.bean.discovery;
-    exports fr.vidocq.vauban.core.bean.resolution;
-    exports fr.vidocq.vauban.core.bean.validation;
-    exports fr.vidocq.vauban.core.context;
-    exports fr.vidocq.vauban.core.event;
-    exports fr.vidocq.vauban.core.interceptor;
-    exports fr.vidocq.vauban.core.enrichment;
-    exports fr.vidocq.vauban.core.extensions;
+    exports io.vidocq.vauban.core;
+    exports io.vidocq.vauban.core.container;
+    exports io.vidocq.vauban.core.langmodel;
+    exports io.vidocq.vauban.core.langmodel.declarations;
+    exports io.vidocq.vauban.core.langmodel.types;
+    exports io.vidocq.vauban.core.types;
+    exports io.vidocq.vauban.core.bean.model;
+    exports io.vidocq.vauban.core.bean.discovery;
+    exports io.vidocq.vauban.core.bean.resolution;
+    exports io.vidocq.vauban.core.bean.validation;
+    exports io.vidocq.vauban.core.context;
+    exports io.vidocq.vauban.core.event;
+    exports io.vidocq.vauban.core.interceptor;
+    exports io.vidocq.vauban.core.enrichment;
+    exports io.vidocq.vauban.core.extensions;
 
     provides jakarta.enterprise.inject.spi.CDIProvider
-            with fr.vidocq.vauban.core.container.VaubanCDIProvider;
+            with io.vidocq.vauban.core.container.VaubanCDIProvider;
 
     provides jakarta.enterprise.inject.build.compatible.spi.BuildServices
-            with fr.vidocq.vauban.core.extensions.VaubanBuildServices;
+            with io.vidocq.vauban.core.extensions.VaubanBuildServices;
 }

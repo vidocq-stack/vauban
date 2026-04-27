@@ -19,14 +19,14 @@ Ajoutez les dependances Vauban dans votre `pom.xml` :
 <dependencies>
     <!-- Runtime CDI -->
     <dependency>
-        <groupId>fr.vidocq.vauban</groupId>
+        <groupId>io.vidocq.vauban</groupId>
         <artifactId>vauban-core</artifactId>
         <version>0.1.0-SNAPSHOT</version>
     </dependency>
 
     <!-- APT : generation compile-time (factories, proxies, BCE) -->
     <dependency>
-        <groupId>fr.vidocq.vauban</groupId>
+        <groupId>io.vidocq.vauban</groupId>
         <artifactId>vauban-processor</artifactId>
         <version>0.1.0-SNAPSHOT</version>
         <scope>provided</scope>
@@ -34,7 +34,7 @@ Ajoutez les dependances Vauban dans votre `pom.xml` :
 
     <!-- Tests JUnit 6 -->
     <dependency>
-        <groupId>fr.vidocq.vauban</groupId>
+        <groupId>io.vidocq.vauban</groupId>
         <artifactId>vauban-junit</artifactId>
         <version>0.1.0-SNAPSHOT</version>
         <scope>test</scope>
@@ -72,7 +72,7 @@ pour les **JARs de dependances** (l'APT ne traite que le module courant) :
 <build>
     <plugins>
         <plugin>
-            <groupId>fr.vidocq.vauban</groupId>
+            <groupId>io.vidocq.vauban</groupId>
             <artifactId>vauban-maven-plugin</artifactId>
             <version>0.1.0-SNAPSHOT</version>
             <executions>
@@ -120,7 +120,7 @@ public class GreetingRepository {
 ### Programmatique
 
 ```java
-import fr.vidocq.vauban.core.container.VaubanContainer;
+import io.vidocq.vauban.core.container.VaubanContainer;
 
 public class Main {
     public static void main(String[] args) {
@@ -163,8 +163,8 @@ container.close();
 ## 4. Tester avec JUnit 6
 
 ```java
-import fr.vidocq.vauban.junit.VaubanTest;
-import fr.vidocq.vauban.junit.AddBeans;
+import io.vidocq.vauban.junit.VaubanTest;
+import io.vidocq.vauban.junit.AddBeans;
 import jakarta.inject.Inject;
 import org.junit.jupiter.api.Test;
 import static org.junit.jupiter.api.Assertions.*;

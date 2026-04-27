@@ -5,7 +5,7 @@
     <modelVersion>4.1.0</modelVersion>
 
     <parent>
-        <groupId>fr.vidocq.vauban</groupId>
+        <groupId>io.vidocq.vauban</groupId>
         <artifactId>vauban-parent</artifactId>
     </parent>
 

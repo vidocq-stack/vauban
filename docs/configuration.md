@@ -21,7 +21,7 @@ a la compilation (APT) et au runtime (fallback pour les JARs non pre-traites).
 
 ```xml
 <dependency>
-    <groupId>fr.vidocq.vauban</groupId>
+    <groupId>io.vidocq.vauban</groupId>
     <artifactId>vauban-processor</artifactId>
     <scope>provided</scope>
 </dependency>

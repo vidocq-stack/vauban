@@ -31,7 +31,7 @@ Vauban est un conteneur CDI 4.1 JPMS-native avec 774/774 TCK. L'objectif est d'i
 #### `vauban-classloader-spi` — Interfaces SPI pures
 
 ```
-fr.vidocq.vauban.classloader.spi
+io.vidocq.vauban.classloader.spi
 |-- ByteSourcePlugin.java    — SPI principale (ServiceLoader)
 |-- ArchiveReader.java       — Abstraction lecture d'archive
 |-- PluginContext.java        — Acces cles + config
@@ -40,7 +40,7 @@ fr.vidocq.vauban.classloader.spi
 #### `vauban-sjar` — Implementation chiffrement AES-256-GCM
 
 ```
-fr.vidocq.vauban.sjar
+io.vidocq.vauban.sjar
 |-- SjarPlugin.java          — implements ByteSourcePlugin
 |-- SjarArchiveReader.java   — Lecture + dechiffrement entries
 |-- SjarClassLoader.java     — ClassLoader custom (findClass + getResourceAsStream)
@@ -163,9 +163,9 @@ Goal `vauban:encrypt` — prend un JAR en entree, produit un `.sjar`.
 | Fichier | Changement |
 |---------|-----------|
 | `pom.xml` (racine) | Ajouter modules + dependencyManagement |
-| `vauban-indexer/module-info.java` | `requires static fr.vidocq.vauban.classloader.spi` |
+| `vauban-indexer/module-info.java` | `requires static io.vidocq.vauban.classloader.spi` |
 | `vauban-indexer/.../JarScanner.java` | Surcharge plugin-aware |
-| `vauban-core/module-info.java` | `requires static fr.vidocq.vauban.classloader.spi`, `uses ByteSourcePlugin` |
+| `vauban-core/module-info.java` | `requires static io.vidocq.vauban.classloader.spi`, `uses ByteSourcePlugin` |
 | `vauban-core/.../VaubanContainerBuilder.java` | Plugin registration + ServiceLoader |
 | `vauban-maven-plugin/.../VaubanGenerator.java` | Config etendu |
 | `vauban-maven-plugin/.../GenerateMojo.java` | SJAR dependencies |

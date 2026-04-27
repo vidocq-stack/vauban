@@ -39,7 +39,7 @@ module com.example.mylib {
 ### 2. Generate a key
 
 ```bash
-java -m fr.vidocq.vauban.sjar generate-key
+java -m io.vidocq.vauban.sjar generate-key
 # Output: a4b2c3d4e5f6...  (64 hex chars = 256 bits)
 ```
 
@@ -47,7 +47,7 @@ java -m fr.vidocq.vauban.sjar generate-key
 
 ```xml
 <plugin>
-    <groupId>fr.vidocq.vauban</groupId>
+    <groupId>io.vidocq.vauban</groupId>
     <artifactId>vauban-maven-plugin</artifactId>
     <executions>
         <execution>
@@ -201,13 +201,13 @@ public class MyPlugin implements ByteSourcePlugin {
 2. Register via ServiceLoader:
 
 ```
-# META-INF/services/fr.vidocq.vauban.classloader.spi.ByteSourcePlugin
+# META-INF/services/io.vidocq.vauban.classloader.spi.ByteSourcePlugin
 com.example.MyPlugin
 ```
 
 Or in `module-info.java`:
 ```java
-provides fr.vidocq.vauban.classloader.spi.ByteSourcePlugin with com.example.MyPlugin;
+provides io.vidocq.vauban.classloader.spi.ByteSourcePlugin with com.example.MyPlugin;
 ```
 
 3. Or register programmatically:
