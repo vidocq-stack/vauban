@@ -13,4 +13,8 @@
     <packaging>pom</packaging>
     <name>Vauban :: Examples</name>
     <description>Example projects demonstrating Vauban CDI container usage</description>
+
+    <properties>
+        <maven.deploy.skip>true</maven.deploy.skip>
+    </properties>
 </project>
