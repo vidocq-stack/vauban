@@ -56,7 +56,7 @@
                         <id>dist</id>
                         <goals><goal>dist</goal></goals>
                         <configuration>
-                            <mainClass>fr.vidocq.example.app.Main</mainClass>
+                            <mainClass>io.vidocq.vauban.example.app.Main</mainClass>
                         </configuration>
                     </execution>
                 </executions>
@@ -67,7 +67,7 @@
                 <configuration>
                     <archive>
                         <manifest>
-                            <mainClass>fr.vidocq.example.app.Main</mainClass>
+                            <mainClass>io.vidocq.vauban.example.app.Main</mainClass>
                         </manifest>
                     </archive>
                 </configuration>

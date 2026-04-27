@@ -1,4 +1,4 @@
-package fr.vidocq.example.test;
+package io.vidocq.vauban.example.test;
 
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
@@ -114,11 +114,11 @@ class ExampleAppEndToEndTest {
         try (var jar = new java.util.jar.JarFile(securizedJar)) {
             assertNotNull(jar.getEntry("META-INF/vauban.encrypted"),
                     "JAR should have encryption marker");
-            assertNotNull(jar.getEntry("fr/vidocq/example/securized/internal/CryptoServiceImpl.class.enc"),
+            assertNotNull(jar.getEntry("io/vidocq/vauban/example/securized/internal/CryptoServiceImpl.class.enc"),
                     "Internal class should be encrypted (.class.enc)");
-            assertNull(jar.getEntry("fr/vidocq/example/securized/internal/CryptoServiceImpl.class"),
+            assertNull(jar.getEntry("io/vidocq/vauban/example/securized/internal/CryptoServiceImpl.class"),
                     "Plain internal class should NOT exist");
-            assertNotNull(jar.getEntry("fr/vidocq/example/securized/api/CryptoService.class"),
+            assertNotNull(jar.getEntry("io/vidocq/vauban/example/securized/api/CryptoService.class"),
                     "Exported interface should be in clear");
         }
     }
@@ -186,7 +186,7 @@ class ExampleAppEndToEndTest {
                 ProcessHandle.current().info().command().orElse("java"));
 
         var pb = new ProcessBuilder(javaExe, "-cp", classpath,
-                "fr.vidocq.example.app.Main", name);
+                "io.vidocq.vauban.example.app.Main", name);
         // Pass the encryption key so the container can decrypt encrypted JARs
         pb.environment().put("VAUBAN_SJAR_KEY", DEMO_KEY);
         var process = pb.start();

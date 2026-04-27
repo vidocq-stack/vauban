@@ -1,4 +1,4 @@
-package fr.vidocq.example.lib;
+package io.vidocq.vauban.example.lib;
 
 import jakarta.enterprise.context.Dependent;
 import java.time.LocalTime;

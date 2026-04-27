@@ -1,4 +1,4 @@
-package fr.vidocq.example.app;
+package io.vidocq.vauban.example.app;
 
 import io.vidocq.vauban.core.container.VaubanContainer;
 

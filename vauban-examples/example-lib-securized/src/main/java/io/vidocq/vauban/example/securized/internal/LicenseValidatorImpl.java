@@ -1,6 +1,6 @@
-package fr.vidocq.example.securized.internal;
+package io.vidocq.vauban.example.securized.internal;
 
-import fr.vidocq.example.securized.api.LicenseValidator;
+import io.vidocq.vauban.example.securized.api.LicenseValidator;
 import jakarta.enterprise.context.Dependent;
 
 /**

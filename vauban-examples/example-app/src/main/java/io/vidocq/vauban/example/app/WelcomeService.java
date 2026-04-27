@@ -1,8 +1,8 @@
-package fr.vidocq.example.app;
+package io.vidocq.vauban.example.app;
 
-import fr.vidocq.example.lib.GreetingService;
-import fr.vidocq.example.lib.TimeService;
-import fr.vidocq.example.securized.api.CryptoService;
+import io.vidocq.vauban.example.lib.GreetingService;
+import io.vidocq.vauban.example.lib.TimeService;
+import io.vidocq.vauban.example.securized.api.CryptoService;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 

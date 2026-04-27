@@ -1,6 +1,6 @@
-package fr.vidocq.example.securized.internal;
+package io.vidocq.vauban.example.securized.internal;
 
-import fr.vidocq.example.securized.api.CryptoService;
+import io.vidocq.vauban.example.securized.api.CryptoService;
 import jakarta.enterprise.context.ApplicationScoped;
 
 import java.nio.charset.StandardCharsets;

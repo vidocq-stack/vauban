@@ -1,4 +1,4 @@
-package fr.vidocq.example.securized.api;
+package io.vidocq.vauban.example.securized.api;
 
 /**
  * Public API for the crypto service — exported, stays in clear text.
