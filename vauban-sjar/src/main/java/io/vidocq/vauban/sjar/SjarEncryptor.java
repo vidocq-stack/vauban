@@ -83,6 +83,9 @@ public final class SjarEncryptor {
                     continue;
                 }
 
+                // Skip existing metadata marker — it will be rewritten below
+                if (name.equals(SjarMetadata.METADATA_ENTRY)) continue;
+
                 try (var is = src.getInputStream(entry)) {
                     var bytes = is.readAllBytes();
 
