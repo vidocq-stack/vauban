@@ -28,17 +28,17 @@
         </license>
     </licenses>
 
+
     <distributionManagement>
         <repository>
-            <id>forgejo</id>
+            <id>forgejo-vidocq</id>
             <url>https://forge.vidocq.dev/api/packages/vidocq/maven</url>
         </repository>
         <snapshotRepository>
-            <id>forgejo</id>
+            <id>forgejo-vidocq</id>
             <url>https://forge.vidocq.dev/api/packages/vidocq/maven</url>
         </snapshotRepository>
     </distributionManagement>
-
 
     <repositories>
         <repository>
