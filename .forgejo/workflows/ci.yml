@@ -78,6 +78,17 @@ jobs:
           tar -xzf apache-maven-4.0.0-rc-5-bin.tar.gz -C /opt
           echo "/opt/apache-maven-4.0.0-rc-5/bin" >> "$GITHUB_PATH"
 
+
+      - name: Debug auth (sans afficher le token)
+        run: |
+          echo "User length: ${#MAVEN_USER}"
+          echo "Token length: ${#MAVEN_TOKEN}"
+          echo "User: $MAVEN_USER"
+        env:
+          MAVEN_USER: ${{ vars.MAVEN_DEPLOY_USER }}
+          MAVEN_TOKEN: ${{ secrets.MAVEN_DEPLOY_TOKEN }}
+
+
       - name: Configure Maven credentials
         run: |
           mkdir -p ~/.m2
