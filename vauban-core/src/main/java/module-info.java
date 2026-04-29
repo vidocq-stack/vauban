@@ -1,7 +1,7 @@
 module io.vidocq.vauban.core {
     requires transitive io.vidocq.vauban.api;
     requires io.vidocq.vauban.indexer;
-    requires static io.vidocq.vauban.classloader.spi;
+    requires io.vidocq.vauban.classloader.spi;
     requires transitive jakarta.cdi.lang.model;
     requires jakarta.el;
     requires jdk.unsupported;
