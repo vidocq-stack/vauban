@@ -5,7 +5,7 @@
 <h1 align="center">Vauban</h1>
 
 <p align="center">
-  <strong>Conteneur CDI 4.1 natif Java Modules</strong><br>
+  <strong>Conteneur CDI 4.1 natif Java Modules :)</strong><br>
   <a href="https://jakarta.ee/specifications/cdi/4.1/">CDI 4.1</a> | JDK 25 | JPMS | Virtual Threads | Zero reflexion
 </p>
 
