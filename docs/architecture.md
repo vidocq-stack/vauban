@@ -15,6 +15,11 @@ graph TB
         API[vauban-api<br/><i>Facade publique</i>]
         CORE[vauban-core<br/><i>Conteneur CDI 4.1</i>]
         IDX[vauban-indexer<br/><i>Scanner bytecode</i>]
+        CL_SPI[vauban-classloader-spi<br/><i>Contrat classloading</i>]
+    end
+
+    subgraph "Option payante"
+        SJAR[vauban-sjar<br/><i>Chiffrement AES-256-GCM</i>]
     end
 
     subgraph "Testing"
@@ -32,31 +37,49 @@ graph TB
     CORE --> IDX
     CORE --> CDI
     CORE --> JDK
+    CORE --> CL_SPI
+    IDX --> CL_SPI
     PROC --> CORE
     PROC --> IDX
+    PROC --> CL_SPI
     PLUGIN --> CORE
     PLUGIN --> IDX
     JUNIT --> CORE
     TCK --> CORE
     SUITE --> CORE
     IDX --> JDK
+    SJAR --> CL_SPI
 
     style CORE fill:#e1f5fe,stroke:#0288d1,stroke-width:2px
     style IDX fill:#f3e5f5,stroke:#7b1fa2
     style API fill:#e8f5e9,stroke:#388e3c
     style PROC fill:#fff3e0,stroke:#f57c00
     style PLUGIN fill:#fff3e0,stroke:#f57c00
+    style CL_SPI fill:#fce4ec,stroke:#c62828
+    style SJAR fill:#fce4ec,stroke:#c62828,stroke-dasharray:5
 ```
 
 Chaque module est un **module JPMS explicite** avec son `module-info.java`.
 
 | Module | Dependances externes |
 |--------|---------------------|
-| `vauban-indexer` | **Aucune** (JDK pur) |
-| `vauban-core` | Jakarta CDI API, Jakarta Inject, Jakarta Interceptors |
+| `vauban-classloader-spi` | **Aucune** (JDK pur — contrat seul) |
+| `vauban-indexer` | `vauban-classloader-spi` |
+| `vauban-core` | Jakarta CDI API, Jakarta Inject, Jakarta Interceptors, `vauban-classloader-spi` |
 | `vauban-api` | Jakarta CDI API (transitif) |
-| `vauban-processor` | `java.compiler` (APT) |
+| `vauban-processor` | `java.compiler` (APT), `vauban-classloader-spi` |
 | `vauban-junit` | JUnit Jupiter |
+| `vauban-sjar` | `vauban-classloader-spi` (implémentation optionnelle) |
+
+### Distinction classloader-spi / sjar
+
+`vauban-classloader-spi` définit le **contrat permanent** du classloading : les interfaces `ByteSourcePlugin`, `ArchiveReader`, `PluginContext`. Ce module est **toujours requis au runtime** (`requires`, non `static`) par `core`, `indexer` et `processor`, car leurs types sont référencés directement dans les signatures.
+
+`vauban-sjar` est l'**implémentation payante optionnelle** : il fournit `ByteSourcePlugin` via `ServiceLoader` pour le chiffrement AES-256-GCM. Sans `sjar` dans le module path, `core` tombe en mode classloading Java standard (le `ServiceLoader` retourne vide, aucun plugin actif).
+
+Ce design permet deux modes d'exploitation distincts :
+- **Mode standard** : classloading Java normal, `vauban-sjar` absent — version open-source
+- **Mode sécurisé** : `vauban-sjar` ajouté au module path, chiffrement des classes internes activé — version commerciale, destinée à devenir pure EE
 
 ---
 

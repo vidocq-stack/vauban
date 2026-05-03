@@ -420,7 +420,9 @@ class MonServiceTest {
 
 ### vauban-classloader-spi
 
-**Role** : SPI extensible pour le chargement de classes depuis des sources custom (JARs chiffres, archives distantes, etc.).
+**Role** : Contrat permanent du classloading — interfaces SPI pour le chargement de classes depuis des sources custom (JARs chiffres, archives distantes, etc.).
+
+Ce module est **toujours requis au runtime** par `vauban-core`, `vauban-indexer` et `vauban-processor`. Sans implementation dans le module path, le conteneur utilise le classloading Java standard. La presence d'une implementation (ex: `vauban-sjar`) active le classloading custom via `ServiceLoader`.
 
 | Interface | Role |
 |-----------|------|
@@ -428,13 +430,11 @@ class MonServiceTest {
 | `ArchiveReader` | Fournit les bytes (dechiffres) des classes d'une archive |
 | `PluginContext` | Fournit les cles et la configuration aux plugins |
 
-**Plugins multiples** : le systeme supporte plusieurs plugins simultanes, decouverts via `ServiceLoader` et tries par priorite. Le premier plugin dont `handles()` retourne `true` gagne.
-
-**Module JPMS** : `io.vidocq.vauban.classloader.spi`
+**Module JPMS** : `io.vidocq.vauban.classloader.spi` — aucune dependance externe.
 
 ### vauban-sjar
 
-**Role** : Implementation du SPI pour le chiffrement in-JAR AES-256-GCM.
+**Role** : Implementation payante et optionnelle du SPI pour le chiffrement in-JAR AES-256-GCM. Absent du module path par defaut (version open-source) ; present uniquement dans la version commerciale destinee a devenir pure EE.
 
 | Classe | Role |
 |--------|------|
