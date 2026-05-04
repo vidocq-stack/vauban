@@ -27,6 +27,9 @@ module io.vidocq.vauban.core {
     provides jakarta.enterprise.inject.spi.CDIProvider
             with io.vidocq.vauban.core.container.VaubanCDIProvider;
 
+    provides jakarta.enterprise.inject.se.SeContainerInitializer
+            with io.vidocq.vauban.core.container.VaubanSeContainerInitializer;
+
     provides jakarta.enterprise.inject.build.compatible.spi.BuildServices
             with io.vidocq.vauban.core.extensions.VaubanBuildServices;
 }
