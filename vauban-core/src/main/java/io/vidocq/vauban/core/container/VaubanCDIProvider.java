@@ -10,7 +10,10 @@ public class VaubanCDIProvider implements CDIProvider {
 
     @Override
     public CDI<Object> getCDI() {
-        return VaubanCDI.INSTANCE;
+        // Return null when no container is running so that CDI.current() throws
+        // IllegalStateException, allowing SeContainerInitializer.newInstance().initialize()
+        // to be called by the application (CDI SE bootstrap pattern).
+        return VaubanContainer.current() != null ? VaubanCDI.INSTANCE : null;
     }
 
     @Override

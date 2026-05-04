@@ -119,10 +119,13 @@ public final class VaubanSeContainerInitializer extends SeContainerInitializer {
 
         if (discoveryDisabled) {
             builder.beanArchive(false);
-        } else {
+        } else if (!packages.isEmpty()) {
             for (var pkg : packages) {
                 builder.scanPackage(pkg);
             }
+        } else if (beanClasses.isEmpty()) {
+            // Default SE discovery: scan all bean archives (JARs/dirs with META-INF/beans.xml)
+            builder.scanBeanArchivesFromClasspath();
         }
 
         for (var cls : beanClasses) {

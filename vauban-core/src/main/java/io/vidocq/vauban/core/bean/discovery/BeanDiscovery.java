@@ -104,6 +104,13 @@ public final class BeanDiscovery {
         this.forcedBeanClasses = forced;
     }
 
+    public void addForcedBeanClasses(Set<DotName> classes) {
+        if (classes.isEmpty()) return;
+        var merged = new HashSet<>(this.forcedBeanClasses);
+        merged.addAll(classes);
+        this.forcedBeanClasses = Set.copyOf(merged);
+    }
+
     private boolean isAllowedByScannedClassesFilter(ClassInfo classInfo) {
         return scannedClassesFilter.isEmpty() || scannedClassesFilter.contains(classInfo.name());
     }

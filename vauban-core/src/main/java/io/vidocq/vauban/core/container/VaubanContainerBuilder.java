@@ -31,6 +31,7 @@ public final class VaubanContainerBuilder {
     private ClassLoader classLoader;
     private java.lang.invoke.MethodHandles.Lookup lookup;
     private boolean isBeanArchive = true;
+    private final Set<Class<?>> forcedDiscoveryClasses = new java.util.LinkedHashSet<>();
     private VaubanLookup builderLookup;
     private final List<io.vidocq.vauban.classloader.spi.ByteSourcePlugin> byteSourcePlugins = new ArrayList<>();
     private io.vidocq.vauban.classloader.spi.PluginContext pluginContext;
@@ -309,6 +310,94 @@ public final class VaubanContainerBuilder {
         }
 
         return this;
+    }
+
+    /**
+     * Scan all bean archives accessible from the current ClassLoader.
+     * An archive is a bean archive if it contains {@code META-INF/beans.xml}.
+     * All concrete classes from discovered archives are added and forced through
+     * bean discovery (equivalent to {@code bean-discovery-mode=all}).
+     * <p>
+     * Used by {@link io.vidocq.vauban.core.container.VaubanSeContainerInitializer}
+     * when no explicit configuration is provided.
+     */
+    public VaubanContainerBuilder scanBeanArchivesFromClasspath() {
+        var cl = this.classLoader != null ? this.classLoader
+                : Thread.currentThread().getContextClassLoader();
+        try {
+            var beansXmlUrls = cl.getResources("META-INF/beans.xml");
+            while (beansXmlUrls.hasMoreElements()) {
+                var beansXmlUrl = beansXmlUrls.nextElement();
+                var urlStr = beansXmlUrl.toString();
+                try {
+                    if (urlStr.startsWith("jar:")) {
+                        int bangIdx = urlStr.indexOf('!');
+                        if (bangIdx > 0) {
+                            // jar:file:/path/to.jar!/META-INF/beans.xml  or  jar:nested:...
+                            var fileStart = urlStr.indexOf("file:");
+                            var jarFilePath = fileStart >= 0
+                                    ? urlStr.substring(fileStart + "file:".length(), bangIdx)
+                                    : null;
+                            if (jarFilePath != null) {
+                                var jarRootUrl = new java.net.URL("jar:file:" + jarFilePath + "!/");
+                                scanJarEntriesForced(jarRootUrl, cl);
+                            }
+                        }
+                    } else if (urlStr.startsWith("file:")) {
+                        // file:/path/classes/META-INF/beans.xml
+                        var beansXmlPath = java.nio.file.Path.of(beansXmlUrl.toURI());
+                        var classesRoot = beansXmlPath.getParent().getParent();
+                        scanAllDirectoryForced(classesRoot, cl);
+                    }
+                } catch (Exception e) { /* skip problematic archives */ }
+            }
+        } catch (java.io.IOException e) {
+            // non-fatal — classpath scan failure
+        }
+        return this;
+    }
+
+    private void scanJarEntriesForced(java.net.URL jarRootUrl, ClassLoader cl) throws Exception {
+        var connection = (java.net.JarURLConnection) jarRootUrl.openConnection();
+        try (var jarFile = connection.getJarFile()) {
+            jarFile.entries().asIterator().forEachRemaining(entry -> {
+                var name = entry.getName();
+                if (!name.endsWith(".class")) return;
+                if (name.contains("module-info") || name.contains("package-info")) return;
+                var className = name.replace('/', '.').replace(".class", "");
+                tryAddForcedBeanClass(className, cl);
+            });
+        }
+    }
+
+    private void scanAllDirectoryForced(java.nio.file.Path rootDir, ClassLoader cl) {
+        if (!java.nio.file.Files.isDirectory(rootDir)) return;
+        try (var stream = java.nio.file.Files.walk(rootDir)) {
+            stream.filter(p -> p.toString().endsWith(".class"))
+                    .forEach(p -> {
+                        var relative = rootDir.relativize(p).toString();
+                        var className = relative
+                                .replace(java.io.File.separatorChar, '.')
+                                .replace('/', '.')
+                                .replace(".class", "");
+                        tryAddForcedBeanClass(className, cl);
+                    });
+        } catch (Exception e) { /* skip */ }
+    }
+
+    private void tryAddForcedBeanClass(String className, ClassLoader cl) {
+        try {
+            if (className.contains("_ClientProxy") || className.contains("$Intercepted")
+                    || className.contains("$$")) return;
+            var clazz = Class.forName(className, false, cl);
+            if (clazz.isAnnotation() || clazz.isInterface() || clazz.isSynthetic()) return;
+            if (clazz.isAnonymousClass() || clazz.isLocalClass()) return;
+            if (java.lang.reflect.Modifier.isAbstract(clazz.getModifiers())) return;
+            addBeanClass(clazz);
+            forcedDiscoveryClasses.add(clazz);
+        } catch (ClassNotFoundException | NoClassDefFoundError e) {
+            // Skip unloadable classes
+        }
     }
 
     /**
@@ -691,6 +780,15 @@ public final class VaubanContainerBuilder {
                     }
                 }
             }
+
+            // Force bean classes from bean-discovery-mode=all archives (e.g. from scanBeanArchivesFromClasspath)
+            if (!forcedDiscoveryClasses.isEmpty()) {
+                var dotNames = forcedDiscoveryClasses.stream()
+                        .map(c -> DotName.of(c.getName()))
+                        .collect(java.util.stream.Collectors.toSet());
+                discovery.addForcedBeanClasses(dotNames);
+            }
+
             var descriptors = new ArrayList<>(discovery.discoverBeans());
             var observers = new ArrayList<>(discovery.discoverObservers());
             var interceptors = discovery.discoverInterceptors();
