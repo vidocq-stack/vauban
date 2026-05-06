@@ -54,7 +54,13 @@ public class VaubanProcessor extends AbstractProcessor {
     private static final String BEANS_LIST_PATH = "META-INF/vauban-beans.list";
     private static final String BCE_RUNTIME_LIST_PATH = "META-INF/vauban-bce-runtime.list";
 
-    private boolean processed = false;
+    // Beans accumulate across APT rounds: companion processors (e.g. mansart-data-processor)
+    // emit their classes in round N which then surface to roundEnv.getElementsAnnotatedWith
+    // in round N+1. We build the full index over all rounds and run the BCE / generation /
+    // writeBeansList pipeline once, at processingOver(), so we see every type whatever the
+    // round it was discovered in.
+    private final IndexBuilder accumulatedIndex = new IndexBuilder();
+    private boolean finalized = false;
     private List<Class<?>> discoveredBceClasses;
     private Set<String> bceAnnotationTypes = Set.of();
 
@@ -107,25 +113,33 @@ public class VaubanProcessor extends AbstractProcessor {
 
     @Override
     public boolean process(Set<? extends TypeElement> annotations, RoundEnvironment roundEnv) {
-        if (processed || roundEnv.processingOver()) return false;
-        processed = true;
+        if (finalized) return false;
 
+        // Accumulate types annotated this round into the cross-round index.
         var scanner = new ElementScanner(processingEnv.getElementUtils(), processingEnv.getTypeUtils());
-        var indexBuilder = new IndexBuilder();
-
-        // Scan all annotated types
         for (var annotation : annotations) {
             for (var element : roundEnv.getElementsAnnotatedWith(annotation)) {
                 if (element instanceof TypeElement typeElement) {
-                    indexBuilder.add(scanner.scan(typeElement));
+                    var name = DotName.of(typeElement.getQualifiedName().toString());
+                    if (!accumulatedIndex.contains(name)) {
+                        accumulatedIndex.add(scanner.scan(typeElement));
+                    }
                 } else if (element.getEnclosingElement() instanceof TypeElement enclosing) {
-                    if (!indexBuilder.contains(DotName.of(enclosing.getQualifiedName().toString()))) {
-                        indexBuilder.add(scanner.scan(enclosing));
+                    var name = DotName.of(enclosing.getQualifiedName().toString());
+                    if (!accumulatedIndex.contains(name)) {
+                        accumulatedIndex.add(scanner.scan(enclosing));
                     }
                 }
             }
         }
 
+        // Wait for the final round so companion processors (mansart-data-processor and friends)
+        // have had a chance to emit their generated CDI classes — without this, beans appearing
+        // only in later rounds would be invisible to the deployment validator.
+        if (!roundEnv.processingOver()) return false;
+        finalized = true;
+
+        var indexBuilder = accumulatedIndex;
         var index = indexBuilder.build();
         if (index.size() == 0) return false;
 
