@@ -211,6 +211,15 @@ public class VaubanProcessor extends AbstractProcessor {
                 writeSyntheticMetadata(bceResult.syntheticBeans(), bceResult.syntheticObservers());
             }
 
+            // Make BCE-declared synthetic beans visible to the deployment validator below so user
+            // code can @Inject them directly without an Instance<> workaround. Without this,
+            // every BCE-supplied bean would force the consuming class to use Instance<T> just to
+            // bypass the static check — surprising and opaque.
+            int slot = beans.size();
+            for (var synBean : bceResult.syntheticBeans()) {
+                beans.add(BceProcessor.toBeanDescriptor(synBean, slot++));
+            }
+
             bceProcessed = true;
         }
 

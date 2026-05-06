@@ -1,10 +1,12 @@
 package io.vidocq.vauban.core.extensions;
 
 import io.vidocq.vauban.core.bean.model.BeanDescriptor;
+import io.vidocq.vauban.core.bean.model.BeanId;
 import io.vidocq.vauban.core.bean.model.InjectionPointInfo;
 import io.vidocq.vauban.core.bean.model.InterceptorDescriptor;
 import io.vidocq.vauban.core.bean.model.ObserverDescriptor;
 import io.vidocq.vauban.core.bean.model.QualifierInstance;
+import io.vidocq.vauban.core.bean.model.ScopeInfo;
 import io.vidocq.vauban.core.langmodel.IndexLookup;
 import io.vidocq.vauban.core.langmodel.VaubanAnnotationInfo;
 import io.vidocq.vauban.core.langmodel.BuiltAnnotationInfo;
@@ -12,6 +14,7 @@ import io.vidocq.vauban.core.langmodel.declarations.VaubanClassInfo;
 import io.vidocq.vauban.indexer.VaubanIndex;
 import io.vidocq.vauban.indexer.model.AnnotationValue;
 import io.vidocq.vauban.indexer.model.DotName;
+import io.vidocq.vauban.indexer.model.TypeInfo;
 import jakarta.enterprise.inject.build.compatible.spi.*;
 import jakarta.enterprise.lang.model.AnnotationInfo;
 import jakarta.enterprise.lang.model.AnnotationMember;
@@ -1289,5 +1292,74 @@ public final class BceProcessor {
     private static int getMethodPriority(Method m) {
         var p = m.getAnnotation(jakarta.annotation.Priority.class);
         return p != null ? p.value() : DEFAULT_PRIORITY;
+    }
+
+    /**
+     * Converts a {@link VaubanSyntheticBeanBuilder} (the in-memory result of a BCE {@code @Synthesis}
+     * method) into a {@link BeanDescriptor} that the resolver and validator can reason about.
+     *
+     * <p>Used both by the runtime container (to register the bean in the live bean manager) and by
+     * the APT processor (to feed the deployment validator so {@code @Inject MyBceBean} compiles
+     * cleanly without an {@code Instance<>} workaround).
+     *
+     * <p>The {@code slot} parameter is folded into the synthetic bean's unique key — it must be
+     * unique within the surrounding bean list (callers typically pass {@code descriptors.size()}).
+     * No factory or creator is materialized here; that is a runtime-only concern handled by the
+     * container.
+     */
+    public static BeanDescriptor toBeanDescriptor(VaubanSyntheticBeanBuilder<?> synBean, int slot) {
+        var beanClass = synBean.getBeanClass();
+        var beanName = DotName.of(beanClass.getName());
+
+        var beanTypes = new LinkedHashSet<TypeInfo>();
+        for (var type : synBean.getTypes()) {
+            if (type instanceof Class<?> cls) {
+                beanTypes.add(new TypeInfo.ClassType(DotName.of(cls.getName())));
+            }
+        }
+        if (beanTypes.isEmpty()) {
+            beanTypes.add(new TypeInfo.ClassType(beanName));
+            beanTypes.add(new TypeInfo.ClassType(DotName.of("java.lang.Object")));
+        }
+
+        var scope = ScopeInfo.DEPENDENT;
+        if (synBean.getScopeAnnotation() != null) {
+            var scopeAnn = synBean.getScopeAnnotation();
+            if (scopeAnn == jakarta.enterprise.context.ApplicationScoped.class) {
+                scope = ScopeInfo.APPLICATION;
+            } else if (scopeAnn == jakarta.enterprise.context.RequestScoped.class) {
+                scope = ScopeInfo.REQUEST;
+            } else if (scopeAnn == jakarta.inject.Singleton.class) {
+                scope = ScopeInfo.SINGLETON;
+            }
+        }
+
+        var qualifiers = new LinkedHashSet<QualifierInstance>();
+        boolean hasExplicitQualifier = false;
+        for (var q : synBean.getQualifiers()) {
+            var qName = DotName.of(q.annotationType().getName());
+            if (!qName.equals(QualifierInstance.DEFAULT_NAME) && !qName.equals(QualifierInstance.ANY_NAME)) {
+                hasExplicitQualifier = true;
+            }
+            qualifiers.add(new QualifierInstance(qName, Map.of()));
+        }
+        if (!hasExplicitQualifier) {
+            qualifiers.add(QualifierInstance.DEFAULT);
+        }
+        qualifiers.add(QualifierInstance.ANY);
+
+        var syntheticKey = DotName.of(beanName.value() + "#synthetic#" + slot);
+        return new BeanDescriptor(
+                new BeanId(syntheticKey.value()),
+                beanName,
+                BeanDescriptor.BeanKind.SYNTHETIC,
+                beanTypes,
+                qualifiers,
+                scope,
+                synBean.isAlternative(),
+                synBean.getPriority(),
+                List.of(),
+                synBean.getName()
+        );
     }
 }

@@ -1222,69 +1222,17 @@ public final class VaubanContainerBuilder {
             List<BeanDescriptor> descriptors,
             Map<DotName, BeanFactory<?>> factories,
             Map<DotName, java.util.function.BiConsumer<Object, CreationalContext<?>>> syntheticDisposers) {
-        var beanClass = synBean.getBeanClass();
-        var beanName = DotName.of(beanClass.getName());
-
-        // Build bean types from the builder's types
-        var beanTypes = new java.util.LinkedHashSet<TypeInfo>();
-        for (var type : synBean.getTypes()) {
-            if (type instanceof Class<?> cls) {
-                beanTypes.add(new TypeInfo.ClassType(DotName.of(cls.getName())));
-            }
-        }
-        if (beanTypes.isEmpty()) {
-            beanTypes.add(new TypeInfo.ClassType(beanName));
-            beanTypes.add(new TypeInfo.ClassType(DotName.of("java.lang.Object")));
-        }
-
-        // Determine scope
-        var scope = io.vidocq.vauban.core.bean.model.ScopeInfo.DEPENDENT;
-        if (synBean.getScopeAnnotation() != null) {
-            var scopeAnn = synBean.getScopeAnnotation();
-            if (scopeAnn == jakarta.enterprise.context.ApplicationScoped.class) {
-                scope = io.vidocq.vauban.core.bean.model.ScopeInfo.APPLICATION;
-            } else if (scopeAnn == jakarta.enterprise.context.RequestScoped.class) {
-                scope = io.vidocq.vauban.core.bean.model.ScopeInfo.REQUEST;
-            } else if (scopeAnn == jakarta.inject.Singleton.class) {
-                scope = io.vidocq.vauban.core.bean.model.ScopeInfo.SINGLETON;
-            }
-        }
-
-        // Build qualifiers from builder's qualifier set
-        var qualifiers = new java.util.LinkedHashSet<QualifierInstance>();
-        boolean hasExplicitQualifier = false;
-        for (var q : synBean.getQualifiers()) {
-            var qName = DotName.of(q.annotationType().getName());
-            if (!qName.equals(QualifierInstance.DEFAULT_NAME) && !qName.equals(QualifierInstance.ANY_NAME)) {
-                hasExplicitQualifier = true;
-            }
-            qualifiers.add(new QualifierInstance(qName, java.util.Map.of()));
-        }
-        if (!hasExplicitQualifier) {
-            qualifiers.add(QualifierInstance.DEFAULT);
-        }
-        qualifiers.add(QualifierInstance.ANY);
-
-        // Use unique key to avoid collisions when multiple synthetic beans share the same type
-        var syntheticKey = DotName.of(beanName.value() + "#synthetic#" + descriptors.size());
-        var descriptor = new BeanDescriptor(
-                new BeanId(syntheticKey.value()),
-                beanName,
-                BeanDescriptor.BeanKind.SYNTHETIC,
-                beanTypes,
-                qualifiers,
-                scope,
-                synBean.isAlternative(),
-                synBean.getPriority(),
-                List.of(),
-                synBean.getName()
-        );
+        // Descriptor construction is shared with the APT pipeline so the deployment validator
+        // sees the same view of synthetic beans at compile time and at runtime.
+        var descriptor = io.vidocq.vauban.core.extensions.BceProcessor
+                .toBeanDescriptor(synBean, descriptors.size());
         descriptors.add(descriptor);
+        var syntheticKey = DotName.of(descriptor.id().value());
 
         // Create factory using SyntheticBeanCreator
         var creatorClass = synBean.getCreatorClass();
         var creatorParams = synBean.getParams();
-        var isDependent = scope.equals(io.vidocq.vauban.core.bean.model.ScopeInfo.DEPENDENT);
+        var isDependent = descriptor.scope().equals(io.vidocq.vauban.core.bean.model.ScopeInfo.DEPENDENT);
         factories.put(syntheticKey, new BeanFactory<Object>() {
             @Override
             public Object create() { return create((CreationalContext<Object>) null); }
