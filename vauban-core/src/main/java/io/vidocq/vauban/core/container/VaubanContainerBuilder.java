@@ -309,7 +309,44 @@ public final class VaubanContainerBuilder {
             throw new RuntimeException("Failed to scan classpath for vauban-beans.list", e);
         }
 
+        // 4. Read META-INF/services/jakarta.enterprise.inject.build.compatible.spi.BuildCompatibleExtension
+        // (CDI 4.1 standard ServiceLoader contract for BCEs). These classes are not beans themselves
+        // but Vauban's BCE pipeline needs them registered as such so the discovery phase can find
+        // them via ReflectionValidator.isBuildCompatibleExtension().
+        scanBuildCompatibleExtensionsServiceLoader(cl);
+
         return this;
+    }
+
+    /**
+     * Reads {@code META-INF/services/jakarta.enterprise.inject.build.compatible.spi.BuildCompatibleExtension}
+     * from every classpath source and adds each declared BCE class as a "bean class" so the runtime
+     * BCE pipeline ({@link io.vidocq.vauban.core.extensions.BceProcessor}) can pick it up.
+     *
+     * <p>Without this step Vauban silently ignores BCEs declared via the standard CDI 4.1
+     * ServiceLoader contract — they are only discovered when listed in {@code vauban-beans.list},
+     * which is non-standard and surprises users porting from Weld/OpenWebBeans.
+     */
+    private void scanBuildCompatibleExtensionsServiceLoader(ClassLoader cl) {
+        try {
+            var urls = cl.getResources(
+                    "META-INF/services/jakarta.enterprise.inject.build.compatible.spi.BuildCompatibleExtension");
+            while (urls.hasMoreElements()) {
+                var url = urls.nextElement();
+                try (var reader = new java.io.BufferedReader(
+                        new java.io.InputStreamReader(url.openStream(), java.nio.charset.StandardCharsets.UTF_8))) {
+                    reader.lines()
+                            .map(line -> {
+                                int hash = line.indexOf('#');
+                                return (hash >= 0 ? line.substring(0, hash) : line).strip();
+                            })
+                            .filter(line -> !line.isEmpty())
+                            .forEach(className -> tryAddBeanClass(className, cl));
+                }
+            }
+        } catch (java.io.IOException _) {
+            // non-fatal — classpath scan failure
+        }
     }
 
     /**
