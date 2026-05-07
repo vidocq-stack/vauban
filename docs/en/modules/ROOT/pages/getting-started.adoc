@@ -1,0 +1,118 @@
+= Getting started
+:description: First CDI bean resolved at compile time by Vauban.
+
+== Prerequisites
+
+* **Java 25** — Temurin recommended.
+* **Maven 4.0.0-rc-5** — pinned via `.sdkmanrc` at the repo root.
+* JPMS enabled: one `module-info.java` per Maven module.
+
+== Maven coordinates
+
+[source,xml]
+----
+<dependencies>
+    <dependency>
+        <groupId>io.vidocq.vauban</groupId>
+        <artifactId>vauban-api</artifactId>
+        <version>0.1.0-SNAPSHOT</version>
+    </dependency>
+    <dependency>
+        <groupId>io.vidocq.vauban</groupId>
+        <artifactId>vauban-core</artifactId>
+        <version>0.1.0-SNAPSHOT</version>
+        <scope>runtime</scope>
+    </dependency>
+    <dependency>
+        <groupId>io.vidocq.vauban</groupId>
+        <artifactId>vauban-processor</artifactId>
+        <version>0.1.0-SNAPSHOT</version>
+        <scope>provided</scope>
+    </dependency>
+</dependencies>
+
+<build>
+  <plugins>
+    <plugin>
+      <groupId>io.vidocq.vauban</groupId>
+      <artifactId>vauban-maven-plugin</artifactId>
+      <version>0.1.0-SNAPSHOT</version>
+      <executions>
+        <execution>
+          <goals>
+            <goal>generate</goal>
+          </goals>
+        </execution>
+      </executions>
+    </plugin>
+  </plugins>
+</build>
+----
+
+== Hello world
+
+Define a bean:
+
+[source,java]
+----
+package io.example;
+
+import jakarta.enterprise.context.ApplicationScoped;
+import jakarta.inject.Inject;
+
+@ApplicationScoped
+public class GreetingService {
+    public String hello(String name) {
+        return "Hello, " + name + "!";
+    }
+}
+
+@ApplicationScoped
+public class HelloApp {
+    @Inject GreetingService greeting;
+
+    public void run() {
+        System.out.println(greeting.hello("Vauban"));
+    }
+}
+----
+
+`module-info.java`:
+
+[source,java]
+----
+module io.example {
+    requires jakarta.cdi;
+    requires io.vidocq.vauban.api;
+    exports io.example;
+}
+----
+
+Start the container:
+
+[source,java]
+----
+import io.vidocq.vauban.api.Vauban;
+
+void main() {
+    try (var container = Vauban.bootstrap()) {
+        var app = container.select(HelloApp.class).get();
+        app.run();
+    }
+}
+----
+
+== Build and run
+
+[source,bash]
+----
+sdk env
+./mvnw -ntp install -DskipTests
+----
+
+The Maven plugin has emitted, under `target/generated-sources/`, the `_Factory` corresponding to each bean. No reflection runs at startup: Vauban merely instantiates those factories.
+
+[NOTE]
+====
+See `vauban-examples/` for richer scenarios (qualifiers, producers, custom scopes).
+====

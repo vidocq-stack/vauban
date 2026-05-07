@@ -1,0 +1,22 @@
+= Vauban
+:description: CDI 4.1 Lite container, JPMS-native, build-time wiring, zero runtime dependency.
+
+[.lead]
+Vauban is a CDI 4.1 container that resolves injection at compile time. JPMS-native, zero runtime dependency, no dynamic proxies — dependency wiring computed like artillery trajectories.
+
+== Why?
+
+Sébastien Le Prestre, marquis de Vauban (1633-1707), Marshal of France, Louis XIV's military engineer — designer of the _ceinture de fer_, author of the _Treatise on the Attack and Defence of Fortresses_. He turned defence into a mathematical art: trajectories, sapping, counter-mining, all computed in advance on paper before the first shovel of dirt was turned.
+
+The Vauban container brings the same discipline to CDI. Every `@Inject` relationship is resolved at compile time by an annotation processor and a Maven plugin: an `Indexer` enumerates beans, a `Processor` generates `_Factory` classes as bytecode via the Class-File API. At runtime, nothing is computed — only instantiation remains.
+
+== At a glance
+
+* **CDI 4.1 Lite** — `@Inject`, `@Singleton`, `@ApplicationScoped`, `@Produces`, `@Disposes`, `@PostConstruct`, `@PreDestroy`, qualifiers.
+* **Build-time wiring** — `vauban-processor` (APT) + `vauban-maven-plugin` generate the entire DI grid at `process-classes`.
+* **JPMS-native** — `vauban-api`, `vauban-core`, `vauban-processor` each have their own `module-info.java`. No classpath, no unjustified `opens`.
+* **Class-File API (JEP 484)** — bytecode emitted without ASM, without Byte Buddy.
+* **Zero runtime dependency** — only the `jakarta.enterprise.cdi-api` spec.
+* **AOT-friendly** — no hot reflection, compatible with GraalVM and Leyden CDS.
+
+xref:getting-started.adoc[Get started →]

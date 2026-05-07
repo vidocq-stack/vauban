@@ -1,0 +1,53 @@
+= Migration
+:description: Depuis Quarkus ArC, Weld ou OpenWebBeans.
+
+[CAUTION]
+Vauban est en **0.1.0-SNAPSHOT**. Une migration réelle est prématurée. Cette page liste les correspondances et les pièges connus.
+
+== Depuis Quarkus ArC
+
+[cols="1,1,2"]
+|===
+| ArC | Vauban | Note
+
+| Build-time CDI
+| Build-time CDI
+| Modèle identique
+
+| `io.quarkus.arc.Unremovable`
+| `[TODO]` équivalent
+| Vauban élimine actuellement uniquement les beans non référencés
+
+| Gizmo bytecode
+| Class-File API
+| Pas d'ASM
+|===
+
+== Depuis Weld
+
+Différences clés :
+
+* **Pas d'AnnotatedType lookup runtime** — Vauban résout tout à la compilation.
+* **Pas de `BeforeBeanDiscovery` / `AfterBeanDiscovery`** — remplacé par les `@BuildStep` du runtime Vidocq.
+* **Pas de portable extensions runtime** — utiliser le mécanisme d'extensions de Vidocq pour ce qui est statique, conserver les portable extensions Weld via une couche d'adaptation `[TODO]`.
+
+[TODO]
+====
+Tableau exhaustif Weld → Vauban des features supportées / non supportées.
+====
+
+== Depuis OpenWebBeans
+
+[TODO] : à documenter dès qu'un cas réel se présente.
+
+== CDI 4.1 Lite — pièges connus
+
+* `@Decorator` et `@Interceptor` : `[TODO]` valider la couverture complète.
+* `@Specializes` : non supporté (CDI Lite).
+* `@Alternative` : `[TODO]` valider.
+* Producer methods avec `@Disposes` : supportés.
+
+== Pour aller plus loin
+
+* `vauban-test-suite` reproduit les comportements standards CDI 4.1 Lite — tester avant de migrer.
+* `vauban/BUG.md` consigne les écarts connus.

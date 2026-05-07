@@ -1,0 +1,82 @@
+= Reference
+:description: Maven artefacts, public packages, Maven plugin, JUnit extension.
+
+== Maven artefacts
+
+[cols="1,3"]
+|===
+| Artefact | Role
+
+| `io.vidocq.vauban:vauban-api:0.1.0-SNAPSHOT`
+| Public API (`Vauban`, `BeanFactory`, etc.)
+
+| `io.vidocq.vauban:vauban-core:0.1.0-SNAPSHOT`
+| Runtime container
+
+| `io.vidocq.vauban:vauban-processor:0.1.0-SNAPSHOT`
+| APT (typically `provided` scope)
+
+| `io.vidocq.vauban:vauban-indexer:0.1.0-SNAPSHOT`
+| Build-time bean indexer
+
+| `io.vidocq.vauban:vauban-maven-plugin:0.1.0-SNAPSHOT`
+| Maven plugin (goals: `index`, `process`, `generate`, `analyze`, `dist`, `encrypt`)
+
+| `io.vidocq.vauban:vauban-classloader-spi:0.1.0-SNAPSHOT`
+| ClassLoader SPI for signed archives
+
+| `io.vidocq.vauban:vauban-sjar:0.1.0-SNAPSHOT`
+| `.sjar` (signed jar) implementation
+
+| `io.vidocq.vauban:vauban-junit:0.1.0-SNAPSHOT`
+| JUnit 5 extension (`@VaubanTest`)
+
+| `io.vidocq.vauban:vauban-test-suite:0.1.0-SNAPSHOT`
+| Official integration test suite
+|===
+
+== Public packages
+
+* `io.vidocq.vauban.api` — standard entry point (`Vauban.bootstrap()`)
+* `io.vidocq.vauban.classloader.spi` — ClassLoader plugin SPI
+* `io.vidocq.vauban.maven.module` — JPMS analysis model
+* `io.vidocq.vauban.maven.generate` — generation Mojos
+
+== Maven plugin goals
+
+[TODO]
+====
+Document each Mojo:
+
+* `vauban:generate` — APT + `_Factory` emission
+* `vauban:analyze` — JPMS analysis, split-package detection
+* `vauban:dist` — distribution packaging
+* `vauban:encrypt` — signed-jar encryption
+====
+
+== JUnit extension (`vauban-junit`)
+
+`@VaubanTest` boots a lightweight container for tests:
+
+[source,java]
+----
+@VaubanTest
+class GreetingServiceTest {
+    @Inject GreetingService greeting;
+
+    @Test void hello() {
+        assertEquals("Hello, Vauban!", greeting.hello("Vauban"));
+    }
+}
+----
+
+== Bugs and benchmarks
+
+* `vauban/BUG.md` — reproducible issues.
+* `vauban/BENCH.md` — `[TODO]` create if missing.
+
+== Compatibility
+
+* Java 25, Maven 4.0.0-rc-5.
+* Strict JPMS, named modules.
+* CDI 4.1 Lite (subset).
