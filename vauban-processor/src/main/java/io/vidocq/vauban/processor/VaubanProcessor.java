@@ -64,8 +64,23 @@ public class VaubanProcessor extends AbstractProcessor {
     private List<Class<?>> discoveredBceClasses;
     private Set<String> bceAnnotationTypes = Set.of();
 
+    /**
+     * DotNames of classes added via {@code ScannedClasses.add()} during a BCE @Discovery phase.
+     * These classes originate from dependency jars, not from the module being compiled.
+     * Generating {@code _Factory} / {@code _ClientProxy} in the user module for such classes
+     * would create a split-package violation under JPMS (the package is already exported by the
+     * source jar). They are kept in the index and in {@code vauban-beans.list} so injection
+     * resolution works, but no bytecode is emitted for them.
+     */
+    private final Set<DotName> externalClassNames = new LinkedHashSet<>();
+
     /** Visible for testing — allows injecting BCE classes without ServiceLoader. */
     public List<Class<?>> overrideBceClasses;
+
+    /** Visible for testing — returns the set of external class names after processing. */
+    public Set<DotName> getExternalClassNames() {
+        return Collections.unmodifiableSet(externalClassNames);
+    }
 
     @Override
     public SourceVersion getSupportedSourceVersion() {
@@ -153,12 +168,15 @@ public class VaubanProcessor extends AbstractProcessor {
             var lookup = new IndexLookup(index);
             discoveryResult = BceProcessor.processDiscovery(bceClasses, lookup);
 
-            // Add scanned classes to the index
+            // Add scanned classes to the index.
+            // These classes come from dependency jars (added via ScannedClasses.add()), not from
+            // the module being compiled — track them as external so we skip factory/proxy generation.
             for (var className : discoveryResult.scannedClasses().getAddedClasses()) {
                 var bytes = loadClassBytes(className, aptClassLoader);
                 if (bytes != null) {
                     try {
                         indexBuilder.add(ClassFileScanner.scan(bytes));
+                        externalClassNames.add(DotName.of(className));
                     } catch (Exception e) {
                         // Class scan failed — skip
                     }
@@ -255,6 +273,19 @@ public class VaubanProcessor extends AbstractProcessor {
             if (bean.kind() == BeanDescriptor.BeanKind.MANAGED) {
                 var classInfo = index.getClassByName(bean.beanClass()).orElse(null);
                 if (classInfo == null) continue;
+
+                // Skip factory/proxy generation for classes that originate from dependency jars
+                // (added via ScannedClasses.add() during @Discovery). Generating artifacts in
+                // the user module for such classes would create a JPMS split-package violation
+                // because the package is already exported by the source jar.
+                // The class remains in vauban-beans.list for injection resolution.
+                if (externalClassNames.contains(bean.beanClass())) {
+                    processingEnv.getMessager().printMessage(Diagnostic.Kind.NOTE,
+                            "[Vauban] Skipping factory/proxy generation for external class "
+                                    + bean.beanClass().value()
+                                    + " (factory expected to be provided by the source jar)");
+                    continue;
+                }
 
                 generateClass(BeanFactoryGenerator.generate(classInfo));
 

@@ -230,7 +230,15 @@ public final class InterceptorSubclassGenerator {
                     }
                     cob.invokevirtual(CD_Class, "getDeclaredMethod",
                             MethodTypeDesc.of(CD_Method, CD_String, CD_Class.arrayType()));
-                    int mSlot = method.getParameterCount() + 1;
+                    // Compute the local-slot offset just past the parameter list. Each long/double
+                    // parameter occupies TWO slots (JVMS §2.6.1), so a naive parameterCount + 1
+                    // count under-allocates and lands the synthetic Method/args/chain locals on
+                    // top of the long's high half — surfacing as a VerifyError "Bad local
+                    // variable type" the first time the method body loads its long/double param.
+                    int mSlot = 1; // skip 'this' at slot 0
+                    for (Class<?> p : method.getParameterTypes()) {
+                        mSlot += (p == long.class || p == double.class) ? 2 : 1;
+                    }
                     cob.astore(mSlot);
 
                     // Build Object[] args
