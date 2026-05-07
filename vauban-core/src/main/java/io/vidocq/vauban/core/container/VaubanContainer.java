@@ -238,21 +238,25 @@ public final class VaubanContainer implements AutoCloseable {
         var finalBean = (ManagedBean<T>) beans.get(bean.descriptor().id());
         if (finalBean == null) finalBean = bean;
 
+        // VAU-INJ-001: for normal-scoped beans, always return the client proxy — never call
+        // context.get() eagerly here.  The context may be inactive at lookup time (e.g.
+        // @TransactionScoped before any TX, @RequestScoped outside a request) and the
+        // no-arg context.get() on such contexts throws ContextNotActiveException.
+        // The proxy's delegate resolves the contextual instance lazily on first method call.
+        if (finalBean.descriptor().scope().isNormal()) {
+            return interceptorWrapper.getOrCreateProxy(finalBean);
+        }
+
         var scopeClass = finalBean.getScope();
         var context = getFirstContext(scopeClass);
         if (context == null) {
             context = dependentContext;
         }
-        
-        // Return existing instance from context if available
+
+        // Return existing instance from context if already created
         var existing = context.get((Contextual<T>) finalBean);
         if (existing != null) return existing;
 
-        // For normal-scoped beans, return a client proxy
-        if (finalBean.descriptor().scope().isNormal()) {
-            return interceptorWrapper.getOrCreateProxy(finalBean);
-        }
-        
         CreationalContext<T> creationalCtx = new CreationalContextImpl<T>();
         return context.get((Contextual<T>) finalBean, creationalCtx);
     }

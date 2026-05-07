@@ -250,6 +250,15 @@ final class InterceptorBeanWrapper {
 
                 return proxy;
             } catch (Exception e) {
+                // VAU-INJ-001: never fall back to eager ctx.get() for normal-scoped beans.
+                // The context may be inactive at proxy-creation time; doing ctx.get() here
+                // would throw ContextNotActiveException and leave the injected field null.
+                // For pseudo-scoped beans (Dependent, Singleton) the eager path is safe.
+                if (bean.descriptor().scope().isNormal()) {
+                    throw new jakarta.enterprise.inject.spi.DeploymentException(
+                            "Failed to create client proxy for normal-scoped bean "
+                                    + bean.getBeanClass().getName(), e);
+                }
                 var scopeClass = bean.getScope();
                 var ctx = container.getFirstContext(scopeClass);
                 if (ctx == null) ctx = container.dependentContext();

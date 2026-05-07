@@ -105,8 +105,7 @@ public final class RuntimeClientProxyGenerator {
             var superCtor = findSimplestConstructor(beanClass);
             var superParamCDs = new ClassDesc[superCtor.getParameterCount()];
             for (int i = 0; i < superParamCDs.length; i++) {
-                superParamCDs[i] = superCtor.getParameterTypes()[i].describeConstable()
-                        .orElse(ClassDesc.of(superCtor.getParameterTypes()[i].getName()));
+                superParamCDs[i] = classDescOf(superCtor.getParameterTypes()[i]);
             }
             var superCtorType = MethodTypeDesc.of(ConstantDescs.CD_void, superParamCDs);
             clb.withMethodBody(
@@ -183,6 +182,22 @@ public final class RuntimeClientProxyGenerator {
         }
     }
 
+    /**
+     * Returns a {@link ClassDesc} for the given type, handling arrays and primitives correctly.
+     *
+     * <p>{@link Class#describeConstable()} returns {@link java.util.Optional#empty()} for array types
+     * on some JDK builds, and {@link ClassDesc#of(String)} does not accept JVM descriptor strings
+     * (e.g. {@code "[Ljava.lang.String;"}).  {@link ClassDesc#ofDescriptor(String)} accepts those
+     * descriptor strings and is always correct.
+     */
+    private static ClassDesc classDescOf(Class<?> type) {
+        var opt = type.describeConstable();
+        if (opt.isPresent()) return opt.get();
+        // Fallback for array types and any other type whose describeConstable() is empty:
+        // use the JVM binary descriptor string (e.g. "[Ljava/lang/String;" or "[I").
+        return ClassDesc.ofDescriptor(type.descriptorString());
+    }
+
     private static boolean shouldProxy(Method method) {
         if (Modifier.isStatic(method.getModifiers())) return false;
         if (Modifier.isPrivate(method.getModifiers())) return false;
@@ -215,12 +230,10 @@ public final class RuntimeClientProxyGenerator {
     private static void generateProxyMethod(ClassBuilder clb,
                                             ClassDesc proxyCD, ClassDesc beanCD, ProxiedMethod pm) {
         Method method = pm.method();
-        var returnCD = method.getReturnType().describeConstable()
-                .orElse(ClassDesc.of(method.getReturnType().getName()));
+        var returnCD = classDescOf(method.getReturnType());
         var paramCDs = new ClassDesc[method.getParameterCount()];
         for (int i = 0; i < paramCDs.length; i++) {
-            paramCDs[i] = method.getParameterTypes()[i].describeConstable()
-                    .orElse(ClassDesc.of(method.getParameterTypes()[i].getName()));
+            paramCDs[i] = classDescOf(method.getParameterTypes()[i]);
         }
         var methodType = MethodTypeDesc.of(returnCD, paramCDs);
 
@@ -314,12 +327,10 @@ public final class RuntimeClientProxyGenerator {
         // method name
         cob.ldc(method.getName());
         // MethodType: return type + param types
-        var returnCD = method.getReturnType().describeConstable()
-                .orElse(ClassDesc.of(method.getReturnType().getName()));
+        var returnCD = classDescOf(method.getReturnType());
         var paramCDs = new ClassDesc[method.getParameterCount()];
         for (int i = 0; i < paramCDs.length; i++) {
-            paramCDs[i] = method.getParameterTypes()[i].describeConstable()
-                    .orElse(ClassDesc.of(method.getParameterTypes()[i].getName()));
+            paramCDs[i] = classDescOf(method.getParameterTypes()[i]);
         }
         // MethodType.methodType(returnType) — build via methodType(Class,Class...) if params, else methodType(Class)
         cob.ldc(returnCD);
