@@ -75,9 +75,10 @@ public final class ClientProxyGenerator {
             clb.withFlags(ClassFile.ACC_PUBLIC | ClassFile.ACC_SUPER);
             clb.withSuperclass(beanCD);
 
-            // Field: private final Supplier delegate
-            clb.withField("delegate", CD_Supplier,
-                    ClassFile.ACC_PRIVATE | ClassFile.ACC_FINAL);
+            // Field: private Supplier $$delegate
+            // Format aligné sur RuntimeClientProxyGenerator (lazy-set via $$setDelegate)
+            // pour qu'InterceptorBeanWrapper.getOrCreateProxy puisse instancier puis injecter.
+            clb.withField("$$delegate", CD_Supplier, ClassFile.ACC_PRIVATE);
 
             // Static final MethodHandle fields (dormant until hierarchy traversal is added).
             for (var pm : methods) {
@@ -87,18 +88,28 @@ public final class ClientProxyGenerator {
                 }
             }
 
-            // Constructor: public Proxy(Supplier delegate) { super(); this.delegate = delegate; }
+            // Constructor: public Proxy() { super(); }
+            // CDI 4.1: pour les beans sans no-arg ctor, le runtime fallback à RuntimeClientProxyGenerator.
             clb.withMethodBody(
                     ConstantDescs.INIT_NAME,
-                    MethodTypeDesc.of(ConstantDescs.CD_void, CD_Supplier),
+                    MethodTypeDesc.of(ConstantDescs.CD_void),
                     ClassFile.ACC_PUBLIC,
                     cob -> {
                         cob.aload(0);
                         cob.invokespecial(beanCD, ConstantDescs.INIT_NAME,
                                 MethodTypeDesc.of(ConstantDescs.CD_void));
+                        cob.return_();
+                    });
+
+            // Setter: public void $$setDelegate(Supplier d) { this.$$delegate = d; }
+            clb.withMethodBody(
+                    "$$setDelegate",
+                    MethodTypeDesc.of(ConstantDescs.CD_void, CD_Supplier),
+                    ClassFile.ACC_PUBLIC,
+                    cob -> {
                         cob.aload(0);
                         cob.aload(1);
-                        cob.putfield(proxyCD, "delegate", CD_Supplier);
+                        cob.putfield(proxyCD, "$$delegate", CD_Supplier);
                         cob.return_();
                     });
 
@@ -173,7 +184,7 @@ public final class ClientProxyGenerator {
                                                     ClassDesc beanCD, MethodInfo method,
                                                     MethodTypeDesc methodType, ClassDesc[] paramCDs) {
         cob.aload(0);
-        cob.getfield(proxyCD, "delegate", CD_Supplier);
+        cob.getfield(proxyCD, "$$delegate", CD_Supplier);
         cob.invokeinterface(CD_Supplier, "get", MethodTypeDesc.of(CD_Object));
         cob.checkcast(beanCD);
         int slot = 1;
@@ -186,7 +197,7 @@ public final class ClientProxyGenerator {
                                                    MethodTypeDesc methodType) {
         cob.getstatic(proxyCD, pm.mhField(), CD_MethodHandle);
         cob.aload(0);
-        cob.getfield(proxyCD, "delegate", CD_Supplier);
+        cob.getfield(proxyCD, "$$delegate", CD_Supplier);
         cob.invokeinterface(CD_Supplier, "get", MethodTypeDesc.of(CD_Object));
         cob.checkcast(beanCD);
         int slot = 1;

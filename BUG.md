@@ -5,10 +5,55 @@ hypothèse de cause, statut. Mise à jour à chaque investigation.
 
 ---
 
+## VAU-PRX-002 — Drift entre `ClientProxyGenerator` (compile-time) et `RuntimeClientProxyGenerator` (runtime)
+
+**Date** : 2026-05-07
+**Statut** : `FIXED` — 2026-05-07
+**Sévérité** : haute (rend tout bean `@ApplicationScoped` injecté via `cassini-cdi-vauban` non utilisable côté JAX-RS quand le `_ClientProxy.class` est pré-généré par APT).
+
+### Symptôme
+
+`InterceptorBeanWrapper.getOrCreateProxy` lève une `DeploymentException("Failed to create client proxy for normal-scoped bean ...")`. Cassini fallback alors sur `cls.getDeclaredConstructor().newInstance()` qui retourne une instance brute non-injectée → NPE à l'invocation (`this.dataSourceInstance is null`, `this.products is null`, etc.).
+
+```
+Caused by: java.lang.NoSuchMethodException: …DatabaseInspectorResource_ClientProxy.<init>()
+    at java.lang.Class.getDeclaredConstructor(Class.java:2491)
+    at io.vidocq.vauban.core.container.InterceptorBeanWrapper.lambda$getOrCreateProxy$0(InterceptorBeanWrapper.java:235)
+```
+
+### Cause racine
+
+Deux générateurs de client proxy coexistaient avec des contrats incompatibles :
+
+- `vauban-processor/.../ClientProxyGenerator.java` (compile-time, APT) émettait : field `delegate` final + ctor `(Supplier)` + putfield au constructeur.
+- `vauban-core/.../RuntimeClientProxyGenerator.java` (runtime fallback) émet : field `$$delegate` non-final + ctor no-arg + setter `$$setDelegate(Supplier)`.
+
+`InterceptorBeanWrapper.getOrCreateProxy` (lignes 235-249) attend exclusivement le second format. `loadOrDefineClassRobustly` charge en priorité le `_ClientProxy.class` pré-généré par APT, donc le format ancien shadows toujours le runtime.
+
+### Pourquoi `vidocq-mps-rest-example` fonctionnait quand même
+
+Son `target/classes/.../TodoResource_ClientProxy.class` venait d'une compilation antérieure faite avec une version du `ClientProxyGenerator` qui produisait déjà le format moderne — il n'avait simplement pas été régénéré depuis le drift.
+
+### Fix
+
+`vauban/vauban-processor/src/main/java/io/vidocq/vauban/processor/codegen/proxy/ClientProxyGenerator.java` : aligné sur le format `RuntimeClientProxyGenerator` :
+- Field `$$delegate` (non-final).
+- Constructor public no-arg appelant `super()`.
+- Méthode `$$setDelegate(Supplier)`.
+- Tous les `getfield "delegate"` → `getfield "$$delegate"`.
+
+Tests `ClientProxyGeneratorTest` mis à jour pour utiliser le nouveau contrat (ctor no-arg + setter).
+
+### Comment éviter la régression
+
+`ClientProxyGeneratorTest.shouldDelegateMethodCalls` / `shouldDelegateVoidMethods` invoquent désormais le proxy via `getDeclaredConstructor().newInstance()` puis `getMethod("$$setDelegate", Supplier.class)` — exactement le code que fait `InterceptorBeanWrapper.getOrCreateProxy`. Tout futur drift unilatéral d'un des deux générateurs casse immédiatement ces tests.
+
+---
+
 ## VAU-INJ-001 — Field injection résout immédiatement les beans normal-scope (perd le client proxy)
 
 **Date** : 2026-05-07
-**Statut** : `OPEN`
+**Statut** : `FIXED` — 2026-05-07
 **Sévérité** : haute (rend `@TransactionScoped` / `@RequestScoped` non utilisable en `@Inject` field direct).
 
 ### Symptôme
@@ -86,13 +131,44 @@ paresseux.
 audit.get().record("…");                  // résout dans le scope actif
 ```
 
-### Fix proposé (à valider)
+### Fix appliqué (2026-05-07)
 
-Dans `BeanInjector.injectFieldsByReflection`, après la résolution du bean
-(ligne 79) : si `resolved.getScope().isNormal()`, instancier le client proxy
-généré (`<bean>_ClientProxy`) avec un `Supplier` qui appelle `bm.getReference()`
-*lazy*, et l'injecter directement — sans matérialiser l'instance au boot.
+**Cause racine réelle** : `VaubanContainer.getContextualInstance` appelait
+`context.get(contextual)` (sans `CreationalContext`, i.e. "look up existing")
+AVANT de vérifier `isNormal()`. Pour un scope inactif au boot
+(`@TransactionScoped` hors TX, `@RequestScoped` hors requête), ce `context.get()`
+appelle `checkActive()` → `ContextNotActiveException`. Cette exception était
+avalée par le catch de `BeanInjector` laissant le field à `null`.
 
-C'est exactement ce que fait Weld/OpenWebBeans côté CDI complet. Vauban a
-déjà toute l'infrastructure (`ClientProxyGenerator`, `Supplier` constructor),
-il suffit de la brancher côté injection.
+Deuxième vecteur : le catch-all dans `InterceptorBeanWrapper.getOrCreateProxy`
+dégradait vers `ctx.get()` eagerment pour tout scope en cas d'exception
+pendant la création du proxy.
+
+**Fix 1 — `VaubanContainer.getContextualInstance`** : déplacer le check
+`isNormal()` en première instruction, avant tout appel à `context.get()`.
+Le proxy est retourné immédiatement sans jamais toucher le contexte.
+
+**Fix 2 — `InterceptorBeanWrapper.getOrCreateProxy` catch block** : pour les
+beans `isNormal()`, lancer `DeploymentException` au lieu de tenter `ctx.get()`
+eagerly.
+
+**Test TDD ajouté** : `NormalScopeFieldInjectionTest` (4 cas) dans
+`vauban-core/src/test/java/io/vidocq/vauban/core/container/`.
+
+262 tests vauban-core — 0 failures, 0 errors après fix.
+
+**Régression TCK découverte et corrigée (2026-05-07)** : le Fix 2 causait 7 failures TCK CDI
+(`EventTypesTest`, `MemberLevelInheritanceTest`, `InvokerAssignabilityTest`,
+`VarargsMethodInvokerTest`). Cause réelle : `RuntimeClientProxyGenerator.generateProxyMethod`
+plantait pour les méthodes ayant des paramètres de type tableau (`Song[]`, `int[]`,
+`String...` varargs) car `Class.describeConstable()` retourne `Optional.empty()` pour ces
+types et le fallback `ClassDesc.of(type.getName())` utilisait le format descripteur JVM
+(ex. `"[Lorg...Song;"`) que `ClassDesc.of()` rejette. La `DeploymentException` du Fix 2
+exposait cette erreur de génération qui était auparavant silencieusement ignorée.
+
+**Fix 3 — `RuntimeClientProxyGenerator.classDescOf(Class<?>)`** : helper qui utilise
+`ClassDesc.ofDescriptor(type.descriptorString())` comme fallback — format accepté pour
+tous les types (tableaux, primitifs, références). Tous les appels
+`describeConstable().orElse(ClassDesc.of(...))` remplacés par `classDescOf()`.
+
+TCK CDI **774/774 PASS** — 0 failures après le Fix 3.

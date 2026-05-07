@@ -123,10 +123,7 @@ public final class EventDispatcher {
             if (asyncOnly && !observer.async()) continue;
             if (!asyncOnly && observer.async()) continue;
 
-            System.out.println("DEBUG EVENT: Checking " + observer.declaringClass().value() + "." + observer.methodName() + " with observer.eventType=" + observer.eventType() + " against eventTypeToMatch " + eventType);
-
             if (!eventTypeMatches(observer, eventType)) {
-                System.out.println("DEBUG EVENT: Mismatch on eventType for " + observer.methodName());
                 continue;
             }
 
@@ -137,10 +134,7 @@ public final class EventDispatcher {
                 qualMatch = observerQualifiersMatch(observer.qualifiers(), eventQualifiers);
             }
             if (qualMatch) {
-                System.out.println("DEBUG EVENT: MATCHED " + observer.methodName() + " with observer.eventType=" + observer.eventType());
                 result.add(observer);
-            } else {
-                System.out.println("DEBUG EVENT: Mismatch on qualifiers for " + observer.methodName());
             }
         }
         return result;
@@ -707,9 +701,7 @@ public final class EventDispatcher {
                             }
                         }
                         try {
-                            System.out.println("DEBUG EVENT: invoking " + method + " on " + beanInstance + " with args: " + java.util.Arrays.toString(args));
                             method.invoke(beanInstance, args);
-                            System.out.println("DEBUG EVENT: invoke successful");
                         } finally {
                             ctx.release();
                         }
@@ -717,8 +709,6 @@ public final class EventDispatcher {
                 } finally {
                     if (beanCtx != null) beanCtx.release();
                 }
-            } else {
-                System.out.println("DEBUG EVENT: findMethod returned null for " + observer.methodName() + " eventClass " + event.getClass());
             }
         } catch (java.lang.reflect.InvocationTargetException e) {
             var cause = e.getCause();

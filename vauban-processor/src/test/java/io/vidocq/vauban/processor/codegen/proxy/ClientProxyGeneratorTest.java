@@ -92,9 +92,8 @@ class ClientProxyGeneratorTest {
             var realInstance = new GreetingService();
             Supplier<GreetingService> supplier = () -> realInstance;
 
-            var proxy = (GreetingService) proxyClass
-                    .getDeclaredConstructor(Supplier.class)
-                    .newInstance(supplier);
+            var proxy = (GreetingService) proxyClass.getDeclaredConstructor().newInstance();
+            proxyClass.getMethod("$$setDelegate", Supplier.class).invoke(proxy, supplier);
 
             assertEquals("Hello, World!", proxy.greet("World"));
             assertEquals(5, proxy.add(2, 3));
@@ -111,9 +110,9 @@ class ClientProxyGeneratorTest {
             var proxyClass = cl.loadClass(generated.className());
 
             var realInstance = new GreetingService();
-            var proxy = (GreetingService) proxyClass
-                    .getDeclaredConstructor(Supplier.class)
-                    .newInstance((Supplier<GreetingService>) () -> realInstance);
+            var proxy = (GreetingService) proxyClass.getDeclaredConstructor().newInstance();
+            proxyClass.getMethod("$$setDelegate", Supplier.class)
+                    .invoke(proxy, (Supplier<GreetingService>) () -> realInstance);
 
             assertDoesNotThrow(() -> proxy.doNothing());
         }
