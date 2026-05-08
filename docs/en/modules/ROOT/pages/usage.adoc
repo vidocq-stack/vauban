@@ -1,0 +1,196 @@
+= Usage patterns
+:description: Scopes, qualifiers, producers, events, interceptors, integration with Cassini and Foy.
+
+[.lead]
+This page covers the CDI 4.1 Lite patterns Vauban supports and how they integrate with the rest of the ecosystem. Every example compiles; the entire injection bytecode is generated at `process-classes`.
+
+== Scopes
+
+CDI 4.1 Lite ships four standard scopes. Vauban supports all of them, plus `@RequestScoped` whenever a contextual transport is wired in.
+
+[cols="1,3,1"]
+|===
+| Scope | Semantics | Implemented
+
+| `@Singleton`
+| One bean per JVM, no proxy.
+| ✅
+
+| `@ApplicationScoped`
+| One bean per container, normal-scope proxy.
+| ✅
+
+| `@Dependent`
+| One instance per injection point, no proxy.
+| ✅ (default)
+
+| `@RequestScoped`
+| One instance per request, normal-scope proxy.
+| ✅ (with Cassini or Foy active)
+
+| `@SessionScoped`
+| One instance per HTTP session.
+| // TODO@user: confirm status with Foy / Cassini
+|===
+
+[NOTE]
+====
+Normal-scoped beans (`@ApplicationScoped`, `@RequestScoped`) get a `_ClientProxy` generated at compile time. The proxy intercepts each call and delegates to the active context. `@Dependent` and `@Singleton` beans do not.
+====
+
+== Qualifiers
+
+Discriminate multiple implementations of the same type.
+
+[source,java]
+----
+import jakarta.inject.Qualifier;
+import java.lang.annotation.*;
+
+@Qualifier
+@Retention(RetentionPolicy.RUNTIME)
+@Target({ElementType.FIELD, ElementType.PARAMETER, ElementType.TYPE})
+public @interface Audit {}
+
+@ApplicationScoped @Audit
+public class AuditLogger implements Logger { /* ... */ }
+
+@ApplicationScoped
+public class Service {
+    @Inject @Audit Logger logger;
+}
+----
+
+`@Named`, `@Default`, `@Any` are supported. Custom qualifiers with `@Nonbinding` members work too.
+
+== Producers and `@Disposes`
+
+[source,java]
+----
+@ApplicationScoped
+public class DataSourceProducer {
+
+    @Produces @ApplicationScoped
+    public DataSource dataSource(Config config) {
+        return DataSource.builder().url(config.url()).build();
+    }
+
+    public void close(@Disposes DataSource ds) {
+        ds.close();
+    }
+}
+----
+
+The `@Disposes` callback runs when the producing bean is destroyed. Vauban emits a dedicated `_ProducerFactory` per producer method.
+
+== Events
+
+[source,java]
+----
+public record OrderCreated(String id) {}
+
+@ApplicationScoped
+public class OrderService {
+    @Inject Event<OrderCreated> events;
+
+    public void create(String id) {
+        events.fire(new OrderCreated(id));
+    }
+}
+
+@ApplicationScoped
+public class OrderListener {
+    public void onOrder(@Observes OrderCreated event) {
+        System.out.println("new order " + event.id());
+    }
+}
+----
+
+Async observers (`@ObservesAsync`) are dispatched on the `EventDispatcher`'s internal `Executors.newVirtualThreadPerTaskExecutor()`. See xref:internals.adoc#virtual-threads[the threading model].
+
+== Interceptors
+
+[source,java]
+----
+@InterceptorBinding
+@Retention(RetentionPolicy.RUNTIME)
+@Target({ElementType.TYPE, ElementType.METHOD})
+public @interface Logged {}
+
+@Logged
+@Interceptor
+@Priority(Interceptor.Priority.APPLICATION)
+public class LoggingInterceptor {
+
+    @AroundInvoke
+    public Object around(InvocationContext ctx) throws Exception {
+        long t0 = System.nanoTime();
+        try {
+            return ctx.proceed();
+        } finally {
+            System.out.printf("%s : %d ns%n", ctx.getMethod(), System.nanoTime() - t0);
+        }
+    }
+}
+
+@ApplicationScoped @Logged
+public class Service { /* intercepted methods */ }
+----
+
+`@AroundConstruct` is also supported. Interceptor chains are resolved at compile time and stored in the generated `_Factory`.
+
+== Programmatic `Instance<T>`
+
+[source,java]
+----
+@ApplicationScoped
+public class Router {
+    @Inject Instance<Handler> handlers;
+
+    public Handler resolve(String name) {
+        return handlers.select(NamedLiteral.of(name)).get();
+    }
+}
+----
+
+`Instance<T>` enables dynamic resolution from application code while keeping the injection grid static inside the container.
+
+== Integration with Cassini (Jakarta REST)
+
+`vauban-core` is the underlying DI layer of xref:cassini::index.adoc[Cassini]. `@Path` resources are CDI beans; `@Provider` providers (`MessageBodyReader`/`Writer`) too. No configuration: Cassini consumes the Vauban `BeanManager` directly.
+
+[source,java]
+----
+@Path("/orders")
+@ApplicationScoped
+public class OrderResource {
+    @Inject OrderService service;
+
+    @POST
+    public Response create(OrderRequest req) {
+        service.create(req.id());
+        return Response.created(URI.create("/orders/" + req.id())).build();
+    }
+}
+----
+
+== Integration with Foy (Jakarta Servlet)
+
+xref:foy::index.adoc[Foy] exposes servlets, filters and listeners as CDI beans. `@RequestScoped` follows the HTTP request/response lifecycle.
+
+== JUnit tests with `@VaubanTest`
+
+[source,java]
+----
+@VaubanTest
+class GreetingServiceTest {
+    @Inject GreetingService greeting;
+
+    @Test
+    void hello() {
+        assertEquals("Hello, Vauban!", greeting.hello("Vauban"));
+    }
+}
+----
+
+The extension boots a minimal container per test class. See xref:reference.adoc#junit-extension[the JUnit reference].

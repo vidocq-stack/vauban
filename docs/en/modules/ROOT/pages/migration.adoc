@@ -1,53 +1,91 @@
 = Migration
-:description: From Quarkus ArC, Weld or OpenWebBeans.
+:description: Migrating from Weld, Quarkus ArC, or OpenWebBeans to Vauban.
 
 [CAUTION]
-Vauban is at **0.1.0-SNAPSHOT**. Real migration is premature. This page lists mappings and known pitfalls.
+====
+Vauban is at `0.1.0-SNAPSHOT`. Real application migration is premature until the TCK coverage is consolidated (see xref:tck.adoc[TCK status]). This page documents model mappings and known pitfalls to prepare the transition.
+====
+
+[.lead]
+Vauban implements the CDI 4.1 Lite profile. Migrating therefore implies dropping Full-profile features when used (runtime portable extensions, `@ConversationScoped`, passivation, application-level EL).
 
 == From Quarkus ArC
 
-[cols="1,1,2"]
+ArC shares Vauban's build-time philosophy. The port is conceptually direct; gaps are mostly tooling.
+
+[cols="2,2,3"]
 |===
 | ArC | Vauban | Note
 
-| Build-time CDI
-| Build-time CDI
-| Identical model
+| Full build-time CDI
+| Full build-time CDI
+| Identical model. No paradigm shift on the application side.
 
-| `io.quarkus.arc.Unremovable`
-| `[TODO]` equivalent
-| Vauban currently only removes unreferenced beans
+| Bytecode generation via Gizmo
+| Bytecode generation via Class-File API (JEP 484)
+| No ASM. Output is compatible with any JVM 25+.
 
-| Gizmo bytecode
-| Class-File API
-| No ASM
+| `@io.quarkus.arc.Unremovable`
+| No direct equivalent
+| Vauban currently only removes unreferenced beans. // TODO@user: confirm whether a similar annotation is planned.
+
+| `@io.quarkus.arc.profile.IfBuildProfile`
+| No equivalent
+| Build-time profiling is the responsibility of the xref:vidocq::index.adoc[Vidocq-MPS] layer.
+
+| Quarkus Dev Mode
+| `vauban-junit` + standard Maven cycle
+| Vauban has no dedicated Dev Mode.
+
+| `@Startup`
+| `@Observes @Initialized(ApplicationScoped.class)`
+| Standard CDI pattern.
 |===
 
 == From Weld
 
+Weld implements the Full profile; some features used by historical applications have no Lite equivalent.
+
 Key differences:
 
-* **No runtime AnnotatedType lookup** — Vauban resolves everything at compile time.
-* **No `BeforeBeanDiscovery` / `AfterBeanDiscovery`** — replaced by Vidocq runtime `@BuildStep`s.
-* **No runtime portable extensions** — use the Vidocq extension mechanism for the static parts, keep Weld portable extensions via a `[TODO]` adapter layer.
+* **No runtime `AnnotatedType` lookup** — Vauban resolves everything at compile time. Code that calls `BeanManager.createAnnotatedType(Class)` must be rewritten as a Build Compatible Extension.
+* **No runtime `BeforeBeanDiscovery` / `AfterBeanDiscovery`** — replaced by the BCE phases `@Discovery` / `@Enhancement` / `@Registration` / `@Synthesis` / `@Validation`.
+* **No portable extensions** — the `Extension` interface is not loaded via `ServiceLoader` at runtime. Migrate every extension to a compile-time BCE.
+* **No `@ConversationScoped`** — refactor to `@SessionScoped` (// TODO@user: confirm support) or to an explicit application mechanism.
 
 [TODO]
 ====
-Exhaustive Weld → Vauban table of supported / unsupported features.
+Exhaustive Weld → Vauban table of supported / unsupported features. // TODO@user
 ====
 
 == From OpenWebBeans
 
-[TODO]: to document once a real-world case shows up.
+OpenWebBeans is very close to Weld in API. The Weld table mostly applies. OWB-specific traits (deferred bean resolution, custom `BeanArchive`) are not supported: Vauban has a single, static discovery mode.
 
-== CDI 4.1 Lite — known pitfalls
+// TODO@user: document once a real migration case shows up.
 
-* `@Decorator` and `@Interceptor`: `[TODO]` validate full coverage.
-* `@Specializes`: unsupported (CDI Lite).
-* `@Alternative`: `[TODO]` validate.
-* Producer methods with `@Disposes`: supported.
+== CDI 4.1 Lite pitfalls
+
+Lite-profile specifics worth knowing before migrating:
+
+* **`@Decorator`** — supported in Lite, validate against your code. // TODO@user: confirm exact coverage.
+* **`@Specializes`** — not supported. Refactor as composition or a prioritised `@Alternative`.
+* **`@Alternative` + `@Priority`** — supported; check existing priorities.
+* **Producer methods with `@Disposes`** — supported.
+* **`@Inject` field on a normal scope** — correctly resolves the client proxy (see fix VAU-INJ-001 in link:{repo-vauban}/src/branch/main/BUG.md[BUG.md]).
+* **`InjectionPoint` metadata** — supported.
+
+== Recommended strategy
+
+. Run the existing code on Vauban in a dedicated branch.
+. Run `vauban:analyze` to detect split packages and missing JPMS exports.
+. Execute a `vauban-test-suite` adapted to your domain.
+. Activate the CDI 4.1 Lite TCK on the application itself via `vauban-junit`.
+. Iterate on BCEs to replace portable extensions.
+. Run on GraalVM `native-image` to confirm no residual reflection.
 
 == Going further
 
-* `vauban-test-suite` reproduces standard CDI 4.1 Lite behaviour — test before migrating.
-* `vauban/BUG.md` records known gaps.
+* xref:concepts.adoc[Concepts] — vocabulary and implementation choices.
+* xref:internals.adoc[Internals] — APT pipeline, threading model.
+* link:{repo-vauban}/src/branch/main/BUG.md[BUG.md] — tracked reproducible bugs.

@@ -1,22 +1,70 @@
 = Vauban
-:description: CDI 4.1 Lite container, JPMS-native, build-time wiring, zero runtime dependency.
+:description: CDI 4.1 Lite container, JPMS-native, build-time code generation, zero runtime dependency.
 
 [.lead]
-Vauban is a CDI 4.1 container that resolves injection at compile time. JPMS-native, zero runtime dependency, no dynamic proxies — dependency wiring computed like artillery trajectories.
+Vauban is a CDI 4.1 container that resolves injection at compile time. JPMS-native, zero runtime dependency, no dynamic proxies — dependency wiring computed like artillery trajectories: drawn on paper before the first shovel of dirt is turned.
 
-== Why?
+== Origin of the name
 
-Sébastien Le Prestre, marquis de Vauban (1633-1707), Marshal of France, Louis XIV's military engineer — designer of the _ceinture de fer_, author of the _Treatise on the Attack and Defence of Fortresses_. He turned defence into a mathematical art: trajectories, sapping, counter-mining, all computed in advance on paper before the first shovel of dirt was turned.
+Sébastien Le Prestre, marquis de Vauban (1633-1707), Marshal of France, military engineer to Louis XIV. Designer of the _ceinture de fer_, author of the _Treatise on the Attack and Defence of Fortresses_. See https://fr.wikipedia.org/wiki/S%C3%A9bastien_Le_Prestre_de_Vauban[the Wikipedia article].
 
-The Vauban container brings the same discipline to CDI. Every `@Inject` relationship is resolved at compile time by an annotation processor and a Maven plugin: an `Indexer` enumerates beans, a `Processor` generates `_Factory` classes as bytecode via the Class-File API. At runtime, nothing is computed — only instantiation remains.
+Vauban turned defence into a mathematical art: trajectories, sapping, counter-mining, all computed in advance. The Vauban container brings the same discipline to CDI. Every `@Inject` relationship is resolved at `process-classes`. An `Indexer` enumerates beans, a `Processor` emits `_Factory` bytecode via the Class-File API. At runtime, nothing is computed — only instantiation remains. The fortifications stand before the first request hits.
 
 == At a glance
 
-* **CDI 4.1 Lite** — `@Inject`, `@Singleton`, `@ApplicationScoped`, `@Produces`, `@Disposes`, `@PostConstruct`, `@PreDestroy`, qualifiers.
-* **Build-time wiring** — `vauban-processor` (APT) + `vauban-maven-plugin` generate the entire DI grid at `process-classes`.
-* **JPMS-native** — `vauban-api`, `vauban-core`, `vauban-processor` each have their own `module-info.java`. No classpath, no unjustified `opens`.
-* **Class-File API (JEP 484)** — bytecode emitted without ASM, without Byte Buddy.
-* **Zero runtime dependency** — only the `jakarta.enterprise.cdi-api` spec.
-* **AOT-friendly** — no hot reflection, compatible with GraalVM and Leyden CDS.
+[cols="1,3"]
+|===
+| Implemented spec | {spec-cdi-4-1}[Jakarta CDI 4.1 — Lite profile]
+| Repo | {repo-vauban}
+| Java | 25 (LTS)
+| JPMS modules | `io.vidocq.vauban.api`, `io.vidocq.vauban.core`, `io.vidocq.vauban.indexer`, `io.vidocq.vauban.processor`, `io.vidocq.vauban.junit`, `io.vidocq.vauban.classloader.spi`, `io.vidocq.vauban.sjar`
+| Runtime dependencies | None beyond `jakarta.cdi` and `jakarta.cdi.lang.model`
+| CDI 4.1 Lite TCK | partial — see xref:tck.adoc[detailed status]
+|===
 
-xref:getting-started.adoc[Get started →]
+== Three identifying traits
+
+. **Zero runtime dependency** — Jakarta CDI spec only. No Weld, no ArC, no Guice.
+. **Static code generation** — Class-File API (JEP 484) at `process-classes`. No reflection at startup. No dynamic proxy. No external bytecode library (ASM, Byte Buddy).
+. **Strict JPMS** — every Vauban artefact has its own `module-info.java`. No classpath, no unjustified `opens`, no `add-opens` at launch.
+
+== Position in the ecosystem
+
+[mermaid]
+....
+graph TB
+  subgraph Build["Compile time (process-classes)"]
+    IDX[vauban-indexer]
+    PROC[vauban-processor<br/>APT + Class-File API]
+    PLUGIN[vauban-maven-plugin]
+    IDX --> PROC
+    PROC --> PLUGIN
+  end
+  subgraph Runtime["Runtime (zero reflection)"]
+    API[vauban-api<br/>Vauban.bootstrap]
+    CORE[vauban-core<br/>BeanManager, contexts, events]
+    API --> CORE
+  end
+  PROC -.generates.-> FACT[_Factory<br/>_ClientProxy]
+  FACT --> CORE
+  CORE --> CASSINI[xref:cassini::index.adoc[Cassini]]
+  CORE --> FOY[xref:foy::index.adoc[Foy]]
+  CORE --> MPS[xref:vidocq::index.adoc[Vidocq-MPS]]
+  classDef rt fill:#e1f5fe,stroke:#0288d1
+  class CORE,API rt
+....
+
+== Quick links
+
+* xref:getting-started.adoc[Getting started]
+* xref:usage.adoc[Usage patterns]
+* xref:concepts.adoc[Concepts]
+* xref:internals.adoc[Internals]
+* xref:tck.adoc[TCK status]
+* xref:reference.adoc[Reference]
+* xref:migration.adoc[Migration]
+
+[NOTE]
+====
+Performance numbers live in link:{repo-vauban}/src/branch/main/BENCH.md[BENCH.md]. None appear inline in this page.
+====

@@ -1,50 +1,115 @@
 = Concepts
-:description: Indexer, Processor, ClassLoader SPI, génération bytecode statique.
+:description: Vocabulaire CDI 4.1 Lite tel que matérialisé par Vauban — bean, scope, qualifier, producer, observer, BeanManager.
 
-== Indexer
+[.lead]
+Cette page définit le vocabulaire de l'injection de dépendances tel que Vauban le matérialise. Le modèle est celui de la spec Jakarta CDI 4.1 ; les choix d'implémentation sont décrits dans xref:internals.adoc[Fonctionnement interne].
 
-`vauban-indexer` parcourt le classpath / module-path à la compilation et produit un **index des beans** : classes annotées CDI, leurs scopes, qualifiers, interceptors, decorators. C'est l'équivalent statique du `BeanArchive` runtime de Weld.
+== Bean
 
-== Processor (APT)
+Un _bean_ est une classe gérée par le container : son cycle de vie, sa résolution de dépendances et son scope sont contrôlés par Vauban.
 
-`vauban-processor` est un `javax.annotation.processing.Processor` qui consomme cet index et **génère un `_Factory` par bean** via la Class-File API. Le bytecode produit :
+Trois conditions suffisent pour qu'une classe devienne un bean Vauban :
 
-* expose un constructeur sans argument ;
-* implémente `BeanFactory<T>` ;
-* sait instancier la cible avec ses dépendances déjà résolues.
+. La classe est annotée d'un scope (`@ApplicationScoped`, `@Singleton`, `@Dependent`, `@RequestScoped`) ou d'un stéréotype.
+. La classe est visible depuis le module `module-info.java` (`exports` ou même module).
+. La classe figure dans l'index produit par `vauban-indexer` à la compilation.
 
-[NOTE]
-====
-Le runtime ne fait jamais de réflexion sur les beans. Tout ce qu'il instancie passe par les `_Factory` générés.
-====
+À la compilation, chaque bean reçoit deux artefacts générés :
 
-== ClassLoader SPI
+* une `_Factory` — implémente `BeanFactory<T>` et sait instancier le bean ;
+* un `_ClientProxy` — uniquement pour les scopes normaux, intercepte les appels et délègue au contexte.
 
-`vauban-classloader-spi` (dans `vauban-classloader-spi`) expose `PluginContext`, `ByteSourcePlugin`, `ArchiveReader` — utilisés par `vauban-sjar` pour charger des `_Factory` depuis des archives signées (`.sjar`). Permet d'embarquer des extensions sans `add-opens`.
+== Scope
 
-== Modes scope
+Un _scope_ définit la durée de vie d'une instance et le contexte qui la stocke.
 
-CDI 4.1 Lite implémenté :
+[plantuml]
+....
+@startuml
+skinparam shadowing false
+skinparam classAttributeIconSize 0
 
-* `@Singleton`, `@ApplicationScoped` — instances uniques sur la durée du container.
-* `@Dependent` — instances multiples, durée de vie alignée sur l'injecteur.
-* `@RequestScoped` — fourni quand un transport contextuel est branché (Cassini ou Foy).
+class "Scope" as S {
+  + isNormal : boolean
+  + isPassivating : boolean
+}
 
-[TODO]
-====
-Documenter la stratégie de cache d'instances et la sérialisation `_Factory` ↔ `Bean<T>` pour les `Producers`.
-====
+class "Context" as C {
+  + get(Bean) : T
+  + isActive() : boolean
+}
 
-== Compatibilité AOT
+class "Bean<T>" as B {
+  + scope : Class<? extends Annotation>
+  + qualifiers : Set<Annotation>
+  + types : Set<Type>
+}
 
-Pas de `Class.forName`, pas de `Method.invoke`, pas de `Class.getDeclaredFields()` au runtime. Tout passe par `MethodHandles` ou directement par bytecode généré. Compatible :
+S "1" -- "1" C : associé à
+B "*" -- "1" S : porte un
+@enduml
+....
 
-* GraalVM `native-image` sans `reflect-config.json`.
-* Project Leyden CDS.
-* JLink minimal images.
+Scopes implémentés : voir xref:usage.adoc#scopes[la table d'usage].
 
-== Outillage
+== Qualifier
 
-* `vauban-maven-plugin` — orchestre le pipeline `index → process → generate → analyze`.
-* `vauban-junit` — `@VaubanTest` extension JUnit 5 qui boote un container minimal pour les tests.
-* `vauban-test-suite` — suite officielle de tests d'intégration.
+Un _qualifier_ est une annotation runtime qui discrimine plusieurs beans d'un même type. Le _Default qualifier_ est implicite. CDI fournit `@Default`, `@Any`, `@Named` ; Vauban supporte tous les qualificateurs custom, y compris ceux à membres `@Nonbinding`.
+
+== Producer
+
+Une méthode ou un champ `@Produces` produit un bean dont l'instanciation n'est pas contrôlée par le container, mais par le code utilisateur. Le _disposer_ associé (`@Disposes`) est appelé à la destruction. Vauban génère une `_ProducerFactory` par méthode producer.
+
+== Observer
+
+Un _observer_ est une méthode `@Observes` ou `@ObservesAsync` qui réagit à un événement applicatif. Les observateurs asynchrones sont dispatchés sur les virtual threads. La résolution des observateurs est statique : le `EventDispatcher` consulte une table générée à la compilation.
+
+== Interceptor
+
+Un _interceptor_ enrobe l'appel d'une méthode (`@AroundInvoke`) ou d'un constructeur (`@AroundConstruct`). Les chaînes d'intercepteurs sont résolues à la compilation et stockées dans la `_Factory` du bean.
+
+== BeanManager
+
+Le `BeanManager` est la façade SPI de CDI. Vauban l'expose via `VaubanBeanManager`, en lecture seule pour le code applicatif. Il permet :
+
+* la résolution programmatique de beans (`getBeans(Type, Qualifier...)`) ;
+* la résolution d'observateurs ;
+* l'accès aux contextes actifs.
+
+Les méthodes mutables historiques (`addBean`, `addObserverMethod`) ne sont pas disponibles : tout est figé à la compilation.
+
+== Graphe d'injection
+
+[mermaid]
+....
+graph LR
+  subgraph Compile["Compilation"]
+    SRC[Code source<br/>annoté CDI] --> IDX[Indexer]
+    IDX --> PROC[Processor APT]
+    PROC --> FAC[(_Factory<br/>_ClientProxy<br/>_ProducerFactory)]
+  end
+  subgraph Runtime["Exécution"]
+    BOOT[Vauban.bootstrap] --> BM[BeanManager]
+    BM --> CTX[Contextes<br/>Application/Request/Dependent]
+    CTX --> INST[Instances managées]
+  end
+  FAC --> BM
+....
+
+L'utilisateur ne touche jamais aux `_Factory`. Il appelle `Vauban.bootstrap()`, sélectionne un bean racine, et le container fait le reste.
+
+== Build Compatible Extensions
+
+CDI 4.1 introduit les Build Compatible Extensions (BCE) : des hooks `@Discovery`, `@Enhancement`, `@Registration`, `@Synthesis`, `@Validation` exécutés à la compilation. Vauban les supporte nativement puisque tout son flux est compile-time. Voir `vauban-test-suite` pour des exemples de BCE personnalisées.
+
+== Différences avec CDI Full
+
+Vauban implémente le profil _Lite_. Sont absents :
+
+* les portable extensions runtime (`Extension`, `BeforeBeanDiscovery`, etc.) — remplacées par les BCE ;
+* `@Specializes` ;
+* `@ConversationScoped` ;
+* la passivation (`PassivationCapable`) ;
+* l'EL (Expression Language) intégré aux beans gérés.
+
+Voir xref:reference.adoc#lite-vs-full[la table comparative].

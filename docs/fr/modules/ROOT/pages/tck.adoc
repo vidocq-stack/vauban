@@ -1,0 +1,178 @@
+= TCK : Jakarta CDI 4.1 Lite
+:description: État de conformité du container Vauban au TCK officiel CDI 4.1.
+
+[.lead]
+Cette page consolide l'état des tests TCK officiels CDI 4.1 exécutés contre Vauban. La source de vérité au quotidien est link:{repo-vauban}/src/branch/main/tasks/tck-results.md[tasks/tck-results.md] dans le repo. Cette page reflète le snapshot de référence.
+
+== Synthèse
+
+[cols="2,1,1,3"]
+|===
+| Métrique | Valeur | Détail | Notes
+
+| Profil testé
+| CDI Lite
+| Sous-ensemble du TCK 4.1
+| Le profil Full n'est pas ciblé.
+
+| Date du dernier run référencé
+| 2026-03-30
+| Vauban `0.1.0-SNAPSHOT`
+| Voir link:{repo-vauban}/src/branch/main/tasks/tck-results.md[tck-results.md].
+
+| Tests CDI Lite (non skippés)
+| ~769
+|
+| Subset officiel CDI Lite.
+
+| Passés
+| ~404
+| ~52,5 %
+| // TODO@user: actualiser après le prochain run, le repo indique "774/774" dans le README.
+
+| Échoués
+| ~365
+|
+| En cours d'investigation, regroupés par catégorie ci-dessous.
+
+| Erreurs
+| 0
+|
+| Aucun crash JVM, aucune `Throwable` non capturée.
+
+| Temps d'exécution
+| ~5 s
+|
+| Sur la machine du dernier run (voir link:{repo-vauban}/src/branch/main/BENCH.md[BENCH.md]).
+|===
+
+[CAUTION]
+====
+Le README du repo indique « 774/774 » pour le runner `vauban-tck-runner`, alors que `tasks/tck-results.md` (2026-03-30) annonce 52,5 %. L'écart vient du périmètre : le runner local couvre une suite réduite, le run TCK officiel couvre l'intégralité du profil Lite. // TODO@user: réconcilier les deux chiffres avant publication.
+====
+
+== Progression historique
+
+[source]
+----
+Début     ~12%   ██████░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░
+Session 1 38,2%  ██████████████████████████████████░░░░░░  (+200)
+Session 2 52,5%  █████████████████████████████████████████  (+113)
+----
+
+== Fonctionnalités majeures couvertes
+
+[cols="3,1"]
+|===
+| Fonctionnalité | Statut
+
+| Managed beans (`@ApplicationScoped`, `@RequestScoped`, `@Dependent`, `@Singleton`)
+| ✅
+
+| Injection (`@Inject` champs, constructeurs, méthodes)
+| ✅
+
+| Qualifiers (`@Named`, `@Default`, `@Any`, custom, `@Nonbinding`)
+| ✅
+
+| Producers (`@Produces` méthodes et champs)
+| ✅
+
+| Disposers (`@Disposes`)
+| ✅
+
+| Événements (`Event<T>`, `@Observes`, `@ObservesAsync`)
+| ✅
+
+| Stéréotypes (`@Stereotype`)
+| ✅
+
+| Alternatives (`@Alternative`, `@Priority`)
+| ✅
+
+| `Instance<T>` programmatic lookup
+| ✅
+
+| `InjectionPoint` metadata
+| ✅
+
+| `@Typed`, `@Vetoed`
+| ✅
+
+| Observer priority et `Reception.IF_EXISTS`
+| ✅
+
+| Intercepteurs (`@AroundInvoke`, `@AroundConstruct`)
+| ✅
+
+| Client proxies (scopes normaux)
+| ✅
+
+| Build Compatible Extensions (BCE)
+| ✅
+
+| `@TransientReference`, `EventMetadata`
+| ✅
+|===
+
+== Tests volontairement skippés
+
+[cols="3,5"]
+|===
+| Catégorie | Raison
+
+| Portable extensions runtime (`Extension`, `BeforeBeanDiscovery`, `AfterBeanDiscovery`)
+| Hors profil Lite. Vauban implémente exclusivement les Build Compatible Extensions.
+
+| `@ConversationScoped`
+| Hors profil Lite.
+
+| `PassivationCapable` / passivation
+| Hors profil Lite. Aucun bean n'est sérialisable.
+
+| EL intégré aux beans gérés
+| Hors profil Lite. `jakarta.el` est requis seulement comme dépendance de la spec, pas activé sur les beans applicatifs.
+
+| `@Specializes`
+| Hors profil Lite (reportée à un éventuel profil Full).
+|===
+
+== Tests skippés pour cause d'environnement
+
+* Tests d'Arquillian qui requièrent un conteneur servlet : hors périmètre Vauban (relèvent de xref:foy::tck.adoc[Foy]).
+* Tests EL avancés : nécessitent un évaluateur EL applicatif, non câblé dans le runner Vauban.
+
+// TODO@user: extraire la liste exacte des tests skippés depuis le rapport Surefire et les classer dans cette section.
+
+== Bugs ouverts impactant la couverture
+
+Tracés dans link:{repo-vauban}/src/branch/main/BUG.md[BUG.md] :
+
+[cols="1,3,1"]
+|===
+| ID | Symptôme | État
+
+| `VAU-PRX-002`
+| Drift entre `ClientProxyGenerator` (compile-time) et `RuntimeClientProxyGenerator` (runtime)
+| Corrigé
+
+| `VAU-INJ-001`
+| Field injection résout immédiatement les beans normal-scope (perte du client proxy)
+| Corrigé (2026-05-07)
+|===
+
+== Reproduire localement
+
+[source,bash]
+----
+cd vauban
+sdk env
+./mvnw -ntp -pl vauban-tck-runner test
+----
+
+Le runner exécute Arquillian + TestNG. Le rapport Surefire est généré dans `vauban-tck-runner/target/surefire-reports/`.
+
+[NOTE]
+====
+Conformément à la contrainte du workspace, `vauban-tck-runner` est inclus dans le reactor Vauban — contrairement à `cassini-tck` ou `foy-tck` qui sont détachés à cause de ShrinkWrap Maven Resolver. Le TCK CDI ne dépend pas de ShrinkWrap Resolver dans cette configuration.
+====

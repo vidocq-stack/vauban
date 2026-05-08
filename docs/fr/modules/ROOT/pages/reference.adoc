@@ -1,59 +1,108 @@
 = Référence
-:description: Artefacts Maven, packages publics, plugin Maven, JUnit extension.
+:description: Artefacts Maven, packages JPMS exportés, plugin Maven, extension JUnit, comparaison Lite vs Full.
+
+[.lead]
+Cette page liste l'ensemble des artefacts publiés par Vauban, les packages JPMS qu'ils exportent, les goals du plugin Maven et la comparaison entre les profils CDI Lite et Full.
 
 == Artefacts Maven
 
-[cols="1,3"]
+[cols="2,1,3"]
 |===
-| Artefact | Rôle
+| Artefact | Scope conseillé | Rôle
 
 | `io.vidocq.vauban:vauban-api:0.1.0-SNAPSHOT`
-| API publique (`Vauban`, `BeanFactory`, etc.)
+| `compile`
+| API publique (`Vauban.bootstrap()`, `BeanFactory<T>`, etc.)
 
 | `io.vidocq.vauban:vauban-core:0.1.0-SNAPSHOT`
-| Container runtime
+| `runtime`
+| Container runtime CDI 4.1 Lite
 
 | `io.vidocq.vauban:vauban-processor:0.1.0-SNAPSHOT`
-| APT (scope `provided`, généralement)
+| `provided`
+| APT (génération de `_Factory`, `_ClientProxy` à `process-classes`)
 
 | `io.vidocq.vauban:vauban-indexer:0.1.0-SNAPSHOT`
-| Indexer build-time des beans
+| `provided`
+| Indexer build-time des beans (zéro dépendance)
 
 | `io.vidocq.vauban:vauban-maven-plugin:0.1.0-SNAPSHOT`
+| `build`
 | Plugin Maven (goals : `index`, `process`, `generate`, `analyze`, `dist`, `encrypt`)
 
 | `io.vidocq.vauban:vauban-classloader-spi:0.1.0-SNAPSHOT`
-| SPI ClassLoader pour archives signées
+| `runtime`
+| SPI ClassLoader (`ByteSourcePlugin`, `ArchiveReader`)
 
 | `io.vidocq.vauban:vauban-sjar:0.1.0-SNAPSHOT`
-| Implémentation `.sjar` (signed jar)
+| `runtime` (optionnel)
+| Implémentation `.sjar` (chiffrement AES-256-GCM)
 
 | `io.vidocq.vauban:vauban-junit:0.1.0-SNAPSHOT`
+| `test`
 | Extension JUnit 5 (`@VaubanTest`)
 
 | `io.vidocq.vauban:vauban-test-suite:0.1.0-SNAPSHOT`
+| `test`
 | Suite officielle de tests d'intégration
 |===
 
-== Packages publics
+== Modules JPMS exportés
 
-* `io.vidocq.vauban.api` — entrée standard (`Vauban.bootstrap()`)
-* `io.vidocq.vauban.classloader.spi` — ClassLoader plugin SPI
-* `io.vidocq.vauban.maven.module` — modèle d'analyse JPMS
-* `io.vidocq.vauban.maven.generate` — Mojos de génération
+[cols="2,3"]
+|===
+| Module | Packages exportés
+
+| `io.vidocq.vauban.api`
+| `io.vidocq.vauban.api`
+
+| `io.vidocq.vauban.core`
+| `io.vidocq.vauban.core`, `.container`, `.langmodel`, `.langmodel.declarations`, `.langmodel.types`, `.types`, `.bean.model`, `.bean.discovery`, `.bean.resolution`, `.bean.validation`, `.context`, `.event`, `.interceptor`, `.enrichment`, `.extensions`
+
+| `io.vidocq.vauban.indexer`
+| `io.vidocq.vauban.indexer`, `.indexer.model`, `.indexer.scanner`
+
+| `io.vidocq.vauban.processor`
+| (interne — requiert `java.compiler`)
+
+| `io.vidocq.vauban.classloader.spi`
+| `io.vidocq.vauban.classloader.spi`
+
+| `io.vidocq.vauban.sjar`
+| `io.vidocq.vauban.sjar`, `.sjar.cli`
+
+| `io.vidocq.vauban.junit`
+| `io.vidocq.vauban.junit`
+|===
+
+`io.vidocq.vauban.core` fournit `jakarta.enterprise.inject.spi.CDIProvider` via `provides`. Aucun `opens` non justifié.
 
 == Goals du plugin Maven
 
-[TODO]
-====
-Documenter chaque Mojo :
+[cols="1,3"]
+|===
+| Goal | Rôle
 
-* `vauban:generate` — APT + génération des `_Factory`
-* `vauban:analyze` — analyse JPMS, détection split packages
-* `vauban:dist` — packaging d'une distribution
-* `vauban:encrypt` — chiffrement de jar signé
-====
+| `vauban:index`
+| Scanne le module-path et écrit `META-INF/vauban/index.bin`.
 
+| `vauban:process`
+| Lance l'APT (équivalent à `javac -processor`).
+
+| `vauban:generate`
+| Génère les `_Factory`, `_ClientProxy`, `_ProducerFactory` via Class-File API.
+
+| `vauban:analyze`
+| Analyse JPMS, détecte split packages et exports incohérents.
+
+| `vauban:dist`
+| Packaging d'une distribution prête à l'exécution (jlink + image).
+
+| `vauban:encrypt`
+| Chiffrement de jar signé via `vauban-sjar` (optionnel).
+|===
+
+[#junit-extension]
 == Extension JUnit (`vauban-junit`)
 
 `@VaubanTest` boote un container léger pour les tests :
@@ -64,19 +113,104 @@ Documenter chaque Mojo :
 class GreetingServiceTest {
     @Inject GreetingService greeting;
 
-    @Test void hello() {
+    @Test
+    void hello() {
         assertEquals("Hello, Vauban!", greeting.hello("Vauban"));
     }
 }
 ----
 
+Trois modes de découverte :
+
+* `@VaubanTest` seul — `scanLocal()` du package du test.
+* `@VaubanTest(scan = ScanMode.CLASSPATH)` — `scanClasspath()` complet.
+* `@VaubanTest(beans = {Foo.class, Bar.class})` — `addBeanClass(...)`.
+
+[#lite-vs-full]
+== Comparaison CDI 4.1 Lite vs Full
+
+[cols="2,1,1,3"]
+|===
+| Fonctionnalité | Lite | Full | Vauban
+
+| Beans gérés, scopes standards
+| ✅
+| ✅
+| ✅
+
+| Producers, disposers
+| ✅
+| ✅
+| ✅
+
+| Événements (`Event<T>`, `@Observes`, `@ObservesAsync`)
+| ✅
+| ✅
+| ✅
+
+| Intercepteurs (`@AroundInvoke`, `@AroundConstruct`)
+| ✅
+| ✅
+| ✅
+
+| Build Compatible Extensions (BCE)
+| ✅
+| ✅
+| ✅
+
+| Portable Extensions (`Extension` SPI runtime)
+| ❌
+| ✅
+| ❌
+
+| `@ConversationScoped`
+| ❌
+| ✅
+| ❌
+
+| `@SessionScoped`
+| ❌
+| ✅
+| // TODO@user: confirmer
+
+| Passivation, sérialisation des beans
+| ❌
+| ✅
+| ❌
+
+| `@Specializes`
+| ❌
+| ✅
+| ❌
+
+| EL pour beans gérés
+| ❌
+| ✅
+| ❌
+
+| Decorators
+| Optionnel
+| ✅
+| // TODO@user: valider la couverture
+|===
+
+== Configuration
+
+Vauban ne nécessite aucun fichier de configuration applicatif. La sélection des beans se fait via :
+
+* le `module-info.java` (visibilité JPMS) ;
+* la stratégie de bootstrap (`scanLocal()`, `scanClasspath()`, `addBeanClass()`).
+
+Pour la configuration applicative dynamique, utiliser MicroProfile Config via xref:vidocq::index.adoc[Vidocq-MPS].
+
 == Bugs et benchmarks
 
-* `vauban/BUG.md` — issues reproductibles.
-* `vauban/BENCH.md` — `[TODO]` créer si absent.
+* link:{repo-vauban}/src/branch/main/BUG.md[BUG.md] — bugs reproductibles tracés.
+* link:{repo-vauban}/src/branch/main/BENCH.md[BENCH.md] — benchmarks (à créer si absent).
 
 == Compatibilité
 
-* Java 25, Maven 4.0.0-rc-5.
-* JPMS strict, modules nommés.
-* CDI 4.1 Lite (sous-ensemble).
+* Java 25 (LTS), Maven 4.0.0-rc-5.
+* JPMS strict, modules nommés exclusivement.
+* CDI 4.1 — profil Lite.
+* Compatible GraalVM `native-image` et Project Leyden CDS.

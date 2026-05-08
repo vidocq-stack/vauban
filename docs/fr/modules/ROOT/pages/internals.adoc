@@ -1,0 +1,147 @@
+= Fonctionnement interne
+:description: Codegen Class-File API, pipeline APT, modèle de threading, séquence de bootstrap.
+
+[.lead]
+Vauban repose sur un principe simple : tout ce qui peut être calculé à la compilation l'est. Aucune réflexion à chaud, aucun proxy dynamique, aucune librairie de bytecode externe. Cette page décrit les choix d'implémentation qui supportent cette discipline.
+
+== Codegen via Class-File API et APT
+
+CDI 4.1 décrit un modèle d'objets richement réflexif : `Bean<T>`, `BeanManager`, `InjectionPoint`, `AnnotatedType`. Vauban refuse d'évaluer ce modèle au runtime. Il le compile.
+
+Deux outils interviennent à `process-classes` :
+
+. **`vauban-indexer`** — parcourt le module-path à la compilation et produit un fichier d'index (`META-INF/vauban/index.bin`). L'équivalent statique du `BeanArchive` runtime de Weld. Zéro dépendance.
+. **`vauban-processor`** — `javax.annotation.processing.Processor` qui consomme l'index et émet du bytecode via la **Class-File API** (https://openjdk.org/jeps/484[JEP 484]). Pas d'ASM, pas de Byte Buddy, pas de Gizmo.
+
+Pour chaque bean, le processeur génère :
+
+[cols="1,3"]
+|===
+| Artefact généré | Rôle
+
+| `MyBean$$_Factory`
+| Implémente `BeanFactory<MyBean>`. Constructeur sans argument. Appelle le constructeur cible avec les dépendances déjà résolues, puis exécute `@PostConstruct`.
+
+| `MyBean$$_ClientProxy`
+| Sous-classe générée pour les scopes normaux. Intercepte chaque méthode publique et délègue au contexte actif via `Context.get(bean, ctx)`.
+
+| `MyProducer$$_ProducerFactory`
+| Pour chaque méthode `@Produces`, encapsule la création et la destruction (`@Disposes`).
+
+| `MyObserver$$_ObserverMethod`
+| Pour chaque méthode `@Observes`, fournit `notify(event)` sans réflexion.
+|===
+
+[NOTE]
+====
+Le drift entre `ClientProxyGenerator` (compile-time) et `RuntimeClientProxyGenerator` (fallback) est un risque tracé dans link:{repo-vauban}/src/branch/main/BUG.md[BUG.md] (entrée VAU-PRX-002). Toute évolution d'un générateur doit être répliquée dans l'autre.
+====
+
+== Pipeline APT — diagramme de séquence
+
+[plantuml]
+....
+@startuml
+skinparam shadowing false
+participant "javac" as JC
+participant "vauban-indexer" as IDX
+participant "vauban-processor" as PROC
+participant "Class-File API" as CFA
+participant "filer" as F
+
+JC -> IDX : annotation discovery
+IDX -> IDX : scan module-path\n+ classpath
+IDX -> PROC : VaubanIndex\n(beans, scopes, qualifiers)
+PROC -> PROC : BeanDiscovery\n+ DeploymentValidator
+PROC -> PROC : BceProcessor\n(Build Compatible Extensions)
+PROC -> CFA : ClassBuilder\nper bean
+CFA -> F : write _Factory.class
+CFA -> F : write _ClientProxy.class
+CFA -> F : write _ProducerFactory.class
+F -> JC : generated-sources\n+ generated-classes
+@enduml
+....
+
+Tout l'index, toute la grille d'injection, tous les proxies sont écrits avant que `javac` ne finisse son travail.
+
+== Séquence de bootstrap runtime
+
+[mermaid]
+....
+sequenceDiagram
+  participant App
+  participant Vauban
+  participant Loader as ServiceLoader
+  participant BM as BeanManager
+  participant CTX as Contexts
+
+  App->>Vauban: Vauban.bootstrap()
+  Vauban->>Loader: charger BeanFactory<*>\n(via _Factory générés)
+  Loader-->>Vauban: liste de _Factory
+  Vauban->>BM: instancier VaubanBeanManager
+  Vauban->>CTX: ApplicationContext.activate()
+  Vauban->>BM: fire @Initialized(Application)
+  Vauban-->>App: VaubanContainer
+  App->>BM: select(HelloApp.class).get()
+  BM->>CTX: Context.get(bean)
+  CTX-->>App: instance (proxy si normal-scope)
+....
+
+L'`ApplicationContext` est créé en mémoire, sans réflexion, sans ouverture de packages.
+
+[#virtual-threads]
+== Modèle de threading
+
+Vauban utilise les **virtual threads** (https://openjdk.org/jeps/444[JEP 444]) pour deux usages :
+
+. **Observateurs asynchrones** — chaque `@ObservesAsync` est dispatché sur un `Executors.newVirtualThreadPerTaskExecutor()` interne au `EventDispatcher`. Pas de pool de threads plateforme, pas de file d'attente bornée.
+. **Contexte de requête** — quand Vauban est embarqué dans Cassini ou Foy, le `RequestContext` est porté par un `ScopedValue` (https://openjdk.org/jeps/487[JEP 487]) plutôt qu'un `ThreadLocal`. Cela permet aux virtual threads structurés de propager le contexte sans fuite.
+
+[NOTE]
+====
+Le passage `ThreadLocal` → `ScopedValue` est documenté dans le `CLAUDE.md` du repo Vauban comme principe directeur.
+====
+
+== Compatibilité AOT
+
+Aucun `Class.forName`, aucun `Method.invoke`, aucun `Class.getDeclaredFields()` n'est appelé à chaud. Le runtime utilise :
+
+* des **invocations directes** sur les `_Factory` générés ;
+* des **`MethodHandles`** pour l'invocation des `@PostConstruct`, `@PreDestroy`, observateurs et intercepteurs ;
+* aucun chargement dynamique de classe au-delà du `ServiceLoader` standard.
+
+Conséquence : Vauban se compile en image native GraalVM sans fichier `reflect-config.json`. Il est compatible avec Project Leyden CDS et avec une image JLink minimale.
+
+== Modules JPMS exportés
+
+[cols="2,3"]
+|===
+| Module | Exports principaux
+
+| `io.vidocq.vauban.api`
+| `io.vidocq.vauban.api` (façade `Vauban`, `BeanFactory`)
+
+| `io.vidocq.vauban.core`
+| `io.vidocq.vauban.core.container`, `io.vidocq.vauban.core.bean.model`, `io.vidocq.vauban.core.context`, `io.vidocq.vauban.core.event`, `io.vidocq.vauban.core.interceptor`, `io.vidocq.vauban.core.extensions`
+
+| `io.vidocq.vauban.indexer`
+| `io.vidocq.vauban.indexer`, `io.vidocq.vauban.indexer.model`, `io.vidocq.vauban.indexer.scanner`
+
+| `io.vidocq.vauban.processor`
+| (interne, requiert `java.compiler`)
+
+| `io.vidocq.vauban.classloader.spi`
+| `io.vidocq.vauban.classloader.spi` — SPI `ByteSourcePlugin`
+
+| `io.vidocq.vauban.sjar`
+| Implémentation chiffrée AES-256-GCM du SPI (optionnelle)
+|===
+
+Voir xref:reference.adoc[la référence] pour la liste exhaustive.
+
+== Sources
+
+* link:{repo-vauban}/src/branch/main/vauban-core[vauban-core] — runtime du container
+* link:{repo-vauban}/src/branch/main/vauban-processor[vauban-processor] — APT et générateurs Class-File API
+* link:{repo-vauban}/src/branch/main/vauban-indexer[vauban-indexer] — scanner build-time
+* link:{repo-vauban}/src/branch/main/BUG.md[BUG.md] — bugs reproductibles tracés (VAU-PRX-002, VAU-INJ-001)
