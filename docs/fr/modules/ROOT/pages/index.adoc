@@ -47,9 +47,9 @@ graph TB
   end
   PROC -.génère.-> FACT[_Factory<br/>_ClientProxy]
   FACT --> CORE
-  CORE --> CASSINI[xref:cassini::index.adoc[Cassini]]
-  CORE --> FOY[xref:foy::index.adoc[Foy]]
-  CORE --> MPS[xref:vidocq::index.adoc[Vidocq-MPS]]
+  CORE --> CASSINI[Cassini]
+  CORE --> FOY[Foy]
+  CORE --> MPS[Vidocq-MPS]
   classDef rt fill:#e1f5fe,stroke:#0288d1
   class CORE,API rt
 ....
