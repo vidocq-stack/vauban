@@ -357,6 +357,7 @@ public final class VaubanGenerator {
                 // est absente du classpath (ex: jakarta.activation depuis microprofile-config-api).
                 // On ignore silencieusement, la classe ne sera simplement pas chargée pour la
                 // suite du pipeline (BCE / proxy / interceptor). Cf. VAU-MVN-001.
+                log.warn("Failed to load class {} from classpath, ignoring: {}", classInfo.name().value());
             }
         }
         return classes;
