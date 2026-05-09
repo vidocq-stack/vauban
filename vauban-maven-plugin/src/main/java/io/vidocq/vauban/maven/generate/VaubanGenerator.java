@@ -212,7 +212,7 @@ public final class VaubanGenerator {
                 } catch (ClassNotFoundException | NoClassDefFoundError _) {
                     // NoClassDefFoundError: une dépendance transitive référencée par cette classe
                     // est absente du classpath fourni au plugin (cf. VAU-MVN-001).
-                    warnings.add("Cannot load class for generation: " + className);
+                   warnings.add("Cannot load class for generation: " + className);
                     continue;
                 }
 
@@ -357,7 +357,7 @@ public final class VaubanGenerator {
                 // est absente du classpath (ex: jakarta.activation depuis microprofile-config-api).
                 // On ignore silencieusement, la classe ne sera simplement pas chargée pour la
                 // suite du pipeline (BCE / proxy / interceptor). Cf. VAU-MVN-001.
-                log.warn("Failed to load class {} from classpath, ignoring: {}", classInfo.name().value());
+               // warnings.add("Failed to load class {} from classpath, ignoring: {}", classInfo.name().value());
             }
         }
         return classes;
