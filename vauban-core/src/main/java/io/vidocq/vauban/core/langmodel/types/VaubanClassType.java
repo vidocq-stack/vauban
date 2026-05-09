@@ -25,8 +25,27 @@ public final class VaubanClassType implements ClassType {
 
     @Override
     public ClassInfo declaration() {
-        var indexClass = lookup.requireClass(name);
+        // The Vauban index contains only application/scanned classes. JDK types
+        // (java.lang.String, java.util.Optional, …) and external library types
+        // (e.g. annotation classes shipped in spec JARs like @ConfigProperty)
+        // legitimately appear in injection-point types but are absent from the
+        // index. Falling back to a synthetic stub keeps the spec contract
+        // ({@code ClassType.declaration().name()} returns the FQN) without
+        // forcing every referenced type to be eagerly indexed. Cf. VAU-BCE-001.
+        var indexClass = lookup.getClass(name).orElseGet(() -> syntheticClassInfo(name));
         return new VaubanClassInfo(indexClass, lookup);
+    }
+
+    private static io.vidocq.vauban.indexer.model.ClassInfo syntheticClassInfo(DotName name) {
+        return new io.vidocq.vauban.indexer.model.ClassInfo(
+                name,
+                DotName.of("java.lang.Object"),
+                List.of(),
+                java.lang.reflect.Modifier.PUBLIC,
+                List.of(),
+                List.of(),
+                List.of(),
+                io.vidocq.vauban.indexer.model.ClassInfo.ClassKind.CLASS);
     }
 
     /**

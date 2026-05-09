@@ -1317,6 +1317,9 @@ public final class BceProcessor {
                 beanTypes.add(new TypeInfo.ClassType(DotName.of(cls.getName())));
             }
         }
+        // Bean types added via the lang-model API (type(jakarta...Type)) are stored
+        // separately and already converted to TypeInfo. Cf. VAU-BCE-001.
+        beanTypes.addAll(synBean.getIndexTypes());
         if (beanTypes.isEmpty()) {
             beanTypes.add(new TypeInfo.ClassType(beanName));
             beanTypes.add(new TypeInfo.ClassType(DotName.of("java.lang.Object")));
@@ -1341,7 +1344,10 @@ public final class BceProcessor {
             if (!qName.equals(QualifierInstance.DEFAULT_NAME) && !qName.equals(QualifierInstance.ANY_NAME)) {
                 hasExplicitQualifier = true;
             }
-            qualifiers.add(new QualifierInstance(qName, Map.of()));
+            // Preserve qualifier members so the resolver can match @Tagged("scalar")
+            // against an injection point whose qualifier has the same value (and
+            // reject one with a different value). Cf. VAU-BCE-001.
+            qualifiers.add(new QualifierInstance(qName, extractAnnotationMembers(q)));
         }
         if (!hasExplicitQualifier) {
             qualifiers.add(QualifierInstance.DEFAULT);
@@ -1361,5 +1367,61 @@ public final class BceProcessor {
                 List.of(),
                 synBean.getName()
         );
+    }
+
+    /**
+     * Extract the member values of an annotation instance via reflection so the
+     * resolver can compare qualifier members at runtime. Annotation members
+     * with non-trivial types (Class, Enum, nested annotation, arrays) are
+     * mapped to their {@link AnnotationValue} counterpart; unsupported shapes
+     * fall through to a string representation. Cf. VAU-BCE-001.
+     */
+    @SuppressWarnings("java:S3011")
+    private static Map<String, AnnotationValue> extractAnnotationMembers(Annotation annotation) {
+        var annType = annotation.annotationType();
+        var out = new LinkedHashMap<String, AnnotationValue>();
+        for (var m : annType.getDeclaredMethods()) {
+            if (m.getParameterCount() != 0) continue;
+            try {
+                m.setAccessible(true);
+                var value = m.invoke(annotation);
+                var converted = toAnnotationValue(value);
+                if (converted != null) out.put(m.getName(), converted);
+            } catch (ReflectiveOperationException ignored) {
+                // member not readable — skip silently, the resolver simply won't have
+                // a value to compare against, which is the same as before this fix.
+            }
+        }
+        return out;
+    }
+
+    private static AnnotationValue toAnnotationValue(Object value) {
+        if (value == null) return null;
+        if (value instanceof String s) return new AnnotationValue.StringVal(s);
+        if (value instanceof Boolean b) return new AnnotationValue.BooleanVal(b);
+        if (value instanceof Byte b) return new AnnotationValue.ByteVal(b);
+        if (value instanceof Character c) return new AnnotationValue.CharVal(c);
+        if (value instanceof Short s) return new AnnotationValue.ShortVal(s);
+        if (value instanceof Integer i) return new AnnotationValue.IntVal(i);
+        if (value instanceof Long l) return new AnnotationValue.LongVal(l);
+        if (value instanceof Float f) return new AnnotationValue.FloatVal(f);
+        if (value instanceof Double d) return new AnnotationValue.DoubleVal(d);
+        if (value instanceof Class<?> c) return new AnnotationValue.ClassVal(DotName.of(c.getName()));
+        if (value instanceof Enum<?> e) return new AnnotationValue.EnumVal(
+                DotName.of(e.getDeclaringClass().getName()), e.name());
+        if (value instanceof Annotation a) return new AnnotationValue.AnnotationVal(
+                new io.vidocq.vauban.indexer.model.AnnotationInfo(
+                        DotName.of(a.annotationType().getName()),
+                        extractAnnotationMembers(a)));
+        if (value.getClass().isArray()) {
+            var len = java.lang.reflect.Array.getLength(value);
+            var elements = new ArrayList<AnnotationValue>(len);
+            for (int i = 0; i < len; i++) {
+                var converted = toAnnotationValue(java.lang.reflect.Array.get(value, i));
+                if (converted != null) elements.add(converted);
+            }
+            return new AnnotationValue.ArrayVal(elements);
+        }
+        return new AnnotationValue.StringVal(value.toString());
     }
 }

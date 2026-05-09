@@ -23,6 +23,19 @@ public final class VaubanAnnotationInfo implements jakarta.enterprise.lang.model
         return new VaubanClassInfo(classInfo, lookup);
     }
 
+    /**
+     * Override the spec's default {@code name()} (which delegates to {@link #declaration()})
+     * so that callers can read the annotation FQN without forcing the declaring class
+     * to be present in the Vauban index. {@code @ConfigProperty}, {@code @ConfigProperties}
+     * and most spec-defined qualifiers ship in their own JARs and are *not* added to the
+     * application index — only the bytecode-resolved name from the index annotation
+     * record is needed to identify them. Cf. VAU-BCE-001.
+     */
+    @Override
+    public String name() {
+        return indexAnnotation.name().value();
+    }
+
     @Override
     public boolean hasMember(String name) {
         return indexAnnotation.hasMember(name);

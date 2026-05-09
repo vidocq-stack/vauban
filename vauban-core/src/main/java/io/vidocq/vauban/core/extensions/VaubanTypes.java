@@ -73,11 +73,14 @@ public final class VaubanTypes implements Types {
 
     @Override
     public ClassType ofClass(String name) {
-        var dotName = DotName.of(name);
-        if (lookup.getClass(dotName).isEmpty()) {
-            return null;
-        }
-        return new VaubanClassType(dotName, lookup);
+        // Always return a ClassType, even when the named class is not in the
+        // Vauban index (typical for JDK types: java.lang.String, java.util.Optional, …).
+        // VaubanClassType.declaration() falls back to a synthetic stub so spec
+        // calls like ClassType.declaration().name() still produce the FQN.
+        // Cf. VAU-BCE-001 — without this, types.of(String.class) returned null
+        // and types.parameterized(Optional.class, types.of(String.class)) blew
+        // up with NPE inside List.of(..) downstream.
+        return new VaubanClassType(DotName.of(name), lookup);
     }
 
     @Override

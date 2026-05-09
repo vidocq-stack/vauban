@@ -117,7 +117,10 @@ public final class VaubanBceBeanInfo implements BeanInfo {
 
     @Override
     public Collection<jakarta.enterprise.inject.build.compatible.spi.InjectionPointInfo> injectionPoints() {
-        return List.of();
+        return descriptor.injectionPoints().stream()
+                .map(ip -> (jakarta.enterprise.inject.build.compatible.spi.InjectionPointInfo)
+                        new VaubanBceInjectionPointInfo(ip, descriptor.beanClass(), lookup))
+                .toList();
     }
 
     public BeanDescriptor descriptor() {

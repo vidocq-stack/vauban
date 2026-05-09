@@ -18,6 +18,7 @@ public final class VaubanSyntheticBeanBuilder<T> implements SyntheticBeanBuilder
 
     private final Class<T> beanClass;
     private final Set<java.lang.reflect.Type> types = new LinkedHashSet<>();
+    private final Set<io.vidocq.vauban.indexer.model.TypeInfo> indexTypes = new LinkedHashSet<>();
     private final Set<Annotation> qualifiers = new LinkedHashSet<>();
     private Class<? extends Annotation> scopeAnnotation;
     private String name;
@@ -52,7 +53,16 @@ public final class VaubanSyntheticBeanBuilder<T> implements SyntheticBeanBuilder
 
     @Override
     public SyntheticBeanBuilder<T> type(Type type) {
-        return this; // simplified
+        // Convert the CDI lang-model Type into Vauban's index TypeInfo so the resulting
+        // synthetic bean exposes the correct (parameterized) bean type set during
+        // resolution. Without this, types like Optional<String> / List<T> were silently
+        // dropped (no-op stub) and the synthetic bean only exposed Object — which
+        // caused unsatisfied-dependency on every parameterized injection point.
+        // Cf. VAU-BCE-001.
+        if (type != null) {
+            indexTypes.add(LangModelTypeMapper.toIndexType(type));
+        }
+        return this;
     }
 
     @Override
@@ -168,6 +178,9 @@ public final class VaubanSyntheticBeanBuilder<T> implements SyntheticBeanBuilder
 
     public Class<T> getBeanClass() { return beanClass; }
     public Set<java.lang.reflect.Type> getTypes() { return types; }
+
+    /** Bean types added via {@link #type(Type)} — already converted to Vauban's TypeInfo. */
+    public Set<io.vidocq.vauban.indexer.model.TypeInfo> getIndexTypes() { return indexTypes; }
     public Set<Annotation> getQualifiers() { return qualifiers; }
     public Class<? extends Annotation> getScopeAnnotation() { return scopeAnnotation; }
     public String getName() { return name; }
