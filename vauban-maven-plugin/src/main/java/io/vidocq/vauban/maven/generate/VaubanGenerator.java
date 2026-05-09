@@ -209,7 +209,9 @@ public final class VaubanGenerator {
                 Class<?> clazz;
                 try {
                     clazz = Class.forName(className, false, config.classLoader());
-                } catch (ClassNotFoundException e) {
+                } catch (ClassNotFoundException | NoClassDefFoundError e) {
+                    // NoClassDefFoundError: une dépendance transitive référencée par cette classe
+                    // est absente du classpath fourni au plugin (cf. VAU-MVN-001).
                     warnings.add("Cannot load class for generation: " + className);
                     continue;
                 }
@@ -350,7 +352,12 @@ public final class VaubanGenerator {
         for (var classInfo : index.getKnownClasses()) {
             try {
                 classes.add(Class.forName(classInfo.name().value(), false, cl));
-            } catch (ClassNotFoundException ignored) {}
+            } catch (ClassNotFoundException | NoClassDefFoundError ignored) {
+                // NoClassDefFoundError: une dépendance transitive référencée par ce type
+                // est absente du classpath (ex: jakarta.activation depuis microprofile-config-api).
+                // On ignore silencieusement, la classe ne sera simplement pas chargée pour la
+                // suite du pipeline (BCE / proxy / interceptor). Cf. VAU-MVN-001.
+            }
         }
         return classes;
     }
