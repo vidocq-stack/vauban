@@ -1,6 +1,10 @@
 = Vauban
 :description: CDI 4.1 Lite container, JPMS-native, build-time code generation, zero runtime dependency.
 
+[.text-center]
+image::vauban-logo.png[Vauban,300,role=module-logo]
+
+
 [.lead]
 Vauban is a CDI 4.1 container that resolves injection at compile time. JPMS-native, zero runtime dependency, no dynamic proxies — dependency wiring computed like artillery trajectories: drawn on paper before the first shovel of dirt is turned.
 

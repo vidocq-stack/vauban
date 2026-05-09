@@ -1,6 +1,10 @@
 = Vauban
 :description: Container CDI 4.1 Lite, JPMS-natif, génération de code à la compilation, zéro dépendance runtime.
 
+[.text-center]
+image::vauban-logo.png[Vauban,300,role=module-logo]
+
+
 [.lead]
 Vauban est un container CDI 4.1 qui résout l'injection au moment de la compilation. JPMS-natif, zéro dépendance runtime, pas de proxy dynamique — la résolution des dépendances se calcule comme une trajectoire balistique : sur plan, avant le premier coup de pelle.
 
