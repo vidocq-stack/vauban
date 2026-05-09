@@ -5,6 +5,66 @@ hypothèse de cause, statut. Mise à jour à chaque investigation.
 
 ---
 
+## VAU-MVN-001 — `VaubanGenerator` propage `NoClassDefFoundError` au lieu de skipper la classe
+
+**Date** : 2026-05-09
+**Statut** : `FIXED` — 2026-05-09 (branche `fix/vau-mvn-001-classpath-noclassdef`)
+**Sévérité** : moyenne — bloque tout build qui consomme un artefact dont une dépendance transitive « optionnelle » manque sur le classpath fourni au plugin (cas concret : `microprofile-config-api:3.1.1` qui référence `jakarta.activation`).
+
+### Symptôme
+
+Pendant la phase `process-classes` de `vauban-maven-plugin`, la JVM lève une erreur de linkage non rattrapée et la build échoue :
+
+```
+java.lang.NoClassDefFoundError: jakarta/activation/DataSource
+    at java.base/java.lang.Class.getDeclaredFields0(Native Method)
+    at io.vidocq.vauban.maven.generate.VaubanGenerator.loadArchiveClasses(VaubanGenerator.java:352)
+    at io.vidocq.vauban.maven.generate.VaubanGenerator.generate(VaubanGenerator.java:141)
+    at io.vidocq.vauban.maven.generate.GenerateMojo.execute(GenerateMojo.java:62)
+```
+
+Aucun `META-INF/vauban-beans.list` n'est produit pour le module concerné, et tous les modules suivants en dépendance Maven échouent en cascade.
+
+### Repro minimal
+
+Un projet Maven qui :
+1. déclare `org.eclipse.microprofile.config:microprofile-config-api:3.1.1` en `compile`,
+2. exécute `vauban:generate` (phase `process-classes`).
+
+Le scénario est exactement celui de `ravel-cdi-vauban` packagé via Vauban (cf. `ravel/CLAUDE.md`).
+
+### Cause racine
+
+Deux call sites de `Class.forName(name, false, cl)` dans `VaubanGenerator` :
+
+| Ligne | Contexte | Catch d'origine |
+|---|---|---|
+| ~211 | génération de proxy / interceptor (dans `generate`) | `ClassNotFoundException` |
+| ~352 | `loadArchiveClasses` (chargement réflexif des classes indexées) | `ClassNotFoundException` |
+
+`Class.forName(name, false, cl)` ne déclenche pas l'init statique mais déclenche le **linkage** : la JVM doit résoudre la superclasse, les interfaces et les types des champs/méthodes. Toute classe référencée absente du classloader passé en paramètre lève `NoClassDefFoundError` (sous-classe de `LinkageError`, donc *pas* de `ClassNotFoundException`).
+
+Le plugin construit son classloader via `GenerateMojo.buildClassLoader(...)` à partir de `project.getArtifacts()`. Les dépendances marquées `optional=true` chez l'artefact scanné (typiquement `microprofile-config-api` → `jakarta.activation`) ne remontent pas jusqu'au classpath du plugin → premier call site qui touche un champ/méthode de la classe importée explose en `NoClassDefFoundError`.
+
+### Fix
+
+`vauban-maven-plugin/src/main/java/io/vidocq/vauban/maven/generate/VaubanGenerator.java`, **les deux** call sites élargissent leur catch à `NoClassDefFoundError` :
+
+- `loadArchiveClasses` (~352) : ignore silencieusement (la classe ne sera pas chargée pour la suite du pipeline BCE / proxy / interceptor, mais reste disponible côté indexer bytecode).
+- Génération proxy (~211) : ajoute le warning existant (« Cannot load class for generation: <fqn> »).
+
+Pas de changement de sémantique vis-à-vis du contrat normal : on remplace simplement un crash dur par une dégradation gracieuse alignée sur le comportement déjà en place pour `ClassNotFoundException`.
+
+### Comment éviter la régression
+
+`VaubanGeneratorTest` passe toujours (9/9). À ajouter en suivi : `shouldSkipClassWithMissingTransitive` qui génère via Class-File API une classe annotée `@ApplicationScoped` étendant un `com.missing.Parent` inexistant, l'embarque dans un JAR scanné, et vérifie que `generate()` retourne sans lever.
+
+### Élargissement éventuel
+
+`Class.forName` peut aussi lever d'autres `LinkageError` (`ClassFormatError`, `IncompatibleClassChangeError`, `UnsupportedClassVersionError`, `VerifyError`). Si on observe l'un de ces cas en production, élargir le catch à `LinkageError` (parent commun). Pour l'instant le fix reste ciblé sur le symptôme observé.
+
+---
+
 ## VAU-PRX-002 — Drift entre `ClientProxyGenerator` (compile-time) et `RuntimeClientProxyGenerator` (runtime)
 
 **Date** : 2026-05-07
