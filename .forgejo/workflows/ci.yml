@@ -1,4 +1,5 @@
-# Dummy commnentÈ
+# Test PR : vérifie que le mécanisme cross-repo de validation downstream fonctionne.
+# Le fix du typo précédent est l'occasion de tester sans risquer de casser quoi que ce soit.
 
 name: CI
 
