@@ -1,0 +1,229 @@
+# Template à fusionner dans le `ci.yml` existant de chaque repo *producteur*
+# (vauban, cassini, champollion, foy, chappe, vidocq-mps, mansart, ravel).
+#
+# CE FICHIER NE SE COPIE PAS TEL QUEL. Il sert de référence : ses 4 jobs
+# (`build-pr`, `discover-impact`, `trigger-downstream`, `verify-downstream`)
+# doivent être ajoutés au workflow CI existant, derrière un trigger
+# `pull_request:` distinct du trigger `push:` qui gère les snapshots/releases.
+#
+# Pré-requis :
+#   - Secret organisation `VIDOCQ_BOT_TOKEN` (write GestionProjet, dispatch repos)
+#   - Secret organisation `MAVEN_DEPLOY_TOKEN` (déjà présent dans ci.yml producteur)
+#   - Reposilite : dépôt `pr-staging` accessible à `https://repo.vidocq.dev/pr-staging`
+#   - Le pom racine doit déclarer un `<repository>` ou `<distributionManagement>`
+#     pour `vidocq-pr-staging` (cf. README.md section « pom.xml producteur »).
+name: pr-validate
+on:
+  pull_request:
+    branches: [main]
+
+jobs:
+
+  build-pr:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Java 25
+        uses: actions/setup-java@v4
+        with:
+          java-version: '25'
+          distribution: temurin
+          cache: maven
+
+      - name: Install Maven 4
+        run: |
+          wget -q https://dlcdn.apache.org/maven/maven-4/4.0.0-rc-5/binaries/apache-maven-4.0.0-rc-5-bin.tar.gz
+          tar -xzf apache-maven-4.0.0-rc-5-bin.tar.gz -C /opt
+          echo "/opt/apache-maven-4.0.0-rc-5/bin" >> "$GITHUB_PATH"
+
+      - name: Configure Maven settings (pr-staging)
+        run: |
+          mkdir -p ~/.m2
+          cat > ~/.m2/settings.xml <<EOF
+          <?xml version="1.0" encoding="UTF-8"?>
+          <settings>
+            <servers>
+              <server>
+                <id>vidocq-pr-staging</id>
+                <username>vidocq-ci-deploy</username>
+                <password>${{ secrets.MAVEN_DEPLOY_TOKEN }}</password>
+                <configuration>
+                  <httpConfiguration><all><usePreemptive>true</usePreemptive></all></httpConfiguration>
+                </configuration>
+              </server>
+            </servers>
+          </settings>
+          EOF
+
+      - name: Compute PR version
+        id: version
+        run: |
+          # Lit la version actuelle du pom racine, en dérive la version PR.
+          BASE=$(mvn -q -DforceStdout help:evaluate -Dexpression=project.version -N | sed 's/-SNAPSHOT$//')
+          PR_VERSION="${BASE}-PR${{ github.event.number }}.${{ github.run_number }}-SNAPSHOT"
+          echo "version=$PR_VERSION" >> "$GITHUB_OUTPUT"
+          echo "PR version : $PR_VERSION"
+
+      - name: Set PR version sur tout le reactor
+        run: |
+          mvn -B -ntp versions:set \
+            -DnewVersion=${{ steps.version.outputs.version }} \
+            -DprocessAllModules=true \
+            -DgenerateBackupPoms=false
+
+      - name: Build, test, deploy en pr-staging
+        run: |
+          mvn -B -ntp deploy -DskipTests=false \
+            -DaltDeploymentRepository=vidocq-pr-staging::default::https://repo.vidocq.dev/pr-staging
+
+  discover-impact:
+    needs: build-pr
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.resolve.outputs.matrix }}
+      has_consumers: ${{ steps.resolve.outputs.has_consumers }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Java 25
+        uses: actions/setup-java@v4
+        with:
+          java-version: '25'
+          distribution: temurin
+
+      - name: Install Maven 4
+        run: |
+          wget -q https://dlcdn.apache.org/maven/maven-4/4.0.0-rc-5/binaries/apache-maven-4.0.0-rc-5-bin.tar.gz
+          tar -xzf apache-maven-4.0.0-rc-5-bin.tar.gz -C /opt
+          echo "/opt/apache-maven-4.0.0-rc-5/bin" >> "$GITHUB_PATH"
+
+      - name: S'assure que python3, curl et jq sont disponibles
+        run: |
+          if ! command -v python3 >/dev/null 2>&1 || ! command -v jq >/dev/null 2>&1 || ! command -v curl >/dev/null 2>&1; then
+            apt-get update && apt-get install -y --no-install-recommends python3 jq curl ca-certificates
+          fi
+
+      - name: Récupère le graphe et le résolveur
+        run: |
+          curl -fsSL -H "Authorization: token ${{ secrets.VIDOCQ_BOT_TOKEN }}" \
+            -o /tmp/inverted.json \
+            "https://forge.vidocq.dev/vidocq/GestionProjet/raw/branch/main/graph/inverted.json"
+          curl -fsSL -H "Authorization: token ${{ secrets.VIDOCQ_BOT_TOKEN }}" \
+            -o /tmp/resolve_impact.py \
+            "https://forge.vidocq.dev/vidocq/GestionProjet/raw/branch/main/scripts/resolve_impact.py"
+
+      - name: Liste les artefacts produits par ce repo
+        id: produced
+        run: |
+          ARTIFACTS=$(mvn -q -Dexec.executable="echo" \
+            -Dexec.args='${project.groupId}:${project.artifactId}' \
+            exec:exec 2>/dev/null \
+            | grep -E '^io\.vidocq' | sort -u | tr '\n' ' ')
+          if [ -z "$ARTIFACTS" ]; then
+            echo "Aucun artefact io.vidocq.* détecté — abandon." >&2
+            exit 1
+          fi
+          echo "Produits : $ARTIFACTS"
+          echo "artifacts=$ARTIFACTS" >> "$GITHUB_OUTPUT"
+
+      - name: Résout les consommateurs impactés (fermeture transitive)
+        id: resolve
+        run: |
+          MATRIX=$(python3 /tmp/resolve_impact.py \
+            --graph /tmp/inverted.json \
+            --changed ${{ steps.produced.outputs.artifacts }} \
+            --format matrix)
+          echo "Matrice : $MATRIX"
+          echo "matrix=$MATRIX" >> "$GITHUB_OUTPUT"
+          COUNT=$(echo "$MATRIX" | jq '.include | length')
+          if [ "$COUNT" -gt 0 ]; then
+            echo "has_consumers=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_consumers=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  trigger-downstream:
+    needs: [build-pr, discover-impact]
+    if: needs.discover-impact.outputs.has_consumers == 'true'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJson(needs.discover-impact.outputs.matrix) }}
+    steps:
+      - name: Dispatch ${{ github.repository }} -> ${{ matrix.repo }}
+        run: |
+          curl -fsSL -X POST \
+            -H "Authorization: token ${{ secrets.VIDOCQ_BOT_TOKEN }}" \
+            -H "Content-Type: application/json" \
+            "https://forge.vidocq.dev/api/v1/repos/${{ matrix.repo }}/dispatches" \
+            -d "$(cat <<JSON
+          {
+            "event_type": "upstream-pr",
+            "client_payload": {
+              "upstream_repo": "${{ github.repository }}",
+              "upstream_version": "${{ needs.build-pr.outputs.version }}",
+              "pr_number": "${{ github.event.number }}",
+              "pr_sha": "${{ github.event.pull_request.head.sha }}"
+            }
+          }
+          JSON
+          )"
+
+  verify-downstream:
+    # Ce job est l'unique « required check » à mettre dans la branch protection.
+    # Il agrège les downstreams dynamiques en un seul statut stable.
+    needs: [discover-impact, trigger-downstream]
+    if: always() && needs.discover-impact.result == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Cas trivial — aucun consommateur impacté
+        if: needs.discover-impact.outputs.has_consumers != 'true'
+        run: |
+          echo "Aucun consommateur impacté par cette PR — verify OK."
+          exit 0
+
+      - name: S'assure que jq et curl sont disponibles
+        if: needs.discover-impact.outputs.has_consumers == 'true'
+        run: |
+          if ! command -v jq >/dev/null 2>&1 || ! command -v curl >/dev/null 2>&1; then
+            apt-get update && apt-get install -y --no-install-recommends jq curl ca-certificates
+          fi
+
+      - name: Attend les statuts downstream
+        if: needs.discover-impact.outputs.has_consumers == 'true'
+        run: |
+          SHA="${{ github.event.pull_request.head.sha }}"
+          EXPECTED=$(echo '${{ needs.discover-impact.outputs.matrix }}' \
+            | jq -r '.include[].repo' | sed 's|.*|downstream/&|')
+          echo "Contextes attendus :"
+          echo "$EXPECTED"
+          DEADLINE=$(( $(date +%s) + 1800 ))  # 30 min max
+          while [ $(date +%s) -lt $DEADLINE ]; do
+            STATUSES=$(curl -fsSL \
+              -H "Authorization: token ${{ secrets.VIDOCQ_BOT_TOKEN }}" \
+              "https://forge.vidocq.dev/api/v1/repos/${{ github.repository }}/commits/$SHA/statuses")
+            ALL_OK=1
+            for ctx in $EXPECTED; do
+              STATE=$(echo "$STATUSES" | jq -r ".[] | select(.context==\"$ctx\") | .state" | head -n1)
+              if [ -z "$STATE" ] || [ "$STATE" = "pending" ]; then
+                echo "[$ctx] en attente..."
+                ALL_OK=0
+                continue
+              fi
+              if [ "$STATE" = "failure" ] || [ "$STATE" = "error" ]; then
+                echo "[$ctx] $STATE — verify-downstream échoue."
+                exit 1
+              fi
+              echo "[$ctx] $STATE"
+            done
+            if [ "$ALL_OK" = "1" ]; then
+              echo "Tous les downstreams sont remontés OK."
+              exit 0
+            fi
+            sleep 30
+          done
+          echo "Timeout : certains downstreams n'ont pas reporté à temps." >&2
+          exit 1

@@ -2,8 +2,12 @@
 
 name: CI
 
+# Le ci.yml est dédié au flux post-merge (push sur main).
+# Les PR sont gérées par pr.yml qui builde + déploie en pr-staging
+# et orchestre la validation cross-repo via le graphe de dépendances Vidocq.
 on:
   push:
+    branches: [main]
 
 jobs:
   build:
