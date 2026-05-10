@@ -296,24 +296,33 @@ jobs:
             | jq -r '.include[].repo' | sed 's|.*|downstream/&|')
           echo "Contextes attendus :"
           echo "$EXPECTED"
-          DEADLINE=$(( $(date +%s) + 1800 ))  # 30 min max
+          DEADLINE=$(( $(date +%s) + 3600 ))  # 60 min max (mansart/vidocq-mps lourds)
+          ITERATION=0
           while [ $(date +%s) -lt $DEADLINE ]; do
+            ITERATION=$((ITERATION + 1))
             STATUSES=$(curl -fsSL \
               -H "Authorization: token ${{ secrets.VIDOCQ_BOT_TOKEN }}" \
               "https://forge.vidocq.dev/api/v1/repos/${{ github.repository }}/commits/$SHA/statuses")
+            POSTED=$(echo "$STATUSES" | jq -r '.[].context' | sort -u)
+            echo "--- Itération $ITERATION : $(echo "$POSTED" | wc -w | tr -d ' ') status posté(s)"
             ALL_OK=1
             for ctx in $EXPECTED; do
               STATE=$(echo "$STATUSES" | jq -r ".[] | select(.context==\"$ctx\") | .state" | head -n1)
-              if [ -z "$STATE" ] || [ "$STATE" = "pending" ]; then
-                echo "[$ctx] en attente..."
+              if [ -z "$STATE" ]; then
+                echo "  [$ctx] AUCUN STATUS POSTÉ — le workflow upstream-pr n'a pas (encore) tourné, ou plante avant 'Poste status'"
+                ALL_OK=0
+                continue
+              fi
+              if [ "$STATE" = "pending" ]; then
+                echo "  [$ctx] pending..."
                 ALL_OK=0
                 continue
               fi
               if [ "$STATE" = "failure" ] || [ "$STATE" = "error" ]; then
-                echo "[$ctx] $STATE — verify-downstream échoue."
+                echo "  [$ctx] $STATE — verify-downstream échoue."
                 exit 1
               fi
-              echo "[$ctx] $STATE"
+              echo "  [$ctx] $STATE"
             done
             if [ "$ALL_OK" = "1" ]; then
               echo "Tous les downstreams sont remontés OK."
