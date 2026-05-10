@@ -77,16 +77,19 @@ jobs:
       - name: Compute PR version
         id: version
         run: |
-          # On parse le pom directement en Python : `mvn help:evaluate -q` ne
-          # supprime pas tous les [INFO] en Maven 4, ce qui pollue stdout et
-          # produit des versions corrompues comme "[INFO]-PR1.1-SNAPSHOT".
+          # Parsing direct du pom.xml en Python — `mvn help:evaluate -q` ne
+          # supprime pas tous les [INFO] en Maven 4, ce qui produit des versions
+          # corrompues type "[INFO]-PR1.1-SNAPSHOT".
+          # Détection dynamique du namespace (Model 4.0.0 vs 4.1.0).
           BASE=$(python3 - <<'PY'
-          import re, xml.etree.ElementTree as ET
-          NS = {"m": "http://maven.apache.org/POM/4.1.0"}
+          import re, sys, xml.etree.ElementTree as ET
           root = ET.parse("pom.xml").getroot()
-          v = root.find("m:version", NS) or root.find("version")
-          text = (v.text if v is not None and v.text else "").strip()
-          print(re.sub(r"-SNAPSHOT$", "", text))
+          ns_uri = root.tag[1:].split("}", 1)[0] if root.tag.startswith("{") else ""
+          v = root.find(f"{{{ns_uri}}}version") if ns_uri else root.find("version")
+          if v is None or not v.text:
+              sys.stderr.write(f"<version> introuvable au niveau racine (ns={ns_uri!r})\n")
+              sys.exit(1)
+          print(re.sub(r"-SNAPSHOT$", "", v.text.strip()))
           PY
           )
           if [ -z "$BASE" ]; then
