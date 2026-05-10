@@ -110,7 +110,7 @@ jobs:
       - name: Build, test, deploy en pr-staging
         run: |
           mvn -B -ntp deploy -DskipTests=false \
-            -DaltDeploymentRepository=vidocq-pr-staging::default::https://repo.vidocq.dev/pr-staging
+            -DaltDeploymentRepository=vidocq-pr-staging::https://repo.vidocq.dev/pr-staging
 
   discover-impact:
     needs: build-pr
