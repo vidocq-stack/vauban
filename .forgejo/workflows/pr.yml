@@ -39,13 +39,29 @@ jobs:
           tar -xzf apache-maven-4.0.0-rc-5-bin.tar.gz -C /opt
           echo "/opt/apache-maven-4.0.0-rc-5/bin" >> "$GITHUB_PATH"
 
-      - name: Configure Maven settings (pr-staging)
+      - name: Configure Maven settings (snapshots + releases + pr-staging)
         run: |
           mkdir -p ~/.m2
           cat > ~/.m2/settings.xml <<EOF
           <?xml version="1.0" encoding="UTF-8"?>
           <settings>
             <servers>
+              <server>
+                <id>vidocq-snapshots</id>
+                <username>vidocq-ci-deploy</username>
+                <password>${{ secrets.MAVEN_DEPLOY_TOKEN }}</password>
+                <configuration>
+                  <httpConfiguration><all><usePreemptive>true</usePreemptive></all></httpConfiguration>
+                </configuration>
+              </server>
+              <server>
+                <id>vidocq-releases</id>
+                <username>vidocq-ci-deploy</username>
+                <password>${{ secrets.MAVEN_DEPLOY_TOKEN }}</password>
+                <configuration>
+                  <httpConfiguration><all><usePreemptive>true</usePreemptive></all></httpConfiguration>
+                </configuration>
+              </server>
               <server>
                 <id>vidocq-pr-staging</id>
                 <username>vidocq-ci-deploy</username>
@@ -61,8 +77,22 @@ jobs:
       - name: Compute PR version
         id: version
         run: |
-          # Lit la version actuelle du pom racine, en dérive la version PR.
-          BASE=$(mvn -q -DforceStdout help:evaluate -Dexpression=project.version -N | sed 's/-SNAPSHOT$//')
+          # On parse le pom directement en Python : `mvn help:evaluate -q` ne
+          # supprime pas tous les [INFO] en Maven 4, ce qui pollue stdout et
+          # produit des versions corrompues comme "[INFO]-PR1.1-SNAPSHOT".
+          BASE=$(python3 - <<'PY'
+          import re, xml.etree.ElementTree as ET
+          NS = {"m": "http://maven.apache.org/POM/4.1.0"}
+          root = ET.parse("pom.xml").getroot()
+          v = root.find("m:version", NS) or root.find("version")
+          text = (v.text if v is not None and v.text else "").strip()
+          print(re.sub(r"-SNAPSHOT$", "", text))
+          PY
+          )
+          if [ -z "$BASE" ]; then
+            echo "Impossible de lire project.version depuis pom.xml" >&2
+            exit 1
+          fi
           PR_VERSION="${BASE}-PR${{ github.event.number }}.${{ github.run_number }}-SNAPSHOT"
           echo "version=$PR_VERSION" >> "$GITHUB_OUTPUT"
           echo "PR version : $PR_VERSION"
