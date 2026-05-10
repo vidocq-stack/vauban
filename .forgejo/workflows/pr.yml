@@ -107,6 +107,58 @@ jobs:
             -DprocessAllModules=true \
             -DgenerateBackupPoms=false
 
+      - name: Sync plugin.xml descriptors avec la version PR
+        # versions:set ne touche pas aux resources. Or les modules avec
+        # packaging=maven-plugin embarquent un plugin.xml dans
+        # src/main/resources/META-INF/maven/ avec une <version> en dur — sans
+        # sync, le JAR de plugin contient un descriptor obsolète et tout
+        # consommateur du plugin échoue avec "Plugin's descriptor contains
+        # the wrong version".
+        run: |
+          python3 - <<'PY'
+          import re
+          import xml.etree.ElementTree as ET
+          from pathlib import Path
+
+          root_pom = ET.parse("pom.xml").getroot()
+          ns_uri = root_pom.tag[1:].split("}", 1)[0] if root_pom.tag.startswith("{") else ""
+          ns = {"m": ns_uri} if ns_uri else {}
+          v = root_pom.find("m:version", ns) if ns_uri else root_pom.find("version")
+          if v is None or not v.text:
+              raise SystemExit("version racine introuvable dans pom.xml")
+          ROOT_VERSION = v.text.strip()
+          print(f"Version racine = {ROOT_VERSION}")
+
+          count = 0
+          for pom in Path(".").rglob("pom.xml"):
+              if "target" in pom.parts:
+                  continue
+              try:
+                  root = ET.parse(pom).getroot()
+              except ET.ParseError:
+                  continue
+              pns_uri = root.tag[1:].split("}", 1)[0] if root.tag.startswith("{") else ""
+              pns = {"m": pns_uri} if pns_uri else {}
+              pkg = root.find("m:packaging", pns) if pns_uri else root.find("packaging")
+              if pkg is None or (pkg.text or "").strip() != "maven-plugin":
+                  continue
+              plugin_xml = pom.parent / "src/main/resources/META-INF/maven/plugin.xml"
+              if not plugin_xml.is_file():
+                  continue
+              content = plugin_xml.read_text(encoding="utf-8")
+              new = re.sub(
+                  r"(<artifactId>[^<]+</artifactId>\s*\n\s*<version>)[^<]+(</version>)",
+                  rf"\g<1>{ROOT_VERSION}\g<2>",
+                  content,
+                  count=1,
+              )
+              if new != content:
+                  plugin_xml.write_text(new, encoding="utf-8")
+                  print(f"sync : {plugin_xml} -> {ROOT_VERSION}")
+                  count += 1
+          print(f"Total : {count} plugin.xml synchronisé(s).")
+          PY
+
       - name: Build, test, deploy en pr-staging
         run: |
           mvn -B -ntp deploy -DskipTests=false \
