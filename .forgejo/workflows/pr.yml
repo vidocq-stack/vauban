@@ -246,15 +246,19 @@ jobs:
       matrix: ${{ fromJson(needs.discover-impact.outputs.matrix) }}
     steps:
       - name: Dispatch ${{ github.repository }} -> ${{ matrix.repo }}
+        # Forgejo Actions n'a pas l'endpoint repository_dispatch ; on utilise
+        # workflow_dispatch sur le fichier upstream-pr.yml présent dans le repo
+        # consommateur. La branche `main` est utilisée pour récupérer le HEAD
+        # courant du consommateur (qu'on testera contre la version PR upstream).
         run: |
           curl -fsSL -X POST \
             -H "Authorization: token ${{ secrets.VIDOCQ_BOT_TOKEN }}" \
             -H "Content-Type: application/json" \
-            "https://forge.vidocq.dev/api/v1/repos/${{ matrix.repo }}/dispatches" \
+            "https://forge.vidocq.dev/api/v1/repos/${{ matrix.repo }}/actions/workflows/upstream-pr.yml/dispatches" \
             -d "$(cat <<JSON
           {
-            "event_type": "upstream-pr",
-            "client_payload": {
+            "ref": "main",
+            "inputs": {
               "upstream_repo": "${{ github.repository }}",
               "upstream_version": "${{ needs.build-pr.outputs.version }}",
               "pr_number": "${{ github.event.number }}",
