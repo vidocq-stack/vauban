@@ -20,4 +20,10 @@ public record ScopeInfo(DotName annotationName, boolean isNormal) {
 
     public static final ScopeInfo SINGLETON = new ScopeInfo(
             DotName.of("jakarta.inject.Singleton"), false);
+
+    public static final ScopeInfo SESSION = new ScopeInfo(
+            DotName.of("jakarta.enterprise.context.SessionScoped"), true);
+
+    public static final ScopeInfo CONVERSATION = new ScopeInfo(
+            DotName.of("jakarta.enterprise.context.ConversationScoped"), true);
 }

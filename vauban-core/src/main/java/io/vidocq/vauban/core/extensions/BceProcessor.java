@@ -1334,6 +1334,10 @@ public final class BceProcessor {
                 scope = ScopeInfo.REQUEST;
             } else if (scopeAnn == jakarta.inject.Singleton.class) {
                 scope = ScopeInfo.SINGLETON;
+            } else if (scopeAnn == jakarta.enterprise.context.SessionScoped.class) {
+                scope = ScopeInfo.SESSION;
+            } else if (scopeAnn == jakarta.enterprise.context.ConversationScoped.class) {
+                scope = ScopeInfo.CONVERSATION;
             }
         }
 
