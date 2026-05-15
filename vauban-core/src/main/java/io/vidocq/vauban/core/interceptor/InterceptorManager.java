@@ -240,8 +240,7 @@ public final class InterceptorManager {
         for (var descriptor : interceptors) {
             if (!descriptor.enabled()) continue;
             if (allBindingNames.containsAll(descriptor.bindings()) && !descriptor.bindings().isEmpty()) {
-                if (!descriptor.bindingAnnotations().isEmpty() && !beanAnnotations.isEmpty()
-                        && !bindingMembersMatch(descriptor.bindingAnnotations(), beanAnnotations)) {
+                if (!bindingMembersMatchWherePresent(descriptor.bindingAnnotations(), beanAnnotations)) {
                     continue;
                 }
                 matches.add(descriptor);
@@ -276,8 +275,7 @@ public final class InterceptorManager {
         for (var descriptor : interceptors) {
             if (!descriptor.enabled()) continue;
             if (allBindings.containsAll(descriptor.bindings()) && !descriptor.bindings().isEmpty()) {
-                if (!descriptor.bindingAnnotations().isEmpty() && !currentBeanAnnotations.isEmpty()
-                        && !bindingMembersMatch(descriptor.bindingAnnotations(), currentBeanAnnotations)) {
+                if (!bindingMembersMatchWherePresent(descriptor.bindingAnnotations(), currentBeanAnnotations)) {
                     continue;
                 }
                 matches.add(descriptor);
@@ -315,8 +313,7 @@ public final class InterceptorManager {
         for (var descriptor : interceptors) {
             if (!descriptor.enabled()) continue;
             if (allBindings.containsAll(descriptor.bindings()) && !descriptor.bindings().isEmpty()) {
-                if (!descriptor.bindingAnnotations().isEmpty() && !beanAnnotations.isEmpty()
-                        && !bindingMembersMatch(descriptor.bindingAnnotations(), beanAnnotations)) {
+                if (!bindingMembersMatchWherePresent(descriptor.bindingAnnotations(), beanAnnotations)) {
                     continue;
                 }
                 matches.add(descriptor);
@@ -455,8 +452,7 @@ public final class InterceptorManager {
         for (var descriptor : interceptors) {
             if (!descriptor.enabled()) continue;
             if (bindings.containsAll(descriptor.bindings()) && !descriptor.bindings().isEmpty()) {
-                if (!descriptor.bindingAnnotations().isEmpty() && !beanAnnotations.isEmpty()
-                        && !bindingMembersMatch(descriptor.bindingAnnotations(), beanAnnotations)) {
+                if (!bindingMembersMatchWherePresent(descriptor.bindingAnnotations(), beanAnnotations)) {
                     continue;
                 }
                 matches.add(descriptor);
@@ -496,8 +492,7 @@ public final class InterceptorManager {
             // An interceptor matches if all its bindings are present on the target
             if (methodBindings.containsAll(descriptor.bindings()) && !descriptor.bindings().isEmpty()) {
                 // Check binding member values if both sides have annotation instances
-                if (!descriptor.bindingAnnotations().isEmpty() && !beanAnnotations.isEmpty()
-                        && !bindingMembersMatch(descriptor.bindingAnnotations(), beanAnnotations)) {
+                if (!bindingMembersMatchWherePresent(descriptor.bindingAnnotations(), beanAnnotations)) {
                     continue;
                 }
                 matches.add(descriptor);
@@ -549,6 +544,24 @@ public final class InterceptorManager {
         return true;
     }
 
+    private boolean bindingMembersMatchWherePresent(
+            List<java.lang.annotation.Annotation> interceptorBindings,
+            List<java.lang.annotation.Annotation> beanBindings) {
+        if (interceptorBindings.isEmpty() || beanBindings.isEmpty()) {
+            return true;
+        }
+        var beanTypes = beanBindings.stream()
+                .map(java.lang.annotation.Annotation::annotationType)
+                .collect(java.util.stream.Collectors.toSet());
+        var comparable = interceptorBindings.stream()
+                .filter(ann -> beanTypes.contains(ann.annotationType()))
+                .toList();
+        if (comparable.isEmpty()) {
+            return true;
+        }
+        return bindingMembersMatch(comparable, beanBindings);
+    }
+
     private boolean annotationMembersEqual(java.lang.annotation.Annotation a, java.lang.annotation.Annotation b) {
         for (var method : a.annotationType().getDeclaredMethods()) {
             if (method.isAnnotationPresent(jakarta.enterprise.util.Nonbinding.class)) continue;
@@ -585,7 +598,7 @@ public final class InterceptorManager {
             if (containsAll && !descriptor.bindings().isEmpty()) {
                 // Check binding member values if available
                 if (!descriptor.bindingAnnotations().isEmpty() && !beanAnnotations.isEmpty()
-                        && !bindingMembersMatch(descriptor.bindingAnnotations(), beanAnnotations)) {
+                        && !bindingMembersMatchWherePresent(descriptor.bindingAnnotations(), beanAnnotations)) {
                     continue;
                 }
                 matches.add(descriptor);
@@ -645,11 +658,7 @@ public final class InterceptorManager {
             if (!descriptor.enabled()) continue;
 
             if (bindings.containsAll(descriptor.bindings()) && !descriptor.bindings().isEmpty()) {
-                if (!descriptor.bindingAnnotations().isEmpty()) {
-                    if (bindingMembersMatch(descriptor.bindingAnnotations(), beanAnnotations)) {
-                        result.add(descriptor);
-                    }
-                } else {
+                if (bindingMembersMatchWherePresent(descriptor.bindingAnnotations(), beanAnnotations)) {
                     result.add(descriptor);
                 }
             }

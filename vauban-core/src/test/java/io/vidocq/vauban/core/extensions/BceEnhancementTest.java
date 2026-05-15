@@ -3,8 +3,7 @@ package io.vidocq.vauban.core.extensions;
 import io.vidocq.vauban.core.bean.model.ScopeInfo;
 import io.vidocq.vauban.core.container.VaubanContainerBuilder;
 import io.vidocq.vauban.indexer.IndexBuilder;
-import io.vidocq.vauban.indexer.model.DotName;
-import org.junit.jupiter.api.DisplayName;
+import io.vidocq.vauban.indexer.model.DotName;import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 
@@ -371,6 +370,91 @@ class BceEnhancementTest {
 
             assertTrue(config.isModified());
             assertTrue(config.isAllAnnotationsRemoved());
+        }
+    }
+
+    // ======================================================================
+    // Group 4: Class-level @InterceptorBinding added via Enhancement
+    // ======================================================================
+
+    /**
+     * Bug Heisenberg / MicroProfile Fault Tolerance : un BCE
+     * {@code @Enhancement} qui ajoutait un binding d'intercepteur via
+     * {@code ClassConfig.addAnnotation(SomeBinding.class)} était silencieusement
+     * ignoré. Seules les annotations qualifier étaient propagées aux
+     * {@code BeanDescriptor.interceptorBindings()} ; les bindings d'intercepteur
+     * ajoutés en class-level disparaissaient → aucun {@code @Interceptor}
+     * correspondant ne pouvait être activé.
+     *
+     * <p>Cas d'usage canonique : un binding marqueur (ex.
+     * {@code @FaultToleranceBinding}) ajouté par une BCE à toute classe portant
+     * {@code @Retry} / {@code @Timeout} / etc. — pattern utilisé par
+     * SmallRye Fault Tolerance et Heisenberg.</p>
+     */
+    @Nested
+    @DisplayName("class-level @InterceptorBinding propagation via Enhancement")
+    class ClassLevelInterceptorBindingPropagation {
+
+        @jakarta.interceptor.InterceptorBinding
+        @Retention(RetentionPolicy.RUNTIME)
+        @interface MarkerBinding {}
+
+        @Retention(RetentionPolicy.RUNTIME)
+        @interface NotABinding {}
+
+        private io.vidocq.vauban.core.bean.model.BeanDescriptor makeBean() {
+            var id = new io.vidocq.vauban.core.bean.model.BeanId("com.example.Dummy");
+            return new io.vidocq.vauban.core.bean.model.BeanDescriptor(
+                    id,
+                    DotName.of("com.example.Dummy"),
+                    io.vidocq.vauban.core.bean.model.BeanDescriptor.BeanKind.MANAGED,
+                    java.util.Set.of(),
+                    java.util.Set.of(),
+                    null,
+                    false,
+                    0,
+                    java.util.List.of(),
+                    null,
+                    java.util.Set.of(),
+                    java.util.Set.of(),
+                    java.util.List.of()
+            );
+        }
+
+        @Test
+        @DisplayName("@InterceptorBinding ajouté en class-level est propagé au BeanDescriptor")
+        void shouldPropagateClassLevelInterceptorBinding() {
+            var config = makeClassConfig();
+            config.addAnnotation(MarkerBinding.class);
+
+            var bean = makeBean();
+            var result = BceProcessor.applyEnhancements(
+                    java.util.List.of(bean),
+                    java.util.Map.of(bean.beanClass(), java.util.List.of(config))
+            );
+
+            assertEquals(1, result.size());
+            var bindings = result.get(0).interceptorBindings();
+            assertTrue(bindings.contains(DotName.of(MarkerBinding.class.getName())),
+                    "Expected interceptor binding to be propagated; bindings=" + bindings);
+        }
+
+        @Test
+        @DisplayName("annotation non-binding ajoutée en class-level n'est pas propagée comme binding")
+        void shouldNotPropagateNonBindingAnnotation() {
+            var config = makeClassConfig();
+            config.addAnnotation(NotABinding.class);
+
+            var bean = makeBean();
+            var result = BceProcessor.applyEnhancements(
+                    java.util.List.of(bean),
+                    java.util.Map.of(bean.beanClass(), java.util.List.of(config))
+            );
+
+            assertEquals(1, result.size());
+            assertFalse(result.get(0).interceptorBindings()
+                            .contains(DotName.of(NotABinding.class.getName())),
+                    "Non-binding annotations must not leak into interceptorBindings");
         }
     }
 }

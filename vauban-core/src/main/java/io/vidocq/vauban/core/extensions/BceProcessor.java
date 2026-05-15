@@ -1086,6 +1086,30 @@ public final class BceProcessor {
                 qualifiers.removeIf(q -> q.annotationName().equals(QualifierInstance.DEFAULT_NAME));
             }
 
+            // Class-level @InterceptorBinding additions -> propagate to bean's
+            // interceptor bindings so they take part in interceptor resolution.
+            // Without this, a BCE that uses ClassConfig.addAnnotation(SomeBinding.class)
+            // to mark a bean class with a marker interceptor binding (e.g. SmallRye's
+            // @FaultToleranceBinding pattern) is silently ignored — the binding never
+            // reaches BeanDescriptor.interceptorBindings(), so InterceptorBeanWrapper
+            // and InterceptorManager never wire the corresponding @Interceptor.
+            for (var ann : config.getAddedAnnotations()) {
+                if (!isInterceptorBindingAnnotation(ann)) continue;
+                interceptorBindings.add(DotName.of(ann.getName()));
+            }
+            for (var annInfo : config.getAddedAnnotationInfos()) {
+                if (!isInterceptorBindingAnnotationInfo(annInfo)) continue;
+                interceptorBindings.add(DotName.of(annInfo.name()));
+                if (annInfo instanceof BuiltAnnotationInfo built) {
+                    try {
+                        var proxy = createAnnotationProxy(built);
+                        if (proxy != null) interceptorBindingAnnotations.add(proxy);
+                    } catch (Exception ignored) {
+                        // intentionally empty — best effort binding-member capture
+                    }
+                }
+            }
+
             // Field-level modifications -> update injection points
             for (var fieldConfig : config.getFieldConfigs()) {
                 if (!fieldConfig.isModified()) continue;
@@ -1209,6 +1233,25 @@ public final class BceProcessor {
             // Unknown annotation: treat as qualifier to keep prior behaviour for cases
             // where the annotation is not on the runtime classpath.
             return true;
+        }
+    }
+
+    private static boolean isInterceptorBindingAnnotation(Class<? extends Annotation> ann) {
+        return ann.isAnnotationPresent(jakarta.interceptor.InterceptorBinding.class);
+    }
+
+    private static boolean isInterceptorBindingAnnotationInfo(AnnotationInfo annInfo) {
+        try {
+            var cl = Thread.currentThread().getContextClassLoader();
+            @SuppressWarnings("unchecked")
+            var clazz = (Class<? extends Annotation>) (cl != null
+                    ? Class.forName(annInfo.name(), false, cl)
+                    : Class.forName(annInfo.name()));
+            return isInterceptorBindingAnnotation(clazz);
+        } catch (ClassNotFoundException e) {
+            // Unknown annotation on the runtime classpath: don't assume it is
+            // an interceptor binding (the previous behaviour was to drop it).
+            return false;
         }
     }
 
