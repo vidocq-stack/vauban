@@ -672,13 +672,19 @@ public final class InterceptorManager {
     public Set<DotName> findBindingsOnClass(Class<?> beanClass, Predicate<DotName> isBinding) {
         var bindings = new LinkedHashSet<DotName>();
         var current = beanClass;
+        var onBeanClass = true;
         while (current != null && current != Object.class) {
-            for (var ann : current.getAnnotations()) {
+            for (var ann : current.getDeclaredAnnotations()) {
                 var annName = DotName.of(ann.annotationType().getName());
                 if (isBinding.test(annName)) {
-                    bindings.add(annName);
+                    if (onBeanClass
+                            || ann.annotationType().isAnnotationPresent(java.lang.annotation.Inherited.class)
+                            || isInterceptorBindingViaStereotype(ann)) {
+                        bindings.add(annName);
+                    }
                 }
             }
+            onBeanClass = false;
             current = current.getSuperclass();
         }
         return bindings;
