@@ -22,11 +22,16 @@ public final class VaubanInvocationContext implements InvocationContext {
     private final Method method;
     private Object[] parameters;
     private final List<InterceptorInvocation> chain;
-    private int currentIndex = -1;
     private final Map<String, Object> contextData = new HashMap<>();
     private final TargetInvoker targetInvoker;
     private Set<java.lang.annotation.Annotation> interceptorBindings;
     private Constructor<?> constructor;
+    // Note: the current position in the chain is NOT an instance field.
+    // It is carried by the {@code idx} parameter of {@link #proceedAt(int)} and
+    // propagated to the next interceptor via {@link ChainedContext}. This avoids any
+    // mutable shared state between threads - a typical @Asynchronous situation where
+    // a virtual thread executes {@code ctx.proceed()} after the initial thread
+    // has returned (and would have reset a shared counter to -1).
 
     /**
      * Functional interface for the final target invocation (to support super calls).
@@ -252,38 +257,49 @@ public final class VaubanInvocationContext implements InvocationContext {
     @SuppressWarnings("java:S3011") // CDI spec requires reflective access
     @Override
     public Object proceed() throws Exception {
+        return proceedAt(0);
+    }
+
+    /**
+     * Advances through the interceptor chain starting at index {@code idx}. This
+     * method does not mutate any instance state: {@code idx} is carried exclusively by
+     * the call stack and propagated to the next interceptor via {@link ChainedContext}.
+     *
+     * <p>Consequence: the instance is safe with respect to cross-thread calls (vthreads
+     * for {@code @Asynchronous}). Multiple successive calls to {@code proceed()} from
+     * the same interceptor ({@code @Retry} semantics) are still supported because each
+     * call re-enters at current index + 1, determined by the context passed to that
+     * interceptor, and not by a shared field.</p>
+     */
+    @SuppressWarnings("java:S3011") // CDI spec requires reflective access
+    Object proceedAt(int idx) throws Exception {
         try {
-            int savedIndex = currentIndex;
-            currentIndex++;
-            try {
-                if (currentIndex < chain.size()) {
-                    var invocation = chain.get(currentIndex);
-                    if (constructor != null && invocation.target() == null) {
-                        if (target == null) {
-                            return invocation.method().invoke(null, this);
-                        } else {
-                            makeAccessibleSafe(invocation.method());
-                            invocation.method().invoke(target, this);
-                            return null;
-                        }
+            if (idx < chain.size()) {
+                var invocation = chain.get(idx);
+                var nextCtx = new ChainedContext(this, idx + 1);
+                if (constructor != null && invocation.target() == null) {
+                    if (target == null) {
+                        return invocation.method().invoke(null, nextCtx);
+                    } else {
+                        makeAccessibleSafe(invocation.method());
+                        invocation.method().invoke(target, nextCtx);
+                        return null;
                     }
-                    return invocation.invoke(this);
-                } else {
-                    if (targetInvoker != null) {
-                        var result = targetInvoker.invoke(target, parameters);
-                        if (constructor != null && result != null) {
-                            target = result;
-                        }
-                        return constructor != null ? null : result;
-                    }
-                    if (method != null) {
-                        makeAccessibleSafe(method);
-                        return method.invoke(target, parameters);
-                    }
-                    return null;
                 }
-            } finally {
-                currentIndex = savedIndex;
+                return invocation.invoke(nextCtx);
+            } else {
+                if (targetInvoker != null) {
+                    var result = targetInvoker.invoke(target, parameters);
+                    if (constructor != null && result != null) {
+                        target = result;
+                    }
+                    return constructor != null ? null : result;
+                }
+                if (method != null) {
+                    makeAccessibleSafe(method);
+                    return method.invoke(target, parameters);
+                }
+                return null;
             }
         } catch (java.lang.reflect.InvocationTargetException e) {
             var cause = e.getCause();
@@ -291,6 +307,26 @@ public final class VaubanInvocationContext implements InvocationContext {
             if (cause instanceof Error err) throw err;
             throw e;
         }
+    }
+
+    /**
+     * Decorator view of the parent context that captures the chain position to visit on
+     * the next {@code proceed()}. All other methods delegate to the parent
+     * so that all interceptors share parameters / contextData /
+     * interceptor bindings.
+     */
+    private record ChainedContext(VaubanInvocationContext parent, int nextIdx) implements InvocationContext {
+        @Override public Object getTarget() { return parent.getTarget(); }
+        @Override public Object getTimer() { return parent.getTimer(); }
+        @Override public Method getMethod() { return parent.getMethod(); }
+        @Override public Constructor<?> getConstructor() { return parent.getConstructor(); }
+        @Override public Object[] getParameters() { return parent.getParameters(); }
+        @Override public void setParameters(Object[] params) { parent.setParameters(params); }
+        @Override public Map<String, Object> getContextData() { return parent.getContextData(); }
+        @Override public Set<java.lang.annotation.Annotation> getInterceptorBindings() {
+            return parent.getInterceptorBindings();
+        }
+        @Override public Object proceed() throws Exception { return parent.proceedAt(nextIdx); }
     }
 
     /**
