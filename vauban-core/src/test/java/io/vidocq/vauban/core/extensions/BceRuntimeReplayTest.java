@@ -123,33 +123,27 @@ class BceRuntimeReplayTest {
             try (var cl = new URLClassLoader(
                     new URL[]{jar.toUri().toURL()},
                     getClass().getClassLoader())) {
-              var testResourceClass = Class.forName("app.TestResource", true, cl);
-              assertFalse(
-                isAnnotationOnBytecode(testResourceClass, RequestScoped.class),
-                "Precondition: @RequestScoped MUST NOT be in the raw bytecode "
-                  + "(APT doit ne PAS reecrire le .class, conformement a la solution)"
-              );
+                var testResourceClass = Class.forName("app.TestResource", true, cl);
+                assertFalse(isAnnotationOnBytecode(testResourceClass, RequestScoped.class),
+                        "Precondition: @RequestScoped MUST NOT be in the raw bytecode "
+                                + "(APT doit ne PAS reecrire le .class, conformement a la solution)");
 
-              try (var container = VaubanContainer.builder()
-                .classLoader(cl)
-                .scanClasspath()
-                .build()) {
+                try (var container = VaubanContainer.builder()
+                        .classLoader(cl)
+                        .scanClasspath()
+                        .build()) {
 
-                var bm = container.getBeanManager();
-                var beans = bm.getBeans(testResourceClass);
+                    var bm = container.getBeanManager();
+                    var beans = bm.getBeans(testResourceClass);
 
-                assertFalse(
-                  beans.isEmpty(),
-                  "BeanManager should expose the pre-processed TestResource as a bean"
-                    + " after replaying BCE from vauban-bce-runtime.list"
-                );
+                    assertFalse(beans.isEmpty(),
+                            "BeanManager should expose the pre-processed TestResource as a bean"
+                                    + " after replaying BCE from vauban-bce-runtime.list");
 
-                Bean<?> bean = beans.iterator().next();
-                assertEquals(
-                  RequestScoped.class, bean.getScope(),
-                  "BCE must be replayed at runtime and @RequestScoped must be applied"
-                );
-              }
+                    Bean<?> bean = beans.iterator().next();
+                    assertEquals(RequestScoped.class, bean.getScope(),
+                            "BCE must be replayed at runtime and @RequestScoped must be applied");
+                }
             }
         }
     }
@@ -175,27 +169,25 @@ class BceRuntimeReplayTest {
             try (var cl = new URLClassLoader(
                     new URL[]{jar.toUri().toURL()},
                     getClass().getClassLoader())) {
-              var testResourceClass = Class.forName("app.TestResource", true, cl);
+                var testResourceClass = Class.forName("app.TestResource", true, cl);
 
-              try (var container = VaubanContainer.builder()
-                .classLoader(cl)
-                .scanClasspath()
-                .build()) {
+                try (var container = VaubanContainer.builder()
+                        .classLoader(cl)
+                        .scanClasspath()
+                        .build()) {
 
-                var bm = container.getBeanManager();
-                var allBeans = bm.getBeans(Object.class, Any.Literal.INSTANCE);
+                    var bm = container.getBeanManager();
+                    var allBeans = bm.getBeans(Object.class, Any.Literal.INSTANCE);
 
-                boolean found = allBeans.stream()
-                  .anyMatch(b -> b.getBeanClass().equals(testResourceClass));
+                    boolean found = allBeans.stream()
+                            .anyMatch(b -> b.getBeanClass().equals(testResourceClass));
 
-                assertTrue(
-                  found,
-                  "getBeans(Object.class, @Any) must contain the replayed TestResource bean. "
-                    + "This is the exact symptom of bug #7. "
-                    + "Actual bean classes: "
-                    + allBeans.stream().map(Bean::getBeanClass).toList()
-                );
-              }
+                    assertTrue(found,
+                            "getBeans(Object.class, @Any) must contain the replayed TestResource bean. "
+                                    + "This is the exact symptom of bug #7. "
+                                    + "Actual bean classes: "
+                                    + allBeans.stream().map(Bean::getBeanClass).toList());
+                }
             }
         }
     }
@@ -229,49 +221,41 @@ class BceRuntimeReplayTest {
                     new URL[]{jarA.toUri().toURL(), jarB.toUri().toURL()},
                     getClass().getClassLoader())) {
 
-              var classA = Class.forName("app.TestResourceA", true, cl);
-              var classB = Class.forName("app.TestResourceB", true, cl);
+                var classA = Class.forName("app.TestResourceA", true, cl);
+                var classB = Class.forName("app.TestResourceB", true, cl);
 
-              try (var container = VaubanContainer.builder()
-                .classLoader(cl)
-                .scanClasspath()
-                // JAR B est brut : le consommateur doit l'ajouter explicitement
-                // (pas de beans.list). Pattern normal d'un JAR legacy.
-                .addBeanClass(classB)
-                .build()) {
+                try (var container = VaubanContainer.builder()
+                        .classLoader(cl)
+                        .scanClasspath()
+                        // JAR B est brut : le consommateur doit l'ajouter explicitement
+                        // (pas de beans.list). Pattern normal d'un JAR legacy.
+                        .addBeanClass(classB)
+                        .build()) {
 
-                var bm = container.getBeanManager();
-                var allBeans = bm.getBeans(Object.class, Any.Literal.INSTANCE);
+                    var bm = container.getBeanManager();
+                    var allBeans = bm.getBeans(Object.class, Any.Literal.INSTANCE);
 
-                boolean foundA = allBeans.stream()
-                  .anyMatch(b -> b.getBeanClass().equals(classA));
-                boolean foundB = allBeans.stream()
-                  .anyMatch(b -> b.getBeanClass().equals(classB));
+                    boolean foundA = allBeans.stream()
+                            .anyMatch(b -> b.getBeanClass().equals(classA));
+                    boolean foundB = allBeans.stream()
+                            .anyMatch(b -> b.getBeanClass().equals(classB));
 
-                assertTrue(
-                  foundA,
-                  "TestResourceA (pre-processed) should be visible after replay from runtime-list"
-                );
-                assertTrue(
-                  foundB,
-                  "TestResourceB (raw JAR) should be visible after full BCE fallback"
-                );
+                    assertTrue(foundA,
+                            "TestResourceA (pre-processed) should be visible after replay from runtime-list");
+                    assertTrue(foundB,
+                            "TestResourceB (raw JAR) should be visible after full BCE fallback");
 
-                // Les deux beans DOIVENT avoir scope @RequestScoped
-                var beanA = allBeans.stream()
-                  .filter(b -> b.getBeanClass().equals(classA)).findFirst().orElseThrow();
-                var beanB = allBeans.stream()
-                  .filter(b -> b.getBeanClass().equals(classB)).findFirst().orElseThrow();
+                    // Les deux beans DOIVENT avoir scope @RequestScoped
+                    var beanA = allBeans.stream()
+                            .filter(b -> b.getBeanClass().equals(classA)).findFirst().orElseThrow();
+                    var beanB = allBeans.stream()
+                            .filter(b -> b.getBeanClass().equals(classB)).findFirst().orElseThrow();
 
-                assertEquals(
-                  RequestScoped.class, beanA.getScope(),
-                  "TestResourceA should have @RequestScoped from BCE replay"
-                );
-                assertEquals(
-                  RequestScoped.class, beanB.getScope(),
-                  "TestResourceB should have @RequestScoped from full BCE fallback"
-                );
-              }
+                    assertEquals(RequestScoped.class, beanA.getScope(),
+                            "TestResourceA should have @RequestScoped from BCE replay");
+                    assertEquals(RequestScoped.class, beanB.getScope(),
+                            "TestResourceB should have @RequestScoped from full BCE fallback");
+                }
             }
         }
     }
