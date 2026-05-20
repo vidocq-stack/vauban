@@ -120,3 +120,25 @@ jobs:
 
       - name: Deploy to Forgejo Maven registry
         run: mvn -B -ntp deploy -DskipTests
+      - name: Notify Slack on failure
+        if: failure()
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          REPO: ${{ github.repository }}
+          REF: ${{ github.ref_name }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          if [ -z "${SLACK_WEBHOOK_URL:-}" ]; then
+            echo "❌ Secret Forgejo manquant : SLACK_WEBHOOK_URL" >&2
+            exit 1
+          fi
+          payload=$(node <<'JS'
+          process.stdout.write(JSON.stringify({
+            text: `[ViBot]: ❌ *Build CI échoué* — \`${process.env.REPO}\`@${process.env.REF}\n<${process.env.RUN_URL}|Voir le run>`
+          }))
+          JS
+          )
+          curl -fsS -X POST "$SLACK_WEBHOOK_URL" \
+            -H 'Content-Type: application/json' \
+            -d "$payload"
