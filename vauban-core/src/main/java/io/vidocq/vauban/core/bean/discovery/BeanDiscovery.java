@@ -31,6 +31,13 @@ public final class BeanDiscovery {
         annotations.add(DotName.of("jakarta.enterprise.inject.Model"));
         annotations.add(DotName.of("jakarta.interceptor.Interceptor"));
         annotations.add(DotName.of("jakarta.decorator.Decorator"));
+        // JAX-RS 4.0 §11.2.5 : les classes @Provider et @Path DOIVENT être discoverable
+        // comme beans CDI (managed beans avec scope @Dependent par défaut si non spécifié).
+        // Sans cette règle, un @Provider sans scope explicite est ignoré par CDI bean
+        // discovery, et donc invisible aux containers JAX-RS qui s'appuient sur le
+        // BeanManager pour découvrir leurs providers (cf. cassini-cdi-vauban).
+        annotations.add(DotName.of("jakarta.ws.rs.ext.Provider"));
+        annotations.add(DotName.of("jakarta.ws.rs.Path"));
         BEAN_DEFINING_ANNOTATIONS = Set.copyOf(annotations);
     }
 
