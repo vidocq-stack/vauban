@@ -445,12 +445,18 @@ public final class BceProcessor {
             for (var m : getDeclaredMethodsSafe(targetClass)) {
                 if (m.isAnnotationPresent(ann)) return true;
             }
-            for (var f : targetClass.getDeclaredFields()) {
-                if (f.isAnnotationPresent(ann)) return true;
-            }
-            for (var c : targetClass.getDeclaredConstructors()) {
-                if (c.isAnnotationPresent(ann)) return true;
-            }
+            // Defensive : getDeclaredFields/Constructors peut throw NoClassDefFoundError
+            // si une signature référence un type optionnel absent du classpath.
+            try {
+                for (var f : targetClass.getDeclaredFields()) {
+                    if (f.isAnnotationPresent(ann)) return true;
+                }
+            } catch (LinkageError ignored) { /* skip */ }
+            try {
+                for (var c : targetClass.getDeclaredConstructors()) {
+                    if (c.isAnnotationPresent(ann)) return true;
+                }
+            } catch (LinkageError ignored) { /* skip */ }
         }
         return false;
     }
@@ -1320,11 +1326,24 @@ public final class BceProcessor {
     /**
      * Get declared methods including from superclasses (for InvokerHolderExtensionBase pattern),
      * sorted by @Priority (lower value = earlier execution, no @Priority = APPLICATION + 500 = 2500).
+     *
+     * <p>Defensive : {@code Class.getDeclaredMethods()} déclenche la résolution
+     * des types des signatures (paramètres, return, throws). Si une signature
+     * référence un type absent du classpath (typiquement une dep optionnelle
+     * du module scanné — ex: {@code jakarta.xml.bind.JAXBException} dans un
+     * {@code throws} de {@code cassini-core/MessageBodyRegistry}), la JVM
+     * throw un {@link LinkageError} (typiquement {@code NoClassDefFoundError}).
+     * On l'attrape et on skip cette couche de la hiérarchie — la classe ne
+     * peut simplement pas être inspectée méthode-par-méthode dans ce contexte.</p>
      */
     private static Method[] getDeclaredMethodsSafe(Class<?> cls) {
         var methods = new ArrayList<Method>();
         for (var c = cls; c != null && c != Object.class; c = c.getSuperclass()) {
-            Collections.addAll(methods, c.getDeclaredMethods());
+            try {
+                Collections.addAll(methods, c.getDeclaredMethods());
+            } catch (LinkageError ignored) {
+                // Type optionnel manquant dans une signature — skip cette couche.
+            }
         }
         methods.sort(Comparator.comparingInt(BceProcessor::getMethodPriority));
         return methods.toArray(new Method[0]);
