@@ -196,7 +196,7 @@ Deux générateurs de client proxy coexistaient avec des contrats incompatibles 
 
 `InterceptorBeanWrapper.getOrCreateProxy` (lignes 235-249) attend exclusivement le second format. `loadOrDefineClassRobustly` charge en priorité le `_ClientProxy.class` pré-généré par APT, donc le format ancien shadows toujours le runtime.
 
-### Pourquoi `vidocq-mps-rest-example` fonctionnait quand même
+### Pourquoi `vidocq-runtime-cassini-rest-example` fonctionnait quand même
 
 Son `target/classes/.../TodoResource_ClientProxy.class` venait d'une compilation antérieure faite avec une version du `ClientProxyGenerator` qui produisait déjà le format moderne — il n'avait simplement pas été régénéré depuis le drift.
 
@@ -246,7 +246,7 @@ jakarta.enterprise.context.ContextNotActiveException
 
 ### Repro minimal
 
-Le projet `vidocq-mps-mansart-h2-example` reproduit en module-path :
+Le projet `vidocq-runtime-mansart-h2-example` reproduit en module-path :
 
 ```java
 @ApplicationScoped

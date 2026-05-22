@@ -31,7 +31,7 @@ ArC partage la philosophie build-time de Vauban. Le portage est conceptuellement
 
 | `@io.quarkus.arc.profile.IfBuildProfile`
 | Pas d'équivalent
-| Le profilage build-time relève de la couche xref:vidocq::index.adoc[Vidocq-MPS].
+| Le profilage build-time relève de la couche xref:vidocq::index.adoc[Vidocq Runtime].
 
 | Quarkus Dev Mode
 | `vauban-junit` + cycle Maven standard

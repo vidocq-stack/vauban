@@ -3,25 +3,25 @@
 **Date** : 2026-05-07
 **Statut** : `RESOLVED`
 **Périmètre** : `vauban-processor`, `vauban-core`, `vauban/BUG.md`
-**Validation finale** : `vidocq-mps-mansart-h2-example` répond 200/201/204 sur tous les endpoints, plus aucun NPE.
+**Validation finale** : `vidocq-runtime-mansart-h2-example` répond 200/201/204 sur tous les endpoints, plus aucun NPE.
 
 ---
 
 ## 1. Contexte du signalement
 
-L'application `vidocq-mps-mansart-h2-example` démarrait correctement (les 7 extensions Vidocq se chargent, Chappe ouvre le port 8080), mais toute requête HTTP vers une ressource JAX-RS plantait :
+L'application `vidocq-runtime-mansart-h2-example` démarrait correctement (les 7 extensions Vidocq se chargent, Chappe ouvre le port 8080), mais toute requête HTTP vers une ressource JAX-RS plantait :
 
 ```
 GRAVE: Cassini dispatch error
 java.lang.NullPointerException: Cannot invoke "jakarta.enterprise.inject.Instance.get()"
     because "this.dataSourceInstance" is null
-        at io.vidocq.mpserver.examples.mansart.DatabaseInspectorResource.rawProducts(...:37)
+        at io.vidocq.runtime.examples.mansart.DatabaseInspectorResource.rawProducts(...:37)
         at io.vidocq.cassini.internal.Invoker.invokeInternal(Invoker.java:693)
 ```
 
 Symétriquement pour `ProductResource.list` : `this.products is null`.
 
-L'exemple jumeau `vidocq-mps-rest-example` (même pattern `@ApplicationScoped @Path` + `@Inject T`) fonctionnait, ce qui rendait le diagnostic non trivial.
+L'exemple jumeau `vidocq-runtime-cassini-rest-example` (même pattern `@ApplicationScoped @Path` + `@Inject T`) fonctionnait, ce qui rendait le diagnostic non trivial.
 
 ## 2. Démarche d'investigation
 
@@ -135,7 +135,7 @@ Reactor vauban : BUILD SUCCESS (full install)
 Reactor vidocq  : BUILD SUCCESS (clean install)
 ```
 
-### 4.2. E2E `vidocq-mps-mansart-h2-example`
+### 4.2. E2E `vidocq-runtime-mansart-h2-example`
 
 Après `clean install` cascade (pour régénérer les `_ClientProxy.class` au format moderne) :
 

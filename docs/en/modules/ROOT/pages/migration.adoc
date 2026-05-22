@@ -31,7 +31,7 @@ ArC shares Vauban's build-time philosophy. The port is conceptually direct; gaps
 
 | `@io.quarkus.arc.profile.IfBuildProfile`
 | No equivalent
-| Build-time profiling is the responsibility of the xref:vidocq::index.adoc[Vidocq-MPS] layer.
+| Build-time profiling is the responsibility of the xref:vidocq::index.adoc[Vidocq Runtime] layer.
 
 | Quarkus Dev Mode
 | `vauban-junit` + standard Maven cycle

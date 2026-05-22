@@ -201,7 +201,7 @@ Vauban needs no application configuration file. Bean selection happens via:
 * the `module-info.java` (JPMS visibility);
 * the bootstrap strategy (`scanLocal()`, `scanClasspath()`, `addBeanClass()`).
 
-For dynamic application configuration, use MicroProfile Config through xref:vidocq::index.adoc[Vidocq-MPS].
+For dynamic application configuration, use MicroProfile Config through xref:vidocq::index.adoc[Vidocq Runtime].
 
 == Bugs and benchmarks
 

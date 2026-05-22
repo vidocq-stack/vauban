@@ -1,5 +1,5 @@
 # Template à fusionner dans le `ci.yml` existant de chaque repo *producteur*
-# (vauban, cassini, champollion, foy, chappe, vidocq-mps, mansart, ravel).
+# (vauban, cassini, champollion, foy, chappe, vidocq, mansart, ravel).
 #
 # CE FICHIER NE SE COPIE PAS TEL QUEL. Il sert de référence : ses 4 jobs
 # (`build-pr`, `discover-impact`, `trigger-downstream`, `verify-downstream`)
@@ -301,7 +301,7 @@ jobs:
             | jq -r '.include[].repo' | sed 's|.*|downstream/&|')
           echo "Contextes attendus :"
           echo "$EXPECTED"
-          DEADLINE=$(( $(date +%s) + 3600 ))  # 60 min max (mansart/vidocq-mps lourds)
+          DEADLINE=$(( $(date +%s) + 3600 ))  # 60 min max (mansart/vidocq lourds)
           ITERATION=0
           while [ $(date +%s) -lt $DEADLINE ]; do
             ITERATION=$((ITERATION + 1))

@@ -17,12 +17,12 @@ import static org.junit.jupiter.api.Assertions.*;
  *
  * <h2>Contexte Vidocq</h2>
  * Vidocq est un framework modulaire JPMS. L'application utilisateur est un
- * module nomme ({@code module io.vidocq.mpserver.app}) qui ouvre ses packages
+ * module nomme ({@code module io.vidocq.runtime.app}) qui ouvre ses packages
  * a {@code io.vidocq.vauban.core}. Mais {@code opens ... to} ne suffit pas :
  * le module appelant doit aussi <em>lire</em> le module cible via
  * {@code Module.addReads()}, sinon {@code MethodHandles.privateLookupIn()}
  * echoue avec {@code IllegalAccessException: module io.vidocq.vauban.core
- * does not read module io.vidocq.mpserver.app}.
+ * does not read module io.vidocq.runtime.app}.
  *
  * <h2>Fix</h2>
  * {@code VaubanLookup.lookupFor()} appelle desormais {@code addReads()} avant

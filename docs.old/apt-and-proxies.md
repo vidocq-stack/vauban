@@ -70,8 +70,8 @@ Exemple de `vauban-beans.list` :
 ```text
 # Vauban discovered beans — generated at compile time by APT
 io.vidocq.mansart.data.cdi.MansartRuntimeProducer
-io.vidocq.mpserver.examples.mansart.DatabaseInspectorResource
-io.vidocq.mpserver.examples.mansart.ProductResource
+io.vidocq.runtime.examples.mansart.DatabaseInspectorResource
+io.vidocq.runtime.examples.mansart.ProductResource
 ...
 ```
 

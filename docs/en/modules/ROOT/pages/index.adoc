@@ -53,7 +53,7 @@ graph TB
   FACT --> CORE
   CORE --> CASSINI[Cassini]
   CORE --> FOY[Foy]
-  CORE --> MPS[Vidocq-MPS]
+  CORE --> MPS[Vidocq Runtime]
   classDef rt fill:#e1f5fe,stroke:#0288d1
   class CORE,API rt
 ....

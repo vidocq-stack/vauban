@@ -201,7 +201,7 @@ Vauban ne nécessite aucun fichier de configuration applicatif. La sélection de
 * le `module-info.java` (visibilité JPMS) ;
 * la stratégie de bootstrap (`scanLocal()`, `scanClasspath()`, `addBeanClass()`).
 
-Pour la configuration applicative dynamique, utiliser MicroProfile Config via xref:vidocq::index.adoc[Vidocq-MPS].
+Pour la configuration applicative dynamique, utiliser MicroProfile Config via xref:vidocq::index.adoc[Vidocq Runtime].
 
 == Bugs et benchmarks
 
