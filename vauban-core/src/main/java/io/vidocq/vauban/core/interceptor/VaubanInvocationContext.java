@@ -233,7 +233,9 @@ public final class VaubanInvocationContext implements InvocationContext {
     }
 
     private static boolean isInterceptorBinding(java.lang.annotation.Annotation ann) {
-        return ann.annotationType().isAnnotationPresent(jakarta.interceptor.InterceptorBinding.class);
+        var t = ann.annotationType();
+        return t.isAnnotationPresent(jakarta.interceptor.InterceptorBinding.class)
+                || io.vidocq.vauban.core.container.VaubanBeanManager.isCustomInterceptorBinding(t);
     }
 
     private static void addTransitiveBindings(Set<java.lang.annotation.Annotation> bindings) {

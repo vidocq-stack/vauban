@@ -191,7 +191,9 @@ public final class ManagedBean<T> implements Bean<T> {
         }
         var annotations = new java.util.LinkedHashSet<java.lang.annotation.Annotation>();
         for (var ann : clazz.getAnnotations()) {
-            if (ann.annotationType().isAnnotationPresent(jakarta.interceptor.InterceptorBinding.class)) {
+            var t = ann.annotationType();
+            if (t.isAnnotationPresent(jakarta.interceptor.InterceptorBinding.class)
+                    || VaubanBeanManager.isCustomInterceptorBinding(t)) {
                 annotations.add(ann);
             }
         }
@@ -209,10 +211,12 @@ public final class ManagedBean<T> implements Bean<T> {
             Set<java.lang.annotation.Annotation> toAdd,
             Set<java.lang.annotation.Annotation> existing) {
         for (var meta : annType.getAnnotations()) {
-            if (meta.annotationType().isAnnotationPresent(jakarta.interceptor.InterceptorBinding.class)
-                    && !existing.contains(meta) && !toAdd.contains(meta)) {
+            var mt = meta.annotationType();
+            boolean isBinding = mt.isAnnotationPresent(jakarta.interceptor.InterceptorBinding.class)
+                    || VaubanBeanManager.isCustomInterceptorBinding(mt);
+            if (isBinding && !existing.contains(meta) && !toAdd.contains(meta)) {
                 toAdd.add(meta);
-                collectTransitiveBindingAnnotations(meta.annotationType(), toAdd, existing);
+                collectTransitiveBindingAnnotations(mt, toAdd, existing);
             }
         }
     }
@@ -222,10 +226,12 @@ public final class ManagedBean<T> implements Bean<T> {
         var clazz = instance.getClass();
         if (clazz.getName().contains("$$Intercepted")) clazz = clazz.getSuperclass();
         for (var ann : clazz.getAnnotations()) {
-            if (ann.annotationType().isAnnotationPresent(jakarta.interceptor.InterceptorBinding.class)) {
-                bindings.add(io.vidocq.vauban.indexer.model.DotName.of(ann.annotationType().getName()));
+            var t = ann.annotationType();
+            if (t.isAnnotationPresent(jakarta.interceptor.InterceptorBinding.class)
+                    || VaubanBeanManager.isCustomInterceptorBinding(t)) {
+                bindings.add(io.vidocq.vauban.indexer.model.DotName.of(t.getName()));
                 // Collect transitive bindings from meta-annotations
-                collectTransitiveInterceptorBindings(ann.annotationType(), bindings);
+                collectTransitiveInterceptorBindings(t, bindings);
             }
         }
         return bindings;
@@ -234,10 +240,12 @@ public final class ManagedBean<T> implements Bean<T> {
     private static void collectTransitiveInterceptorBindings(Class<? extends java.lang.annotation.Annotation> annType,
             Set<io.vidocq.vauban.indexer.model.DotName> bindings) {
         for (var meta : annType.getAnnotations()) {
-            if (meta.annotationType().isAnnotationPresent(jakarta.interceptor.InterceptorBinding.class)) {
-                var name = io.vidocq.vauban.indexer.model.DotName.of(meta.annotationType().getName());
+            var mt = meta.annotationType();
+            if (mt.isAnnotationPresent(jakarta.interceptor.InterceptorBinding.class)
+                    || VaubanBeanManager.isCustomInterceptorBinding(mt)) {
+                var name = io.vidocq.vauban.indexer.model.DotName.of(mt.getName());
                 if (bindings.add(name)) {
-                    collectTransitiveInterceptorBindings(meta.annotationType(), bindings);
+                    collectTransitiveInterceptorBindings(mt, bindings);
                 }
             }
         }
