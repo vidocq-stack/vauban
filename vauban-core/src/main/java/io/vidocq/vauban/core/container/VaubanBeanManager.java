@@ -51,6 +51,10 @@ public final class VaubanBeanManager implements BeanManager {
         return customQualifierTypes.contains(annotationType);
     }
 
+    public static boolean isCustomInterceptorBinding(Class<?> annotationType) {
+        return customInterceptorBindingTypes.contains(annotationType);
+    }
+
     private final VaubanContainer container;
     private final Map<Class<? extends Annotation>, List<Context>> contexts;
     private static final String MSG_NOT_IMPLEMENTED = "Not yet implemented";

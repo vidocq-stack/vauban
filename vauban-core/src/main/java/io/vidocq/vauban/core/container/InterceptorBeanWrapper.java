@@ -290,7 +290,8 @@ final class InterceptorBeanWrapper {
             var beanClass = container.loadClass(mb.descriptor().beanClass().value());
             for (var m : beanClass.getDeclaredMethods()) {
                 for (var ann : m.getAnnotations()) {
-                    if (ann.annotationType().isAnnotationPresent(jakarta.interceptor.InterceptorBinding.class)) {
+                    if (ann.annotationType().isAnnotationPresent(jakarta.interceptor.InterceptorBinding.class)
+                            || VaubanBeanManager.isCustomInterceptorBinding(ann.annotationType())) {
                         return true;
                     }
                 }
@@ -317,7 +318,8 @@ final class InterceptorBeanWrapper {
         }
         for (var m : beanClass.getDeclaredMethods()) {
             for (var ann : m.getAnnotations()) {
-                if (ann.annotationType().isAnnotationPresent(jakarta.interceptor.InterceptorBinding.class)) {
+                if (ann.annotationType().isAnnotationPresent(jakarta.interceptor.InterceptorBinding.class)
+                        || VaubanBeanManager.isCustomInterceptorBinding(ann.annotationType())) {
                     allBindings.add(DotName.of(ann.annotationType().getName()));
                 }
             }
@@ -371,7 +373,8 @@ final class InterceptorBeanWrapper {
                 try {
                     var cls = container.loadClass(descriptor.beanClass().value());
                     for (var ann : cls.getAnnotations()) {
-                        if (ann.annotationType().isAnnotationPresent(jakarta.interceptor.InterceptorBinding.class)) {
+                        if (ann.annotationType().isAnnotationPresent(jakarta.interceptor.InterceptorBinding.class)
+                                || VaubanBeanManager.isCustomInterceptorBinding(ann.annotationType())) {
                             bindings.add(DotName.of(ann.annotationType().getName()));
                         }
                     }
@@ -557,12 +560,14 @@ final class InterceptorBeanWrapper {
 
                         var bindingAnnotationsByType = new java.util.LinkedHashMap<Class<?>, java.lang.annotation.Annotation>();
                         for (var ann : finalBeanClass.getAnnotations()) {
-                             if (ann.annotationType().isAnnotationPresent(jakarta.interceptor.InterceptorBinding.class)) {
+                             if (ann.annotationType().isAnnotationPresent(jakarta.interceptor.InterceptorBinding.class)
+                                     || VaubanBeanManager.isCustomInterceptorBinding(ann.annotationType())) {
                                  bindingAnnotationsByType.put(ann.annotationType(), ann);
                              }
                         }
                         for (var ann : targetCtor.getAnnotations()) {
-                            if (ann.annotationType().isAnnotationPresent(jakarta.interceptor.InterceptorBinding.class)) {
+                            if (ann.annotationType().isAnnotationPresent(jakarta.interceptor.InterceptorBinding.class)
+                                    || VaubanBeanManager.isCustomInterceptorBinding(ann.annotationType())) {
                                 bindingAnnotationsByType.put(ann.annotationType(), ann);
                             }
                         }

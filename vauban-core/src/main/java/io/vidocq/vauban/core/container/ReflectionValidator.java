@@ -375,10 +375,13 @@ final class ReflectionValidator {
         for (var ann : annotations) {
             var annType = ann.annotationType();
             if (annType.isAnnotationPresent(jakarta.enterprise.inject.Stereotype.class)
-                    || annType.isAnnotationPresent(jakarta.interceptor.InterceptorBinding.class)) {
+                    || annType.isAnnotationPresent(jakarta.interceptor.InterceptorBinding.class)
+                    || VaubanBeanManager.isCustomInterceptorBinding(annType)) {
                 if (!visited.add(annType)) continue;
                 for (var metaAnn : annType.getAnnotations()) {
-                    if (metaAnn.annotationType().isAnnotationPresent(jakarta.interceptor.InterceptorBinding.class)) {
+                    var mt = metaAnn.annotationType();
+                    if (mt.isAnnotationPresent(jakarta.interceptor.InterceptorBinding.class)
+                            || VaubanBeanManager.isCustomInterceptorBinding(mt)) {
                         var prev = bindingsByType.put(metaAnn.annotationType(), metaAnn);
                         if (prev != null && !prev.equals(metaAnn)) {
                             errors.add("Bean " + beanName

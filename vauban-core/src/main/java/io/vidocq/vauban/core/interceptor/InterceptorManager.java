@@ -103,18 +103,19 @@ public final class InterceptorManager {
         this.instanceFactory = factory;
     }
 
-    private void collectBindingsRecursively(java.lang.annotation.Annotation[] annotations, 
-                                            Map<Class<? extends java.lang.annotation.Annotation>, java.lang.annotation.Annotation> result, 
+    private void collectBindingsRecursively(java.lang.annotation.Annotation[] annotations,
+                                            Map<Class<? extends java.lang.annotation.Annotation>, java.lang.annotation.Annotation> result,
                                             Set<Class<? extends java.lang.annotation.Annotation>> visited) {
         for (var ann : annotations) {
             var type = ann.annotationType();
             if (visited.add(type)) {
-                if (type.isAnnotationPresent(jakarta.interceptor.InterceptorBinding.class)) {
+                boolean isBinding = type.isAnnotationPresent(jakarta.interceptor.InterceptorBinding.class)
+                        || io.vidocq.vauban.core.container.VaubanBeanManager.isCustomInterceptorBinding(type);
+                if (isBinding) {
                     result.put(type, ann);
                 }
                 // Transitive bindings and Stereotypes
-                if (type.isAnnotationPresent(jakarta.interceptor.InterceptorBinding.class) 
-                    || type.isAnnotationPresent(jakarta.enterprise.inject.Stereotype.class)) {
+                if (isBinding || type.isAnnotationPresent(jakarta.enterprise.inject.Stereotype.class)) {
                     collectBindingsRecursively(type.getAnnotations(), result, visited);
                 }
             }
@@ -345,7 +346,8 @@ public final class InterceptorManager {
             var cl = Thread.currentThread().getContextClassLoader();
             var clazz = cl != null ? Class.forName(name.value(), false, cl)
                     : Class.forName(name.value());
-            return clazz.isAnnotationPresent(jakarta.interceptor.InterceptorBinding.class);
+            return clazz.isAnnotationPresent(jakarta.interceptor.InterceptorBinding.class)
+                    || io.vidocq.vauban.core.container.VaubanBeanManager.isCustomInterceptorBinding(clazz);
         } catch (Exception e) {
             return false;
         }

@@ -145,8 +145,10 @@ final class BeanLifecycle {
         }
         var annotations = new LinkedHashSet<Annotation>();
         for (var ann : clazz.getAnnotations()) {
-            if (ann.annotationType().isAnnotationPresent(jakarta.interceptor.InterceptorBinding.class)) {
-                bindings.add(DotName.of(ann.annotationType().getName()));
+            var t = ann.annotationType();
+            if (t.isAnnotationPresent(jakarta.interceptor.InterceptorBinding.class)
+                    || VaubanBeanManager.isCustomInterceptorBinding(t)) {
+                bindings.add(DotName.of(t.getName()));
                 annotations.add(ann);
             }
         }
@@ -162,9 +164,11 @@ final class BeanLifecycle {
         var annotations = new LinkedHashSet<Annotation>();
         var dotNames = new LinkedHashSet<DotName>();
         for (var ann : clazz.getAnnotations()) {
-            if (ann.annotationType().isAnnotationPresent(jakarta.interceptor.InterceptorBinding.class)) {
+            var t = ann.annotationType();
+            if (t.isAnnotationPresent(jakarta.interceptor.InterceptorBinding.class)
+                    || VaubanBeanManager.isCustomInterceptorBinding(t)) {
                 annotations.add(ann);
-                dotNames.add(DotName.of(ann.annotationType().getName()));
+                dotNames.add(DotName.of(t.getName()));
             }
         }
         collectTransitiveBindings(annotations, dotNames);
