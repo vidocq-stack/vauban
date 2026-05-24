@@ -63,10 +63,6 @@ jobs:
     runs-on: ubuntu-latest
     needs: tck
 
-    permissions:
-      packages: write
-      contents: read
-
     steps:
       - uses: actions/checkout@v4
 
@@ -83,7 +79,7 @@ jobs:
           tar -xzf apache-maven-4.0.0-rc-5-bin.tar.gz -C /opt
           echo "/opt/apache-maven-4.0.0-rc-5/bin" >> "$GITHUB_PATH"
 
-      - name: Configure Maven credentials
+      - name: Configure Maven credentials (Sonatype Central Portal)
         run: |
           mkdir -p ~/.m2
           cat > ~/.m2/settings.xml <<EOF
@@ -91,35 +87,35 @@ jobs:
           <settings>
             <servers>
               <server>
-                <id>vidocq-snapshots</id>
-                <username>vidocq-ci-deploy</username>
-                <password>${{ secrets.MAVEN_DEPLOY_TOKEN }}</password>
-                <configuration>
-                  <httpConfiguration>
-                    <all>
-                      <usePreemptive>true</usePreemptive>
-                    </all>
-                  </httpConfiguration>
-                </configuration>
+                <id>central</id>
+                <username>${{ secrets.CENTRAL_USERNAME }}</username>
+                <password>${{ secrets.CENTRAL_TOKEN }}</password>
               </server>
               <server>
-                <id>vidocq-releases</id>
-                <username>vidocq-ci-deploy</username>
-                <password>${{ secrets.MAVEN_DEPLOY_TOKEN }}</password>
-                <configuration>
-                  <httpConfiguration>
-                    <all>
-                      <usePreemptive>true</usePreemptive>
-                    </all>
-                  </httpConfiguration>
-                </configuration>
+                <id>central-snapshots</id>
+                <username>${{ secrets.CENTRAL_USERNAME }}</username>
+                <password>${{ secrets.CENTRAL_TOKEN }}</password>
               </server>
             </servers>
           </settings>
           EOF
 
-      - name: Deploy to Forgejo Maven registry
-        run: mvn -B -ntp deploy -DskipTests
+      - name: Import GPG signing key
+        env:
+          GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
+        run: |
+          echo "$GPG_PRIVATE_KEY" | gpg --batch --yes --import
+          # Pré-définit l'agent GPG en mode loopback pour que maven-gpg-plugin
+          # puisse lui injecter la passphrase via --pinentry-mode loopback (cf.
+          # profile 'release' du pom).
+          echo 'allow-loopback-pinentry' > ~/.gnupg/gpg-agent.conf 2>/dev/null || \
+            (mkdir -p ~/.gnupg && chmod 700 ~/.gnupg && echo 'allow-loopback-pinentry' > ~/.gnupg/gpg-agent.conf)
+          gpgconf --kill gpg-agent || true
+
+      - name: Deploy to Maven Central Portal
+        env:
+          GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
+        run: mvn -B -ntp -Prelease deploy -DskipTests -Dgpg.passphrase="$GPG_PASSPHRASE"
       - name: Notify Slack on failure
         if: failure()
         env:
