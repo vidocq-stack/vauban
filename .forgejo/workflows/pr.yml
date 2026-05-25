@@ -59,8 +59,8 @@ jobs:
     needs: build-pr
     runs-on: ubuntu-latest
     outputs:
-      matrix: ${{ steps.resolve.outputs.matrix }}
-      has_consumers: ${{ steps.resolve.outputs.has_consumers }}
+      matrix: ${{ steps.filter.outputs.matrix }}
+      has_consumers: ${{ steps.filter.outputs.has_consumers }}
     steps:
       - uses: actions/checkout@v4
 
@@ -114,7 +114,40 @@ jobs:
             --graph /tmp/inverted.json \
             --changed ${{ steps.produced.outputs.artifacts }} \
             --format matrix)
-          echo "Matrix: $MATRIX"
+          echo "Matrix (raw): $MATRIX"
+          echo "matrix=$MATRIX" >> "$GITHUB_OUTPUT"
+
+      - name: Keep only consumers that exist on Codeberg
+        id: filter
+        # Self-adjusting: the migrated graph still lists historical consumers (cassini,
+        # champollion, ...). Until a consumer repo exists on Codeberg it cannot run
+        # upstream-pr.yml nor post a status, so verify-downstream would hang. We drop the
+        # repos that are not on Codeberg yet; each one rejoins the validation automatically
+        # once it is migrated — no manual flag to flip.
+        env:
+          TOKEN: ${{ secrets.VIDOCQ_BOT_TOKEN }}
+        run: |
+          set -euo pipefail
+          RAW='${{ steps.resolve.outputs.matrix }}'
+          EXISTING=()
+          for r in $(echo "$RAW" | jq -r '.include[].repo'); do
+            code=$(curl -s -o /dev/null -w '%{http_code}' -m 15 -H "Authorization: token $TOKEN" \
+              "https://codeberg.org/api/v1/repos/$r")
+            if [ "$code" = "200" ]; then
+              echo "  keep $r"
+              EXISTING+=("$r")
+            else
+              echo "  drop $r (not on Codeberg yet, HTTP $code)"
+            fi
+          done
+          if [ ${#EXISTING[@]} -eq 0 ]; then
+            EXJSON='[]'
+          else
+            EXJSON=$(printf '%s\n' "${EXISTING[@]}" | jq -R . | jq -s -c .)
+          fi
+          MATRIX=$(echo "$RAW" | jq -c --argjson ex "$EXJSON" \
+            '{include: [.include[] | select([.repo] | inside($ex))]}')
+          echo "Matrix (filtered): $MATRIX"
           echo "matrix=$MATRIX" >> "$GITHUB_OUTPUT"
           COUNT=$(echo "$MATRIX" | jq '.include | length')
           if [ "$COUNT" -gt 0 ]; then
