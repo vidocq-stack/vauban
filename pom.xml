@@ -275,6 +275,46 @@
                 </plugins>
             </build>
         </profile>
+
+        <!-- Publication des -SNAPSHOT vers le repo snapshots du Central Portal.
+             On NE passe PAS par central-publishing-maven-plugin : son hook de publication
+             en fin de session ne se déclenche pas sous Maven 4 (il collecte mais n'uploade
+             pas → job vert mais rien publié). Le maven-deploy-plugin standard pousse vers
+             <distributionManagement><snapshotRepository> (central-snapshots). Les SNAPSHOT
+             ne sont pas validés par Central : ni bundle ni signature GPG requis. -->
+        <profile>
+            <id>snapshot</id>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-source-plugin</artifactId>
+                        <version>3.3.1</version>
+                        <executions>
+                            <execution>
+                                <id>attach-sources</id>
+                                <goals><goal>jar-no-fork</goal></goals>
+                            </execution>
+                        </executions>
+                    </plugin>
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-javadoc-plugin</artifactId>
+                        <version>3.11.2</version>
+                        <configuration>
+                            <doclint>all,-missing</doclint>
+                        </configuration>
+                        <executions>
+                            <execution>
+                                <id>attach-javadocs</id>
+                                <goals><goal>jar</goal></goals>
+                            </execution>
+                        </executions>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
+
         <profile>
             <id>quality</id>
             <build>
