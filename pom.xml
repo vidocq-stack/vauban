@@ -228,6 +228,12 @@
                         <groupId>org.apache.maven.plugins</groupId>
                         <artifactId>maven-javadoc-plugin</artifactId>
                         <version>3.11.2</version>
+                        <configuration>
+                            <!-- Publie le jar javadoc pour Central sans exiger une doc exhaustive :
+                                 'all,-missing' garde les contrôles de référence (ex. @param d'un
+                                 paramètre inexistant = erreur) mais ignore les warnings "no comment". -->
+                            <doclint>all,-missing</doclint>
+                        </configuration>
                         <executions>
                             <execution>
                                 <id>attach-javadocs</id>

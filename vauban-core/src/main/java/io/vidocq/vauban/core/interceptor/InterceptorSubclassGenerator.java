@@ -44,7 +44,6 @@ public final class InterceptorSubclassGenerator {
      * Generate an intercepted subclass for the given bean class.
      *
      * @param beanClass the bean class to intercept
-     * @param bindings the interceptor bindings on this bean
      * @return the generated class name and bytecode
      */
     @SuppressWarnings("java:S135")
