@@ -1,8 +1,8 @@
 # Template à copier dans `.forgejo/workflows/update-dep-graph.yml` de chaque repo
 # consommateur (vauban, cassini, champollion, foy, chappe, vidocq, mansart, ...).
 #
-# Pré-requis : secret `VIDOCQ_BOT_TOKEN` configuré au niveau organisation Forgejo
-# avec write sur `vidocq/GestionProjet` et read sur le repo courant.
+# Pré-requis : secret `VIDOCQ_BOT_TOKEN` configuré au niveau organisation Codeberg
+# avec write sur `Vidocq/GestionProjet` et read sur le repo courant.
 name: update-dependency-graph
 on:
   push:
@@ -33,10 +33,10 @@ jobs:
         run: |
           curl -fsSL -o /tmp/extract_deps.sh \
             -H "Authorization: token ${{ secrets.VIDOCQ_BOT_TOKEN }}" \
-            "https://forge.vidocq.dev/vidocq/GestionProjet/raw/branch/main/scripts/extract_deps.sh"
+            "https://codeberg.org/Vidocq/GestionProjet/raw/branch/main/scripts/extract_deps.sh"
           curl -fsSL -o /tmp/update_data_file.sh \
             -H "Authorization: token ${{ secrets.VIDOCQ_BOT_TOKEN }}" \
-            "https://forge.vidocq.dev/vidocq/GestionProjet/raw/branch/main/scripts/update_data_file.sh"
+            "https://codeberg.org/Vidocq/GestionProjet/raw/branch/main/scripts/update_data_file.sh"
           chmod +x /tmp/extract_deps.sh /tmp/update_data_file.sh
 
       - name: Extrait les dépendances `io.vidocq.*`
