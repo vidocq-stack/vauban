@@ -12,7 +12,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: Vidocq/ci/setup-maven@main
+      - uses: https://codeberg.org/Vidocq/ci/setup-maven@main
       - name: Build & test
         run: mvn -B -ntp verify
 
@@ -21,9 +21,9 @@ jobs:
     needs: build
     steps:
       - uses: actions/checkout@v4
-      - uses: Vidocq/ci/setup-maven@main
+      - uses: https://codeberg.org/Vidocq/ci/setup-maven@main
       - name: CDI TCK 4.1 Lite
-        uses: Vidocq/ci/run-tck@main
+        uses: https://codeberg.org/Vidocq/ci/run-tck@main
         with:
           module: vauban-tck-runner
 
@@ -32,10 +32,10 @@ jobs:
     needs: tck
     steps:
       - uses: actions/checkout@v4
-      - uses: Vidocq/ci/setup-maven@main
+      - uses: https://codeberg.org/Vidocq/ci/setup-maven@main
 
       - name: Deploy to Maven Central
-        uses: Vidocq/ci/deploy-maven@main
+        uses: https://codeberg.org/Vidocq/ci/deploy-maven@main
         with:
           central-username: ${{ secrets.CENTRAL_USERNAME }}
           central-password: ${{ secrets.CENTRAL_PASSWORD }}
@@ -44,7 +44,7 @@ jobs:
 
       - name: Notify Slack on failure
         if: failure()
-        uses: Vidocq/ci/notify-slack@main
+        uses: https://codeberg.org/Vidocq/ci/notify-slack@main
         with:
           webhook-url: ${{ secrets.SLACK_WEBHOOK_URL }}
           status: failure
@@ -54,7 +54,7 @@ jobs:
 
       - name: Notify Slack on success
         if: success()
-        uses: Vidocq/ci/notify-slack@main
+        uses: https://codeberg.org/Vidocq/ci/notify-slack@main
         with:
           webhook-url: ${{ secrets.SLACK_WEBHOOK_URL }}
           status: success
