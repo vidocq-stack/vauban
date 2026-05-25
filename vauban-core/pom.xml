@@ -23,9 +23,11 @@
             <artifactId>vauban-indexer</artifactId>
         </dependency>
         <dependency>
+            <!-- Non-optional: module-info has a hard `requires io.vidocq.vauban.classloader.spi`,
+                 so it must propagate transitively, otherwise modular consumers fail at runtime
+                 with FindException/IllegalAccessError. -->
             <groupId>io.vidocq.vauban</groupId>
             <artifactId>vauban-classloader-spi</artifactId>
-            <optional>true</optional>
         </dependency>
 
         <dependency>
