@@ -1,8 +1,8 @@
 name: CI
 
-# Flux post-merge (push sur main). Les étapes communes (setup Maven/Java, TCK, deploy
-# Central, notif Slack) sont mutualisées via les composite actions du repo Vidocq/ci.
-# Les PR restent gérées par pr.yml.
+# Post-merge flow (push on main). Common steps (Maven/Java setup, TCK, Central deploy,
+# Slack notification) are factored out via the composite actions in the Vidocq/ci repo.
+# Pull requests are handled by pr.yml.
 on:
   push:
     branches: [main]
