@@ -89,12 +89,12 @@ jobs:
               <server>
                 <id>central</id>
                 <username>${{ secrets.CENTRAL_USERNAME }}</username>
-                <password>${{ secrets.CENTRAL_TOKEN }}</password>
+                <password>${{ secrets.CENTRAL_PASSWORD }}</password>
               </server>
               <server>
                 <id>central-snapshots</id>
                 <username>${{ secrets.CENTRAL_USERNAME }}</username>
-                <password>${{ secrets.CENTRAL_TOKEN }}</password>
+                <password>${{ secrets.CENTRAL_PASSWORD }}</password>
               </server>
             </servers>
           </settings>
@@ -104,7 +104,23 @@ jobs:
         env:
           GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
         run: |
-          echo "$GPG_PRIVATE_KEY" | gpg --batch --yes --import
+          set -euo pipefail
+          if [ -z "${GPG_PRIVATE_KEY:-}" ]; then
+            echo "❌ Secret GPG_PRIVATE_KEY absent ou vide" >&2; exit 1
+          fi
+          # La clé peut être stockée en base64 (recommandé, évite les retours-ligne
+          # mangés) ou en ASCII-armored brut. On tente d'abord le décodage base64,
+          # sinon on importe tel quel.
+          if echo "$GPG_PRIVATE_KEY" | base64 -d 2>/dev/null | gpg --batch --import 2>/dev/null; then
+            echo "✅ clé GPG importée (base64)"
+          else
+            echo "$GPG_PRIVATE_KEY" | gpg --batch --import
+          fi
+          # Garde-fou : sans clé privée effectivement importée, inutile d'aller plus loin.
+          if ! gpg --list-secret-keys --with-colons | grep -q '^sec'; then
+            echo "❌ Aucune clé privée GPG importée — le secret GPG_PRIVATE_KEY doit contenir la clé armored (idéalement base64 de 'gpg --export-secret-keys --armor')" >&2
+            exit 1
+          fi
           # Pré-définit l'agent GPG en mode loopback pour que maven-gpg-plugin
           # puisse lui injecter la passphrase via --pinentry-mode loopback (cf.
           # profile 'release' du pom).
