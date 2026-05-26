@@ -17,7 +17,7 @@ import static org.junit.jupiter.api.Assertions.*;
 @DisplayName("ClassFileScanner")
 class ClassFileScannerTest {
 
-    // --- Classes de test ---
+    // --- Test classes ---
 
     static class SimpleClass {
         private String name;
@@ -60,7 +60,7 @@ class ClassFileScannerTest {
         public final void finalMethod() {}
     }
 
-    // --- Utilitaire ---
+    // --- Utility ---
 
     private static byte[] bytesOf(Class<?> clazz) throws IOException {
         String resource = clazz.getName().replace('.', '/') + ".class";
@@ -77,34 +77,34 @@ class ClassFileScannerTest {
     // --- Tests ---
 
     @Nested
-    @DisplayName("scan d'une classe simple")
+    @DisplayName("scan of a simple class")
     class ScanSimpleClass {
 
         @Test
-        @DisplayName("extrait le nom complet de la classe")
+        @DisplayName("extracts the fully qualified class name")
         void shouldExtractClassName() throws IOException {
             var info = scan(SimpleClass.class);
             assertEquals(DotName.of(SimpleClass.class.getName()), info.name());
         }
 
         @Test
-        @DisplayName("extrait la superclasse (java.lang.Object)")
+        @DisplayName("extracts the superclass (java.lang.Object)")
         void shouldExtractSuperclass() throws IOException {
             var info = scan(SimpleClass.class);
             assertEquals(DotName.of("java.lang.Object"), info.superName());
         }
 
         @Test
-        @DisplayName("extrait les champs")
+        @DisplayName("extracts the fields")
         void shouldExtractFields() throws IOException {
             var info = scan(SimpleClass.class);
             var fieldNames = info.fields().stream().map(FieldInfo::name).toList();
-            assertTrue(fieldNames.contains("name"), "devrait contenir le champ 'name'");
-            assertTrue(fieldNames.contains("value"), "devrait contenir le champ 'value'");
+            assertTrue(fieldNames.contains("name"), "should contain the 'name' field");
+            assertTrue(fieldNames.contains("value"), "should contain the 'value' field");
         }
 
         @Test
-        @DisplayName("extrait les types des champs")
+        @DisplayName("extracts the field types")
         void shouldExtractFieldTypes() throws IOException {
             var info = scan(SimpleClass.class);
             var nameField = info.fields().stream().filter(f -> f.name().equals("name")).findFirst().orElseThrow();
@@ -117,7 +117,7 @@ class ClassFileScannerTest {
         }
 
         @Test
-        @DisplayName("extrait les methodes")
+        @DisplayName("extracts the methods")
         void shouldExtractMethods() throws IOException {
             var info = scan(SimpleClass.class);
             var methodNames = info.methods().stream().map(MethodInfo::name).toList();
@@ -126,7 +126,7 @@ class ClassFileScannerTest {
         }
 
         @Test
-        @DisplayName("detecte les flags d'acces des champs")
+        @DisplayName("detects the field access flags")
         void shouldDetectFieldAccessFlags() throws IOException {
             var info = scan(SimpleClass.class);
             var nameField = info.fields().stream().filter(f -> f.name().equals("name")).findFirst().orElseThrow();
@@ -138,7 +138,7 @@ class ClassFileScannerTest {
         }
 
         @Test
-        @DisplayName("detecte le kind CLASS")
+        @DisplayName("detects the CLASS kind")
         void shouldDetectClassKind() throws IOException {
             var info = scan(SimpleClass.class);
             assertEquals(ClassKind.CLASS, info.kind());
@@ -148,7 +148,7 @@ class ClassFileScannerTest {
         }
 
         @Test
-        @DisplayName("detecte le constructeur")
+        @DisplayName("detects the constructor")
         void shouldDetectConstructor() throws IOException {
             var info = scan(SimpleClass.class);
             assertTrue(info.methods().stream().anyMatch(MethodInfo::isConstructor));
@@ -156,18 +156,18 @@ class ClassFileScannerTest {
     }
 
     @Nested
-    @DisplayName("scan d'une classe annotee")
+    @DisplayName("scan of an annotated class")
     class ScanAnnotatedClass {
 
         @Test
-        @DisplayName("extrait les annotations de classe")
+        @DisplayName("extracts the class annotations")
         void shouldExtractClassAnnotations() throws IOException {
             var info = scan(AnnotatedClass.class);
             assertTrue(info.hasAnnotation(DotName.of("java.lang.Deprecated")));
         }
 
         @Test
-        @DisplayName("extrait les annotations de methode")
+        @DisplayName("extracts the method annotations")
         void shouldExtractMethodAnnotations() throws IOException {
             var info = scan(AnnotatedClass.class);
             var method = info.methods().stream()
@@ -177,7 +177,7 @@ class ClassFileScannerTest {
         }
 
         @Test
-        @DisplayName("extrait une annotation custom avec ses valeurs")
+        @DisplayName("extracts a custom annotation with its values")
         void shouldExtractCustomAnnotationWithValues() throws IOException {
             var info = scan(CustomAnnotatedClass.class);
             var annotation = info.annotation(DotName.of(CustomAnnotation.class.getName()));
@@ -190,11 +190,11 @@ class ClassFileScannerTest {
     }
 
     @Nested
-    @DisplayName("scan d'une interface")
+    @DisplayName("scan of an interface")
     class ScanInterface {
 
         @Test
-        @DisplayName("detecte le kind INTERFACE")
+        @DisplayName("detects the INTERFACE kind")
         void shouldDetectInterfaceKind() throws IOException {
             var info = scan(SimpleInterface.class);
             assertEquals(ClassKind.INTERFACE, info.kind());
@@ -202,7 +202,7 @@ class ClassFileScannerTest {
         }
 
         @Test
-        @DisplayName("extrait les methodes abstraites")
+        @DisplayName("extracts the abstract methods")
         void shouldExtractAbstractMethods() throws IOException {
             var info = scan(SimpleInterface.class);
             var doSomething = info.methods().stream()
@@ -211,7 +211,7 @@ class ClassFileScannerTest {
         }
 
         @Test
-        @DisplayName("extrait les methodes default")
+        @DisplayName("extracts the default methods")
         void shouldExtractDefaultMethods() throws IOException {
             var info = scan(SimpleInterface.class);
             var defaultMethod = info.methods().stream()
@@ -222,18 +222,18 @@ class ClassFileScannerTest {
     }
 
     @Nested
-    @DisplayName("scan d'une classe implementant une interface")
+    @DisplayName("scan of a class implementing an interface")
     class ScanImplementingClass {
 
         @Test
-        @DisplayName("extrait la superclasse")
+        @DisplayName("extracts the superclass")
         void shouldExtractSuperclass() throws IOException {
             var info = scan(ImplementingClass.class);
             assertEquals(DotName.of(SimpleClass.class.getName()), info.superName());
         }
 
         @Test
-        @DisplayName("extrait les interfaces implementees")
+        @DisplayName("extracts the implemented interfaces")
         void shouldExtractInterfaces() throws IOException {
             var info = scan(ImplementingClass.class);
             assertTrue(info.interfaces().contains(DotName.of(SimpleInterface.class.getName())));
@@ -241,11 +241,11 @@ class ClassFileScannerTest {
     }
 
     @Nested
-    @DisplayName("scan d'un enum")
+    @DisplayName("scan of an enum")
     class ScanEnum {
 
         @Test
-        @DisplayName("detecte le kind ENUM")
+        @DisplayName("detects the ENUM kind")
         void shouldDetectEnumKind() throws IOException {
             var info = scan(SimpleEnum.class);
             assertEquals(ClassKind.ENUM, info.kind());
@@ -254,11 +254,11 @@ class ClassFileScannerTest {
     }
 
     @Nested
-    @DisplayName("scan d'un record")
+    @DisplayName("scan of a record")
     class ScanRecord {
 
         @Test
-        @DisplayName("detecte le kind RECORD")
+        @DisplayName("detects the RECORD kind")
         void shouldDetectRecordKind() throws IOException {
             var info = scan(SimpleRecord.class);
             assertEquals(ClassKind.RECORD, info.kind());
@@ -266,7 +266,7 @@ class ClassFileScannerTest {
         }
 
         @Test
-        @DisplayName("extrait les composants du record comme champs")
+        @DisplayName("extracts the record components as fields")
         void shouldExtractRecordComponents() throws IOException {
             var info = scan(SimpleRecord.class);
             var fieldNames = info.fields().stream().map(FieldInfo::name).toList();
@@ -276,11 +276,11 @@ class ClassFileScannerTest {
     }
 
     @Nested
-    @DisplayName("scan d'une annotation")
+    @DisplayName("scan of an annotation")
     class ScanAnnotation {
 
         @Test
-        @DisplayName("detecte le kind ANNOTATION")
+        @DisplayName("detects the ANNOTATION kind")
         void shouldDetectAnnotationKind() throws IOException {
             var info = scan(CustomAnnotation.class);
             assertEquals(ClassKind.ANNOTATION, info.kind());
@@ -289,11 +289,11 @@ class ClassFileScannerTest {
     }
 
     @Nested
-    @DisplayName("scan d'une classe abstraite")
+    @DisplayName("scan of an abstract class")
     class ScanAbstractClass {
 
         @Test
-        @DisplayName("detecte les methodes abstraites et finales")
+        @DisplayName("detects abstract and final methods")
         void shouldDetectAbstractAndFinalMethods() throws IOException {
             var info = scan(AbstractClass.class);
             assertTrue(info.isAbstract());
@@ -309,11 +309,11 @@ class ClassFileScannerTest {
     }
 
     @Nested
-    @DisplayName("scan des types de retour et parametres")
+    @DisplayName("scan of return types and parameters")
     class ScanMethodSignatures {
 
         @Test
-        @DisplayName("extrait le type de retour void")
+        @DisplayName("extracts the void return type")
         void shouldExtractVoidReturn() throws IOException {
             var info = scan(SimpleClass.class);
             var setter = info.methods().stream()
@@ -322,7 +322,7 @@ class ClassFileScannerTest {
         }
 
         @Test
-        @DisplayName("extrait le type de retour String")
+        @DisplayName("extracts the String return type")
         void shouldExtractStringReturn() throws IOException {
             var info = scan(SimpleClass.class);
             var getter = info.methods().stream()
@@ -332,7 +332,7 @@ class ClassFileScannerTest {
         }
 
         @Test
-        @DisplayName("extrait les parametres de methode")
+        @DisplayName("extracts the method parameters")
         void shouldExtractMethodParameters() throws IOException {
             var info = scan(SimpleClass.class);
             var setter = info.methods().stream()

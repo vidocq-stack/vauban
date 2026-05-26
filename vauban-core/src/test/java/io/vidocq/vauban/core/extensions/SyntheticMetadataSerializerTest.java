@@ -13,7 +13,7 @@ import java.util.Properties;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-@DisplayName("SyntheticMetadataSerializer - serialisation des beans/observers synthetiques")
+@DisplayName("SyntheticMetadataSerializer - serialization of synthetic beans/observers")
 class SyntheticMetadataSerializerTest {
 
     @Nested
@@ -58,13 +58,13 @@ class SyntheticMetadataSerializerTest {
         }
 
         @Test
-        @DisplayName("Class encode retourne le FQCN")
+        @DisplayName("Class encode returns the FQCN")
         void shouldEncodeClass() {
             assertEquals("C:java.lang.String", SyntheticMetadataSerializer.encodeParam(String.class));
         }
 
         @Test
-        @DisplayName("null retourne null")
+        @DisplayName("null returns null")
         void shouldReturnNullForNull() {
             assertNull(SyntheticMetadataSerializer.encodeParam(null));
             assertNull(SyntheticMetadataSerializer.decodeParam(null));
@@ -76,7 +76,7 @@ class SyntheticMetadataSerializerTest {
     class ReadBeans {
 
         @Test
-        @DisplayName("lit un bean synthetique depuis Properties")
+        @DisplayName("reads a synthetic bean from Properties")
         void shouldReadSingleBean() {
             var props = new Properties();
             props.setProperty("bean.count", "1");
@@ -99,7 +99,7 @@ class SyntheticMetadataSerializerTest {
         }
 
         @Test
-        @DisplayName("lit les params d'un bean synthetique")
+        @DisplayName("reads the params of a synthetic bean")
         void shouldReadBeanParams() {
             var props = new Properties();
             props.setProperty("bean.count", "1");
@@ -118,7 +118,7 @@ class SyntheticMetadataSerializerTest {
         }
 
         @Test
-        @DisplayName("retourne liste vide si count=0")
+        @DisplayName("returns an empty list if count=0")
         void shouldReturnEmptyListWhenCountZero() {
             var props = new Properties();
             props.setProperty("bean.count", "0");
@@ -126,7 +126,7 @@ class SyntheticMetadataSerializerTest {
         }
 
         @Test
-        @DisplayName("retourne liste vide si pas de count")
+        @DisplayName("returns an empty list if there is no count")
         void shouldReturnEmptyListWhenNoCount() {
             assertTrue(SyntheticMetadataSerializer.readBeans(new Properties()).isEmpty());
         }
@@ -137,7 +137,7 @@ class SyntheticMetadataSerializerTest {
     class ReadObservers {
 
         @Test
-        @DisplayName("lit un observer synthetique depuis Properties")
+        @DisplayName("reads a synthetic observer from Properties")
         void shouldReadSingleObserver() {
             var props = new Properties();
             props.setProperty("observer.count", "1");
@@ -162,7 +162,7 @@ class SyntheticMetadataSerializerTest {
     class WriteReadRoundTrip {
 
         @Test
-        @DisplayName("round-trip complet avec beans vides")
+        @DisplayName("full round-trip with empty bean lists")
         void shouldRoundTripEmptyLists() throws IOException {
             var baos = new ByteArrayOutputStream();
             SyntheticMetadataSerializer.write(List.of(), List.of(), baos);

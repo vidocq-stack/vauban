@@ -12,27 +12,27 @@ import java.util.Properties;
 import static org.junit.jupiter.api.Assertions.*;
 
 /**
- * Tests du mecanisme de skip BCE au runtime et du chargement des metadonnees
- * synthetiques pre-calculees a la compilation.
+ * Tests of the runtime BCE skip mechanism and of the loading of synthetic
+ * metadata precomputed at compile time.
  *
- * <h2>Contexte</h2>
- * Quand le VaubanProcessor (APT) execute les BCEs a la compilation, il ecrit :
+ * <h2>Context</h2>
+ * When the VaubanProcessor (APT) executes the BCEs at compile time, it writes:
  * <ul>
- *   <li>{@code META-INF/vauban-bce-processed} — marqueur pour le skip runtime</li>
- *   <li>{@code META-INF/vauban-synthetic-metadata.properties} — beans/observers synthetiques</li>
+ *   <li>{@code META-INF/vauban-bce-processed} — marker for the runtime skip</li>
+ *   <li>{@code META-INF/vauban-synthetic-metadata.properties} — synthetic beans/observers</li>
  * </ul>
- * Au boot, le VaubanContainerBuilder detecte le marqueur et charge les metadonnees
- * au lieu de re-executer les BCEs. Ces tests verifient que ce mecanisme fonctionne.
+ * At boot, the VaubanContainerBuilder detects the marker and loads the metadata
+ * instead of re-executing the BCEs. These tests verify that this mechanism works.
  */
-@DisplayName("BCE runtime skip - chargement des metadonnees synthetiques")
+@DisplayName("BCE runtime skip - loading of synthetic metadata")
 class BceRuntimeSkipTest {
 
     @Nested
-    @DisplayName("SyntheticMetadataSerializer - round-trip complet avec builders")
+    @DisplayName("SyntheticMetadataSerializer - full round-trip with builders")
     class SerializerRoundTrip {
 
         @Test
-        @DisplayName("serialise et desersialise un bean synthetique avec tous les champs")
+        @DisplayName("serializes and deserializes a synthetic bean with all fields")
         void shouldRoundTripSyntheticBean() throws IOException {
             var builder = new VaubanSyntheticBeanBuilder<>(String.class);
             builder.scope(jakarta.enterprise.context.ApplicationScoped.class);
@@ -62,7 +62,7 @@ class BceRuntimeSkipTest {
         }
 
         @Test
-        @DisplayName("serialise et deserialise un observer synthetique")
+        @DisplayName("serializes and deserializes a synthetic observer")
         void shouldRoundTripSyntheticObserver() throws IOException {
             var builder = new VaubanSyntheticObserverBuilder<>(String.class);
             builder.priority(500);
@@ -87,7 +87,7 @@ class BceRuntimeSkipTest {
         }
 
         @Test
-        @DisplayName("serialise plusieurs beans et observers ensemble")
+        @DisplayName("serializes several beans and observers together")
         void shouldRoundTripMultipleBoth() throws IOException {
             var bean1 = new VaubanSyntheticBeanBuilder<>(String.class);
             bean1.scope(jakarta.enterprise.context.ApplicationScoped.class);
@@ -118,11 +118,11 @@ class BceRuntimeSkipTest {
     }
 
     @Nested
-    @DisplayName("SyntheticBeanDescriptor - reconstruction des champs")
+    @DisplayName("SyntheticBeanDescriptor - field reconstruction")
     class DescriptorReconstruction {
 
         @Test
-        @DisplayName("les types sont preserves apres serialisation")
+        @DisplayName("the types are preserved after serialization")
         void shouldPreserveTypes() throws IOException {
             var builder = new VaubanSyntheticBeanBuilder<>(String.class);
             builder.type(CharSequence.class);
@@ -142,7 +142,7 @@ class BceRuntimeSkipTest {
         }
 
         @Test
-        @DisplayName("les qualifiers sont preserves apres serialisation")
+        @DisplayName("the qualifiers are preserved after serialization")
         void shouldPreserveQualifiers() throws IOException {
             var builder = new VaubanSyntheticBeanBuilder<>(String.class);
             builder.qualifier(jakarta.inject.Named.class);
@@ -157,10 +157,10 @@ class BceRuntimeSkipTest {
         }
 
         @Test
-        @DisplayName("disposer est preserve s'il est present")
+        @DisplayName("disposer is preserved if it is present")
         void shouldPreserveDisposer() throws IOException {
             var builder = new VaubanSyntheticBeanBuilder<>(String.class);
-            // Pas de disposer configuré → doit être null
+            // No disposer configured → must be null
 
             var baos = new ByteArrayOutputStream();
             SyntheticMetadataSerializer.write(List.of(builder), List.of(), baos);
@@ -172,10 +172,10 @@ class BceRuntimeSkipTest {
         }
 
         @Test
-        @DisplayName("bean sans scope a scopeAnnotation null")
+        @DisplayName("a bean without a scope has a null scopeAnnotation")
         void shouldHandleNullScope() throws IOException {
             var builder = new VaubanSyntheticBeanBuilder<>(String.class);
-            // Pas de scope
+            // No scope
 
             var baos = new ByteArrayOutputStream();
             SyntheticMetadataSerializer.write(List.of(builder), List.of(), baos);
@@ -188,18 +188,18 @@ class BceRuntimeSkipTest {
     }
 
     @Nested
-    @DisplayName("Marqueur BCE")
+    @DisplayName("BCE marker")
     class BceMarker {
 
         @Test
-        @DisplayName("le chemin du marqueur est correct")
+        @DisplayName("the marker path is correct")
         void shouldHaveCorrectMarkerPath() {
             assertEquals("META-INF/vauban-bce-processed",
                     SyntheticMetadataSerializer.BCE_PROCESSED_MARKER);
         }
 
         @Test
-        @DisplayName("le chemin des metadonnees est correct")
+        @DisplayName("the metadata path is correct")
         void shouldHaveCorrectMetadataPath() {
             assertEquals("META-INF/vauban-synthetic-metadata.properties",
                     SyntheticMetadataSerializer.METADATA_PATH);

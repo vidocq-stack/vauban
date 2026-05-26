@@ -8,7 +8,7 @@ import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-@DisplayName("Instance<T> - lookup programmatique")
+@DisplayName("Instance<T> - programmatic lookup")
 class InstanceImplTest {
 
     @ApplicationScoped
@@ -33,7 +33,7 @@ class InstanceImplTest {
     }
 
     @Test
-    @DisplayName("Instance.get() retourne une instance contextuelle")
+    @DisplayName("Instance.get() returns a contextual instance")
     void shouldGetInstance() {
         try (var container = VaubanContainer.builder()
                 .addBeanClass(Greeter.class)
@@ -45,7 +45,7 @@ class InstanceImplTest {
     }
 
     @Test
-    @DisplayName("Instance.isResolvable() retourne true pour un bean present")
+    @DisplayName("Instance.isResolvable() returns true for a present bean")
     void shouldBeResolvable() {
         try (var container = VaubanContainer.builder()
                 .addBeanClass(Greeter.class)
@@ -57,7 +57,7 @@ class InstanceImplTest {
     }
 
     @Test
-    @DisplayName("Instance.isUnsatisfied() retourne true pour un type absent")
+    @DisplayName("Instance.isUnsatisfied() returns true for an absent type")
     void shouldBeUnsatisfied() {
         try (var container = VaubanContainer.builder()
                 .addBeanClass(Greeter.class)
@@ -68,7 +68,7 @@ class InstanceImplTest {
     }
 
     @Test
-    @DisplayName("Instance.select(subtype) retourne une instance du sous-type")
+    @DisplayName("Instance.select(subtype) returns an instance of the subtype")
     void shouldSelectSubtype() {
         try (var container = VaubanContainer.builder()
                 .addBeanClass(Greeter.class)
@@ -81,7 +81,7 @@ class InstanceImplTest {
     }
 
     @Test
-    @DisplayName("Instance itere sur toutes les instances")
+    @DisplayName("Instance iterates over all instances")
     void shouldIterateOverInstances() {
         try (var container = VaubanContainer.builder()
                 .addBeanClass(Greeter.class)
@@ -97,7 +97,7 @@ class InstanceImplTest {
     }
 
     @Test
-    @DisplayName("Instance.getHandle() retourne un handle fonctionnel")
+    @DisplayName("Instance.getHandle() returns a functional handle")
     void shouldGetHandle() {
         try (var container = VaubanContainer.builder()
                 .addBeanClass(Greeter.class)
@@ -110,7 +110,7 @@ class InstanceImplTest {
     }
 
     @Test
-    @DisplayName("BeanManager.createInstance() retourne un Instance fonctionnel")
+    @DisplayName("BeanManager.createInstance() returns a functional Instance")
     void shouldCreateInstanceFromBeanManager() {
         try (var container = VaubanContainer.builder()
                 .addBeanClass(Greeter.class)

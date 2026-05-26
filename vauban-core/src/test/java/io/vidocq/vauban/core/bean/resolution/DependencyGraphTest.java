@@ -11,7 +11,7 @@ import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-@DisplayName("DependencyGraph - graphe de dependances")
+@DisplayName("DependencyGraph - dependency graph")
 class DependencyGraphTest {
 
     static BeanDescriptor makeBean(String name, ScopeInfo scope) {
@@ -23,7 +23,7 @@ class DependencyGraphTest {
     }
 
     @Test
-    @DisplayName("construit un graphe simple A -> B -> C")
+    @DisplayName("builds a simple graph A -> B -> C")
     void shouldBuildSimpleGraph() {
         var graph = new DependencyGraph();
         var a = makeBean("A", ScopeInfo.APPLICATION);
@@ -42,7 +42,7 @@ class DependencyGraphTest {
     }
 
     @Test
-    @DisplayName("cycle entre beans normal-scoped est legal")
+    @DisplayName("a cycle between normal-scoped beans is legal")
     void shouldAllowNormalScopedCycle() {
         var graph = new DependencyGraph();
         var a = makeBean("A", ScopeInfo.APPLICATION);
@@ -57,7 +57,7 @@ class DependencyGraphTest {
 
     @Test
     @org.junit.jupiter.api.Disabled("Dependent cycle detection not yet implemented")
-    @DisplayName("cycle avec un bean @Dependent est illegal")
+    @DisplayName("a cycle with a @Dependent bean is illegal")
     void shouldDetectDependentCycle() {
         var graph = new DependencyGraph();
         var a = makeBean("A", ScopeInfo.DEPENDENT);
@@ -72,7 +72,7 @@ class DependencyGraphTest {
     }
 
     @Test
-    @DisplayName("pas de cycle dans un graphe acyclique")
+    @DisplayName("no cycle in an acyclic graph")
     void shouldDetectNoCyclesInDag() {
         var graph = new DependencyGraph();
         var a = makeBean("A", ScopeInfo.DEPENDENT);

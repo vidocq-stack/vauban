@@ -33,44 +33,44 @@ import java.util.jar.JarOutputStream;
 import static org.junit.jupiter.api.Assertions.*;
 
 /**
- * Tests ROUGES pour le bug #7 — partie runtime (rejeu BCE).
+ * RED tests for bug #7 — runtime part (BCE replay).
  *
- * <h2>Contrat teste</h2>
+ * <h2>Tested contract</h2>
  * <ol>
- *   <li>Au demarrage, {@code VaubanContainerBuilder} doit lire
- *       {@code META-INF/vauban-bce-runtime.list} sur tout le classpath.</li>
- *   <li>Pour chaque couple {@code (bceFQN, classFQN)} : resoudre la BCE via
- *       ServiceLoader et rejouer sa phase {@code @Enhancement} uniquement sur
- *       la classe ciblee.</li>
- *   <li>L'index est reconstruit avec les annotations ajoutees ->
- *       {@code BeanManager.getBeans(TestResource.class)} voit la classe
- *       avec son scope enrichi.</li>
- *   <li>Le short-circuit {@code allSourcesProcessed -> bceClasses = List.of()}
- *       doit etre remplace par une lecture ciblee de la runtime-list.</li>
+ *   <li>At startup, {@code VaubanContainerBuilder} must read
+ *       {@code META-INF/vauban-bce-runtime.list} across the whole classpath.</li>
+ *   <li>For each {@code (bceFQN, classFQN)} pair: resolve the BCE via
+ *       ServiceLoader and replay its {@code @Enhancement} phase only on
+ *       the targeted class.</li>
+ *   <li>The index is rebuilt with the added annotations ->
+ *       {@code BeanManager.getBeans(TestResource.class)} sees the class
+ *       with its enriched scope.</li>
+ *   <li>The short-circuit {@code allSourcesProcessed -> bceClasses = List.of()}
+ *       must be replaced by a targeted read of the runtime-list.</li>
  * </ol>
  *
- * <h2>Montage de classpath</h2>
- * Les classes {@code TestResourceA} / {@code TestResourceB} sont synthetisees
- * via la <b>Class-File API JDK 25</b> ({@code java.lang.classfile.*}) avec
- * pour seul contenu l'annotation {@code @PathLike}. Cela reproduit le
- * scenario bug #7 : un JAR pre-processe ou l'APT a inscrit la BCE dans la
- * runtime-list mais n'a PAS reecrit le bytecode (pattern conforme APT/JSR-269).
+ * <h2>Classpath setup</h2>
+ * The classes {@code TestResourceA} / {@code TestResourceB} are synthesized
+ * via the <b>JDK 25 Class-File API</b> ({@code java.lang.classfile.*}) with
+ * the {@code @PathLike} annotation as their only content. This reproduces the
+ * bug #7 scenario: a pre-processed JAR where the APT inscribed the BCE in the
+ * runtime-list but did NOT rewrite the bytecode (an APT/JSR-269 conformant pattern).
  *
- * Avantage vs {@code javax.tools.JavaCompiler} : pas besoin de
- * {@code requires java.compiler} dans le module de production, coherent
- * avec le reste de Vauban qui genere tout son bytecode via Class-File API.
+ * Advantage over {@code javax.tools.JavaCompiler}: no need for
+ * {@code requires java.compiler} in the production module, consistent
+ * with the rest of Vauban which generates all its bytecode via the Class-File API.
  *
- * Puis on packe dans un JAR :
+ * Then everything is packed into a JAR:
  * <ul>
  *   <li>{@code TestResource.class}</li>
  *   <li>{@code META-INF/vauban-beans.list}</li>
  *   <li>{@code META-INF/vauban-bce-processed} (marker)</li>
  *   <li>{@code META-INF/vauban-bce-runtime.list}
- *       (nouveau fichier pivot du bug #7)</li>
- *   <li>{@code META-INF/services/...BuildCompatibleExtension} listant la BCE</li>
+ *       (the new pivot file of bug #7)</li>
+ *   <li>{@code META-INF/services/...BuildCompatibleExtension} listing the BCE</li>
  * </ul>
  */
-@DisplayName("BCE runtime replay - lecture de vauban-bce-runtime.list")
+@DisplayName("BCE runtime replay - reading vauban-bce-runtime.list")
 class BceRuntimeReplayTest {
 
     private static final String RUNTIME_LIST_PATH = "META-INF/vauban-bce-runtime.list";
@@ -86,11 +86,11 @@ class BceRuntimeReplayTest {
     Path tempDir;
 
     // ---- Annotation trigger ----
-    // Voir {@link io.vidocq.vauban.core.extensions.testfixtures.PathLike}.
-    // Extraite en top-level pour avoir un ClassDesc stable
-    // (descripteur sans '$') et etre resolvable depuis tout ClassLoader.
+    // See {@link io.vidocq.vauban.core.extensions.testfixtures.PathLike}.
+    // Extracted to top-level to get a stable ClassDesc
+    // (a descriptor without '$') and to be resolvable from any ClassLoader.
 
-    // ---- BCE de test : ajoute @RequestScoped aux classes @PathLike ----
+    // ---- Test BCE: adds @RequestScoped to @PathLike classes ----
 
     public static class TestScopeBce implements BuildCompatibleExtension {
         @Enhancement(types = Object.class, withAnnotations = PathLike.class)
@@ -100,17 +100,17 @@ class BceRuntimeReplayTest {
     }
 
     // ======================================================================
-    // Test 2 - Runtime rejoue la BCE depuis la liste et applique le scope
+    // Test 2 - Runtime replays the BCE from the list and applies the scope
     // ======================================================================
 
     @Nested
-    @DisplayName("Test 2 - rejeu BCE → scope RequestScoped applique")
+    @DisplayName("Test 2 - BCE replay → RequestScoped scope applied")
     class ReplayFromRuntimeList {
 
         @Test
-        @DisplayName("BeanManager.getBeans(TestResource.class) retourne un bean avec scope @RequestScoped")
+        @DisplayName("BeanManager.getBeans(TestResource.class) returns a bean with scope @RequestScoped")
         void shouldReplayBceAndApplyRequestScopedAtRuntime() throws Exception {
-            // JAR pre-processe : TestResource avec @PathLike SEUL dans le bytecode
+            // Pre-processed JAR: TestResource with @PathLike ALONE in the bytecode
             var jar = buildPreProcessedJar(
                     tempDir.resolve("resource.jar"),
                     "app.TestResource",
@@ -126,7 +126,7 @@ class BceRuntimeReplayTest {
                 var testResourceClass = Class.forName("app.TestResource", true, cl);
                 assertFalse(isAnnotationOnBytecode(testResourceClass, RequestScoped.class),
                         "Precondition: @RequestScoped MUST NOT be in the raw bytecode "
-                                + "(APT doit ne PAS reecrire le .class, conformement a la solution)");
+                                + "(APT must NOT rewrite the .class, in accordance with the solution)");
 
                 try (var container = VaubanContainer.builder()
                         .classLoader(cl)
@@ -149,15 +149,15 @@ class BceRuntimeReplayTest {
     }
 
     // ======================================================================
-    // Test 3 - symptome exact bug #7 : getBeans(Object.class, @Any)
+    // Test 3 - exact symptom of bug #7: getBeans(Object.class, @Any)
     // ======================================================================
 
     @Nested
-    @DisplayName("Test 3 - symptome exact bug #7")
+    @DisplayName("Test 3 - exact symptom of bug #7")
     class AnyQueryVisibility {
 
         @Test
-        @DisplayName("getBeans(Object.class, Any.Literal) contient TestResource apres replay")
+        @DisplayName("getBeans(Object.class, Any.Literal) contains TestResource after replay")
         void shouldExposeReplayedBeanToAnyQuery() throws Exception {
             var jar = buildPreProcessedJar(
                     tempDir.resolve("resource.jar"),
@@ -193,17 +193,17 @@ class BceRuntimeReplayTest {
     }
 
     // ======================================================================
-    // Test 4 - Classpath mixte : JAR pre-processe + JAR brut
+    // Test 4 - Mixed classpath: pre-processed JAR + raw JAR
     // ======================================================================
 
     @Nested
-    @DisplayName("Test 4 - classpath mixte")
+    @DisplayName("Test 4 - mixed classpath")
     class MixedClasspath {
 
         @Test
-        @DisplayName("JAR pre-processe (replay) + JAR brut (fallback full BCE) → deux beans visibles")
+        @DisplayName("pre-processed JAR (replay) + raw JAR (full BCE fallback) → two visible beans")
         void shouldHandleBothPreProcessedAndRawJars() throws Exception {
-            // JAR A : pre-processe, TestResourceA ciblee par runtime-list
+            // JAR A: pre-processed, TestResourceA targeted by the runtime-list
             var jarA = buildPreProcessedJar(
                     tempDir.resolve("resA.jar"),
                     "app.TestResourceA",
@@ -212,7 +212,7 @@ class BceRuntimeReplayTest {
                     /*includeBceClass*/ true,
                     /*includeService*/  true);
 
-            // JAR B : NON pre-processe, pas de marker ni beans.list ni runtime-list
+            // JAR B: NOT pre-processed, no marker, no beans.list, no runtime-list
             var jarB = buildRawJar(
                     tempDir.resolve("resB.jar"),
                     "app.TestResourceB");
@@ -227,8 +227,8 @@ class BceRuntimeReplayTest {
                 try (var container = VaubanContainer.builder()
                         .classLoader(cl)
                         .scanClasspath()
-                        // JAR B est brut : le consommateur doit l'ajouter explicitement
-                        // (pas de beans.list). Pattern normal d'un JAR legacy.
+                        // JAR B is raw: the consumer must add it explicitly
+                        // (no beans.list). The normal pattern for a legacy JAR.
                         .addBeanClass(classB)
                         .build()) {
 
@@ -245,7 +245,7 @@ class BceRuntimeReplayTest {
                     assertTrue(foundB,
                             "TestResourceB (raw JAR) should be visible after full BCE fallback");
 
-                    // Les deux beans DOIVENT avoir scope @RequestScoped
+                    // Both beans MUST have scope @RequestScoped
                     var beanA = allBeans.stream()
                             .filter(b -> b.getBeanClass().equals(classA)).findFirst().orElseThrow();
                     var beanB = allBeans.stream()

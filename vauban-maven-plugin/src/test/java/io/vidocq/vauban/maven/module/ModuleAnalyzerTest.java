@@ -10,7 +10,7 @@ import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-@DisplayName("ModuleAnalyzer - analyse de compatibilite JPMS")
+@DisplayName("ModuleAnalyzer - JPMS compatibility analysis")
 class ModuleAnalyzerTest {
 
     // Find a JAR on the test classpath
@@ -20,11 +20,11 @@ class ModuleAnalyzerTest {
     }
 
     @Nested
-    @DisplayName("analyse de JARs")
+    @DisplayName("JAR analysis")
     class JarAnalysis {
 
         @Test
-        @DisplayName("detecte un module explicite (JUnit API)")
+        @DisplayName("detects an explicit module (JUnit API)")
         void shouldDetectExplicitModule() throws Exception {
             var junitApiPath = findJarOf(org.junit.jupiter.api.Test.class);
             // JUnit might be a dir in test classpath, skip if so
@@ -37,7 +37,7 @@ class ModuleAnalyzerTest {
         }
 
         @Test
-        @DisplayName("analyse un JAR et retourne des packages")
+        @DisplayName("analyzes a JAR and returns packages")
         void shouldReturnPackages() throws Exception {
             var path = findJarOf(org.junit.jupiter.api.Test.class);
             if (!path.toString().endsWith(".jar")) return;
@@ -48,11 +48,11 @@ class ModuleAnalyzerTest {
     }
 
     @Nested
-    @DisplayName("derivation du nom de module automatique")
+    @DisplayName("automatic module name derivation")
     class AutomaticModuleName {
 
         @Test
-        @DisplayName("derive le nom depuis le filename")
+        @DisplayName("derives the name from the filename")
         void shouldDeriveFromFilename() {
             assertEquals("commons.lang3", ModuleAnalyzer.deriveAutomaticModuleName("commons-lang3-3.14.0.jar"));
             assertEquals("guava", ModuleAnalyzer.deriveAutomaticModuleName("guava-33.0.0.jar"));
@@ -60,7 +60,7 @@ class ModuleAnalyzerTest {
         }
 
         @Test
-        @DisplayName("gere les cas speciaux")
+        @DisplayName("handles edge cases")
         void shouldHandleEdgeCases() {
             assertEquals("simple", ModuleAnalyzer.deriveAutomaticModuleName("simple.jar"));
             assertEquals("my.lib", ModuleAnalyzer.deriveAutomaticModuleName("my_lib.jar"));
@@ -68,11 +68,11 @@ class ModuleAnalyzerTest {
     }
 
     @Nested
-    @DisplayName("detection de split packages")
+    @DisplayName("split package detection")
     class SplitPackageDetection {
 
         @Test
-        @DisplayName("detecte les packages presents dans plusieurs JARs")
+        @DisplayName("detects packages present in multiple JARs")
         void shouldDetectSplitPackages() {
             var r1 = new ModuleAnalysisResult(
                 Path.of("a.jar"), "a.jar", ModuleType.AUTOMATIC, "a",
@@ -88,7 +88,7 @@ class ModuleAnalyzerTest {
         }
 
         @Test
-        @DisplayName("pas de split packages quand les packages sont distincts")
+        @DisplayName("no split packages when packages are distinct")
         void shouldNotDetectWhenDistinct() {
             var r1 = new ModuleAnalysisResult(
                 Path.of("a.jar"), "a.jar", ModuleType.EXPLICIT, "a",
@@ -102,11 +102,11 @@ class ModuleAnalyzerTest {
     }
 
     @Nested
-    @DisplayName("rapport")
+    @DisplayName("report")
     class Report {
 
         @Test
-        @DisplayName("genere un rapport lisible")
+        @DisplayName("generates a readable report")
         void shouldGenerateReadableReport() {
             var r1 = new ModuleAnalysisResult(
                 Path.of("cdi-api.jar"), "cdi-api.jar", ModuleType.EXPLICIT, "jakarta.cdi",

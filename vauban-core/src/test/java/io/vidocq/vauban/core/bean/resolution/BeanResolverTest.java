@@ -16,7 +16,7 @@ import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-@DisplayName("BeanResolver - resolution typesafe CDI 4.1")
+@DisplayName("BeanResolver - CDI 4.1 typesafe resolution")
 class BeanResolverTest {
 
     private AssignabilityRules assignability;
@@ -43,11 +43,11 @@ class BeanResolverTest {
     }
 
     @Nested
-    @DisplayName("resolution simple")
+    @DisplayName("simple resolution")
     class SimpleResolution {
 
         @Test
-        @DisplayName("resout un bean unique par type")
+        @DisplayName("resolves a unique bean by type")
         void shouldResolveUniqueBean() {
             var serviceType = new TypeInfo.ClassType(DotName.of("com.example.MyService"));
             var bean = makeBean("com.example.MyService",
@@ -62,7 +62,7 @@ class BeanResolverTest {
         }
 
         @Test
-        @DisplayName("retourne vide quand aucun bean ne correspond")
+        @DisplayName("returns empty when no bean matches")
         void shouldReturnEmptyWhenNoMatch() {
             var resolver = new BeanResolver(List.of(), assignability);
             var result = resolver.resolve(
@@ -72,7 +72,7 @@ class BeanResolverTest {
         }
 
         @Test
-        @DisplayName("detecte une dependance ambigue")
+        @DisplayName("detects an ambiguous dependency")
         void shouldDetectAmbiguousDependency() {
             var serviceType = new TypeInfo.ClassType(DotName.of("com.example.MyService"));
             var bean1 = makeBean("com.example.Impl1",
@@ -91,7 +91,7 @@ class BeanResolverTest {
     class QualifierResolution {
 
         @Test
-        @DisplayName("filtre par qualifier")
+        @DisplayName("filters by qualifier")
         void shouldFilterByQualifier() {
             var serviceType = new TypeInfo.ClassType(DotName.of("com.example.MyService"));
             var customQualifier = new QualifierInstance(DotName.of("com.example.Special"), Map.of());
@@ -128,7 +128,7 @@ class BeanResolverTest {
     class Alternatives {
 
         @Test
-        @DisplayName("selectionne l'alternative avec la plus haute priorite")
+        @DisplayName("selects the alternative with the highest priority")
         void shouldSelectHighestPriorityAlternative() {
             var serviceType = new TypeInfo.ClassType(DotName.of("com.example.MyService"));
             var normal = makeBean("com.example.DefaultImpl",
@@ -148,7 +148,7 @@ class BeanResolverTest {
     class InjectionPointResolution {
 
         @Test
-        @DisplayName("resout un injection point satisfait")
+        @DisplayName("resolves a satisfied injection point")
         void shouldResolveInjectionPoint() {
             var serviceType = new TypeInfo.ClassType(DotName.of("com.example.MyService"));
             var bean = makeBean("com.example.MyService",
@@ -164,7 +164,7 @@ class BeanResolverTest {
         }
 
         @Test
-        @DisplayName("detecte un injection point non satisfait")
+        @DisplayName("detects an unsatisfied injection point")
         void shouldDetectUnsatisfied() {
             var resolver = new BeanResolver(List.of(), assignability);
             var ip = new InjectionPointInfo(

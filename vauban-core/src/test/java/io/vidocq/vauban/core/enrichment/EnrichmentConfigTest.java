@@ -20,11 +20,11 @@ class EnrichmentConfigTest {
     }
 
     @Nested
-    @DisplayName("load - parsing de fichier properties")
+    @DisplayName("load - properties file parsing")
     class Load {
 
         @Test
-        @DisplayName("parse une regle simple enrich.Path=RequestScoped")
+        @DisplayName("parses a simple rule enrich.Path=RequestScoped")
         void shouldParseSingleRule() throws Exception {
             var config = parse("enrich.jakarta.ws.rs.Path=jakarta.enterprise.context.RequestScoped");
 
@@ -35,7 +35,7 @@ class EnrichmentConfigTest {
         }
 
         @Test
-        @DisplayName("parse plusieurs regles")
+        @DisplayName("parses multiple rules")
         void shouldParseMultipleRules() throws Exception {
             var config = parse("""
                     enrich.jakarta.ws.rs.Path=jakarta.enterprise.context.RequestScoped
@@ -46,7 +46,7 @@ class EnrichmentConfigTest {
         }
 
         @Test
-        @DisplayName("ignore les cles sans prefix enrich.")
+        @DisplayName("ignores keys without the enrich. prefix")
         void shouldIgnoreNonEnrichKeys() throws Exception {
             var config = parse("""
                     other.key=value
@@ -58,21 +58,21 @@ class EnrichmentConfigTest {
         }
 
         @Test
-        @DisplayName("ignore les cles vides")
+        @DisplayName("ignores empty keys")
         void shouldIgnoreEmptyKeys() throws Exception {
             var config = parse("enrich.=jakarta.enterprise.context.RequestScoped");
             assertEquals(0, config.rules().size());
         }
 
         @Test
-        @DisplayName("ignore les valeurs vides")
+        @DisplayName("ignores empty values")
         void shouldIgnoreEmptyValues() throws Exception {
             var config = parse("enrich.jakarta.ws.rs.Path=");
             assertEquals(0, config.rules().size());
         }
 
         @Test
-        @DisplayName("ignore les commentaires")
+        @DisplayName("ignores comments")
         void shouldIgnoreComments() throws Exception {
             var config = parse("""
                     # Bean enrichment rules
@@ -84,7 +84,7 @@ class EnrichmentConfigTest {
         }
 
         @Test
-        @DisplayName("fichier vide retourne config vide")
+        @DisplayName("empty file returns empty config")
         void shouldReturnEmptyForEmptyFile() throws Exception {
             var config = parse("");
             assertTrue(config.rules().isEmpty());
@@ -92,39 +92,39 @@ class EnrichmentConfigTest {
     }
 
     @Nested
-    @DisplayName("resolveScope - resolution des scopes connus")
+    @DisplayName("resolveScope - resolution of known scopes")
     class ResolveScope {
 
         @Test
-        @DisplayName("ApplicationScoped est normal")
+        @DisplayName("ApplicationScoped is normal")
         void shouldResolveApplicationScoped() throws Exception {
             var config = parse("enrich.X=jakarta.enterprise.context.ApplicationScoped");
             assertEquals(ScopeInfo.APPLICATION, config.rules().getFirst().targetScope());
         }
 
         @Test
-        @DisplayName("RequestScoped est normal")
+        @DisplayName("RequestScoped is normal")
         void shouldResolveRequestScoped() throws Exception {
             var config = parse("enrich.X=jakarta.enterprise.context.RequestScoped");
             assertEquals(ScopeInfo.REQUEST, config.rules().getFirst().targetScope());
         }
 
         @Test
-        @DisplayName("Dependent est pseudo-scope")
+        @DisplayName("Dependent is a pseudo-scope")
         void shouldResolveDependent() throws Exception {
             var config = parse("enrich.X=jakarta.enterprise.context.Dependent");
             assertEquals(ScopeInfo.DEPENDENT, config.rules().getFirst().targetScope());
         }
 
         @Test
-        @DisplayName("Singleton est pseudo-scope")
+        @DisplayName("Singleton is a pseudo-scope")
         void shouldResolveSingleton() throws Exception {
             var config = parse("enrich.X=jakarta.inject.Singleton");
             assertEquals(ScopeInfo.SINGLETON, config.rules().getFirst().targetScope());
         }
 
         @Test
-        @DisplayName("scope custom est traite comme normal par defaut")
+        @DisplayName("a custom scope is treated as normal by default")
         void shouldResolveCustomScopeAsNormal() throws Exception {
             var config = parse("enrich.X=com.example.MyCustomScope");
             var scope = config.rules().getFirst().targetScope();
@@ -134,11 +134,11 @@ class EnrichmentConfigTest {
     }
 
     @Nested
-    @DisplayName("triggerAnnotationNames - noms pour APT")
+    @DisplayName("triggerAnnotationNames - names for APT")
     class TriggerAnnotationNames {
 
         @Test
-        @DisplayName("retourne les FQCNs des annotations trigger")
+        @DisplayName("returns the FQCNs of the trigger annotations")
         void shouldReturnTriggerFqcns() throws Exception {
             var config = parse("""
                     enrich.jakarta.ws.rs.Path=jakarta.enterprise.context.RequestScoped
@@ -152,18 +152,18 @@ class EnrichmentConfigTest {
         }
 
         @Test
-        @DisplayName("config vide retourne ensemble vide")
+        @DisplayName("empty config returns an empty set")
         void shouldReturnEmptyForEmptyConfig() {
             assertTrue(EnrichmentConfig.empty().triggerAnnotationNames().isEmpty());
         }
     }
 
     @Nested
-    @DisplayName("ruleFor - recherche par annotation")
+    @DisplayName("ruleFor - lookup by annotation")
     class RuleFor {
 
         @Test
-        @DisplayName("trouve la regle pour une annotation connue")
+        @DisplayName("finds the rule for a known annotation")
         void shouldFindRuleForKnownAnnotation() throws Exception {
             var config = parse("enrich.jakarta.ws.rs.Path=jakarta.enterprise.context.RequestScoped");
 
@@ -173,7 +173,7 @@ class EnrichmentConfigTest {
         }
 
         @Test
-        @DisplayName("retourne vide pour une annotation inconnue")
+        @DisplayName("returns empty for an unknown annotation")
         void shouldReturnEmptyForUnknownAnnotation() throws Exception {
             var config = parse("enrich.jakarta.ws.rs.Path=jakarta.enterprise.context.RequestScoped");
 
@@ -182,11 +182,11 @@ class EnrichmentConfigTest {
     }
 
     @Nested
-    @DisplayName("merge - fusion de configs")
+    @DisplayName("merge - merging configs")
     class Merge {
 
         @Test
-        @DisplayName("fusionne deux configs sans conflit")
+        @DisplayName("merges two configs without conflict")
         void shouldMergeDisjointConfigs() throws Exception {
             var a = parse("enrich.A=jakarta.enterprise.context.RequestScoped");
             var b = parse("enrich.B=jakarta.enterprise.context.ApplicationScoped");
@@ -196,7 +196,7 @@ class EnrichmentConfigTest {
         }
 
         @Test
-        @DisplayName("la seconde config gagne en cas de doublon")
+        @DisplayName("the second config wins on a duplicate")
         void shouldPreferSecondOnConflict() throws Exception {
             var a = parse("enrich.A=jakarta.enterprise.context.RequestScoped");
             var b = parse("enrich.A=jakarta.enterprise.context.ApplicationScoped");
@@ -208,11 +208,11 @@ class EnrichmentConfigTest {
     }
 
     @Nested
-    @DisplayName("empty - config vide")
+    @DisplayName("empty - empty config")
     class Empty {
 
         @Test
-        @DisplayName("empty() retourne une config sans regles")
+        @DisplayName("empty() returns a config with no rules")
         void shouldReturnEmptyConfig() {
             var config = EnrichmentConfig.empty();
             assertTrue(config.rules().isEmpty());

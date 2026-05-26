@@ -1,37 +1,37 @@
-# Vauban - Plan de travail
+# Vauban - Work plan
 
-## Phases completees
-- **Phase 0**: Bootstrap projet (POM parent Maven 4, 9 modules JPMS) ✅
-- **Phase 1**: Indexeur de classes (ClassFileScanner, JarScanner, 64 tests) ✅
+## Completed phases
+- **Phase 0**: Project bootstrap (Maven 4 parent POM, 9 JPMS modules) ✅
+- **Phase 1**: Class indexer (ClassFileScanner, JarScanner, 64 tests) ✅
 - **Phase 2**: CDI Language Model (declarations, types, AssignabilityRules, 33 tests) ✅
-- **Phase 3**: Decouverte et resolution de beans (BeanDiscovery, BeanResolver, DependencyGraph, 25 tests) ✅
-- **Phase 4**: Generation de code (BeanFactoryGenerator, ClientProxyGenerator via Class-File API, 8 tests) ✅
-- **Phase 5**: Processeur APT (VaubanProcessor, ElementScanner, pipeline complet, 3 tests) ✅
-- **Phase 6**: Runtime conteneur (VaubanContainer, ApplicationContext, RequestContext, DependentContext, 7 tests) ✅
-- **Phase 7**: Integration JUnit 6 (@VaubanTest, VaubanExtension, 5 tests) ✅
-- **Phase 8**: TCK Runner (SPI TCK, Arquillian adapter, 1826 tests executes) ✅
-- **Phase 11**: Outillage modules (ModuleAnalyzer, ModuleReport, 7 tests) ✅
+- **Phase 3**: Bean discovery and resolution (BeanDiscovery, BeanResolver, DependencyGraph, 25 tests) ✅
+- **Phase 4**: Code generation (BeanFactoryGenerator, ClientProxyGenerator via Class-File API, 8 tests) ✅
+- **Phase 5**: APT processor (VaubanProcessor, ElementScanner, full pipeline, 3 tests) ✅
+- **Phase 6**: Runtime container (VaubanContainer, ApplicationContext, RequestContext, DependentContext, 7 tests) ✅
+- **Phase 7**: JUnit 6 integration (@VaubanTest, VaubanExtension, 5 tests) ✅
+- **Phase 8**: TCK Runner (TCK SPI, Arquillian adapter, 1826 tests executed) ✅
+- **Phase 11**: Module tooling (ModuleAnalyzer, ModuleReport, 7 tests) ✅
 
-## Phase 10: Validation TCK CDI Lite 🚧
-- [x] Validation de déploiement : types proxiables, constructeurs, intercepteurs
-- [x] Execution TCK Maven 4 : 917 tests, 218 échecs, 148 sautés
-- [x] Support AroundConstruct, bytecode intercepteurs (Class-File API)
-- [x] Gestion exceptions de déploiement (DefinitionException vs DeploymentException)
-- [x] Injection par constructeur dans intercepteurs, @Priority ordering
-- [x] Matching bindings d'intercepteurs avec @Nonbinding
-- [x] Exclusion alternatives désactivées
-- [x] Amélioration assignabilité types (raw vs parameterized, wildcards)
+## Phase 10: CDI Lite TCK validation 🚧
+- [x] Deployment validation: proxyable types, constructors, interceptors
+- [x] Maven 4 TCK run: 917 tests, 218 failures, 148 skipped
+- [x] AroundConstruct support, interceptor bytecode (Class-File API)
+- [x] Deployment exception handling (DefinitionException vs DeploymentException)
+- [x] Constructor injection in interceptors, @Priority ordering
+- [x] Matching interceptor bindings with @Nonbinding
+- [x] Exclusion of disabled alternatives
+- [x] Improved type assignability (raw vs parameterized, wildcards)
 
-## Backlog (differe)
-- [ ] `DirectoryScanner` - scan repertoires
-- [ ] Serialisation binaire IndexWriter/IndexReader
-- [ ] `InterceptorSubclassGenerator` complet
+## Backlog (deferred)
+- [ ] `DirectoryScanner` - directory scanning
+- [ ] Binary serialization IndexWriter/IndexReader
+- [ ] Complete `InterceptorSubclassGenerator`
 - [ ] `DecoratorSubclassGenerator`
 - [ ] `ObserverInvokerGenerator`
-- [ ] Pipeline BCE complet (5 phases @Discovery etc.)
+- [ ] Complete BCE pipeline (5 phases @Discovery etc.)
 - [ ] `ExtensionLoader` via ServiceLoader
-- [ ] Systeme d'evenements (Event<T>, @Observes)
-- [ ] `Instance<T>` programmatic lookup complet
-- [ ] Beans built-in (BeanManager, Event, Instance)
-- [ ] `@MockBean` pour JUnit
-- [ ] Goals Maven (vauban:index, vauban:module-analyze)
+- [ ] Event system (Event<T>, @Observes)
+- [ ] Complete `Instance<T>` programmatic lookup
+- [ ] Built-in beans (BeanManager, Event, Instance)
+- [ ] `@MockBean` for JUnit
+- [ ] Maven goals (vauban:index, vauban:module-analyze)

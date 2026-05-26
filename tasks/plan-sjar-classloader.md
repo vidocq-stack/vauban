@@ -1,69 +1,69 @@
-# Plan : Systeme de ClassLoader a plugins pour Vauban — Support SJAR (Secure JAR)
+# Plan: Plugin-based ClassLoader system for Vauban — SJAR (Secure JAR) support
 
-## Contexte
+## Context
 
-Vauban est un conteneur CDI 4.1 JPMS-native avec 774/774 TCK. L'objectif est d'introduire un **systeme de plugins classloader** pour supporter des cas d'usage avances, en commencant par les **JARs chiffres** (`.sjar`). Cela permet de distribuer des bibliotheques CDI dont les classes sont protegees par chiffrement AES-256-GCM.
+Vauban is a JPMS-native CDI 4.1 container with 774/774 TCK. The goal is to introduce a **plugin classloader system** to support advanced use cases, starting with **encrypted JARs** (`.sjar`). This makes it possible to distribute CDI libraries whose classes are protected by AES-256-GCM encryption.
 
-### Points d'entree actuels du classloading
+### Current classloading entry points
 
-| Fichier | Mecanisme | Role |
+| File | Mechanism | Role |
 |---------|-----------|------|
-| `BeanDiscovery.java` | `Class.forName(name, false, cl)` | Chargement des beans decouverts |
-| `VaubanContainerBuilder.java` | `scanLocal/scanPackage/scanClasspath` | Decouverte + `Class.forName()` |
+| `BeanDiscovery.java` | `Class.forName(name, false, cl)` | Loading discovered beans |
+| `VaubanContainerBuilder.java` | `scanLocal/scanPackage/scanClasspath` | Discovery + `Class.forName()` |
 | `BceProcessor.java` | `classLoader.loadClass()` | Build Compatible Extensions |
-| `InterceptorBeanWrapper.java` | `loadOrDefineClassRobustly()` | Definition proxies/intercepteurs |
-| `JarScanner.java` | `JarFile` -> `byte[]` -> `ClassFileScanner` | Indexation bytecode (pas de ClassLoader) |
-| `VaubanGenerator.java` | `URLClassLoader` | Generation build-time |
+| `InterceptorBeanWrapper.java` | `loadOrDefineClassRobustly()` | Defining proxies/interceptors |
+| `JarScanner.java` | `JarFile` -> `byte[]` -> `ClassFileScanner` | Bytecode indexing (no ClassLoader) |
+| `VaubanGenerator.java` | `URLClassLoader` | Build-time generation |
 
-### Decision architecturale cle
+### Key architectural decision
 
-**Interception au niveau bytes** plutot que remplacement de ClassLoader :
-- `ClassFileScanner.scan(byte[])` travaille deja sur des bytes bruts
-- On intercepte la lecture des bytes **avant** le scan et **avant** le `defineClass`
-- Un `SjarClassLoader` custom fournit le `defineClass` pour les classes chiffrees
+**Byte-level interception** rather than ClassLoader replacement:
+- `ClassFileScanner.scan(byte[])` already works on raw bytes
+- We intercept the byte reading **before** the scan and **before** the `defineClass`
+- A custom `SjarClassLoader` provides the `defineClass` for the encrypted classes
 
 ---
 
 ## Architecture
 
-### 2 nouveaux modules
+### 2 new modules
 
-#### `vauban-classloader-spi` — Interfaces SPI pures
+#### `vauban-classloader-spi` — Pure SPI interfaces
 
 ```
 io.vidocq.vauban.classloader.spi
-|-- ByteSourcePlugin.java    — SPI principale (ServiceLoader)
-|-- ArchiveReader.java       — Abstraction lecture d'archive
-|-- PluginContext.java        — Acces cles + config
+|-- ByteSourcePlugin.java    — Main SPI (ServiceLoader)
+|-- ArchiveReader.java       — Archive reading abstraction
+|-- PluginContext.java        — Key access + config
 ```
 
-#### `vauban-sjar` — Implementation chiffrement AES-256-GCM
+#### `vauban-sjar` — AES-256-GCM encryption implementation
 
 ```
 io.vidocq.vauban.sjar
 |-- SjarPlugin.java          — implements ByteSourcePlugin
-|-- SjarArchiveReader.java   — Lecture + dechiffrement entries
-|-- SjarClassLoader.java     — ClassLoader custom (findClass + getResourceAsStream)
-|-- SjarEncryptor.java       — Outil JAR -> SJAR
-|-- SjarKeyProvider.java     — Resolution cles (env, keystore, callback)
+|-- SjarArchiveReader.java   — Reading + decryption of entries
+|-- SjarClassLoader.java     — Custom ClassLoader (findClass + getResourceAsStream)
+|-- SjarEncryptor.java       — JAR -> SJAR tool
+|-- SjarKeyProvider.java     — Key resolution (env, keystore, callback)
 |-- cli/
-    |-- SjarTool.java        — CLI encrypt/verify
+    |-- SjarTool.java        — encrypt/verify CLI
 ```
 
-### Format SJAR
+### SJAR format
 
-Un `.sjar` est un **ZIP standard** avec :
+A `.sjar` is a **standard ZIP** with:
 
 ```
 META-INF/
-  MANIFEST.MF              # Headers standard + Vauban-Encryption
-  SJAR-METADATA.json        # Metadonnees chiffrement (non chiffre)
-  SJAR-METADATA.sig          # HMAC-SHA256 du metadata
-com/example/MyBean.class.enc  # Classe chiffree [12B IV][ciphertext+GCM tag]
-resources/                     # Ressources non chiffrees
+  MANIFEST.MF              # Standard headers + Vauban-Encryption
+  SJAR-METADATA.json        # Encryption metadata (not encrypted)
+  SJAR-METADATA.sig          # HMAC-SHA256 of the metadata
+com/example/MyBean.class.enc  # Encrypted class [12B IV][ciphertext+GCM tag]
+resources/                     # Unencrypted resources
 ```
 
-**SJAR-METADATA.json** :
+**SJAR-METADATA.json**:
 ```json
 {
   "version": 1,
@@ -99,115 +99,115 @@ public interface PluginContext {
 }
 ```
 
-### Gestion des cles (3 niveaux)
+### Key management (3 levels)
 
-1. **Env** : `VAUBAN_SJAR_KEY=<hex-256-bits>` — CI/CD
-2. **Keystore** : `-Dvauban.sjar.keystore=path -Dvauban.sjar.keyalias=mykey` — production
-3. **Programmatique** : `builder.pluginContext(custom)` — vault (HashiCorp, AWS KMS)
+1. **Env**: `VAUBAN_SJAR_KEY=<hex-256-bits>` — CI/CD
+2. **Keystore**: `-Dvauban.sjar.keystore=path -Dvauban.sjar.keyalias=mykey` — production
+3. **Programmatic**: `builder.pluginContext(custom)` — vault (HashiCorp, AWS KMS)
 
 ---
 
-## Integration avec le code existant
+## Integration with the existing code
 
-### 1. `JarScanner` — nouvelle surcharge plugin-aware
+### 1. `JarScanner` — new plugin-aware overload
 
 ```java
-// Existant (inchange) :
+// Existing (unchanged):
 public static List<ClassInfo> scan(Path jarPath) throws IOException;
 
-// Nouveau :
+// New:
 public static List<ClassInfo> scan(Path archivePath,
     List<ByteSourcePlugin> plugins, PluginContext context) throws IOException;
 ```
 
-### 2. `VaubanContainerBuilder` — enregistrement plugins
+### 2. `VaubanContainerBuilder` — plugin registration
 
-- Nouveau champ `List<ByteSourcePlugin>` + `PluginContext`
-- Methodes `addByteSourcePlugin()`, `pluginContext()`
-- Auto-discovery via `ServiceLoader.load(ByteSourcePlugin.class)` dans `build()`
-- `scanClasspath()` etendu pour detecter les `.sjar` sur le classpath
-- Nouveau `scanSjar(Path)` pour ajouter un SJAR explicitement
+- New `List<ByteSourcePlugin>` field + `PluginContext`
+- `addByteSourcePlugin()`, `pluginContext()` methods
+- Auto-discovery via `ServiceLoader.load(ByteSourcePlugin.class)` in `build()`
+- `scanClasspath()` extended to detect `.sjar` files on the classpath
+- New `scanSjar(Path)` to add an SJAR explicitly
 
 ### 3. `VaubanGenerator` (Maven plugin)
 
-- `Config` record etendu avec `List<ByteSourcePlugin>` + `PluginContext`
-- `generate()` utilise la surcharge plugin-aware de `JarScanner`
+- `Config` record extended with `List<ByteSourcePlugin>` + `PluginContext`
+- `generate()` uses the plugin-aware overload of `JarScanner`
 
-### 4. Nouveau Mojo `EncryptMojo`
+### 4. New `EncryptMojo` Mojo
 
-Goal `vauban:encrypt` — prend un JAR en entree, produit un `.sjar`.
+`vauban:encrypt` goal — takes a JAR as input, produces a `.sjar`.
 
 ---
 
-## Fichiers a creer
+## Files to create
 
-| Fichier | Module |
+| File | Module |
 |---------|--------|
-| `vauban-classloader-spi/pom.xml` | nouveau |
-| `vauban-classloader-spi/src/main/java/module-info.java` | nouveau |
-| `vauban-classloader-spi/.../spi/ByteSourcePlugin.java` | nouveau |
-| `vauban-classloader-spi/.../spi/ArchiveReader.java` | nouveau |
-| `vauban-classloader-spi/.../spi/PluginContext.java` | nouveau |
-| `vauban-sjar/pom.xml` | nouveau |
-| `vauban-sjar/src/main/java/module-info.java` | nouveau |
-| `vauban-sjar/.../sjar/SjarPlugin.java` | nouveau |
-| `vauban-sjar/.../sjar/SjarArchiveReader.java` | nouveau |
-| `vauban-sjar/.../sjar/SjarClassLoader.java` | nouveau |
-| `vauban-sjar/.../sjar/SjarEncryptor.java` | nouveau |
-| `vauban-sjar/.../sjar/SjarKeyProvider.java` | nouveau |
-| `vauban-sjar/.../sjar/cli/SjarTool.java` | nouveau |
-| Tests dans `vauban-sjar/src/test/java/` | nouveau |
+| `vauban-classloader-spi/pom.xml` | new |
+| `vauban-classloader-spi/src/main/java/module-info.java` | new |
+| `vauban-classloader-spi/.../spi/ByteSourcePlugin.java` | new |
+| `vauban-classloader-spi/.../spi/ArchiveReader.java` | new |
+| `vauban-classloader-spi/.../spi/PluginContext.java` | new |
+| `vauban-sjar/pom.xml` | new |
+| `vauban-sjar/src/main/java/module-info.java` | new |
+| `vauban-sjar/.../sjar/SjarPlugin.java` | new |
+| `vauban-sjar/.../sjar/SjarArchiveReader.java` | new |
+| `vauban-sjar/.../sjar/SjarClassLoader.java` | new |
+| `vauban-sjar/.../sjar/SjarEncryptor.java` | new |
+| `vauban-sjar/.../sjar/SjarKeyProvider.java` | new |
+| `vauban-sjar/.../sjar/cli/SjarTool.java` | new |
+| Tests in `vauban-sjar/src/test/java/` | new |
 
-## Fichiers a modifier
+## Files to modify
 
-| Fichier | Changement |
+| File | Change |
 |---------|-----------|
-| `pom.xml` (racine) | Ajouter modules + dependencyManagement |
+| `pom.xml` (root) | Add modules + dependencyManagement |
 | `vauban-indexer/module-info.java` | `requires static io.vidocq.vauban.classloader.spi` |
-| `vauban-indexer/.../JarScanner.java` | Surcharge plugin-aware |
+| `vauban-indexer/.../JarScanner.java` | Plugin-aware overload |
 | `vauban-core/module-info.java` | `requires static io.vidocq.vauban.classloader.spi`, `uses ByteSourcePlugin` |
 | `vauban-core/.../VaubanContainerBuilder.java` | Plugin registration + ServiceLoader |
-| `vauban-maven-plugin/.../VaubanGenerator.java` | Config etendu |
+| `vauban-maven-plugin/.../VaubanGenerator.java` | Extended Config |
 | `vauban-maven-plugin/.../GenerateMojo.java` | SJAR dependencies |
-| `vauban-maven-plugin/plugin.xml` | Nouveau goal encrypt |
+| `vauban-maven-plugin/plugin.xml` | New encrypt goal |
 
 ---
 
-## Phases d'implementation
+## Implementation phases
 
-### Phase 1 : SPI + SJAR basique (classpath, non-modulaire)
+### Phase 1: SPI + basic SJAR (classpath, non-modular)
 
-1. Creer `vauban-classloader-spi` avec les 3 interfaces
-2. Creer `vauban-sjar` avec `SjarPlugin`, `SjarArchiveReader`, `SjarEncryptor`, `SjarClassLoader`
-3. Modifier `JarScanner` — surcharge plugin-aware
-4. Modifier `VaubanContainerBuilder` — plugins ServiceLoader + `scanSjar()`
-5. Ajouter `EncryptMojo` au maven plugin
-6. Tests : chiffrer un JAR test, scanner, decouvrir beans, executer CDI
+1. Create `vauban-classloader-spi` with the 3 interfaces
+2. Create `vauban-sjar` with `SjarPlugin`, `SjarArchiveReader`, `SjarEncryptor`, `SjarClassLoader`
+3. Modify `JarScanner` — plugin-aware overload
+4. Modify `VaubanContainerBuilder` — ServiceLoader plugins + `scanSjar()`
+5. Add `EncryptMojo` to the maven plugin
+6. Tests: encrypt a test JAR, scan it, discover beans, run CDI
 
-### Phase 2 : Integration complete
+### Phase 2: Full integration
 
-1. `VaubanGenerator` build-time avec SJAR
-2. JPMS `ModuleLayer` pour modules nommes dans SJARs
-3. CLI tool `SjarTool`
+1. Build-time `VaubanGenerator` with SJAR
+2. JPMS `ModuleLayer` for named modules in SJARs
+3. `SjarTool` CLI tool
 
-### Phase 3 : Durcissement
+### Phase 3: Hardening
 
-1. Verification signature HMAC du metadata
-2. Rotation de cles (multiple aliases par SJAR)
-3. Chiffrement selectif (packages specifiques)
+1. HMAC signature verification of the metadata
+2. Key rotation (multiple aliases per SJAR)
+3. Selective encryption (specific packages)
 
 ---
 
 ## Verification
 
-1. **Compilation** : `mvn compile -q` — tous les modules
-2. **Tests unitaires** : `mvn test -pl vauban-sjar` — chiffrement/dechiffrement, scan, discovery
-3. **Test integration** : creer un SJAR avec un bean CDI, le charger via `VaubanContainer.builder().scanSjar(path).build()`, verifier injection
-4. **TCK** : 774/774 inchange (le SJAR est additif, ne casse rien)
-5. **Securite** : verifier que les bytes dechiffres ne fuient pas (pas de temp files, cache en memoire uniquement)
+1. **Compilation**: `mvn compile -q` — all modules
+2. **Unit tests**: `mvn test -pl vauban-sjar` — encryption/decryption, scan, discovery
+3. **Integration test**: create an SJAR with a CDI bean, load it via `VaubanContainer.builder().scanSjar(path).build()`, verify injection
+4. **TCK**: 774/774 unchanged (SJAR is additive, breaks nothing)
+5. **Security**: verify that decrypted bytes do not leak (no temp files, in-memory cache only)
 
-## Limites connues
+## Known limitations
 
-- **Securite relative** : le chiffrement protege contre la lecture statique mais pas contre `jmap` ou agents JVMTI en runtime
-- **Phase 1 classpath only** : pas de support ModuleLayer pour les SJAR modulaires (Phase 2)
-- **Pas de chiffrement des ressources** en Phase 1 (uniquement les `.class`)
+- **Relative security**: encryption protects against static reading but not against `jmap` or JVMTI agents at runtime
+- **Phase 1 classpath only**: no ModuleLayer support for modular SJARs (Phase 2)
+- **No resource encryption** in Phase 1 (only `.class` files)

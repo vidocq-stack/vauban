@@ -18,25 +18,25 @@ class JarScannerTest {
     }
 
     @Test
-    @DisplayName("scanne un JAR et trouve des classes")
+    @DisplayName("scans a JAR and finds classes")
     void shouldScanJar() throws Exception {
         var classes = JarScanner.scan(junitJarPath());
-        assertFalse(classes.isEmpty(), "devrait trouver des classes dans le JAR JUnit");
+        assertFalse(classes.isEmpty(), "should find classes in the JUnit JAR");
     }
 
     @Test
-    @DisplayName("trouve une classe connue dans le JAR")
+    @DisplayName("finds a known class in the JAR")
     void shouldFindKnownClass() throws Exception {
         var classes = JarScanner.scan(junitJarPath());
         boolean found = classes.stream()
                 .anyMatch(c -> c.name().equals(DotName.of("org.junit.jupiter.api.Test")));
-        assertTrue(found, "devrait trouver org.junit.jupiter.api.Test");
+        assertTrue(found, "should find org.junit.jupiter.api.Test");
     }
 
     @Test
-    @DisplayName("retourne plusieurs classes")
+    @DisplayName("returns multiple classes")
     void shouldReturnMultipleClasses() throws Exception {
         var classes = JarScanner.scan(junitJarPath());
-        assertTrue(classes.size() > 10, "un JAR JUnit devrait contenir plus de 10 classes");
+        assertTrue(classes.size() > 10, "a JUnit JAR should contain more than 10 classes");
     }
 }

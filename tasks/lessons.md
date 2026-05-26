@@ -1,66 +1,66 @@
 # Lessons Learned
 
-## 1. Pas de preview features sauf APIs finalisees JDK 25
-**Contexte**: L'utilisateur a explicitement refuse `--enable-preview`.
-**Regle**: Utiliser uniquement les APIs finalisees du JDK 25. `ScopedValue` (JEP 487) est finalise en JDK 25 et doit etre utilise a la place de `ThreadLocal` pour la compatibilite virtual threads. Pas de Stable Values (JEP 502), ni Structured Concurrency (JEP 505).
+## 1. No preview features except finalized JDK 25 APIs
+**Context**: The user explicitly refused `--enable-preview`.
+**Rule**: Use only finalized JDK 25 APIs. `ScopedValue` (JEP 487) is finalized in JDK 25 and must be used instead of `ThreadLocal` for virtual-thread compatibility. No Stable Values (JEP 502), no Structured Concurrency (JEP 505).
 
-## 2. Maven 4 RC est acceptable
-**Contexte**: L'utilisateur veut Maven 4.0.0-rc-5, pas Maven 3.9.
-**Regle**: Utiliser les features Maven 4 (POM model 4.1.0, decouverte auto sous-projets, nouveau lifecycle). Ne pas proposer de downgrade vers Maven 3.
+## 2. Maven 4 RC is acceptable
+**Context**: The user wants Maven 4.0.0-rc-5, not Maven 3.9.
+**Rule**: Use Maven 4 features (POM model 4.1.0, automatic sub-project discovery, the new lifecycle). Do not propose a downgrade to Maven 3.
 
-## 3. maven-plugin-plugin incompatible JDK 25
-**Contexte**: Phase 0 - le plugin-plugin 3.15.1 ne supporte pas class file version 69 (JDK 25).
-**Regle**: Le module vauban-maven-plugin reste en packaging `jar` jusqu'a ce que maven-plugin-tools supporte JDK 25. Ne pas utiliser `<packaging>maven-plugin</packaging>` ni les annotations `@Mojo`.
+## 3. maven-plugin-plugin incompatible with JDK 25
+**Context**: Phase 0 - plugin-plugin 3.15.1 does not support class file version 69 (JDK 25).
+**Rule**: The vauban-maven-plugin module stays in `jar` packaging until maven-plugin-tools supports JDK 25. Do not use `<packaging>maven-plugin</packaging>` nor the `@Mojo` annotations.
 
-## 4. Les sealed interfaces/classes locales sont interdites en Java
-**Contexte**: Phase 0 - erreur de compilation dans SmokeTest avec sealed interface locale.
-**Regle**: Toujours declarer les sealed types comme membres de classe (nested) ou top-level, jamais locaux dans une methode.
+## 4. Local sealed interfaces/classes are forbidden in Java
+**Context**: Phase 0 - compilation error in SmokeTest with a local sealed interface.
+**Rule**: Always declare sealed types as class members (nested) or top-level, never local within a method.
 
-## 5. Packages vides avec module-info exports
-**Contexte**: Phase 0 - erreur "package is empty or does not exist" quand un module exporte un package qui ne contient que package-info.java.
-**Regle**: Chaque package exporte dans module-info.java doit contenir au moins une classe concrete (pas juste package-info.java).
+## 5. Empty packages with module-info exports
+**Context**: Phase 0 - "package is empty or does not exist" error when a module exports a package that contains only package-info.java.
+**Rule**: Every package exported in module-info.java must contain at least one concrete class (not just package-info.java).
 
-## 6. Shell Claude Code et SDKMAN
-**Contexte**: Le shell de Claude Code ne charge pas automatiquement le .sdkmanrc.
-**Regle**: Toujours prefixer les commandes Maven avec `export MAVEN_HOME=~/.sdkman/candidates/maven/4.0.0-rc-5 && export PATH="$MAVEN_HOME/bin:$PATH" &&` pour garantir Maven 4.
+## 6. Claude Code shell and SDKMAN
+**Context**: The Claude Code shell does not automatically load the .sdkmanrc.
+**Rule**: Always prefix Maven commands with `export MAVEN_HOME=~/.sdkman/candidates/maven/4.0.0-rc-5 && export PATH="$MAVEN_HOME/bin:$PATH" &&` to guarantee Maven 4.
 
-## 7. Conflit de noms AnnotationValue entre model et JDK
-**Contexte**: Phase 1 - `io.vidocq.vauban.indexer.model.AnnotationValue` et `java.lang.classfile.AnnotationValue` ont le meme nom simple.
-**Regle**: Dans `ClassFileScanner`, utiliser des FQN pour les references a `java.lang.classfile.AnnotationValue` et ses sous-types. Ne pas utiliser d'import wildcard pour les deux packages.
+## 7. AnnotationValue name conflict between model and JDK
+**Context**: Phase 1 - `io.vidocq.vauban.indexer.model.AnnotationValue` and `java.lang.classfile.AnnotationValue` have the same simple name.
+**Rule**: In `ClassFileScanner`, use FQNs for references to `java.lang.classfile.AnnotationValue` and its subtypes. Do not use a wildcard import for both packages.
 
-## 8. API Class-File JDK 25 : symbol vs raw
-**Contexte**: Phase 1 - `FieldModel.fieldType()` retourne `Utf8Entry` (raw), `fieldTypeSymbol()` retourne `ClassDesc` (type). Idem pour `MethodModel`.
-**Regle**: Toujours utiliser les methodes `*Symbol()` (`fieldTypeSymbol()`, `methodTypeSymbol()`) pour obtenir les types symboliques.
+## 8. JDK 25 Class-File API: symbol vs raw
+**Context**: Phase 1 - `FieldModel.fieldType()` returns `Utf8Entry` (raw), `fieldTypeSymbol()` returns `ClassDesc` (type). Same for `MethodModel`.
+**Rule**: Always use the `*Symbol()` methods (`fieldTypeSymbol()`, `methodTypeSymbol()`) to obtain the symbolic types.
 
-## 9. Les agents custom .claude/agents/ ne sont pas des subagent_type
-**Contexte**: Phase 1 - `subagent_type: "tdd-writer"` echoue avec "Agent type not found".
-**Regle**: Les agents custom sont invoques differemment (via @mention ou directive). Pour les sous-agents, utiliser `general-purpose` avec les instructions de l'agent dans le prompt.
+## 9. Custom .claude/agents/ agents are not subagent_type
+**Context**: Phase 1 - `subagent_type: "tdd-writer"` fails with "Agent type not found".
+**Rule**: Custom agents are invoked differently (via @mention or directive). For subagents, use `general-purpose` with the agent's instructions in the prompt.
 
-## 10. Conflits de noms CDI lang model vs indexer model
-**Contexte**: Phase 2 - Les interfaces CDI (`ClassInfo`, `FieldInfo`, `MethodInfo`, `AnnotationInfo`) ont les memes noms simples que nos records indexer.
-**Regle**: Dans les implementations du lang model, utiliser des FQN ou des imports precis. Ne jamais importer en wildcard les deux packages. Prefixer `jakarta.enterprise.lang.model.declarations.ClassInfo` et `io.vidocq.vauban.indexer.model.ClassInfo` explicitement.
+## 10. CDI lang model vs indexer model name conflicts
+**Context**: Phase 2 - The CDI interfaces (`ClassInfo`, `FieldInfo`, `MethodInfo`, `AnnotationInfo`) have the same simple names as our indexer records.
+**Rule**: In the lang model implementations, use FQNs or precise imports. Never wildcard-import both packages. Prefix `jakarta.enterprise.lang.model.declarations.ClassInfo` and `io.vidocq.vauban.indexer.model.ClassInfo` explicitly.
 
-## 11. Ne pas supposer l'origine des commits
-**Contexte**: Les commits "Missing file to commit" etaient de l'utilisateur, pas des agents.
-**Regle**: Ne pas faire d'hypotheses sur qui a fait un commit. Verifier avec l'utilisateur avant de consolider/rebase.
+## 11. Do not assume the origin of commits
+**Context**: The "Missing file to commit" commits were the user's, not the agents'.
+**Rule**: Do not make assumptions about who made a commit. Check with the user before consolidating/rebasing.
 
 ## 12. CDI DefinitionException vs DeploymentException
-**Contexte**: Phase 10 - Le TCK est tres strict sur le type d'exception lancee. Les erreurs de syntaxe/definition sont des `DefinitionException`, les problemes de resolution de graphe (unsatisfied, ambiguous) sont des `DeploymentException`.
-**Regle**: Toujours verifier la spec CDI (Section 2.8) pour le type d'exception attendu. Dans `VaubanContainer.builder().build()`, filtrer les erreurs par `ValidationError.Kind` pour lancer la bonne exception Jakarta EE.
+**Context**: Phase 10 - The TCK is very strict about the type of exception thrown. Syntax/definition errors are `DefinitionException`, graph resolution problems (unsatisfied, ambiguous) are `DeploymentException`.
+**Rule**: Always check the CDI spec (Section 2.8) for the expected exception type. In `VaubanContainer.builder().build()`, filter errors by `ValidationError.Kind` to throw the right Jakarta EE exception.
 
-## 13. Alternatives desactivees et decouverte de beans
-**Contexte**: Phase 10 - `DisabledBeanNotAvailableForInjectionTest` echouait car un bean alternative sans `@Priority` etait quand meme decouvert.
-**Regle**: CDI 4.1 Section 5.1.1 : une alternative n'est pas disponible pour l'injection si elle n'est pas activee. Il est preferable de les exclure des la phase `BeanDiscovery` pour eviter qu'elles ne polluent le `BeanResolver`.
+## 13. Disabled alternatives and bean discovery
+**Context**: Phase 10 - `DisabledBeanNotAvailableForInjectionTest` failed because an alternative bean without `@Priority` was still discovered.
+**Rule**: CDI 4.1 Section 5.1.1: an alternative is not available for injection if it is not enabled. It is preferable to exclude them as early as the `BeanDiscovery` phase to prevent them from polluting the `BeanResolver`.
 
-## 14. Field injection sur normal-scope DOIT retourner le client proxy paresseux
-**Contexte**: VAU-INJ-001 (2026-05-07) — `@Inject OperationAudit audit` (ou tout bean `@TransactionScoped`/`@RequestScoped`) restait `null` apres injection, provoquant un NPE a l'usage.
-**Cause racine**: `VaubanContainer.getContextualInstance` appelait `context.get(contextual)` (sans `CreationalContext`, donc version "look up existing") AVANT de verifier `isNormal()`. Pour un scope inactif (`@TransactionScoped` hors TX, `@RequestScoped` hors requete), ce `context.get()` appelle `checkActive()` qui lance `ContextNotActiveException`. Cette exception etait avalee par le catch de `BeanInjector` laissant le field a `null`. Deuxieme probleme : le catch-all dans `InterceptorBeanWrapper.getOrCreateProxy` faisait de meme — `ctx.get()` eagerment sur un scope inactif.
-**Regle**: Pour les beans `isNormal()`, toujours retourner le client proxy directement — sans jamais appeler `context.get()` au moment de la creation/injection. Le proxy resout le contexte *au moment de l'invocation de methode*, pas au boot. Le pattern correct : `if (scope.isNormal()) return interceptorWrapper.getOrCreateProxy(bean)` en premiere instruction de `getContextualInstance`, avant tout acces au contexte. Le catch-all d'`InterceptorBeanWrapper.getOrCreateProxy` ne doit jamais degrader vers `ctx.get()` pour les beans normal-scope.
-**Fix applique**: `VaubanContainer.getContextualInstance` (check `isNormal()` monte avant `context.get()`) + `InterceptorBeanWrapper.getOrCreateProxy` catch block (rethrow `DeploymentException` pour normal-scope au lieu de `ctx.get()`).
-**Faux pas (2026-05-07)**: Le catch block dans `getOrCreateProxy` lançait `DeploymentException` pour tout bean `isNormal()` quand la *creation du proxy bytecode* echouait. Or `RuntimeClientProxyGenerator.generateProxyMethod` plantait silencieusement pour les methodes avec des parametres de type tableau (ex. `Song[]`, `int[]`, `String...` varargs) car `Class.describeConstable()` retourne `Optional.empty()` pour ces types, et le fallback `ClassDesc.of(type.getName())` echouait car `Song[].class.getName()` retourne `"[Lorg...Song;"` (format descripteur JVM, pas format nom de classe). Resultat : 7 TCK failures sur `EventTypesTest`, `MemberLevelInheritanceTest`, `InvokerAssignabilityTest`, `VarargsMethodInvokerTest`.
-**Correction finale**: Introduire un helper `classDescOf(Class<?>)` dans `RuntimeClientProxyGenerator` utilisant `ClassDesc.ofDescriptor(type.descriptorString())` comme fallback — ce methode accepte les descripteurs JVM. TCK 774/774 PASS retrouve.
+## 14. Field injection on a normal scope MUST return the lazy client proxy
+**Context**: VAU-INJ-001 (2026-05-07) — `@Inject OperationAudit audit` (or any `@TransactionScoped`/`@RequestScoped` bean) remained `null` after injection, causing an NPE on use.
+**Root cause**: `VaubanContainer.getContextualInstance` called `context.get(contextual)` (without a `CreationalContext`, hence the "look up existing" version) BEFORE checking `isNormal()`. For an inactive scope (`@TransactionScoped` outside a TX, `@RequestScoped` outside a request), this `context.get()` calls `checkActive()`, which throws `ContextNotActiveException`. This exception was swallowed by `BeanInjector`'s catch, leaving the field `null`. Second problem: the catch-all in `InterceptorBeanWrapper.getOrCreateProxy` did the same — `ctx.get()` eagerly on an inactive scope.
+**Rule**: For `isNormal()` beans, always return the client proxy directly — without ever calling `context.get()` at creation/injection time. The proxy resolves the context *at method-invocation time*, not at boot. The correct pattern: `if (scope.isNormal()) return interceptorWrapper.getOrCreateProxy(bean)` as the first statement of `getContextualInstance`, before any context access. The catch-all of `InterceptorBeanWrapper.getOrCreateProxy` must never degrade to `ctx.get()` for normal-scoped beans.
+**Fix applied**: `VaubanContainer.getContextualInstance` (the `isNormal()` check moved above `context.get()`) + `InterceptorBeanWrapper.getOrCreateProxy` catch block (rethrow `DeploymentException` for normal scope instead of `ctx.get()`).
+**Misstep (2026-05-07)**: The catch block in `getOrCreateProxy` threw `DeploymentException` for every `isNormal()` bean when the *bytecode proxy creation* failed. But `RuntimeClientProxyGenerator.generateProxyMethod` crashed silently for methods with array-type parameters (e.g. `Song[]`, `int[]`, `String...` varargs) because `Class.describeConstable()` returns `Optional.empty()` for those types, and the fallback `ClassDesc.of(type.getName())` failed because `Song[].class.getName()` returns `"[Lorg...Song;"` (JVM descriptor format, not class-name format). Result: 7 TCK failures on `EventTypesTest`, `MemberLevelInheritanceTest`, `InvokerAssignabilityTest`, `VarargsMethodInvokerTest`.
+**Final correction**: Introduce a `classDescOf(Class<?>)` helper in `RuntimeClientProxyGenerator` using `ClassDesc.ofDescriptor(type.descriptorString())` as the fallback — this method accepts JVM descriptors. TCK 774/774 PASS recovered.
 
-## 15. ClassDesc pour les types tableau dans le Class-File API
-**Contexte**: `RuntimeClientProxyGenerator` (VAU-INJ-001 follow-up, 2026-05-07).
-**Cause**: `Class.describeConstable()` peut retourner `Optional.empty()` pour les types tableau (ex. `Song[].class`, `int[].class`). Le fallback `ClassDesc.of(type.getName())` echoue car `getName()` retourne le descripteur JVM (`[Lpackage.Class;` ou `[I`) que `ClassDesc.of()` ne reconnait pas — il attend un nom binaire avec des `.`.
-**Regle**: Toujours utiliser `ClassDesc.ofDescriptor(type.descriptorString())` comme fallback pour `describeConstable()`. `descriptorString()` retourne le format descripteur JVM valide pour tous les types (primitifs, references, tableaux). Pattern correct : `type.describeConstable().orElseGet(() -> ClassDesc.ofDescriptor(type.descriptorString()))`.
+## 15. ClassDesc for array types in the Class-File API
+**Context**: `RuntimeClientProxyGenerator` (VAU-INJ-001 follow-up, 2026-05-07).
+**Cause**: `Class.describeConstable()` can return `Optional.empty()` for array types (e.g. `Song[].class`, `int[].class`). The fallback `ClassDesc.of(type.getName())` fails because `getName()` returns the JVM descriptor (`[Lpackage.Class;` or `[I`), which `ClassDesc.of()` does not recognize — it expects a binary name with `.`.
+**Rule**: Always use `ClassDesc.ofDescriptor(type.descriptorString())` as the fallback for `describeConstable()`. `descriptorString()` returns the valid JVM descriptor format for all types (primitives, references, arrays). Correct pattern: `type.describeConstable().orElseGet(() -> ClassDesc.ofDescriptor(type.descriptorString()))`.

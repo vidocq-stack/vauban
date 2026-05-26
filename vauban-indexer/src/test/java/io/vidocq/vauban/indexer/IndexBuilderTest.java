@@ -27,14 +27,14 @@ class IndexBuilderTest {
     }
 
     @Test
-    @DisplayName("construit un index vide")
+    @DisplayName("builds an empty index")
     void shouldBuildEmptyIndex() {
         var index = new IndexBuilder().build();
         assertEquals(0, index.size());
     }
 
     @Test
-    @DisplayName("ajoute une classe")
+    @DisplayName("adds a class")
     void shouldAddClassInfo() {
         var builder = new IndexBuilder();
         builder.add(dummyClass("com.example.Foo"));
@@ -42,7 +42,7 @@ class IndexBuilderTest {
     }
 
     @Test
-    @DisplayName("remplace une classe dupliquee")
+    @DisplayName("replaces a duplicate class")
     void shouldReplaceDuplicate() {
         var builder = new IndexBuilder();
         builder.add(dummyClass("com.example.Foo"));
@@ -51,7 +51,7 @@ class IndexBuilderTest {
     }
 
     @Test
-    @DisplayName("verifie la presence d'une classe")
+    @DisplayName("checks the presence of a class")
     void shouldCheckContains() {
         var builder = new IndexBuilder();
         builder.add(dummyClass("com.example.Foo"));
@@ -60,7 +60,7 @@ class IndexBuilderTest {
     }
 
     @Test
-    @DisplayName("ajoute plusieurs classes")
+    @DisplayName("adds multiple classes")
     void shouldAddAll() {
         var builder = new IndexBuilder();
         builder.addAll(List.of(dummyClass("com.example.A"), dummyClass("com.example.B")));

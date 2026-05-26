@@ -12,7 +12,7 @@ import jakarta.enterprise.context.RequestScoped;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-@DisplayName("VaubanContainer - conteneur CDI")
+@DisplayName("VaubanContainer - CDI container")
 class VaubanContainerTest {
 
     @ApplicationScoped
@@ -72,11 +72,11 @@ class VaubanContainerTest {
 
     @SuppressWarnings("BuilderMissingRequiredFields")
     @Nested
-    @DisplayName("bootstrap et shutdown")
+    @DisplayName("bootstrap and shutdown")
     class Lifecycle {
 
         @Test
-        @DisplayName("demarre et arrete le conteneur")
+        @DisplayName("starts and stops the container")
         void shouldStartAndStop() {
             try (var container = VaubanContainer.builder()
                     .addBeanClass(AppService.class)
@@ -86,7 +86,7 @@ class VaubanContainerTest {
         }
 
         @Test
-        @DisplayName("lookup un bean @ApplicationScoped")
+        @DisplayName("looks up an @ApplicationScoped bean")
         void shouldLookupApplicationScopedBean() {
             try (var container = VaubanContainer.builder()
                     .addBeanClass(AppService.class)
@@ -98,7 +98,7 @@ class VaubanContainerTest {
         }
 
         @Test
-        @DisplayName("@ApplicationScoped retourne la meme instance")
+        @DisplayName("@ApplicationScoped returns the same instance")
         void shouldReturnSameInstanceForApplicationScoped() {
             try (var container = VaubanContainer.builder()
                     .addBeanClass(AppService.class)
@@ -115,7 +115,7 @@ class VaubanContainerTest {
     class Scopes {
 
         @Test
-        @DisplayName("@Dependent cree une nouvelle instance a chaque lookup")
+        @DisplayName("@Dependent creates a new instance on each lookup")
         void shouldCreateNewDependentInstance() {
             DependentHelper.resetCounter();
             try (var container = VaubanContainer.builder()
@@ -129,7 +129,7 @@ class VaubanContainerTest {
 
         @Test
         @org.junit.jupiter.api.Disabled("RequestScoped proxy not returned by select() yet")
-        @DisplayName("@RequestScoped fonctionne dans un contexte actif")
+        @DisplayName("@RequestScoped works in an active context")
         void shouldWorkInActiveRequestContext() {
             try (var container = VaubanContainer.builder()
                     .addBeanClass(RequestBean.class)
@@ -154,7 +154,7 @@ class VaubanContainerTest {
     class CustomFactory {
 
         @Test
-        @DisplayName("utilise une factory custom")
+        @DisplayName("uses a custom factory")
         void shouldUseCustomFactory() {
             try (var container = VaubanContainer.builder()
                     .addBeanClass(AppService.class)
@@ -167,11 +167,11 @@ class VaubanContainerTest {
     }
 
     @Nested
-    @DisplayName("erreurs")
+    @DisplayName("errors")
     class Errors {
 
         @Test
-        @DisplayName("lance UnsatisfiedResolutionException pour type inconnu")
+        @DisplayName("throws UnsatisfiedResolutionException for unknown type")
         void shouldThrowForUnknownType() {
             try (var container = VaubanContainer.builder()
                     .addBeanClass(AppService.class)
@@ -183,11 +183,11 @@ class VaubanContainerTest {
     }
 
     @Nested
-    @DisplayName("injection entre beans")
+    @DisplayName("injection between beans")
     class Injection {
 
         @Test
-        @DisplayName("injecte les dependances @Inject fields")
+        @DisplayName("injects @Inject field dependencies")
         void shouldInjectFieldDependencies() {
             try (var container = VaubanContainer.builder()
                     .addBeanClass(Service.class)
@@ -199,7 +199,7 @@ class VaubanContainerTest {
         }
 
         @Test
-        @DisplayName("injecte les dependances via constructeur @Inject")
+        @DisplayName("injects dependencies via @Inject constructor")
         void shouldInjectConstructorDependencies() {
             try (var container = VaubanContainer.builder()
                     .addBeanClass(CtorInjectedService.class)
@@ -245,7 +245,7 @@ class VaubanContainerTest {
     class LifecycleCallbacks {
 
         @Test
-        @DisplayName("appelle @PostConstruct apres creation")
+        @DisplayName("calls @PostConstruct after creation")
         void shouldCallPostConstruct() {
             try (var container = VaubanContainer.builder()
                     .addBeanClass(LifecycleBean.class)
@@ -256,7 +256,7 @@ class VaubanContainerTest {
         }
 
         @Test
-        @DisplayName("appelle @PreDestroy a la fermeture du conteneur")
+        @DisplayName("calls @PreDestroy at container shutdown")
         void shouldCallPreDestroy() {
             // Use a static flag to verify @PreDestroy was called
             // (proxy becomes invalid after container close)
@@ -273,7 +273,7 @@ class VaubanContainerTest {
         }
 
         @Test
-        @DisplayName("appelle les methodes @Inject initialisatrices")
+        @DisplayName("calls @Inject initializer methods")
         void shouldCallInitializerMethods() {
             try (var container = VaubanContainer.builder()
                     .addBeanClass(InitMethodBean.class)
@@ -319,7 +319,7 @@ class VaubanContainerTest {
     class ProducerBeans {
 
         @Test
-        @DisplayName("producer method cree un bean")
+        @DisplayName("producer method creates a bean")
         void shouldCreateBeanFromProducerMethod() {
             try (var container = VaubanContainer.builder()
                     .addBeanClass(ProducerConfig.class)
@@ -331,7 +331,7 @@ class VaubanContainerTest {
         }
 
         @Test
-        @DisplayName("producer method retourne la meme instance en @ApplicationScoped")
+        @DisplayName("producer method returns the same instance when @ApplicationScoped")
         void shouldReturnSameInstanceForApplicationScopedProducer() {
             try (var container = VaubanContainer.builder()
                     .addBeanClass(ProducerConfig.class)
@@ -343,7 +343,7 @@ class VaubanContainerTest {
         }
 
         @Test
-        @DisplayName("producer field cree un bean")
+        @DisplayName("producer field creates a bean")
         void shouldCreateBeanFromProducerField() {
             try (var container = VaubanContainer.builder()
                     .addBeanClass(FieldProducerConfig.class)
@@ -360,7 +360,7 @@ class VaubanContainerTest {
     class BeanManagerTest {
 
         @Test
-        @DisplayName("fournit un BeanManager fonctionnel")
+        @DisplayName("provides a functional BeanManager")
         void shouldProvideBeanManager() {
             try (var container = VaubanContainer.builder()
                     .addBeanClass(AppService.class)

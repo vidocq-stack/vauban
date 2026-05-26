@@ -16,7 +16,7 @@ class TypeInfoTest {
     class PrimitiveTypeTest {
 
         @Test
-        @DisplayName("cree tous les types primitifs")
+        @DisplayName("creates all primitive types")
         void shouldCreateAllKinds() {
             for (var kind : TypeInfo.PrimitiveType.Kind.values()) {
                 var type = new TypeInfo.PrimitiveType(kind);
@@ -25,7 +25,7 @@ class TypeInfoTest {
         }
 
         @Test
-        @DisplayName("cree depuis un descripteur char")
+        @DisplayName("creates from a char descriptor")
         void shouldCreateFromDescriptor() {
             assertEquals(TypeInfo.PrimitiveType.Kind.INT, TypeInfo.PrimitiveType.fromDescriptor('I').kind());
             assertEquals(TypeInfo.PrimitiveType.Kind.LONG, TypeInfo.PrimitiveType.fromDescriptor('J').kind());
@@ -34,7 +34,7 @@ class TypeInfoTest {
         }
 
         @Test
-        @DisplayName("rejette un descripteur invalide")
+        @DisplayName("rejects an invalid descriptor")
         void shouldRejectInvalidDescriptor() {
             assertThrows(IllegalArgumentException.class, () -> TypeInfo.PrimitiveType.fromDescriptor('X'));
         }
@@ -45,7 +45,7 @@ class TypeInfoTest {
     class ClassTypeTest {
 
         @Test
-        @DisplayName("encapsule un DotName")
+        @DisplayName("wraps a DotName")
         void shouldWrapDotName() {
             var type = new TypeInfo.ClassType(DotName.of("java.lang.String"));
             assertEquals("java.lang.String", type.name().value());
@@ -57,7 +57,7 @@ class TypeInfoTest {
     class ArrayTypeTest {
 
         @Test
-        @DisplayName("stocke le type composant et les dimensions")
+        @DisplayName("stores the component type and the dimensions")
         void shouldStoreComponentAndDimensions() {
             var component = new TypeInfo.PrimitiveType(TypeInfo.PrimitiveType.Kind.INT);
             var array = new TypeInfo.ArrayType(component, 2);
@@ -71,7 +71,7 @@ class TypeInfoTest {
     class ParameterizedTypeTest {
 
         @Test
-        @DisplayName("stocke le type brut et les arguments")
+        @DisplayName("stores the raw type and the arguments")
         void shouldStoreRawTypeAndArguments() {
             var raw = DotName.of("java.util.List");
             var arg = new TypeInfo.ClassType(DotName.of("java.lang.String"));
@@ -82,7 +82,7 @@ class TypeInfoTest {
         }
 
         @Test
-        @DisplayName("fait une copie defensive des arguments")
+        @DisplayName("makes a defensive copy of the arguments")
         void shouldDefensiveCopyArguments() {
             var args = new java.util.ArrayList<TypeInfo>();
             args.add(new TypeInfo.ClassType(DotName.of("java.lang.String")));
@@ -97,7 +97,7 @@ class TypeInfoTest {
     class VoidTypeTest {
 
         @Test
-        @DisplayName("est un singleton logique")
+        @DisplayName("is a logical singleton")
         void shouldExist() {
             var v = new TypeInfo.VoidType();
             assertNotNull(v);

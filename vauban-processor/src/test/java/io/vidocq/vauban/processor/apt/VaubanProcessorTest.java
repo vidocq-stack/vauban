@@ -15,7 +15,7 @@ import java.util.stream.Collectors;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-@DisplayName("VaubanProcessor - processeur APT")
+@DisplayName("VaubanProcessor - APT processor")
 class VaubanProcessorTest {
 
     @TempDir
@@ -150,7 +150,7 @@ class VaubanProcessorTest {
     }
 
     @Test
-    @DisplayName("compile un bean @ApplicationScoped et genere une factory")
+    @DisplayName("compiles an @ApplicationScoped bean and generates a factory")
     void shouldGenerateFactoryForApplicationScopedBean() throws IOException {
         var success = compileWithProcessor("""
             import jakarta.enterprise.context.ApplicationScoped;
@@ -169,7 +169,7 @@ class VaubanProcessorTest {
     }
 
     @Test
-    @DisplayName("compile un bean @ApplicationScoped et genere un proxy")
+    @DisplayName("compiles an @ApplicationScoped bean and generates a proxy")
     void shouldGenerateProxyForNormalScopedBean() throws IOException {
         var success = compileWithProcessor("""
             import jakarta.enterprise.context.ApplicationScoped;
@@ -187,7 +187,7 @@ class VaubanProcessorTest {
     }
 
     @Test
-    @DisplayName("ne genere PAS de proxy pour un bean @Dependent")
+    @DisplayName("does NOT generate a proxy for a @Dependent bean")
     void shouldNotGenerateProxyForDependentBean() throws IOException {
         var success = compileWithProcessor("""
             import jakarta.enterprise.context.Dependent;

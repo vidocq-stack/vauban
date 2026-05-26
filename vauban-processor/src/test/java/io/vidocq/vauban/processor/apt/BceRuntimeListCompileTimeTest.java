@@ -28,41 +28,41 @@ import java.util.List;
 import static org.junit.jupiter.api.Assertions.*;
 
 /**
- * Tests ROUGES pour le bug #7 — partie APT (compile-time).
+ * RED tests for bug #7 — APT part (compile-time).
  *
- * <h2>Contrat teste</h2>
- * Quand une BCE applique des modifications <b>observables au runtime</b>
- * (annotations ajoutees, qualifiers) a une classe, le {@link VaubanProcessor}
- * doit ecrire une entree dans {@code META-INF/vauban-bce-runtime.list} :
+ * <h2>Contract under test</h2>
+ * When a BCE applies <b>runtime-observable</b> modifications
+ * (added annotations, qualifiers) to a class, the {@link VaubanProcessor}
+ * must write an entry into {@code META-INF/vauban-bce-runtime.list}:
  *
  * <pre>
  * # Vauban BCE runtime replay list
  * &lt;BCE-FQN&gt;;&lt;target-class-FQN&gt;
  * </pre>
  *
- * Les BCEs en <i>lecture seule</i> (qui n'ajoutent rien) ne produisent pas
- * de ligne dans ce fichier — pas d'overhead runtime.
+ * <i>Read-only</i> BCEs (which add nothing) do not produce
+ * a line in this file — no runtime overhead.
  *
- * <h2>Pourquoi ces tests sont necessaires</h2>
- * Le fichier {@code vauban-bce-runtime.list} est le pivot entre l'APT et le
- * runtime : sans lui, le {@code VaubanContainerBuilder} ne sait pas quelles
- * BCEs rejouer sur quelles classes, et les annotations synthetiques
- * (ex: {@code @RequestScoped} ajoute par {@code CassiniScopeBCE} sur une
- * classe {@code @Path}) ne sont jamais visibles au runtime.
+ * <h2>Why these tests are necessary</h2>
+ * The {@code vauban-bce-runtime.list} file is the pivot between the APT and the
+ * runtime: without it, the {@code VaubanContainerBuilder} does not know which
+ * BCEs to replay on which classes, and synthetic annotations
+ * (e.g. {@code @RequestScoped} added by {@code CassiniScopeBCE} on a
+ * {@code @Path} class) are never visible at runtime.
  *
- * @see io.vidocq.vauban.processor.apt.BceCompileTimeTest pour le pattern
- *      de compilation in-process.
+ * @see io.vidocq.vauban.processor.apt.BceCompileTimeTest for the in-process
+ *      compilation pattern.
  */
-@DisplayName("BCE runtime list - ecriture compile-time par VaubanProcessor")
+@DisplayName("BCE runtime list - compile-time writing by VaubanProcessor")
 class BceRuntimeListCompileTimeTest {
 
     /**
-     * Chemin attendu du nouveau fichier produit par l'APT.
-     * L'implementation DOIT exposer ce chemin via une constante publique
-     * (ex: {@code SyntheticMetadataSerializer.BCE_RUNTIME_LIST_PATH})
-     * mais tant que le code de production n'est pas ecrit, le test
-     * utilise directement le litteral pour etre rouge a la compilation
-     * fonctionnelle et non a la compilation Java.
+     * Expected path of the new file produced by the APT.
+     * The implementation MUST expose this path via a public constant
+     * (e.g. {@code SyntheticMetadataSerializer.BCE_RUNTIME_LIST_PATH})
+     * but as long as the production code is not written, the test
+     * uses the literal directly so it is red at the functional-compilation
+     * level and not at Java compilation.
      */
     private static final String RUNTIME_LIST_PATH = "META-INF/vauban-bce-runtime.list";
 
@@ -70,17 +70,17 @@ class BceRuntimeListCompileTimeTest {
     Path tempDir;
 
     // ---------- Annotation trigger ----------
-    // Voir {@link io.vidocq.vauban.processor.apt.testfixtures.PathLike}.
-    // Extraite en top-level pour etre referencable depuis les sources
-    // compilees in-memory (le compilateur in-process refuse les nested
-    // annotations declarees dans la classe de test elle-meme).
+    // See {@link io.vidocq.vauban.processor.apt.testfixtures.PathLike}.
+    // Extracted to top-level so it can be referenced from the in-memory
+    // compiled sources (the in-process compiler rejects nested
+    // annotations declared in the test class itself).
 
-    // ---------- BCEs de test ----------
+    // ---------- Test BCEs ----------
 
     /**
-     * BCE qui ajoute {@code @RequestScoped} a toute classe portant
-     * l'annotation trigger {@link PathLike}. Simule {@code CassiniScopeBCE}.
-     * <b>Modifie</b> la classe → doit produire une ligne dans
+     * BCE that adds {@code @RequestScoped} to any class carrying
+     * the trigger annotation {@link PathLike}. Simulates {@code CassiniScopeBCE}.
+     * <b>Modifies</b> the class → must produce a line in
      * {@code vauban-bce-runtime.list}.
      */
     public static class WritingScopeBce implements BuildCompatibleExtension {
@@ -91,13 +91,13 @@ class BceRuntimeListCompileTimeTest {
     }
 
     /**
-     * BCE qui ne <b>modifie rien</b> : elle lit juste {@code clazz.info()}.
-     * Doit ne rien ecrire dans {@code vauban-bce-runtime.list}.
+     * BCE that <b>modifies nothing</b>: it just reads {@code clazz.info()}.
+     * Must write nothing into {@code vauban-bce-runtime.list}.
      */
     public static class ReadOnlyBce implements BuildCompatibleExtension {
         @Enhancement(types = Object.class, withAnnotations = PathLike.class)
         public void inspect(ClassConfig clazz) {
-            // lecture seule : on ne touche PAS a ClassConfig
+            // read-only: we do NOT touch ClassConfig
             clazz.info();
         }
     }
@@ -107,11 +107,11 @@ class BceRuntimeListCompileTimeTest {
     // ======================================================================
 
     @Nested
-    @DisplayName("Test 1 — BCE qui modifie la classe → ecriture dans la liste")
+    @DisplayName("Test 1 — BCE that modifies the class → write into the list")
     class WritingBce {
 
         @Test
-        @DisplayName("produit META-INF/vauban-bce-runtime.list avec '<BCE>;<target>'")
+        @DisplayName("produces META-INF/vauban-bce-runtime.list with '<BCE>;<target>'")
         void shouldWriteRuntimeListEntryWhenBceAddsAnnotation() throws IOException {
             var result = compileWithBce(
                     List.of(WritingScopeBce.class),
@@ -128,7 +128,7 @@ class BceRuntimeListCompileTimeTest {
             assertTrue(result.success(),
                     "Compilation should succeed. Messages: " + result.messages());
 
-            // Le fichier DOIT exister apres passage du processor
+            // The file MUST exist after the processor has run
             assertTrue(result.hasFile(RUNTIME_LIST_PATH),
                     "Expected " + RUNTIME_LIST_PATH
                             + " to be generated by VaubanProcessor when BCE modifies a class");
@@ -140,7 +140,7 @@ class BceRuntimeListCompileTimeTest {
         }
 
         @Test
-        @DisplayName("ignore les lignes commentaires (#)")
+        @DisplayName("ignores comment lines (#)")
         void shouldIgnoreCommentsInRuntimeList() throws IOException {
             var result = compileWithBce(
                     List.of(WritingScopeBce.class),
@@ -157,13 +157,13 @@ class BceRuntimeListCompileTimeTest {
             assertTrue(result.success(), "Compilation should succeed");
             assertTrue(result.hasFile(RUNTIME_LIST_PATH));
 
-            // Le fichier DOIT contenir au moins un header commentaire
+            // The file MUST contain at least one comment header
             var raw = Files.readString(result.outputDir().resolve(RUNTIME_LIST_PATH),
                     StandardCharsets.UTF_8);
             assertTrue(raw.lines().anyMatch(l -> l.trim().startsWith("#")),
                     "Runtime list should contain a comment header (generated by Vauban)");
 
-            // readRuntimeList filtre deja les # → ne doit contenir QUE la ligne utile
+            // readRuntimeList already filters out # → must contain ONLY the useful line
             var entries = result.readRuntimeList();
             for (var e : entries) {
                 assertFalse(e.startsWith("#"),
@@ -173,16 +173,16 @@ class BceRuntimeListCompileTimeTest {
     }
 
     @Nested
-    @DisplayName("Test 5 — BCE en lecture seule n'ecrit rien")
+    @DisplayName("Test 5 — read-only BCE writes nothing")
     class ReadOnly {
 
         @Test
-        @DisplayName("BCE read-only ne produit aucune ligne active dans vauban-bce-runtime.list")
+        @DisplayName("read-only BCE produces no active line in vauban-bce-runtime.list")
         void shouldNotWriteAnyRuntimeEntryForReadOnlyBce() throws IOException {
-            // On compile AVEC UNE BCE MODIFIANTE en plus pour garantir que le
-            // fichier existe, puis on verifie que la BCE read-only n'y apparait pas.
-            // C'est plus fort qu'un "if exists" qui laisserait passer une
-            // implementation naive qui ne genere jamais le fichier.
+            // We compile WITH AN ADDITIONAL MODIFYING BCE to guarantee that the
+            // file exists, then we verify that the read-only BCE does not appear in it.
+            // This is stronger than an "if exists" check that would let a naive
+            // implementation that never generates the file pass.
             var result = compileWithBce(
                     List.of(WritingScopeBce.class, ReadOnlyBce.class),
                     """
@@ -206,19 +206,19 @@ class BceRuntimeListCompileTimeTest {
             assertTrue(result.success(),
                     "Compilation should succeed. Messages: " + result.messages());
 
-            // La BCE modifiante doit avoir declenche la creation du fichier
+            // The modifying BCE must have triggered the creation of the file
             assertTrue(result.hasFile(RUNTIME_LIST_PATH),
                     "Runtime list should exist: WritingScopeBce modifies classes and must register them");
 
             var entries = result.readRuntimeList();
 
-            // WritingScopeBce doit ecrire des lignes (pour WritingTarget ET ReadOnlyResource,
-            // toutes deux ciblees par withAnnotations=PathLike)
+            // WritingScopeBce must write lines (for both WritingTarget AND ReadOnlyResource,
+            // both targeted by withAnnotations=PathLike)
             var writingFqn = WritingScopeBce.class.getName();
             assertTrue(entries.stream().anyMatch(e -> e.startsWith(writingFqn + ";")),
                     "Writing BCE should produce at least one entry. Got: " + entries);
 
-            // ReadOnlyBce ne doit avoir AUCUNE ligne, meme pour la classe qu'elle a vue
+            // ReadOnlyBce must have NO line, even for the class it saw
             var readOnlyFqn = ReadOnlyBce.class.getName();
             assertTrue(entries.stream().noneMatch(e -> e.startsWith(readOnlyFqn + ";")),
                     "Read-only BCE " + readOnlyFqn
@@ -227,7 +227,7 @@ class BceRuntimeListCompileTimeTest {
     }
 
     // ======================================================================
-    // Helpers (repris du pattern BceCompileTimeTest)
+    // Helpers (reused from the BceCompileTimeTest pattern)
     // ======================================================================
 
     private CompilationResult compileWithBce(List<Class<?>> bceClasses, String... sources) throws IOException {
@@ -320,8 +320,8 @@ class BceRuntimeListCompileTimeTest {
                 ApplicationScoped.class,
                 jakarta.inject.Inject.class,
                 jakarta.interceptor.Interceptor.class,
-                BceRuntimeListCompileTimeTest.class, // pour tirer target/test-classes
-                PathLike.class                       // garantir testfixtures sur classpath
+                BceRuntimeListCompileTimeTest.class, // to pull in target/test-classes
+                PathLike.class                       // ensure testfixtures is on the classpath
         );
 
         var paths = new LinkedHashSet<String>();

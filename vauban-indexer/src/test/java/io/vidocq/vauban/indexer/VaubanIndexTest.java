@@ -71,7 +71,7 @@ class VaubanIndexTest {
     }
 
     @Test
-    @DisplayName("trouve une classe par nom")
+    @DisplayName("finds a class by name")
     void shouldFindClassByName() {
         var result = index.getClassByName(DotName.of("com.example.AnnotatedFoo"));
         assertTrue(result.isPresent());
@@ -79,46 +79,46 @@ class VaubanIndexTest {
     }
 
     @Test
-    @DisplayName("retourne empty pour une classe inconnue")
+    @DisplayName("returns empty for an unknown class")
     void shouldReturnEmptyForUnknown() {
         assertTrue(index.getClassByName(DotName.of("com.example.Unknown")).isEmpty());
     }
 
     @Test
-    @DisplayName("trouve les classes avec une annotation")
+    @DisplayName("finds the classes with an annotation")
     void shouldFindClassesWithAnnotation() {
         var result = index.getClassesWithAnnotation(DEPRECATED);
         assertEquals(1, result.size());
     }
 
     @Test
-    @DisplayName("trouve les implementeurs directs")
+    @DisplayName("finds the direct implementors")
     void shouldFindDirectImplementors() {
         var result = index.getImplementors(MY_INTERFACE);
         assertEquals(2, result.size());
     }
 
     @Test
-    @DisplayName("trouve les sous-classes directes")
+    @DisplayName("finds the direct subclasses")
     void shouldFindDirectSubclasses() {
         var result = index.getSubclasses(BASE_CLASS);
         assertEquals(2, result.size());
     }
 
     @Test
-    @DisplayName("retourne toutes les classes connues")
+    @DisplayName("returns all known classes")
     void shouldReturnKnownClasses() {
         assertEquals(5, index.getKnownClasses().size());
     }
 
     @Test
-    @DisplayName("retourne la taille")
+    @DisplayName("returns the size")
     void shouldReturnSize() {
         assertEquals(5, index.size());
     }
 
     @Test
-    @DisplayName("verifie la presence")
+    @DisplayName("checks the presence")
     void shouldCheckContains() {
         assertTrue(index.containsClass(DotName.of("com.example.ImplA")));
         assertFalse(index.containsClass(DotName.of("com.example.Unknown")));

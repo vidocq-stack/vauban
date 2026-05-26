@@ -11,12 +11,12 @@ import java.util.function.Supplier;
 import static org.junit.jupiter.api.Assertions.*;
 
 /**
- * Tests du generateur de client proxies CDI.
+ * Tests of the CDI client proxy generator.
  *
- * <h2>Contexte Vidocq</h2>
- * Lors du developpement de Vidocq, les services applicatifs utilisent
- * systematiquement l'injection par constructeur ({@code @Inject}) sans
- * declarer de constructeur no-arg. Exemple typique :
+ * <h2>Vidocq context</h2>
+ * During Vidocq development, application services systematically use
+ * constructor injection ({@code @Inject}) without declaring a no-arg
+ * constructor. A typical example:
  * <pre>
  *   {@literal @}ApplicationScoped
  *   public class OrderService {
@@ -24,28 +24,28 @@ import static org.junit.jupiter.api.Assertions.*;
  *       public OrderService(OrderRepository repo, EventBus bus) { ... }
  *   }
  * </pre>
- * Vauban refusait de proxifier ces beans normal-scoped avec une
- * {@code UnproxyableResolutionException}, obligeant a ajouter un
- * {@code protected OrderService() {}} partout.
+ * Vauban refused to proxy these normal-scoped beans, throwing an
+ * {@code UnproxyableResolutionException} and forcing a
+ * {@code protected OrderService() {}} to be added everywhere.
  *
  * <h2>Fix</h2>
- * Le generateur genere desormais un constructeur no-arg dans le proxy qui
- * appelle {@code super(null, null, ...)} ou {@code super(0, false, ...)}
- * selon les types du constructeur le plus simple du bean parent.
+ * The generator now generates a no-arg constructor in the proxy that
+ * calls {@code super(null, null, ...)} or {@code super(0, false, ...)}
+ * depending on the parameter types of the simplest constructor of the parent bean.
  *
- * <h2>Pourquoi le TCK ne couvre pas ce cas</h2>
- * Le TCK CDI 4.1 teste uniquement que les beans avec constructeur
- * <em>prive</em> no-arg sont bien rejetes ({@code UnproxyableManagedBeanTest}).
- * Il ne teste pas le cas "aucun constructeur no-arg mais un constructeur
- * {@code @Inject} parametre" car la spec a assoupli cette contrainte et la
- * plupart des implementations (Weld, OWB) gerent ce cas depuis longtemps.
- * Le TCK suppose implicitement que les implementations le supportent.
+ * <h2>Why the TCK does not cover this case</h2>
+ * The CDI 4.1 TCK only tests that beans with a <em>private</em> no-arg
+ * constructor are properly rejected ({@code UnproxyableManagedBeanTest}).
+ * It does not test the "no no-arg constructor but a parameterized
+ * {@code @Inject} constructor" case, because the spec relaxed this constraint
+ * and most implementations (Weld, OWB) have handled this case for a long time.
+ * The TCK implicitly assumes that implementations support it.
  */
 @DisplayName("RuntimeClientProxyGenerator")
 class RuntimeClientProxyGeneratorTest {
 
     // -----------------------------------------------------------------------
-    // Classes de test (beans a proxifier)
+    // Test classes (beans to proxy)
     // -----------------------------------------------------------------------
 
     public static class SimpleService {
@@ -98,10 +98,10 @@ class RuntimeClientProxyGeneratorTest {
     }
 
     /**
-     * Bean qui hérite d'une classe parent située dans un package différent
-     * et surcharge une méthode {@code protected}. Reproduit exactement le
-     * cas {@code HttpServlet.doGet} — sans le fix MethodHandle, la classe
-     * proxy générée échoue au {@code VerifyError} au chargement.
+     * Bean that inherits from a parent class located in a different package
+     * and overrides a {@code protected} method. Reproduces exactly the
+     * {@code HttpServlet.doGet} case — without the MethodHandle fix, the
+     * generated proxy class fails with a {@code VerifyError} at load time.
      */
     public static class ProtectedBean extends io.vidocq.vauban.core.proxy.sub.BaseWithProtected {
         @Override protected String protectedEcho(String value) { return "impl:" + value; }
@@ -109,15 +109,15 @@ class RuntimeClientProxyGeneratorTest {
     }
 
     // -----------------------------------------------------------------------
-    // Utilitaires
+    // Utilities
     // -----------------------------------------------------------------------
 
     private static final java.util.Map<String, Class<?>> definedClasses = new java.util.concurrent.ConcurrentHashMap<>();
 
     /**
-     * Definit la classe proxy dans le meme classloader via MethodHandles.Lookup,
-     * puis l'instancie via le constructeur sans argument.
-     * Cache les classes deja definies pour eviter les erreurs de definition dupliquee.
+     * Defines the proxy class in the same classloader via MethodHandles.Lookup,
+     * then instantiates it via the no-arg constructor.
+     * Caches already-defined classes to avoid duplicate definition errors.
      */
     private static Object instantiateProxy(RuntimeClientProxyGenerator.GeneratedProxy proxy) throws Exception {
         Class<?> proxyClass = definedClasses.computeIfAbsent(proxy.className(), name -> {
@@ -131,7 +131,7 @@ class RuntimeClientProxyGeneratorTest {
     }
 
     /**
-     * Appelle $$setDelegate sur l'instance proxy.
+     * Calls $$setDelegate on the proxy instance.
      */
     private static void setDelegate(Object proxyInstance, Supplier<?> delegate) throws Exception {
         Method setter = proxyInstance.getClass().getMethod("$$setDelegate", Supplier.class);
@@ -143,11 +143,11 @@ class RuntimeClientProxyGeneratorTest {
     // -----------------------------------------------------------------------
 
     @Nested
-    @DisplayName("methodes protected heritees d'un autre package")
+    @DisplayName("protected methods inherited from another package")
     class ProtectedMethodCrossPackage {
 
         @Test
-        @DisplayName("le proxy d'un bean avec methode protected cross-package se charge sans VerifyError")
+        @DisplayName("the proxy of a bean with a cross-package protected method loads without VerifyError")
         void shouldLoadProxyWithoutVerifyError() throws Exception {
             var proxy = RuntimeClientProxyGenerator.generate(ProtectedBean.class);
             Object instance = instantiateProxy(proxy);
@@ -155,7 +155,7 @@ class RuntimeClientProxyGeneratorTest {
         }
 
         @Test
-        @DisplayName("l'appel d'une methode protected delegue a l'instance contextuelle")
+        @DisplayName("calling a protected method delegates to the contextual instance")
         void shouldDelegateProtectedEchoToContextualInstance() throws Exception {
             var proxy = RuntimeClientProxyGenerator.generate(ProtectedBean.class);
             Object instance = instantiateProxy(proxy);
@@ -169,7 +169,7 @@ class RuntimeClientProxyGeneratorTest {
         }
 
         @Test
-        @DisplayName("l'appel d'une methode protected avec primitives fonctionne")
+        @DisplayName("calling a protected method with primitives works")
         void shouldHandlePrimitivesOnProtectedMethod() throws Exception {
             var proxy = RuntimeClientProxyGenerator.generate(ProtectedBean.class);
             Object instance = instantiateProxy(proxy);
@@ -179,12 +179,12 @@ class RuntimeClientProxyGeneratorTest {
             Method sum = ProtectedBean.class.getDeclaredMethod("protectedSum", int.class, int.class);
             sum.setAccessible(true);
             int result = (int) sum.invoke(instance, 3, 4);
-            // (3+4)*10 = 70 — prouve que la methode impl est bien appelee, pas la base.
+            // (3+4)*10 = 70 — proves the impl method is called, not the base.
             assertEquals(70, result);
         }
 
         @Test
-        @DisplayName("l'appel d'une methode publique du meme bean reste via invokevirtual (pas de regression)")
+        @DisplayName("calling a public method of the same bean stays via invokevirtual (no regression)")
         void shouldStillUseInvokevirtualForPublicMethods() throws Exception {
             var proxy = RuntimeClientProxyGenerator.generate(ProtectedBean.class);
             Object instance = instantiateProxy(proxy);
@@ -197,38 +197,38 @@ class RuntimeClientProxyGeneratorTest {
     }
 
     @Nested
-    @DisplayName("nommage du proxy")
+    @DisplayName("proxy naming")
     class ProxyNaming {
 
         @Test
-        @DisplayName("le nom de classe du proxy suit la convention BeanClass_ClientProxy")
+        @DisplayName("the proxy class name follows the BeanClass_ClientProxy convention")
         void shouldFollowNamingConvention() {
             String name = RuntimeClientProxyGenerator.proxyClassName(SimpleService.class);
             assertEquals(SimpleService.class.getName() + "_ClientProxy", name);
         }
 
         @Test
-        @DisplayName("le GeneratedProxy contient le bon nom de classe")
+        @DisplayName("the GeneratedProxy contains the correct class name")
         void shouldReturnCorrectClassNameInRecord() {
             var proxy = RuntimeClientProxyGenerator.generate(SimpleService.class);
             assertEquals(SimpleService.class.getName() + "_ClientProxy", proxy.className());
         }
 
         @Test
-        @DisplayName("le bytecode genere est non vide")
+        @DisplayName("the generated bytecode is non-empty")
         void shouldGenerateNonEmptyBytecode() {
             var proxy = RuntimeClientProxyGenerator.generate(SimpleService.class);
             assertNotNull(proxy.bytecode());
-            assertTrue(proxy.bytecode().length > 0, "Le bytecode ne doit pas etre vide");
+            assertTrue(proxy.bytecode().length > 0, "The bytecode must not be empty");
         }
     }
 
     @Nested
-    @DisplayName("proxy d'une classe avec constructeur sans argument")
+    @DisplayName("proxy of a class with a no-arg constructor")
     class NoArgConstructor {
 
         @Test
-        @DisplayName("le proxy peut etre instancie via le constructeur sans argument")
+        @DisplayName("the proxy can be instantiated via the no-arg constructor")
         void shouldInstantiateWithNoArgConstructor() throws Exception {
             var proxy = RuntimeClientProxyGenerator.generate(SimpleService.class);
             Object instance = instantiateProxy(proxy);
@@ -236,7 +236,7 @@ class RuntimeClientProxyGeneratorTest {
         }
 
         @Test
-        @DisplayName("le proxy est une sous-classe du bean")
+        @DisplayName("the proxy is a subclass of the bean")
         void shouldBeSubclassOfBean() throws Exception {
             var proxy = RuntimeClientProxyGenerator.generate(SimpleService.class);
             Object instance = instantiateProxy(proxy);
@@ -244,7 +244,7 @@ class RuntimeClientProxyGeneratorTest {
         }
 
         @Test
-        @DisplayName("le proxy possede le champ $$delegate")
+        @DisplayName("the proxy has the $$delegate field")
         void shouldHaveDelegateField() throws Exception {
             var proxy = RuntimeClientProxyGenerator.generate(SimpleService.class);
             Object instance = instantiateProxy(proxy);
@@ -255,25 +255,25 @@ class RuntimeClientProxyGeneratorTest {
     }
 
     /**
-     * Cas central du bug Vidocq : bean {@code @ApplicationScoped} avec uniquement
-     * un constructeur {@code @Inject} parametre. Avant le fix, Vauban lancait
-     * {@code UnproxyableResolutionException} car le proxy generait un
-     * {@code super()} qui n'existait pas dans le bean parent.
+     * Central case of the Vidocq bug: an {@code @ApplicationScoped} bean with only
+     * a parameterized {@code @Inject} constructor. Before the fix, Vauban threw
+     * {@code UnproxyableResolutionException} because the proxy generated a
+     * {@code super()} that did not exist in the parent bean.
      */
     @Nested
-    @DisplayName("proxy d'une classe avec uniquement un constructeur parametre")
+    @DisplayName("proxy of a class with only a parameterized constructor")
     class ParameterizedConstructorOnly {
 
         @Test
-        @DisplayName("le proxy genere un constructeur sans argument meme si le bean n'en a pas")
+        @DisplayName("the proxy generates a no-arg constructor even if the bean has none")
         void shouldGenerateNoArgConstructorForParameterizedBean() throws Exception {
             var proxy = RuntimeClientProxyGenerator.generate(InjectOnlyService.class);
             Object instance = instantiateProxy(proxy);
-            assertNotNull(instance, "Le proxy doit etre instanciable meme sans constructeur sans arg dans le bean");
+            assertNotNull(instance, "The proxy must be instantiable even without a no-arg constructor in the bean");
         }
 
         @Test
-        @DisplayName("le proxy appelle super(null) pour les parametres de type reference")
+        @DisplayName("the proxy calls super(null) for reference-type parameters")
         void shouldCallSuperWithNullForReferenceParams() throws Exception {
             var proxy = RuntimeClientProxyGenerator.generate(InjectOnlyService.class);
             Object instance = instantiateProxy(proxy);
@@ -281,7 +281,7 @@ class RuntimeClientProxyGeneratorTest {
         }
 
         @Test
-        @DisplayName("le proxy avec constructeur parametre delegue les appels de methode")
+        @DisplayName("the proxy with a parameterized constructor delegates method calls")
         void shouldDelegateMethodCallsWhenDelegateIsSet() throws Exception {
             var proxy = RuntimeClientProxyGenerator.generate(InjectOnlyService.class);
             Object instance = instantiateProxy(proxy);
@@ -296,36 +296,36 @@ class RuntimeClientProxyGeneratorTest {
     }
 
     /**
-     * Variante du bug avec des primitifs : {@code super(0, false)} au lieu
-     * de {@code super(null)}. Verifie que le bytecode genere pousse les
-     * bonnes valeurs par defaut sur la stack (iconst_0, lconst_0, etc.).
+     * Variant of the bug with primitives: {@code super(0, false)} instead
+     * of {@code super(null)}. Verifies that the generated bytecode pushes the
+     * correct default values onto the stack (iconst_0, lconst_0, etc.).
      */
     @Nested
-    @DisplayName("proxy d'une classe avec constructeur a parametres primitifs")
+    @DisplayName("proxy of a class with a primitive-parameter constructor")
     class PrimitiveConstructorParams {
 
         @Test
-        @DisplayName("le proxy appelle super(0, false) pour les primitifs int et boolean")
+        @DisplayName("the proxy calls super(0, false) for the int and boolean primitives")
         void shouldCallSuperWithDefaultPrimitives() throws Exception {
             var proxy = RuntimeClientProxyGenerator.generate(PrimitiveCtorService.class);
             Object instance = instantiateProxy(proxy);
-            assertNotNull(instance, "Le proxy doit etre instanciable avec des valeurs par defaut pour les primitifs");
+            assertNotNull(instance, "The proxy must be instantiable with default values for the primitives");
         }
 
         @Test
-        @DisplayName("les champs du bean ont les valeurs par defaut (0, false) dans le proxy non-delegue")
+        @DisplayName("the bean fields have the default values (0, false) in the non-delegated proxy")
         void shouldHaveDefaultValuesInUndelegatedProxy() throws Exception {
             var proxy = RuntimeClientProxyGenerator.generate(PrimitiveCtorService.class);
             Object instance = instantiateProxy(proxy);
-            // Cast direct possible car le proxy est une sous-classe
+            // Direct cast possible because the proxy is a subclass
             PrimitiveCtorService asService = (PrimitiveCtorService) instance;
-            // Sans delegate, les champs reflètent les valeurs par defaut passees au super()
+            // Without a delegate, the fields reflect the default values passed to super()
             // count=0, flag=false
-            // (mais getCount() et isFlag() seront delegues si un delegate est set)
+            // (but getCount() and isFlag() will be delegated if a delegate is set)
         }
 
         @Test
-        @DisplayName("le proxy delegue getCount au vrai bean")
+        @DisplayName("the proxy delegates getCount to the real bean")
         void shouldDelegateGetCount() throws Exception {
             var proxy = RuntimeClientProxyGenerator.generate(PrimitiveCtorService.class);
             Object instance = instantiateProxy(proxy);
@@ -338,7 +338,7 @@ class RuntimeClientProxyGeneratorTest {
         }
 
         @Test
-        @DisplayName("le proxy delegue isFlag au vrai bean")
+        @DisplayName("the proxy delegates isFlag to the real bean")
         void shouldDelegateIsFlag() throws Exception {
             var proxy = RuntimeClientProxyGenerator.generate(PrimitiveCtorService.class);
             Object instance = instantiateProxy(proxy);
@@ -352,11 +352,11 @@ class RuntimeClientProxyGeneratorTest {
     }
 
     @Nested
-    @DisplayName("proxy d'une classe avec long, double, float dans le constructeur")
+    @DisplayName("proxy of a class with long, double, float in the constructor")
     class WideTypesConstructor {
 
         @Test
-        @DisplayName("le proxy gere les types larges (long, double, float) dans le constructeur")
+        @DisplayName("the proxy handles wide types (long, double, float) in the constructor")
         void shouldHandleWidePrimitiveTypes() throws Exception {
             var proxy = RuntimeClientProxyGenerator.generate(LongDoubleCtorService.class);
             Object instance = instantiateProxy(proxy);
@@ -364,7 +364,7 @@ class RuntimeClientProxyGeneratorTest {
         }
 
         @Test
-        @DisplayName("le proxy delegue les methodes retournant long")
+        @DisplayName("the proxy delegates methods returning long")
         void shouldDelegateLongReturnType() throws Exception {
             var proxy = RuntimeClientProxyGenerator.generate(LongDoubleCtorService.class);
             Object instance = instantiateProxy(proxy);
@@ -378,11 +378,11 @@ class RuntimeClientProxyGeneratorTest {
     }
 
     @Nested
-    @DisplayName("selection du constructeur le plus simple")
+    @DisplayName("selection of the simplest constructor")
     class ConstructorSelection {
 
         @Test
-        @DisplayName("choisit le constructeur sans argument quand il existe")
+        @DisplayName("chooses the no-arg constructor when it exists")
         void shouldPreferNoArgConstructor() throws Exception {
             var proxy = RuntimeClientProxyGenerator.generate(MultiCtorService.class);
             Object instance = instantiateProxy(proxy);
@@ -392,11 +392,11 @@ class RuntimeClientProxyGeneratorTest {
     }
 
     @Nested
-    @DisplayName("delegation des methodes")
+    @DisplayName("method delegation")
     class MethodDelegation {
 
         @Test
-        @DisplayName("delegue un appel de methode simple au delegate")
+        @DisplayName("delegates a simple method call to the delegate")
         void shouldDelegateSimpleMethodCall() throws Exception {
             var proxy = RuntimeClientProxyGenerator.generate(SimpleService.class);
             Object instance = instantiateProxy(proxy);
@@ -409,7 +409,7 @@ class RuntimeClientProxyGeneratorTest {
         }
 
         @Test
-        @DisplayName("delegue une methode avec parametres primitifs")
+        @DisplayName("delegates a method with primitive parameters")
         void shouldDelegateMethodWithPrimitiveParams() throws Exception {
             var proxy = RuntimeClientProxyGenerator.generate(SimpleService.class);
             Object instance = instantiateProxy(proxy);
@@ -422,7 +422,7 @@ class RuntimeClientProxyGeneratorTest {
         }
 
         @Test
-        @DisplayName("delegue une methode void")
+        @DisplayName("delegates a void method")
         void shouldDelegateVoidMethod() throws Exception {
             var proxy = RuntimeClientProxyGenerator.generate(VoidService.class);
             Object instance = instantiateProxy(proxy);
@@ -438,7 +438,7 @@ class RuntimeClientProxyGeneratorTest {
         }
 
         @Test
-        @DisplayName("le delegate supplier est appele a chaque invocation de methode")
+        @DisplayName("the delegate supplier is called on each method invocation")
         void shouldCallSupplierOnEachInvocation() throws Exception {
             var proxy = RuntimeClientProxyGenerator.generate(SimpleService.class);
             Object instance = instantiateProxy(proxy);
@@ -454,50 +454,50 @@ class RuntimeClientProxyGeneratorTest {
             hello.invoke(instance);
             hello.invoke(instance);
             hello.invoke(instance);
-            assertEquals(3, callCount[0], "Le supplier doit etre appele a chaque invocation");
+            assertEquals(3, callCount[0], "The supplier must be called on each invocation");
         }
 
         @Test
-        @DisplayName("lance NullPointerException si le delegate n'est pas positionne")
+        @DisplayName("throws NullPointerException if the delegate is not set")
         void shouldThrowWhenDelegateNotSet() throws Exception {
             var proxy = RuntimeClientProxyGenerator.generate(SimpleService.class);
             Object instance = instantiateProxy(proxy);
-            // delegate est null par defaut
+            // delegate is null by default
 
             Method hello = instance.getClass().getMethod("hello");
             assertThrows(Exception.class, () -> hello.invoke(instance),
-                    "Doit echouer quand le delegate n'est pas positionne");
+                    "Must fail when the delegate is not set");
         }
     }
 
     @Nested
-    @DisplayName("methodes exclues du proxy")
+    @DisplayName("methods excluded from the proxy")
     class ExcludedMethods {
 
         @Test
-        @DisplayName("les methodes final ne sont pas surchargees")
+        @DisplayName("final methods are not overridden")
         void shouldNotOverrideFinalMethods() throws Exception {
             var proxy = RuntimeClientProxyGenerator.generate(ServiceWithFinalMethod.class);
             Object instance = instantiateProxy(proxy);
 
-            // La methode proxied est surchargee
+            // The proxied method is overridden
             Method proxied = instance.getClass().getMethod("proxied");
             assertTrue(proxied.getDeclaringClass().getName().contains("_ClientProxy"),
-                    "proxied() doit etre surchargee dans le proxy");
+                    "proxied() must be overridden in the proxy");
 
-            // La methode final ne doit pas etre surchargee — declaree dans la classe parente
+            // The final method must not be overridden — declared in the parent class
             Method notProxied = instance.getClass().getMethod("notProxied");
             assertEquals(ServiceWithFinalMethod.class, notProxied.getDeclaringClass(),
-                    "notProxied() final ne doit pas etre surchargee");
+                    "final notProxied() must not be overridden");
         }
 
         @Test
-        @DisplayName("les methodes static ne sont pas surchargees")
+        @DisplayName("static methods are not overridden")
         void shouldNotOverrideStaticMethods() throws Exception {
             var proxy = RuntimeClientProxyGenerator.generate(ServiceWithStaticMethod.class);
             Object instance = instantiateProxy(proxy);
 
-            // Verifier que le proxy n'a pas de methode static declaree
+            // Verify that the proxy has no declared static method
             boolean hasStaticInProxy = false;
             for (Method m : instance.getClass().getDeclaredMethods()) {
                 if (m.getName().equals("staticMethod")) {
@@ -505,24 +505,24 @@ class RuntimeClientProxyGeneratorTest {
                     break;
                 }
             }
-            assertFalse(hasStaticInProxy, "Les methodes statiques ne doivent pas etre proxifiees");
+            assertFalse(hasStaticInProxy, "Static methods must not be proxied");
         }
 
         @Test
-        @DisplayName("la methode $$setDelegate n'est pas elle-meme proxifiee")
+        @DisplayName("the $$setDelegate method is not itself proxied")
         void shouldNotProxyDollarDollarMethods() throws Exception {
             var proxy = RuntimeClientProxyGenerator.generate(SimpleService.class);
             Object instance = instantiateProxy(proxy);
 
-            // $$setDelegate doit exister mais ne doit pas etre une methode de delegation
+            // $$setDelegate must exist but must not be a delegation method
             Method setDel = instance.getClass().getMethod("$$setDelegate", Supplier.class);
             assertNotNull(setDel);
-            // Verifier qu'il n'y a qu'une seule declaration de $$setDelegate
+            // Verify there is only a single declaration of $$setDelegate
             long count = 0;
             for (Method m : instance.getClass().getDeclaredMethods()) {
                 if (m.getName().equals("$$setDelegate")) count++;
             }
-            assertEquals(1, count, "$$setDelegate ne doit etre declare qu'une fois");
+            assertEquals(1, count, "$$setDelegate must be declared only once");
         }
     }
 
@@ -531,15 +531,15 @@ class RuntimeClientProxyGeneratorTest {
     class GeneratedProxyRecord {
 
         @Test
-        @DisplayName("equals est base sur le nom et le bytecode")
+        @DisplayName("equals is based on the name and the bytecode")
         void shouldImplementEqualsCorrectly() {
             var p1 = RuntimeClientProxyGenerator.generate(SimpleService.class);
             var p2 = RuntimeClientProxyGenerator.generate(SimpleService.class);
-            assertEquals(p1, p2, "Deux generations identiques doivent etre egales");
+            assertEquals(p1, p2, "Two identical generations must be equal");
         }
 
         @Test
-        @DisplayName("equals retourne false pour des beans differents")
+        @DisplayName("equals returns false for different beans")
         void shouldNotBeEqualForDifferentBeans() {
             var p1 = RuntimeClientProxyGenerator.generate(SimpleService.class);
             var p2 = RuntimeClientProxyGenerator.generate(VoidService.class);
@@ -547,16 +547,16 @@ class RuntimeClientProxyGeneratorTest {
         }
 
         @Test
-        @DisplayName("toString contient le nom de classe et la taille du bytecode")
+        @DisplayName("toString contains the class name and the bytecode size")
         void shouldHaveReadableToString() {
             var proxy = RuntimeClientProxyGenerator.generate(SimpleService.class);
             String str = proxy.toString();
-            assertTrue(str.contains("_ClientProxy"), "toString doit contenir le nom du proxy");
-            assertTrue(str.contains("bytes"), "toString doit contenir 'bytes'");
+            assertTrue(str.contains("_ClientProxy"), "toString must contain the proxy name");
+            assertTrue(str.contains("bytes"), "toString must contain 'bytes'");
         }
 
         @Test
-        @DisplayName("hashCode est coherent avec equals")
+        @DisplayName("hashCode is consistent with equals")
         void shouldHaveConsistentHashCode() {
             var p1 = RuntimeClientProxyGenerator.generate(SimpleService.class);
             var p2 = RuntimeClientProxyGenerator.generate(SimpleService.class);

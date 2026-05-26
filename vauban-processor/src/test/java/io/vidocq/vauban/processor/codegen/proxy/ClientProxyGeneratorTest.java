@@ -51,11 +51,11 @@ class ClientProxyGeneratorTest {
     }
 
     @Nested
-    @DisplayName("generation de proxy")
+    @DisplayName("proxy generation")
     class ProxyGeneration {
 
         @Test
-        @DisplayName("genere un proxy valide")
+        @DisplayName("generates a valid proxy")
         void shouldGenerateValidProxy() throws IOException {
             var classInfo = scanClass(GreetingService.class);
             var generated = ClientProxyGenerator.generate(classInfo);
@@ -66,7 +66,7 @@ class ClientProxyGeneratorTest {
         }
 
         @Test
-        @DisplayName("le proxy peut etre charge")
+        @DisplayName("the proxy can be loaded")
         void shouldLoadProxy() throws Exception {
             var classInfo = scanClass(GreetingService.class);
             var generated = ClientProxyGenerator.generate(classInfo);
@@ -80,7 +80,7 @@ class ClientProxyGeneratorTest {
         }
 
         @Test
-        @DisplayName("le proxy delegue les appels de methode au supplier")
+        @DisplayName("the proxy delegates method calls to the supplier")
         void shouldDelegateMethodCalls() throws Exception {
             var classInfo = scanClass(GreetingService.class);
             var generated = ClientProxyGenerator.generate(classInfo);
@@ -100,7 +100,7 @@ class ClientProxyGeneratorTest {
         }
 
         @Test
-        @DisplayName("le proxy delegue les methodes void")
+        @DisplayName("the proxy delegates void methods")
         void shouldDelegateVoidMethods() throws Exception {
             var classInfo = scanClass(GreetingService.class);
             var generated = ClientProxyGenerator.generate(classInfo);

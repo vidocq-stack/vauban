@@ -1,144 +1,144 @@
-# Rapport de développement assisté par IA — Vauban
+# AI-Assisted Development Report — Vauban
 
-> Retour d'expérience sur la construction de Vauban avec Claude Code (Sonnet 4.6 / Opus 4.7).
-> Durée réelle : **~1 mois**. Développeur : 1 senior (25 ans d'expérience Java/Jakarta EE).
+> Lessons learned from building Vauban with Claude Code (Sonnet 4.6 / Opus 4.7).
+> Actual duration: **~1 month**. Developer: 1 senior (25 years of Java/Jakarta EE experience).
 
 ---
 
-## Ce qui a été construit
+## What was built
 
-| Module | Rôle |
+| Module | Role |
 |--------|------|
-| `vauban-indexer` | Scanner bytecode sans dépendance externe (remplace Jandex) |
-| `vauban-core` | Conteneur CDI 4.1 Lite — injection, scopes, events, intercepteurs, proxies client |
-| `vauban-processor` | Annotation processor (APT) — découverte et génération de code à la compilation |
-| `vauban-maven-plugin` | Plugin Maven — `generate`, `encrypt`, `dist` |
-| `vauban-classloader-spi` | SPI extensible pour chargement de classes custom |
-| `vauban-sjar` | Chiffrement in-JAR AES-256-GCM basé sur `module-info.class` |
-| `vauban-junit` | Extension JUnit 6 pour tests CDI |
-| `vauban-tck-runner` | Runner CDI TCK 4.1 officiel |
-| `vauban-test-suite` | Suite de tests d'intégration |
+| `vauban-indexer` | Bytecode scanner with no external dependency (replaces Jandex) |
+| `vauban-core` | CDI 4.1 Lite container — injection, scopes, events, interceptors, client proxies |
+| `vauban-processor` | Annotation processor (APT) — discovery and code generation at compile time |
+| `vauban-maven-plugin` | Maven plugin — `generate`, `encrypt`, `dist` |
+| `vauban-classloader-spi` | Extensible SPI for custom class loading |
+| `vauban-sjar` | In-JAR AES-256-GCM encryption based on `module-info.class` |
+| `vauban-junit` | JUnit 6 extension for CDI tests |
+| `vauban-tck-runner` | Official CDI TCK 4.1 runner |
+| `vauban-test-suite` | Integration test suite |
 
-**Caractéristiques transversales**
+**Cross-cutting characteristics**
 
-- JPMS natif — chaque module a son `module-info.java`
-- Zéro dépendance bytecode externe — génération via Class-File API JDK 25
-- Virtual threads — `ScopedValue` (JEP 487) au lieu de `ThreadLocal` partout
+- Native JPMS — each module has its own `module-info.java`
+- Zero external bytecode dependency — generation via the JDK 25 Class-File API
+- Virtual threads — `ScopedValue` (JEP 487) instead of `ThreadLocal` everywhere
 - Build Compatible Extensions — 5 phases, compile-time + runtime + replay
-- CDI TCK 4.1 Lite : **774/774 tests (100%)**
+- CDI TCK 4.1 Lite: **774/774 tests (100%)**
 
 ---
 
-## Estimation sans IA
+## Estimate without AI
 
-### Développeur seul (profil senior, 25 ans d'expérience)
+### Solo developer (senior profile, 25 years of experience)
 
-| Bloc | Durée estimée |
+| Block | Estimated duration |
 |------|--------------|
-| Indexeur bytecode + APT | 1,5 mois |
-| Conteneur core (injection, scopes, events) | 3 mois |
-| Intercepteurs + proxies (Class-File API JDK 25) | 2 mois |
-| Build Compatible Extensions — 5 phases | 2 mois |
-| Maven plugin + SJAR | 1,5 mois |
-| TCK — atteindre 100% (774/774) | 2 mois |
-| Friction JPMS transversale | +30 % sur l'ensemble |
-| **Total** | **~15–18 mois** |
+| Bytecode indexer + APT | 1.5 months |
+| Core container (injection, scopes, events) | 3 months |
+| Interceptors + proxies (JDK 25 Class-File API) | 2 months |
+| Build Compatible Extensions — 5 phases | 2 months |
+| Maven plugin + SJAR | 1.5 months |
+| TCK — reaching 100% (774/774) | 2 months |
+| Cross-cutting JPMS friction | +30% across the board |
+| **Total** | **~15–18 months** |
 
-> Le TCK seul est chroniquement sous-estimé. Chaque échec sur un corner case de spec CDI
-> peut représenter une journée de debug. Atteindre 100 % (pas 95 %) coûte disproportionnément cher.
+> The TCK alone is chronically underestimated. Each failure on a CDI spec corner case
+> can represent a full day of debugging. Reaching 100% (not 95%) is disproportionately expensive.
 
-### Équipe de 2 seniors
+### Team of 2 seniors
 
-Environ **8–10 mois** — la coordination, les revues de code et l'absence de parallélisme parfait
-limitent le gain linéaire.
+About **8–10 months** — coordination, code reviews, and the absence of perfect parallelism
+limit the linear gain.
 
 ---
 
-## Facteur d'accélération
+## Acceleration factor
 
 ```
 ~15x
 ```
 
-1 mois avec IA ≈ 15–18 mois solo.
+1 month with AI ≈ 15–18 months solo.
 
 ---
 
-## Ce que l'IA a apporté
+## What AI brought
 
-### Zéro page blanche
-Chaque composant démarrait avec une base solide et cohérente avec l'existant.
-Le coût du "premier jet" est passé de jours à minutes.
+### No blank page
+Every component started from a solid base consistent with the existing code.
+The cost of the "first draft" dropped from days to minutes.
 
-### Disponibilité de la spec CDI
-Les questions sur les règles d'assignabilité CDI 4.1, les phases BCE, le comportement
-exact des scopes en présence d'intercepteurs — obtenues en secondes plutôt qu'en heures
-de lecture de spec.
+### CDI spec availability
+Questions about CDI 4.1 assignability rules, BCE phases, and the exact behavior
+of scopes in the presence of interceptors — answered in seconds rather than hours
+of spec reading.
 
-### Class-File API JDK 25
-L'API est récente, la documentation sparse. L'IA avait le contexte suffisant pour
-générer du bytecode correct (factories, proxies, sous-classes interceptées) sans
-itérations longues sur des erreurs de format de classe.
+### JDK 25 Class-File API
+The API is recent and its documentation sparse. The AI had enough context to
+generate correct bytecode (factories, proxies, intercepted subclasses) without
+long iterations on class-format errors.
 
-### Parallélisme cognitif
-Pendant les décisions d'architecture (choix d'un trade-off JPMS, design d'une API publique),
-le code était déjà en cours d'écriture. Le temps de réflexion du développeur n'a plus
-bloqué la production de code.
+### Cognitive parallelism
+While making architectural decisions (choosing a JPMS trade-off, designing a public API),
+the code was already being written. The developer's thinking time no longer
+blocked code production.
 
-### Pattern recognition sur les échecs TCK
-Les erreurs TCK récurrentes (propagation d'annotations BCE, faux positifs de validation,
-dispatch par MethodHandle sur méthodes protected cross-package) ont été reconnues et
-corrigées sans spirale de debug prolongée.
-
----
-
-## Ce que l'IA n'a pas remplacé
-
-- **Vision architecturale** — les décisions sur la structure des modules JPMS,
-  la frontière compile-time / runtime, le modèle d'extension BCE.
-- **Jugement sur l'élégance** — distinguer un hack qui passe les tests d'une solution
-  correcte selon la spec.
-- **Connaissance du domaine** — savoir *quoi* tester, *quels* corner cases de CDI
-  valent la peine d'être couverts, *où* la spec est ambiguë.
-- **Décisions produit** — périmètre (CDI Lite vs Full), choix de ne pas dépendre d'ASM,
-  priorité au JPMS natif dès le départ.
+### Pattern recognition on TCK failures
+Recurring TCK errors (BCE annotation propagation, validation false positives,
+MethodHandle dispatch on cross-package protected methods) were recognized and
+fixed without a prolonged debugging spiral.
 
 ---
 
-## Observations sur la méthode de travail
+## What AI did not replace
 
-### Ce qui a bien fonctionné
+- **Architectural vision** — decisions about JPMS module structure,
+  the compile-time / runtime boundary, the BCE extension model.
+- **Judgment on elegance** — distinguishing a hack that passes the tests from a solution
+  that is correct per the spec.
+- **Domain knowledge** — knowing *what* to test, *which* CDI corner cases
+  are worth covering, *where* the spec is ambiguous.
+- **Product decisions** — scope (CDI Lite vs Full), the choice not to depend on ASM,
+  prioritizing native JPMS from the start.
 
-- **Agents spécialisés en parallèle** — exploration du codebase, analyse TCK, génération
-  de bytecode et revue tournaient simultanément.
-- **TDD strict** — les tests rouges avant l'implémentation ont évité les régressions
-  silencieuses dans un codebase aussi dense.
-- **Plan mode systématique** — sur toute tâche à 3+ étapes, rédiger le plan avant
-  de coder a réduit les allers-retours.
-- **Context-mode** — externaliser les outputs volumineux (build, TCK, logs) a maintenu
-  la fenêtre de contexte propre sur une session longue.
+---
 
-### Ce qui a coûté du temps malgré l'IA
+## Observations on the working method
 
-- Les **migrations de packages** (fr.vidocq → io.vidocq) sur ~300 fichiers — mécanique
-  mais source d'oublis (fichiers sans extension, références hardcodées).
-- Les **bugs d'idempotence** (SjarEncryptor, double chiffrement en CI) — détectés
-  seulement en environnement CI, invisibles en développement local.
-- Les **erreurs de parsing Mermaid** dans la documentation — la syntaxe `timeline`
-  et les entités HTML dans les nœuds `[]` sont des pièges fréquents.
+### What worked well
+
+- **Specialized agents in parallel** — codebase exploration, TCK analysis, bytecode
+  generation, and review ran simultaneously.
+- **Strict TDD** — red tests before implementation avoided silent regressions
+  in such a dense codebase.
+- **Systematic plan mode** — for any task with 3+ steps, writing the plan before
+  coding reduced the back-and-forth.
+- **Context-mode** — externalizing large outputs (build, TCK, logs) kept the
+  context window clean over a long session.
+
+### What cost time despite AI
+
+- **Package migrations** (fr.vidocq → io.vidocq) across ~300 files — mechanical
+  but a source of misses (files without extensions, hardcoded references).
+- **Idempotence bugs** (SjarEncryptor, double encryption in CI) — detected
+  only in the CI environment, invisible in local development.
+- **Mermaid parsing errors** in the documentation — the `timeline` syntax
+  and HTML entities inside `[]` nodes are frequent traps.
 
 ---
 
 ## Conclusion
 
-Pour un projet de cette complexité technique — spec formelle (CDI 4.1), génération
-de bytecode, JPMS, TCK officiel — l'assistance IA a représenté un multiplicateur
-de **~15x** sur la vitesse de développement.
+For a project of this technical complexity — a formal spec (CDI 4.1), bytecode
+generation, JPMS, an official TCK — AI assistance represented a
+**~15x** multiplier on development speed.
 
-Le gain n'est pas uniforme : il est maximal sur le code mécanique et structurel
-(boilerplate, implémentations de spec, tests de conformité), et nul sur les décisions
-d'architecture et le jugement d'ingénierie senior.
+The gain is not uniform: it is maximal on mechanical and structural code
+(boilerplate, spec implementations, conformance tests), and zero on architectural
+decisions and senior engineering judgment.
 
-Le modèle le plus précis n'est pas "l'IA code à la place du développeur" mais
-**"le développeur senior pilote à la vitesse de sa pensée plutôt qu'à la vitesse
-de sa frappe"**.
+The most accurate model is not "AI codes in place of the developer" but
+**"the senior developer steers at the speed of their thought rather than at the speed
+of their typing"**.

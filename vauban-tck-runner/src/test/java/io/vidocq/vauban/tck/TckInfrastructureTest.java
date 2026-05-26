@@ -4,25 +4,25 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import static org.junit.jupiter.api.Assertions.*;
 
-@DisplayName("TCK Infrastructure - verification de l'infrastructure")
+@DisplayName("TCK Infrastructure - infrastructure verification")
 class TckInfrastructureTest {
 
     @Test
-    @DisplayName("VaubanBeans SPI est fonctionnel")
+    @DisplayName("VaubanBeans SPI is functional")
     void beansSpiShouldWork() {
         var beans = new VaubanBeans();
         assertFalse(beans.isProxy(new Object()));
     }
 
     @Test
-    @DisplayName("VaubanContexts SPI est fonctionnel")
+    @DisplayName("VaubanContexts SPI is functional")
     void contextsSpiShouldWork() {
         var contexts = new VaubanContexts();
         assertNotNull(contexts.getDependentContext());
     }
 
     @Test
-    @DisplayName("VaubanContextuals SPI est fonctionnel")
+    @DisplayName("VaubanContextuals SPI is functional")
     void contextualsSpiShouldWork() {
         var contextuals = new VaubanContextuals();
         var inspectable = contextuals.create("test", new io.vidocq.vauban.core.context.DependentContext());
@@ -31,7 +31,7 @@ class TckInfrastructureTest {
     }
 
     @Test
-    @DisplayName("VaubanCreationalContexts SPI est fonctionnel")
+    @DisplayName("VaubanCreationalContexts SPI is functional")
     void creationalContextsSpiShouldWork() {
         var ccs = new VaubanCreationalContexts();
         var inspectable = ccs.create(null);

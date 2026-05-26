@@ -59,7 +59,7 @@ class LangModelTest {
     class TypeMapperTest {
 
         @Test
-        @DisplayName("mappe VoidType")
+        @DisplayName("maps VoidType")
         void shouldMapVoidType() throws IOException {
             var lookup = buildLookup();
             var result = TypeMapper.map(new TypeInfo.VoidType(), lookup);
@@ -69,7 +69,7 @@ class LangModelTest {
         }
 
         @Test
-        @DisplayName("mappe PrimitiveType INT")
+        @DisplayName("maps PrimitiveType INT")
         void shouldMapPrimitiveInt() throws IOException {
             var lookup = buildLookup();
             var result = TypeMapper.map(new TypeInfo.PrimitiveType(TypeInfo.PrimitiveType.Kind.INT), lookup);
@@ -80,7 +80,7 @@ class LangModelTest {
         }
 
         @Test
-        @DisplayName("mappe ClassType")
+        @DisplayName("maps ClassType")
         void shouldMapClassType() throws IOException {
             var lookup = buildLookup(AnnotatedService.class);
             var result = TypeMapper.map(
@@ -90,7 +90,7 @@ class LangModelTest {
         }
 
         @Test
-        @DisplayName("mappe ArrayType")
+        @DisplayName("maps ArrayType")
         void shouldMapArrayType() throws IOException {
             var lookup = buildLookup();
             var result = TypeMapper.map(
@@ -106,7 +106,7 @@ class LangModelTest {
     class ClassInfoTest {
 
         @Test
-        @DisplayName("expose le nom de la classe")
+        @DisplayName("exposes the class name")
         void shouldExposeName() throws IOException {
             var lookup = buildLookup(AnnotatedService.class);
             var indexClass = scanClass(AnnotatedService.class);
@@ -115,7 +115,7 @@ class LangModelTest {
         }
 
         @Test
-        @DisplayName("expose le nom simple")
+        @DisplayName("exposes the simple name")
         void shouldExposeSimpleName() throws IOException {
             var lookup = buildLookup(AnnotatedService.class);
             var indexClass = scanClass(AnnotatedService.class);
@@ -125,7 +125,7 @@ class LangModelTest {
         }
 
         @Test
-        @DisplayName("detecte les annotations")
+        @DisplayName("detects annotations")
         void shouldDetectAnnotations() throws IOException {
             var lookup = buildLookup(AnnotatedService.class);
             var indexClass = scanClass(AnnotatedService.class);
@@ -135,7 +135,7 @@ class LangModelTest {
         }
 
         @Test
-        @DisplayName("expose les methodes")
+        @DisplayName("exposes methods")
         void shouldExposeMethods() throws IOException {
             var lookup = buildLookup(AnnotatedService.class);
             var indexClass = scanClass(AnnotatedService.class);
@@ -146,7 +146,7 @@ class LangModelTest {
         }
 
         @Test
-        @DisplayName("expose les champs")
+        @DisplayName("exposes fields")
         void shouldExposeFields() throws IOException {
             var lookup = buildLookup(AnnotatedService.class);
             var indexClass = scanClass(AnnotatedService.class);
@@ -155,7 +155,7 @@ class LangModelTest {
         }
 
         @Test
-        @DisplayName("expose la superclasse")
+        @DisplayName("exposes the superclass")
         void shouldExposeSuperclass() throws IOException {
             var lookup = buildLookup(MyImpl.class, AnnotatedService.class);
             var indexClass = scanClass(MyImpl.class);
@@ -165,7 +165,7 @@ class LangModelTest {
         }
 
         @Test
-        @DisplayName("expose les super-interfaces")
+        @DisplayName("exposes the super-interfaces")
         void shouldExposeSuperInterfaces() throws IOException {
             var lookup = buildLookup(MyImpl.class, MyInterface.class);
             var indexClass = scanClass(MyImpl.class);
@@ -174,7 +174,7 @@ class LangModelTest {
         }
 
         @Test
-        @DisplayName("detecte isPlainClass")
+        @DisplayName("detects isPlainClass")
         void shouldDetectPlainClass() throws IOException {
             var lookup = buildLookup(AnnotatedService.class);
             var classInfo = new VaubanClassInfo(scanClass(AnnotatedService.class), lookup);
@@ -184,7 +184,7 @@ class LangModelTest {
         }
 
         @Test
-        @DisplayName("detecte interface")
+        @DisplayName("detects interface")
         void shouldDetectInterface() throws IOException {
             var lookup = buildLookup(MyInterface.class);
             var classInfo = new VaubanClassInfo(scanClass(MyInterface.class), lookup);
@@ -198,7 +198,7 @@ class LangModelTest {
     class AnnotationMemberTest {
 
         @Test
-        @DisplayName("expose les valeurs d'annotation")
+        @DisplayName("exposes annotation values")
         void shouldExposeAnnotationValues() throws IOException {
             var annot = new io.vidocq.vauban.indexer.model.AnnotationInfo(
                     DotName.of("test.MyAnnotation"),
@@ -217,7 +217,7 @@ class LangModelTest {
         }
 
         @Test
-        @DisplayName("expose les valeurs int")
+        @DisplayName("exposes int values")
         void shouldExposeIntValues() throws IOException {
             var lookup = buildLookup();
             var member = new VaubanAnnotationMember(

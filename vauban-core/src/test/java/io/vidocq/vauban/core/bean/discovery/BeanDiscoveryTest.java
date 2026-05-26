@@ -18,7 +18,7 @@ import java.util.Map;
 import static org.junit.jupiter.api.Assertions.*;
 
 @SuppressWarnings("java:S2187") // Test scaffold — helpers and data classes for future tests
-@DisplayName("BeanDiscovery - decouverte des beans CDI")
+@DisplayName("BeanDiscovery - CDI bean discovery")
 class BeanDiscoveryTest {
 
     static ClassInfo scanClass(Class<?> clazz) throws IOException {
@@ -108,11 +108,11 @@ class BeanDiscoveryTest {
     }
 
     @Nested
-    @DisplayName("decouverte de managed beans")
+    @DisplayName("managed bean discovery")
     class ManagedBeans {
 
         @Test
-        @DisplayName("decouvre un bean @ApplicationScoped")
+        @DisplayName("discovers an @ApplicationScoped bean")
         void shouldDiscoverApplicationScopedBean() {
             var builder = new IndexBuilder();
             builder.add(makeAnnotatedClass("com.example.MyService", "jakarta.enterprise.context.ApplicationScoped"));
@@ -125,7 +125,7 @@ class BeanDiscoveryTest {
         }
 
         @Test
-        @DisplayName("decouvre un bean @Dependent")
+        @DisplayName("discovers a @Dependent bean")
         void shouldDiscoverDependentBean() {
             var builder = new IndexBuilder();
             builder.add(makeAnnotatedClass("com.example.MyRepo", "jakarta.enterprise.context.Dependent"));
@@ -137,7 +137,7 @@ class BeanDiscoveryTest {
         }
 
         @Test
-        @DisplayName("ignore les classes @Vetoed")
+        @DisplayName("ignores @Vetoed classes")
         void shouldIgnoreVetoedClasses() {
             var builder = new IndexBuilder();
             builder.add(makeVetoedClass("com.example.VetoedService"));
@@ -147,7 +147,7 @@ class BeanDiscoveryTest {
         }
 
         @Test
-        @DisplayName("ignore les classes abstraites")
+        @DisplayName("ignores abstract classes")
         void shouldIgnoreAbstractClasses() {
             var builder = new IndexBuilder();
             builder.add(makeAbstractClass("com.example.AbstractService"));
@@ -157,7 +157,7 @@ class BeanDiscoveryTest {
         }
 
         @Test
-        @DisplayName("ignore les interfaces")
+        @DisplayName("ignores interfaces")
         void shouldIgnoreInterfaces() {
             var builder = new IndexBuilder();
             builder.add(makeInterface("com.example.MyInterface"));
@@ -167,7 +167,7 @@ class BeanDiscoveryTest {
         }
 
         @Test
-        @DisplayName("ignore les classes sans annotation bean-defining")
+        @DisplayName("ignores classes without a bean-defining annotation")
         void shouldIgnoreClassesWithoutBeanDefiningAnnotation() {
             var builder = new IndexBuilder();
             builder.add(new ClassInfo(
@@ -186,7 +186,7 @@ class BeanDiscoveryTest {
     class Qualifiers {
 
         @Test
-        @DisplayName("ajoute @Default et @Any implicitement")
+        @DisplayName("adds @Default and @Any implicitly")
         void shouldAddDefaultAndAny() {
             var builder = new IndexBuilder();
             builder.add(makeAnnotatedClass("com.example.MyService", "jakarta.enterprise.context.ApplicationScoped"));
@@ -199,11 +199,11 @@ class BeanDiscoveryTest {
     }
 
     @Nested
-    @DisplayName("types de beans")
+    @DisplayName("bean types")
     class BeanTypes {
 
         @Test
-        @DisplayName("inclut la classe et Object dans les types")
+        @DisplayName("includes the class and Object in the types")
         void shouldIncludeClassAndObject() {
             var builder = new IndexBuilder();
             builder.add(makeAnnotatedClass("com.example.MyService", "jakarta.enterprise.context.ApplicationScoped"));
@@ -215,7 +215,7 @@ class BeanDiscoveryTest {
         }
 
         @Test
-        @DisplayName("inclut les interfaces dans les types")
+        @DisplayName("includes interfaces in the types")
         void shouldIncludeInterfaces() {
             var builder = new IndexBuilder();
             builder.add(new ClassInfo(
@@ -238,7 +238,7 @@ class BeanDiscoveryTest {
     class InjectionPoints {
 
         @Test
-        @DisplayName("decouvre les champs @Inject")
+        @DisplayName("discovers @Inject fields")
         void shouldDiscoverInjectFields() {
             var builder = new IndexBuilder();
             builder.add(makeClassWithInjectField("com.example.MyController", "com.example.MyService"));
@@ -292,7 +292,7 @@ class BeanDiscoveryTest {
         }
 
         @Test
-        @DisplayName("un stereotype est une bean-defining annotation")
+        @DisplayName("a stereotype is a bean-defining annotation")
         void stereotypeIsBeanDefiningAnnotation() {
             var builder = new IndexBuilder();
             // Register the @Service stereotype annotation
@@ -310,7 +310,7 @@ class BeanDiscoveryTest {
         }
 
         @Test
-        @DisplayName("le scope du stereotype est herite quand le bean n'a pas de scope explicite")
+        @DisplayName("the stereotype scope is inherited when the bean has no explicit scope")
         void stereotypeScopeIsInherited() {
             var builder = new IndexBuilder();
             builder.add(makeStereotypeAnnotation("com.example.Service", List.of(
@@ -325,7 +325,7 @@ class BeanDiscoveryTest {
         }
 
         @Test
-        @DisplayName("un scope explicite sur le bean a priorite sur le stereotype")
+        @DisplayName("an explicit scope on the bean takes precedence over the stereotype")
         void explicitScopeOverridesStereotype() {
             var builder = new IndexBuilder();
             builder.add(makeStereotypeAnnotation("com.example.Service", List.of(
@@ -343,7 +343,7 @@ class BeanDiscoveryTest {
         }
 
         @Test
-        @DisplayName("@Named sur le stereotype rend le bean nomme")
+        @DisplayName("@Named on the stereotype makes the bean named")
         void stereotypeNamedIsInherited() {
             var builder = new IndexBuilder();
             builder.add(makeStereotypeAnnotation("com.example.Service", List.of(
@@ -359,7 +359,7 @@ class BeanDiscoveryTest {
         }
 
         @Test
-        @DisplayName("les qualifiers du stereotype sont herites par le bean")
+        @DisplayName("the stereotype qualifiers are inherited by the bean")
         void stereotypeQualifiersAreInherited() {
             var builder = new IndexBuilder();
             // Create a custom qualifier annotation
@@ -384,7 +384,7 @@ class BeanDiscoveryTest {
         }
 
         @Test
-        @DisplayName("un bean sans scope et stereotype sans scope a le scope Dependent")
+        @DisplayName("a bean with no scope and a stereotype with no scope has the Dependent scope")
         void noScopeDefaultsToDependent() {
             var builder = new IndexBuilder();
             builder.add(makeStereotypeAnnotation("com.example.MyStereotype", List.of(
@@ -403,7 +403,7 @@ class BeanDiscoveryTest {
     class ProducerMethods {
 
         @Test
-        @DisplayName("decouvre les producer methods")
+        @DisplayName("discovers producer methods")
         void shouldDiscoverProducerMethods() {
             var builder = new IndexBuilder();
             builder.add(makeClassWithProducerMethod("com.example.Config", "createService", "com.example.MyService"));

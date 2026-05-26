@@ -76,8 +76,8 @@ public final class ClientProxyGenerator {
             clb.withSuperclass(beanCD);
 
             // Field: private Supplier $$delegate
-            // Format aligné sur RuntimeClientProxyGenerator (lazy-set via $$setDelegate)
-            // pour qu'InterceptorBeanWrapper.getOrCreateProxy puisse instancier puis injecter.
+            // Format aligned with RuntimeClientProxyGenerator (lazy-set via $$setDelegate)
+            // so that InterceptorBeanWrapper.getOrCreateProxy can instantiate then inject.
             clb.withField("$$delegate", CD_Supplier, ClassFile.ACC_PRIVATE);
 
             // Static final MethodHandle fields (dormant until hierarchy traversal is added).
@@ -89,7 +89,7 @@ public final class ClientProxyGenerator {
             }
 
             // Constructor: public Proxy() { super(); }
-            // CDI 4.1: pour les beans sans no-arg ctor, le runtime fallback à RuntimeClientProxyGenerator.
+            // CDI 4.1: for beans without a no-arg ctor, the runtime falls back to RuntimeClientProxyGenerator.
             clb.withMethodBody(
                     ConstantDescs.INIT_NAME,
                     MethodTypeDesc.of(ConstantDescs.CD_void),

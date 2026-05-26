@@ -5,8 +5,8 @@
 <h1 align="center">Vauban</h1>
 
 <p align="center">
-  <strong>Conteneur CDI 4.1 natif Java Modules :)</strong><br>
-  <a href="https://jakarta.ee/specifications/cdi/4.1/">CDI 4.1</a> | JDK 25 | JPMS | Virtual Threads | Zero reflexion
+  <strong>Java Modules-native CDI 4.1 container :)</strong><br>
+  <a href="https://jakarta.ee/specifications/cdi/4.1/">CDI 4.1</a> | JDK 25 | JPMS | Virtual Threads | Zero reflection
 </p>
 
 <p align="center">
@@ -19,74 +19,66 @@
 
 ---
 
-> [English version below](#english)
+## What is Vauban?
 
-## Qu'est-ce que Vauban ?
+Vauban is an implementation of [Jakarta CDI 4.1](https://jakarta.ee/specifications/cdi/4.1/) designed from the ground up for the Java Platform Module System (JPMS). It generates all the required code (factories, proxies, interceptors) at compile time using the JDK 25 Class-File API, with no external bytecode dependency.
 
-Vauban est une implementation de [Jakarta CDI 4.1](https://jakarta.ee/specifications/cdi/4.1/) concue des le depart pour le systeme de modules Java (JPMS). Il genere tout le code necessaire (factories, proxies, intercepteurs) a la compilation via l'API Class-File du JDK 25, sans aucune dependance bytecode externe.
-
-### Pourquoi Vauban ?
+### Why Vauban?
 
 | | Weld | ArC (Quarkus) | **Vauban** |
 |---|---|---|---|
-| Approche | Runtime / reflexion | Build-time / Jandex + ASM | **Build-time / Class-File API** |
-| JPMS | Non | Non | **Natif** |
-| Dependances bytecode | ASM / ByteBuddy | ASM | **Aucune** (JDK pur) |
+| Approach | Runtime / reflection | Build-time / Jandex + ASM | **Build-time / Class-File API** |
+| JPMS | No | No | **Native** |
+| Bytecode dependencies | ASM / ByteBuddy | ASM | **None** (pure JDK) |
 | CDI Lite TCK | ~100% | ~100% | **100% (774/774)** |
 
-### Philosophie
+### Philosophy
 
-- **JPMS-first** : chaque composant est un module Java explicite (`module-info.java`)
-- **Zero reflexion** : generation de code statique via l'API Class-File du JDK 25
-- **Virtual threads ready** : `ScopedValue` (JEP 487) au lieu de `ThreadLocal` partout
-- **Dependances minimales** : l'indexeur n'a aucune dependance externe
-- **Build Compatible Extensions** : modele d'extensions CDI 4.1 Lite
+- **JPMS-first**: every component is an explicit Java module (`module-info.java`)
+- **Zero reflection**: static code generation via the JDK 25 Class-File API
+- **Virtual threads ready**: `ScopedValue` (JEP 487) instead of `ThreadLocal` everywhere
+- **Minimal dependencies**: the indexer has no external dependency
+- **Build Compatible Extensions**: CDI 4.1 Lite extension model
 
-## Demarrage rapide
+## Quick Start
 
-### Prerequis
+### Prerequisites
 
 - JDK 25 (Temurin)
 - Maven 4.0.0-rc-5
 
 ```bash
-# Avec SDKMAN!
+# With SDKMAN!
 sdk env install
 ```
 
-### Build
+### Three Ways to Declare Beans
 
-```bash
-mvn clean verify
-```
-
-### Trois facons de declarer les beans
-
-| Mode | Quand l'utiliser | API |
+| Mode | When to use it | API |
 |------|-----------------|-----|
-| **`scanLocal()`** | Application standard | Scanne le package de l'appelant + sous-packages |
-| **`scanPackage()` + `scanClasspath()`** | Multi-modules, dependances CDI | Scan explicite + beans des JARs (via `vauban-maven-plugin`) |
-| **`addBeanClass()`** | Tests unitaires | Chaque bean est liste a la main — perimetre chirurgical |
+| **`scanLocal()`** | Standard application | Scans the caller's package + sub-packages |
+| **`scanPackage()` + `scanClasspath()`** | Multi-module, CDI dependencies | Explicit scan + beans from JARs (via `vauban-maven-plugin`) |
+| **`addBeanClass()`** | Unit tests | Each bean is listed by hand — surgical scope |
 
-### Application standard (`scanLocal`)
+### Standard Application (`scanLocal`)
 
 ```java
 import io.vidocq.vauban.core.container.VaubanContainer;
 
-// Scanne automatiquement le package de l'appelant (com.example.**)
+// Automatically scans the caller's package (com.example.**)
 var container = VaubanContainer.builder()
     .scanLocal()
     .build();
 
-var service = container.select(MonService.class);
-service.traiter(42);
+var service = container.select(MyService.class);
+service.process(42);
 container.close();
 ```
 
-### Multi-modules avec dependances CDI (`scanClasspath`)
+### Multi-module with CDI Dependencies (`scanClasspath`)
 
-Les beans dans les JARs de dependances sont decouverts au build par `vauban-maven-plugin`
-et listes dans `META-INF/vauban-beans.list`. Au runtime, `scanClasspath()` les charge.
+Beans in dependency JARs are discovered at build time by `vauban-maven-plugin`
+and listed in `META-INF/vauban-beans.list`. At runtime, `scanClasspath()` loads them.
 
 ```xml
 <!-- pom.xml -->
@@ -103,42 +95,42 @@ et listes dans `META-INF/vauban-beans.list`. Au runtime, `scanClasspath()` les c
 
 ```java
 var container = VaubanContainer.builder()
-    .scanClasspath()                    // beans des dependances (JARs)
-    .scanPackage("com.example.app")     // beans locaux
+    .scanClasspath()                    // beans from dependencies (JARs)
+    .scanPackage("com.example.app")     // local beans
     .build();
 ```
 
-> Le plugin `vauban:generate` pre-genere aussi les client proxies (`_ClientProxy`)
-> et les sous-classes interceptees (`$$Intercepted`) avec un nommage deterministe.
-> Au runtime, ces classes sont trouvees sur le classpath sans regeneration.
+> The `vauban:generate` plugin also pre-generates the client proxies (`_ClientProxy`)
+> and the intercepted subclasses (`$$Intercepted`) with deterministic naming.
+> At runtime, those classes are found on the classpath without regeneration.
 
-### Tests unitaires (`addBeanClass`)
+### Unit Tests (`addBeanClass`)
 
-Perimetre controle — pas de scan implicite, pas de bean inattendu :
+Controlled scope — no implicit scan, no unexpected bean:
 
 ```java
 var container = VaubanContainer.builder()
-    .addBeanClass(MonService.class)
-    .addBeanClass(MonRepository.class)
+    .addBeanClass(MyService.class)
+    .addBeanClass(MyRepository.class)
     .build();
 ```
 
-### Beans CDI
+### CDI Beans
 
 ```java
 @ApplicationScoped
-public class MonService {
+public class MyService {
 
     @Inject
-    MonRepository repository;
+    MyRepository repository;
 
-    public String traiter(int id) {
+    public String process(int id) {
         return repository.trouver(id).nom();
     }
 }
 
 @Dependent
-public class MonRepository {
+public class MyRepository {
     public Record trouver(int id) {
         return new Record(id, "Item " + id);
     }
@@ -147,27 +139,27 @@ public class MonRepository {
 }
 ```
 
-### Tests avec JUnit 6
+### Testing with JUnit 6
 
-`@AddBeans` declare explicitement les classes a inclure dans le conteneur de test.
-Perimetre controle — pas de scan implicite, pas de bean inattendu.
+`@AddBeans` explicitly declares the classes to include in the test container.
+Controlled scope — no implicit scan, no unexpected bean.
 
 ```java
 @VaubanTest
-@AddBeans({MonService.class, MonRepository.class})
-class MonServiceTest {
+@AddBeans({MyService.class, MyRepository.class})
+class MyServiceTest {
 
     @Inject
-    MonService service;
+    MyService service;
 
     @Test
     void devraitTraiterCorrectement() {
-        assertNotNull(service.traiter(1));
+        assertNotNull(service.process(1));
     }
 }
 ```
 
-### Evenements CDI
+### CDI Events
 
 ```java
 @ApplicationScoped
@@ -190,7 +182,7 @@ public class AuditService {
 }
 ```
 
-### Intercepteurs
+### Interceptors
 
 ```java
 @InterceptorBinding
@@ -210,8 +202,8 @@ public class LogInterceptor {
 
 @ApplicationScoped
 @Logged
-public class MonService {
-    public String traiter(int id) { return "OK"; }
+public class MyService {
+    public String process(int id) { return "OK"; }
 }
 ```
 
@@ -219,7 +211,7 @@ public class MonService {
 
 ## Architecture
 
-> Documentation detaillee avec diagrammes Mermaid : [docs/architecture.md](docs/architecture.md)
+> Detailed documentation with Mermaid diagrams: [docs/architecture.md](docs/architecture.md)
 
 ```mermaid
 graph TB
@@ -245,17 +237,17 @@ graph TB
 
 ```
 vauban/
-├── vauban-indexer            Indexeur de bytecode (remplace Jandex), zero dependance
-├── vauban-api                API publique Vauban
-├── vauban-core               Runtime du conteneur CDI 4.1 Lite
-├── vauban-processor          Processeur d'annotations (compile-time)
-├── vauban-maven-plugin       Plugin Maven : scan, generation, chiffrement, distribution
-├── vauban-classloader-spi    SPI pour plugins de chargement de classes (extensible)
-├── vauban-sjar               Chiffrement in-JAR AES-256-GCM (implementation du SPI)
-├── vauban-junit              Extension JUnit 6 pour tests CDI
-├── vauban-tck-runner         Runner CDI TCK 4.1 (774/774)
-├── vauban-test-suite         Suite de tests d'integration
-└── vauban-examples           Exemples multi-modules (plain + chiffre + distribution)
+├── vauban-indexer            Bytecode indexer (replaces Jandex), zero dependency
+├── vauban-api                Public Vauban API
+├── vauban-core               CDI 4.1 Lite container runtime
+├── vauban-processor          Annotation processor (compile-time)
+├── vauban-maven-plugin       Maven plugin: scan, generation, encryption, distribution
+├── vauban-classloader-spi    SPI for class-loading plugins (extensible)
+├── vauban-sjar               In-JAR AES-256-GCM encryption (SPI implementation)
+├── vauban-junit              JUnit 6 extension for CDI tests
+├── vauban-tck-runner         CDI TCK 4.1 runner (774/774)
+├── vauban-test-suite         Integration test suite
+└── vauban-examples           Multi-module examples (plain + encrypted + distribution)
 ```
 
 ---
@@ -264,22 +256,22 @@ vauban/
 
 ### vauban-indexer
 
-**Role** : Scanner et indexer les fichiers `.class` sans reflexion ni dependances externes.
+**Role**: Scan and index `.class` files without reflection or external dependencies.
 
-Equivalent fonctionnel de Jandex, mais utilise exclusivement l'API Class-File du JDK 25.
-Produit un `VaubanIndex` immutable contenant les metadonnees de toutes les classes scannees.
+Functional equivalent of Jandex, but uses exclusively the JDK 25 Class-File API.
+Produces an immutable `VaubanIndex` containing the metadata of every scanned class.
 
-| Classe | Role |
+| Class | Role |
 |--------|------|
-| `ClassFileScanner` | Parse un fichier `.class` JDK 25 en `ClassInfo` |
-| `JarScanner` | Scanne un JAR complet |
-| `IndexBuilder` | Construit un index incrementalement |
-| `VaubanIndex` | Index immutable — requetes par nom, annotation, supertype |
-| `ClassInfo` | Metadonnees d'une classe (annotations, champs, methodes, supertypes) |
-| `TypeInfo` | Representation des types (class, parameterized, wildcard, type variable, array) |
-| `DotName` | Nom qualifie interne (`jakarta.inject.Inject`) |
+| `ClassFileScanner` | Parses a JDK 25 `.class` file into `ClassInfo` |
+| `JarScanner` | Scans a full JAR |
+| `IndexBuilder` | Builds an index incrementally |
+| `VaubanIndex` | Immutable index — queries by name, annotation, supertype |
+| `ClassInfo` | Class metadata (annotations, fields, methods, supertypes) |
+| `TypeInfo` | Type representation (class, parameterized, wildcard, type variable, array) |
+| `DotName` | Internal qualified name (`jakarta.inject.Inject`) |
 
-**Module JPMS** : `io.vidocq.vauban.indexer` — zero dependance externe.
+**JPMS module**: `io.vidocq.vauban.indexer` — zero external dependency.
 
 ```java
 var index = new IndexBuilder()
@@ -292,184 +284,184 @@ var beans = index.getAnnotatedClasses(DotName.of("jakarta.enterprise.context.App
 
 ### vauban-api
 
-**Role** : Point d'entree public pour les applications.
+**Role**: Public entry point for applications.
 
-Fournit la facade `Vauban` et re-exporte les contrats CDI 4.1.
+Provides the `Vauban` facade and re-exports the CDI 4.1 contracts.
 
-**Module JPMS** : `io.vidocq.vauban.api` — depend de Jakarta CDI API (transitif).
+**JPMS module**: `io.vidocq.vauban.api` — depends on the Jakarta CDI API (transitive).
 
 ### vauban-core
 
-**Role** : Le coeur du conteneur CDI. Gere le cycle de vie des beans, l'injection, les scopes, les evenements, les intercepteurs et les Build Compatible Extensions.
+**Role**: The heart of the CDI container. Manages the bean lifecycle, injection, scopes, events, interceptors, and Build Compatible Extensions.
 
-#### Packages et classes cles
+#### Key packages and classes
 
-| Package | Classes cles | Role |
+| Package | Key classes | Role |
 |---------|-------------|------|
-| `container` | `VaubanContainer`, `VaubanBeanManager`, `ManagedBean`, `InstanceImpl` | Bootstrap, gestion des beans, cycle de vie |
-| `bean.discovery` | `BeanDiscovery` | Decouverte CDI via l'index |
-| `bean.model` | `BeanDescriptor`, `InterceptorDescriptor`, `ObserverDescriptor` | Modeles de metadonnees |
-| `bean.resolution` | `BeanResolver`, `QualifierMatcher` | Resolution des beans par type + qualifiers |
-| `bean.validation` | `ClassValidator`, `DeploymentValidator` | Validation DefinitionException / DeploymentException |
-| `context` | `ApplicationContext`, `RequestContext`, `DependentContext` | Implementations des scopes |
-| `event` | `EventDispatcher`, `EventImpl`, `VaubanObserverMethod` | Fire sync/async, matching des observeurs |
-| `interceptor` | `InterceptorManager`, `VaubanInvocationContext`, `InterceptorSubclassGenerator` | Resolution, chaines, generation de sous-classes `$$Intercepted` |
-| `extensions` | `BceProcessor`, `VaubanBuildServices` | Build Compatible Extensions (phases Discovery → Validation) |
+| `container` | `VaubanContainer`, `VaubanBeanManager`, `ManagedBean`, `InstanceImpl` | Bootstrap, bean management, lifecycle |
+| `bean.discovery` | `BeanDiscovery` | CDI discovery via the index |
+| `bean.model` | `BeanDescriptor`, `InterceptorDescriptor`, `ObserverDescriptor` | Metadata models |
+| `bean.resolution` | `BeanResolver`, `QualifierMatcher` | Bean resolution by type + qualifiers |
+| `bean.validation` | `ClassValidator`, `DeploymentValidator` | DefinitionException / DeploymentException validation |
+| `context` | `ApplicationContext`, `RequestContext`, `DependentContext` | Scope implementations |
+| `event` | `EventDispatcher`, `EventImpl`, `VaubanObserverMethod` | Sync/async fire, observer matching |
+| `interceptor` | `InterceptorManager`, `VaubanInvocationContext`, `InterceptorSubclassGenerator` | Resolution, chains, `$$Intercepted` subclass generation |
+| `extensions` | `BceProcessor`, `VaubanBuildServices` | Build Compatible Extensions (Discovery → Validation phases) |
 | `langmodel` | `VaubanClassInfo`, `VaubanAnnotationMember` | CDI Language Model (`jakarta.enterprise.lang.model`) |
-| `types` | `AssignabilityRules`, `TypeHierarchyResolver` | Regles d'assignabilite CDI 4.1 Section 2.4 |
-| `proxy` | `RuntimeClientProxyGenerator` | Generation de client proxies via Class-File API |
+| `types` | `AssignabilityRules`, `TypeHierarchyResolver` | CDI 4.1 Section 2.4 assignability rules |
+| `proxy` | `RuntimeClientProxyGenerator` | Client proxy generation via Class-File API |
 
-#### Sequence de demarrage (`VaubanContainer.builder().build()`)
+#### Startup sequence (`VaubanContainer.builder().build()`)
 
 ```
-1. Collecte des classes beans (classpath ou programmatique)
-2. BeanDiscovery : scan de l'index, decouverte annotated-mode
-   ├── Beans manages (scopes, stereotypes)
-   ├── Producers (@Produces methodes/champs)
-   ├── Observeurs (@Observes / @ObservesAsync)
-   └── Intercepteurs (@Interceptor + @InterceptorBinding)
-3. ClassValidator : validation DefinitionException
-4. BceProcessor : Build Compatible Extensions
+1. Collect bean classes (classpath or programmatic)
+2. BeanDiscovery: index scan, annotated-mode discovery
+   ├── Managed beans (scopes, stereotypes)
+   ├── Producers (@Produces methods/fields)
+   ├── Observers (@Observes / @ObservesAsync)
+   └── Interceptors (@Interceptor + @InterceptorBinding)
+3. ClassValidator: DefinitionException validation
+4. BceProcessor: Build Compatible Extensions
    ├── @Discovery → @Enhancement → @Registration → @Synthesis → @Validation
-   └── Beans/observeurs synthetiques
-5. DeploymentValidator : validation DeploymentException
-6. Creation des scopes (ApplicationContext, RequestContext, DependentContext)
-7. InterceptorManager : resolution des chaines d'intercepteurs
-8. EventDispatcher : enregistrement des observeurs
-9. VaubanBeanManager : facade BeanManager CDI
-10. Fire @Initialized(ApplicationScoped.class) et @Startup
+   └── Synthetic beans/observers
+5. DeploymentValidator: DeploymentException validation
+6. Create scopes (ApplicationContext, RequestContext, DependentContext)
+7. InterceptorManager: resolve interceptor chains
+8. EventDispatcher: register observers
+9. VaubanBeanManager: CDI BeanManager facade
+10. Fire @Initialized(ApplicationScoped.class) and @Startup
 ```
 
 #### Injection
 
-Le `BeanResolver` resout les points d'injection par type + qualifiers :
-- Supporte `@Inject` sur champs, constructeurs et methodes
-- Qualifiers : `@Named`, `@Default`, `@Any`, qualifiers custom
-- `@Typed` pour restreindre les types exposes
-- `Instance<T>` pour le lookup programmatique
-- `InjectionPoint` pour la metadata d'injection
+The `BeanResolver` resolves injection points by type + qualifiers:
+- Supports `@Inject` on fields, constructors, and methods
+- Qualifiers: `@Named`, `@Default`, `@Any`, custom qualifiers
+- `@Typed` to restrict the exposed types
+- `Instance<T>` for programmatic lookup
+- `InjectionPoint` for injection metadata
 
-#### Evenements
+#### Events
 
-`EventDispatcher` gere le fire synchrone et asynchrone :
-- Matching par type d'evenement (incluant les generiques) et qualifiers
-- Tri par `@Priority` des observeurs
-- Support `@Observes(during = IF_EXISTS)` conditionnel
-- `fireAsync()` retourne `CompletionStage<U>`
-- `EventMetadata` avec type runtime resolu
+`EventDispatcher` handles synchronous and asynchronous fire:
+- Matching by event type (including generics) and qualifiers
+- Observer ordering by `@Priority`
+- Conditional `@Observes(during = IF_EXISTS)` support
+- `fireAsync()` returns `CompletionStage<U>`
+- `EventMetadata` with resolved runtime type
 
-#### Intercepteurs
+#### Interceptors
 
-Generes via l'API Class-File — zero reflexion a l'execution :
-- Sous-classe `BeanClass$$Intercepted` avec methodes overridees
-- Bridge `$$super$methodName` pour l'appel a la methode originale
-- `@AroundInvoke` et `@AroundConstruct`
-- Matching des bindings par nom + valeurs membres
-- Support des bindings herites et transitifs (via stereotypes)
+Generated via the Class-File API — zero reflection at runtime:
+- `BeanClass$$Intercepted` subclass with overridden methods
+- `$$super$methodName` bridge to call the original method
+- `@AroundInvoke` and `@AroundConstruct`
+- Binding matching by name + member values
+- Support for inherited and transitive bindings (via stereotypes)
 
-**Module JPMS** : `io.vidocq.vauban.core` — fournit `CDIProvider` et `BuildServices`.
+**JPMS module**: `io.vidocq.vauban.core` — provides `CDIProvider` and `BuildServices`.
 
 ### vauban-processor
 
-**Role** : Processeur d'annotations (APT) qui genere les factories de beans et les client proxies a la compilation.
+**Role**: Annotation processor (APT) that generates bean factories and client proxies at compile time.
 
-| Classe | Role |
+| Class | Role |
 |--------|------|
-| `VaubanProcessor` | Point d'entree APT (`AbstractProcessor`) |
-| `ElementScanner` | Convertit les elements APT en `ClassInfo` |
-| `BeanFactoryGenerator` | Genere les implementations `BeanFactory<T>` |
-| `ClientProxyGenerator` | Genere les client proxies pour les scopes normaux |
+| `VaubanProcessor` | APT entry point (`AbstractProcessor`) |
+| `ElementScanner` | Converts APT elements into `ClassInfo` |
+| `BeanFactoryGenerator` | Generates `BeanFactory<T>` implementations |
+| `ClientProxyGenerator` | Generates client proxies for normal scopes |
 
-**Flux** :
-1. APT detecte les annotations CDI
-2. Scan des elements → `VaubanIndex`
+**Flow**:
+1. APT detects the CDI annotations
+2. Scan elements → `VaubanIndex`
 3. `BeanDiscovery` + `DeploymentValidator`
-4. Generation bytecode via Class-File API pour chaque bean manage
+4. Bytecode generation via the Class-File API for each managed bean
 
-**Module JPMS** : `io.vidocq.vauban.processor` — depend de `java.compiler`.
+**JPMS module**: `io.vidocq.vauban.processor` — depends on `java.compiler`.
 
 ### vauban-junit
 
-**Role** : Integration JUnit 6 (Jupiter) pour les tests CDI.
+**Role**: JUnit 6 (Jupiter) integration for CDI tests.
 
-| Classe | Role |
+| Class | Role |
 |--------|------|
-| `VaubanExtension` | Extension JUnit (`BeforeAllCallback`, `AfterAllCallback`, `TestInstancePostProcessor`) |
-| `@VaubanTest` | Marque une classe de test pour CDI |
-| `@AddBeans` | Declare les classes beans a inclure dans le conteneur de test |
+| `VaubanExtension` | JUnit extension (`BeforeAllCallback`, `AfterAllCallback`, `TestInstancePostProcessor`) |
+| `@VaubanTest` | Marks a test class for CDI |
+| `@AddBeans` | Declares the bean classes to include in the test container |
 
-**Fonctionnement** :
-1. `@BeforeAll` : cree un `VaubanContainer` avec les classes `@AddBeans`
-2. `PostProcessor` : injecte les champs `@Inject` de l'instance de test
-3. `@AfterAll` : ferme le conteneur
+**How it works**:
+1. `@BeforeAll`: creates a `VaubanContainer` with the `@AddBeans` classes
+2. `PostProcessor`: injects the `@Inject` fields of the test instance
+3. `@AfterAll`: closes the container
 
 ```java
 @VaubanTest
-@AddBeans({MonService.class, MonRepository.class})
-class MonServiceTest {
-    @Inject MonService service;
+@AddBeans({MyService.class, MyRepository.class})
+class MyServiceTest {
+    @Inject MyService service;
 
     @Test
     void test() {
-        assertNotNull(service.traiter(1));
+        assertNotNull(service.process(1));
     }
 }
 ```
 
-**Module JPMS** : `io.vidocq.vauban.junit` — depend de `org.junit.jupiter.api`.
+**JPMS module**: `io.vidocq.vauban.junit` — depends on `org.junit.jupiter.api`.
 
 ### vauban-classloader-spi
 
-**Role** : Contrat permanent du classloading — interfaces SPI pour le chargement de classes depuis des sources custom (JARs chiffres, archives distantes, etc.).
+**Role**: Permanent class-loading contract — SPI interfaces for loading classes from custom sources (encrypted JARs, remote archives, etc.).
 
-Ce module est **toujours requis au runtime** par `vauban-core`, `vauban-indexer` et `vauban-processor`. Sans implementation dans le module path, le conteneur utilise le classloading Java standard. La presence d'une implementation (ex: `vauban-sjar`) active le classloading custom via `ServiceLoader`.
+This module is **always required at runtime** by `vauban-core`, `vauban-indexer`, and `vauban-processor`. Without an implementation on the module path, the container uses standard Java class loading. The presence of an implementation (e.g. `vauban-sjar`) enables custom class loading via `ServiceLoader`.
 
 | Interface | Role |
 |-----------|------|
-| `ByteSourcePlugin` | Declare le format d'archive gere (protocol, handles, open) |
-| `ArchiveReader` | Fournit les bytes (dechiffres) des classes d'une archive |
-| `PluginContext` | Fournit les cles et la configuration aux plugins |
+| `ByteSourcePlugin` | Declares the supported archive format (protocol, handles, open) |
+| `ArchiveReader` | Provides the (decrypted) bytes of an archive's classes |
+| `PluginContext` | Provides keys and configuration to plugins |
 
-**Module JPMS** : `io.vidocq.vauban.classloader.spi` — aucune dependance externe.
+**JPMS module**: `io.vidocq.vauban.classloader.spi` — no external dependency.
 
 ### vauban-sjar
 
-**Role** : Implementation payante et optionnelle du SPI pour le chiffrement in-JAR AES-256-GCM. Absent du module path par defaut (version open-source) ; present uniquement dans la version commerciale destinee a devenir pure EE.
+**Role**: Paid, optional SPI implementation for in-JAR AES-256-GCM encryption. Absent from the module path by default (open-source edition); present only in the commercial edition intended to become pure EE.
 
-| Classe | Role |
+| Class | Role |
 |--------|------|
-| `SjarEncryptor` | Chiffre les classes internes d'un JAR modulaire in-place |
-| `SjarPlugin` | Implementation `ByteSourcePlugin` — detecte `META-INF/vauban.encrypted` |
-| `SjarArchiveReader` | Lit et dechiffre les `.class.enc` avec cache memoire |
-| `SjarKeyProvider` | Resolution de cles (env, keystore, programmatique) |
-| `SjarClassLoader` | ClassLoader custom pour les classes chiffrees |
+| `SjarEncryptor` | Encrypts the internal classes of a modular JAR in-place |
+| `SjarPlugin` | `ByteSourcePlugin` implementation — detects `META-INF/vauban.encrypted` |
+| `SjarArchiveReader` | Reads and decrypts the `.class.enc` files with an in-memory cache |
+| `SjarKeyProvider` | Key resolution (env, keystore, programmatic) |
+| `SjarClassLoader` | Custom ClassLoader for encrypted classes |
 
-Le chiffrement est guide par `module-info.class` :
-- Packages `exports`/`opens` → en clair (compilable)
-- Tous les autres packages → chiffres (`.class.enc`)
-- `META-INF/vauban.encrypted` → metadonnees JSON
+Encryption is driven by `module-info.class`:
+- `exports`/`opens` packages → in clear (compilable)
+- All other packages → encrypted (`.class.enc`)
+- `META-INF/vauban.encrypted` → JSON metadata
 
-Documentation complete : [vauban-sjar/README.md](vauban-sjar/README.md)
+Full documentation: [vauban-sjar/README.md](vauban-sjar/README.md)
 
-**Module JPMS** : `io.vidocq.vauban.sjar` — fournit `ByteSourcePlugin` via `ServiceLoader`.
+**JPMS module**: `io.vidocq.vauban.sjar` — provides `ByteSourcePlugin` via `ServiceLoader`.
 
 ### vauban-maven-plugin
 
-**Role** : Build-time CDI bean discovery, pre-generation de proxies, chiffrement de classes, et packaging de distribution.
+**Role**: Build-time CDI bean discovery, proxy pre-generation, class encryption, and distribution packaging.
 
-| Classe | Role |
+| Class | Role |
 |--------|------|
-| `VaubanGenerator` | Core : scan JARs → index → discover → genere proxies/intercepteurs → ecrit `vauban-beans.list` |
-| `GenerateMojo` | Goal `vauban:generate`, phase `process-classes` |
-| `EncryptMojo` | Goal `vauban:encrypt`, phase `package` — chiffre les classes internes |
-| `DistMojo` | Goal `vauban:dist`, phase `package` — ZIP de distribution avec scripts |
-| `ModuleAnalyzer` | Analyse JPMS (modules explicites/automatiques, split packages) |
+| `VaubanGenerator` | Core: scan JARs → index → discover → generate proxies/interceptors → write `vauban-beans.list` |
+| `GenerateMojo` | `vauban:generate` goal, `process-classes` phase |
+| `EncryptMojo` | `vauban:encrypt` goal, `package` phase — encrypts the internal classes |
+| `DistMojo` | `vauban:dist` goal, `package` phase — distribution ZIP with scripts |
+| `ModuleAnalyzer` | JPMS analysis (explicit/automatic modules, split packages) |
 
 | Goal | Phase | Description |
 |------|-------|-------------|
-| `vauban:generate` | process-classes | Scan deps + projet, decouverte CDI, pre-generation proxies, ecriture `vauban-beans.list` |
-| `vauban:encrypt` | package | Chiffrement AES-256-GCM des classes internes (base sur `module-info`) |
-| `vauban:dist` | package | ZIP de distribution avec `bin/run.sh`, `bin/run.cmd` et `lib/*.jar` |
+| `vauban:generate` | process-classes | Scan deps + project, CDI discovery, proxy pre-generation, write `vauban-beans.list` |
+| `vauban:encrypt` | package | AES-256-GCM encryption of the internal classes (based on `module-info`) |
+| `vauban:dist` | package | Distribution ZIP with `bin/run.sh`, `bin/run.cmd`, and `lib/*.jar` |
 
 ```xml
 <plugin>
@@ -493,196 +485,81 @@ Documentation complete : [vauban-sjar/README.md](vauban-sjar/README.md)
 
 ### vauban-tck-runner
 
-**Role** : Execute le CDI TCK 4.1 officiel contre Vauban.
+**Role**: Runs the official CDI TCK 4.1 against Vauban.
 
-**Stack** : Arquillian 1.8 + TestNG 7.9 + ShrinkWrap.
+**Stack**: Arquillian 1.8 + TestNG 7.9 + ShrinkWrap.
 
 ```bash
-# Lancer le TCK complet
+# Run the full TCK
 ./run-tck.sh
 
 # Un test specifique
 ./run-tck.sh -Dtest=EventMetadataTest
 ```
 
-**Resultat actuel** : **774/774 tests CDI Lite (100%)**
+**Current result**: **774/774 CDI Lite tests (100%)**
 
 ### vauban-test-suite
 
-**Role** : Tests d'integration couvrant les scenarios CDI de bout en bout (injection, scopes, evenements, intercepteurs, producers).
+**Role**: Integration tests covering end-to-end CDI scenarios (injection, scopes, events, interceptors, producers).
 
 ---
 
-## Fonctionnalites CDI 4.1 Lite
+## CDI 4.1 Lite Features
 
-| Fonctionnalite | Status |
+| Feature | Status |
 |---|---|
 | Managed beans (`@ApplicationScoped`, `@RequestScoped`, `@Dependent`, `@Singleton`) | ✅ |
-| Injection (`@Inject` champs, constructeurs, methodes) | ✅ |
+| Injection (`@Inject` fields, constructors, methods) | ✅ |
 | Qualifiers (`@Named`, `@Default`, `@Any`, custom, `@Nonbinding`) | ✅ |
-| Producers (`@Produces` methodes et champs) | ✅ |
+| Producers (`@Produces` methods and fields) | ✅ |
 | Disposers (`@Disposes`) | ✅ |
-| Evenements (`Event<T>`, `@Observes`, `@ObservesAsync`) | ✅ |
+| Events (`Event<T>`, `@Observes`, `@ObservesAsync`) | ✅ |
 | Stereotypes (`@Stereotype`) | ✅ |
 | Alternatives (`@Alternative`, `@Priority`) | ✅ |
 | `Instance<T>` programmatic lookup | ✅ |
 | `InjectionPoint` metadata | ✅ |
-| `@Typed` restriction de types | ✅ |
-| `@Vetoed` (classe et package) | ✅ |
-| Observer priority et conditional (`IF_EXISTS`) | ✅ |
-| Intercepteurs (`@AroundInvoke`, `@AroundConstruct`) | ✅ |
-| Client proxies (scopes normaux) | ✅ |
+| `@Typed` type restriction | ✅ |
+| `@Vetoed` (class and package) | ✅ |
+| Observer priority and conditional (`IF_EXISTS`) | ✅ |
+| Interceptors (`@AroundInvoke`, `@AroundConstruct`) | ✅ |
+| Client proxies (normal scopes) | ✅ |
 | Build Compatible Extensions (BCE) | ✅ |
 | `@TransientReference` | ✅ |
 | `EventMetadata` | ✅ |
 
-## Validation TCK
+## TCK Validation
 
-Le conteneur est valide contre le [CDI TCK 4.1](https://github.com/jakartaee/cdi-tck) officiel.
+The container is validated against the official [CDI TCK 4.1](https://github.com/jakartaee/cdi-tck).
 
 ```
 CDI Lite TCK :  774/774 tests (100%)
-CDI Full TCK :  non cible (futur module vauban-full)
+CDI Full TCK :  not targeted (future vauban-full module)
 ```
 
-| Profil | Scope | Status |
+| Profile | Scope | Status |
 |--------|-------|--------|
-| **CDI Lite** | Managed beans, injection, events, producers, intercepteurs, BCE | **100% TCK** |
-| **CDI Full** | + Portable Extensions, decorators, conversation scope, EL | Futur (`vauban-full`) |
+| **CDI Lite** | Managed beans, injection, events, producers, interceptors, BCE | **100% TCK** |
+| **CDI Full** | + Portable Extensions, decorators, conversation scope, EL | Future (`vauban-full`) |
 
 ## Documentation
 
-| Document | Contenu |
+| Document | Contents |
 |----------|---------|
-| [docs/architecture.md](docs/architecture.md) | Architecture, diagrammes Mermaid, sequences de demarrage |
-| [docs/configuration.md](docs/configuration.md) | Reference des proprietes de configuration |
-| [docs/getting-started.md](docs/getting-started.md) | Guide de demarrage rapide |
+| [docs/architecture.md](docs/architecture.md) | Architecture, Mermaid diagrams, startup sequences |
+| [docs/configuration.md](docs/configuration.md) | Configuration properties reference |
+| [docs/getting-started.md](docs/getting-started.md) | Quick start guide |
 
-## Qualite
+## Quality
 
-- **SonarQube** : 0 issue (0 bug, 0 vulnerabilite, 0 code smell ouvert)
-- **JaCoCo** : couverture via le profil Maven `quality`
+- **SonarQube**: 0 issues (0 bugs, 0 vulnerabilities, 0 open code smells)
+- **JaCoCo**: coverage via the `quality` Maven profile
 
 ```bash
-# Analyse qualite
+# Quality analysis
 mvn verify -Pquality -pl vauban-core
 ```
 
-## Licence
-
-[Apache License 2.0](LICENSE)
-
----
-
-<a id="english"></a>
-
-<p align="center">
-  <img src="vauban-logo.png" alt="Vauban" width="200">
-</p>
-
-## CDI 4.1 Container, Java Modules Native
-
-Vauban is a [Jakarta CDI 4.1](https://jakarta.ee/specifications/cdi/4.1/) implementation designed from the ground up for the Java Platform Module System (JPMS). It generates all required code (factories, proxies, interceptors) at compile time using the JDK 25 Class-File API, with zero external bytecode dependencies.
-
-### Quick Start
-
-```bash
-# Prerequisites: JDK 25 + Maven 4.0.0-rc-5
-sdk env install
-mvn clean verify
-```
-
-### Three Ways to Declare Beans
-
-```java
-// 1. Auto-scan caller's package (standard apps)
-var container = VaubanContainer.builder().scanLocal().build();
-
-// 2. Multi-module with dependency JARs (requires vauban-maven-plugin)
-var container = VaubanContainer.builder()
-    .scanClasspath()                 // beans from dependency JARs
-    .scanPackage("com.example.app")  // local beans
-    .build();
-
-// 3. Explicit (unit tests — surgical control)
-var container = VaubanContainer.builder()
-    .addBeanClass(MyService.class)
-    .build();
-```
-
-### Testing with JUnit 6
-
-```java
-@VaubanTest
-@AddBeans({MyService.class, MyRepository.class})
-class MyServiceTest {
-
-    @Inject MyService service;
-
-    @Test
-    void shouldWork() {
-        assertNotNull(service.process(1));
-    }
-}
-```
-
-### CDI Lite Features
-
-Managed beans, field/constructor/method injection, qualifiers, producers, disposers, events (sync & async), stereotypes, alternatives, `Instance<T>`, `InjectionPoint`, `@Typed`, `@Vetoed`, observer priority, `@Nonbinding`, interceptors (`@AroundInvoke`, `@AroundConstruct`), client proxies, Build Compatible Extensions, `@TransientReference`, `EventMetadata`.
-
-### Virtual Thread Ready
-
-All internal thread-local state uses JDK 25 `ScopedValue` (JEP 487) instead of `ThreadLocal` — no memory leaks with virtual threads, automatic scope inheritance, structured concurrency compatible.
-
-### TCK Validation
-
-```
-CDI Lite TCK:  774/774 tests (100%)
-CDI Full TCK:  not targeted (future vauban-full module)
-```
-
-### Modules
-
-| Module | Purpose |
-|--------|---------|
-| `vauban-indexer` | Bytecode scanner and class indexer (replaces Jandex, zero dependencies) |
-| `vauban-api` | Public API facade |
-| `vauban-core` | CDI 4.1 Lite container runtime (`scanLocal`, `scanPackage`, `scanClasspath`) |
-| `vauban-processor` | Annotation processor (compile-time scan + code generation) |
-| `vauban-classloader-spi` | Plugin SPI for custom class loading (encrypted JARs, remote sources, etc.) |
-| `vauban-sjar` | In-JAR AES-256-GCM encryption based on `module-info.class` directives |
-| `vauban-maven-plugin` | Goals: `generate` (CDI scan), `encrypt` (in-JAR encryption), `dist` (distribution ZIP) |
-| `vauban-junit` | JUnit 6 integration for CDI tests (`@VaubanTest`, `@AddBeans`) |
-| `vauban-tck-runner` | CDI TCK 4.1 runner (774/774) |
-| `vauban-test-suite` | Integration test suite |
-| `vauban-examples` | Multi-module examples (plain lib + encrypted lib + app + E2E tests) |
-
-### Build Pipeline
-
-```
-mvn process-classes (vauban:generate)
-  ├── Scan dependency JARs + project classes
-  ├── BeanDiscovery on merged index
-  ├── Pre-generate _ClientProxy + $$Intercepted .class files (deterministic names)
-  └── Write META-INF/vauban-beans.list
-
-Runtime (VaubanContainer)
-  ├── scanClasspath() → reads beans lists from all JARs
-  ├── scanLocal() / scanPackage() → discovers local classes
-  ├── Finds pre-generated proxies/interceptors via loadClass()
-  └── Fallback: generates at runtime if not pre-generated
-```
-
-### Architecture
-
-The container boots in this sequence:
-1. **Index** — Scan bean classes into `VaubanIndex` (Class-File API, no reflection)
-2. **Discover** — `BeanDiscovery` finds beans, producers, observers, interceptors
-3. **Validate** — `ClassValidator` (definition errors) + `DeploymentValidator` (deployment errors)
-4. **Extend** — `BceProcessor` runs Build Compatible Extensions (@Discovery → @Validation)
-5. **Wire** — Create scopes, register observers, resolve interceptor chains
-6. **Start** — Fire `@Initialized(ApplicationScoped.class)` and `@Startup`
-
-### License
+## License
 
 [Apache License 2.0](LICENSE)

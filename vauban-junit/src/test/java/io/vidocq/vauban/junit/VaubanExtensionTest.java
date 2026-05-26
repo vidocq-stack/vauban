@@ -9,7 +9,7 @@ import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-@DisplayName("VaubanExtension - extension JUnit 6")
+@DisplayName("VaubanExtension - JUnit 6 extension")
 class VaubanExtensionTest {
 
     // --- Test beans ---
@@ -32,7 +32,7 @@ class VaubanExtensionTest {
 
     @SuppressWarnings("CdiManagedBeanInconsistencyInspection")
     @Nested
-    @DisplayName("@VaubanTest avec @AddBeans et @Inject")
+    @DisplayName("@VaubanTest with @AddBeans and @Inject")
     @VaubanTest
     @AddBeans({GreetingService.class, Calculator.class})
     class InjectionTest {
@@ -44,14 +44,14 @@ class VaubanExtensionTest {
         Calculator calculator;
 
         @Test
-        @DisplayName("injecte un bean @ApplicationScoped")
+        @DisplayName("injects an @ApplicationScoped bean")
         void shouldInjectApplicationScopedBean() {
             assertNotNull(greetingService);
             assertEquals("Hello, World!", greetingService.greet("World"));
         }
 
         @Test
-        @DisplayName("injecte un bean @Dependent")
+        @DisplayName("injects a @Dependent bean")
         void shouldInjectDependentBean() {
             assertNotNull(calculator);
             assertEquals(5, calculator.add(2, 3));
@@ -59,12 +59,12 @@ class VaubanExtensionTest {
     }
 
     @Nested
-    @DisplayName("@VaubanTest sans beans")
+    @DisplayName("@VaubanTest without beans")
     @VaubanTest
     class EmptyContainerTest {
 
         @Test
-        @DisplayName("fonctionne avec un conteneur vide")
+        @DisplayName("works with an empty container")
         void shouldWorkWithEmptyContainer() {
             // No injection, just verify the container lifecycle doesn't crash
             assertTrue(true);
@@ -73,7 +73,7 @@ class VaubanExtensionTest {
 
     @SuppressWarnings("CdiManagedBeanInconsistencyInspection")
     @Nested
-    @DisplayName("@VaubanTest avec un seul bean")
+    @DisplayName("@VaubanTest with a single bean")
     @VaubanTest
     @AddBeans(GreetingService.class)
     class SingleBeanTest {
@@ -82,14 +82,14 @@ class VaubanExtensionTest {
         GreetingService service;
 
         @Test
-        @DisplayName("@ApplicationScoped retourne la meme instance entre tests")
+        @DisplayName("@ApplicationScoped returns the same instance across tests")
         void shouldReturnSameInstance1() {
             assertNotNull(service);
             service.greet("test");
         }
 
         @Test
-        @DisplayName("le bean est fonctionnel")
+        @DisplayName("the bean is functional")
         void shouldReturnSameInstance2() {
             assertEquals("Hello, Vauban!", service.greet("Vauban"));
         }

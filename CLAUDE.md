@@ -60,12 +60,12 @@
 
 ## Context Mode
 
-- Use `ctx_batch_execute` pour les commandes produisant beaucoup d'output (builds, tests, logs)
-- Use `ctx_search` pour les recherches de suivi après un batch_execute
-- Use `ctx_execute` / `ctx_execute_file` pour l'analyse de données, parsing de logs, transformations
-- **Ne jamais** utiliser Bash pour des commandes produisant >20 lignes d'output — passer par context-mode
-- **Ne jamais** utiliser ctx_execute/ctx_execute_file pour créer ou modifier des fichiers — utiliser Write/Edit
-- Read est réservé aux fichiers qu'on va éditer ensuite — pour l'analyse, utiliser ctx_execute_file
+- Use `ctx_batch_execute` for commands producing large output (builds, tests, logs)
+- Use `ctx_search` for follow-up searches after a batch_execute
+- Use `ctx_execute` / `ctx_execute_file` for data analysis, log parsing, transformations
+- **Never** use Bash for commands producing >20 lines of output — go through context-mode
+- **Never** use ctx_execute/ctx_execute_file to create or modify files — use Write/Edit
+- Read is reserved for files you will edit next — for analysis, use ctx_execute_file
 
 ## Core Principles
 

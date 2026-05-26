@@ -47,11 +47,11 @@ class BeanFactoryGeneratorTest {
     }
 
     @Nested
-    @DisplayName("generation de factory pour bean no-arg")
+    @DisplayName("factory generation for a no-arg bean")
     class NoArgBean {
 
         @Test
-        @DisplayName("genere une classe factory valide")
+        @DisplayName("generates a valid factory class")
         void shouldGenerateValidFactory() throws IOException {
             var classInfo = scanClass(SimpleBean.class);
             var generated = BeanFactoryGenerator.generate(classInfo);
@@ -62,7 +62,7 @@ class BeanFactoryGeneratorTest {
         }
 
         @Test
-        @DisplayName("la factory generee peut etre chargee")
+        @DisplayName("the generated factory can be loaded")
         void shouldLoadGeneratedFactory() throws Exception {
             var classInfo = scanClass(SimpleBean.class);
             var generated = BeanFactoryGenerator.generate(classInfo);
@@ -74,7 +74,7 @@ class BeanFactoryGeneratorTest {
         }
 
         @Test
-        @DisplayName("la factory cree une instance du bean")
+        @DisplayName("the factory creates a bean instance")
         void shouldCreateBeanInstance() throws Exception {
             var classInfo = scanClass(SimpleBean.class);
             var generated = BeanFactoryGenerator.generate(classInfo);
@@ -94,7 +94,7 @@ class BeanFactoryGeneratorTest {
         }
 
         @Test
-        @DisplayName("la factory implemente BeanFactory")
+        @DisplayName("the factory implements BeanFactory")
         void shouldImplementBeanFactory() throws Exception {
             var classInfo = scanClass(SimpleBean.class);
             var generated = BeanFactoryGenerator.generate(classInfo);

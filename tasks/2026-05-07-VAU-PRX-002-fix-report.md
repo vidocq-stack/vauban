@@ -1,15 +1,15 @@
-# Rapport — VAU-PRX-002 : drift entre `ClientProxyGenerator` (APT) et `RuntimeClientProxyGenerator`
+# Report — VAU-PRX-002: drift between `ClientProxyGenerator` (APT) and `RuntimeClientProxyGenerator`
 
-**Date** : 2026-05-07
-**Statut** : `RESOLVED`
-**Périmètre** : `vauban-processor`, `vauban-core`, `vauban/BUG.md`
-**Validation finale** : `vidocq-runtime-mansart-h2-example` répond 200/201/204 sur tous les endpoints, plus aucun NPE.
+**Date**: 2026-05-07
+**Status**: `RESOLVED`
+**Scope**: `vauban-processor`, `vauban-core`, `vauban/BUG.md`
+**Final validation**: `vidocq-runtime-mansart-h2-example` returns 200/201/204 on all endpoints, no more NPE.
 
 ---
 
-## 1. Contexte du signalement
+## 1. Context of the report
 
-L'application `vidocq-runtime-mansart-h2-example` démarrait correctement (les 7 extensions Vidocq se chargent, Chappe ouvre le port 8080), mais toute requête HTTP vers une ressource JAX-RS plantait :
+The `vidocq-runtime-mansart-h2-example` application started correctly (the 7 Vidocq extensions load, Chappe opens port 8080), but every HTTP request to a JAX-RS resource crashed:
 
 ```
 GRAVE: Cassini dispatch error
@@ -19,31 +19,31 @@ java.lang.NullPointerException: Cannot invoke "jakarta.enterprise.inject.Instanc
         at io.vidocq.cassini.internal.Invoker.invokeInternal(Invoker.java:693)
 ```
 
-Symétriquement pour `ProductResource.list` : `this.products is null`.
+Symmetrically for `ProductResource.list`: `this.products is null`.
 
-L'exemple jumeau `vidocq-runtime-cassini-rest-example` (même pattern `@ApplicationScoped @Path` + `@Inject T`) fonctionnait, ce qui rendait le diagnostic non trivial.
+The twin example `vidocq-runtime-cassini-rest-example` (same `@ApplicationScoped @Path` + `@Inject T` pattern) worked, which made the diagnosis non-trivial.
 
-## 2. Démarche d'investigation
+## 2. Investigation approach
 
-### 2.1. Cartographie initiale (3 explorations parallèles)
+### 2.1. Initial mapping (3 parallel explorations)
 
-- **Exemple mansart-h2** vs **exemple rest** : comparaison des classes, scopes, `module-info.java`, contenu de `target/classes/META-INF/`.
-- **Vauban event resolver** : audit du log parasite `DEBUG EVENT` qui remontait dans la sortie utilisateur.
-- **Vauban field injection** : audit du flux `BeanInjector.injectFieldsByReflection` et de la résolution cross-module.
+- **mansart-h2 example** vs **rest example**: comparison of classes, scopes, `module-info.java`, and the contents of `target/classes/META-INF/`.
+- **Vauban event resolver**: audit of the stray `DEBUG EVENT` log that surfaced in the user-facing output.
+- **Vauban field injection**: audit of the `BeanInjector.injectFieldsByReflection` flow and cross-module resolution.
 
-Conclusion intermédiaire : trois pistes contradictoires, pas de cause racine claire. Décision : passer en diagnostic live plutôt que continuer la théorie.
+Intermediate conclusion: three contradictory leads, no clear root cause. Decision: switch to live diagnosis instead of continuing with theory.
 
-### 2.2. Vérification des tests existants
+### 2.2. Checking existing tests
 
-`vauban-core/src/test/.../NormalScopeFieldInjectionTest.java::Fix4RegressionTest` modélisait déjà — selon son commentaire — `DatabaseInspectorResource + ProductResource combined` (fix VAU-INJ-001 documenté dans `BUG.md`). Lancement isolé : **8 tests passent**. Donc le scénario générique « `@ApplicationScoped` intercepté + `@Inject Instance<T>` + `@Inject @Singleton-intercepted` » ne reproduisait PAS le bug.
+`vauban-core/src/test/.../NormalScopeFieldInjectionTest.java::Fix4RegressionTest` already modeled — according to its comment — `DatabaseInspectorResource + ProductResource combined` (fix VAU-INJ-001 documented in `BUG.md`). Run in isolation: **8 tests pass**. So the generic scenario "intercepted `@ApplicationScoped` + `@Inject Instance<T>` + `@Inject @Singleton-intercepted`" did NOT reproduce the bug.
 
-### 2.3. Diagnostic runtime ciblé
+### 2.3. Targeted runtime diagnosis
 
-Ajout de logs `[VAU-INJ]` dans `BeanInjector.injectFieldsByReflection` et `[VAU-SEL]` dans `VaubanContainer.select` (conditionnés par `-Dvauban.debug.inject=true`). Build léger de `vauban-core` (les dépendants prennent automatiquement le snapshot M2).
+Added `[VAU-INJ]` logs in `BeanInjector.injectFieldsByReflection` and `[VAU-SEL]` logs in `VaubanContainer.select` (gated by `-Dvauban.debug.inject=true`). Light build of `vauban-core` (dependents automatically pick up the M2 snapshot).
 
-**Premier run** : aucune trace `[VAU-INJ]` pour `DatabaseInspectorResource` ni `ProductResource`, et **aucune** trace `[VAU-SEL]` non plus. Donc Cassini ne demandait pas ces beans à Vauban — il les instanciait par fallback.
+**First run**: no `[VAU-INJ]` trace for `DatabaseInspectorResource` or `ProductResource`, and **no** `[VAU-SEL]` trace either. So Cassini was not requesting these beans from Vauban — it was instantiating them via a fallback.
 
-**Second run** (logs au début de `select()` + autour de `getContextualInstance`) : `select-entry` apparaît bien, mais `getContextualInstance` lance :
+**Second run** (logs at the start of `select()` + around `getContextualInstance`): `select-entry` does appear, but `getContextualInstance` throws:
 
 ```
 [VAU-SEL] -> EXCEPTION getContextualInstance
@@ -54,121 +54,121 @@ Caused by: java.lang.NoSuchMethodException:
    ...DatabaseInspectorResource_ClientProxy.<init>()
 ```
 
-### 2.4. Cause racine
+### 2.4. Root cause
 
-`InterceptorBeanWrapper.getOrCreateProxy:235` appelle `proxyClass.getDeclaredConstructor().newInstance()` (ctor no-arg). Le `_ClientProxy.class` chargé n'avait PAS de ctor no-arg.
+`InterceptorBeanWrapper.getOrCreateProxy:235` calls `proxyClass.getDeclaredConstructor().newInstance()` (no-arg ctor). The loaded `_ClientProxy.class` did NOT have a no-arg ctor.
 
-`javap` comparatif :
+`javap` comparison:
 
 ```text
 # rest-example (OK)
 class TodoResource_ClientProxy extends TodoResource {
   private Supplier $$delegate;
-  public TodoResource_ClientProxy();              ← ctor no-arg
+  public TodoResource_ClientProxy();              ← no-arg ctor
   public void $$setDelegate(Supplier);
   ... overrides ...
 }
 
 # mansart-h2-example (FAIL)
 class DatabaseInspectorResource_ClientProxy extends DatabaseInspectorResource {
-  private final Supplier delegate;                ← final, autre nom
+  private final Supplier delegate;                ← final, different name
   public DatabaseInspectorResource_ClientProxy(Supplier);  ← ctor takes Supplier
   ...
 }
 ```
 
-Deux générateurs incompatibles produisaient des `_ClientProxy.class` :
+Two incompatible generators were producing `_ClientProxy.class` files:
 
-| Générateur | Localisation | Format | Quand utilisé |
+| Generator | Location | Format | When used |
 |---|---|---|---|
-| `ClientProxyGenerator` | `vauban-processor` (APT, compile-time) | ancien (ctor `(Supplier)`, field `delegate` final) | écrit dans `target/classes` |
-| `RuntimeClientProxyGenerator` | `vauban-core` (Class-File API runtime) | moderne (ctor `()`, field `$$delegate`, setter `$$setDelegate`) | fallback runtime via `MethodHandles.Lookup.defineClass` |
+| `ClientProxyGenerator` | `vauban-processor` (APT, compile-time) | old (ctor `(Supplier)`, final `delegate` field) | written to `target/classes` |
+| `RuntimeClientProxyGenerator` | `vauban-core` (Class-File API runtime) | modern (ctor `()`, `$$delegate` field, `$$setDelegate` setter) | runtime fallback via `MethodHandles.Lookup.defineClass` |
 
-`InterceptorBeanWrapper.getOrCreateProxy` n'acceptait que le format moderne. `loadOrDefineClassRobustly` chargeait en priorité la classe pré-générée APT — donc le format ancien shadowait toujours le runtime, et l'exception `NoSuchMethodException` était systématique pour tout bean recompilé après le drift.
+`InterceptorBeanWrapper.getOrCreateProxy` accepted only the modern format. `loadOrDefineClassRobustly` loaded the pre-generated APT class first — so the old format always shadowed the runtime one, and the `NoSuchMethodException` was systematic for any bean recompiled after the drift.
 
-**Pourquoi rest-example fonctionnait** : son `TodoResource_ClientProxy.class` venait d'une compilation antérieure au drift, pendant laquelle `ClientProxyGenerator` produisait encore le format moderne. mansart-h2-example, recompilé plus récemment, embarquait la version ancienne.
+**Why rest-example worked**: its `TodoResource_ClientProxy.class` came from a compilation prior to the drift, during which `ClientProxyGenerator` still produced the modern format. mansart-h2-example, recompiled more recently, shipped the old version.
 
-## 3. Fix appliqué
+## 3. Fix applied
 
 ### 3.1. `vauban-processor/.../codegen/proxy/ClientProxyGenerator.java`
 
-Aligné sur le contrat de `RuntimeClientProxyGenerator` :
+Aligned with the `RuntimeClientProxyGenerator` contract:
 
 ```text
 - private final Supplier delegate;          → private Supplier $$delegate;
 - public Proxy(Supplier d) { ...putfield }  → public Proxy() { super(); }
 + public void $$setDelegate(Supplier d) { this.$$delegate = d; }
-- getfield "delegate"                       → getfield "$$delegate"   (3 emplacements)
+- getfield "delegate"                       → getfield "$$delegate"   (3 locations)
 ```
 
 ### 3.2. `vauban-processor/.../ClientProxyGeneratorTest.java`
 
-Les tests instanciaient le proxy via `getDeclaredConstructor(Supplier.class).newInstance(supplier)`. Migration vers le contrat utilisé par le runtime :
+The tests instantiated the proxy via `getDeclaredConstructor(Supplier.class).newInstance(supplier)`. Migrated to the contract used by the runtime:
 
 ```java
 var proxy = (T) proxyClass.getDeclaredConstructor().newInstance();
 proxyClass.getMethod("$$setDelegate", Supplier.class).invoke(proxy, supplier);
 ```
 
-C'est exactement le code que `InterceptorBeanWrapper.getOrCreateProxy:235-249` exécute. Tout drift unilatéral d'un des deux générateurs casse désormais ces tests à compile-time du module `vauban-processor`.
+This is exactly the code that `InterceptorBeanWrapper.getOrCreateProxy:235-249` executes. Any unilateral drift of either generator now breaks these tests at compile time of the `vauban-processor` module.
 
-### 3.3. Nettoyage logs parasites — `vauban-core/.../event/EventDispatcher.java`
+### 3.3. Stray log cleanup — `vauban-core/.../event/EventDispatcher.java`
 
-7 occurrences de `System.out.println("DEBUG EVENT: ...")` (chemins `Checking`, `Mismatch on eventType`, `MATCHED`, `Mismatch on qualifiers`, `invoking`, `invoke successful`, `findMethod returned null`) — toutes supprimées. Logs de production silencieux à nouveau.
+7 occurrences of `System.out.println("DEBUG EVENT: ...")` (the `Checking`, `Mismatch on eventType`, `MATCHED`, `Mismatch on qualifiers`, `invoking`, `invoke successful`, `findMethod returned null` paths) — all removed. Production logs silent again.
 
-### 3.4. Trace de diagnostic temporaire
+### 3.4. Temporary diagnostic trace
 
-Les `[VAU-INJ]` / `[VAU-SEL]` ajoutés pour le diagnostic ont été retirés de `BeanInjector.java` et `VaubanContainer.java` après confirmation du fix.
+The `[VAU-INJ]` / `[VAU-SEL]` logs added for diagnosis were removed from `BeanInjector.java` and `VaubanContainer.java` after confirming the fix.
 
 ### 3.5. Documentation — `vauban/BUG.md`
 
-Nouvelle entrée `VAU-PRX-002` (statut `FIXED`, 2026-05-07) en tête du tracker, avant `VAU-INJ-001`.
+New `VAU-PRX-002` entry (status `FIXED`, 2026-05-07) at the top of the tracker, before `VAU-INJ-001`.
 
 ## 4. Validation
 
-### 4.1. Tests unitaires
+### 4.1. Unit tests
 
 ```text
 vauban-core    : 266 tests, 0 failures, 0 errors  (incl. NormalScopeFieldInjectionTest 8/8)
-vauban-processor : 4 ClientProxyGenerator tests OK après migration du contrat
+vauban-processor : 4 ClientProxyGenerator tests OK after contract migration
 Reactor vauban : BUILD SUCCESS (full install)
 Reactor vidocq  : BUILD SUCCESS (clean install)
 ```
 
 ### 4.2. E2E `vidocq-runtime-mansart-h2-example`
 
-Après `clean install` cascade (pour régénérer les `_ClientProxy.class` au format moderne) :
+After a cascading `clean install` (to regenerate the `_ClientProxy.class` files in the modern format):
 
-| Endpoint | Verbe | Code | Réponse |
+| Endpoint | Verb | Code | Response |
 |---|---|---|---|
 | `/api/db/products` | GET | 200 | `[Espresso, Cappuccino, Latte]` |
-| `/api/products` | GET | 200 | idem (via repository Mansart Data) |
+| `/api/products` | GET | 200 | same (via Mansart Data repository) |
 | `/api/products` | POST `{"name":"Mocha","price":4.5}` | 201 | `{id:4, name:"Mocha", ...}` |
 | `/api/products/1` | DELETE | 204 | — |
 | `/api/products/count` | GET | 200 | `3` |
 
-Aucune ligne `GRAVE` / `Exception` / `NPE` / `DEBUG EVENT` dans les logs.
+No `GRAVE` / `Exception` / `NPE` / `DEBUG EVENT` line in the logs.
 
-## 5. Bug secondaire identifié (non corrigé ici)
+## 5. Secondary bug identified (not fixed here)
 
-Pendant le diagnostic, une autre anomalie est apparue : `vauban-indexer/ClassFileScanner.java:99` extrait le descriptor brut du paramètre annoté `@Observes`. Pour `void onStart(@Observes Startup event)`, le runtime indexe `eventType=ClassType[name=java.lang.Object]` au lieu de `Startup`. Conséquence : l'observer matche par hasard via `Object` (super-type universel) — pas bloquant fonctionnellement, mais conceptuellement faux.
+During diagnosis, another anomaly appeared: `vauban-indexer/ClassFileScanner.java:99` extracts the raw descriptor of the parameter annotated `@Observes`. For `void onStart(@Observes Startup event)`, the runtime indexes `eventType=ClassType[name=java.lang.Object]` instead of `Startup`. Consequence: the observer matches by accident via `Object` (the universal supertype) — not functionally blocking, but conceptually wrong.
 
-Tâche dédiée créée pour parser l'attribut `Signature` du bytecode quand pertinent. Voir `BUG.md` à mettre à jour si on veut tracker formellement cette anomalie.
+A dedicated task was created to parse the `Signature` bytecode attribute when relevant. See `BUG.md`, to be updated if we want to formally track this anomaly.
 
-## 6. Leçons retenues
+## 6. Lessons learned
 
-1. **Deux générateurs avec contrats divergents = bombe à retardement**. Le test `ClientProxyGeneratorTest` doit appeler le proxy comme le runtime l'appelle (même API, même pattern d'instanciation), pas via une API privée connue de seuls les auteurs du test.
-2. **Les `_ClientProxy.class` survivent aux modifications de générateur**. Tant qu'on ne fait pas `mvn clean`, on travaille avec d'anciens artefacts. C'est la raison pour laquelle rest-example masquait le bug et mansart-h2 le révélait.
-3. **Diagnostic live plutôt que théorie répétée**. Trois explorations consécutives n'avaient pas convergé ; un seul aller-retour `ajouter trace → build léger → relancer → grep` a mis le bug en évidence en moins de 2 minutes.
-4. **Le format `Causé par` est plus informatif que la classe de l'exception wrappante**. `DeploymentException("Failed to create client proxy ...")` était le symptôme ; `Caused by NoSuchMethodException: ...<init>()` était la cause.
+1. **Two generators with divergent contracts = time bomb**. The `ClientProxyGeneratorTest` test must call the proxy the way the runtime calls it (same API, same instantiation pattern), not via a private API known only to the test authors.
+2. **The `_ClientProxy.class` files survive generator changes**. As long as you don't run `mvn clean`, you work with old artifacts. This is why rest-example hid the bug and mansart-h2 revealed it.
+3. **Live diagnosis rather than repeated theorizing**. Three consecutive explorations had not converged; a single round-trip of `add trace → light build → re-run → grep` exposed the bug in less than 2 minutes.
+4. **The `Caused by` format is more informative than the wrapping exception's class**. `DeploymentException("Failed to create client proxy ...")` was the symptom; `Caused by NoSuchMethodException: ...<init>()` was the cause.
 
-## 7. Fichiers touchés
+## 7. Files touched
 
 ```text
 vauban/vauban-processor/src/main/java/io/vidocq/vauban/processor/codegen/proxy/ClientProxyGenerator.java
 vauban/vauban-processor/src/test/java/io/vidocq/vauban/processor/codegen/proxy/ClientProxyGeneratorTest.java
 vauban/vauban-core/src/main/java/io/vidocq/vauban/core/event/EventDispatcher.java
 vauban/BUG.md
-vauban/docs/apt-and-proxies.md       (créé en parallèle, voir doc utilisateur)
-vauban/tasks/2026-05-07-VAU-PRX-002-fix-report.md   (ce rapport)
+vauban/docs/apt-and-proxies.md       (created in parallel, see user doc)
+vauban/tasks/2026-05-07-VAU-PRX-002-fix-report.md   (this report)
 ```

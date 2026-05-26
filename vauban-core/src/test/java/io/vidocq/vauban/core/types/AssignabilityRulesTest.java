@@ -14,7 +14,7 @@ import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-@DisplayName("AssignabilityRules - regles d'assignabilite CDI 4.1")
+@DisplayName("AssignabilityRules - CDI 4.1 assignability rules")
 class AssignabilityRulesTest {
 
     private AssignabilityRules rules;
@@ -55,18 +55,18 @@ class AssignabilityRulesTest {
     }
 
     @Nested
-    @DisplayName("types simples (ClassType)")
+    @DisplayName("simple types (ClassType)")
     class SimpleTypes {
 
         @Test
-        @DisplayName("un type est assignable a lui-meme")
+        @DisplayName("a type is assignable to itself")
         void sameType() {
             var string = new ClassType(DotName.of("java.lang.String"));
             assertTrue(rules.isAssignable(string, string));
         }
 
         @Test
-        @DisplayName("un sous-type est assignable a son super-type")
+        @DisplayName("a subtype is assignable to its supertype")
         void subtypeAssignable() {
             var integer = new ClassType(DotName.of("java.lang.Integer"));
             var number = new ClassType(DotName.of("java.lang.Number"));
@@ -74,7 +74,7 @@ class AssignabilityRulesTest {
         }
 
         @Test
-        @DisplayName("un super-type n'est PAS assignable a son sous-type")
+        @DisplayName("a supertype is NOT assignable to its subtype")
         void supertypeNotAssignable() {
             var number = new ClassType(DotName.of("java.lang.Number"));
             var integer = new ClassType(DotName.of("java.lang.Integer"));
@@ -82,7 +82,7 @@ class AssignabilityRulesTest {
         }
 
         @Test
-        @DisplayName("une classe est assignable a une interface implementee")
+        @DisplayName("a class is assignable to an implemented interface")
         void classToInterface() {
             var integer = new ClassType(DotName.of("java.lang.Integer"));
             var comparable = new ClassType(DotName.of("java.lang.Comparable"));
@@ -90,7 +90,7 @@ class AssignabilityRulesTest {
         }
 
         @Test
-        @DisplayName("tout est assignable a Object")
+        @DisplayName("everything is assignable to Object")
         void assignableToObject() {
             var string = new ClassType(DotName.of("java.lang.String"));
             var object = new ClassType(DotName.of("java.lang.Object"));
@@ -98,7 +98,7 @@ class AssignabilityRulesTest {
         }
 
         @Test
-        @DisplayName("sous-interface assignable a super-interface")
+        @DisplayName("a sub-interface is assignable to a super-interface")
         void subInterfaceToSuperInterface() {
             var list = new ClassType(DotName.of("java.util.List"));
             var collection = new ClassType(DotName.of("java.util.Collection"));
@@ -109,11 +109,11 @@ class AssignabilityRulesTest {
     }
 
     @Nested
-    @DisplayName("types parametres (ParameterizedType)")
+    @DisplayName("parameterized types (ParameterizedType)")
     class ParameterizedTypes {
 
         @Test
-        @DisplayName("List<String> est assignable a List<String>")
+        @DisplayName("List<String> is assignable to List<String>")
         void sameParameterizedType() {
             var listString = new ParameterizedType(
                     DotName.of("java.util.List"),
@@ -122,7 +122,7 @@ class AssignabilityRulesTest {
         }
 
         @Test
-        @DisplayName("List<String> n'est PAS assignable a List<Integer>")
+        @DisplayName("List<String> is NOT assignable to List<Integer>")
         void differentTypeArgs() {
             var listString = new ParameterizedType(
                     DotName.of("java.util.List"),
@@ -134,7 +134,7 @@ class AssignabilityRulesTest {
         }
 
         @Test
-        @DisplayName("List<String> n'est PAS assignable a List<Object> (invariance)")
+        @DisplayName("List<String> is NOT assignable to List<Object> (invariance)")
         void genericInvariance() {
             var listString = new ParameterizedType(
                     DotName.of("java.util.List"),
@@ -151,7 +151,7 @@ class AssignabilityRulesTest {
     class Wildcards {
 
         @Test
-        @DisplayName("List<String> est assignable a List<? extends Object>")
+        @DisplayName("List<String> is assignable to List<? extends Object>")
         void extendsWildcard() {
             var listString = new ParameterizedType(
                     DotName.of("java.util.List"),
@@ -164,7 +164,7 @@ class AssignabilityRulesTest {
         }
 
         @Test
-        @DisplayName("List<Integer> est assignable a List<? extends Number>")
+        @DisplayName("List<Integer> is assignable to List<? extends Number>")
         void extendsWildcardNumber() {
             var listInteger = new ParameterizedType(
                     DotName.of("java.util.List"),
@@ -177,7 +177,7 @@ class AssignabilityRulesTest {
         }
 
         @Test
-        @DisplayName("List<Number> est assignable a List<? super Integer>")
+        @DisplayName("List<Number> is assignable to List<? super Integer>")
         void superWildcard() {
             var listNumber = new ParameterizedType(
                     DotName.of("java.util.List"),
@@ -190,7 +190,7 @@ class AssignabilityRulesTest {
         }
 
         @Test
-        @DisplayName("List<String> est assignable a List<?>")
+        @DisplayName("List<String> is assignable to List<?>")
         void unboundedWildcard() {
             var listString = new ParameterizedType(
                     DotName.of("java.util.List"),
@@ -203,11 +203,11 @@ class AssignabilityRulesTest {
     }
 
     @Nested
-    @DisplayName("raw types et tableaux")
+    @DisplayName("raw types and arrays")
     class RawAndArrayTypes {
 
         @Test
-        @DisplayName("raw List est assignable a List<String> (CDI autorise)")
+        @DisplayName("raw List is assignable to List<String> (allowed by CDI)")
         void rawToParameterized() {
             var rawList = new ClassType(DotName.of("java.util.List"));
             var listString = new ParameterizedType(
@@ -217,14 +217,14 @@ class AssignabilityRulesTest {
         }
 
         @Test
-        @DisplayName("int[] est assignable a int[]")
+        @DisplayName("int[] is assignable to int[]")
         void sameArrayType() {
             var intArr = new ArrayType(new PrimitiveType(PrimitiveType.Kind.INT), 1);
             assertTrue(rules.isAssignable(intArr, intArr));
         }
 
         @Test
-        @DisplayName("int[] n'est PAS assignable a long[]")
+        @DisplayName("int[] is NOT assignable to long[]")
         void differentArrayComponentType() {
             var intArr = new ArrayType(new PrimitiveType(PrimitiveType.Kind.INT), 1);
             var longArr = new ArrayType(new PrimitiveType(PrimitiveType.Kind.LONG), 1);
@@ -233,7 +233,7 @@ class AssignabilityRulesTest {
     }
 
     @Nested
-    @DisplayName("hierarchie de sous-types (isSubtypeOf)")
+    @DisplayName("subtype hierarchy (isSubtypeOf)")
     class SubtypeHierarchy {
 
         @Test

@@ -15,7 +15,7 @@ import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-@DisplayName("IndexEnricher - enrichissement de l'index avec scopes synthetiques")
+@DisplayName("IndexEnricher - enriching the index with synthetic scopes")
 class IndexEnricherTest {
 
     private static final DotName PATH = DotName.of("jakarta.ws.rs.Path");
@@ -53,37 +53,37 @@ class IndexEnricherTest {
     }
 
     @Nested
-    @DisplayName("enrich - ajout de scope aux classes matchantes")
+    @DisplayName("enrich - adding scope to matching classes")
     class Enrich {
 
         @Test
-        @DisplayName("ajoute @RequestScoped a une classe @Path sans scope")
+        @DisplayName("adds @RequestScoped to a @Path class without a scope")
         void shouldAddScopeToPathClass() {
             var index = buildIndex(makeClass("com.example.HelloResource", PATH));
             var enriched = IndexEnricher.enrich(index, config(PATH, ScopeInfo.REQUEST));
 
             var classInfo = enriched.getClassByName(DotName.of("com.example.HelloResource")).orElseThrow();
             assertTrue(classInfo.hasAnnotation(REQUEST_SCOPED),
-                    "La classe enrichie doit avoir @RequestScoped");
+                    "The enriched class must have @RequestScoped");
             assertTrue(classInfo.hasAnnotation(PATH),
-                    "L'annotation trigger doit etre conservee");
+                    "The trigger annotation must be preserved");
         }
 
         @Test
-        @DisplayName("n'ecrase pas un scope CDI existant")
+        @DisplayName("does not override an existing CDI scope")
         void shouldNotOverrideExistingScope() {
             var index = buildIndex(makeClass("com.example.MyBean", PATH, APPLICATION_SCOPED));
             var enriched = IndexEnricher.enrich(index, config(PATH, ScopeInfo.REQUEST));
 
             var classInfo = enriched.getClassByName(DotName.of("com.example.MyBean")).orElseThrow();
             assertTrue(classInfo.hasAnnotation(APPLICATION_SCOPED),
-                    "Le scope existant doit etre conserve");
+                    "The existing scope must be preserved");
             assertFalse(classInfo.hasAnnotation(REQUEST_SCOPED),
-                    "Le scope enrichi ne doit pas etre ajoute");
+                    "The enriched scope must not be added");
         }
 
         @Test
-        @DisplayName("ne modifie pas les classes sans annotation trigger")
+        @DisplayName("does not modify classes without a trigger annotation")
         void shouldNotModifyClassesWithoutTrigger() {
             var index = buildIndex(makeClass("com.example.PlainService"));
             var enriched = IndexEnricher.enrich(index, config(PATH, ScopeInfo.REQUEST));
@@ -93,7 +93,7 @@ class IndexEnricherTest {
         }
 
         @Test
-        @DisplayName("enrichit plusieurs classes dans le meme index")
+        @DisplayName("enriches multiple classes in the same index")
         void shouldEnrichMultipleClasses() {
             var index = buildIndex(
                     makeClass("com.example.Resource1", PATH),
@@ -111,7 +111,7 @@ class IndexEnricherTest {
         }
 
         @Test
-        @DisplayName("supporte plusieurs regles d'enrichissement")
+        @DisplayName("supports multiple enrichment rules")
         void shouldSupportMultipleRules() {
             var index = buildIndex(
                     makeClass("com.example.Resource", PATH),
@@ -131,25 +131,25 @@ class IndexEnricherTest {
         }
 
         @Test
-        @DisplayName("retourne le meme index si aucune regle")
+        @DisplayName("returns the same index when there are no rules")
         void shouldReturnSameIndexWhenNoRules() {
             var index = buildIndex(makeClass("com.example.Resource", PATH));
             var result = IndexEnricher.enrich(index, EnrichmentConfig.empty());
 
-            assertSame(index, result, "L'index original doit etre retourne si pas de regles");
+            assertSame(index, result, "The original index must be returned when there are no rules");
         }
 
         @Test
-        @DisplayName("retourne le meme index si aucune classe ne matche")
+        @DisplayName("returns the same index when no class matches")
         void shouldReturnSameIndexWhenNoMatch() {
             var index = buildIndex(makeClass("com.example.PlainService"));
             var result = IndexEnricher.enrich(index, config(PATH, ScopeInfo.REQUEST));
 
-            assertSame(index, result, "L'index original doit etre retourne si pas de match");
+            assertSame(index, result, "The original index must be returned when there is no match");
         }
 
         @Test
-        @DisplayName("preserve le nombre total de classes dans l'index")
+        @DisplayName("preserves the total number of classes in the index")
         void shouldPreserveClassCount() {
             var index = buildIndex(
                     makeClass("com.example.A", PATH),
@@ -162,7 +162,7 @@ class IndexEnricherTest {
         }
 
         @Test
-        @DisplayName("la premiere regle qui matche gagne")
+        @DisplayName("the first matching rule wins")
         void shouldApplyFirstMatchingRule() {
             // Class has both @Path and @Provider
             var index = buildIndex(makeClass("com.example.Dual", PATH, PROVIDER));
@@ -175,7 +175,7 @@ class IndexEnricherTest {
             var classInfo = enriched.getClassByName(DotName.of("com.example.Dual")).orElseThrow();
 
             assertTrue(classInfo.hasAnnotation(REQUEST_SCOPED),
-                    "La premiere regle (Path→RequestScoped) doit gagner");
+                    "The first rule (Path→RequestScoped) must win");
             assertFalse(classInfo.hasAnnotation(APPLICATION_SCOPED));
         }
     }

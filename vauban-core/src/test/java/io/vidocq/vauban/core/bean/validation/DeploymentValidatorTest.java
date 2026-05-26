@@ -14,7 +14,7 @@ import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-@DisplayName("DeploymentValidator - validation du deploiement CDI")
+@DisplayName("DeploymentValidator - CDI deployment validation")
 class DeploymentValidatorTest {
 
     static BeanDescriptor makeBean(String name, List<InjectionPointInfo> ips) {
@@ -34,7 +34,7 @@ class DeploymentValidatorTest {
     }
 
     @Test
-    @DisplayName("deploiement valide sans erreur")
+    @DisplayName("valid deployment with no error")
     void shouldPassValidDeployment() {
         var serviceBean = makeBean("com.example.MyService", List.of());
         var controllerBean = makeBean("com.example.MyController", List.of(
@@ -53,7 +53,7 @@ class DeploymentValidatorTest {
     }
 
     @Test
-    @DisplayName("detecte une dependance non satisfaite")
+    @DisplayName("detects an unsatisfied dependency")
     void shouldDetectUnsatisfiedDependency() {
         var controllerBean = makeBean("com.example.MyController", List.of(
                 new InjectionPointInfo(
@@ -72,7 +72,7 @@ class DeploymentValidatorTest {
     }
 
     @Test
-    @DisplayName("detecte une dependance ambigue")
+    @DisplayName("detects an ambiguous dependency")
     void shouldDetectAmbiguousDependency() {
         var serviceType = new TypeInfo.ClassType(DotName.of("com.example.MyService"));
         var impl1 = new BeanDescriptor(

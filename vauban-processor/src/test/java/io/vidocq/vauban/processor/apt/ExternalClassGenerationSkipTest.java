@@ -22,61 +22,61 @@ import static org.junit.jupiter.api.Assertions.*;
  * Tests that VaubanProcessor skips _Factory / _ClientProxy generation for classes
  * added via ScannedClasses.add() during a BCE @Discovery phase.
  *
- * <h2>Contexte</h2>
- * Quand un BCE appelle {@code scanned.add("some.ExternalClass")} dans {@code @Discovery},
- * la classe est indexee depuis le jar de dependance (par loadClassBytes). Si VaubanProcessor
- * generait {@code ExternalClass_Factory.class} dans le module utilisateur, cela creerait
- * une violation JPMS « split-package » : le package est deja exporte par le jar source.
+ * <h2>Context</h2>
+ * When a BCE calls {@code scanned.add("some.ExternalClass")} in {@code @Discovery},
+ * the class is indexed from the dependency jar (via loadClassBytes). If VaubanProcessor
+ * generated {@code ExternalClass_Factory.class} in the user module, it would create
+ * a JPMS "split-package" violation: the package is already exported by the source jar.
  *
- * <h2>Apres le patch</h2>
- * Les classes externes (ajoutees via scanned.add) restent dans l'index et dans
- * {@code META-INF/vauban-beans.list} pour la resolution des injections, mais aucun
- * bytecode n'est emis dans le module utilisateur.
+ * <h2>After the patch</h2>
+ * External classes (added via scanned.add) remain in the index and in
+ * {@code META-INF/vauban-beans.list} for injection resolution, but no
+ * bytecode is emitted in the user module.
  */
-@DisplayName("ExternalClass - skip generation factory/proxy pour classes externes")
+@DisplayName("ExternalClass - skip factory/proxy generation for external classes")
 class ExternalClassGenerationSkipTest {
 
     @TempDir
     Path tempDir;
 
     /**
-     * BCE de test qui simule l'ajout d'une classe de dependance via scanned.add().
-     * On utilise VaubanProcessor lui-meme comme «classe externe» car elle est disponible
-     * sur le classpath du processeur — ce qui permet a loadClassBytes() de la trouver
-     * sans avoir a embarquer un jar tiers dans les tests.
+     * Test BCE that simulates adding a dependency class via scanned.add().
+     * We use VaubanProcessor itself as the "external class" because it is available
+     * on the processor classpath — which lets loadClassBytes() find it
+     * without having to bundle a third-party jar in the tests.
      *
-     * Pour un test realiste, la classe referente doit etre annotee CDI. On pointe vers
-     * ApplicationScoped (disponible sur le classpath) simplement pour valider le mecanisme
-     * de skip — le vrai cas metier serait un TransactionalInterceptor ou un
-     * ExternalRuntimeProducer depuis un jar mansart.
+     * For a realistic test, the referenced class should be CDI-annotated. We point to
+     * ApplicationScoped (available on the classpath) simply to validate the skip
+     * mechanism — the real business case would be a TransactionalInterceptor or an
+     * ExternalRuntimeProducer from a mansart jar.
      *
-     * La classe que l'on declare comme «externe» ici est
-     * {@code jakarta.enterprise.context.ApplicationScoped} — ce n'est pas un bean CDI valide,
-     * mais le but du test est uniquement de verifier qu'aucun fichier _Factory n'est cree
-     * pour une classe enregistree via scanned.add(), quelle que soit la classe.
+     * The class we declare as "external" here is
+     * {@code jakarta.enterprise.context.ApplicationScoped} — it is not a valid CDI bean,
+     * but the goal of the test is solely to verify that no _Factory file is created
+     * for a class registered via scanned.add(), whatever the class.
      *
-     * Pour un test plus realiste, on utilise une vraie classe @Singleton disponible sur le
-     * classpath du processeur: jakarta.inject.Singleton (annotation, pas un bean).
+     * For a more realistic test, we use a real @Singleton class available on the
+     * processor classpath: jakarta.inject.Singleton (an annotation, not a bean).
      *
-     * Donc: on utilise VaubanProcessor lui-meme (annotable, disponible, pas un bean CDI)
-     * pour forcer le chemin loadClassBytes → externalClassNames. Si le scan echoue
-     * (pas de scope CDI sur la classe), la classe n'est pas bean — c'est acceptable :
-     * on veut juste verifier le tracking d'origine, pas la resolution d'injection complete.
+     * So: we use VaubanProcessor itself (annotatable, available, not a CDI bean)
+     * to force the loadClassBytes → externalClassNames path. If the scan fails
+     * (no CDI scope on the class), the class is not a bean — which is acceptable:
+     * we only want to verify origin tracking, not full injection resolution.
      *
-     * Approche retenue : une classe locale annotee @ApplicationScoped + @jakarta.inject.Named
-     * est compilee DANS le module. Un BCE declare une AUTRE classe connue du classpath (mais
-     * pas dans les sources compilees) via scanned.add(). On verifie que _Factory n'est pas
-     * generee pour la classe externe, mais qu'elle l'est pour la classe locale.
+     * Chosen approach: a local class annotated @ApplicationScoped + @jakarta.inject.Named
+     * is compiled INSIDE the module. A BCE declares ANOTHER class known to the classpath (but
+     * not in the compiled sources) via scanned.add(). We verify that _Factory is not
+     * generated for the external class, but that it is for the local class.
      */
 
     /**
-     * BCE qui ajoute la classe {@code jakarta.enterprise.context.ApplicationScoped}
-     * (une classe connue du classpath) via scanned.add().
-     * En pratique ce n'est pas un bean CDI valide, mais le test valide que le chemin
-     * externalClassNames est bien emprunte et qu'aucun _Factory n'est emis pour elle.
-     * La presence dans vauban-beans.list n'est pas attendue ici car la classe n'a pas
-     * de scope CDI indexable — ce qui est voulu : on teste le mecanisme de skip, pas
-     * la completude de la resolution.
+     * BCE that adds the class {@code jakarta.enterprise.context.ApplicationScoped}
+     * (a class known to the classpath) via scanned.add().
+     * In practice this is not a valid CDI bean, but the test validates that the
+     * externalClassNames path is taken and that no _Factory is emitted for it.
+     * Presence in vauban-beans.list is not expected here because the class has no
+     * indexable CDI scope — which is intended: we test the skip mechanism, not
+     * the completeness of resolution.
      */
     public static class ExternalDiscoveryBce implements BuildCompatibleExtension {
         /**
@@ -169,7 +169,7 @@ class ExternalClassGenerationSkipTest {
     // ---- Tests ----
 
     @Test
-    @DisplayName("classe locale genere _Factory ; classe externe (scanned.add) ne genere pas _Factory")
+    @DisplayName("local class generates _Factory; external class (scanned.add) does not generate _Factory")
     void shouldSkipFactoryForExternalClassButGenerateForLocalClass() throws IOException {
         // LocalBean is compiled in the user module — must get a _Factory.
         // ExternalDiscoveryBce.EXTERNAL_CLASS is added via scanned.add() — must NOT get a _Factory.
@@ -209,7 +209,7 @@ class ExternalClassGenerationSkipTest {
     }
 
     @Test
-    @DisplayName("classe locale est listee dans vauban-beans.list ; pas de _Factory pour la classe externe")
+    @DisplayName("local class is listed in vauban-beans.list; no _Factory for the external class")
     void localBeanStillListedInBeansListNoExternalFactory() throws IOException {
         // The local bean must appear in vauban-beans.list and get its _Factory.
         // The external class must never have a _Factory emitted in the output dir.
@@ -241,7 +241,7 @@ class ExternalClassGenerationSkipTest {
     }
 
     @Test
-    @DisplayName("INFO log emis pour classe externe skippee")
+    @DisplayName("INFO log emitted for a skipped external class")
     void shouldLogInfoForSkippedExternalClass() throws IOException {
         // An external class that IS a valid CDI bean would produce the INFO log.
         // Here we use a simpler approach: we verify that a class added via scanned.add()

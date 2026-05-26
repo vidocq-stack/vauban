@@ -13,36 +13,35 @@ import java.lang.reflect.Method;
 import static org.junit.jupiter.api.Assertions.*;
 
 /**
- * Tests de l'utilitaire d'acces reflectif centralise de Vauban.
+ * Tests for Vauban's centralized reflective access utility.
  *
- * <h2>Contexte Vidocq</h2>
- * Vidocq est un framework modulaire JPMS. L'application utilisateur est un
- * module nomme ({@code module io.vidocq.runtime.app}) qui ouvre ses packages
- * a {@code io.vidocq.vauban.core}. Mais {@code opens ... to} ne suffit pas :
- * le module appelant doit aussi <em>lire</em> le module cible via
- * {@code Module.addReads()}, sinon {@code MethodHandles.privateLookupIn()}
- * echoue avec {@code IllegalAccessException: module io.vidocq.vauban.core
+ * <h2>Vidocq context</h2>
+ * Vidocq is a modular JPMS framework. The user application is a named module
+ * ({@code module io.vidocq.runtime.app}) that opens its packages to
+ * {@code io.vidocq.vauban.core}. But {@code opens ... to} is not enough:
+ * the calling module must also <em>read</em> the target module via
+ * {@code Module.addReads()}, otherwise {@code MethodHandles.privateLookupIn()}
+ * fails with {@code IllegalAccessException: module io.vidocq.vauban.core
  * does not read module io.vidocq.runtime.app}.
  *
  * <h2>Fix</h2>
- * {@code VaubanLookup.lookupFor()} appelle desormais {@code addReads()} avant
- * {@code privateLookupIn()} quand les modules ne se lisent pas encore.
+ * {@code VaubanLookup.lookupFor()} now calls {@code addReads()} before
+ * {@code privateLookupIn()} when the modules do not yet read each other.
  *
- * <h2>Suppression de sun.misc.Unsafe</h2>
- * L'ancien code utilisait {@code sun.misc.Unsafe::staticFieldOffset} pour
- * acceder a {@code IMPL_LOOKUP} en fallback. Cette API est terminally
- * deprecated depuis JDK 23 et sera supprimee. Le fix utilise le root
- * {@code Lookup} fourni par l'utilisateur via {@code VaubanContainer.builder()
- * .lookup(MethodHandles.lookup())} — plus propre et JPMS-compliant.
+ * <h2>Removal of sun.misc.Unsafe</h2>
+ * The old code used {@code sun.misc.Unsafe::staticFieldOffset} to access
+ * {@code IMPL_LOOKUP} as a fallback. This API has been terminally deprecated
+ * since JDK 23 and will be removed. The fix uses the root {@code Lookup}
+ * provided by the user via {@code VaubanContainer.builder()
+ * .lookup(MethodHandles.lookup())} — cleaner and JPMS-compliant.
  *
- * <h2>Pourquoi le TCK ne couvre pas ce cas</h2>
- * Le TCK CDI 4.1 s'execute en classpath (unnamed module). Les problemes
- * {@code addReads} n'apparaissent que quand l'application est un module
- * JPMS nomme, ce que le TCK ne teste jamais. Le workaround classpath
- * ({@code --add-reads} en CLI) masquait le bug en dev mais pas en production
- * modulaire.
+ * <h2>Why the TCK does not cover this case</h2>
+ * The CDI 4.1 TCK runs on the classpath (unnamed module). The {@code addReads}
+ * problems only appear when the application is a named JPMS module, which the
+ * TCK never tests. The classpath workaround ({@code --add-reads} on the CLI)
+ * hid the bug in dev but not in modular production.
  */
-@DisplayName("VaubanLookup - acces reflectif via MethodHandles")
+@DisplayName("VaubanLookup - reflective access via MethodHandles")
 class VaubanLookupTest {
 
     private VaubanLookup lookup;
@@ -52,7 +51,7 @@ class VaubanLookupTest {
         lookup = new VaubanLookup(MethodHandles.lookup());
     }
 
-    // -- Classes de test --
+    // -- Test classes --
 
     public static class SimpleBean {
         public SimpleBean() {}
@@ -95,34 +94,34 @@ class VaubanLookupTest {
     // -- Tests --
 
     /**
-     * Teste le coeur du fix JPMS : {@code lookupFor} doit appeler
-     * {@code Module.addReads()} avant {@code privateLookupIn()} pour que
-     * vauban.core puisse lire les modules JDK ou applicatifs.
-     * Les tests avec java.sql et java.logging verifient que
-     * {@code canRead()} passe a {@code true} apres l'appel.
+     * Tests the core of the JPMS fix: {@code lookupFor} must call
+     * {@code Module.addReads()} before {@code privateLookupIn()} so that
+     * vauban.core can read JDK or application modules.
+     * The tests with java.sql and java.logging verify that
+     * {@code canRead()} becomes {@code true} after the call.
      */
     @Nested
-    @DisplayName("lookupFor - obtention d'un Lookup prive")
+    @DisplayName("lookupFor - obtaining a private Lookup")
     class LookupFor {
 
         @Test
-        @DisplayName("retourne un Lookup pour une classe du meme module")
+        @DisplayName("returns a Lookup for a class in the same module")
         void shouldReturnLookupForSameModuleClass() {
             var result = lookup.lookupFor(SimpleBean.class);
             assertNotNull(result);
         }
 
         @Test
-        @DisplayName("echoue proprement pour une classe JDK dont le package n'est pas ouvert")
+        @DisplayName("fails cleanly for a JDK class whose package is not opened")
         void shouldThrowForClosedJdkPackage() {
-            // java.lang.String est dans java.base mais le package n'est pas ouvert
+            // java.lang.String is in java.base but the package is not opened
             var ex = assertThrows(RuntimeException.class, () -> lookup.lookupFor(String.class));
             assertTrue(ex.getMessage().contains("opens java.lang"),
-                    "Le message d'erreur doit indiquer le package a ouvrir");
+                    "The error message must indicate the package to open");
         }
 
         @Test
-        @DisplayName("met en cache le Lookup pour les appels successifs")
+        @DisplayName("caches the Lookup for successive calls")
         void shouldCacheLookupResults() {
             var first = lookup.lookupFor(SimpleBean.class);
             var second = lookup.lookupFor(SimpleBean.class);
@@ -130,31 +129,31 @@ class VaubanLookupTest {
         }
 
         @Test
-        @DisplayName("addReads est appele pour une classe d'un autre module JDK (java.sql)")
+        @DisplayName("addReads is called for a class from another JDK module (java.sql)")
         void shouldAddReadsForCrossModuleAccess() throws Exception {
-            // java.sql.Connection est dans le module java.sql (nomme)
+            // java.sql.Connection is in the java.sql module (named)
             Class<?> connectionClass = Class.forName("java.sql.Connection");
             Module targetModule = connectionClass.getModule();
-            assertTrue(targetModule.isNamed(), "java.sql.Connection doit etre dans un module nomme");
+            assertTrue(targetModule.isNamed(), "java.sql.Connection must be in a named module");
             assertEquals("java.sql", targetModule.getName());
 
-            // lookupFor va appeler addReads avant privateLookupIn
-            // privateLookupIn echouera car java.sql n'ouvre pas ses packages,
-            // mais addReads aura ete appele avant l'exception
+            // lookupFor will call addReads before privateLookupIn
+            // privateLookupIn will fail because java.sql does not open its packages,
+            // but addReads will have been called before the exception
             try {
                 lookup.lookupFor(connectionClass);
             } catch (RuntimeException ignored) {
-                // L'exception de privateLookupIn est attendue pour les modules JDK fermes
+                // The privateLookupIn exception is expected for closed JDK modules
             }
 
-            // Verification cle : addReads a ete appele, le module peut maintenant lire java.sql
+            // Key check: addReads was called, the module can now read java.sql
             Module vaubanModule = VaubanLookup.class.getModule();
             assertTrue(vaubanModule.canRead(targetModule),
-                    "Apres lookupFor, le module vauban.core doit pouvoir lire java.sql grace a addReads");
+                    "After lookupFor, the vauban.core module must be able to read java.sql thanks to addReads");
         }
 
         @Test
-        @DisplayName("addReads est appele pour java.logging (module nomme)")
+        @DisplayName("addReads is called for java.logging (named module)")
         void shouldAddReadsForLoggingModule() throws Exception {
             Class<?> loggerClass = Class.forName("java.util.logging.Logger");
             Module targetModule = loggerClass.getModule();
@@ -163,29 +162,29 @@ class VaubanLookupTest {
             try {
                 lookup.lookupFor(loggerClass);
             } catch (RuntimeException ignored) {
-                // L'exception de privateLookupIn est attendue pour les modules JDK fermes
+                // The privateLookupIn exception is expected for closed JDK modules
             }
 
             Module vaubanModule = VaubanLookup.class.getModule();
             assertTrue(vaubanModule.canRead(targetModule),
-                    "Apres lookupFor, le module vauban.core doit pouvoir lire java.logging grace a addReads");
+                    "After lookupFor, the vauban.core module must be able to read java.logging thanks to addReads");
         }
 
         @Test
-        @DisplayName("lookupFor reussit pour une classe utilisateur (package ouvert implicitement)")
+        @DisplayName("lookupFor succeeds for a user class (package implicitly opened)")
         void shouldSucceedForUserClassInSameModule() {
-            // Les classes de test sont dans le meme module -- pas de probleme d'acces
+            // The test classes are in the same module -- no access problem
             var result = lookup.lookupFor(SimpleBean.class);
             assertNotNull(result);
         }
     }
 
     @Nested
-    @DisplayName("newInstance - creation d'instances")
+    @DisplayName("newInstance - instance creation")
     class NewInstance {
 
         @Test
-        @DisplayName("cree une instance avec le constructeur sans argument")
+        @DisplayName("creates an instance with the no-arg constructor")
         void shouldCreateInstanceWithNoArgConstructor() {
             var instance = lookup.newInstance(SimpleBean.class);
             assertNotNull(instance);
@@ -193,7 +192,7 @@ class VaubanLookupTest {
         }
 
         @Test
-        @DisplayName("chaque appel cree une nouvelle instance")
+        @DisplayName("each call creates a new instance")
         void shouldCreateDistinctInstances() {
             var a = lookup.newInstance(SimpleBean.class);
             var b = lookup.newInstance(SimpleBean.class);
@@ -201,25 +200,25 @@ class VaubanLookupTest {
         }
 
         @Test
-        @DisplayName("l'instance creee est fonctionnelle")
+        @DisplayName("the created instance is functional")
         void shouldCreateFunctionalInstance() {
             var instance = lookup.newInstance(SimpleBean.class);
             assertEquals("hello", instance.greet());
         }
 
         @Test
-        @DisplayName("lance une exception pour une classe sans constructeur sans-arg")
+        @DisplayName("throws an exception for a class without a no-arg constructor")
         void shouldThrowWhenNoNoArgConstructor() {
             assertThrows(RuntimeException.class, () -> lookup.newInstance(BeanWithArgs.class));
         }
     }
 
     @Nested
-    @DisplayName("newInstance avec constructeur et arguments")
+    @DisplayName("newInstance with constructor and arguments")
     class NewInstanceWithConstructor {
 
         @Test
-        @DisplayName("cree une instance avec les arguments fournis")
+        @DisplayName("creates an instance with the provided arguments")
         void shouldCreateInstanceWithArgs() throws Exception {
             Constructor<?> ctor = BeanWithArgs.class.getConstructor(String.class, int.class);
             var instance = (BeanWithArgs) lookup.newInstance(ctor, "test", 42);
@@ -229,7 +228,7 @@ class VaubanLookupTest {
         }
 
         @Test
-        @DisplayName("lance CreationException si les arguments sont incorrects")
+        @DisplayName("throws CreationException if the arguments are incorrect")
         void shouldThrowOnWrongArgs() throws Exception {
             Constructor<?> ctor = BeanWithArgs.class.getConstructor(String.class, int.class);
             assertThrows(Exception.class, () -> lookup.newInstance(ctor, 123, "wrong"));
@@ -237,11 +236,11 @@ class VaubanLookupTest {
     }
 
     @Nested
-    @DisplayName("setField / getField - acces aux champs")
+    @DisplayName("setField / getField - field access")
     class FieldAccess {
 
         @Test
-        @DisplayName("ecrit et lit un champ public")
+        @DisplayName("writes and reads a public field")
         void shouldSetAndGetPublicField() throws Exception {
             var instance = new BeanWithField();
             Field field = BeanWithField.class.getDeclaredField("message");
@@ -253,7 +252,7 @@ class VaubanLookupTest {
         }
 
         @Test
-        @DisplayName("ecrit et lit un champ prive")
+        @DisplayName("writes and reads a private field")
         void shouldSetAndGetPrivateField() throws Exception {
             var instance = new BeanWithField();
             Field field = BeanWithField.class.getDeclaredField("count");
@@ -265,7 +264,7 @@ class VaubanLookupTest {
         }
 
         @Test
-        @DisplayName("ecrit et lit un champ statique")
+        @DisplayName("writes and reads a static field")
         void shouldSetAndGetStaticField() throws Exception {
             Field field = BeanWithStaticField.class.getDeclaredField("shared");
 
@@ -278,7 +277,7 @@ class VaubanLookupTest {
         }
 
         @Test
-        @DisplayName("getField retourne null pour un champ non initialise")
+        @DisplayName("getField returns null for an uninitialized field")
         void shouldReturnNullForUninitializedField() throws Exception {
             var instance = new BeanWithField();
             Field field = BeanWithField.class.getDeclaredField("message");
@@ -288,7 +287,7 @@ class VaubanLookupTest {
         }
 
         @Test
-        @DisplayName("getField retourne 0 pour un int non initialise")
+        @DisplayName("getField returns 0 for an uninitialized int")
         void shouldReturnZeroForUninitializedIntField() throws Exception {
             var instance = new BeanWithField();
             Field field = BeanWithField.class.getDeclaredField("count");
@@ -299,11 +298,11 @@ class VaubanLookupTest {
     }
 
     @Nested
-    @DisplayName("invokeMethod - invocation de methodes")
+    @DisplayName("invokeMethod - method invocation")
     class InvokeMethod {
 
         @Test
-        @DisplayName("invoque une methode d'instance avec un argument")
+        @DisplayName("invokes an instance method with one argument")
         void shouldInvokeInstanceMethodWithArg() throws Exception {
             var instance = new BeanWithMethods();
             Method method = BeanWithMethods.class.getMethod("echo", String.class);
@@ -313,7 +312,7 @@ class VaubanLookupTest {
         }
 
         @Test
-        @DisplayName("invoque une methode avec plusieurs arguments")
+        @DisplayName("invokes a method with several arguments")
         void shouldInvokeMethodWithMultipleArgs() throws Exception {
             var instance = new BeanWithMethods();
             Method method = BeanWithMethods.class.getMethod("add", int.class, int.class);
@@ -323,7 +322,7 @@ class VaubanLookupTest {
         }
 
         @Test
-        @DisplayName("invoque une methode statique")
+        @DisplayName("invokes a static method")
         void shouldInvokeStaticMethod() throws Exception {
             Method method = BeanWithMethods.class.getMethod("staticMethod");
 
@@ -332,7 +331,7 @@ class VaubanLookupTest {
         }
 
         @Test
-        @DisplayName("invoque une methode void sans erreur")
+        @DisplayName("invokes a void method without error")
         void shouldInvokeVoidMethod() throws Exception {
             var instance = new BeanWithMethods();
             Method method = BeanWithMethods.class.getMethod("voidMethod");
@@ -341,7 +340,7 @@ class VaubanLookupTest {
         }
 
         @Test
-        @DisplayName("invoque une methode void via invokeStaticMethod sur instance")
+        @DisplayName("invokes a void method via invokeStaticMethod on instance")
         void shouldInvokeStaticMethodWithNullInstance() throws Exception {
             Method method = BeanWithMethods.class.getMethod("staticMethod");
 
@@ -351,37 +350,37 @@ class VaubanLookupTest {
     }
 
     @Nested
-    @DisplayName("makeAccessible - rend un membre accessible")
+    @DisplayName("makeAccessible - makes a member accessible")
     class MakeAccessible {
 
         @Test
-        @DisplayName("rend un constructeur prive accessible apres appel")
+        @DisplayName("makes a private constructor accessible after the call")
         void shouldMakePrivateConstructorAccessible() throws Exception {
             Constructor<?> ctor = BeanWithPrivateConstructor.class.getDeclaredConstructor();
 
-            // makeAccessible ne doit pas lancer d'exception
+            // makeAccessible must not throw an exception
             assertDoesNotThrow(() -> lookup.makeAccessible(ctor));
 
-            // Apres l'appel, le constructeur doit etre accessible
+            // After the call, the constructor must be accessible
             assertTrue(ctor.canAccess(null));
         }
 
         @Test
-        @DisplayName("rend un champ prive accessible apres appel")
+        @DisplayName("makes a private field accessible after the call")
         void shouldMakePrivateFieldAccessible() throws Exception {
             Field field = BeanWithField.class.getDeclaredField("count");
             var instance = new BeanWithField();
 
             assertDoesNotThrow(() -> lookup.makeAccessible(field));
 
-            // Apres l'appel, le champ doit etre accessible
+            // After the call, the field must be accessible
             assertTrue(field.canAccess(instance));
         }
 
         @Test
-        @DisplayName("rend une methode accessible apres appel")
+        @DisplayName("makes a method accessible after the call")
         void shouldMakeMethodAccessible() throws Exception {
-            // Utilisons une methode privee fictive via une inner class
+            // Use a fictional private method via an inner class
             Method method = BeanWithMethods.class.getMethod("echo", String.class);
 
             assertDoesNotThrow(() -> lookup.makeAccessible(method));
@@ -390,14 +389,14 @@ class VaubanLookupTest {
     }
 
     @Nested
-    @DisplayName("constructeur par defaut")
+    @DisplayName("default constructor")
     class DefaultConstructor {
 
         @Test
-        @DisplayName("utilise MethodHandles.lookup() quand aucun Lookup n'est fourni")
+        @DisplayName("uses MethodHandles.lookup() when no Lookup is provided")
         void shouldUseDefaultLookupWhenNoneProvided() {
             var defaultLookup = new VaubanLookup();
-            // Doit pouvoir creer une instance d'une classe dans le meme package
+            // Must be able to create an instance of a class in the same package
             var instance = defaultLookup.newInstance(SimpleBean.class);
             assertNotNull(instance);
         }

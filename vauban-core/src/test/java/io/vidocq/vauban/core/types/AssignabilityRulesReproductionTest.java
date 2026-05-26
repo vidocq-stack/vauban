@@ -25,7 +25,7 @@ class AssignabilityRulesReproductionTest {
     }
 
     @Test
-    @DisplayName("List<? extends Integer> doit etre assignable a List<? extends Number>")
+    @DisplayName("List<? extends Integer> must be assignable to List<? extends Number>")
     void wildcardToWildcardAssignability() {
         var listExtendsInteger = new ParameterizedType(
                 DotName.of("java.util.List"),
@@ -35,13 +35,13 @@ class AssignabilityRulesReproductionTest {
                 DotName.of("java.util.List"),
                 List.of(new WildcardType(new ClassType(DotName.of("java.lang.Number")), null)));
 
-        // BUG: isTypeArgumentAssignable ne gere pas Wildcard vs Wildcard
-        assertTrue(rules.isAssignable(listExtendsInteger, listExtendsNumber), 
-                "List<? extends Integer> devrait etre assignable a List<? extends Number>");
+        // BUG: isTypeArgumentAssignable does not handle Wildcard vs Wildcard
+        assertTrue(rules.isAssignable(listExtendsInteger, listExtendsNumber),
+                "List<? extends Integer> should be assignable to List<? extends Number>");
     }
 
     @Test
-    @DisplayName("List<T extends Integer> doit etre assignable a List<? extends Number>")
+    @DisplayName("List<T extends Integer> must be assignable to List<? extends Number>")
     void typeVariableToWildcardAssignability() {
         var typeVarT = new TypeVariable("T", List.of(new ClassType(DotName.of("java.lang.Integer"))));
         var listT = new ParameterizedType(
@@ -52,8 +52,8 @@ class AssignabilityRulesReproductionTest {
                 DotName.of("java.util.List"),
                 List.of(new WildcardType(new ClassType(DotName.of("java.lang.Number")), null)));
 
-        // BUG: isTypeArgumentAssignable ne gere pas TypeVariable vs Wildcard
+        // BUG: isTypeArgumentAssignable does not handle TypeVariable vs Wildcard
         assertTrue(rules.isAssignable(listT, listExtendsNumber),
-                "List<T extends Integer> devrait etre assignable a List<? extends Number>");
+                "List<T extends Integer> should be assignable to List<? extends Number>");
     }
 }

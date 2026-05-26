@@ -26,17 +26,17 @@ import java.util.List;
 import static org.junit.jupiter.api.Assertions.*;
 
 /**
- * TDD for VAU-INJ-001: field @Inject d'un bean normal-scope doit retourner
- * un client proxy paresseux, jamais materialiser l'instance au boot.
+ * TDD for VAU-INJ-001: a field @Inject of a normal-scope bean must return
+ * a lazy client proxy, never materialize the instance at boot.
  *
- * <p>Avant fix : le field restait null (ContextNotActiveException avalee).
- * Apres fix : le field contient un proxy ; l'acces hors-scope leve
- * ContextNotActiveException ; l'acces dans le scope retourne la bonne instance.
+ * <p>Before fix: the field stayed null (ContextNotActiveException swallowed).
+ * After fix: the field holds a proxy; out-of-scope access throws
+ * ContextNotActiveException; in-scope access returns the right instance.
  */
-@DisplayName("VAU-INJ-001 - field injection de beans normal-scope doit retourner un client proxy paresseux")
+@DisplayName("VAU-INJ-001 - normal-scope bean field injection must return a lazy client proxy")
 class NormalScopeFieldInjectionTest {
 
-    // --- Beans de test ---
+    // --- Test beans ---
 
     @RequestScoped
     public static class RequestScopedService {
@@ -52,8 +52,8 @@ class NormalScopeFieldInjectionTest {
     }
 
     /**
-     * Bean @ApplicationScoped avec un @Inject field vers un bean @RequestScoped.
-     * Au boot, aucun contexte request n'est actif — c'est le scenario du bug.
+     * @ApplicationScoped bean with an @Inject field toward a @RequestScoped bean.
+     * At boot, no request context is active — this is the bug scenario.
      */
     @ApplicationScoped
     public static class AppServiceWithRequestDep {
@@ -72,11 +72,11 @@ class NormalScopeFieldInjectionTest {
     // --- Tests ---
 
     @Nested
-    @DisplayName("injection field normal-scope")
+    @DisplayName("normal-scope field injection")
     class FieldInjection {
 
         @Test
-        @DisplayName("le field injecte n'est PAS null apres injection (un proxy est injecte)")
+        @DisplayName("the injected field is NOT null after injection (a proxy is injected)")
         void injectedFieldIsNotNull() {
             try (var container = VaubanContainer.builder()
                     .addBeanClass(AppServiceWithRequestDep.class)
@@ -85,14 +85,14 @@ class NormalScopeFieldInjectionTest {
 
                 var appService = container.select(AppServiceWithRequestDep.class);
 
-                // VAU-INJ-001 : avant fix ce field etait null
+                // VAU-INJ-001: before fix this field was null
                 assertNotNull(appService.getRequestDep(),
-                        "Le field @Inject vers un bean @RequestScoped ne doit pas etre null — un proxy doit etre injecte");
+                        "The @Inject field toward a @RequestScoped bean must not be null — a proxy must be injected");
             }
         }
 
         @Test
-        @DisplayName("invoquer le proxy hors-scope request leve ContextNotActiveException")
+        @DisplayName("invoking the proxy outside the request scope throws ContextNotActiveException")
         void invokingProxyOutsideScopeLazilyThrows() {
             try (var container = VaubanContainer.builder()
                     .addBeanClass(AppServiceWithRequestDep.class)
@@ -101,16 +101,16 @@ class NormalScopeFieldInjectionTest {
 
                 var appService = container.select(AppServiceWithRequestDep.class);
 
-                // Le proxy est non-null mais l'invocation doit echouer hors-scope
+                // The proxy is non-null but the invocation must fail out-of-scope
                 assertNotNull(appService.getRequestDep());
                 assertThrows(ContextNotActiveException.class,
                         appService::callRequestDep,
-                        "Invoquer une methode sur le proxy hors-scope doit lever ContextNotActiveException");
+                        "Invoking a method on the proxy out-of-scope must throw ContextNotActiveException");
             }
         }
 
         @Test
-        @DisplayName("invoquer le proxy dans un scope actif retourne la bonne instance")
+        @DisplayName("invoking the proxy inside an active scope returns the right instance")
         void invokingProxyInsideActiveScopeWorks() {
             try (var container = VaubanContainer.builder()
                     .addBeanClass(AppServiceWithRequestDep.class)
@@ -122,14 +122,14 @@ class NormalScopeFieldInjectionTest {
                 container.requestContext().runInScope(() -> {
                     assertNotNull(appService.getRequestDep());
                     assertEquals("result-1", appService.callRequestDep());
-                    // Meme instance dans le meme scope : le compteur s'incremente
+                    // Same instance within the same scope: the counter increments
                     assertEquals("result-2", appService.callRequestDep());
                 });
             }
         }
 
         @Test
-        @DisplayName("nouvelle instance par scope : deux scopes distincts voient des instances differentes")
+        @DisplayName("new instance per scope: two distinct scopes see different instances")
         void differentScopesGetDifferentInstances() {
             try (var container = VaubanContainer.builder()
                     .addBeanClass(AppServiceWithRequestDep.class)
@@ -138,7 +138,7 @@ class NormalScopeFieldInjectionTest {
 
                 var appService = container.select(AppServiceWithRequestDep.class);
 
-                // Premier scope
+                // First scope
                 int[] counterAfterScope1 = {0};
                 container.requestContext().runInScope(() -> {
                     appService.callRequestDep(); // result-1
@@ -147,11 +147,11 @@ class NormalScopeFieldInjectionTest {
                 });
                 assertEquals(2, counterAfterScope1[0]);
 
-                // Deuxieme scope : nouvelle instance, compteur repart de zero
+                // Second scope: new instance, counter restarts from zero
                 container.requestContext().runInScope(() -> {
                     String first = appService.callRequestDep();
                     assertEquals("result-1", first,
-                            "Un nouveau scope doit creer une nouvelle instance @RequestScoped");
+                            "A new scope must create a new @RequestScoped instance");
                 });
             }
         }

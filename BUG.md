@@ -1,19 +1,19 @@
-# Vauban — Bugs reproductibles
+# Vauban — Reproducible bugs
 
-Tracker interne. Format minimaliste : id court, date, symptôme, repro,
-hypothèse de cause, statut. Mise à jour à chaque investigation.
+Internal tracker. Minimalist format: short id, date, symptom, repro,
+suspected cause, status. Updated on every investigation.
 
 ---
 
-## VAU-BCE-001 — Pipeline BCE : `@Registration` voit zéro IP, `@Synthesis` perd les types paramétrés et les membres de qualifier
+## VAU-BCE-001 — BCE pipeline: `@Registration` sees zero IP, `@Synthesis` loses parameterized types and qualifier members
 
-**Date** : 2026-05-09
-**Statut** : `FIXED` — 2026-05-09 (branche `fix/vau-bce-001-bce-not-invoked`)
-**Sévérité** : haute — bloque toute Build Compatible Extension qui (a) parcourt `BeanInfo.injectionPoints()` en `@Registration`, (b) déclare un `SyntheticBean` avec un type paramétré (`Optional<T>`, `List<T>`, `Provider<T>`, …), ou (c) attache un qualifier dont les membres conditionnent la résolution. Cas concret : `ConfigCdiExtension` de Ravel (MicroProfile Config 3.1) — empêche M6 (intégration écosystème Vidocq) tant que la BCE n'est pas reconnue.
+**Date**: 2026-05-09
+**Status**: `FIXED` — 2026-05-09 (branch `fix/vau-bce-001-bce-not-invoked`)
+**Severity**: high — blocks any Build Compatible Extension that (a) traverses `BeanInfo.injectionPoints()` in `@Registration`, (b) declares a `SyntheticBean` with a parameterized type (`Optional<T>`, `List<T>`, `Provider<T>`, …), or (c) attaches a qualifier whose members drive resolution. Concrete case: Ravel's `ConfigCdiExtension` (MicroProfile Config 3.1) — blocks M6 (Vidocq ecosystem integration) as long as the BCE is not recognized.
 
-### Symptôme
+### Symptom
 
-Le pipeline BCE est *entré* (les méthodes `@Registration` / `@Synthesis` sont bien dispatchées par `BceProcessor`), mais à l'arrivée le déploiement échoue avec :
+The BCE pipeline is *entered* (the `@Registration` / `@Synthesis` methods are correctly dispatched by `BceProcessor`), but on arrival the deployment fails with:
 
 ```
 jakarta.enterprise.inject.spi.DeploymentException:
@@ -23,16 +23,16 @@ CDI deployment validation failed:
       with qualifiers […, @ConfigProperty(name=app.greeting, defaultValue=Hello)]
 ```
 
-ou, plus en amont, un `IllegalArgumentException` :
+or, earlier in the pipeline, an `IllegalArgumentException`:
 
 ```
 @Registration error: Class not found in index: org.eclipse.microprofile.config.inject.ConfigProperty
 @Registration error: Class not found in index: java.lang.String
 ```
 
-ou encore une `NullPointerException` muette ramenée en `@Synthesis error: null` quand l'extension construit un `ParameterizedType` via `Types.parameterized(Optional.class, types.of(String.class))`.
+or even a silent `NullPointerException` surfaced as `@Synthesis error: null` when the extension builds a `ParameterizedType` via `Types.parameterized(Optional.class, types.of(String.class))`.
 
-### Repro minimal
+### Minimal repro
 
 ```java
 @jakarta.inject.Qualifier
@@ -67,59 +67,59 @@ SeContainerInitializer.newInstance()
 // → DeploymentException: Unsatisfied dependency on @Tagged("scalar") + @Tagged("optional")
 ```
 
-Le test couvre exactement la surface API utilisée par `ravel-cdi-vauban/.../ConfigCdiExtension` qui passe **349/349** au TCK MicroProfile Config 3.1 sous Weld 6.0.2 — donc le code Ravel est conforme spec ; le bug est entièrement côté Vauban.
+The test covers exactly the API surface used by `ravel-cdi-vauban/.../ConfigCdiExtension`, which passes **349/349** on the MicroProfile Config 3.1 TCK under Weld 6.0.2 — so the Ravel code is spec-compliant; the bug is entirely on the Vauban side.
 
-### Cause racine — six défauts cumulés sur le même chemin
+### Root cause — six cumulative defects on the same path
 
-| # | Site | Problème |
+| # | Site | Problem |
 |---|---|---|
-| 1 | `VaubanBceBeanInfo.injectionPoints()` | Stub `return List.of();` — l'extension reçoit zéro IP, son `@Registration` ne collecte rien, `@Synthesis` ne synthétise rien. |
-| 2 | `VaubanAnnotationInfo` | Pas d'override de `name()`. Le default API CDI Lite 4.1 (`return declaration().name();`) traverse `lookup.requireClass(<annotation FQN>)` qui crashe pour les annotations hors-index (typique : `@ConfigProperty` qui vit dans `microprofile-config-api`). |
-| 3 | `VaubanClassType.declaration()` | `lookup.requireClass(name)` lance `IllegalArgumentException("Class not found in index: java.lang.String")` pour tout type JDK ou tiers absent du scan. Le contrat spec exige que `ClassType.declaration()` réussisse pour tout type du modèle. |
-| 4 | `VaubanSyntheticBeanBuilder.type(Type)` | No-op (`return this; // simplified`) — toute `addBean(...).type(<lang-model Type>)` est silencieusement perdue, le bean synthétique n'expose finalement que `Object`. Frappe systématique sur `Optional<T>`, `List<T>`, `Provider<T>`, etc. |
-| 5 | `VaubanTypes.ofClass(String name)` | Retourne `null` si la classe n'est pas dans l'index. Provoque une NPE quand l'extension construit `types.parameterized(Optional.class, types.of(String.class))` → `List.of(null, …)`. |
-| 6 | `BceProcessor.toBeanDescriptor` | `qualifiers.add(new QualifierInstance(qName, Map.of()));` — les membres du qualifier sont perdus. Conséquence : `@Tagged("scalar")` côté bean synthétique vs `@Tagged("scalar")` côté IP ne se résolvent plus, parce que le qualifier du bean a `members={}` alors que le qualifier de l'IP a `members={value=StringVal[scalar]}`. Le résolveur les considère distincts. |
+| 1 | `VaubanBceBeanInfo.injectionPoints()` | Stub `return List.of();` — the extension receives zero IP, its `@Registration` collects nothing, `@Synthesis` synthesizes nothing. |
+| 2 | `VaubanAnnotationInfo` | No override of `name()`. The CDI Lite 4.1 API default (`return declaration().name();`) goes through `lookup.requireClass(<annotation FQN>)` which crashes for annotations outside the index (typical: `@ConfigProperty`, which lives in `microprofile-config-api`). |
+| 3 | `VaubanClassType.declaration()` | `lookup.requireClass(name)` throws `IllegalArgumentException("Class not found in index: java.lang.String")` for any JDK or third-party type absent from the scan. The spec contract requires `ClassType.declaration()` to succeed for any type in the model. |
+| 4 | `VaubanSyntheticBeanBuilder.type(Type)` | No-op (`return this; // simplified`) — any `addBean(...).type(<lang-model Type>)` is silently lost, and the synthetic bean ends up exposing only `Object`. Systematic hit on `Optional<T>`, `List<T>`, `Provider<T>`, etc. |
+| 5 | `VaubanTypes.ofClass(String name)` | Returns `null` if the class is not in the index. Causes an NPE when the extension builds `types.parameterized(Optional.class, types.of(String.class))` → `List.of(null, …)`. |
+| 6 | `BceProcessor.toBeanDescriptor` | `qualifiers.add(new QualifierInstance(qName, Map.of()));` — the qualifier members are lost. Consequence: `@Tagged("scalar")` on the synthetic bean side vs `@Tagged("scalar")` on the IP side no longer resolve, because the bean qualifier has `members={}` whereas the IP qualifier has `members={value=StringVal[scalar]}`. The resolver considers them distinct. |
 
 ### Fix
 
-Sept fichiers touchés dans `vauban-core`, tous sur le pipeline BCE / lang-model :
+Seven files touched in `vauban-core`, all on the BCE / lang-model pipeline:
 
-1. `extensions/VaubanBceBeanInfo.injectionPoints()` — délègue à un nouveau wrapper `VaubanBceInjectionPointInfo` qui adapte chaque `BeanDescriptor.InjectionPointInfo` (modèle interne) vers `jakarta.enterprise.inject.build.compatible.spi.InjectionPointInfo` avec le type, les qualifiers (membres préservés via `VaubanAnnotationInfo`) et la déclaration (`FieldInfo` quand parsable depuis la description, sinon `ClassInfo` fallback).
-2. `langmodel/VaubanAnnotationInfo` — override de `name()` retourne directement `indexAnnotation.name().value()` sans passer par `declaration()`.
-3. `langmodel/types/VaubanClassType.declaration()` — fallback synthétique (`io.vidocq.vauban.indexer.model.ClassInfo` avec juste le `name`) quand le type n'est pas indexé.
-4. `extensions/VaubanSyntheticBeanBuilder.type(Type)` — convertit le `Type` lang-model en `TypeInfo` via le nouveau helper `LangModelTypeMapper`, stocké dans un nouveau `Set<TypeInfo> indexTypes`. Accessible via `getIndexTypes()`.
-5. `extensions/LangModelTypeMapper` (NEW) — inverse de `langmodel.types.TypeMapper` : `jakarta…Type → indexer TypeInfo` (récursif sur primitifs, classes, paramétrés, tableaux, wildcards, type-variables).
-6. `extensions/VaubanTypes.ofClass(String)` — retourne toujours un `VaubanClassType`, plus de `null` même si le type n'est pas dans l'index (le fallback de #3 prend le relais).
-7. `extensions/BceProcessor.toBeanDescriptor` — fusionne `synBean.getIndexTypes()` dans le set de types, et appelle un nouvel helper `extractAnnotationMembers(Annotation)` (réflexion : chaque méthode du type d'annotation → `AnnotationValue` correspondante, support primitifs / String / Class / Enum / Annotation imbriquée / arrays).
+1. `extensions/VaubanBceBeanInfo.injectionPoints()` — delegates to a new wrapper `VaubanBceInjectionPointInfo` that adapts each `BeanDescriptor.InjectionPointInfo` (internal model) to `jakarta.enterprise.inject.build.compatible.spi.InjectionPointInfo` with the type, the qualifiers (members preserved via `VaubanAnnotationInfo`) and the declaration (`FieldInfo` when parsable from the description, otherwise `ClassInfo` fallback).
+2. `langmodel/VaubanAnnotationInfo` — override of `name()` returns `indexAnnotation.name().value()` directly without going through `declaration()`.
+3. `langmodel/types/VaubanClassType.declaration()` — synthetic fallback (`io.vidocq.vauban.indexer.model.ClassInfo` with just the `name`) when the type is not indexed.
+4. `extensions/VaubanSyntheticBeanBuilder.type(Type)` — converts the lang-model `Type` to a `TypeInfo` via the new helper `LangModelTypeMapper`, stored in a new `Set<TypeInfo> indexTypes`. Accessible via `getIndexTypes()`.
+5. `extensions/LangModelTypeMapper` (NEW) — inverse of `langmodel.types.TypeMapper`: `jakarta…Type → indexer TypeInfo` (recursive over primitives, classes, parameterized, arrays, wildcards, type-variables).
+6. `extensions/VaubanTypes.ofClass(String)` — always returns a `VaubanClassType`, no more `null` even if the type is not in the index (the fallback from #3 takes over).
+7. `extensions/BceProcessor.toBeanDescriptor` — merges `synBean.getIndexTypes()` into the type set, and calls a new helper `extractAnnotationMembers(Annotation)` (reflection: each method of the annotation type → corresponding `AnnotationValue`, support for primitives / String / Class / Enum / nested Annotation / arrays).
 
-Aucune signature publique modifiée. Pas d'impact sur le chemin pré-processed APT (les `vauban-bce-runtime.list` / `vauban-bce-processed` markers passent par d'autres call-sites).
+No public signature modified. No impact on the pre-processed APT path (the `vauban-bce-runtime.list` / `vauban-bce-processed` markers go through other call-sites).
 
-### Test de régression
+### Regression test
 
-`vauban-core/src/test/java/io/vidocq/vauban/core/extensions/BceRegistrationSynthesisTest.java` (3 tests) :
+`vauban-core/src/test/java/io/vidocq/vauban/core/extensions/BceRegistrationSynthesisTest.java` (3 tests):
 
-- `registrationExposesInjectionPoints` — vérifie que `BeanInfo.injectionPoints()` expose les 2 IPs avec leur type ET le membre `value` du `@Tagged` qualifier (couvre #1, #2, #6 sur le chemin lecture).
-- `syntheticScalarBeanResolves` — `@Synthesis` enregistre un `SyntheticBean<String>` avec qualifier `@Tagged("scalar")`, l'IP `@Inject @Tagged("scalar") String` résout (couvre #6 côté résolution).
-- `syntheticParameterizedBeanResolves` — `@Synthesis` avec `type(types.parameterized(Optional.class, types.of(String.class)))`, l'IP `Optional<String>` résout (couvre #3, #4, #5).
+- `registrationExposesInjectionPoints` — verifies that `BeanInfo.injectionPoints()` exposes the 2 IPs with their type AND the `value` member of the `@Tagged` qualifier (covers #1, #2, #6 on the read path).
+- `syntheticScalarBeanResolves` — `@Synthesis` registers a `SyntheticBean<String>` with qualifier `@Tagged("scalar")`, the IP `@Inject @Tagged("scalar") String` resolves (covers #6 on the resolution side).
+- `syntheticParameterizedBeanResolves` — `@Synthesis` with `type(types.parameterized(Optional.class, types.of(String.class)))`, the IP `Optional<String>` resolves (covers #3, #4, #5).
 
-`vauban-core` : 269 tests, 0 failure (266 baseline + 3 nouveaux). `ravel-cdi-vauban` : 21 tests, 0 failure ; le test `VaubanContainerIntegrationTest.resolves_config_property_injection_through_bce_pipeline` (jusque-là `@Disabled` pour M6 résiduel) passe désormais en local — peut être réactivé côté ravel après publication d'un snapshot Vauban contenant ce fix.
+`vauban-core`: 269 tests, 0 failure (266 baseline + 3 new). `ravel-cdi-vauban`: 21 tests, 0 failure; the test `VaubanContainerIntegrationTest.resolves_config_property_injection_through_bce_pipeline` (until now `@Disabled` for residual M6) now passes locally — it can be re-enabled on the Ravel side once a Vauban snapshot containing this fix is published.
 
-### Suivi
+### Follow-up
 
-- `VaubanBceInterceptorInfo.injectionPoints()` reste un stub — `InterceptorDescriptor` ne piste pas encore les IPs ; pas critique pour M6, à ouvrir séparément (VAU-BCE-002 si besoin).
-- Les autres call sites de `new QualifierInstance(qName, Map.of())` (BceProcessor lignes 1010, 1071, 1141 ; VaubanContainerBuilder ligne 1172) suivent la même pattern de perte de membres ; à investiguer si un cas non-synthétique le requiert.
+- `VaubanBceInterceptorInfo.injectionPoints()` remains a stub — `InterceptorDescriptor` does not track IPs yet; not critical for M6, to be opened separately (VAU-BCE-002 if needed).
+- The other call sites of `new QualifierInstance(qName, Map.of())` (BceProcessor lines 1010, 1071, 1141; VaubanContainerBuilder line 1172) follow the same member-loss pattern; to be investigated if a non-synthetic case requires it.
 
 ---
 
-## VAU-MVN-001 — `VaubanGenerator` propage `NoClassDefFoundError` au lieu de skipper la classe
+## VAU-MVN-001 — `VaubanGenerator` propagates `NoClassDefFoundError` instead of skipping the class
 
-**Date** : 2026-05-09
-**Statut** : `FIXED` — 2026-05-09 (branche `fix/vau-mvn-001-classpath-noclassdef`)
-**Sévérité** : moyenne — bloque tout build qui consomme un artefact dont une dépendance transitive « optionnelle » manque sur le classpath fourni au plugin (cas concret : `microprofile-config-api:3.1.1` qui référence `jakarta.activation`).
+**Date**: 2026-05-09
+**Status**: `FIXED` — 2026-05-09 (branch `fix/vau-mvn-001-classpath-noclassdef`)
+**Severity**: medium — blocks any build that consumes an artifact whose "optional" transitive dependency is missing from the classpath provided to the plugin (concrete case: `microprofile-config-api:3.1.1`, which references `jakarta.activation`).
 
-### Symptôme
+### Symptom
 
-Pendant la phase `process-classes` de `vauban-maven-plugin`, la JVM lève une erreur de linkage non rattrapée et la build échoue :
+During the `process-classes` phase of `vauban-maven-plugin`, the JVM raises an uncaught linkage error and the build fails:
 
 ```
 java.lang.NoClassDefFoundError: jakarta/activation/DataSource
@@ -129,57 +129,57 @@ java.lang.NoClassDefFoundError: jakarta/activation/DataSource
     at io.vidocq.vauban.maven.generate.GenerateMojo.execute(GenerateMojo.java:62)
 ```
 
-Aucun `META-INF/vauban-beans.list` n'est produit pour le module concerné, et tous les modules suivants en dépendance Maven échouent en cascade.
+No `META-INF/vauban-beans.list` is produced for the affected module, and all subsequent Maven-dependent modules fail in cascade.
 
-### Repro minimal
+### Minimal repro
 
-Un projet Maven qui :
-1. déclare `org.eclipse.microprofile.config:microprofile-config-api:3.1.1` en `compile`,
-2. exécute `vauban:generate` (phase `process-classes`).
+A Maven project that:
+1. declares `org.eclipse.microprofile.config:microprofile-config-api:3.1.1` in `compile`,
+2. runs `vauban:generate` (`process-classes` phase).
 
-Le scénario est exactement celui de `ravel-cdi-vauban` packagé via Vauban (cf. `ravel/CLAUDE.md`).
+The scenario is exactly that of `ravel-cdi-vauban` packaged via Vauban (see `ravel/CLAUDE.md`).
 
-### Cause racine
+### Root cause
 
-Deux call sites de `Class.forName(name, false, cl)` dans `VaubanGenerator` :
+Two call sites of `Class.forName(name, false, cl)` in `VaubanGenerator`:
 
-| Ligne | Contexte | Catch d'origine |
+| Line | Context | Original catch |
 |---|---|---|
-| ~211 | génération de proxy / interceptor (dans `generate`) | `ClassNotFoundException` |
-| ~352 | `loadArchiveClasses` (chargement réflexif des classes indexées) | `ClassNotFoundException` |
+| ~211 | proxy / interceptor generation (in `generate`) | `ClassNotFoundException` |
+| ~352 | `loadArchiveClasses` (reflective loading of indexed classes) | `ClassNotFoundException` |
 
-`Class.forName(name, false, cl)` ne déclenche pas l'init statique mais déclenche le **linkage** : la JVM doit résoudre la superclasse, les interfaces et les types des champs/méthodes. Toute classe référencée absente du classloader passé en paramètre lève `NoClassDefFoundError` (sous-classe de `LinkageError`, donc *pas* de `ClassNotFoundException`).
+`Class.forName(name, false, cl)` does not trigger static init but does trigger **linkage**: the JVM must resolve the superclass, the interfaces, and the field/method types. Any referenced class missing from the classloader passed as a parameter throws `NoClassDefFoundError` (a subclass of `LinkageError`, hence *not* a `ClassNotFoundException`).
 
-Le plugin construit son classloader via `GenerateMojo.buildClassLoader(...)` à partir de `project.getArtifacts()`. Les dépendances marquées `optional=true` chez l'artefact scanné (typiquement `microprofile-config-api` → `jakarta.activation`) ne remontent pas jusqu'au classpath du plugin → premier call site qui touche un champ/méthode de la classe importée explose en `NoClassDefFoundError`.
+The plugin builds its classloader via `GenerateMojo.buildClassLoader(...)` from `project.getArtifacts()`. Dependencies marked `optional=true` on the scanned artifact (typically `microprofile-config-api` → `jakarta.activation`) do not propagate up to the plugin classpath → the first call site that touches a field/method of the imported class blows up with `NoClassDefFoundError`.
 
 ### Fix
 
-`vauban-maven-plugin/src/main/java/io/vidocq/vauban/maven/generate/VaubanGenerator.java`, **les deux** call sites élargissent leur catch à `NoClassDefFoundError` :
+`vauban-maven-plugin/src/main/java/io/vidocq/vauban/maven/generate/VaubanGenerator.java`, **both** call sites widen their catch to `NoClassDefFoundError`:
 
-- `loadArchiveClasses` (~352) : ignore silencieusement (la classe ne sera pas chargée pour la suite du pipeline BCE / proxy / interceptor, mais reste disponible côté indexer bytecode).
-- Génération proxy (~211) : ajoute le warning existant (« Cannot load class for generation: <fqn> »).
+- `loadArchiveClasses` (~352): silently ignored (the class will not be loaded for the rest of the BCE / proxy / interceptor pipeline, but remains available on the bytecode indexer side).
+- proxy generation (~211): adds the existing warning ("Cannot load class for generation: <fqn>").
 
-Pas de changement de sémantique vis-à-vis du contrat normal : on remplace simplement un crash dur par une dégradation gracieuse alignée sur le comportement déjà en place pour `ClassNotFoundException`.
+No semantic change with respect to the normal contract: we simply replace a hard crash with a graceful degradation aligned with the behavior already in place for `ClassNotFoundException`.
 
-### Comment éviter la régression
+### How to avoid the regression
 
-`VaubanGeneratorTest` passe toujours (9/9). À ajouter en suivi : `shouldSkipClassWithMissingTransitive` qui génère via Class-File API une classe annotée `@ApplicationScoped` étendant un `com.missing.Parent` inexistant, l'embarque dans un JAR scanné, et vérifie que `generate()` retourne sans lever.
+`VaubanGeneratorTest` still passes (9/9). To add as follow-up: `shouldSkipClassWithMissingTransitive`, which generates via Class-File API a class annotated `@ApplicationScoped` extending a non-existent `com.missing.Parent`, embeds it in a scanned JAR, and verifies that `generate()` returns without throwing.
 
-### Élargissement éventuel
+### Possible widening
 
-`Class.forName` peut aussi lever d'autres `LinkageError` (`ClassFormatError`, `IncompatibleClassChangeError`, `UnsupportedClassVersionError`, `VerifyError`). Si on observe l'un de ces cas en production, élargir le catch à `LinkageError` (parent commun). Pour l'instant le fix reste ciblé sur le symptôme observé.
+`Class.forName` can also throw other `LinkageError`s (`ClassFormatError`, `IncompatibleClassChangeError`, `UnsupportedClassVersionError`, `VerifyError`). If we observe one of these cases in production, widen the catch to `LinkageError` (common parent). For now the fix stays targeted at the observed symptom.
 
 ---
 
-## VAU-PRX-002 — Drift entre `ClientProxyGenerator` (compile-time) et `RuntimeClientProxyGenerator` (runtime)
+## VAU-PRX-002 — Drift between `ClientProxyGenerator` (compile-time) and `RuntimeClientProxyGenerator` (runtime)
 
-**Date** : 2026-05-07
-**Statut** : `FIXED` — 2026-05-07
-**Sévérité** : haute (rend tout bean `@ApplicationScoped` injecté via `cassini-cdi-vauban` non utilisable côté JAX-RS quand le `_ClientProxy.class` est pré-généré par APT).
+**Date**: 2026-05-07
+**Status**: `FIXED` — 2026-05-07
+**Severity**: high (makes any `@ApplicationScoped` bean injected via `cassini-cdi-vauban` unusable on the JAX-RS side when the `_ClientProxy.class` is pre-generated by APT).
 
-### Symptôme
+### Symptom
 
-`InterceptorBeanWrapper.getOrCreateProxy` lève une `DeploymentException("Failed to create client proxy for normal-scoped bean ...")`. Cassini fallback alors sur `cls.getDeclaredConstructor().newInstance()` qui retourne une instance brute non-injectée → NPE à l'invocation (`this.dataSourceInstance is null`, `this.products is null`, etc.).
+`InterceptorBeanWrapper.getOrCreateProxy` throws a `DeploymentException("Failed to create client proxy for normal-scoped bean ...")`. Cassini then falls back to `cls.getDeclaredConstructor().newInstance()`, which returns a raw, non-injected instance → NPE on invocation (`this.dataSourceInstance is null`, `this.products is null`, etc.).
 
 ```
 Caused by: java.lang.NoSuchMethodException: …DatabaseInspectorResource_ClientProxy.<init>()
@@ -187,49 +187,49 @@ Caused by: java.lang.NoSuchMethodException: …DatabaseInspectorResource_ClientP
     at io.vidocq.vauban.core.container.InterceptorBeanWrapper.lambda$getOrCreateProxy$0(InterceptorBeanWrapper.java:235)
 ```
 
-### Cause racine
+### Root cause
 
-Deux générateurs de client proxy coexistaient avec des contrats incompatibles :
+Two client proxy generators coexisted with incompatible contracts:
 
-- `vauban-processor/.../ClientProxyGenerator.java` (compile-time, APT) émettait : field `delegate` final + ctor `(Supplier)` + putfield au constructeur.
-- `vauban-core/.../RuntimeClientProxyGenerator.java` (runtime fallback) émet : field `$$delegate` non-final + ctor no-arg + setter `$$setDelegate(Supplier)`.
+- `vauban-processor/.../ClientProxyGenerator.java` (compile-time, APT) emitted: final `delegate` field + `(Supplier)` ctor + putfield in the constructor.
+- `vauban-core/.../RuntimeClientProxyGenerator.java` (runtime fallback) emits: non-final `$$delegate` field + no-arg ctor + `$$setDelegate(Supplier)` setter.
 
-`InterceptorBeanWrapper.getOrCreateProxy` (lignes 235-249) attend exclusivement le second format. `loadOrDefineClassRobustly` charge en priorité le `_ClientProxy.class` pré-généré par APT, donc le format ancien shadows toujours le runtime.
+`InterceptorBeanWrapper.getOrCreateProxy` (lines 235-249) expects exclusively the second format. `loadOrDefineClassRobustly` loads the APT-pre-generated `_ClientProxy.class` in priority, so the old format always shadows the runtime one.
 
-### Pourquoi `vidocq-runtime-cassini-rest-example` fonctionnait quand même
+### Why `vidocq-runtime-cassini-rest-example` worked anyway
 
-Son `target/classes/.../TodoResource_ClientProxy.class` venait d'une compilation antérieure faite avec une version du `ClientProxyGenerator` qui produisait déjà le format moderne — il n'avait simplement pas été régénéré depuis le drift.
+Its `target/classes/.../TodoResource_ClientProxy.class` came from an earlier compilation done with a version of `ClientProxyGenerator` that already produced the modern format — it simply had not been regenerated since the drift.
 
 ### Fix
 
-`vauban/vauban-processor/src/main/java/io/vidocq/vauban/processor/codegen/proxy/ClientProxyGenerator.java` : aligné sur le format `RuntimeClientProxyGenerator` :
-- Field `$$delegate` (non-final).
-- Constructor public no-arg appelant `super()`.
-- Méthode `$$setDelegate(Supplier)`.
-- Tous les `getfield "delegate"` → `getfield "$$delegate"`.
+`vauban/vauban-processor/src/main/java/io/vidocq/vauban/processor/codegen/proxy/ClientProxyGenerator.java`: aligned with the `RuntimeClientProxyGenerator` format:
+- `$$delegate` field (non-final).
+- Public no-arg constructor calling `super()`.
+- `$$setDelegate(Supplier)` method.
+- All `getfield "delegate"` → `getfield "$$delegate"`.
 
-Tests `ClientProxyGeneratorTest` mis à jour pour utiliser le nouveau contrat (ctor no-arg + setter).
+`ClientProxyGeneratorTest` tests updated to use the new contract (no-arg ctor + setter).
 
-### Comment éviter la régression
+### How to avoid the regression
 
-`ClientProxyGeneratorTest.shouldDelegateMethodCalls` / `shouldDelegateVoidMethods` invoquent désormais le proxy via `getDeclaredConstructor().newInstance()` puis `getMethod("$$setDelegate", Supplier.class)` — exactement le code que fait `InterceptorBeanWrapper.getOrCreateProxy`. Tout futur drift unilatéral d'un des deux générateurs casse immédiatement ces tests.
+`ClientProxyGeneratorTest.shouldDelegateMethodCalls` / `shouldDelegateVoidMethods` now invoke the proxy via `getDeclaredConstructor().newInstance()` then `getMethod("$$setDelegate", Supplier.class)` — exactly the code that `InterceptorBeanWrapper.getOrCreateProxy` does. Any future unilateral drift of either generator immediately breaks these tests.
 
 ---
 
-## VAU-INJ-001 — Field injection résout immédiatement les beans normal-scope (perd le client proxy)
+## VAU-INJ-001 — Field injection eagerly resolves normal-scope beans (loses the client proxy)
 
-**Date** : 2026-05-07
-**Statut** : `FIXED` — 2026-05-07
-**Sévérité** : haute (rend `@TransactionScoped` / `@RequestScoped` non utilisable en `@Inject` field direct).
+**Date**: 2026-05-07
+**Status**: `FIXED` — 2026-05-07
+**Severity**: high (makes `@TransactionScoped` / `@RequestScoped` unusable as a direct `@Inject` field).
 
-### Symptôme
+### Symptom
 
-Quand un bean `@ApplicationScoped` (ou autre bean managé) déclare un `@Inject T`
-où `T` est un bean **normal-scope** (`@TransactionScoped`, `@RequestScoped`, …),
-l'injection field tente de résoudre le contexte au moment du boot/de la
-création de l'instance — donc *hors-scope* — et lève un
-`ContextNotActiveException`. Le field reste `null` ; toute invocation suivante
-provoque un NPE.
+When an `@ApplicationScoped` bean (or another managed bean) declares an `@Inject T`
+where `T` is a **normal-scope** bean (`@TransactionScoped`, `@RequestScoped`, …),
+field injection tries to resolve the context at boot/instance-creation time —
+hence *out-of-scope* — and throws a
+`ContextNotActiveException`. The field stays `null`; any subsequent invocation
+causes an NPE.
 
 ```
 INJECTION FAILED FOR audit ON class …ProductResource$$Intercepted :
@@ -240,19 +240,19 @@ jakarta.enterprise.context.ContextNotActiveException
     at io.vidocq.vauban.core.container.InterceptorBeanWrapper.lambda$getOrCreateProxy$0
     at io.vidocq.vauban.core.container.InterceptorBeanWrapper.getOrCreateProxy
     at io.vidocq.vauban.core.container.VaubanContainer.getOrCreateProxyForBean
-    at io.vidocq.vauban.core.container.VaubanBeanManager.getReference        ← ici
-    at io.vidocq.vauban.core.container.BeanInjector.lambda$injectFieldsByReflection$0  ← appelle getReference au boot
+    at io.vidocq.vauban.core.container.VaubanBeanManager.getReference        ← here
+    at io.vidocq.vauban.core.container.BeanInjector.lambda$injectFieldsByReflection$0  ← calls getReference at boot
 ```
 
-### Repro minimal
+### Minimal repro
 
-Le projet `vidocq-runtime-mansart-h2-example` reproduit en module-path :
+The `vidocq-runtime-mansart-h2-example` project reproduces this on the module-path:
 
 ```java
 @ApplicationScoped
 @Path("/products")
 public class ProductResource {
-    @Inject OperationAudit audit;        // @TransactionScoped → null après injection
+    @Inject OperationAudit audit;        // @TransactionScoped → null after injection
 
     @POST @Transactional
     public Response create(Product input) {
@@ -264,77 +264,77 @@ public class ProductResource {
 public class OperationAudit implements Serializable { … }
 ```
 
-### Hypothèse de cause
+### Suspected cause
 
-`BeanInjector.injectFieldsByReflection` (vauban-core, ligne ~90) :
+`BeanInjector.injectFieldsByReflection` (vauban-core, line ~90):
 
 ```java
 value = bm.getReference(resolved, fieldType, ctx);
 ```
 
-Pour un bean normal-scope, `getReference` doit retourner un **client proxy
-paresseux** : un objet wrapper qui résout le contexte *à chaque invocation de
-méthode* (pas au moment de la création). Aujourd'hui `getReference` →
-`getOrCreateProxy` → `ApplicationContext.get` → `ManagedBean.create` → ce qui
-tente de créer l'instance immédiatement. Hors-scope, l'`OperationAudit` ne
-peut pas être créé et le proxy retourné est null.
+For a normal-scope bean, `getReference` must return a **lazy client
+proxy**: a wrapper object that resolves the context *on each method
+invocation* (not at creation time). Today `getReference` →
+`getOrCreateProxy` → `ApplicationContext.get` → `ManagedBean.create` → which
+tries to create the instance immediately. Out-of-scope, the `OperationAudit`
+cannot be created and the returned proxy is null.
 
-Le client proxy `OperationAudit_ClientProxy` existe d'ailleurs (généré par
-`ClientProxyGenerator`), avec un constructeur `(Supplier<OperationAudit>)` —
-c'est exactement le pattern correct. Mais `BeanInjector` ne l'instancie pas ;
-il appelle `getReference` qui résout l'instance, perdant la lazy-resolution
-qu'offre le proxy.
+The `OperationAudit_ClientProxy` client proxy does in fact exist (generated by
+`ClientProxyGenerator`), with a `(Supplier<OperationAudit>)` constructor —
+that is exactly the correct pattern. But `BeanInjector` does not instantiate
+it; it calls `getReference`, which resolves the instance, losing the
+lazy-resolution offered by the proxy.
 
-### Workaround documenté
+### Documented workaround
 
-Injecter via `Provider<T>` ou `Instance<T>` : `BeanInjector` a une branche
-spécifique (lignes 38-53) pour ces types qui crée correctement un wrapper
-paresseux.
+Inject via `Provider<T>` or `Instance<T>`: `BeanInjector` has a specific
+branch (lines 38-53) for these types that correctly creates a lazy
+wrapper.
 
 ```java
 @Inject Provider<OperationAudit> audit;   // OK
 …
-audit.get().record("…");                  // résout dans le scope actif
+audit.get().record("…");                  // resolves in the active scope
 ```
 
-### Fix appliqué (2026-05-07)
+### Applied fix (2026-05-07)
 
-**Cause racine réelle** : `VaubanContainer.getContextualInstance` appelait
-`context.get(contextual)` (sans `CreationalContext`, i.e. "look up existing")
-AVANT de vérifier `isNormal()`. Pour un scope inactif au boot
-(`@TransactionScoped` hors TX, `@RequestScoped` hors requête), ce `context.get()`
-appelle `checkActive()` → `ContextNotActiveException`. Cette exception était
-avalée par le catch de `BeanInjector` laissant le field à `null`.
+**Actual root cause**: `VaubanContainer.getContextualInstance` called
+`context.get(contextual)` (without `CreationalContext`, i.e. "look up existing")
+BEFORE checking `isNormal()`. For a scope inactive at boot
+(`@TransactionScoped` outside a TX, `@RequestScoped` outside a request), this `context.get()`
+calls `checkActive()` → `ContextNotActiveException`. This exception was
+swallowed by the `BeanInjector` catch, leaving the field at `null`.
 
-Deuxième vecteur : le catch-all dans `InterceptorBeanWrapper.getOrCreateProxy`
-dégradait vers `ctx.get()` eagerment pour tout scope en cas d'exception
-pendant la création du proxy.
+Second vector: the catch-all in `InterceptorBeanWrapper.getOrCreateProxy`
+degraded to an eager `ctx.get()` for any scope when an exception occurred
+during proxy creation.
 
-**Fix 1 — `VaubanContainer.getContextualInstance`** : déplacer le check
-`isNormal()` en première instruction, avant tout appel à `context.get()`.
-Le proxy est retourné immédiatement sans jamais toucher le contexte.
+**Fix 1 — `VaubanContainer.getContextualInstance`**: move the
+`isNormal()` check to the first statement, before any call to `context.get()`.
+The proxy is returned immediately without ever touching the context.
 
-**Fix 2 — `InterceptorBeanWrapper.getOrCreateProxy` catch block** : pour les
-beans `isNormal()`, lancer `DeploymentException` au lieu de tenter `ctx.get()`
+**Fix 2 — `InterceptorBeanWrapper.getOrCreateProxy` catch block**: for
+`isNormal()` beans, throw `DeploymentException` instead of trying `ctx.get()`
 eagerly.
 
-**Test TDD ajouté** : `NormalScopeFieldInjectionTest` (4 cas) dans
+**TDD test added**: `NormalScopeFieldInjectionTest` (4 cases) in
 `vauban-core/src/test/java/io/vidocq/vauban/core/container/`.
 
-262 tests vauban-core — 0 failures, 0 errors après fix.
+262 vauban-core tests — 0 failures, 0 errors after the fix.
 
-**Régression TCK découverte et corrigée (2026-05-07)** : le Fix 2 causait 7 failures TCK CDI
+**TCK regression discovered and fixed (2026-05-07)**: Fix 2 caused 7 CDI TCK failures
 (`EventTypesTest`, `MemberLevelInheritanceTest`, `InvokerAssignabilityTest`,
-`VarargsMethodInvokerTest`). Cause réelle : `RuntimeClientProxyGenerator.generateProxyMethod`
-plantait pour les méthodes ayant des paramètres de type tableau (`Song[]`, `int[]`,
-`String...` varargs) car `Class.describeConstable()` retourne `Optional.empty()` pour ces
-types et le fallback `ClassDesc.of(type.getName())` utilisait le format descripteur JVM
-(ex. `"[Lorg...Song;"`) que `ClassDesc.of()` rejette. La `DeploymentException` du Fix 2
-exposait cette erreur de génération qui était auparavant silencieusement ignorée.
+`VarargsMethodInvokerTest`). Actual cause: `RuntimeClientProxyGenerator.generateProxyMethod`
+crashed for methods having array-type parameters (`Song[]`, `int[]`,
+`String...` varargs) because `Class.describeConstable()` returns `Optional.empty()` for these
+types and the fallback `ClassDesc.of(type.getName())` used the JVM descriptor format
+(e.g. `"[Lorg...Song;"`) that `ClassDesc.of()` rejects. The `DeploymentException` from Fix 2
+exposed this generation error that was previously silently ignored.
 
-**Fix 3 — `RuntimeClientProxyGenerator.classDescOf(Class<?>)`** : helper qui utilise
-`ClassDesc.ofDescriptor(type.descriptorString())` comme fallback — format accepté pour
-tous les types (tableaux, primitifs, références). Tous les appels
-`describeConstable().orElse(ClassDesc.of(...))` remplacés par `classDescOf()`.
+**Fix 3 — `RuntimeClientProxyGenerator.classDescOf(Class<?>)`**: helper that uses
+`ClassDesc.ofDescriptor(type.descriptorString())` as a fallback — a format accepted for
+all types (arrays, primitives, references). All
+`describeConstable().orElse(ClassDesc.of(...))` calls replaced by `classDescOf()`.
 
-TCK CDI **774/774 PASS** — 0 failures après le Fix 3.
+CDI TCK **774/774 PASS** — 0 failures after Fix 3.

@@ -17,42 +17,42 @@ import java.util.Map;
 import static org.junit.jupiter.api.Assertions.*;
 
 /**
- * Tests pour le traitement BCE Enhancement dans Vauban.
+ * Tests for BCE Enhancement processing in Vauban.
  *
- * <h2>Contexte Vidocq</h2>
- * Vidocq utilise une Build Compatible Extension ({@code RestScopeExtension})
- * qui ajoute automatiquement {@code @RequestScoped} aux classes annotees
- * {@code @Path} sans scope CDI :
+ * <h2>Vidocq context</h2>
+ * Vidocq uses a Build Compatible Extension ({@code RestScopeExtension})
+ * that automatically adds {@code @RequestScoped} to classes annotated
+ * with {@code @Path} that have no CDI scope:
  * <pre>
  *   {@literal @}Enhancement(types = Object.class, withAnnotations = Path.class)
  *   public void addDefaultScope(ClassConfig clazz) {
  *       clazz.addAnnotation(RequestScoped.class);
  *   }
  * </pre>
- * Avec 3 ressources JAX-RS ({@code HelloResource}, {@code Hello2Resource},
- * {@code HelloSimpleJaxRSResource}), seule la premiere recevait le scope.
- * Les deux autres n'etaient jamais traitees, donc jamais decouvertes comme
- * beans CDI, et le {@code JerseyBridge} ne les trouvait pas.
+ * With 3 JAX-RS resources ({@code HelloResource}, {@code Hello2Resource},
+ * {@code HelloSimpleJaxRSResource}), only the first received the scope.
+ * The other two were never processed, hence never discovered as CDI
+ * beans, and the {@code JerseyBridge} could not find them.
  *
- * <h2>Deux bugs identifies</h2>
+ * <h2>Two identified bugs</h2>
  * <ol>
- *   <li><b>matchesClass</b> : avec {@code types = Object.class} (le wildcard
- *       CDI par defaut) et {@code withSubtypes = false} (le defaut),
- *       le check faisait {@code Object.class.equals(targetClass)} → toujours
- *       {@code false} pour les archive classes (classes sans scope CDI).
- *       Les beans existants utilisaient {@code isAssignableFrom} et n'etaient
- *       pas affectes.</li>
- *   <li><b>applyEnhancements</b> : ne creait jamais de nouveaux
- *       {@code BeanDescriptor} pour les classes qui recevaient un scope via
- *       Enhancement. Seuls les beans deja decouverts etaient modifies.</li>
+ *   <li><b>matchesClass</b>: with {@code types = Object.class} (the default
+ *       CDI wildcard) and {@code withSubtypes = false} (the default),
+ *       the check did {@code Object.class.equals(targetClass)} → always
+ *       {@code false} for archive classes (classes without a CDI scope).
+ *       Existing beans used {@code isAssignableFrom} and were not
+ *       affected.</li>
+ *   <li><b>applyEnhancements</b>: it never created new
+ *       {@code BeanDescriptor}s for classes that received a scope via
+ *       Enhancement. Only already-discovered beans were modified.</li>
  * </ol>
  *
- * <h2>Pourquoi le TCK ne couvre pas ce cas</h2>
- * Le TCK CDI 4.1 teste les BCE avec des beans qui ont deja un scope ou un
- * stereotype. Il ne teste pas le scenario ou une {@code @Enhancement}
- * <em>promeut</em> une classe non-bean en bean en ajoutant un scope.
- * Ce pattern est pourtant courant dans les frameworks (MicroProfile REST,
- * SmallRye JAX-RS) qui integrent JAX-RS avec CDI via des BCE.
+ * <h2>Why the TCK does not cover this case</h2>
+ * The CDI 4.1 TCK tests BCEs with beans that already have a scope or a
+ * stereotype. It does not test the scenario where an {@code @Enhancement}
+ * <em>promotes</em> a non-bean class to a bean by adding a scope.
+ * This pattern is nevertheless common in frameworks (MicroProfile REST,
+ * SmallRye JAX-RS) that integrate JAX-RS with CDI via BCEs.
  */
 @DisplayName("BCE Enhancement processing")
 class BceEnhancementTest {
@@ -79,8 +79,8 @@ class BceEnhancementTest {
     }
 
     /**
-     * Cree un VaubanClassConfig minimal a partir d'un ClassInfo indexer
-     * pour la phase Enhancement (constructeur public VaubanClassConfig(ClassInfo)).
+     * Creates a minimal VaubanClassConfig from an indexer ClassInfo
+     * for the Enhancement phase (public constructor VaubanClassConfig(ClassInfo)).
      */
     private static VaubanClassConfig makeClassConfig() {
         var indexClassInfo = new io.vidocq.vauban.indexer.model.ClassInfo(
@@ -121,17 +121,17 @@ class BceEnhancementTest {
     // ======================================================================
 
     /**
-     * Bug 1 Vidocq : {@code matchesClass(Object.class, false, X)} retournait
-     * toujours {@code false} pour les archive classes. {@code Object.class}
-     * est le wildcard par defaut de {@code @Enhancement.types()} et doit
-     * matcher toutes les classes, independamment de {@code withSubtypes}.
+     * Vidocq bug 1: {@code matchesClass(Object.class, false, X)} always
+     * returned {@code false} for archive classes. {@code Object.class}
+     * is the default wildcard of {@code @Enhancement.types()} and must
+     * match all classes, regardless of {@code withSubtypes}.
      */
     @Nested
-    @DisplayName("matchesClass - correspondance de types")
+    @DisplayName("matchesClass - type matching")
     class MatchesClass {
 
         @Test
-        @DisplayName("Object.class sans sous-types correspond a n'importe quelle classe (wildcard)")
+        @DisplayName("Object.class without subtypes matches any class (wildcard)")
         void shouldMatchAnyClassWhenObjectWithoutSubtypes() throws Exception {
             assertTrue(invokeMatchesClass(new Class<?>[]{Object.class}, false, Dog.class));
             assertTrue(invokeMatchesClass(new Class<?>[]{Object.class}, false, String.class));
@@ -139,7 +139,7 @@ class BceEnhancementTest {
         }
 
         @Test
-        @DisplayName("Object.class avec sous-types correspond a n'importe quelle classe")
+        @DisplayName("Object.class with subtypes matches any class")
         void shouldMatchAnyClassWhenObjectWithSubtypes() throws Exception {
             assertTrue(invokeMatchesClass(new Class<?>[]{Object.class}, true, Dog.class));
             assertTrue(invokeMatchesClass(new Class<?>[]{Object.class}, true, String.class));
@@ -147,7 +147,7 @@ class BceEnhancementTest {
         }
 
         @Test
-        @DisplayName("type specifique sans sous-types ne correspond qu'a la classe exacte")
+        @DisplayName("a specific type without subtypes matches only the exact class")
         void shouldMatchOnlyExactClassWhenNoSubtypes() throws Exception {
             assertTrue(invokeMatchesClass(new Class<?>[]{Animal.class}, false, Animal.class));
             assertFalse(invokeMatchesClass(new Class<?>[]{Animal.class}, false, Dog.class));
@@ -155,7 +155,7 @@ class BceEnhancementTest {
         }
 
         @Test
-        @DisplayName("type specifique avec sous-types correspond aux sous-classes")
+        @DisplayName("a specific type with subtypes matches the subclasses")
         void shouldMatchSubtypesWhenEnabled() throws Exception {
             assertTrue(invokeMatchesClass(new Class<?>[]{Animal.class}, true, Animal.class));
             assertTrue(invokeMatchesClass(new Class<?>[]{Animal.class}, true, Dog.class));
@@ -164,21 +164,21 @@ class BceEnhancementTest {
         }
 
         @Test
-        @DisplayName("tableau vide ne correspond a aucune classe")
+        @DisplayName("an empty array matches no class")
         void shouldMatchNothingWhenTypesEmpty() throws Exception {
             assertFalse(invokeMatchesClass(new Class<?>[0], false, Dog.class));
             assertFalse(invokeMatchesClass(new Class<?>[0], true, Dog.class));
         }
 
         @Test
-        @DisplayName("plusieurs types - correspond si au moins un type matche")
+        @DisplayName("multiple types - matches if at least one type matches")
         void shouldMatchIfAnyTypeMatches() throws Exception {
             assertTrue(invokeMatchesClass(new Class<?>[]{String.class, Animal.class}, false, Animal.class));
             assertFalse(invokeMatchesClass(new Class<?>[]{String.class, Integer.class}, false, Animal.class));
         }
 
         @Test
-        @DisplayName("Object.class parmi d'autres types agit comme wildcard")
+        @DisplayName("Object.class among other types acts as a wildcard")
         void shouldMatchWhenObjectAmongOtherTypes() throws Exception {
             assertTrue(invokeMatchesClass(new Class<?>[]{String.class, Object.class}, false, Unrelated.class));
         }
@@ -189,17 +189,17 @@ class BceEnhancementTest {
     // ======================================================================
 
     /**
-     * Bug 2 Vidocq : apres Enhancement, les classes non-beans qui recevaient
-     * un scope n'etaient jamais converties en BeanDescriptor.
-     * {@code extractEnhancedScope} detecte le scope ajoute par la BCE pour
-     * creer le nouveau bean avec le bon scope (normal vs pseudo).
+     * Vidocq bug 2: after Enhancement, non-bean classes that received
+     * a scope were never converted into a BeanDescriptor.
+     * {@code extractEnhancedScope} detects the scope added by the BCE to
+     * create the new bean with the correct scope (normal vs pseudo).
      */
     @Nested
-    @DisplayName("extractEnhancedScope - extraction du scope depuis les configs Enhancement")
+    @DisplayName("extractEnhancedScope - scope extraction from the Enhancement configs")
     class ExtractEnhancedScope {
 
         @Test
-        @DisplayName("config avec @RequestScoped retourne ScopeInfo normal=true")
+        @DisplayName("config with @RequestScoped returns ScopeInfo normal=true")
         void shouldReturnRequestScopedWhenAdded() throws Exception {
             var config = makeClassConfig();
             config.addAnnotation(jakarta.enterprise.context.RequestScoped.class);
@@ -212,7 +212,7 @@ class BceEnhancementTest {
         }
 
         @Test
-        @DisplayName("config avec @ApplicationScoped retourne ScopeInfo normal=true")
+        @DisplayName("config with @ApplicationScoped returns ScopeInfo normal=true")
         void shouldReturnApplicationScopedWhenAdded() throws Exception {
             var config = makeClassConfig();
             config.addAnnotation(jakarta.enterprise.context.ApplicationScoped.class);
@@ -225,7 +225,7 @@ class BceEnhancementTest {
         }
 
         @Test
-        @DisplayName("config avec @Dependent retourne ScopeInfo.DEPENDENT")
+        @DisplayName("config with @Dependent returns ScopeInfo.DEPENDENT")
         void shouldReturnDependentWhenAdded() throws Exception {
             var config = makeClassConfig();
             config.addAnnotation(jakarta.enterprise.context.Dependent.class);
@@ -237,7 +237,7 @@ class BceEnhancementTest {
         }
 
         @Test
-        @DisplayName("config avec @Singleton retourne ScopeInfo.SINGLETON")
+        @DisplayName("config with @Singleton returns ScopeInfo.SINGLETON")
         void shouldReturnSingletonWhenAdded() throws Exception {
             var config = makeClassConfig();
             config.addAnnotation(jakarta.inject.Singleton.class);
@@ -249,10 +249,10 @@ class BceEnhancementTest {
         }
 
         @Test
-        @DisplayName("config sans annotation de scope retourne null")
+        @DisplayName("config without a scope annotation returns null")
         void shouldReturnNullWhenNoScopeAnnotation() throws Exception {
             var config = makeClassConfig();
-            // Aucune annotation ajoutee
+            // No annotation added
 
             var scope = invokeExtractEnhancedScope(List.of(config));
 
@@ -260,7 +260,7 @@ class BceEnhancementTest {
         }
 
         @Test
-        @DisplayName("config avec annotation non-scope retourne null")
+        @DisplayName("config with a non-scope annotation returns null")
         void shouldReturnNullWhenNonScopeAnnotation() throws Exception {
             var config = makeClassConfig();
             config.addAnnotation(SuppressWarnings.class);
@@ -271,7 +271,7 @@ class BceEnhancementTest {
         }
 
         @Test
-        @DisplayName("liste vide de configs retourne null")
+        @DisplayName("an empty config list returns null")
         void shouldReturnNullWhenEmptyConfigList() throws Exception {
             var scope = invokeExtractEnhancedScope(List.of());
 
@@ -279,7 +279,7 @@ class BceEnhancementTest {
         }
 
         @Test
-        @DisplayName("premiere config avec scope gagne sur les suivantes")
+        @DisplayName("the first config with a scope wins over the following ones")
         void shouldReturnFirstScopeWhenMultipleConfigs() throws Exception {
             var config1 = makeClassConfig();
             config1.addAnnotation(jakarta.enterprise.context.RequestScoped.class);
@@ -294,7 +294,7 @@ class BceEnhancementTest {
         }
 
         @Test
-        @DisplayName("config sans scope suivie d'une config avec scope retourne le scope")
+        @DisplayName("a config without a scope followed by a config with a scope returns the scope")
         void shouldSkipNonScopeAndReturnFirstScope() throws Exception {
             var config1 = makeClassConfig();
             config1.addAnnotation(SuppressWarnings.class);
@@ -310,15 +310,15 @@ class BceEnhancementTest {
     }
 
     // ======================================================================
-    // Group 3: VaubanClassConfig - verification du comportement addAnnotation
+    // Group 3: VaubanClassConfig - verification of the addAnnotation behavior
     // ======================================================================
 
     @Nested
-    @DisplayName("VaubanClassConfig - modifications d'annotations")
+    @DisplayName("VaubanClassConfig - annotation modifications")
     class ClassConfigAnnotations {
 
         @Test
-        @DisplayName("addAnnotation(Class) ajoute l'annotation a la liste")
+        @DisplayName("addAnnotation(Class) adds the annotation to the list")
         void shouldTrackAddedAnnotationClass() {
             var config = makeClassConfig();
 
@@ -329,7 +329,7 @@ class BceEnhancementTest {
         }
 
         @Test
-        @DisplayName("config sans modification n'est pas marquee modifiee")
+        @DisplayName("a config without modification is not marked as modified")
         void shouldNotBeModifiedWhenNoChanges() {
             var config = makeClassConfig();
 
@@ -337,7 +337,7 @@ class BceEnhancementTest {
         }
 
         @Test
-        @DisplayName("plusieurs annotations ajoutees sont toutes presentes")
+        @DisplayName("multiple added annotations are all present")
         void shouldTrackMultipleAddedAnnotations() {
             var config = makeClassConfig();
 
@@ -351,7 +351,7 @@ class BceEnhancementTest {
         }
 
         @Test
-        @DisplayName("addAnnotation en doublon ne cree pas de duplicata (Set)")
+        @DisplayName("a duplicate addAnnotation does not create a duplicate (Set)")
         void shouldNotDuplicateAnnotations() {
             var config = makeClassConfig();
 
@@ -362,7 +362,7 @@ class BceEnhancementTest {
         }
 
         @Test
-        @DisplayName("removeAllAnnotations marque la config comme modifiee")
+        @DisplayName("removeAllAnnotations marks the config as modified")
         void shouldBeModifiedAfterRemoveAll() {
             var config = makeClassConfig();
 
@@ -378,18 +378,18 @@ class BceEnhancementTest {
     // ======================================================================
 
     /**
-     * Bug Heisenberg / MicroProfile Fault Tolerance : un BCE
-     * {@code @Enhancement} qui ajoutait un binding d'intercepteur via
-     * {@code ClassConfig.addAnnotation(SomeBinding.class)} était silencieusement
-     * ignoré. Seules les annotations qualifier étaient propagées aux
-     * {@code BeanDescriptor.interceptorBindings()} ; les bindings d'intercepteur
-     * ajoutés en class-level disparaissaient → aucun {@code @Interceptor}
-     * correspondant ne pouvait être activé.
+     * Heisenberg / MicroProfile Fault Tolerance bug: a BCE
+     * {@code @Enhancement} that added an interceptor binding via
+     * {@code ClassConfig.addAnnotation(SomeBinding.class)} was silently
+     * ignored. Only qualifier annotations were propagated to
+     * {@code BeanDescriptor.interceptorBindings()}; interceptor bindings
+     * added at class-level disappeared → no matching {@code @Interceptor}
+     * could be activated.
      *
-     * <p>Cas d'usage canonique : un binding marqueur (ex.
-     * {@code @FaultToleranceBinding}) ajouté par une BCE à toute classe portant
-     * {@code @Retry} / {@code @Timeout} / etc. — pattern utilisé par
-     * SmallRye Fault Tolerance et Heisenberg.</p>
+     * <p>Canonical use case: a marker binding (e.g.
+     * {@code @FaultToleranceBinding}) added by a BCE to any class carrying
+     * {@code @Retry} / {@code @Timeout} / etc. — a pattern used by
+     * SmallRye Fault Tolerance and Heisenberg.</p>
      */
     @Nested
     @DisplayName("class-level @InterceptorBinding propagation via Enhancement")
@@ -422,7 +422,7 @@ class BceEnhancementTest {
         }
 
         @Test
-        @DisplayName("@InterceptorBinding ajouté en class-level est propagé au BeanDescriptor")
+        @DisplayName("@InterceptorBinding added at class-level is propagated to the BeanDescriptor")
         void shouldPropagateClassLevelInterceptorBinding() {
             var config = makeClassConfig();
             config.addAnnotation(MarkerBinding.class);
@@ -440,7 +440,7 @@ class BceEnhancementTest {
         }
 
         @Test
-        @DisplayName("annotation non-binding ajoutée en class-level n'est pas propagée comme binding")
+        @DisplayName("a non-binding annotation added at class-level is not propagated as a binding")
         void shouldNotPropagateNonBindingAnnotation() {
             var config = makeClassConfig();
             config.addAnnotation(NotABinding.class);

@@ -10,7 +10,7 @@ import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-@DisplayName("Systeme d'evenements CDI")
+@DisplayName("CDI event system")
 class EventSystemTest {
 
     // Event payload
@@ -57,7 +57,7 @@ class EventSystemTest {
     }
 
     @Test
-    @DisplayName("un evenement est recu par l'observer")
+    @DisplayName("an event is received by the observer")
     void shouldDeliverEventToObserver() {
         try (var container = VaubanContainer.builder()
                 .addBeanClass(OrderService.class)
@@ -74,7 +74,7 @@ class EventSystemTest {
     }
 
     @Test
-    @DisplayName("un evenement sans observer ne cause pas d'erreur")
+    @DisplayName("an event without an observer does not cause an error")
     void shouldNotFailWithoutObserver() {
         try (var container = VaubanContainer.builder()
                 .addBeanClass(OrderService.class)
@@ -86,7 +86,7 @@ class EventSystemTest {
     }
 
     @Test
-    @DisplayName("plusieurs observers recoivent le meme evenement")
+    @DisplayName("multiple observers receive the same event")
     void shouldNotifyMultipleObservers() {
         try (var container = VaubanContainer.builder()
                 .addBeanClass(OrderService.class)
