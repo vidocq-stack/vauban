@@ -36,4 +36,5 @@ replay_pid*
 .junie/
 .mistral/
 .claude/
+.claudeignore
 .env
