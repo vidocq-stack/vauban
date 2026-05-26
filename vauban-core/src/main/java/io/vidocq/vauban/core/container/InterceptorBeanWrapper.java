@@ -193,6 +193,39 @@ final class InterceptorBeanWrapper {
         return (T) proxyCache.computeIfAbsent(bean.descriptor().id(), id -> {
             var beanClass = resolveProxyTargetClass(bean);
 
+            // VAU-PROXY-INTERFACE: when the proxy target is an interface (e.g. a @RequestScoped
+            // producer-method bean whose produced type is an interface like JsonWebToken),
+            // RuntimeClientProxyGenerator cannot subclass an interface. Use java.lang.reflect.Proxy
+            // instead — the proxy lazily resolves the contextual instance per-call.
+            if (beanClass.isInterface()) {
+                var beanId = bean.descriptor().id();
+                java.util.function.Supplier<Object> delegate = () -> {
+                    var currentBean = container.beans.get(beanId);
+                    if (currentBean == null) currentBean = bean;
+                    var scopeClass = currentBean.getScope();
+                    var ctx = container.getFirstContext(scopeClass);
+                    if (ctx == null) ctx = container.dependentContext();
+                    return ctx.get((Contextual<Object>) (Contextual<?>) currentBean,
+                            new CreationalContextImpl<Object>());
+                };
+                // Collect all interface types from the bean to implement
+                java.util.Set<Class<?>> ifaceSet = new java.util.LinkedHashSet<>();
+                for (var t : bean.getTypes()) {
+                    if (t instanceof Class<?> c && c.isInterface() && c != Object.class) {
+                        ifaceSet.add(c);
+                    }
+                }
+                ifaceSet.add(beanClass);
+                Class<?>[] ifaces = ifaceSet.toArray(new Class<?>[0]);
+                return java.lang.reflect.Proxy.newProxyInstance(
+                        beanClass.getClassLoader(),
+                        ifaces,
+                        (proxy, method, args) -> {
+                            Object target = delegate.get();
+                            return method.invoke(target, args);
+                        });
+            }
+
             if (java.lang.reflect.Modifier.isFinal(beanClass.getModifiers())) {
                 throw new jakarta.enterprise.inject.UnproxyableResolutionException("Normal scoped bean " + beanClass.getName() + " is final");
             }
@@ -271,8 +304,17 @@ final class InterceptorBeanWrapper {
     Class<?> resolveProxyTargetClass(ManagedBean<?> bean) {
         if (bean.descriptor().kind() == BeanDescriptor.BeanKind.PRODUCER_METHOD
                 || bean.descriptor().kind() == BeanDescriptor.BeanKind.PRODUCER_FIELD) {
+            // First pass: prefer a concrete (non-interface) type
             for (var type : bean.getTypes()) {
                 if (type instanceof Class<?> c && c != Object.class && !c.isInterface()) {
+                    return c;
+                }
+            }
+            // VAU-PROXY-INTERFACE: no concrete type found — the produced type is an interface
+            // (e.g. JsonWebToken). Return the interface so getOrCreateProxy() can detect it
+            // and create a java.lang.reflect.Proxy instead of a subclass proxy.
+            for (var type : bean.getTypes()) {
+                if (type instanceof Class<?> c && c != Object.class) {
                     return c;
                 }
             }

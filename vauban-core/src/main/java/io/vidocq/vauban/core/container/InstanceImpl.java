@@ -25,6 +25,8 @@ public final class InstanceImpl<T> implements Instance<T> {
 
     private final VaubanContainer container;
     private final Class<T> type;
+    /** Full resolution type (may be a ParameterizedType) — used in getBeans() to match synthetic beans exactly. */
+    private final java.lang.reflect.Type resolveType;
     private final Annotation[] qualifiers;
     private final jakarta.enterprise.inject.spi.InjectionPoint injectionPoint;
     private final CreationalContextImpl<?> parentCreationalContext;
@@ -38,22 +40,36 @@ public final class InstanceImpl<T> implements Instance<T> {
     }
 
     public InstanceImpl(VaubanContainer container, Class<T> type) {
-        this(container, type, new Annotation[0], null, null);
+        this(container, type, type, new Annotation[0], null, null);
     }
 
     public InstanceImpl(VaubanContainer container, Class<T> type, jakarta.enterprise.inject.spi.InjectionPoint injectionPoint) {
-        this(container, type, new Annotation[0], injectionPoint, null);
+        this(container, type, type, new Annotation[0], injectionPoint, null);
     }
 
     public InstanceImpl(VaubanContainer container, Class<T> type, Annotation[] qualifiers, jakarta.enterprise.inject.spi.InjectionPoint injectionPoint) {
-        this(container, type, qualifiers, injectionPoint, null);
+        this(container, type, type, qualifiers, injectionPoint, null);
     }
 
     public InstanceImpl(VaubanContainer container, Class<T> type, Annotation[] qualifiers,
                         jakarta.enterprise.inject.spi.InjectionPoint injectionPoint,
                         CreationalContextImpl<?> parentCreationalContext) {
+        this(container, type, type, qualifiers, injectionPoint, parentCreationalContext);
+    }
+
+    /**
+     * Full constructor with explicit lookup type. Use when the injection point's generic type is a
+     * {@link java.lang.reflect.ParameterizedType} (e.g. {@code Optional<String>}) — in that case
+     * {@code lookupType} carries the full type for {@code getBeans()} while {@code type} holds the
+     * raw class used for generic bounds.
+     */
+    public InstanceImpl(VaubanContainer container, Class<T> type, java.lang.reflect.Type resolveType,
+                        Annotation[] qualifiers,
+                        jakarta.enterprise.inject.spi.InjectionPoint injectionPoint,
+                        CreationalContextImpl<?> parentCreationalContext) {
         this.container = container;
         this.type = type;
+        this.resolveType = resolveType != null ? resolveType : type;
         this.injectionPoint = injectionPoint;
         this.parentCreationalContext = parentCreationalContext;
         // If qualifiers are empty, default to @Any and @Default
@@ -75,10 +91,10 @@ public final class InstanceImpl<T> implements Instance<T> {
     @Override
     public T get() {
         var bm = container.getBeanManager();
-        var beans = bm.getBeans(type, qualifiers);
+        var beans = bm.getBeans(resolveType, qualifiers);
         if (beans.isEmpty()) {
             throw new jakarta.enterprise.inject.UnsatisfiedResolutionException(
-                    "No bean found for type: " + type.getName() + " with qualifiers: " + Arrays.toString(qualifiers));
+                    "No bean found for type: " + resolveType.getTypeName() + " with qualifiers: " + Arrays.toString(qualifiers));
         }
         @SuppressWarnings("unchecked")
         var bean = (Bean<T>) bm.resolve(beans);
@@ -86,7 +102,7 @@ public final class InstanceImpl<T> implements Instance<T> {
         ScopedValue.CallableOp<T, RuntimeException> action = () -> {
             var ctx = bm.createCreationalContext(bean);
             @SuppressWarnings("unchecked")
-            var ref = (T) bm.getReference(bean, type, ctx);
+            var ref = (T) bm.getReference(bean, resolveType, ctx);
             if (ref != null && bean.getScope() == jakarta.enterprise.context.Dependent.class) {
                 dependentInstances.put(ref, ctx);
                 if (parentCreationalContext != null) {
@@ -201,7 +217,7 @@ public final class InstanceImpl<T> implements Instance<T> {
 
     @Override
     public boolean isResolvable() {
-        var beans = container.getBeanManager().getBeans(type, qualifiers);
+        var beans = container.getBeanManager().getBeans(resolveType, qualifiers);
         if (beans.isEmpty()) return false;
         if (beans.size() == 1) return true;
         try {
@@ -246,10 +262,10 @@ public final class InstanceImpl<T> implements Instance<T> {
     @Override
     public Handle<T> getHandle() {
         var bm = container.getBeanManager();
-        var beans = bm.getBeans(type, qualifiers);
+        var beans = bm.getBeans(resolveType, qualifiers);
         if (beans.isEmpty()) {
             throw new jakarta.enterprise.inject.UnsatisfiedResolutionException(
-                    "No bean found for type: " + type.getName());
+                    "No bean found for type: " + resolveType.getTypeName());
         }
         @SuppressWarnings("unchecked")
         var bean = (Bean<T>) bm.resolve(beans);
@@ -321,7 +337,7 @@ public final class InstanceImpl<T> implements Instance<T> {
      * Only the highest-priority alternative(s) are returned.
      */
     private Set<Bean<?>> getEffectiveBeans() {
-        var beans = container.getBeanManager().getBeans(type, qualifiers);
+        var beans = container.getBeanManager().getBeans(resolveType, qualifiers);
         if (beans.size() <= 1) return beans;
         // Check if any enabled alternatives are present
         var alternatives = beans.stream()
