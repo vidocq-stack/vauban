@@ -38,17 +38,24 @@ final class BeanInjector {
                 if (field.getType() == Instance.class
                         || field.getType() == jakarta.inject.Provider.class) {
                     Class<?> instanceType = Object.class;
+                    java.lang.reflect.Type instanceLookupType = Object.class;
                     var genericType = ManagedBean.resolveType(field.getGenericType(), typeMapping);
                     if (genericType instanceof ParameterizedType pt) {
                         var typeArg = pt.getActualTypeArguments()[0];
                         if (typeArg instanceof Class<?> c) {
                             instanceType = c;
+                            instanceLookupType = c;
+                        } else if (typeArg instanceof ParameterizedType nestedPt) {
+                            // e.g. Provider<Optional<String>>, Provider<Set<String>> — preserve the
+                            // full parameterized type so getBeans() can match synthetic beans exactly.
+                            instanceType = (nestedPt.getRawType() instanceof Class<?> raw) ? raw : Object.class;
+                            instanceLookupType = nestedPt;
                         }
                     }
                     var fieldQualifiers = QualifierHelper.extractFieldQualifiers(field);
                     var ownerBean = container.findBeanForInstance(instance);
                     var ip = new VaubanInjectionPoint(field, ownerBean);
-                    vaubanLookup.setField(instance, field, new InstanceImpl<>(container, instanceType, fieldQualifiers, ip));
+                    vaubanLookup.setField(instance, field, new InstanceImpl<>(container, instanceType, instanceLookupType, fieldQualifiers, ip, null));
                     continue;
                 }
 

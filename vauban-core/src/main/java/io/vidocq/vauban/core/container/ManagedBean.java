@@ -432,23 +432,14 @@ public final class ManagedBean<T> implements Bean<T> {
                 case io.vidocq.vauban.indexer.model.TypeInfo.ParameterizedType pt -> {
                     try {
                         var rawClass = Class.forName(pt.rawType().value(), true, classLoader);
-                        
-                        // We must reconstruct ParameterizedType, otherwise generic types are lost!
-                        java.lang.reflect.Type[] args = new java.lang.reflect.Type[pt.typeArguments().size()];
-                        for (int i = 0; i < args.length; i++) {
-                            var argType = pt.typeArguments().get(i);
-                            if (argType instanceof io.vidocq.vauban.indexer.model.TypeInfo.ClassType act) {
-                                args[i] = Class.forName(act.name().value(), true, classLoader);
-                            } else {
-                                args[i] = Object.class; // default fallback
-                            }
-                        }
+                        // Reconstruct ParameterizedType recursively so nested parameterized type
+                        // arguments (e.g. ClaimValue<Set<String>>) are preserved.
+                        java.lang.reflect.Type[] args = resolveTypeArguments(pt.typeArguments(), classLoader);
                         types.add(new java.lang.reflect.ParameterizedType() {
                             @Override public java.lang.reflect.Type[] getActualTypeArguments() { return args; }
                             @Override public java.lang.reflect.Type getRawType() { return rawClass; }
                             @Override public java.lang.reflect.Type getOwnerType() { return null; }
                         });
-                        
                     } catch (ClassNotFoundException e) { /* skip */ }
                 }
                 case io.vidocq.vauban.indexer.model.TypeInfo.ArrayType at -> {
@@ -678,6 +669,45 @@ public final class ManagedBean<T> implements Bean<T> {
         } catch (ClassNotFoundException e) {
             return null;
         }
+    }
+
+    /**
+     * Recursively converts a list of {@code TypeInfo} type arguments to {@code java.lang.reflect.Type[]}.
+     * Handles nested parameterized types (e.g. {@code Set<String>} inside {@code ClaimValue<Set<String>>}).
+     */
+    private static java.lang.reflect.Type[] resolveTypeArguments(
+            java.util.List<io.vidocq.vauban.indexer.model.TypeInfo> argInfos,
+            ClassLoader classLoader) throws ClassNotFoundException {
+        var args = new java.lang.reflect.Type[argInfos.size()];
+        for (int i = 0; i < args.length; i++) {
+            args[i] = resolveTypeArgument(argInfos.get(i), classLoader);
+        }
+        return args;
+    }
+
+    private static java.lang.reflect.Type resolveTypeArgument(
+            io.vidocq.vauban.indexer.model.TypeInfo argInfo,
+            ClassLoader classLoader) throws ClassNotFoundException {
+        return switch (argInfo) {
+            case io.vidocq.vauban.indexer.model.TypeInfo.ClassType ct ->
+                    Class.forName(ct.name().value(), true, classLoader);
+            case io.vidocq.vauban.indexer.model.TypeInfo.ParameterizedType pt -> {
+                var rawClass = Class.forName(pt.rawType().value(), true, classLoader);
+                var nestedArgs = resolveTypeArguments(pt.typeArguments(), classLoader);
+                yield new java.lang.reflect.ParameterizedType() {
+                    @Override public java.lang.reflect.Type[] getActualTypeArguments() { return nestedArgs; }
+                    @Override public java.lang.reflect.Type getRawType() { return rawClass; }
+                    @Override public java.lang.reflect.Type getOwnerType() { return null; }
+                };
+            }
+            case io.vidocq.vauban.indexer.model.TypeInfo.ArrayType at -> {
+                var arrayClass = resolveArrayClass(at, classLoader);
+                yield arrayClass != null ? arrayClass : Object.class;
+            }
+            case io.vidocq.vauban.indexer.model.TypeInfo.PrimitiveType pt ->
+                    primitiveClass(pt.kind());
+            default -> Object.class;
+        };
     }
 
     private static Class<?> primitiveClass(io.vidocq.vauban.indexer.model.TypeInfo.PrimitiveType.Kind kind) {
