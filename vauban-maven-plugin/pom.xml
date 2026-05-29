@@ -56,6 +56,25 @@
     </dependencies>
 
     <build>
+        <!-- Filter ONLY the hand-written plugin descriptor so ${project.version}
+             tracks `mvn versions:set` (releases). Every other resource passes
+             through un-filtered to avoid corrupting binaries or signed files. -->
+        <resources>
+            <resource>
+                <directory>src/main/resources</directory>
+                <filtering>true</filtering>
+                <includes>
+                    <include>META-INF/maven/plugin.xml</include>
+                </includes>
+            </resource>
+            <resource>
+                <directory>src/main/resources</directory>
+                <filtering>false</filtering>
+                <excludes>
+                    <exclude>META-INF/maven/plugin.xml</exclude>
+                </excludes>
+            </resource>
+        </resources>
         <plugins>
             <!-- Skip maven-plugin-plugin descriptor generation (JDK 25 incompatible)
                  Hand-written plugin.xml is in src/main/resources/META-INF/maven/ -->
