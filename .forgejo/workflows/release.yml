@@ -26,7 +26,7 @@ on:
         default: "manual"
         options: ["manual", "auto"]
       vidocq_parent_release:
-        description: "io.vidocq stable version (must be on Central)"
+        description: "io.vidocq:vidocq-parent — stable version (must be released on Central first)"
         type: string
         required: true
 
