@@ -13,6 +13,11 @@
     <name>Vauban :: Test Suite</name>
     <description>Integration test suite</description>
 
+    <properties>
+        <!-- Internal integration tests — not a public artifact, never published to Central. -->
+        <maven.deploy.skip>true</maven.deploy.skip>
+    </properties>
+
     <dependencies>
         <dependency>
             <groupId>io.vidocq.vauban</groupId>

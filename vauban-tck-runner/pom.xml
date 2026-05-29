@@ -17,6 +17,8 @@
         <cdi.tck.version>4.1.0</cdi.tck.version>
         <arquillian.version>1.8.0.Final</arquillian.version>
         <testng.version>7.9.0</testng.version>
+        <!-- TCK harness — not a public artifact, never published to Central. -->
+        <maven.deploy.skip>true</maven.deploy.skip>
     </properties>
 
     <dependencyManagement>
