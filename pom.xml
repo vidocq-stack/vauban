@@ -9,7 +9,6 @@
         <groupId>io.vidocq</groupId>
         <artifactId>vidocq-parent</artifactId>
         <version>1.0.0-SNAPSHOT</version>
-        <relativePath/>
     </parent>
 
     <groupId>io.vidocq.vauban</groupId>
