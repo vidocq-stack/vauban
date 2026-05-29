@@ -7,12 +7,27 @@ on:
     inputs:
       release_version:
         description: "Release version (e.g. 0.1.0). Without -SNAPSHOT."
+        type: string
         required: true
       next_dev_version:
         description: "Next dev version (e.g. 0.2.0-SNAPSHOT). Must end with -SNAPSHOT."
+        type: string
         required: true
+      dry_run:
+        description: "Dry-run: build + sign + bundle without commit/tag/push/upload."
+        type: choice
+        required: true
+        default: "false"
+        options: ["false", "true"]
+      auto_publish:
+        description: "Promote: 'manual' (default; click Publish on Sonatype Portal) or 'auto' (publish + wait for repo1.maven.org)."
+        type: choice
+        required: true
+        default: "manual"
+        options: ["manual", "auto"]
       vidocq_parent_release:
         description: "io.vidocq stable version (must be on Central)"
+        type: string
         required: true
 
 jobs:
@@ -28,6 +43,9 @@ jobs:
         with:
           release-version:  ${{ inputs.release_version }}
           next-dev-version: ${{ inputs.next_dev_version }}
+          dry-run:          ${{ inputs.dry_run }}
+          # Map 'manual'/'auto' → 'false'/'true' so the action.yml input stays boolean.
+          auto-publish:     ${{ inputs.auto_publish == 'auto' && 'true' || 'false' }}
           overrides: |
             io.vidocq=${{ inputs.vidocq_parent_release }}
           central-username: ${{ secrets.CENTRAL_USERNAME }}
