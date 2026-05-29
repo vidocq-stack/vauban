@@ -36,6 +36,21 @@ jobs:
     needs: build
     steps:
       - uses: actions/checkout@v4
+
+      - name: Fetch Vidocq/ci action (Forgejo mirror, basic-auth)
+        shell: bash
+        env:
+          MIRROR_URL:  ${{ secrets.MIRROR_ASD_URL }}
+          MIRROR_USER: ${{ secrets.MIRROR_ASD_USER }}
+          MIRROR_PASS: ${{ secrets.MIRROR_ASD_PASSWORD }}
+        run: |
+          set -euo pipefail
+          enc_pass=$(python3 -c "import os,urllib.parse;print(urllib.parse.quote(os.environ['MIRROR_PASS'], safe=''))")
+          host="${MIRROR_URL#https://}"; host="${host#http://}"; host="${host%/}"
+          git clone --depth=1 --branch v1 \
+            "https://${MIRROR_USER}:${enc_pass}@${host}/Vidocq/ci.git" \
+            .ci-action
+
       - uses: ./.ci-action/setup-maven
       - name: CDI TCK 4.1 Lite
         uses: ./.ci-action/run-tck
@@ -47,6 +62,21 @@ jobs:
     needs: tck
     steps:
       - uses: actions/checkout@v4
+
+      - name: Fetch Vidocq/ci action (Forgejo mirror, basic-auth)
+        shell: bash
+        env:
+          MIRROR_URL:  ${{ secrets.MIRROR_ASD_URL }}
+          MIRROR_USER: ${{ secrets.MIRROR_ASD_USER }}
+          MIRROR_PASS: ${{ secrets.MIRROR_ASD_PASSWORD }}
+        run: |
+          set -euo pipefail
+          enc_pass=$(python3 -c "import os,urllib.parse;print(urllib.parse.quote(os.environ['MIRROR_PASS'], safe=''))")
+          host="${MIRROR_URL#https://}"; host="${host#http://}"; host="${host%/}"
+          git clone --depth=1 --branch v1 \
+            "https://${MIRROR_USER}:${enc_pass}@${host}/Vidocq/ci.git" \
+            .ci-action
+
       - uses: ./.ci-action/setup-maven
 
       - name: Deploy to Maven Central
