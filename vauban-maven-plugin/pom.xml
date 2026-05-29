@@ -56,9 +56,14 @@
     </dependencies>
 
     <build>
-        <!-- Filter ONLY the hand-written plugin descriptor so ${project.version}
-             tracks `mvn versions:set` (releases). Every other resource passes
-             through un-filtered to avoid corrupting binaries or signed files. -->
+        <!-- Filter ONLY the hand-written plugin descriptor, and ONLY for the
+             single token @project.version@. We must not use the default ${...}
+             delimiter: plugin.xml has many ${project.build.outputDirectory},
+             ${project.build.directory}, ${project} occurrences that are mojo
+             parameter defaults — they must remain literal in the JARed
+             descriptor so Plexus resolves them at mojo execution time inside
+             the *consuming* project, not at this build's resources phase.
+             @-delimited tokens (Maven's other convention) avoid the clash. -->
         <resources>
             <resource>
                 <directory>src/main/resources</directory>
@@ -76,6 +81,19 @@
             </resource>
         </resources>
         <plugins>
+            <!-- Disable the default ${*} delimiter so only @project.version@
+                 in the plugin descriptor is substituted; every ${...} stays
+                 literal for runtime resolution by Plexus. -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-resources-plugin</artifactId>
+                <configuration>
+                    <useDefaultDelimiters>false</useDefaultDelimiters>
+                    <delimiters>
+                        <delimiter>@</delimiter>
+                    </delimiters>
+                </configuration>
+            </plugin>
             <!-- Skip maven-plugin-plugin descriptor generation (JDK 25 incompatible)
                  Hand-written plugin.xml is in src/main/resources/META-INF/maven/ -->
             <plugin>
