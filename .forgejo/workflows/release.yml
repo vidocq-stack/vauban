@@ -48,6 +48,10 @@ jobs:
           auto-publish:     ${{ inputs.auto_publish == 'auto' && 'true' || 'false' }}
           overrides: |
             io.vidocq=${{ inputs.vidocq_parent_release }}
+          excluded-modules: |
+            vauban-examples
+            vauban-tck-runner
+            vauban-test-suite
           central-username: ${{ secrets.CENTRAL_USERNAME }}
           central-password: ${{ secrets.CENTRAL_PASSWORD }}
           gpg-private-key:  ${{ secrets.GPG_PRIVATE_KEY }}
