@@ -15,6 +15,13 @@
     <name>Vauban :: Examples</name>
     <description>Example projects demonstrating Vauban CDI container usage</description>
 
+    <modules>
+        <module>example-lib</module>
+        <module>example-lib-securized</module>
+        <module>example-app</module>
+        <module>example-test</module>
+    </modules>
+
     <properties>
         <maven.deploy.skip>true</maven.deploy.skip>
     </properties>
