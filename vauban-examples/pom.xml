@@ -23,6 +23,29 @@
     </modules>
 
     <properties>
+        <!--
+            Demo modules: never released as dependencies. We disable every release-time
+            attachment (sources/javadoc/GPG) plus the deploy goal AND we override the
+            central-publishing-maven-plugin to skip publish — the latter is required
+            because central-publishing replaces maven-deploy-plugin via extensions=true
+            and ignores `maven.deploy.skip`.
+        -->
         <maven.deploy.skip>true</maven.deploy.skip>
+        <maven.install.skip>true</maven.install.skip>
+        <maven.javadoc.skip>true</maven.javadoc.skip>
+        <maven.source.skip>true</maven.source.skip>
+        <gpg.skip>true</gpg.skip>
     </properties>
+
+    <build>
+        <plugins>
+            <plugin>
+                <groupId>org.sonatype.central</groupId>
+                <artifactId>central-publishing-maven-plugin</artifactId>
+                <configuration>
+                    <skipPublishing>true</skipPublishing>
+                </configuration>
+            </plugin>
+        </plugins>
+    </build>
 </project>
