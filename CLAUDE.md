@@ -74,3 +74,7 @@ Make every change as simple as possible and minimize code impact.
 
 ### No Laziness
 Find root causes. Avoid temporary fixes. Maintain senior-level engineering standards.
+
+### Language
+
+Commit messages, Javadoc, and the content of all `.md` files must be written in **English**.
