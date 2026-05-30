@@ -5,7 +5,7 @@
 **Rule**: Use only finalized JDK 25 APIs. `ScopedValue` (JEP 487) is finalized in JDK 25 and must be used instead of `ThreadLocal` for virtual-thread compatibility. No Stable Values (JEP 502), no Structured Concurrency (JEP 505).
 
 ## 2. Maven 4 RC is acceptable
-**Context**: The user wants Maven 4.0.0-rc-5, not Maven 3.9.
+**Context**: The user wants Maven 3.9.16, not Maven 3.9.
 **Rule**: Use Maven 4 features (POM model 4.1.0, automatic sub-project discovery, the new lifecycle). Do not propose a downgrade to Maven 3.
 
 ## 3. maven-plugin-plugin incompatible with JDK 25
@@ -22,7 +22,7 @@
 
 ## 6. Claude Code shell and SDKMAN
 **Context**: The Claude Code shell does not automatically load the .sdkmanrc.
-**Rule**: Always prefix Maven commands with `export MAVEN_HOME=~/.sdkman/candidates/maven/4.0.0-rc-5 && export PATH="$MAVEN_HOME/bin:$PATH" &&` to guarantee Maven 4.
+**Rule**: Always prefix Maven commands with `export MAVEN_HOME=~/.sdkman/candidates/maven/3.9.16 && export PATH="$MAVEN_HOME/bin:$PATH" &&` to guarantee Maven 4.
 
 ## 7. AnnotationValue name conflict between model and JDK
 **Context**: Phase 1 - `io.vidocq.vauban.indexer.model.AnnotationValue` and `java.lang.classfile.AnnotationValue` have the same simple name.

@@ -45,7 +45,7 @@ Vauban is an implementation of [Jakarta CDI 4.1](https://jakarta.ee/specificatio
 ### Prerequisites
 
 - JDK 25 (Temurin)
-- Maven 4.0.0-rc-5
+- Maven 3.9.16
 
 ```bash
 # With SDKMAN!

@@ -7,7 +7,7 @@ Cette page montre comment écrire un premier bean `@ApplicationScoped`, le câbl
 == Pré-requis
 
 * **Java 25** — Temurin recommandé. Module path activé.
-* **Maven 4.0.0-rc-5** — épinglé via `.sdkmanrc` à la racine du repo.
+* **Maven 3.9.16** — épinglé via `.sdkmanrc` à la racine du repo.
 * JPMS strict : un `module-info.java` par module Maven.
 
 == Coordonnées Maven

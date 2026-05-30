@@ -7,7 +7,7 @@ This page shows how to write a first `@ApplicationScoped` bean, wire it via `@In
 == Prerequisites
 
 * **Java 25** — Temurin recommended. Module path enabled.
-* **Maven 4.0.0-rc-5** — pinned via `.sdkmanrc` at the repo root.
+* **Maven 3.9.16** — pinned via `.sdkmanrc` at the repo root.
 * Strict JPMS: one `module-info.java` per Maven module.
 
 == Maven coordinates

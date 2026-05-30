@@ -210,7 +210,7 @@ Pour la configuration applicative dynamique, utiliser MicroProfile Config via xr
 
 == Compatibilité
 
-* Java 25 (LTS), Maven 4.0.0-rc-5.
+* Java 25 (LTS), Maven 3.9.16.
 * JPMS strict, modules nommés exclusivement.
 * CDI 4.1 — profil Lite.
 * Compatible GraalVM `native-image` et Project Leyden CDS.

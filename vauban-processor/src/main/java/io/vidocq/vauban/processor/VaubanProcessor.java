@@ -40,7 +40,25 @@ import java.util.stream.Collectors;
  *
  * <p>When BCEs are processed, a marker file {@code META-INF/vauban-bce-processed}
  * is written so the runtime container skips re-executing them.</p>
+ *
+ * <h2>APT options</h2>
+ *
+ * <ul>
+ *   <li>{@code -Avauban.validation=false} — skip the static deployment validation
+ *       (UNSATISFIED / AMBIGUOUS / unproxyable / circular dep checks). Useful when
+ *       beans rely on injections that only a runtime BCE can satisfy (e.g.
+ *       MicroProfile {@code @ConfigProperty}, {@code @Claim}, {@code @RegisterRestClient})
+ *       and the BCE isn't on the APT classpath. The runtime container still runs the
+ *       full validation at container start; this option only silences the compile-time
+ *       check, it doesn't disable wiring.</li>
+ *   <li>{@code -Avauban.validation.scope=main|all} — when set to {@code main} (default),
+ *       validation only runs on the principal source set and is skipped automatically
+ *       when the processor detects it's invoked from a {@code testCompile} (i.e. the
+ *       file manager points at {@code target/test-classes} as default output). Set to
+ *       {@code all} to enforce validation on test sources too.</li>
+ * </ul>
  */
+@javax.annotation.processing.SupportedOptions({"vauban.validation", "vauban.validation.scope"})
 public class VaubanProcessor extends AbstractProcessor {
 
     private static final Set<String> CDI_ANNOTATIONS = Set.of(
@@ -255,11 +273,22 @@ public class VaubanProcessor extends AbstractProcessor {
             bceProcessed = true;
         }
 
-        // Validate deployment
-        var assignability = new AssignabilityRules(index);
-        var resolver = new BeanResolver(beans, assignability);
-        var validator = new DeploymentValidator(beans, resolver);
-        var errors = validator.validate();
+        // Validate deployment — unless explicitly skipped (cf. APT options on the class javadoc).
+        // The runtime container always re-validates on container start; this only silences the
+        // compile-time check for projects whose beans depend on BCE-produced injections that
+        // aren't visible to the static analyser (typical pattern with @ConfigProperty / @Claim /
+        // @RegisterRestClient used in test code without the producing BCE on the APT classpath).
+        var errors = java.util.Collections.<DeploymentValidator.ValidationError>emptyList();
+        if (validationEnabled()) {
+            var assignability = new AssignabilityRules(index);
+            var resolver = new BeanResolver(beans, assignability);
+            var validator = new DeploymentValidator(beans, resolver);
+            errors = validator.validate();
+        } else {
+            processingEnv.getMessager().printMessage(Diagnostic.Kind.NOTE,
+                    "[Vauban] Static deployment validation skipped (vauban.validation=false). "
+                            + "Runtime container will still validate on start.");
+        }
 
         for (var error : errors) {
             processingEnv.getMessager().printMessage(Diagnostic.Kind.ERROR,
@@ -304,6 +333,37 @@ public class VaubanProcessor extends AbstractProcessor {
         }
 
         return true;
+    }
+
+    // --- APT options ---
+
+    /**
+     * Returns {@code true} iff the static deployment validation must run for this APT invocation.
+     * <p>Honours two APT options (cf. javadoc on this class):
+     * <ul>
+     *   <li>{@code vauban.validation=false} unconditionally disables validation.</li>
+     *   <li>{@code vauban.validation.scope=main} (default) auto-disables validation when the
+     *       APT invocation targets a test source set (typically {@code target/test-classes}).</li>
+     * </ul>
+     */
+    private boolean validationEnabled() {
+        var opts = processingEnv.getOptions();
+        var explicit = opts.get("vauban.validation");
+        if (explicit != null && (explicit.equalsIgnoreCase("false") || explicit.equalsIgnoreCase("no"))) {
+            return false;
+        }
+        var scope = opts.getOrDefault("vauban.validation.scope", "main");
+        if ("all".equalsIgnoreCase(scope)) return true;
+        // scope=main → skip if invoked from testCompile (output dir ends with /test-classes)
+        try {
+            var out = processingEnv.getFiler()
+                    .getResource(javax.tools.StandardLocation.CLASS_OUTPUT, "", "vauban-probe.tmp")
+                    .toUri().toString();
+            return !out.contains("/test-classes/");
+        } catch (Exception e) {
+            // Filer probe failed — default to running validation (safest).
+            return true;
+        }
     }
 
     // --- BCE Discovery ---
