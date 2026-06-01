@@ -190,7 +190,11 @@ public final class ElementScanner {
             case DECLARED -> {
                 var declaredType = (DeclaredType) mirror;
                 var element = (TypeElement) declaredType.asElement();
-                var dotName = DotName.of(element.getQualifiedName().toString());
+                // Binary name (not qualified): nested classes are joined with '$', not '.', so the
+                // generated client-proxy bytecode emits a valid descriptor (e.g. Outer$Nested, not
+                // Outer/Nested). getQualifiedName() loses the '$' and breaks proxy method signatures
+                // whose return/param type is a nested class. Top-level types are unaffected.
+                var dotName = DotName.of(elements.getBinaryName(element).toString());
                 if (declaredType.getTypeArguments().isEmpty()) {
                     yield new TypeInfo.ClassType(dotName);
                 } else {

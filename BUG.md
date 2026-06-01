@@ -5,6 +5,32 @@ suspected cause, status. Updated on every investigation.
 
 ---
 
+## VAU-PRX-003 — APT client proxy emits an invalid descriptor for a method whose return/param type is a NESTED class
+- **Date**: 2026-06-01 — **Status**: FIXED
+- **Severity**: high (any `@ApplicationScoped`/normal-scoped bean with a method returning or taking a
+  nested class; the bean becomes uninstantiable at runtime once injected)
+- **Surfaced by**: Arago Phase 1 — `AttendeeTokens.verify()` returning the nested record
+  `AragoJwt.Claims`. Injecting `AttendeeTokens` into a resource threw, at request time:
+  `NoClassDefFoundError: io/vidocq/tools/arago/auth/AragoJwt/Claims` (note the `/` before `Claims`).
+
+### Symptom
+The compile-time `*_ClientProxy` for such a bean has a method whose bytecode descriptor uses `/`
+where `$` is required for a nested class (e.g. `Lio/.../AragoJwt/Claims;` instead of
+`Lio/.../AragoJwt$Claims;`). Loading the proxy and resolving its methods (e.g. `getMethod(...)` during
+interceptor-proxy setup) raises `NoClassDefFoundError` / `ClassNotFoundException` with a dotted name.
+
+### Cause
+APT path only. `ElementScanner.typeMirrorToTypeInfo` built the `DotName` for a `DeclaredType` from
+`TypeElement.getQualifiedName()` — the **canonical** name (`Outer.Nested`, dot-separated). Fed to
+`ClassDesc.of(...)`, the dot becomes a `/`, yielding `Outer/Nested`. (The runtime
+`RuntimeClientProxyGenerator` was correct — it uses `Class.describeConstable()`/`descriptorString()`.)
+
+### Fix
+`ElementScanner` now uses `Elements.getBinaryName(element)` (the binary name, `Outer$Nested`) for the
+`ClassType`/`ParameterizedType` raw name. Top-level types are unaffected (binary == qualified).
+Regression: `BceCompileTimeTest.clientProxyHandlesNestedReturnType` (compiles a bean returning a
+nested record, loads the generated proxy, asserts the method resolves with the `$` binary name).
+
 ## VAU-PROXY-INTERFACE — no client proxy for an interface-typed normal-scoped bean; `Instance`/`Provider` and nested generics lose their type arguments
 
 **Date**: 2026-05-26

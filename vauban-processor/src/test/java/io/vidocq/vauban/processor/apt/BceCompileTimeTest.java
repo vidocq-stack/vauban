@@ -169,6 +169,40 @@ class BceCompileTimeTest {
     // ---- Tests ----
 
     @Test
+    @DisplayName("client proxy for a bean method returning a NESTED type loads (binary name, not canonical)")
+    void clientProxyHandlesNestedReturnType() throws Exception {
+        // Regression: the APT path built the return-type ClassDesc from getQualifiedName() (canonical,
+        // dot-separated) instead of getBinaryName() ('$'-separated). For a nested return type the
+        // generated proxy emitted an invalid descriptor (Outer/Nested), so resolving the proxy's
+        // methods threw NoClassDefFoundError at runtime. Surfaced by Arago (AttendeeTokens.verify ->
+        // AragoJwt.Claims). See vauban BUG.md.
+        String source = """
+                package t;
+                import jakarta.enterprise.context.ApplicationScoped;
+                @ApplicationScoped
+                public class NestedReturnSvc {
+                    public record Box(String value) {}
+                    public Box make() { return new Box("x"); }
+                }
+                """;
+        var result = compileWithBce(List.of(), source);
+        assertTrue(result.success(), () -> "compilation failed: " + result.messages());
+        assertTrue(result.hasFile("t/NestedReturnSvc_ClientProxy.class"),
+                "client proxy should be generated (@ApplicationScoped is normal-scoped)");
+
+        // Load the generated proxy and resolve its methods — this is what threw NoClassDefFoundError
+        // (t/NestedReturnSvc/Box) before the fix.
+        try (var cl = new java.net.URLClassLoader(
+                new java.net.URL[]{result.outputDir().toUri().toURL()},
+                getClass().getClassLoader())) {
+            Class<?> proxy = cl.loadClass("t.NestedReturnSvc_ClientProxy");
+            var makeReturn = proxy.getDeclaredMethod("make").getReturnType();
+            assertEquals("t.NestedReturnSvc$Box", makeReturn.getName(),
+                    "the proxy's make() must return the nested Box (binary name with '$')");
+        }
+    }
+
+    @Test
     @DisplayName("@Enhancement BCE modifies an existing bean — the BCE runs at compile time")
     void shouldExecuteEnhancementOnExistingBean() throws IOException {
         // The bean already has @Dependent (pseudo-scope). The BCE adds @RequestScoped (normal-scope).
