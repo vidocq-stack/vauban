@@ -19,6 +19,8 @@ import java.util.function.BiFunction;
 
 final class InterceptorBeanWrapper {
 
+    private static final System.Logger LOG = System.getLogger(InterceptorBeanWrapper.class.getName());
+
     private static final ScopedValue<Boolean> IS_CREATING_INTERCEPTOR = ScopedValue.newInstance();
 
     private final VaubanContainer container;
@@ -162,11 +164,11 @@ final class InterceptorBeanWrapper {
                 return instance;
             });
         } catch (Exception e) {
-            System.err.println("CRITICAL: Failed to create interceptor " + descriptor.interceptorClass());
-            e.printStackTrace();
+            LOG.log(System.Logger.Level.ERROR,
+                    "Failed to create interceptor " + descriptor.interceptorClass(), e);
             if (e instanceof java.lang.reflect.InvocationTargetException ite) {
-                System.err.println("Caused by: " + ite.getTargetException());
-                ite.getTargetException().printStackTrace();
+                LOG.log(System.Logger.Level.ERROR,
+                        "Caused by: " + ite.getTargetException(), ite.getTargetException());
             }
             throw new jakarta.enterprise.inject.CreationException("Failed to create interceptor: " + descriptor.interceptorClass(), e);
         }
@@ -728,7 +730,8 @@ final class InterceptorBeanWrapper {
                                 interceptedClass2 = loadOrDefineClassRobustly(beanClass, generated2.className(), generated2.bytecode());
                             }
                         } catch (Exception ex2) {
-                            System.err.println("[VAUBAN-DBG] Fallback interception also failed for " + descriptor.beanClass().value() + ": " + ex2);
+                            LOG.log(System.Logger.Level.ERROR,
+                                    "Fallback interception also failed for " + descriptor.beanClass().value(), ex2);
                             throw new jakarta.enterprise.inject.spi.DeploymentException("Could not define interceptor subclass", ex2);
                         }
                     var mgr2 = this.interceptorManager;

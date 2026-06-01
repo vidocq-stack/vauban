@@ -13,6 +13,8 @@ import java.lang.reflect.ParameterizedType;
 
 final class BeanInjector {
 
+    private static final System.Logger LOG = System.getLogger(BeanInjector.class.getName());
+
     private final VaubanContainer container;
     private final VaubanLookup vaubanLookup;
 
@@ -109,8 +111,8 @@ final class BeanInjector {
                 throw e;
             } catch (Exception e) {
                 if (e.getCause() instanceof jakarta.enterprise.inject.IllegalProductException ipe) throw ipe;
-                System.err.println("INJECTION FAILED FOR " + field.getName() + " ON " + instance.getClass() + " : " + e.getMessage());
-                e.printStackTrace();
+                LOG.log(System.Logger.Level.ERROR,
+                        "Injection failed for " + field.getName() + " on " + instance.getClass(), e);
             }
             }
             clazz = clazz.getSuperclass();

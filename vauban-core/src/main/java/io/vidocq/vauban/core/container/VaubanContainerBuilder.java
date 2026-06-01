@@ -23,6 +23,7 @@ import java.util.Set;
 
 public final class VaubanContainerBuilder {
 
+    private static final System.Logger LOG = System.getLogger(VaubanContainerBuilder.class.getName());
 
     private final List<Class<?>> beanClasses = new ArrayList<>();
     private final Set<String> bceProcessedSources = new java.util.HashSet<>();
@@ -453,18 +454,20 @@ public final class VaubanContainerBuilder {
                         loadPluginsIfNeeded();
                         scanSjar(jarPath);
                     } catch (SecurityException e) {
-                        System.err.println("[WARN] Vauban: cannot decrypt encrypted JAR " + jarPath.getFileName()
-                                + " — " + e.getMessage());
-                        System.err.println("[WARN] Vauban: set VAUBAN_SJAR_KEY environment variable "
-                                + "or call builder.pluginContext() with the decryption key.");
-                        System.err.println("[WARN] Vauban: beans from this JAR will NOT be available.");
+                        LOG.log(System.Logger.Level.WARNING,
+                                "Cannot decrypt encrypted JAR {0}: {1}", jarPath.getFileName(), e.getMessage());
+                        LOG.log(System.Logger.Level.WARNING,
+                                "Set VAUBAN_SJAR_KEY environment variable or call builder.pluginContext() with the decryption key.");
+                        LOG.log(System.Logger.Level.WARNING,
+                                "Beans from this JAR will NOT be available.");
                     } catch (IllegalStateException e) {
-                        System.err.println("[WARN] Vauban: encrypted JAR " + jarPath.getFileName()
-                                + " found but no ByteSourcePlugin available.");
-                        System.err.println("[WARN] Vauban: add vauban-sjar to the classpath/module path.");
+                        LOG.log(System.Logger.Level.WARNING,
+                                "Encrypted JAR {0} found but no ByteSourcePlugin available.", jarPath.getFileName());
+                        LOG.log(System.Logger.Level.WARNING,
+                                "Add vauban-sjar to the classpath/module path.");
                     } catch (Exception e) {
-                        System.err.println("[WARN] Vauban: failed to load encrypted JAR "
-                                + jarPath.getFileName() + " — " + e.getMessage());
+                        LOG.log(System.Logger.Level.WARNING,
+                                "Failed to load encrypted JAR " + jarPath.getFileName(), e);
                     }
                 }
             }
