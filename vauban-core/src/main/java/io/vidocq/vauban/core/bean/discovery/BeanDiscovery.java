@@ -112,7 +112,15 @@ public final class BeanDiscovery {
     }
 
     private boolean isAllowedByScannedClassesFilter(ClassInfo classInfo) {
-        return scannedClassesFilter.isEmpty() || scannedClassesFilter.contains(classInfo.name());
+        if (scannedClassesFilter.isEmpty() || scannedClassesFilter.contains(classInfo.name())) {
+            return true;
+        }
+        // Annotated discovery mode: a class carrying a bean-defining annotation is always a
+        // discovery candidate. The scanned-classes filter only governs whether *non-annotated*
+        // classes (those a BCE forces in via ScannedClasses.add in a non-bean archive) are scanned;
+        // it must never hide a legitimately-annotated bean — including its @Produces members.
+        return hasBeanDefiningAnnotation(classInfo)
+                || hasBeanDefiningAnnotationViaReflection(classInfo.name());
     }
 
     /**

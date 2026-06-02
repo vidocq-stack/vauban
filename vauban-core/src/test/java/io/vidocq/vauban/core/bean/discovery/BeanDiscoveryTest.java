@@ -418,4 +418,44 @@ class BeanDiscoveryTest {
             assertTrue(producer.types().contains(new TypeInfo.ClassType(DotName.of("com.example.MyService"))));
         }
     }
+
+    @Nested
+    @DisplayName("scanned-classes filter (non-bean archive + BCE ScannedClasses)")
+    class ScannedClassesFilter {
+
+        // VAU-DISC-001 — Regression. In annotated discovery mode (a non-bean archive, i.e.
+        // beanArchive=false), a Build Compatible Extension that adds classes via
+        // ScannedClasses.add() must NOT suppress beans that carry a bean-defining annotation.
+        // VaubanContainerBuilder restricts discovery to the BCE-scanned set when !isBeanArchive;
+        // that restriction used to swallow legitimately-annotated beans. Surfaced by the Mansart
+        // Jakarta Data TCK harness: its MansartDataExtension scans the runtime producer, which
+        // turned the scanned set into an exclusive whitelist and silently dropped the test's
+        // @Singleton @Produces DataSource — leaving every @Repository's RepositoryRuntime
+        // unsatisfied ("No @Default DataSource bean found"), so all 73 EntityTests errored.
+        @Test
+        @DisplayName("an annotated @Produces bean survives an active scanned-classes filter")
+        void annotatedProducerSurvivesScannedClassesFilter() {
+            var builder = new IndexBuilder();
+            // The class the BCE forces in via ScannedClasses.add(...) (mimics MansartRuntimeProducer).
+            builder.add(makeAnnotatedClass("com.example.ScannedRuntime", "jakarta.inject.Singleton"));
+            // A producer class NOT in the scanned set but carrying a bean-defining annotation —
+            // the test-supplied @Produces DataSource (mimics the TCK's H2DataSourceProducer).
+            builder.add(makeClassWithProducerMethod(
+                    "com.example.DataSourceProducer", "dataSource", "com.example.DataSource"));
+            var discovery = new BeanDiscovery(builder.build());
+
+            // Reproduce VaubanContainerBuilder's wiring when !isBeanArchive and the BCE scanned classes.
+            var scanned = java.util.Set.of(DotName.of("com.example.ScannedRuntime"));
+            discovery.setForcedBeanClasses(scanned);
+            discovery.setScannedClassesFilter(scanned);
+
+            var beans = discovery.discoverBeans();
+            var producer = beans.stream()
+                    .filter(b -> b.kind() == BeanDescriptor.BeanKind.PRODUCER_METHOD)
+                    .filter(b -> b.types().contains(new TypeInfo.ClassType(DotName.of("com.example.DataSource"))))
+                    .findFirst();
+            assertTrue(producer.isPresent(),
+                    "annotated @Produces bean must survive the scanned-classes filter; discovered=" + beans);
+        }
+    }
 }

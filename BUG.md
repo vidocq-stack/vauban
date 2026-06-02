@@ -5,6 +5,38 @@ suspected cause, status. Updated on every investigation.
 
 ---
 
+## VAU-DISC-001 — non-bean archive + BCE `ScannedClasses` suppressed annotated beans (incl. `@Produces`)
+- **Date**: 2026-06-02 — **Status**: FIXED
+- **Severity**: high (any non-bean archive whose Build Compatible Extension calls
+  `ScannedClasses.add(...)` — every legitimately-annotated bean outside the scanned set silently vanished)
+- **Surfaced by**: Mansart Jakarta Data 1.0 TCK harness — the whole official `EntityTests` suite
+  (73/73) errored in `@BeforeEach` with `assertNotNull` on injected repositories. The misleading
+  proximate symptom was a `null` injection; the real cause was upstream in Vauban.
+
+### Symptom
+A container built with `beanArchive(false)` whose BCE adds classes via `ScannedClasses.add(...)`
+discovered **only** the scanned classes. Any other class in the archive — even one carrying a
+bean-defining annotation — was dropped, including its `@Produces` members. In the TCK this meant the
+test-supplied `@Singleton @Produces DataSource` (`H2DataSourceProducer`) was never registered, so
+`MansartRuntimeProducer` saw an unsatisfied `Instance<DataSource>` and threw "No @Default DataSource
+bean found", which left every `@Repository`'s `RepositoryRuntime` unsatisfied → `@Inject` repo = null.
+
+### Cause
+`VaubanContainerBuilder.build()` calls `discovery.setScannedClassesFilter(scannedDotNames)` when
+`!isBeanArchive` and the BCE scanned classes (lines ~818). In `BeanDiscovery.discoverBeans()` the
+filter (`isAllowedByScannedClassesFilter`) ran **before** the bean-defining-annotation check and
+turned the scanned set into an exclusive whitelist — contrary to CDI "annotated" discovery, where a
+bean-defining annotation is always a discovery trigger and `ScannedClasses.add` only *augments* the
+set with otherwise-unannotated classes. (Observers/disposers/interceptors never used this filter,
+which is why only managed beans + producers were affected.)
+
+### Fix
+`isAllowedByScannedClassesFilter` now also returns `true` for any class with a bean-defining
+annotation (index or reflection): the scanned-classes filter governs only *non-annotated* forced
+classes and can no longer hide annotated beans. Regression:
+`BeanDiscoveryTest$ScannedClassesFilter.annotatedProducerSurvivesScannedClassesFilter`. Full vauban
+reactor green; downstream Mansart Jakarta Data TCK now 74/74 (EntityTests 73 + SignatureTests 1).
+
 ## VAU-PRX-003 — APT client proxy emits an invalid descriptor for a method whose return/param type is a NESTED class
 - **Date**: 2026-06-01 — **Status**: FIXED
 - **Severity**: high (any `@ApplicationScoped`/normal-scoped bean with a method returning or taking a
