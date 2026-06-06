@@ -113,7 +113,27 @@ enrich its index). So freezing them is this plugin's job, not only `vidocq-runti
       the reflective path → guarantees a fully static / AOT-pure (GraalVM-ready) image when wanted,
       while the permissive reflective fallback stays the default for robustness/repackaging.
 
-### Verify (module-path, not classpath)
+### SPI placement + Weld portability (done)
+- [x] Moved `VaubanComponentProvider` from `vauban-core` to **`vauban-api`** — a module names it in
+      `provides`, so the service type must be compile-visible; wrappers have vauban-core at test scope
+      only. Wrappers now `requires static io.vidocq.vauban.api` (dep in `provided` scope = non-transitive).
+- [x] `@Vetoed` on the generated `_VaubanComponents` (both generators) — Weld in bean-discovery-mode=all
+      skips it (would otherwise NoClassDefFoundError on the absent SPI super-interface). Empirically
+      verified: a module with `requires static api` + `provides api.Svc with …` boots with the api
+      module ABSENT (provides inert, no `uses`) → confirms Weld pulls neither vauban-api nor vauban-core
+      at runtime.
+
+### Cervantes wiring (done — provider path active, opens still kept)
+- [x] cervantes-cdi-vauban + cervantes-jaxrs: `requires static vauban-api` + `provides … with
+      <pkg>._VaubanComponents`; build green, plugin round-ordering holds (provider .class generated
+      before module-info compiles). Context (cdi) & @Provider beans (jaxrs) now provider-instantiated.
+- [ ] Producer-method invokers (Brique B producers) — still reflective, so `opens …cdi.internal` stays.
+
+### Verify (module-path, not classpath) — THE remaining proof to drop opens
+- [ ] Build a module-path JWT vehicle (jlink example OR docker compose) — the IT is class-path only,
+      where the opens defect is invisible. Then drop `opens io.vidocq.cervantes.jaxrs` and
+      `opens io.vidocq.cervantes.cdi` (BCE via ServiceLoader + context via provider), keep
+      `cdi.internal` until producer invokers exist. Validate a JWT endpoint responds with no opens.
 - [ ] jlink cassini-rest / mansart-h2 boot + endpoint without opens; post-jlink smoke test
 
 ## Backlog (deferred)
