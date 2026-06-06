@@ -223,6 +223,14 @@ public final class VaubanLookup {
      * Make a member accessible for later invocation via {@code Method.invoke()}.
      * Uses {@link MethodHandles#privateLookupIn} to validate access, then sets accessible.
      * Prefer {@link #invokeMethod} for direct MethodHandle-based invocation.
+     *
+     * <p>A <strong>public</strong> member of a public class in a package that is exported to
+     * {@code io.vidocq.vauban.core} is reflectively invocable with no deep access, so this method
+     * skips {@code privateLookupIn} for it (only ensuring read edge). This is what lets the
+     * interceptor chain invoke a generated {@code $$Intercepted}'s public {@code $$super$…} bridge
+     * (and a public {@code @AroundInvoke}) on the strict module path with
+     * <strong>no {@code opens … to io.vidocq.vauban.core}</strong>. Non-public or non-exported
+     * members still go through {@code privateLookupIn}, which needs the package {@code opens}-ed.
      */
     public void makeAccessible(java.lang.reflect.AccessibleObject member) {
         Class<?> declaringClass = switch (member) {
@@ -232,9 +240,46 @@ public final class VaubanLookup {
             default -> null;
         };
         if (declaringClass != null) {
-            lookupFor(declaringClass); // validate Lookup access
+            if (isPubliclyInvocable(member, declaringClass)) {
+                ensureReads(declaringClass.getModule()); // reflective invoke needs only a read edge
+                return;
+            }
+            lookupFor(declaringClass); // validate deep access (needs opens) for non-public members
         }
         member.trySetAccessible();
+    }
+
+    /**
+     * {@code true} when {@code member} can be reflectively invoked without deep access: a public
+     * member of a public class that is either on the class path (unnamed module) or in a package
+     * exported to {@code io.vidocq.vauban.core}.
+     */
+    private static boolean isPubliclyInvocable(java.lang.reflect.AccessibleObject member,
+            Class<?> declaringClass) {
+        int mods = switch (member) {
+            case Method m -> m.getModifiers();
+            case Field f -> f.getModifiers();
+            case Constructor<?> c -> c.getModifiers();
+            default -> 0;
+        };
+        if (!java.lang.reflect.Modifier.isPublic(mods)
+                || !java.lang.reflect.Modifier.isPublic(declaringClass.getModifiers())) {
+            return false;
+        }
+        Module targetModule = declaringClass.getModule();
+        if (!targetModule.isNamed()) {
+            return true; // class path — unrestricted
+        }
+        return targetModule.isExported(declaringClass.getPackageName(),
+                VaubanLookup.class.getModule());
+    }
+
+    /** Add a read edge from {@code io.vidocq.vauban.core} to {@code targetModule} if missing. */
+    private static void ensureReads(Module targetModule) {
+        Module vaubanModule = VaubanLookup.class.getModule();
+        if (targetModule.isNamed() && !vaubanModule.canRead(targetModule)) {
+            vaubanModule.addReads(targetModule);
+        }
     }
 
     /**
