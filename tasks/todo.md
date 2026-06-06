@@ -129,11 +129,21 @@ enrich its index). So freezing them is this plugin's job, not only `vidocq-runti
       before module-info compiles). Context (cdi) & @Provider beans (jaxrs) now provider-instantiated.
 - [ ] Producer-method invokers (Brique B producers) — still reflective, so `opens …cdi.internal` stays.
 
-### Verify (module-path, not classpath) — THE remaining proof to drop opens
-- [ ] Build a module-path JWT vehicle (jlink example OR docker compose) — the IT is class-path only,
-      where the opens defect is invisible. Then drop `opens io.vidocq.cervantes.jaxrs` and
-      `opens io.vidocq.cervantes.cdi` (BCE via ServiceLoader + context via provider), keep
-      `cdi.internal` until producer invokers exist. Validate a JWT endpoint responds with no opens.
+### Verify (module-path, not classpath) — DONE for cervantes
+- [x] Module-path JWT vehicle built: `vidocq/…/vidocq-runtime-cervantes-jwt-example` (jlink image,
+      bundles all cervantes modules). Proven: `/api/secured/admin` with an RSA-signed admin token →
+      200, no-token → 401, user token → 403, `/public` → 200 — WITH the `opens … to
+      io.vidocq.vauban.core` REMOVED from cervantes-jaxrs and cervantes-cdi (kept `cdi.internal`).
+      → the vauban opens are confirmed droppable; committed on cervantes branch.
+- [ ] **cassini residual reflection (NEW, separate from vauban)**: the vehicle surfaced that
+      `io.vidocq.cassini.core` (AdapterRegistry / FieldInjector) reflects on the `@Provider` beans
+      and wants `opens … to io.vidocq.cassini.core` — non-fatal (reflective fallback), pre-existing.
+      To reach truly zero-opens, cassini must generate an in-module adapter/field-injector for
+      `@Provider`/resource beans (cassini-codegen concern), OR these modules add the cassini-qualified
+      opens. Not a vauban task.
+- [ ] Producer-method invokers (Brique B producers) → still needed to drop `opens …cdi.internal`,
+      and to let a resource `@Inject JsonWebToken` (the example uses SecurityContext to avoid the
+      cross-module producer, which the APT does not resolve at compile time — also worth fixing).
 - [ ] jlink cassini-rest / mansart-h2 boot + endpoint without opens; post-jlink smoke test
 
 ## Backlog (deferred)
