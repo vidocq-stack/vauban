@@ -5,7 +5,7 @@ import jakarta.inject.Inject;
 
 /**
  * Test bean with an {@code @Inject} constructor, instantiated through a
- * {@link io.vidocq.vauban.core.VaubanComponentProvider} that receives the container-resolved
+ * {@link io.vidocq.vauban.api.VaubanComponentProvider} that receives the container-resolved
  * argument — proving in-module {@code new X(args…)} without {@code opens … to vauban.core}.
  */
 @Dependent

@@ -267,7 +267,7 @@ public final class VaubanGenerator {
      * Emits {@code <pkg>/_VaubanComponents.class} (and a class-path service file) for the public,
      * top-level, no-arg managed beans compiled into this module ({@code projectClassesDir}). Beans
      * from dependency jars are excluded — they carry their own provider. The module still needs a
-     * hand-written {@code provides io.vidocq.vauban.core.VaubanComponentProvider with …;} for the
+     * hand-written {@code provides io.vidocq.vauban.api.VaubanComponentProvider with …;} for the
      * module path; the class-path service file covers the unnamed-module case.
      */
     private static void generateComponentProvider(Config config,
@@ -294,7 +294,7 @@ public final class VaubanGenerator {
                     providerFqn, List.copyOf(fqns));
             writeClassFile(config.outputDir(), gen.className(), gen.bytecode());
             var svc = config.outputDir().resolve(
-                    "META-INF/services/io.vidocq.vauban.core.VaubanComponentProvider");
+                    "META-INF/services/io.vidocq.vauban.api.VaubanComponentProvider");
             Files.createDirectories(svc.getParent());
             Files.write(svc, List.of(providerFqn), StandardCharsets.UTF_8);
         } catch (Exception e) {

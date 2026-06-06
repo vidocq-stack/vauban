@@ -4,7 +4,7 @@ import java.util.List;
 
 /**
  * Generates a per-module {@code _VaubanComponents} class implementing
- * {@code io.vidocq.vauban.core.VaubanComponentProvider}. The generated class instantiates the
+ * {@code io.vidocq.vauban.api.VaubanComponentProvider}. The generated class instantiates the
  * module's components <em>in-module</em> ({@code new X(args…)}), so the container can create them
  * without reflection and without {@code opens … to io.vidocq.vauban.core}.
  *
@@ -21,7 +21,7 @@ import java.util.List;
  *
  * <pre>{@code
  * package app;
- * public final class _VaubanComponents implements io.vidocq.vauban.core.VaubanComponentProvider {
+ * public final class _VaubanComponents implements io.vidocq.vauban.api.VaubanComponentProvider {
  *     public Object create(String className) {
  *         return switch (className) {
  *             case "app.HelloResource" -> new app.HelloResource();
@@ -41,7 +41,7 @@ import java.util.List;
 public final class ComponentProviderGenerator {
 
     public static final String SIMPLE_NAME = "_VaubanComponents";
-    private static final String SPI = "io.vidocq.vauban.core.VaubanComponentProvider";
+    private static final String SPI = "io.vidocq.vauban.api.VaubanComponentProvider";
 
     private ComponentProviderGenerator() {}
 

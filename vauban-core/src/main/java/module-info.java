@@ -14,7 +14,7 @@ module io.vidocq.vauban.core {
 
     // Instantiate application components (beans, contexts, synthetic creators) via APT-generated
     // providers, so application modules need not open their packages to the container.
-    uses io.vidocq.vauban.core.VaubanComponentProvider;
+    uses io.vidocq.vauban.api.VaubanComponentProvider;
 
     exports io.vidocq.vauban.core;
     exports io.vidocq.vauban.core.container;

@@ -21,7 +21,7 @@ class ComponentProviderGeneratorTest {
         var s = gen.source();
         assertTrue(s.contains("package app;"), s);
         assertTrue(s.contains("public final class _VaubanComponents "
-                + "implements io.vidocq.vauban.core.VaubanComponentProvider"), s);
+                + "implements io.vidocq.vauban.api.VaubanComponentProvider"), s);
         assertTrue(s.contains("case \"app.Foo\" -> new app.Foo();"), s);
         assertTrue(s.contains("case \"app.web.Bar\" -> new app.web.Bar();"), s);
         assertTrue(s.contains("default -> null;"), s);

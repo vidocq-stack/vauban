@@ -186,7 +186,7 @@ public final class VaubanLookup {
                         + " on the module path. Either (preferred) provide a generated "
                         + "VaubanComponentProvider for its module — the APT or packaging plugin "
                         + "emits a `_VaubanComponents` and the module declares `provides "
-                        + "io.vidocq.vauban.core.VaubanComponentProvider with …;` — so the container "
+                        + "io.vidocq.vauban.api.VaubanComponentProvider with …;` — so the container "
                         + "instantiates it in-module without reflection; or open the package: "
                         + "`opens " + clazz.getPackageName() + " to io.vidocq.vauban.core;`", e);
             }

@@ -264,7 +264,7 @@ class VaubanGeneratorTest {
         assertTrue(Files.exists(providerClass), "_VaubanComponents.class should be generated in-module");
         assertTrue(Files.size(providerClass) > 0, "provider .class must not be empty");
 
-        var svc = outputDir.resolve("META-INF/services/io.vidocq.vauban.core.VaubanComponentProvider");
+        var svc = outputDir.resolve("META-INF/services/io.vidocq.vauban.api.VaubanComponentProvider");
         assertTrue(Files.exists(svc), "class-path service file should be written");
         assertEquals("com.myapp._VaubanComponents", Files.readString(svc, StandardCharsets.UTF_8).strip());
     }

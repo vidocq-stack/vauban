@@ -39,7 +39,7 @@ public final class VaubanContainerBuilder {
     // Module-supplied component providers (ServiceLoader). Consulted before reflective
     // instantiation so application modules need not open their packages to the container.
     private ComponentProviders componentProviders = new ComponentProviders(List.of());
-    private final List<io.vidocq.vauban.core.VaubanComponentProvider> componentProviderList = new ArrayList<>();
+    private final List<io.vidocq.vauban.api.VaubanComponentProvider> componentProviderList = new ArrayList<>();
     // Classes already reported as falling back to reflective instantiation — traced once each so
     // the residual (jars not frozen by APT/plugin) is visible without spamming per-instance logs.
     private final java.util.Set<String> reflectiveFallbacks = java.util.concurrent.ConcurrentHashMap.newKeySet();
@@ -53,7 +53,7 @@ public final class VaubanContainerBuilder {
 
     /**
      * Instantiates {@code cls} preferring an APT-generated
-     * {@link io.vidocq.vauban.core.VaubanComponentProvider} (no reflection, no {@code opens})
+     * {@link io.vidocq.vauban.api.VaubanComponentProvider} (no reflection, no {@code opens})
      * and falling back to reflective {@link VaubanLookup}
      * when no provider owns the class (class path, unnamed modules, jars not yet processed).
      */
@@ -72,7 +72,7 @@ public final class VaubanContainerBuilder {
 
     /**
      * Records (once per class) that {@code cls} is being instantiated reflectively because no
-     * generated {@link io.vidocq.vauban.core.VaubanComponentProvider} owns it. This is a valid
+     * generated {@link io.vidocq.vauban.api.VaubanComponentProvider} owns it. This is a valid
      * permanent fallback for the class path, open/automatic modules, and jars not yet processed
      * by the APT or the packaging plugin — but it is the residual that prevents a fully static,
      * AOT-friendly, opens-free deployment, so it is surfaced at DEBUG rather than left silent.
@@ -88,12 +88,12 @@ public final class VaubanContainerBuilder {
     }
 
     /**
-     * Registers a {@link io.vidocq.vauban.core.VaubanComponentProvider} programmatically. It is
+     * Registers a {@link io.vidocq.vauban.api.VaubanComponentProvider} programmatically. It is
      * consulted before the {@link java.util.ServiceLoader}-discovered providers and before
      * reflective instantiation. Mainly for tests and advanced embedding; application modules
      * normally declare their generated provider via {@code provides … with} in module-info.
      */
-    public VaubanContainerBuilder addComponentProvider(io.vidocq.vauban.core.VaubanComponentProvider provider) {
+    public VaubanContainerBuilder addComponentProvider(io.vidocq.vauban.api.VaubanComponentProvider provider) {
         componentProviderList.add(provider);
         return this;
     }

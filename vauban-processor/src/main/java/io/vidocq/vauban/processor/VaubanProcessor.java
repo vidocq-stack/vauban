@@ -754,7 +754,7 @@ public class VaubanProcessor extends AbstractProcessor {
             processingEnv.getMessager().printMessage(Diagnostic.Kind.NOTE,
                     "[Vauban] Generated " + gen.className() + " for " + componentFqns.size()
                             + " component(s). On the module path, add to module-info: "
-                            + "provides io.vidocq.vauban.core.VaubanComponentProvider with "
+                            + "provides io.vidocq.vauban.api.VaubanComponentProvider with "
                             + gen.className() + ";");
         } catch (IOException e) {
             processingEnv.getMessager().printMessage(Diagnostic.Kind.WARNING,
@@ -767,7 +767,7 @@ public class VaubanProcessor extends AbstractProcessor {
         try {
             var resource = processingEnv.getFiler().createResource(
                     StandardLocation.CLASS_OUTPUT, "",
-                    "META-INF/services/io.vidocq.vauban.core.VaubanComponentProvider");
+                    "META-INF/services/io.vidocq.vauban.api.VaubanComponentProvider");
             try (var w = new PrintWriter(resource.openOutputStream(), false, StandardCharsets.UTF_8)) {
                 w.println(providerClassName);
             }

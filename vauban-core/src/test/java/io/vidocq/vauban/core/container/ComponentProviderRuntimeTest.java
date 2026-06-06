@@ -9,7 +9,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * End-to-end proof that the container instantiates a bean through a
- * {@link io.vidocq.vauban.core.VaubanComponentProvider} (loaded via ServiceLoader) instead
+ * {@link io.vidocq.vauban.api.VaubanComponentProvider} (loaded via ServiceLoader) instead
  * of reflection — i.e. without needing {@code opens … to io.vidocq.vauban.core}.
  *
  * <p>{@link CountingComponentProvider} is registered as a service and records the call when

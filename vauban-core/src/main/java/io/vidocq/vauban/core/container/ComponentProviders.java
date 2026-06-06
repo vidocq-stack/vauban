@@ -1,6 +1,6 @@
 package io.vidocq.vauban.core.container;
 
-import io.vidocq.vauban.core.VaubanComponentProvider;
+import io.vidocq.vauban.api.VaubanComponentProvider;
 
 import java.util.ArrayList;
 import java.util.List;

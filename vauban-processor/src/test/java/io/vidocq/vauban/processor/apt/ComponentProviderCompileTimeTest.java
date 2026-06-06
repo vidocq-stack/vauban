@@ -1,6 +1,6 @@
 package io.vidocq.vauban.processor.apt;
 
-import io.vidocq.vauban.core.VaubanComponentProvider;
+import io.vidocq.vauban.api.VaubanComponentProvider;
 import io.vidocq.vauban.processor.VaubanProcessor;
 import jakarta.enterprise.context.ApplicationScoped;
 import org.junit.jupiter.api.DisplayName;
@@ -33,7 +33,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class ComponentProviderCompileTimeTest {
 
     private static final String SERVICE_PATH =
-            "META-INF/services/io.vidocq.vauban.core.VaubanComponentProvider";
+            "META-INF/services/io.vidocq.vauban.api.VaubanComponentProvider";
 
     @TempDir
     Path tempDir;

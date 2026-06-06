@@ -1,6 +1,6 @@
 package io.vidocq.vauban.core.provider;
 
-import io.vidocq.vauban.core.VaubanComponentProvider;
+import io.vidocq.vauban.api.VaubanComponentProvider;
 import io.vidocq.vauban.core.container.ProvidedBean;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;

@@ -8,7 +8,7 @@ import java.util.List;
 
 /**
  * Generates the bytecode of a per-module {@code _VaubanComponents} class implementing
- * {@link io.vidocq.vauban.core.VaubanComponentProvider}, so the container can instantiate the
+ * {@link io.vidocq.vauban.api.VaubanComponentProvider}, so the container can instantiate the
  * module's no-arg beans in-module ({@code new X()}) without reflection and without
  * {@code opens … to io.vidocq.vauban.core}.
  *
@@ -24,7 +24,7 @@ public final class ComponentProviderClassGenerator {
     private static final ClassDesc CD_Object = ConstantDescs.CD_Object;
     private static final ClassDesc CD_String = ConstantDescs.CD_String;
     private static final ClassDesc CD_Provider =
-            ClassDesc.of("io.vidocq.vauban.core.VaubanComponentProvider");
+            ClassDesc.of("io.vidocq.vauban.api.VaubanComponentProvider");
     private static final MethodTypeDesc MTD_void = MethodTypeDesc.of(ConstantDescs.CD_void);
     private static final MethodTypeDesc MTD_String_equals =
             MethodTypeDesc.of(ConstantDescs.CD_boolean, CD_Object);
