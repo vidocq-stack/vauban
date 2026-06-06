@@ -33,6 +33,10 @@ public record MethodInfo(
         return (accessFlags & 0x0400) != 0;
     }
 
+    public boolean isFinal() {
+        return (accessFlags & 0x0010) != 0;
+    }
+
     public boolean isPublic() {
         return (accessFlags & 0x0001) != 0;
     }

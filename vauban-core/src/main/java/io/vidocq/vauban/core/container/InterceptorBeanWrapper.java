@@ -533,18 +533,26 @@ final class InterceptorBeanWrapper {
                     if (!hasInterceptors) continue;
                 }
 
-                var generated = io.vidocq.vauban.core.interceptor.InterceptorSubclassGenerator
-                        .generate(beanClass);
-
                 try {
                     Class<?> interceptedClass;
-                    if (classDefiner != null) {
-                        interceptedClass = classDefiner.apply(generated.className(), generated.bytecode());
-                    } else {
-                        try {
-                            interceptedClass = loadOrDefineClassRobustly(beanClass, generated.className(), generated.bytecode());
-                        } catch (Exception e) {
-                            throw new jakarta.enterprise.inject.spi.DeploymentException("Could not define interceptor subclass", e);
+                    var interceptedName = beanClass.getName() + "$$Intercepted";
+                    try {
+                        // Prefer a PRE-GENERATED subclass (Vauban APT or Maven plugin). On the strict
+                        // module path, defining the class at runtime would need deep access into the
+                        // bean's module (an `opens … to io.vidocq.vauban.core`); an already-compiled
+                        // sibling on the bean's own loader avoids that entirely.
+                        interceptedClass = Class.forName(interceptedName, false, beanClass.getClassLoader());
+                    } catch (ClassNotFoundException notPreGenerated) {
+                        var generated = io.vidocq.vauban.core.interceptor.InterceptorSubclassGenerator
+                                .generate(beanClass);
+                        if (classDefiner != null) {
+                            interceptedClass = classDefiner.apply(generated.className(), generated.bytecode());
+                        } else {
+                            try {
+                                interceptedClass = loadOrDefineClassRobustly(beanClass, generated.className(), generated.bytecode());
+                            } catch (Exception e) {
+                                throw new jakarta.enterprise.inject.spi.DeploymentException("Could not define interceptor subclass", e);
+                            }
                         }
                     }
 

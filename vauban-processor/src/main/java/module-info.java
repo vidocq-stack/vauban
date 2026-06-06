@@ -10,6 +10,7 @@ module io.vidocq.vauban.processor {
     exports io.vidocq.vauban.processor.codegen;
     exports io.vidocq.vauban.processor.codegen.factory;
     exports io.vidocq.vauban.processor.codegen.proxy;
+    exports io.vidocq.vauban.processor.codegen.interceptor;
 
     provides javax.annotation.processing.Processor
         with io.vidocq.vauban.processor.VaubanProcessor;

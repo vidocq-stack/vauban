@@ -241,6 +241,43 @@ Reflective method invocation was the next forced `setAccessible`/`unreflect` kee
       a change to selection now benefits both. Erasure unified (type-variable/wildcard fields/params
       now handled on the APT side too). Byte-for-byte behavior preserved — both vehicles re-proven.
 
+## Phase 15 — `$$Intercepted` generation in the APT (own code → APT, plugin → external jars)
+
+So a module's OWN intercepted beans are pre-generated at compile time (no runtime class definition,
+no `opens … to io.vidocq.vauban.core` on the module path), making the APT feature-complete vs the
+plugin. The runtime `InterceptorSubclassGenerator` emits a GENERIC subclass (chain resolved at
+runtime), so only method SHAPES are needed → a ClassInfo/Elements front-end is feasible.
+
+- [x] `MethodInfo.isFinal()` (vauban-indexer).
+- [x] **Shared emitter** (vauban-core): split `InterceptorSubclassGenerator` into a neutral shape
+      model (`TypeRef`/`MethodShape`/`CtorShape`/`InterceptedShape`) + `InterceptedEmitter.emit(shape)`,
+      with `fromClass(Class)` front-end. `generate(Class)` = `emit(fromClass(...))` — runtime/plugin
+      API unchanged. Golden + structural tests (note: `getDeclaredMethods()` order varies across JVM
+      runs so the guarantee is within-run determinism + roundtrip + the existing interception tests).
+- [x] **APT front-end** `InterceptedShapeFromElements.from(TypeElement, Elements, Types)`
+      (vauban-processor) — inherited override-set via `Elements.getAllMembers`; cross-check test vs
+      `fromClass` (same override set).
+- [x] **APT wiring** (`VaubanProcessor`): detect interception targets via the **Elements API**
+      (`getAnnotation(@InterceptorBinding)` on the annotation element — works for custom + method-level
+      bindings, unlike the index, which doesn't resolve custom binding annotations), then emit
+      `<bean>$$Intercepted` bytecode via the Filer. Compile-test proves the `.class` is emitted.
+- [x] **Runtime skip** (`InterceptorBeanWrapper`): probe `Class.forName(<bean>$$Intercepted)` on the
+      bean's loader first; only generate/define at runtime if absent. This is what removes the
+      module-path deep-access for pre-generated targets.
+- [ ] **Module-path jlink proof** — STILL NEEDED. `vauban-examples` E2E runs on the CLASSPATH (`-cp`),
+      so it can't exercise opens-removal. Build a jlink vehicle (vidocq, like knock/cervantes) with an
+      intercepted bean compiled by the APT, target package NOT opened to vauban.core, interception
+      fires. Fold into the dirac migration proof.
+- [ ] **Étape 5 DEFERRED — interceptor-package opens via in-module `@AroundInvoke`.** Routing the
+      interceptor's `@AroundInvoke` through the generated `invoke()` is blocked by the SPI `invoke`
+      having NO `throws` clause while `@AroundInvoke` methods declare `throws Exception` (and @Retry /
+      fault-tolerance depend on exact exception propagation). NOT needed for the migration goal — the
+      interceptor beans keep their package open for reflective `@AroundInvoke` invocation. Revisit with
+      a throwing-variant SPI or a wrapper-unwrap scheme.
+- [ ] **Étape 6 — migrate the 3 interceptor wrappers** dirac/heisenberg/humboldt plugin→APT (same as
+      the knock-cdi pilot), prove interception still works on the module path. Then the 7 no-interceptor
+      wrappers (cervantes/ravel/cyrano/cassini/grimm/foy/…) as a mechanical sweep.
+
 ## Backlog (deferred)
 - [ ] `DirectoryScanner` - directory scanning
 - [ ] Binary serialization IndexWriter/IndexReader

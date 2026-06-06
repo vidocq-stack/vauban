@@ -133,6 +133,34 @@ class ComponentProviderCompileTimeTest {
                 "no provider must be generated into a class-as-package directory");
     }
 
+    @Test
+    @DisplayName("pre-generates a <bean>$$Intercepted subclass for an interception target")
+    void generatesInterceptedSubclassForBoundBean() throws Exception {
+        var result = compile("AuditedService", """
+                package app;
+
+                @jakarta.interceptor.InterceptorBinding
+                @java.lang.annotation.Retention(java.lang.annotation.RetentionPolicy.RUNTIME)
+                @java.lang.annotation.Target({java.lang.annotation.ElementType.TYPE,
+                        java.lang.annotation.ElementType.METHOD})
+                @interface Audited {}
+
+                @jakarta.enterprise.context.ApplicationScoped
+                @Audited
+                public class AuditedService {
+                    public String run() { return "ok"; }
+                }
+                """);
+
+        assertTrue(result.success(), "compilation should succeed. Messages: " + result.messages());
+
+        // The APT must pre-generate the interception subclass to bytecode, so the runtime never
+        // defines it (which would need `opens … to io.vidocq.vauban.core` on the module path).
+        assertTrue(Files.exists(result.outputDir().resolve("app/AuditedService$$Intercepted.class")),
+                "expected APT-generated app/AuditedService$$Intercepted.class. Messages: "
+                        + result.messages());
+    }
+
     // ---- minimal in-process compilation harness (with -s for generated sources) ----
 
     private CompilationResult compile(String simpleName, String source) throws IOException {

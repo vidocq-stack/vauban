@@ -5,6 +5,7 @@ import io.vidocq.vauban.processor.codegen.GeneratedClass;
 import io.vidocq.vauban.processor.codegen.factory.BeanFactoryGenerator;
 import io.vidocq.vauban.processor.codegen.proxy.ClientProxyGenerator;
 import io.vidocq.vauban.processor.codegen.provider.ComponentProviderGenerator;
+import io.vidocq.vauban.processor.codegen.interceptor.InterceptedShapeFromElements;
 import io.vidocq.vauban.core.bean.discovery.BeanDiscovery;
 import io.vidocq.vauban.core.bean.model.BeanDescriptor;
 import io.vidocq.vauban.core.bean.model.ScopeInfo;
@@ -336,6 +337,27 @@ public class VaubanProcessor extends AbstractProcessor {
                 // The instantiable flag lets ComponentCollector attempt constructor-param extraction.
                 var fqn = bean.beanClass().value();
                 providedClasses.add(new ProvidedClass(fqn, classInfo, isTopLevelType(fqn)));
+
+                // Pre-generate the <bean>$$Intercepted subclass for intercepted targets, so the
+                // runtime needs no reflective class definition (hence no `opens … to
+                // io.vidocq.vauban.core`) on the strict module path. Mirrors the Maven plugin but
+                // builds the shape from javac Elements instead of a loaded Class. Top-level,
+                // non-final targets only; anything else falls back to runtime generation.
+                if (isTopLevelType(fqn)) {
+                    var typeElement = processingEnv.getElementUtils().getTypeElement(fqn);
+                    if (typeElement != null && isInterceptedTarget(typeElement)) {
+                        try {
+                            var shape = InterceptedShapeFromElements.from(typeElement,
+                                    processingEnv.getElementUtils(), processingEnv.getTypeUtils());
+                            var bytecode = io.vidocq.vauban.core.interceptor.InterceptedEmitter.emit(shape);
+                            generateClass(new GeneratedClass(fqn + "$$Intercepted", bytecode));
+                        } catch (Exception e) {
+                            processingEnv.getMessager().printMessage(Diagnostic.Kind.NOTE,
+                                    "[Vauban] Could not pre-generate " + fqn + "$$Intercepted"
+                                            + " (the runtime will generate it): " + e.getMessage());
+                        }
+                    }
+                }
             }
         }
 
@@ -653,6 +675,38 @@ public class VaubanProcessor extends AbstractProcessor {
             processingEnv.getMessager().printMessage(Diagnostic.Kind.WARNING,
                     "[Vauban] Failed to write BCE marker: " + e.getMessage());
         }
+    }
+
+    /**
+     * A managed bean is an interception TARGET (needs a {@code $$Intercepted} subclass) when it is
+     * non-final and carries an interceptor binding — at the class level (including {@code @Inherited}
+     * bindings from supertypes, via {@code getAllAnnotationMirrors}) or on any instance method.
+     *
+     * <p>Detection uses the javac {@code Elements} API rather than the indexer model: a custom
+     * binding annotation defined in (or brought into) the module isn't necessarily in the Vauban
+     * index, but its meta-{@code @InterceptorBinding} is always resolvable from the compiler symbol
+     * table. This also covers method-level bindings, which the Maven plugin (class-level only) misses.
+     */
+    private boolean isInterceptedTarget(TypeElement beanElement) {
+        if (beanElement.getModifiers().contains(Modifier.FINAL)) return false;
+        for (var am : processingEnv.getElementUtils().getAllAnnotationMirrors(beanElement)) {
+            if (isInterceptorBinding(am)) return true;
+        }
+        for (var enclosed : beanElement.getEnclosedElements()) {
+            if (enclosed.getKind() != ElementKind.METHOD) continue;
+            if (enclosed.getModifiers().contains(Modifier.STATIC)
+                    || enclosed.getModifiers().contains(Modifier.PRIVATE)) continue;
+            for (var am : enclosed.getAnnotationMirrors()) {
+                if (isInterceptorBinding(am)) return true;
+            }
+        }
+        return false;
+    }
+
+    /** An interceptor binding is an annotation type itself meta-annotated {@code @InterceptorBinding}. */
+    private static boolean isInterceptorBinding(javax.lang.model.element.AnnotationMirror am) {
+        return am.getAnnotationType().asElement()
+                .getAnnotation(jakarta.interceptor.InterceptorBinding.class) != null;
     }
 
     /**
