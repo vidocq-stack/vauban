@@ -45,9 +45,14 @@ enhancement result reduces to `target FQN → [annotation FQN…]` — trivially
 - [ ] Extend codegen beyond client-proxies; runtime via factory, fallback `privateLookupIn`
       (PoC: cervantes-jwt synthetic creator)
 
-### Brique C — ServiceLoader fallback for residual BCE instantiation
+### Brique C — ServiceLoader fallback for residual BCE instantiation ✅
 (= existing backlog item "ExtensionLoader via ServiceLoader")
-- [ ] `uses BuildCompatibleExtension` in vauban-core/module-info; neutralize `instantiateBce`
+- [x] `uses BuildCompatibleExtension` in vauban-core/module-info
+- [x] `BceProcessor.instantiateBce` ServiceLoader-first; reflection only as fallback
+      (class path / unnamed module / not-declared-as-service)
+- [x] clean install green; BCE-service tests (replay Test 2/3/4) + ExampleAppEndToEnd pass
+- Note: ServiceLoader vs reflection is indistinguishable on the class path; the no-opens
+  proof comes from the jlink module-path validation (Brique verify).
 
 ### Brique D — Packaging plugin freezes non-APT jars (vidocq-runtime-maven-plugin)
 - [ ] `VidocqGenerateMojo` writes patch + factories + marker for untreated deps

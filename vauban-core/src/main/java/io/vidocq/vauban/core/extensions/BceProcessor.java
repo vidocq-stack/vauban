@@ -226,9 +226,38 @@ public final class BceProcessor {
 
     @SuppressWarnings({"java:S3011", "java:S112"}) // CDI spec requires reflective access; container exceptions propagate as RuntimeException
     private static Object instantiateBce(Class<?> bceClass) throws Exception {
+        // Prefer ServiceLoader: a BCE declared via `provides ... with` is instantiated by the
+        // module system WITHOUT requiring the module to open its package to vauban-core. This
+        // removes the deep reflection that forced `opens <pkg> to io.vidocq.vauban.core`.
+        var loaded = serviceLoaderInstance(bceClass);
+        if (loaded != null) return loaded;
+
+        // Fallback: class path, unnamed module, or a BCE not declared as a service.
         var ctor = bceClass.getDeclaredConstructor();
         makeAccessibleSafe(ctor);
         return ctor.newInstance();
+    }
+
+    /**
+     * Returns the {@link java.util.ServiceLoader}-provided instance for {@code bceClass} if it
+     * is registered as a {@code BuildCompatibleExtension} service on its own class loader,
+     * otherwise {@code null}. The module system performs the instantiation, so no qualified
+     * {@code opens} to vauban-core is needed on the module path.
+     */
+    private static Object serviceLoaderInstance(Class<?> bceClass) {
+        try {
+            var loader = java.util.ServiceLoader.load(
+                    jakarta.enterprise.inject.build.compatible.spi.BuildCompatibleExtension.class,
+                    bceClass.getClassLoader());
+            for (var provider : loader.stream().toList()) {
+                if (provider.type().equals(bceClass)) {
+                    return provider.get();
+                }
+            }
+        } catch (Throwable _) {
+            // ServiceLoader unavailable / misconfigured — fall back to reflection.
+        }
+        return null;
     }
 
     private enum EnhancementParamKind {

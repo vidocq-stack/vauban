@@ -8,6 +8,10 @@ module io.vidocq.vauban.core {
 
     uses io.vidocq.vauban.classloader.spi.ByteSourcePlugin;
 
+    // Instantiate Build Compatible Extensions through their `provides ... with` declaration,
+    // so application modules need not `opens <pkg> to io.vidocq.vauban.core` on the module path.
+    uses jakarta.enterprise.inject.build.compatible.spi.BuildCompatibleExtension;
+
     exports io.vidocq.vauban.core;
     exports io.vidocq.vauban.core.container;
     exports io.vidocq.vauban.core.langmodel;
