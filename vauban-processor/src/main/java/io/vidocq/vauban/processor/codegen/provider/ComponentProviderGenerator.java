@@ -5,12 +5,19 @@ import java.util.List;
 /**
  * Generates a per-module {@code _VaubanComponents} class implementing
  * {@code io.vidocq.vauban.core.VaubanComponentProvider}. The generated class instantiates the
- * module's components <em>in-module</em> ({@code new X()}), so the container can create them
+ * module's components <em>in-module</em> ({@code new X(args…)}), so the container can create them
  * without reflection and without {@code opens … to io.vidocq.vauban.core}.
  *
  * <p>Emitted as Java <strong>source</strong> (not bytecode): the switch-on-name is trivial and
- * stays readable, and javac compiles it in a subsequent APT round. Only components with a
- * public no-arg constructor are listed; anything else falls back to reflection at runtime.
+ * stays readable, and javac compiles it in a subsequent APT round. Two paths are generated:
+ * <ul>
+ *   <li>{@code create(String)} — no-arg components: {@code new X()};</li>
+ *   <li>{@code create(String, Object[])} — components with an injected constructor:
+ *       {@code new X((Dep) args[0], …)} where the arguments have already been resolved by
+ *       {@code vauban-core} (the provider only performs the in-module {@code new}).</li>
+ * </ul>
+ * Only components whose constructor parameters are nameable reference types are listed; anything
+ * else falls back to reflection at runtime.
  *
  * <pre>{@code
  * package app;
@@ -18,6 +25,13 @@ import java.util.List;
  *     public Object create(String className) {
  *         return switch (className) {
  *             case "app.HelloResource" -> new app.HelloResource();
+ *             default -> null;
+ *         };
+ *     }
+ *     public Object create(String className, Object[] args) {
+ *         if (args == null || args.length == 0) return create(className);
+ *         return switch (className) {
+ *             case "app.Service" -> new app.Service((app.Repo) args[0]);
  *             default -> null;
  *         };
  *     }
@@ -35,11 +49,42 @@ public final class ComponentProviderGenerator {
     public record Generated(String className, String source) {}
 
     /**
+     * A component the provider can instantiate in-module.
+     *
+     * @param fqn           fully-qualified class name of the component
+     * @param ctorParamTypes erased, nameable types of the selected constructor's parameters, in
+     *                       declared order (empty for a no-arg constructor)
+     */
+    public record Component(String fqn, List<String> ctorParamTypes) {
+        public Component {
+            ctorParamTypes = List.copyOf(ctorParamTypes);
+        }
+
+        boolean noArg() {
+            return ctorParamTypes.isEmpty();
+        }
+    }
+
+    /**
+     * Back-compatible no-arg entry point: every component is instantiated via {@code new X()}.
+     *
      * @param packageName   package the provider lives in (a package of the current module)
      * @param componentFqns fully-qualified names of components instantiable via {@code new X()}
      */
     public static Generated generate(String packageName, List<String> componentFqns) {
+        return generateFrom(packageName, componentFqns.stream()
+                .map(fqn -> new Component(fqn, List.of())).toList());
+    }
+
+    /**
+     * @param packageName package the provider lives in (a package of the current module)
+     * @param components  components to instantiate, no-arg and/or injected-constructor
+     */
+    public static Generated generateFrom(String packageName, List<Component> components) {
         var className = packageName.isEmpty() ? SIMPLE_NAME : packageName + "." + SIMPLE_NAME;
+        var noArg = components.stream().filter(Component::noArg).toList();
+        var withArgs = components.stream().filter(c -> !c.noArg()).toList();
+
         var sb = new StringBuilder();
         if (!packageName.isEmpty()) {
             sb.append("package ").append(packageName).append(";\n\n");
@@ -48,15 +93,39 @@ public final class ComponentProviderGenerator {
         sb.append("// the container needs no `opens ... to io.vidocq.vauban.core`. Do not edit.\n");
         sb.append("public final class ").append(SIMPLE_NAME)
                 .append(" implements ").append(SPI).append(" {\n");
+
         sb.append("    @Override\n");
         sb.append("    public Object create(String className) {\n");
         sb.append("        return switch (className) {\n");
-        for (var fqn : componentFqns) {
-            sb.append("            case \"").append(fqn).append("\" -> new ").append(fqn).append("();\n");
+        for (var c : noArg) {
+            sb.append("            case \"").append(c.fqn()).append("\" -> new ")
+                    .append(c.fqn()).append("();\n");
         }
         sb.append("            default -> null;\n");
         sb.append("        };\n");
         sb.append("    }\n");
+
+        if (!withArgs.isEmpty()) {
+            sb.append("    @Override\n");
+            sb.append("    @SuppressWarnings({\"unchecked\", \"rawtypes\"})\n");
+            sb.append("    public Object create(String className, Object[] args) {\n");
+            sb.append("        if (args == null || args.length == 0) return create(className);\n");
+            sb.append("        return switch (className) {\n");
+            for (var c : withArgs) {
+                sb.append("            case \"").append(c.fqn()).append("\" -> new ")
+                        .append(c.fqn()).append("(");
+                var params = c.ctorParamTypes();
+                for (int i = 0; i < params.size(); i++) {
+                    if (i > 0) sb.append(", ");
+                    sb.append("(").append(params.get(i)).append(") args[").append(i).append("]");
+                }
+                sb.append(");\n");
+            }
+            sb.append("            default -> null;\n");
+            sb.append("        };\n");
+            sb.append("    }\n");
+        }
+
         sb.append("}\n");
         return new Generated(className, sb.toString());
     }

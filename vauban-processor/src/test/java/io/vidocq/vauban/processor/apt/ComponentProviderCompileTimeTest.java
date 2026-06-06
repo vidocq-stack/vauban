@@ -40,7 +40,7 @@ class ComponentProviderCompileTimeTest {
     @Test
     @DisplayName("generates a compiling _VaubanComponents + service file for a packaged no-arg bean")
     void generatesProviderForPackagedNoArgBean() throws Exception {
-        var result = compile("""
+        var result = compile("HelloResource", """
                 package app;
 
                 @jakarta.enterprise.context.ApplicationScoped
@@ -65,15 +65,48 @@ class ComponentProviderCompileTimeTest {
         assertEquals("app._VaubanComponents", Files.readString(svc).strip());
     }
 
+    @Test
+    @DisplayName("generates a compiling args-overload casting resolved deps for an @Inject-ctor bean")
+    void generatesArgAwareProviderForInjectConstructorBean() throws Exception {
+        var result = compile("GreetingService", """
+                package app;
+
+                @jakarta.enterprise.context.ApplicationScoped
+                public class GreetingService {
+                    private final Repo repo;
+                    @jakarta.inject.Inject
+                    public GreetingService(Repo repo) { this.repo = repo; }
+                    public String greet() { return repo.name(); }
+                }
+
+                @jakarta.enterprise.context.ApplicationScoped
+                class Repo {
+                    String name() { return "repo"; }
+                }
+                """);
+
+        assertTrue(result.success(), "compilation should succeed. Messages: " + result.messages());
+
+        var genSource = result.genDir().resolve("app/_VaubanComponents.java");
+        assertTrue(Files.exists(genSource), "expected generated provider source at " + genSource);
+        var src = Files.readString(genSource);
+        assertTrue(src.contains("public Object create(String className, Object[] args)"), src);
+        assertTrue(src.contains(
+                "case \"app.GreetingService\" -> new app.GreetingService((app.Repo) args[0]);"), src);
+
+        assertTrue(Files.exists(result.outputDir().resolve("app/_VaubanComponents.class")),
+                "the generated provider (with the args overload) must compile to a .class");
+    }
+
     // ---- minimal in-process compilation harness (with -s for generated sources) ----
 
-    private CompilationResult compile(String source) throws IOException {
+    private CompilationResult compile(String simpleName, String source) throws IOException {
         var compiler = ToolProvider.getSystemJavaCompiler();
         var diagnostics = new DiagnosticCollector<JavaFileObject>();
 
         var sourceDir = Files.createDirectories(tempDir.resolve("src"));
         var dir = Files.createDirectories(sourceDir.resolve("app"));
-        var file = dir.resolve("HelloResource.java");
+        var file = dir.resolve(simpleName + ".java");
         Files.writeString(file, source);
         var sourceFile = new SimpleJavaFileObject(file.toUri(), JavaFileObject.Kind.SOURCE) {
             @Override

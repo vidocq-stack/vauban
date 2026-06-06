@@ -38,4 +38,26 @@ class ComponentProviderRuntimeTest {
                             + "(generated, in-module) rather than reflective newInstance");
         }
     }
+
+    @Test
+    @DisplayName("an @Inject-constructor bean is created by the provider with container-resolved args")
+    void instantiatesConstructorBeanViaProvider() {
+        CountingComponentProvider.CREATED.clear();
+
+        try (var container = VaubanContainer.builder()
+                .classLoader(getClass().getClassLoader())
+                .addComponentProvider(new CountingComponentProvider())
+                .addBeanClass(ProvidedConstructorBean.class)
+                .addBeanClass(ProvidedDependency.class)
+                .build()) {
+
+            ProvidedConstructorBean bean = container.select(ProvidedConstructorBean.class);
+
+            assertNotNull(bean, "container should produce a ProvidedConstructorBean instance");
+            assertEquals("bean+dep", bean.describe());
+            assertTrue(CountingComponentProvider.CREATED.contains(ProvidedConstructorBean.class.getName()),
+                    "the @Inject-constructor bean must be instantiated through the provider "
+                            + "(in-module new X(args)) rather than reflective newInstance");
+        }
+    }
 }

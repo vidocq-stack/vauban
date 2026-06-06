@@ -1043,7 +1043,7 @@ public final class VaubanContainerBuilder {
 
             var beanClassLoader = discoveryClassLoader;
             var vaubanLookup = getBuilderLookup();
-            var container = new VaubanContainer(index, descriptors, observers, interceptors, disposers, factories, syntheticDisposers, beanClassLoader, classDefiner, vaubanLookup);
+            var container = new VaubanContainer(index, descriptors, observers, interceptors, disposers, factories, syntheticDisposers, beanClassLoader, classDefiner, vaubanLookup, componentProviders);
 
             // Register custom contexts from Build Compatible Extensions
             if (discoveryResult != null) {

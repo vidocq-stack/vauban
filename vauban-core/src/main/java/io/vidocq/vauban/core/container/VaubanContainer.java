@@ -100,6 +100,7 @@ public final class VaubanContainer implements AutoCloseable {
     private final ClassLoader classLoader;
     private final java.util.function.BiFunction<String, byte[], Class<?>> classDefiner;
     private final VaubanLookup vaubanLookup;
+    private final ComponentProviders componentProviders;
     final BeanLifecycle beanLifecycle;
     final DisposerInvoker disposerInvoker;
     private final BeanInjector beanInjector;
@@ -126,11 +127,14 @@ public final class VaubanContainer implements AutoCloseable {
                             Map<DotName, java.util.function.BiConsumer<Object, CreationalContext<?>>> syntheticDisposers,
                             ClassLoader classLoader,
                             java.util.function.BiFunction<String, byte[], Class<?>> classDefiner,
-                            VaubanLookup vaubanLookup) {
+                            VaubanLookup vaubanLookup,
+                            ComponentProviders componentProviders) {
         this.index = index;
         this.classLoader = classLoader;
         this.classDefiner = classDefiner;
         this.vaubanLookup = vaubanLookup;
+        this.componentProviders = componentProviders == null
+                ? new ComponentProviders(List.of()) : componentProviders;
         this.disposerInvoker = new DisposerInvoker(this, vaubanLookup);
         this.beanInjector = new BeanInjector(this, vaubanLookup);
         this.applicationContext = new ApplicationContext();
@@ -598,10 +602,10 @@ public final class VaubanContainer implements AutoCloseable {
                     final var finalCtor = injectCtor;
                     final var finalArgs = args;
 
-                    Object result;
-                    if (constructCtx != null) {
-                        result = vaubanLookup.newInstance(finalCtor, finalArgs);
-                    } else {
+                    // Provider-first: let the owning module run `new X(args…)` in-module (no
+                    // opens); fall back to reflective construction when no provider owns it.
+                    Object result = componentProviders.create(descriptor.beanClass().value(), finalArgs);
+                    if (result == null) {
                         result = vaubanLookup.newInstance(finalCtor, finalArgs);
                     }
                     for (var tc : transientCtxs) {

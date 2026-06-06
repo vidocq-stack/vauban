@@ -55,11 +55,17 @@ via ServiceLoader and consults it before any reflective `newInstance`.
       `componentProviders` threaded through `registerSyntheticBean`/`buildSyntheticObserver`
       AND the generator to emit entries for those classes; deferred (no observable effect alone)
 - [ ] Producers (invokeMethod) / producer fields / disposers — generated invokers (B2)
-- [ ] @Inject-constructor beans (args) — provider `create(name, args)` overload
+- [x] @Inject-constructor beans (args) — `create(String, Object[])` SPI overload; container
+      resolves args (qualifiers/generics stay in vauban-core), provider runs `new X(args…)`
+      in-module. Wired in `VaubanContainer.createManagedBeanFactory` (provider-first); runtime
+      test `instantiatesConstructorBeanViaProvider` green
 - [x] **APT generation** of `_VaubanComponents` (source switch `new X()`) + class-path service
       file + NOTE advising the module-info `provides` — covers public no-arg managed beans
       (generator unit test + APT integration test: generated source compiles)
-- [ ] Extend generation to @Inject-constructor beans (resolve args) — B2
+- [x] Extend generation to @Inject-constructor beans (resolve args) — B2: `instantiableCtorParams`
+      selects the injected ctor (mirrors bean discovery), emits `new X((Dep) args[i]…)` casting
+      the container-resolved args; non-nameable params (primitive/type-var/wildcard) fall back to
+      reflection. Generator + APT integration tests green
 - [ ] Module-path proof via jlink (ServiceLoader path, no opens)
 
 ### Brique C — ServiceLoader fallback for residual BCE instantiation ✅

@@ -23,4 +23,13 @@ public class CountingComponentProvider implements VaubanComponentProvider {
         }
         return null;
     }
+
+    @Override
+    public Object create(String className, Object[] args) {
+        if (ProvidedConstructorBean.class.getName().equals(className)) {
+            CREATED.add(className);
+            return new ProvidedConstructorBean((ProvidedDependency) args[0]);
+        }
+        return create(className);
+    }
 }

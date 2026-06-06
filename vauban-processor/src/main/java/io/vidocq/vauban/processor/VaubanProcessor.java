@@ -4,6 +4,7 @@ import io.vidocq.vauban.processor.apt.ElementScanner;
 import io.vidocq.vauban.processor.codegen.GeneratedClass;
 import io.vidocq.vauban.processor.codegen.factory.BeanFactoryGenerator;
 import io.vidocq.vauban.processor.codegen.proxy.ClientProxyGenerator;
+import io.vidocq.vauban.processor.codegen.provider.ComponentProviderGenerator;
 import io.vidocq.vauban.core.bean.discovery.BeanDiscovery;
 import io.vidocq.vauban.core.bean.model.BeanDescriptor;
 import io.vidocq.vauban.core.bean.model.ScopeInfo;
@@ -303,7 +304,7 @@ public class VaubanProcessor extends AbstractProcessor {
         if (!errors.isEmpty()) return true;
 
         // Generate code for each bean
-        var providerComponents = new TreeSet<String>();
+        var providerComponents = new java.util.TreeMap<String, ComponentProviderGenerator.Component>();
         for (var bean : beans) {
             if (bean.kind() == BeanDescriptor.BeanKind.MANAGED) {
                 var classInfo = index.getClassByName(bean.beanClass()).orElse(null);
@@ -328,17 +329,19 @@ public class VaubanProcessor extends AbstractProcessor {
                     generateClass(ClientProxyGenerator.generate(classInfo));
                 }
 
-                // Collect components the generated provider can instantiate in-module (new X()),
-                // so the container avoids reflection — and the module avoids `opens`.
-                if (isInstantiableNoArg(classInfo)) {
-                    providerComponents.add(bean.beanClass().value());
-                }
+                // Collect components the generated provider can instantiate in-module — no-arg
+                // (new X()) or injected-constructor (new X(args…) with container-resolved args) —
+                // so the container avoids reflection, and the module avoids `opens`.
+                var fqn = bean.beanClass().value();
+                instantiableCtorParams(classInfo)
+                        .ifPresent(params -> providerComponents.put(
+                                fqn, new ComponentProviderGenerator.Component(fqn, params)));
             }
         }
 
         // Emit the per-module VaubanComponentProvider for those components.
         if (!providerComponents.isEmpty()) {
-            writeComponentProvider(List.copyOf(providerComponents));
+            writeComponentProvider(List.copyOf(providerComponents.values()));
         }
 
         // Write META-INF/vauban-beans.list
@@ -636,17 +639,58 @@ public class VaubanProcessor extends AbstractProcessor {
     }
 
     /**
-     * A managed class is instantiable via {@code new X()} when it is public, non-abstract, and
-     * exposes a public no-arg constructor (or only the implicit default one). Anything else is
-     * left to the runtime reflective fallback.
+     * Describes how the generated provider can instantiate a managed class in-module, or empty
+     * when it must be left to the runtime reflective fallback. The class must be public and
+     * non-abstract; then:
+     * <ul>
+     *   <li>a public no-arg (or implicit default) constructor → empty parameter list;</li>
+     *   <li>otherwise the injected constructor (the {@code @Inject}-annotated one, or the single
+     *       declared one — mirroring bean discovery) if it is public and every parameter is a
+     *       nameable reference type → that constructor's erased parameter type names, in order.</li>
+     * </ul>
+     * A non-nameable parameter (primitive, type variable, wildcard) yields empty, so such beans
+     * keep going through the reflective path.
      */
-    private static boolean isInstantiableNoArg(io.vidocq.vauban.indexer.model.ClassInfo ci) {
-        if (!ci.isPublic() || ci.isAbstract()) return false;
+    private static java.util.Optional<List<String>> instantiableCtorParams(
+            io.vidocq.vauban.indexer.model.ClassInfo ci) {
+        if (!ci.isPublic() || ci.isAbstract()) return java.util.Optional.empty();
         var ctors = ci.methods().stream()
                 .filter(io.vidocq.vauban.indexer.model.MethodInfo::isConstructor)
                 .toList();
-        if (ctors.isEmpty()) return true; // implicit public default constructor on a public class
-        return ctors.stream().anyMatch(c -> c.parameters().isEmpty() && c.isPublic());
+        if (ctors.isEmpty()) return java.util.Optional.of(List.of()); // implicit public default ctor
+        if (ctors.stream().anyMatch(c -> c.parameters().isEmpty() && c.isPublic())) {
+            return java.util.Optional.of(List.of()); // prefer the simplest path
+        }
+        var injected = ctors.stream().filter(VaubanProcessor::hasInject).findFirst();
+        if (injected.isEmpty() && ctors.size() == 1) {
+            injected = java.util.Optional.of(ctors.get(0));
+        }
+        if (injected.isEmpty() || !injected.get().isPublic()) return java.util.Optional.empty();
+        var casts = new java.util.ArrayList<String>();
+        for (var p : injected.get().parameters()) {
+            var cast = nameableErasure(p.type());
+            if (cast == null) return java.util.Optional.empty();
+            casts.add(cast);
+        }
+        return java.util.Optional.of(List.copyOf(casts));
+    }
+
+    private static boolean hasInject(io.vidocq.vauban.indexer.model.MethodInfo m) {
+        return m.annotations().stream()
+                .anyMatch(a -> "jakarta.inject.Inject".equals(a.name().value()));
+    }
+
+    /** Erased, source-nameable type for a {@code (Cast) args[i]}, or {@code null} if not nameable. */
+    private static String nameableErasure(io.vidocq.vauban.indexer.model.TypeInfo t) {
+        return switch (t) {
+            case io.vidocq.vauban.indexer.model.TypeInfo.ClassType c -> c.name().value();
+            case io.vidocq.vauban.indexer.model.TypeInfo.ParameterizedType p -> p.rawType().value();
+            case io.vidocq.vauban.indexer.model.TypeInfo.ArrayType a -> {
+                var comp = nameableErasure(a.componentType());
+                yield comp == null ? null : comp + "[]".repeat(a.dimensions());
+            }
+            default -> null; // primitive, type variable, wildcard, void → reflective fallback
+        };
     }
 
     /** Longest common package prefix (by segments) of the given component FQNs. */
@@ -675,14 +719,15 @@ public class VaubanProcessor extends AbstractProcessor {
      * Generates the per-module {@code _VaubanComponents} provider (in-module instantiation) and a
      * class-path service file, then advises adding the {@code provides} clause for the module path.
      */
-    private void writeComponentProvider(List<String> componentFqns) {
+    private void writeComponentProvider(List<ComponentProviderGenerator.Component> components) {
+        var componentFqns = components.stream().map(ComponentProviderGenerator.Component::fqn).toList();
         var pkg = commonPackage(componentFqns);
         if (pkg.isEmpty()) {
             // disjoint packages — fall back to the first component's package (already sorted)
             var first = componentFqns.get(0);
             pkg = first.contains(".") ? first.substring(0, first.lastIndexOf('.')) : "";
         }
-        var gen = io.vidocq.vauban.processor.codegen.provider.ComponentProviderGenerator.generate(pkg, componentFqns);
+        var gen = ComponentProviderGenerator.generateFrom(pkg, components);
         try {
             var file = processingEnv.getFiler().createSourceFile(gen.className());
             try (var w = file.openWriter()) {

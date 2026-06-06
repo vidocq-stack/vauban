@@ -28,6 +28,31 @@ class ComponentProviderGeneratorTest {
     }
 
     @Test
+    @DisplayName("emits a second switch casting resolved args for injected-constructor components")
+    void generatesArgAwareSwitch() {
+        var gen = ComponentProviderGenerator.generateFrom("app", List.of(
+                new ComponentProviderGenerator.Component("app.Foo", List.of()),
+                new ComponentProviderGenerator.Component("app.Service",
+                        List.of("app.Repo", "app.Clock"))));
+
+        var s = gen.source();
+        assertTrue(s.contains("case \"app.Foo\" -> new app.Foo();"), s);
+        assertTrue(s.contains("public Object create(String className, Object[] args)"), s);
+        assertTrue(s.contains("if (args == null || args.length == 0) return create(className);"), s);
+        assertTrue(s.contains(
+                "case \"app.Service\" -> new app.Service((app.Repo) args[0], (app.Clock) args[1]);"), s);
+    }
+
+    @Test
+    @DisplayName("no injected-constructor component omits the args overload")
+    void noArgsOverloadWhenAllNoArg() {
+        var gen = ComponentProviderGenerator.generateFrom("app",
+                List.of(new ComponentProviderGenerator.Component("app.Foo", List.of())));
+
+        assertFalse(gen.source().contains("Object[] args"), gen.source());
+    }
+
+    @Test
     @DisplayName("default package omits the package declaration")
     void defaultPackageOmitsPackageDecl() {
         var gen = ComponentProviderGenerator.generate("", List.of("Foo"));

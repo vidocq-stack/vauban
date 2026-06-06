@@ -31,4 +31,23 @@ public interface VaubanComponentProvider {
      * @return a fresh instance, or {@code null} if not owned by this provider
      */
     Object create(String className);
+
+    /**
+     * Instantiates the component with the given fully-qualified name using its injected
+     * constructor, passing the dependency values {@code vauban-core} has already resolved (in
+     * declared parameter order). The provider performs the {@code new X(args…)} call in-module
+     * so the constructor invocation needs no reflection and no {@code opens} — argument
+     * resolution (qualifiers, generics, injection points) stays in the container.
+     *
+     * <p>The default delegates to {@link #create(String)} when there are no arguments, and
+     * returns {@code null} otherwise, so providers that only handle no-arg components keep
+     * working and the container falls back to reflection for arg-bearing ones.
+     *
+     * @param className fully-qualified name of the component class to instantiate
+     * @param args      already-resolved constructor arguments, in declared order
+     * @return a fresh instance, or {@code null} if not owned by this provider
+     */
+    default Object create(String className, Object[] args) {
+        return (args == null || args.length == 0) ? create(className) : null;
+    }
 }

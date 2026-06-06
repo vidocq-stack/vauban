@@ -62,6 +62,24 @@ final class ComponentProviders {
         return null;
     }
 
+    /**
+     * Returns a fresh instance of {@code className} from the first provider that owns it,
+     * passing the container-resolved constructor {@code args} (in declared order) so the
+     * {@code new X(args…)} call happens in-module; {@code null} if no provider owns it (the
+     * caller then falls back to reflection). A provider that throws is skipped.
+     */
+    Object create(String className, Object[] args) {
+        for (var provider : providers) {
+            try {
+                var instance = provider.create(className, args);
+                if (instance != null) return instance;
+            } catch (RuntimeException _) {
+                // a misbehaving provider must not break container startup — try the next one
+            }
+        }
+        return null;
+    }
+
     boolean isEmpty() {
         return providers.isEmpty();
     }
