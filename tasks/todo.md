@@ -202,16 +202,26 @@ Reflective method invocation was the next forced `setAccessible`/`unreflect` kee
       nested-`$` params and non-void primitive returns (warned, no silent cap). Unit-tested (the
       bytecode test actually invokes the generated methods).
 - [x] vauban `clean install` green — capability complete + tested, zero regression.
-- [ ] **BLOCKER to drop a real `.internal` opens — single common-package provider design.** To
-      actually drop knock-cdi-vauban's `opens .internal` AND cervantes-cdi's, the provider must be
-      co-located with EACH package's beans so it can `new`/inject/invoke package-private members:
-      - knock-cdi beans (`HealthCheckRegistrar`, `KnockCdiHealthCheckRegistry`) are PACKAGE-PRIVATE
-        → `create()`'s `isInstantiableNoArg` `ci.isPublic()` gate skips them.
-      - cervantes producers are PUBLIC but in `.internal` while the provider lands in `.cdi`
-        (commonPackage of `.cdi`+`.cdi.internal`) → cross-package package-private members unreachable.
-      → **Decision pending: per-package providers** (one `_VaubanComponents` per package, module-info
-      lists all via `provides … with A, B;`) vs piecemeal visibility-relaxed gates. Per-package is the
-      clean general fix (also removes the Phase-13 multi-package field-injection limitation).
+- [x] **Per-package providers (plugin path) — DONE.** `VaubanGenerator` now emits ONE
+      `_VaubanComponents` per package that has beans (co-located → can `new`/inject/invoke that
+      package's package-private members), and lists them all in the class-path service file; the
+      module-info lists all via `provides … with A, B;`. `isInstantiableNoArg` relaxed: a package-
+      private top-level class with a non-private no-arg ctor is now instantiable. Removes the
+      Phase-13 multi-package field-injection limitation too.
+- [x] **PROVEN knock-cdi-vauban (module path, jlink)**: dropped `opens io.vidocq.knock.cdi.internal`.
+      The `.internal` provider create()s the package-private `HealthCheckRegistrar`/
+      `KnockCdiHealthCheckRegistry`, injects Registrar's package-private `@Inject` fields, and fires
+      its `@Observes @Initialized(ApplicationScoped)` observer (invoke) — `/api/health/live` → 200
+      with the discovered `app` check (observer ran). knock is now ZERO opens-to-vauban.core.
+- [x] **PROVEN cervantes-cdi-vauban (module path, jlink)**: dropped `opens
+      io.vidocq.cervantes.cdi.internal`. Two providers (`.cdi` + `.cdi.internal`); the `.internal`
+      one invokes the `@Produces jwtValidator()` and `currentToken(JsonWebTokenContext)`. JWT
+      endpoint: `/admin` admin-token → 200, user-token → 403, no-token → 401, `/public` → 200 — token
+      validation ran in-module. cervantes is now ZERO opens-to-vauban.core. (Both still show only the
+      separate `io.vidocq.cassini.core` adapter-generation warning — a cassini-codegen concern.)
+- [ ] APT path (`VaubanProcessor`/`ComponentProviderGenerator`) still emits a single common-package
+      provider — mirror the per-package split for consistency (the spec-wrapper proofs use the
+      plugin; examples use APT and still work with the single provider, so non-urgent).
 
 ## Backlog (deferred)
 - [ ] `DirectoryScanner` - directory scanning
