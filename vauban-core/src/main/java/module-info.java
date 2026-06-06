@@ -12,6 +12,10 @@ module io.vidocq.vauban.core {
     // so application modules need not `opens <pkg> to io.vidocq.vauban.core` on the module path.
     uses jakarta.enterprise.inject.build.compatible.spi.BuildCompatibleExtension;
 
+    // Instantiate application components (beans, contexts, synthetic creators) via APT-generated
+    // providers, so application modules need not open their packages to the container.
+    uses io.vidocq.vauban.core.VaubanComponentProvider;
+
     exports io.vidocq.vauban.core;
     exports io.vidocq.vauban.core.container;
     exports io.vidocq.vauban.core.langmodel;

@@ -36,12 +36,45 @@ public final class VaubanContainerBuilder {
     private VaubanLookup builderLookup;
     private final List<io.vidocq.vauban.classloader.spi.ByteSourcePlugin> byteSourcePlugins = new ArrayList<>();
     private io.vidocq.vauban.classloader.spi.PluginContext pluginContext;
+    // Module-supplied component providers (ServiceLoader). Consulted before reflective
+    // instantiation so application modules need not open their packages to the container.
+    private ComponentProviders componentProviders = new ComponentProviders(List.of());
+    private final List<io.vidocq.vauban.core.VaubanComponentProvider> componentProviderList = new ArrayList<>();
 
     private VaubanLookup getBuilderLookup() {
         if (builderLookup == null) {
             builderLookup = new VaubanLookup(lookup != null ? lookup : java.lang.invoke.MethodHandles.lookup());
         }
         return builderLookup;
+    }
+
+    /**
+     * Instantiates {@code cls} preferring an APT-generated
+     * {@link io.vidocq.vauban.core.VaubanComponentProvider} (no reflection, no {@code opens})
+     * and falling back to reflective {@link VaubanLookup}
+     * when no provider owns the class (class path, unnamed modules, jars not yet processed).
+     */
+    private Object instantiate(Class<?> cls, VaubanLookup lkp) {
+        var provided = componentProviders.create(cls.getName());
+        if (provided != null) return provided;
+        try {
+            return lkp.newInstance(cls);
+        } catch (RuntimeException e) {
+            throw e;
+        } catch (Exception e) {
+            throw new jakarta.enterprise.inject.CreationException(e);
+        }
+    }
+
+    /**
+     * Registers a {@link io.vidocq.vauban.core.VaubanComponentProvider} programmatically. It is
+     * consulted before the {@link java.util.ServiceLoader}-discovered providers and before
+     * reflective instantiation. Mainly for tests and advanced embedding; application modules
+     * normally declare their generated provider via {@code provides … with} in module-info.
+     */
+    public VaubanContainerBuilder addComponentProvider(io.vidocq.vauban.core.VaubanComponentProvider provider) {
+        componentProviderList.add(provider);
+        return this;
     }
 
     public VaubanContainerBuilder beanArchive(boolean isBeanArchive) {
@@ -661,15 +694,7 @@ public final class VaubanContainerBuilder {
             if (!factories.containsKey(DotName.of(clazz.getName()))) {
                 var beanClass2 = clazz;
                 var lkp = getBuilderLookup();
-                factories.put(DotName.of(clazz.getName()), () -> {
-                    try {
-                        return lkp.newInstance(beanClass2);
-                    } catch (RuntimeException e) {
-                        throw e;
-                    } catch (Exception e) {
-                        throw new jakarta.enterprise.inject.CreationException(e);
-                    }
-                });
+                factories.put(DotName.of(clazz.getName()), () -> instantiate(beanClass2, lkp));
             }
         }
 
@@ -678,6 +703,10 @@ public final class VaubanContainerBuilder {
         var previousCl = Thread.currentThread().getContextClassLoader();
         ClassLoader discoveryClassLoader = buildCompositeClassLoader();
         Thread.currentThread().setContextClassLoader(discoveryClassLoader);
+
+        // Load module-supplied component providers once; the bean factories (deferred lambdas)
+        // read this field at creation time, preferring generated instantiation over reflection.
+        componentProviders = ComponentProviders.load(discoveryClassLoader, componentProviderList);
 
         // --- Identify BCE classes and unprocessed archive classes ---
         var bceClasses = beanClasses.stream()
@@ -728,15 +757,7 @@ public final class VaubanContainerBuilder {
                     }
                     if (!factories.containsKey(DotName.of(className))) {
                         var lkp = getBuilderLookup();
-                        factories.put(DotName.of(className), () -> {
-                            try {
-                                return lkp.newInstance(cls);
-                            } catch (RuntimeException e) {
-                                throw e;
-                            } catch (Exception e) {
-                                throw new jakarta.enterprise.inject.CreationException(e);
-                            }
-                        });
+                        factories.put(DotName.of(className), () -> instantiate(cls, lkp));
                     }
                 } catch (Exception e) {
                     // Class not found — skip

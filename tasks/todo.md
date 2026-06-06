@@ -41,9 +41,21 @@ enhancement result reduces to `target FQN → [annotation FQN…]` — trivially
 - Note: legacy `vauban-bce-runtime.list` still written as fallback; remove once Brique B/D
   cover all jars and module-path validation passes.
 
-### Brique B — Co-located `_Factory` for producers/contexts/synthetic-creators
-- [ ] Extend codegen beyond client-proxies; runtime via factory, fallback `privateLookupIn`
-      (PoC: cervantes-jwt synthetic creator)
+### Brique B — Co-located instantiation via VaubanComponentProvider (contract = option A)
+Contract chosen: APT generates `app._VaubanComponents implements VaubanComponentProvider`
+(in-module `new X()`), exposed via `provides … with` in the app module-info; vauban loads it
+via ServiceLoader and consults it before any reflective `newInstance`.
+- [x] SPI `io.vidocq.vauban.core.VaubanComponentProvider` (exported) + `uses` in module-info
+- [x] `ComponentProviders` resolver (ServiceLoader + explicit) — 5 unit tests
+- [x] Runtime wiring of managed-bean + BCE-discovered `newInstance` sites via `instantiate()`
+- [x] `addComponentProvider(...)` programmatic API; runtime test proves bean built by provider
+- [x] clean install green, no regression
+- [ ] Wire remaining no-arg sites: custom Context (~l.1031), synthetic creator/disposer/observer
+      (~1234/1298/1325)
+- [ ] Producers (invokeMethod) / producer fields / disposers — generated invokers (B2)
+- [ ] @Inject-constructor beans (args) — provider `create(name, args)` overload
+- [ ] **APT generation** of `_VaubanComponents` + emit `provides` lint/suggestion (the big piece)
+- [ ] Module-path proof via jlink (ServiceLoader path, no opens)
 
 ### Brique C — ServiceLoader fallback for residual BCE instantiation ✅
 (= existing backlog item "ExtensionLoader via ServiceLoader")
