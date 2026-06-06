@@ -50,8 +50,10 @@ via ServiceLoader and consults it before any reflective `newInstance`.
 - [x] Runtime wiring of managed-bean + BCE-discovered `newInstance` sites via `instantiate()`
 - [x] `addComponentProvider(...)` programmatic API; runtime test proves bean built by provider
 - [x] clean install green, no regression
-- [ ] Wire remaining no-arg sites: custom Context (~l.1031), synthetic creator/disposer/observer
-      (~1234/1298/1325)
+- [x] Wire custom Context site (provider-first, in build())
+- [ ] Synthetic creator/disposer/observer sites are in `static` methods — need
+      `componentProviders` threaded through `registerSyntheticBean`/`buildSyntheticObserver`
+      AND the generator to emit entries for those classes; deferred (no observable effect alone)
 - [ ] Producers (invokeMethod) / producer fields / disposers — generated invokers (B2)
 - [ ] @Inject-constructor beans (args) — provider `create(name, args)` overload
 - [x] **APT generation** of `_VaubanComponents` (source switch `new X()`) + class-path service

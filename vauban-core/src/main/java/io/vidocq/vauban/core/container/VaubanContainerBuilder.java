@@ -1049,7 +1049,10 @@ public final class VaubanContainerBuilder {
             if (discoveryResult != null) {
                 for (var reg : discoveryResult.metaAnnotations().getCustomContexts()) {
                     try {
-                        var ctx = (jakarta.enterprise.context.spi.Context) vaubanLookup.newInstance(reg.contextClass());
+                        var contextClass = reg.contextClass();
+                        var provided = componentProviders.create(contextClass.getName());
+                        var ctx = (jakarta.enterprise.context.spi.Context)
+                                (provided != null ? provided : vaubanLookup.newInstance(contextClass));
                         container.contexts.computeIfAbsent(reg.scopeAnnotation(), k -> new java.util.ArrayList<>()).add(ctx);
                     } catch (Exception e) {
                         // Skip context if instantiation fails
