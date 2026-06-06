@@ -285,13 +285,51 @@ public final class VaubanGenerator {
             var ci = index.getClassByName(io.vidocq.vauban.indexer.model.DotName.of(fqn)).orElse(null);
             if (ci != null && isInstantiableNoArg(ci)) fqns.add(fqn);
         }
-        if (fqns.isEmpty()) return;
 
-        var pkg = commonPackage(List.copyOf(fqns));
+        // Collect field-injection descriptors for in-package, non-private @Inject fields.
+        // putfield only works from the same package, so restrict to beans in providerPkg.
+        var fieldInjects =
+                new ArrayList<io.vidocq.vauban.core.provider.ComponentProviderClassGenerator.FieldInject>();
+        if (!fqns.isEmpty()) {
+            var providerPkg = commonPackage(List.copyOf(fqns));
+            var injectName = io.vidocq.vauban.indexer.model.DotName.of("jakarta.inject.Inject");
+            for (var bean : beans) {
+                if (bean.kind() != BeanKind.MANAGED) continue;
+                var fqn = bean.beanClass().value();
+                if (fqn.contains("$")) continue;
+                if (!classFileExists(projectDir, fqn)) continue;
+                // putfield constraint: provider and target must share the same package
+                var beanPkg = fqn.contains(".") ? fqn.substring(0, fqn.lastIndexOf('.')) : "";
+                if (!beanPkg.equals(providerPkg)) continue;
+                var ci = index.getClassByName(io.vidocq.vauban.indexer.model.DotName.of(fqn)).orElse(null);
+                if (ci == null) continue;
+                for (var f : ci.fields()) {
+                    if (f.isStatic()) continue;
+                    boolean hasInject = f.annotations().stream()
+                            .anyMatch(a -> a.name().equals(injectName));
+                    if (!hasInject) continue;
+                    if (f.isPrivate()) {
+                        warnings.add("Field injection for private field " + fqn + "#" + f.name()
+                                + " still needs `opens … to io.vidocq.vauban.core`"
+                                + " (make it package-private to drop the opens)");
+                        continue;
+                    }
+                    var erasure = fieldErasure(f.type());
+                    if (erasure == null) continue; // primitive — skip
+                    fieldInjects.add(
+                            new io.vidocq.vauban.core.provider.ComponentProviderClassGenerator
+                                    .FieldInject(fqn, f.name(), erasure));
+                }
+            }
+        }
+
+        if (fqns.isEmpty() && fieldInjects.isEmpty()) return;
+
+        var pkg = fqns.isEmpty() ? "" : commonPackage(List.copyOf(fqns));
         var providerFqn = pkg.isEmpty() ? "_VaubanComponents" : pkg + "._VaubanComponents";
         try {
             var gen = io.vidocq.vauban.core.provider.ComponentProviderClassGenerator.generate(
-                    providerFqn, List.copyOf(fqns));
+                    providerFqn, List.copyOf(fqns), List.copyOf(fieldInjects));
             writeClassFile(config.outputDir(), gen.className(), gen.bytecode());
             var svc = config.outputDir().resolve(
                     "META-INF/services/io.vidocq.vauban.api.VaubanComponentProvider");
@@ -300,6 +338,29 @@ public final class VaubanGenerator {
         } catch (Exception e) {
             warnings.add("Failed to generate component provider: " + e.getMessage());
         }
+    }
+
+    /**
+     * Returns the erased type name for a field type, suitable for use as a {@code putfield}
+     * descriptor. Returns {@code null} for primitive types (which cannot be {@code @Inject}ed)
+     * and for void / wildcard (not valid field types in practice).
+     */
+    private static String fieldErasure(io.vidocq.vauban.indexer.model.TypeInfo type) {
+        return switch (type) {
+            case io.vidocq.vauban.indexer.model.TypeInfo.ClassType ct -> ct.name().value();
+            case io.vidocq.vauban.indexer.model.TypeInfo.ParameterizedType pt -> pt.rawType().value();
+            case io.vidocq.vauban.indexer.model.TypeInfo.ArrayType at -> {
+                var component = fieldErasure(at.componentType());
+                yield component == null ? null : component + "[]";
+            }
+            case io.vidocq.vauban.indexer.model.TypeInfo.TypeVariable tv ->
+                    tv.bounds().isEmpty() ? "java.lang.Object"
+                            : fieldErasure(tv.bounds().getFirst());
+            case io.vidocq.vauban.indexer.model.TypeInfo.WildcardType wt ->
+                    wt.upperBound() != null ? fieldErasure(wt.upperBound()) : "java.lang.Object";
+            case io.vidocq.vauban.indexer.model.TypeInfo.PrimitiveType ignored -> null;
+            case io.vidocq.vauban.indexer.model.TypeInfo.VoidType ignored -> null;
+        };
     }
 
     /** Public, non-abstract class with a public no-arg (or implicit default) constructor. */

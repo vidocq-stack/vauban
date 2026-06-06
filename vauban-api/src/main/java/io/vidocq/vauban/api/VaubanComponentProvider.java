@@ -56,4 +56,30 @@ public interface VaubanComponentProvider {
     default Object create(String className, Object[] args) {
         return (args == null || args.length == 0) ? create(className) : null;
     }
+
+    /**
+     * Writes an already-resolved value into an {@code @Inject} field of {@code bean}, in-module, so
+     * the container needs neither {@code unreflectSetter}/{@code setAccessible} nor an
+     * {@code opens … to io.vidocq.vauban.core} for field injection. The generated implementation
+     * performs a plain in-package field assignment ({@code ((Bean) bean).field = (Type) value}),
+     * which is a bytecode {@code putfield} — no reflection.
+     *
+     * <p>{@code vauban-core} resolves the value (qualifiers, generics, scopes, injection points) and
+     * only delegates the assignment. A provider must own {@code className} <em>and</em> live in the
+     * same package as the field's declaring class (a {@code putfield} cannot reach a package-private
+     * field across packages); otherwise it returns {@code false} and the container falls back to
+     * reflective field injection (which still needs the qualified {@code opens}).
+     *
+     * <p>The default returns {@code false}, so providers that only instantiate components keep
+     * working and the container keeps injecting their fields reflectively.
+     *
+     * @param bean      the bean instance whose field is written
+     * @param className fully-qualified name of the field's declaring class
+     * @param fieldName name of the {@code @Inject} field to assign
+     * @param value     the container-resolved value to assign (may be {@code null})
+     * @return {@code true} if this provider performed the assignment; {@code false} otherwise
+     */
+    default boolean injectField(Object bean, String className, String fieldName, Object value) {
+        return false;
+    }
 }

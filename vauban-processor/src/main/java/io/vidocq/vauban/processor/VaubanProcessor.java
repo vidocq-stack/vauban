@@ -305,6 +305,7 @@ public class VaubanProcessor extends AbstractProcessor {
 
         // Generate code for each bean
         var providerComponents = new java.util.TreeMap<String, ComponentProviderGenerator.Component>();
+        var providerFieldInjects = new java.util.ArrayList<ComponentProviderGenerator.FieldInject>();
         for (var bean : beans) {
             if (bean.kind() == BeanDescriptor.BeanKind.MANAGED) {
                 var classInfo = index.getClassByName(bean.beanClass()).orElse(null);
@@ -338,12 +339,17 @@ public class VaubanProcessor extends AbstractProcessor {
                             .ifPresent(params -> providerComponents.put(
                                     fqn, new ComponentProviderGenerator.Component(fqn, params)));
                 }
+
+                // Collect non-private, non-static @Inject instance fields for in-module assignment.
+                // Fields in the same package as _VaubanComponents can be written without opens.
+                collectInjectFields(classInfo, providerFieldInjects);
             }
         }
 
         // Emit the per-module VaubanComponentProvider for those components.
         if (!providerComponents.isEmpty()) {
-            writeComponentProvider(List.copyOf(providerComponents.values()));
+            writeComponentProvider(List.copyOf(providerComponents.values()),
+                    List.copyOf(providerFieldInjects));
         }
 
         // Write META-INF/vauban-beans.list
@@ -733,10 +739,44 @@ public class VaubanProcessor extends AbstractProcessor {
     }
 
     /**
+     * Collects non-private, non-static {@code @Inject} instance fields from {@code classInfo} into
+     * {@code sink}. Private fields are skipped but a NOTE is emitted: they still need an
+     * {@code opens} directive for the runtime to inject them.
+     */
+    private void collectInjectFields(io.vidocq.vauban.indexer.model.ClassInfo classInfo,
+            List<ComponentProviderGenerator.FieldInject> sink) {
+        var beanFqn = classInfo.name().value();
+        for (var field : classInfo.fields()) {
+            boolean isInject = field.annotations().stream()
+                    .anyMatch(a -> "jakarta.inject.Inject".equals(a.name().value()));
+            if (!isInject) continue;
+            if (field.isStatic()) continue;
+            if (field.isPrivate()) {
+                processingEnv.getMessager().printMessage(Diagnostic.Kind.NOTE,
+                        "[Vauban] @Inject field '" + field.name() + "' in " + beanFqn
+                                + " is private — static assignment skipped;"
+                                + " an `opens " + packageOf(beanFqn)
+                                + " to io.vidocq.vauban.core` is still required for this field.");
+                continue;
+            }
+            var erasure = nameableErasure(field.type());
+            if (erasure == null) continue; // primitive or non-nameable type — skip
+            sink.add(new ComponentProviderGenerator.FieldInject(beanFqn, field.name(), erasure));
+        }
+    }
+
+    /** Returns the package name portion of a fully-qualified class name (empty for default pkg). */
+    private static String packageOf(String fqn) {
+        int dot = fqn.lastIndexOf('.');
+        return dot < 0 ? "" : fqn.substring(0, dot);
+    }
+
+    /**
      * Generates the per-module {@code _VaubanComponents} provider (in-module instantiation) and a
      * class-path service file, then advises adding the {@code provides} clause for the module path.
      */
-    private void writeComponentProvider(List<ComponentProviderGenerator.Component> components) {
+    private void writeComponentProvider(List<ComponentProviderGenerator.Component> components,
+            List<ComponentProviderGenerator.FieldInject> fieldInjects) {
         var componentFqns = components.stream().map(ComponentProviderGenerator.Component::fqn).toList();
         var pkg = commonPackage(componentFqns);
         if (pkg.isEmpty()) {
@@ -744,7 +784,17 @@ public class VaubanProcessor extends AbstractProcessor {
             var first = componentFqns.get(0);
             pkg = first.contains(".") ? first.substring(0, first.lastIndexOf('.')) : "";
         }
-        var gen = ComponentProviderGenerator.generateFrom(pkg, components);
+        // Only keep field injections that are in the same package as the generated provider —
+        // a putfield to a package-private field only compiles from within the same package.
+        final var providerPkg = pkg;
+        var localFieldInjects = fieldInjects.stream()
+                .filter(fi -> {
+                    var fqn = fi.declaringClassFqn();
+                    var beanPkg = fqn.contains(".") ? fqn.substring(0, fqn.lastIndexOf('.')) : "";
+                    return beanPkg.equals(providerPkg);
+                })
+                .toList();
+        var gen = ComponentProviderGenerator.generateFrom(pkg, components, localFieldInjects);
         try {
             var file = processingEnv.getFiler().createSourceFile(gen.className());
             try (var w = file.openWriter()) {

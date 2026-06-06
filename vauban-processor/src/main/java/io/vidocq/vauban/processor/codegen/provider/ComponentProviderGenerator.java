@@ -1,6 +1,8 @@
 package io.vidocq.vauban.processor.codegen.provider;
 
 import java.util.List;
+import java.util.Map;
+import java.util.stream.Collectors;
 
 /**
  * Generates a per-module {@code _VaubanComponents} class implementing
@@ -66,6 +68,18 @@ public final class ComponentProviderGenerator {
     }
 
     /**
+     * Describes an {@code @Inject} instance field (non-private, non-static) that the generated
+     * provider can assign in-module via a plain {@code ((DeclaringType) bean).field = (FieldType) value;}.
+     * Only fields in the same package as the generated {@code _VaubanComponents} class are eligible:
+     * a {@code putfield} to a package-private field only compiles from the same package.
+     *
+     * @param declaringClassFqn fully-qualified name of the bean class declaring the field
+     * @param fieldName         simple name of the field
+     * @param fieldTypeErasure  erased, source-nameable type of the field (e.g. {@code "app.Repo"})
+     */
+    public record FieldInject(String declaringClassFqn, String fieldName, String fieldTypeErasure) {}
+
+    /**
      * Back-compatible no-arg entry point: every component is instantiated via {@code new X()}.
      *
      * @param packageName   package the provider lives in (a package of the current module)
@@ -81,6 +95,17 @@ public final class ComponentProviderGenerator {
      * @param components  components to instantiate, no-arg and/or injected-constructor
      */
     public static Generated generateFrom(String packageName, List<Component> components) {
+        return generateFrom(packageName, components, List.of());
+    }
+
+    /**
+     * @param packageName  package the provider lives in (a package of the current module)
+     * @param components   components to instantiate, no-arg and/or injected-constructor
+     * @param fieldInjects non-private, non-static {@code @Inject} fields in the provider's own
+     *                     package that the provider can assign directly (no reflection, no opens)
+     */
+    public static Generated generateFrom(String packageName, List<Component> components,
+            List<FieldInject> fieldInjects) {
         var className = packageName.isEmpty() ? SIMPLE_NAME : packageName + "." + SIMPLE_NAME;
         var noArg = components.stream().filter(Component::noArg).toList();
         var withArgs = components.stream().filter(c -> !c.noArg()).toList();
@@ -126,6 +151,34 @@ public final class ComponentProviderGenerator {
             }
             sb.append("            default -> null;\n");
             sb.append("        };\n");
+            sb.append("    }\n");
+        }
+
+        if (!fieldInjects.isEmpty()) {
+            // Group field injections by declaring class for the outer switch.
+            Map<String, List<FieldInject>> byClass = fieldInjects.stream()
+                    .collect(Collectors.groupingBy(FieldInject::declaringClassFqn,
+                            java.util.LinkedHashMap::new, Collectors.toList()));
+
+            sb.append("    @Override\n");
+            sb.append("    @SuppressWarnings({\"unchecked\", \"rawtypes\"})\n");
+            sb.append("    public boolean injectField(Object bean, String className, String fieldName, Object value) {\n");
+            sb.append("        switch (className) {\n");
+            for (var entry : byClass.entrySet()) {
+                sb.append("            case \"").append(entry.getKey()).append("\" -> {\n");
+                sb.append("                var b = (").append(entry.getKey()).append(") bean;\n");
+                sb.append("                switch (fieldName) {\n");
+                for (var fi : entry.getValue()) {
+                    sb.append("                    case \"").append(fi.fieldName()).append("\" -> { ")
+                            .append("b.").append(fi.fieldName())
+                            .append(" = (").append(fi.fieldTypeErasure()).append(") value; return true; }\n");
+                }
+                sb.append("                    default -> { return false; }\n");
+                sb.append("                }\n");
+                sb.append("            }\n");
+            }
+            sb.append("            default -> { return false; }\n");
+            sb.append("        }\n");
             sb.append("    }\n");
         }
 

@@ -146,6 +146,41 @@ enrich its index). So freezing them is this plugin's job, not only `vidocq-runti
       cross-module producer, which the APT does not resolve at compile time — also worth fixing).
 - [ ] jlink cassini-rest / mansart-h2 boot + endpoint without opens; post-jlink smoke test
 
+## Phase 13 — Brique B field-injector codegen (zero-reflection field injection)
+
+Field injection (`@Inject` on a package-private field) was the last forced `setAccessible` —
+it kept the `opens … to io.vidocq.vauban.core` even after in-module instantiation (Phase 12).
+cervantes side-stepped it with `@Context`; this phase removes it generally.
+
+- [x] SPI: `VaubanComponentProvider.injectField(bean, className, fieldName, value)` default → false
+      (vauban-api). Generated impl does a plain in-package `putfield` — no reflection.
+- [x] `ComponentProviders.injectField(...)` delegator (first provider that returns true wins).
+- [x] `BeanInjector.writeField(...)` choke-point: tries the generated provider first (keyed on the
+      field's declaring class), falls back to `VaubanLookup.setField` (reflective) — all 5 inject
+      sites routed through it. Default behaviour unchanged when no provider owns the field.
+- [x] Bytecode generator (`ComponentProviderClassGenerator`, plugin path): `FieldInject` record +
+      3-arg `generate` overload emitting the `injectField` putfield chain. 1-arg overload kept.
+- [x] APT source generator (`ComponentProviderGenerator`): `FieldInject` record + `generateFrom`
+      overload emitting the nested `switch(className)/switch(fieldName)` injectField.
+- [x] Plumbing: `VaubanGenerator` (plugin) + `VaubanProcessor` (APT) collect each managed bean's
+      non-private, non-static `@Inject` fields IN THE PROVIDER'S OWN PACKAGE (a putfield can't reach
+      a package-private field across packages) and pass them to the generators. Private @Inject
+      fields are skipped with an explicit NOTE/warning (no silent cap) — they still need the opens.
+- [x] Unit tests both generators; vauban `clean install` green.
+- [x] **PROVEN on knock (module path, jlink)**: dropped `opens io.vidocq.knock.jaxrs to
+      io.vidocq.vauban.core` (added `requires static vauban.api` + `provides … with
+      io.vidocq.knock.jaxrs._VaubanComponents`). Vehicle `vidocq/…/vidocq-runtime-knock-health-example`:
+      `GET /api/health` → 200 `{"status":"UP","checks":[{"name":"app","status":"UP"}]}`,
+      `/health/live` → 200, `/health/ready` → 200. The resource was instantiated AND its package-private
+      `@Inject HealthCheckRegistry registry` field injected by the generated provider — zero reflection,
+      zero `opens … to vauban.core`. Only residual warning is `io.vidocq.cassini.core` (separate).
+- [ ] Limitation (documented, not silent): multi-package modules need one provider per package for
+      field injection (the common-package provider only injects beans in its exact package). Today the
+      other packages fall back to reflection. Per-package providers = follow-up.
+- [ ] knock-cdi-vauban `.internal` opens STAYS: its beans are field-injected AND have `@Observes`
+      (method invocation) — needs the field-injector for package-private fields PLUS an observer-method
+      invoker codegen. Tracked under Brique B producers / observer-invoker.
+
 ## Backlog (deferred)
 - [ ] `DirectoryScanner` - directory scanning
 - [ ] Binary serialization IndexWriter/IndexReader

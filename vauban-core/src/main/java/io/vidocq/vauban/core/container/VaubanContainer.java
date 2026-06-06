@@ -119,6 +119,10 @@ public final class VaubanContainer implements AutoCloseable {
         return beanInjector;
     }
 
+    ComponentProviders componentProviders() {
+        return componentProviders;
+    }
+
     VaubanContainer(VaubanIndex index, List<BeanDescriptor> descriptors,
                             List<ObserverDescriptor> observers,
                             List<InterceptorDescriptor> interceptorDescriptors,

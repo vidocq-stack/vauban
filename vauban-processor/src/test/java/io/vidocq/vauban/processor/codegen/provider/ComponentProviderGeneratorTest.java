@@ -61,4 +61,40 @@ class ComponentProviderGeneratorTest {
         assertFalse(gen.source().contains("package "), gen.source());
         assertTrue(gen.source().contains("case \"Foo\" -> new Foo();"), gen.source());
     }
+
+    @Test
+    @DisplayName("emits injectField switch for non-private @Inject fields grouped by class")
+    void generatesInjectFieldSwitch() {
+        var fieldInjects = List.of(
+                new ComponentProviderGenerator.FieldInject("app.Service", "repo", "app.Repo"),
+                new ComponentProviderGenerator.FieldInject("app.Service", "clock", "app.Clock"),
+                new ComponentProviderGenerator.FieldInject("app.Foo", "dep", "app.Dep"));
+
+        var gen = ComponentProviderGenerator.generateFrom("app",
+                List.of(new ComponentProviderGenerator.Component("app.Service", List.of()),
+                        new ComponentProviderGenerator.Component("app.Foo", List.of())),
+                fieldInjects);
+
+        var s = gen.source();
+        assertTrue(s.contains("public boolean injectField(Object bean, String className, String fieldName, Object value)"), s);
+        // outer switch cases
+        assertTrue(s.contains("case \"app.Service\""), s);
+        assertTrue(s.contains("case \"app.Foo\""), s);
+        // inner field assignments
+        assertTrue(s.contains("case \"repo\" -> { b.repo = (app.Repo) value; return true; }"), s);
+        assertTrue(s.contains("case \"clock\" -> { b.clock = (app.Clock) value; return true; }"), s);
+        assertTrue(s.contains("case \"dep\" -> { b.dep = (app.Dep) value; return true; }"), s);
+        // fallback returns
+        assertTrue(s.contains("default -> { return false; }"), s);
+    }
+
+    @Test
+    @DisplayName("no injectField method emitted when fieldInjects is empty")
+    void noInjectFieldWhenEmpty() {
+        var gen = ComponentProviderGenerator.generateFrom("app",
+                List.of(new ComponentProviderGenerator.Component("app.Foo", List.of())),
+                List.of());
+
+        assertFalse(gen.source().contains("injectField"), gen.source());
+    }
 }

@@ -5,6 +5,14 @@ import io.vidocq.vauban.core.container.ProvidedBean;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
+import java.lang.classfile.ClassFile;
+import java.lang.constant.ClassDesc;
+import java.lang.constant.ConstantDescs;
+import java.lang.constant.MethodTypeDesc;
+import java.util.List;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNotSame;
 import static org.junit.jupiter.api.Assertions.assertNull;
@@ -22,7 +30,7 @@ class ComponentProviderClassGeneratorTest {
     void generatesLoadableProvider() throws Exception {
         var gen = ComponentProviderClassGenerator.generate(
                 "io.vidocq.vauban.core.provider._GenTestComponents",
-                java.util.List.of(ProvidedBean.class.getName()));
+                List.of(ProvidedBean.class.getName()));
 
         var loader = new ByteClassLoader(getClass().getClassLoader());
         var providerClass = loader.define(gen.className(), gen.bytecode());
@@ -38,6 +46,77 @@ class ComponentProviderClassGeneratorTest {
 
         assertTrue(providerClass.isAnnotationPresent(jakarta.enterprise.inject.Vetoed.class),
                 "@Vetoed keeps Weld (bean-discovery-mode=all) from loading it as a bean");
+    }
+
+    /**
+     * Verifies injectField by generating BOTH the target bean class and the provider in the same
+     * ByteClassLoader (unnamed module), so the putfield access check passes.
+     *
+     * <p>In production, the generated provider and the target bean share the same named module;
+     * the test mirrors that by loading both in the same unnamed-module classloader.
+     */
+    @Test
+    @DisplayName("injectField sets a package-private field via putfield and returns true")
+    void injectFieldSetsPackagePrivateField() throws Exception {
+        // Package shared by the synthetic target bean and the generated provider.
+        var pkg = "io.vidocq.vauban.core.provider.test.inject";
+        var targetFqn = pkg + ".InjectTarget";
+        var providerFqn = pkg + "._GenInjectComponents";
+
+        // Generate a minimal target bean: class InjectTarget { String service; Object dependency; }
+        byte[] targetBytes = buildTargetBeanBytecode(targetFqn);
+
+        var fi1 = new ComponentProviderClassGenerator.FieldInject(targetFqn, "service", "java.lang.String");
+        var fi2 = new ComponentProviderClassGenerator.FieldInject(targetFqn, "dependency", "java.lang.Object");
+        var gen = ComponentProviderClassGenerator.generate(providerFqn, List.of(), List.of(fi1, fi2));
+
+        // Both classes loaded in the same unnamed-module ByteClassLoader — putfield access is valid.
+        var loader = new ByteClassLoader(getClass().getClassLoader());
+        var targetClass = loader.define(targetFqn, targetBytes);
+        var providerClass = loader.define(gen.className(), gen.bytecode());
+        var provider = (VaubanComponentProvider) providerClass.getDeclaredConstructor().newInstance();
+
+        var bean = targetClass.getDeclaredConstructor().newInstance();
+
+        assertTrue(provider.injectField(bean, targetFqn, "service", "hello"),
+                "injectField must return true for a known class/field");
+        var serviceField = targetClass.getDeclaredField("service");
+        serviceField.setAccessible(true);
+        assertEquals("hello", serviceField.get(bean), "package-private field must be set");
+
+        var depValue = new Object();
+        assertTrue(provider.injectField(bean, targetFqn, "dependency", depValue),
+                "Object-typed field must also be injectable");
+        var depField = targetClass.getDeclaredField("dependency");
+        depField.setAccessible(true);
+        assertEquals(depValue, depField.get(bean), "Object field must be set");
+
+        assertFalse(provider.injectField(bean, "com.unknown.Class", "service", "x"),
+                "unknown class must return false");
+        assertFalse(provider.injectField(bean, targetFqn, "unknownField", "x"),
+                "unknown field must return false");
+    }
+
+    /**
+     * Generates bytecode for a minimal bean class with two package-private fields:
+     * {@code String service} and {@code Object dependency}.
+     */
+    private static byte[] buildTargetBeanBytecode(String fqn) {
+        var cd = ClassDesc.of(fqn);
+        var cdObject = ConstantDescs.CD_Object;
+        var cdString = ConstantDescs.CD_String;
+        var mtdVoid = MethodTypeDesc.of(ConstantDescs.CD_void);
+        return ClassFile.of().build(cd, clb -> {
+            clb.withFlags(ClassFile.ACC_PUBLIC | ClassFile.ACC_SUPER);
+            clb.withSuperclass(cdObject);
+            clb.withField("service", cdString, 0);       // package-private
+            clb.withField("dependency", cdObject, 0);    // package-private
+            clb.withMethodBody(ConstantDescs.INIT_NAME, mtdVoid, ClassFile.ACC_PUBLIC, cob -> {
+                cob.aload(0);
+                cob.invokespecial(cdObject, ConstantDescs.INIT_NAME, mtdVoid);
+                cob.return_();
+            });
+        });
     }
 
     /** Minimal loader exposing {@code defineClass} for the generated provider bytecode. */

@@ -33,7 +33,7 @@ final class BeanInjector {
                 try {
 
                 if (field.getType() == InjectionPoint.class) {
-                    vaubanLookup.setField(instance, field, VaubanContainer.getCurrentInjectionPoint());
+                    writeField(instance, field,VaubanContainer.getCurrentInjectionPoint());
                     continue;
                 }
 
@@ -57,13 +57,13 @@ final class BeanInjector {
                     var fieldQualifiers = QualifierHelper.extractFieldQualifiers(field);
                     var ownerBean = container.findBeanForInstance(instance);
                     var ip = new VaubanInjectionPoint(field, ownerBean);
-                    vaubanLookup.setField(instance, field, new InstanceImpl<>(container, instanceType, instanceLookupType, fieldQualifiers, ip, null));
+                    writeField(instance, field,new InstanceImpl<>(container, instanceType, instanceLookupType, fieldQualifiers, ip, null));
                     continue;
                 }
 
                 if (BeanManager.class.isAssignableFrom(field.getType())
                         || field.getType() == jakarta.enterprise.inject.spi.BeanContainer.class) {
-                    vaubanLookup.setField(instance, field, container.getBeanManager());
+                    writeField(instance, field,container.getBeanManager());
                     continue;
                 }
 
@@ -71,7 +71,7 @@ final class BeanInjector {
                     var eventQualifiers = QualifierHelper.collectEventQualifiers(field.getAnnotations());
                     var ownerBean = container.findBeanForInstance(instance);
                     var eventIp = new VaubanInjectionPoint(field, ownerBean);
-                    vaubanLookup.setField(instance, field, new EventImpl<>(container.eventDispatcher(), eventQualifiers, eventIp));
+                    writeField(instance, field,new EventImpl<>(container.eventDispatcher(), eventQualifiers, eventIp));
                     continue;
                 }
 
@@ -104,7 +104,7 @@ final class BeanInjector {
                         }
                     }
                     if (value != null || !field.getType().isPrimitive()) {
-                        vaubanLookup.setField(instance, field, value);
+                        writeField(instance, field,value);
                     }
                 });
             } catch (jakarta.enterprise.inject.IllegalProductException | jakarta.enterprise.inject.UnproxyableResolutionException e) {
@@ -117,6 +117,22 @@ final class BeanInjector {
             }
             clazz = clazz.getSuperclass();
         }
+    }
+
+    /**
+     * Writes a resolved value into an {@code @Inject} field, delegating to the module's generated
+     * {@code VaubanComponentProvider} when one owns the field's declaring class (an in-module
+     * {@code putfield} — no reflection, no {@code opens}); otherwise falls back to reflective
+     * {@link VaubanLookup#setField} (which still needs the qualified {@code opens} on the module
+     * path). The provider is keyed on the field's declaring class, so a field inherited from a
+     * superclass is routed to that superclass's provider.
+     */
+    private void writeField(Object instance, java.lang.reflect.Field field, Object value) {
+        var declaringClass = field.getDeclaringClass().getName();
+        if (container.componentProviders().injectField(instance, declaringClass, field.getName(), value)) {
+            return;
+        }
+        vaubanLookup.setField(instance, field, value);
     }
 
     void callInitializerMethods(Object instance, CreationalContext<?> ctx) {

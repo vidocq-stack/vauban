@@ -80,6 +80,23 @@ final class ComponentProviders {
         return null;
     }
 
+    /**
+     * Asks each provider to write {@code value} into the {@code fieldName} field of {@code bean}
+     * in-module (declaring class {@code className}), returning {@code true} as soon as one performs
+     * the assignment, or {@code false} if none owns it (so the caller falls back to reflective field
+     * injection). A provider that throws is skipped rather than failing injection.
+     */
+    boolean injectField(Object bean, String className, String fieldName, Object value) {
+        for (var provider : providers) {
+            try {
+                if (provider.injectField(bean, className, fieldName, value)) return true;
+            } catch (RuntimeException _) {
+                // a misbehaving provider must not break injection — try the next one
+            }
+        }
+        return false;
+    }
+
     boolean isEmpty() {
         return providers.isEmpty();
     }
