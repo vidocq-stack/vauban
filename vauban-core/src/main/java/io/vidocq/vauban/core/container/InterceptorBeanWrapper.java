@@ -376,6 +376,21 @@ final class InterceptorBeanWrapper {
         }
     }
 
+    /**
+     * Instantiates an intercepted subclass. The statically generated {@code <bean>$$Intercepted}
+     * is a public class with a public constructor living in the bean's (exported) package, so the
+     * public {@link java.lang.invoke.MethodHandles#publicLookup() Lookup} can construct it with no
+     * {@code privateLookupIn} — hence <strong>no {@code opens … to io.vidocq.vauban.core}</strong>
+     * on the strict module path. Falls back to the private-lookup path for runtime-generated
+     * subclasses (class path, where access is unrestricted) or a bean in a non-exported package
+     * (which keeps its qualified {@code opens}).
+     */
+    private Object instantiateIntercepted(java.lang.reflect.Constructor<?> ctor, Object[] args) {
+        var instance = vaubanLookup.newInstancePublic(ctor, args);
+        if (instance != null) return instance;
+        return vaubanLookup.newInstance(ctor, args);
+    }
+
     Class<?> loadOrDefineClassRobustly(Class<?> targetClass, String className, byte[] bytecode) throws Exception {
         try {
             return targetClass.getClassLoader().loadClass(className);
@@ -694,7 +709,7 @@ final class InterceptorBeanWrapper {
                         }
                         if (subclassCtor == null) subclassCtor = finalInterceptedClass.getDeclaredConstructors()[0];
 
-                        var instance = vaubanLookup.newInstance(subclassCtor, finalArgs);
+                        var instance = instantiateIntercepted(subclassCtor, finalArgs);
 
                         var initMethod = finalInterceptedClass.getMethod("$$init",
                                 io.vidocq.vauban.core.interceptor.InterceptorManager.class,
@@ -798,7 +813,7 @@ final class InterceptorBeanWrapper {
                             } else {
                             var ctor2 = finalInterceptedClass.getDeclaredConstructor();
                             Object[] finalArgs2 = new Object[0];
-                            var inst = vaubanLookup.newInstance(ctor2, finalArgs2);
+                            var inst = instantiateIntercepted(ctor2, finalArgs2);
                                     finalInterceptedClass.getMethod("$$init",
                                             io.vidocq.vauban.core.interceptor.InterceptorManager.class,
                                             java.util.Set.class,

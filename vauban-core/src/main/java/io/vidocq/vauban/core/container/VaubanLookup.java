@@ -70,6 +70,36 @@ public final class VaubanLookup {
     }
 
     /**
+     * Instantiates via the public {@link MethodHandles#publicLookup()}. This works for a
+     * <strong>public</strong> constructor of a public class in an <strong>unconditionally
+     * exported</strong> package, with no {@code privateLookupIn} and hence no
+     * {@code opens … to io.vidocq.vauban.core} on the strict module path. Used for the
+     * statically generated {@code <bean>$$Intercepted} subclass (always public, in the bean's
+     * exported package).
+     *
+     * <p>Returns {@code null} when public access is insufficient — a non-public member, or a
+     * package that is only qualifiedly exported / not exported — so the caller can fall back to
+     * {@link #newInstance(Constructor, Object...)} (the private-lookup path, which needs the
+     * package {@code opens}-ed, or is on the class path where access is unrestricted).
+     */
+    public Object newInstancePublic(Constructor<?> constructor, Object... args) {
+        MethodHandle mh;
+        try {
+            mh = MethodHandles.publicLookup().unreflectConstructor(constructor);
+        } catch (IllegalAccessException publicAccessInsufficient) {
+            return null;
+        }
+        try {
+            return mh.invokeWithArguments(args);
+        } catch (RuntimeException | Error e) {
+            throw e;
+        } catch (Throwable e) {
+            throw new jakarta.enterprise.inject.CreationException(
+                    "Failed to invoke constructor: " + constructor, e);
+        }
+    }
+
+    /**
      * Create a new instance using the given constructor and arguments.
      */
     public Object newInstance(Constructor<?> constructor, Object... args) {
