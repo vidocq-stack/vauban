@@ -142,6 +142,12 @@ public final class VaubanGenerator {
                 var enhMods = io.vidocq.vauban.core.extensions.BceProcessor.processEnhancementOnly(
                         bceClasses, archiveClasses, index, config.classLoader());
 
+                // Brique A for plugin-processed modules (cervantes/cyrano/knock/dirac, which use
+                // this plugin instead of the APT): freeze the @Enhancement result as a static
+                // patch so the runtime applies it without re-instantiating/replaying the BCE
+                // reflectively — removing one reason for `opens … to io.vidocq.vauban.core`.
+                writeEnhancementsPatch(config.outputDir(), enhMods, warnings);
+
                 if (!enhMods.isEmpty()) {
                     // Rebuild index with synthetic scope annotations from Enhancement
                     var enrichedBuilder = new IndexBuilder();
@@ -317,6 +323,42 @@ public final class VaubanGenerator {
                 .map(String::strip)
                 .filter(line -> !line.isEmpty() && !line.startsWith("#"))
                 .toList();
+    }
+
+    /**
+     * Serializes the {@code @Enhancement} result (target class → added annotation FQNs) to
+     * {@code META-INF/vauban-enhancements.properties}, mirroring what the APT emits. Mirrors
+     * {@code VaubanProcessor.writeEnhancementsPatch}; only modified configs contribute. A write
+     * failure is non-fatal (the runtime falls back to reflective replay).
+     */
+    private static void writeEnhancementsPatch(Path outputDir,
+            Map<io.vidocq.vauban.indexer.model.DotName,
+                    List<io.vidocq.vauban.core.extensions.VaubanClassConfig>> modifications,
+            List<String> warnings) {
+        var patch = new TreeMap<String, List<String>>();
+        for (var entry : modifications.entrySet()) {
+            var added = new LinkedHashSet<String>();
+            for (var cfg : entry.getValue()) {
+                if (!cfg.isModified()) continue;
+                for (var ann : cfg.getAddedAnnotations()) {
+                    added.add(ann.getName());
+                }
+            }
+            if (!added.isEmpty()) {
+                patch.put(entry.getKey().value(), List.copyOf(added));
+            }
+        }
+        if (patch.isEmpty()) return;
+        try {
+            var patchFile = outputDir.resolve(
+                    io.vidocq.vauban.core.extensions.EnhancementPatchSerializer.PATCH_PATH);
+            Files.createDirectories(patchFile.getParent());
+            try (var os = Files.newOutputStream(patchFile)) {
+                io.vidocq.vauban.core.extensions.EnhancementPatchSerializer.write(patch, os);
+            }
+        } catch (IOException e) {
+            warnings.add("Failed to write enhancement patch: " + e.getMessage());
+        }
     }
 
     private static void writeBeansList(Path outputDir, List<String> beanClassNames) throws IOException {

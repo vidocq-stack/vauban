@@ -90,8 +90,20 @@ via ServiceLoader and consults it before any reflective `newInstance`.
 - Note: ServiceLoader vs reflection is indistinguishable on the class path; the no-opens
   proof comes from the jlink module-path validation (Brique verify).
 
-### Brique D — Packaging plugin freezes non-APT jars (vidocq-runtime-maven-plugin)
-- [ ] `VidocqGenerateMojo` writes patch + factories + marker for untreated deps
+### Brique D — Build/packaging plugins freeze non-APT modules
+Note: the CDI-vauban wrapper modules (cervantes/cyrano/knock/dirac) are NOT processed by the APT
+— they use `vauban-maven-plugin`'s `generate` goal (which already runs the BCE @Enhancement to
+enrich its index). So freezing them is this plugin's job, not only `vidocq-runtime-maven-plugin`.
+- [x] `vauban-maven-plugin` (`VaubanGenerator`) serializes the @Enhancement result to
+      `META-INF/vauban-enhancements.properties` (Brique A for plugin-processed modules) — it
+      already computed `enhMods`, now it writes the patch. Test:
+      `shouldEnrichNonCdiBeanViaBceEnhancement` asserts the patch records the added @RequestScoped.
+- [ ] `vauban-maven-plugin` generates a bytecode `_VaubanComponents` (no javac in the plugin phase)
+      for the module's no-arg beans/contexts → lets cervantes' `JsonWebTokenContext` & JAX-RS
+      providers be instantiated in-module (needed to drop `opens io.vidocq.cervantes.cdi`).
+- [ ] Producer-method invokers (Brique B producers) → needed to drop `opens …cdi.internal`.
+- [ ] `vidocq-runtime-maven-plugin` (`VidocqGenerateMojo`) writes patch + factories + marker for
+      untreated deps brought at packaging time.
 - [ ] Optional `failOnReflectiveFallback` build flag: fail packaging if any bean would still need
       the reflective path → guarantees a fully static / AOT-pure (GraalVM-ready) image when wanted,
       while the permissive reflective fallback stays the default for robustness/repackaging.
