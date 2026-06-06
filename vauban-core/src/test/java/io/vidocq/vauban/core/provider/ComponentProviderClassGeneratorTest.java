@@ -2,6 +2,8 @@ package io.vidocq.vauban.core.provider;
 
 import io.vidocq.vauban.api.VaubanComponentProvider;
 import io.vidocq.vauban.core.container.ProvidedBean;
+import io.vidocq.vauban.indexer.codegen.FieldInject;
+import io.vidocq.vauban.indexer.codegen.MethodInvoke;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
@@ -67,8 +69,8 @@ class ComponentProviderClassGeneratorTest {
         // Generate a minimal target bean: class InjectTarget { String service; Object dependency; }
         byte[] targetBytes = buildTargetBeanBytecode(targetFqn);
 
-        var fi1 = new ComponentProviderClassGenerator.FieldInject(targetFqn, "service", "java.lang.String");
-        var fi2 = new ComponentProviderClassGenerator.FieldInject(targetFqn, "dependency", "java.lang.Object");
+        var fi1 = new FieldInject(targetFqn, "service", "java.lang.String");
+        var fi2 = new FieldInject(targetFqn, "dependency", "java.lang.Object");
         var gen = ComponentProviderClassGenerator.generate(providerFqn, List.of(), List.of(fi1, fi2));
 
         // Both classes loaded in the same unnamed-module ByteClassLoader — putfield access is valid.
@@ -171,9 +173,9 @@ class ComponentProviderClassGeneratorTest {
             });
         });
 
-        var miVoid = new ComponentProviderClassGenerator.MethodInvoke(
+        var miVoid = new MethodInvoke(
                 beanFqn, "record", List.of("java.lang.String"), false, true, null);
-        var miNonVoid = new ComponentProviderClassGenerator.MethodInvoke(
+        var miNonVoid = new MethodInvoke(
                 beanFqn, "make", List.of(), false, false, "java.lang.Object");
 
         var gen = ComponentProviderClassGenerator.generate(

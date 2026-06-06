@@ -6,6 +6,8 @@ import io.vidocq.vauban.core.bean.model.BeanDescriptor.BeanKind;
 import io.vidocq.vauban.core.interceptor.InterceptorSubclassGenerator;
 import io.vidocq.vauban.core.proxy.RuntimeClientProxyGenerator;
 import io.vidocq.vauban.indexer.IndexBuilder;
+import io.vidocq.vauban.indexer.codegen.ComponentCollector;
+import io.vidocq.vauban.indexer.codegen.ProvidedClass;
 import io.vidocq.vauban.indexer.scanner.ClassFileScanner;
 import io.vidocq.vauban.indexer.scanner.JarScanner;
 
@@ -280,116 +282,38 @@ public final class VaubanGenerator {
         var projectDir = config.projectClassesDir();
         if (projectDir == null) return;
 
-        // Per-package accumulators for the three in-module capabilities.
-        record Bundle(
-                TreeSet<String> noArg,
-                List<io.vidocq.vauban.core.provider.ComponentProviderClassGenerator.FieldInject> fields,
-                List<io.vidocq.vauban.core.provider.ComponentProviderClassGenerator.MethodInvoke> methods) {}
-        var byPackage = new java.util.TreeMap<String, Bundle>();
-
-        var injectName    = io.vidocq.vauban.indexer.model.DotName.of("jakarta.inject.Inject");
-        var producesName  = io.vidocq.vauban.indexer.model.DotName.of("jakarta.enterprise.inject.Produces");
-        var postConstructName = io.vidocq.vauban.indexer.model.DotName.of("jakarta.annotation.PostConstruct");
-        var preDestroyName = io.vidocq.vauban.indexer.model.DotName.of("jakarta.annotation.PreDestroy");
-        var observesName  = io.vidocq.vauban.indexer.model.DotName.of("jakarta.enterprise.event.Observes");
-        var observesAsyncName = io.vidocq.vauban.indexer.model.DotName.of("jakarta.enterprise.event.ObservesAsync");
-        var disposesName  = io.vidocq.vauban.indexer.model.DotName.of("jakarta.enterprise.inject.Disposes");
-
+        // Build the list of eligible managed classes: non-nested, in this module's classes dir.
+        var provided = new ArrayList<ProvidedClass>();
         for (var bean : beans) {
             if (bean.kind() != BeanKind.MANAGED) continue;
             var fqn = bean.beanClass().value();
-            if (fqn.contains("$")) continue;                       // nested → reflective fallback
-            if (!classFileExists(projectDir, fqn)) continue;       // not part of this module
+            if (fqn.contains("$")) continue;               // nested → reflective fallback
+            if (!classFileExists(projectDir, fqn)) continue; // not part of this module
             var ci = index.getClassByName(io.vidocq.vauban.indexer.model.DotName.of(fqn)).orElse(null);
             if (ci == null) continue;
-            var pkg = packageOf(fqn);
-            var bundle = byPackage.computeIfAbsent(pkg,
-                    k -> new Bundle(new TreeSet<>(), new ArrayList<>(), new ArrayList<>()));
-
-            // create(): a co-located provider may instantiate package-private (top-level) beans too.
-            if (isInstantiableNoArg(ci)) bundle.noArg().add(fqn);
-
-            // injectField(): non-private, non-static @Inject fields (package-private OK — same package).
-            for (var f : ci.fields()) {
-                if (f.isStatic()) continue;
-                if (f.annotations().stream().noneMatch(a -> a.name().equals(injectName))) continue;
-                if (f.isPrivate()) {
-                    warnings.add("Field injection for private field " + fqn + "#" + f.name()
-                            + " still needs `opens … to io.vidocq.vauban.core`"
-                            + " (make it package-private to drop the opens)");
-                    continue;
-                }
-                var erasure = fieldErasure(f.type());
-                if (erasure == null) continue; // primitive — skip
-                bundle.fields().add(new io.vidocq.vauban.core.provider.ComponentProviderClassGenerator
-                        .FieldInject(fqn, f.name(), erasure));
-            }
-
-            // invoke(): methods the container invokes reflectively today (producers, observers,
-            // disposers, lifecycle, initializers). package-private OK — same package.
-            for (var m : ci.methods()) {
-                if (m.isConstructor() || m.isStaticInitializer()) continue;
-                if (m.isPrivate() || m.isAbstract()) continue;
-                boolean hasMethodAnnotation = m.annotations().stream().anyMatch(a ->
-                        a.name().equals(producesName)
-                        || a.name().equals(postConstructName)
-                        || a.name().equals(preDestroyName)
-                        || a.name().equals(injectName));
-                boolean hasParamAnnotation = m.parameters().stream()
-                        .flatMap(p -> p.annotations().stream())
-                        .anyMatch(a -> a.name().equals(observesName)
-                                || a.name().equals(observesAsyncName)
-                                || a.name().equals(disposesName));
-                if (!hasMethodAnnotation && !hasParamAnnotation) continue;
-
-                var paramErasures = new ArrayList<String>();
-                boolean skipMethod = false;
-                for (var p : m.parameters()) {
-                    var erasure = fieldErasure(p.type());
-                    if (erasure == null) {
-                        warnings.add("Skipping method " + fqn + "#" + m.name()
-                                + ": parameter type is a non-nameable/primitive — cannot emit invokevirtual");
-                        skipMethod = true;
-                        break;
-                    }
-                    if (erasure.contains("$")) {
-                        warnings.add("Skipping method " + fqn + "#" + m.name()
-                                + ": parameter type " + erasure + " is a nested class — cannot safely cast");
-                        skipMethod = true;
-                        break;
-                    }
-                    paramErasures.add(erasure);
-                }
-                if (skipMethod) continue;
-
-                boolean isVoid = m.returnType() instanceof io.vidocq.vauban.indexer.model.TypeInfo.VoidType;
-                if (!isVoid && m.returnType() instanceof io.vidocq.vauban.indexer.model.TypeInfo.PrimitiveType) {
-                    warnings.add("Skipping method " + fqn + "#" + m.name()
-                            + ": primitive return type — only reference returns are supported");
-                    continue;
-                }
-                String returnErasure = isVoid ? null : fieldErasure(m.returnType());
-                bundle.methods().add(new io.vidocq.vauban.core.provider.ComponentProviderClassGenerator
-                        .MethodInvoke(fqn, m.name(), paramErasures, m.isStatic(), isVoid, returnErasure));
-            }
+            // instantiable=true: let ComponentCollector determine the constructor strategy
+            provided.add(new ProvidedClass(fqn, ci, true));
         }
 
-        if (byPackage.isEmpty()) return;
+        var packages = ComponentCollector.collect(provided, warnings);
+        if (packages.isEmpty()) return;
 
         var providerFqns = new ArrayList<String>();
-        for (var entry : byPackage.entrySet()) {
-            var pkg = entry.getKey();
-            var bundle = entry.getValue();
-            if (bundle.noArg().isEmpty() && bundle.fields().isEmpty() && bundle.methods().isEmpty()) continue;
-            var providerFqn = pkg.isEmpty() ? "_VaubanComponents" : pkg + "._VaubanComponents";
+        for (var pkg : packages) {
+            // The bytecode generator takes List<String> noArgFqns — extract only no-arg components.
+            var noArgFqns = pkg.components().stream()
+                    .filter(io.vidocq.vauban.indexer.codegen.Component::noArg)
+                    .map(io.vidocq.vauban.indexer.codegen.Component::fqn)
+                    .toList();
+            var providerFqn = pkg.providerFqn();
             try {
                 var gen = io.vidocq.vauban.core.provider.ComponentProviderClassGenerator.generate(
-                        providerFqn, List.copyOf(bundle.noArg()),
-                        List.copyOf(bundle.fields()), List.copyOf(bundle.methods()));
+                        providerFqn, noArgFqns, pkg.fields(), pkg.methods());
                 writeClassFile(config.outputDir(), gen.className(), gen.bytecode());
                 providerFqns.add(providerFqn);
             } catch (Exception e) {
-                warnings.add("Failed to generate component provider for package " + pkg + ": " + e.getMessage());
+                warnings.add("Failed to generate component provider for package "
+                        + pkg.packageName() + ": " + e.getMessage());
             }
         }
         if (providerFqns.isEmpty()) return;
@@ -401,50 +325,6 @@ public final class VaubanGenerator {
         } catch (Exception e) {
             warnings.add("Failed to write component provider service file: " + e.getMessage());
         }
-    }
-
-    /** Returns the package name for a fully-qualified class name, or {@code ""} for the default package. */
-    private static String packageOf(String fqn) {
-        return fqn.contains(".") ? fqn.substring(0, fqn.lastIndexOf('.')) : "";
-    }
-
-    /**
-     * Returns the erased type name for a field type, suitable for use as a {@code putfield}
-     * descriptor. Returns {@code null} for primitive types (which cannot be {@code @Inject}ed)
-     * and for void / wildcard (not valid field types in practice).
-     */
-    private static String fieldErasure(io.vidocq.vauban.indexer.model.TypeInfo type) {
-        return switch (type) {
-            case io.vidocq.vauban.indexer.model.TypeInfo.ClassType ct -> ct.name().value();
-            case io.vidocq.vauban.indexer.model.TypeInfo.ParameterizedType pt -> pt.rawType().value();
-            case io.vidocq.vauban.indexer.model.TypeInfo.ArrayType at -> {
-                var component = fieldErasure(at.componentType());
-                yield component == null ? null : component + "[]";
-            }
-            case io.vidocq.vauban.indexer.model.TypeInfo.TypeVariable tv ->
-                    tv.bounds().isEmpty() ? "java.lang.Object"
-                            : fieldErasure(tv.bounds().getFirst());
-            case io.vidocq.vauban.indexer.model.TypeInfo.WildcardType wt ->
-                    wt.upperBound() != null ? fieldErasure(wt.upperBound()) : "java.lang.Object";
-            case io.vidocq.vauban.indexer.model.TypeInfo.PrimitiveType ignored -> null;
-            case io.vidocq.vauban.indexer.model.TypeInfo.VoidType ignored -> null;
-        };
-    }
-
-    /**
-     * Non-abstract (top-level) class with a no-arg constructor reachable from a co-located generated
-     * provider: a public OR package-private class with a non-private no-arg (or implicit default)
-     * constructor. Package-private members are fine because the generated {@code _VaubanComponents}
-     * lives in the same package; only {@code private} and nested ({@code $}) classes fall back to
-     * reflection (the latter filtered out earlier).
-     */
-    private static boolean isInstantiableNoArg(io.vidocq.vauban.indexer.model.ClassInfo ci) {
-        if (ci.isAbstract()) return false;
-        var ctors = ci.methods().stream()
-                .filter(io.vidocq.vauban.indexer.model.MethodInfo::isConstructor)
-                .toList();
-        if (ctors.isEmpty()) return true; // implicit default constructor (same access as the class)
-        return ctors.stream().anyMatch(c -> c.parameters().isEmpty() && !c.isPrivate());
     }
 
     private static void scanClassesDirectory(Path classesDir, IndexBuilder indexBuilder,

@@ -1,5 +1,8 @@
 package io.vidocq.vauban.processor.codegen.provider;
 
+import io.vidocq.vauban.indexer.codegen.Component;
+import io.vidocq.vauban.indexer.codegen.FieldInject;
+import io.vidocq.vauban.indexer.codegen.MethodInvoke;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
@@ -31,8 +34,8 @@ class ComponentProviderGeneratorTest {
     @DisplayName("emits a second switch casting resolved args for injected-constructor components")
     void generatesArgAwareSwitch() {
         var gen = ComponentProviderGenerator.generateFrom("app", List.of(
-                new ComponentProviderGenerator.Component("app.Foo", List.of()),
-                new ComponentProviderGenerator.Component("app.Service",
+                new Component("app.Foo", List.of()),
+                new Component("app.Service",
                         List.of("app.Repo", "app.Clock"))));
 
         var s = gen.source();
@@ -47,7 +50,7 @@ class ComponentProviderGeneratorTest {
     @DisplayName("no injected-constructor component omits the args overload")
     void noArgsOverloadWhenAllNoArg() {
         var gen = ComponentProviderGenerator.generateFrom("app",
-                List.of(new ComponentProviderGenerator.Component("app.Foo", List.of())));
+                List.of(new Component("app.Foo", List.of())));
 
         assertFalse(gen.source().contains("Object[] args"), gen.source());
     }
@@ -66,13 +69,13 @@ class ComponentProviderGeneratorTest {
     @DisplayName("emits injectField switch for non-private @Inject fields grouped by class")
     void generatesInjectFieldSwitch() {
         var fieldInjects = List.of(
-                new ComponentProviderGenerator.FieldInject("app.Service", "repo", "app.Repo"),
-                new ComponentProviderGenerator.FieldInject("app.Service", "clock", "app.Clock"),
-                new ComponentProviderGenerator.FieldInject("app.Foo", "dep", "app.Dep"));
+                new FieldInject("app.Service", "repo", "app.Repo"),
+                new FieldInject("app.Service", "clock", "app.Clock"),
+                new FieldInject("app.Foo", "dep", "app.Dep"));
 
         var gen = ComponentProviderGenerator.generateFrom("app",
-                List.of(new ComponentProviderGenerator.Component("app.Service", List.of()),
-                        new ComponentProviderGenerator.Component("app.Foo", List.of())),
+                List.of(new Component("app.Service", List.of()),
+                        new Component("app.Foo", List.of())),
                 fieldInjects);
 
         var s = gen.source();
@@ -92,7 +95,7 @@ class ComponentProviderGeneratorTest {
     @DisplayName("no injectField method emitted when fieldInjects is empty")
     void noInjectFieldWhenEmpty() {
         var gen = ComponentProviderGenerator.generateFrom("app",
-                List.of(new ComponentProviderGenerator.Component("app.Foo", List.of())),
+                List.of(new Component("app.Foo", List.of())),
                 List.of());
 
         assertFalse(gen.source().contains("injectField"), gen.source());
@@ -103,23 +106,23 @@ class ComponentProviderGeneratorTest {
     void generatesInvokeSwitch() {
         var methodInvokes = List.of(
                 // void instance method with one parameter
-                new ComponentProviderGenerator.MethodInvoke(
+                new MethodInvoke(
                         "app.Service", "record",
                         List.of("java.lang.String"),
                         false, true, null),
                 // non-void instance method, no parameters
-                new ComponentProviderGenerator.MethodInvoke(
+                new MethodInvoke(
                         "app.Service", "make",
                         List.of(),
                         false, false, "app.Product"),
                 // static producer method, no parameters
-                new ComponentProviderGenerator.MethodInvoke(
+                new MethodInvoke(
                         "app.Service", "staticProduce",
                         List.of(),
                         true, false, "app.Product"));
 
         var gen = ComponentProviderGenerator.generateFrom("app",
-                List.of(new ComponentProviderGenerator.Component("app.Service", List.of())),
+                List.of(new Component("app.Service", List.of())),
                 List.of(),
                 methodInvokes);
 
@@ -145,7 +148,7 @@ class ComponentProviderGeneratorTest {
     @DisplayName("no invoke method emitted when methodInvokes is empty")
     void noInvokeMethodWhenEmpty() {
         var gen = ComponentProviderGenerator.generateFrom("app",
-                List.of(new ComponentProviderGenerator.Component("app.Foo", List.of())),
+                List.of(new Component("app.Foo", List.of())),
                 List.of(),
                 List.of());
 

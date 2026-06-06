@@ -224,15 +224,22 @@ Reflective method invocation was the next forced `setAccessible`/`unreflect` kee
       `instantiableCtorParams` relaxed to package-private (co-located source provider). Removed the
       now-unused `commonPackage`/`commonPrefixBySegments`. Build green. (End-to-end module-path proof
       comes when a wrapper actually adopts APT — see the plugin-vs-APT note below.)
-- [ ] **Plugin = external jars, APT = own code (maintainer's intent).** Today every spec wrapper
-      (cervantes/knock/dirac/ravel/heisenberg/cyrano/humboldt/cassini-cdi) uses the *plugin* for its
-      OWN beans; per the maintainer the plugin should be reserved for non-APT-processed *dependency
-      jars* (Brique D), and a module's own beans should go through the APT. Migrating a wrapper from
-      plugin → APT is a separate chantier — caveats to check first: (1) the plugin also generates
-      `$$Intercepted` interceptor subclasses, which the incremental APT does not (only matters if the
-      wrapper has interceptor beans — cervantes/knock don't); (2) the two-step `src/main/module-info/`
-      workaround + `vauban-core` at test scope; (3) `vauban-processor` on the `annotationProcessorPath`
-      (it needs only vauban-api+indexer, not vauban-core). Pilot on one interceptor-free wrapper.
+- [x] **Plugin = external jars, APT = own code (maintainer's intent) — pilot DONE.** knock-cdi-vauban
+      (no interceptor beans) migrated from the vauban-maven-plugin to `vauban-processor` on the
+      `annotationProcessorPath`: the APT now emits its `_ClientProxy`/`_Factory`/`vauban-beans.list`/
+      per-package `_VaubanComponents` at compile time; the separate module-info compile runs
+      `proc=none`. PROVEN on the knock-health jlink example (/api/health 200, no vauban.core opens).
+      Remaining wrappers (cervantes/dirac/ravel/heisenberg/cyrano/humboldt/cassini-cdi) can follow the
+      same pattern; ones WITH interceptor beans still need the plugin for `$$Intercepted` (the APT
+      doesn't generate interceptor subclasses) — keep the plugin for those, or for external dep jars.
+- [x] **Shared collector — plugin & APT now reuse one selection logic.** Extracted the descriptor
+      records (`Component`/`FieldInject`/`MethodInvoke`/`PackageProvider`/`ProvidedClass`) and the
+      `ComponentCollector` (erasure, instantiable-no-arg, field/method selection, per-package
+      grouping) into `io.vidocq.vauban.indexer.codegen` (the module both paths already depend on).
+      Both `ComponentProviderGenerator` (APT source) and `ComponentProviderClassGenerator` (plugin
+      bytecode) consume the shared records; only the EMISSION (source vs bytecode) stays separate, so
+      a change to selection now benefits both. Erasure unified (type-variable/wildcard fields/params
+      now handled on the APT side too). Byte-for-byte behavior preserved — both vehicles re-proven.
 
 ## Backlog (deferred)
 - [ ] `DirectoryScanner` - directory scanning

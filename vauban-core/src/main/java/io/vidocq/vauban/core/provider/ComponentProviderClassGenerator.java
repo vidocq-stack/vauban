@@ -1,5 +1,8 @@
 package io.vidocq.vauban.core.provider;
 
+import io.vidocq.vauban.indexer.codegen.FieldInject;
+import io.vidocq.vauban.indexer.codegen.MethodInvoke;
+
 import java.lang.classfile.Annotation;
 import java.lang.classfile.ClassFile;
 import java.lang.classfile.Label;
@@ -7,8 +10,8 @@ import java.lang.classfile.attribute.RuntimeVisibleAnnotationsAttribute;
 import java.lang.constant.ClassDesc;
 import java.lang.constant.ConstantDescs;
 import java.lang.constant.MethodTypeDesc;
-import java.util.List;
 import java.util.ArrayList;
+import java.util.List;
 
 /**
  * Generates the bytecode of a per-module {@code _VaubanComponents} class implementing
@@ -22,6 +25,10 @@ import java.util.ArrayList;
  * {@code create(String)} is a chain of {@code className.equals("fqn")} tests returning a fresh
  * instance, mirroring the source switch. Only public, top-level, no-arg beans are listed; anything
  * else is left to the reflective fallback.
+ *
+ * <p>The descriptor records ({@link FieldInject}, {@link MethodInvoke}) are defined in
+ * {@code io.vidocq.vauban.indexer.codegen} and shared with the APT source generator
+ * ({@code ComponentProviderGenerator}) via the common {@code vauban-indexer} dependency.
  */
 public final class ComponentProviderClassGenerator {
 
@@ -42,50 +49,6 @@ public final class ComponentProviderClassGenerator {
 
     /** A generated class: its fully-qualified name and its bytecode. */
     public record Generated(String className, byte[] bytecode) {}
-
-    /**
-     * Describes a field injection site: the declaring class, field name, and erased field type.
-     * The field must be package-private (or wider) — private fields still require {@code opens}.
-     *
-     * @param declaringClassFqn fully-qualified name of the class declaring the field
-     * @param fieldName         simple field name
-     * @param fieldTypeFqn      fully-qualified name of the erased field type (e.g. {@code java.util.List},
-     *                          or {@code java.lang.String[]} for array types)
-     */
-    public record FieldInject(String declaringClassFqn, String fieldName, String fieldTypeFqn) {}
-
-    /**
-     * Describes a method invocation site: the declaring class, method name, erased parameter types,
-     * the erased return type (null for void), and whether the method is static.
-     *
-     * <p>The {@code methodId} key is {@code methodName + "(" + String.join(",", paramErasures) + ")"},
-     * matching exactly the key produced by {@link io.vidocq.vauban.core.container.VaubanLookup#methodId}.
-     *
-     * @param declaringClassFqn fully-qualified name of the class declaring the method
-     * @param methodName        simple method name
-     * @param paramErasures     erased parameter type names (binary, e.g. {@code java.lang.String},
-     *                          {@code java.lang.Object[]})
-     * @param isStatic          whether the method is static
-     * @param isVoid            whether the method return type is void
-     * @param returnErasure     erased return type FQN, or {@code null} for void
-     */
-    public record MethodInvoke(
-            String declaringClassFqn,
-            String methodName,
-            List<String> paramErasures,
-            boolean isStatic,
-            boolean isVoid,
-            String returnErasure
-    ) {
-        public MethodInvoke {
-            paramErasures = List.copyOf(paramErasures);
-        }
-
-        /** The lookup key used by the container to find this method. */
-        public String methodId() {
-            return methodName + "(" + String.join(",", paramErasures) + ")";
-        }
-    }
 
     /**
      * @param providerClassName fully-qualified name of the provider to generate (in a package of
@@ -165,7 +128,7 @@ public final class ComponentProviderClassGenerator {
             clb.withMethodBody("injectField", MTD_injectField, ClassFile.ACC_PUBLIC, cob -> {
                 for (var fi : fieldInjects) {
                     var declCD = ClassDesc.of(fi.declaringClassFqn());
-                    var fieldTypeCD = resolveFieldTypeDesc(fi.fieldTypeFqn());
+                    var fieldTypeCD = resolveFieldTypeDesc(fi.fieldTypeErasure());
                     Label next = cob.newLabel();
                     // if (!className.equals(declFqn)) goto next
                     cob.aload(2);
@@ -309,8 +272,8 @@ public final class ComponentProviderClassGenerator {
     }
 
     /**
-     * Resolves a field type FQN (as stored in {@link FieldInject}) to a {@link ClassDesc}.
-     * Handles simple array types expressed as {@code "ComponentType[]"}.
+     * Resolves a field type erasure (as stored in {@link FieldInject#fieldTypeErasure()}) to a
+     * {@link ClassDesc}. Handles simple array types expressed as {@code "ComponentType[]"}.
      */
     private static ClassDesc resolveFieldTypeDesc(String fqn) {
         if (fqn.endsWith("[]")) {

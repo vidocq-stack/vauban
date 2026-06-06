@@ -1,5 +1,9 @@
 package io.vidocq.vauban.processor.codegen.provider;
 
+import io.vidocq.vauban.indexer.codegen.Component;
+import io.vidocq.vauban.indexer.codegen.FieldInject;
+import io.vidocq.vauban.indexer.codegen.MethodInvoke;
+
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
@@ -39,6 +43,10 @@ import java.util.stream.Collectors;
  *     }
  * }
  * }</pre>
+ *
+ * <p>The descriptor records ({@link Component}, {@link FieldInject}, {@link MethodInvoke}) are
+ * defined in {@code io.vidocq.vauban.indexer.codegen} and shared with the bytecode generator
+ * ({@code ComponentProviderClassGenerator}) via the common {@code vauban-indexer} dependency.
  */
 public final class ComponentProviderGenerator {
 
@@ -49,69 +57,6 @@ public final class ComponentProviderGenerator {
 
     /** A generated source file: its fully-qualified class name and its textual content. */
     public record Generated(String className, String source) {}
-
-    /**
-     * A component the provider can instantiate in-module.
-     *
-     * @param fqn           fully-qualified class name of the component
-     * @param ctorParamTypes erased, nameable types of the selected constructor's parameters, in
-     *                       declared order (empty for a no-arg constructor)
-     */
-    public record Component(String fqn, List<String> ctorParamTypes) {
-        public Component {
-            ctorParamTypes = List.copyOf(ctorParamTypes);
-        }
-
-        boolean noArg() {
-            return ctorParamTypes.isEmpty();
-        }
-    }
-
-    /**
-     * Describes an {@code @Inject} instance field (non-private, non-static) that the generated
-     * provider can assign in-module via a plain {@code ((DeclaringType) bean).field = (FieldType) value;}.
-     * Only fields in the same package as the generated {@code _VaubanComponents} class are eligible:
-     * a {@code putfield} to a package-private field only compiles from the same package.
-     *
-     * @param declaringClassFqn fully-qualified name of the bean class declaring the field
-     * @param fieldName         simple name of the field
-     * @param fieldTypeErasure  erased, source-nameable type of the field (e.g. {@code "app.Repo"})
-     */
-    public record FieldInject(String declaringClassFqn, String fieldName, String fieldTypeErasure) {}
-
-    /**
-     * Describes a method (producer, observer, disposer, lifecycle callback, initializer) that the
-     * generated provider can invoke in-module without reflection.
-     *
-     * <p>The method identity key ({@code methodId}) is {@code methodName(paramErasure0,…)}, using
-     * binary class names (dots for top-level, {@code $} for nested, {@code []} per array dimension),
-     * exactly matching the format produced by
-     * {@code io.vidocq.vauban.core.container.VaubanLookup#methodId(Method)}.
-     *
-     * @param declaringClassFqn fully-qualified name of the class declaring the method
-     * @param methodName        simple name of the method
-     * @param paramErasures     erased parameter type names in declared order (empty for no-arg)
-     * @param isStatic          {@code true} for a static method (no target cast)
-     * @param isVoid            {@code true} when the return type is {@code void}
-     * @param returnErasure     erased return type name, or {@code null} when {@code isVoid} is true
-     */
-    public record MethodInvoke(
-            String declaringClassFqn,
-            String methodName,
-            java.util.List<String> paramErasures,
-            boolean isStatic,
-            boolean isVoid,
-            String returnErasure) {
-
-        public MethodInvoke {
-            paramErasures = List.copyOf(paramErasures);
-        }
-
-        /** The runtime-compatible method identity key: {@code name(erasure0,erasure1,…)}. */
-        public String methodId() {
-            return methodName + "(" + String.join(",", paramErasures) + ")";
-        }
-    }
 
     /**
      * Back-compatible no-arg entry point: every component is instantiated via {@code new X()}.
