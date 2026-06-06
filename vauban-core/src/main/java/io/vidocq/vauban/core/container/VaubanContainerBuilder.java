@@ -40,6 +40,9 @@ public final class VaubanContainerBuilder {
     // instantiation so application modules need not open their packages to the container.
     private ComponentProviders componentProviders = new ComponentProviders(List.of());
     private final List<io.vidocq.vauban.core.VaubanComponentProvider> componentProviderList = new ArrayList<>();
+    // Classes already reported as falling back to reflective instantiation — traced once each so
+    // the residual (jars not frozen by APT/plugin) is visible without spamming per-instance logs.
+    private final java.util.Set<String> reflectiveFallbacks = java.util.concurrent.ConcurrentHashMap.newKeySet();
 
     private VaubanLookup getBuilderLookup() {
         if (builderLookup == null) {
@@ -57,12 +60,30 @@ public final class VaubanContainerBuilder {
     private Object instantiate(Class<?> cls, VaubanLookup lkp) {
         var provided = componentProviders.create(cls.getName());
         if (provided != null) return provided;
+        traceReflectiveFallback(cls);
         try {
             return lkp.newInstance(cls);
         } catch (RuntimeException e) {
             throw e;
         } catch (Exception e) {
             throw new jakarta.enterprise.inject.CreationException(e);
+        }
+    }
+
+    /**
+     * Records (once per class) that {@code cls} is being instantiated reflectively because no
+     * generated {@link io.vidocq.vauban.core.VaubanComponentProvider} owns it. This is a valid
+     * permanent fallback for the class path, open/automatic modules, and jars not yet processed
+     * by the APT or the packaging plugin — but it is the residual that prevents a fully static,
+     * AOT-friendly, opens-free deployment, so it is surfaced at DEBUG rather than left silent.
+     */
+    private void traceReflectiveFallback(Class<?> cls) {
+        if (reflectiveFallbacks.add(cls.getName())) {
+            LOG.log(System.Logger.Level.DEBUG, () ->
+                    "No generated VaubanComponentProvider for " + cls.getName()
+                    + " — instantiating reflectively (requires an open/automatic module or "
+                    + "`opens … to io.vidocq.vauban.core`). Generate a provider via the APT or the "
+                    + "packaging plugin to make it static and remove the opens.");
         }
     }
 

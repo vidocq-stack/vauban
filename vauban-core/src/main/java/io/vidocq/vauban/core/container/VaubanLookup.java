@@ -182,9 +182,13 @@ public final class VaubanLookup {
                 }
                 return MethodHandles.privateLookupIn(clazz, rootLookup);
             } catch (IllegalAccessException e) {
-                throw new RuntimeException("Cannot obtain Lookup for " + clazz.getName()
-                        + ". Ensure the module opens the package to io.vidocq.vauban.core: "
-                        + "opens " + clazz.getPackageName() + " to io.vidocq.vauban.core;", e);
+                throw new RuntimeException("Cannot reflectively access " + clazz.getName()
+                        + " on the module path. Either (preferred) provide a generated "
+                        + "VaubanComponentProvider for its module — the APT or packaging plugin "
+                        + "emits a `_VaubanComponents` and the module declares `provides "
+                        + "io.vidocq.vauban.core.VaubanComponentProvider with …;` — so the container "
+                        + "instantiates it in-module without reflection; or open the package: "
+                        + "`opens " + clazz.getPackageName() + " to io.vidocq.vauban.core;`", e);
             }
         });
     }

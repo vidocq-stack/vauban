@@ -38,8 +38,15 @@ enhancement result reduces to `target FQN → [annotation FQN…]` — trivially
       `effectiveReplayPairs`); reflective replay kept only as legacy fallback for
       patch-less targets — Test 7 proves scope applied with NO BCE on the classpath
 - [x] Full `clean install` green (no regression); no `instantiateBce` on the patched path
-- Note: legacy `vauban-bce-runtime.list` still written as fallback; remove once Brique B/D
-  cover all jars and module-path validation passes.
+- Note: the **reflective fallback path itself is permanent by design** — it is the only way to
+  handle jars not frozen by the APT/plugin (class path, open/automatic modules, third-party
+  CDI jars), and it works *without* opens for the class path / automatic modules; it only fails
+  for an explicit module that neither opens its package nor ships a provider (unavoidable for any
+  container, Weld included). What is removable is just the **legacy `vauban-bce-runtime.list`
+  artifact** (now superseded by the enhancement patch), once Brique B/D cover our own modules.
+- [x] Surface the residual instead of leaving it silent: `instantiate()` logs once-per-class at
+      DEBUG when it falls back to reflection; `VaubanLookup` failure message now points to *both*
+      options (generate a `_VaubanComponents` provider **or** add the `opens`).
 
 ### Brique B — Co-located instantiation via VaubanComponentProvider (contract = option A)
 Contract chosen: APT generates `app._VaubanComponents implements VaubanComponentProvider`
@@ -85,6 +92,9 @@ via ServiceLoader and consults it before any reflective `newInstance`.
 
 ### Brique D — Packaging plugin freezes non-APT jars (vidocq-runtime-maven-plugin)
 - [ ] `VidocqGenerateMojo` writes patch + factories + marker for untreated deps
+- [ ] Optional `failOnReflectiveFallback` build flag: fail packaging if any bean would still need
+      the reflective path → guarantees a fully static / AOT-pure (GraalVM-ready) image when wanted,
+      while the permissive reflective fallback stays the default for robustness/repackaging.
 
 ### Verify (module-path, not classpath)
 - [ ] jlink cassini-rest / mansart-h2 boot + endpoint without opens; post-jlink smoke test
