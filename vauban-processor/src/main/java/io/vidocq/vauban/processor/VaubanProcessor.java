@@ -333,16 +333,14 @@ public class VaubanProcessor extends AbstractProcessor {
                     generateClass(ClientProxyGenerator.generate(classInfo));
                 }
 
-                // Accumulate for the provider: only top-level types get an in-module entry.
-                // The instantiable flag lets ComponentCollector attempt constructor-param extraction.
                 var fqn = bean.beanClass().value();
-                providedClasses.add(new ProvidedClass(fqn, classInfo, isTopLevelType(fqn)));
 
                 // Pre-generate the <bean>$$Intercepted subclass for intercepted targets, so the
                 // runtime needs no reflective class definition (hence no `opens … to
                 // io.vidocq.vauban.core`) on the strict module path. Mirrors the Maven plugin but
                 // builds the shape from javac Elements instead of a loaded Class. Top-level,
                 // non-final targets only; anything else falls back to runtime generation.
+                boolean interceptedGenerated = false;
                 if (isTopLevelType(fqn)) {
                     var typeElement = processingEnv.getElementUtils().getTypeElement(fqn);
                     if (typeElement != null && isInterceptedTarget(typeElement)) {
@@ -351,6 +349,7 @@ public class VaubanProcessor extends AbstractProcessor {
                                     processingEnv.getElementUtils(), processingEnv.getTypeUtils());
                             var bytecode = io.vidocq.vauban.core.interceptor.InterceptedEmitter.emit(shape);
                             generateClass(new GeneratedClass(fqn + "$$Intercepted", bytecode));
+                            interceptedGenerated = true;
                         } catch (Exception e) {
                             processingEnv.getMessager().printMessage(Diagnostic.Kind.NOTE,
                                     "[Vauban] Could not pre-generate " + fqn + "$$Intercepted"
@@ -358,6 +357,13 @@ public class VaubanProcessor extends AbstractProcessor {
                         }
                     }
                 }
+
+                // Accumulate for the provider: only top-level types get an in-module entry. The
+                // instantiable flag lets ComponentCollector attempt constructor-param extraction;
+                // the intercepted flag makes it also emit a component for the $$Intercepted subclass
+                // generated just above (instantiated in-module by the bytecode provider, no opens).
+                providedClasses.add(new ProvidedClass(
+                        fqn, classInfo, isTopLevelType(fqn), interceptedGenerated));
             }
         }
 
@@ -730,11 +736,23 @@ public class VaubanProcessor extends AbstractProcessor {
      * the caller can list it (with the others) in the single class-path service file. The fields and
      * methods passed in already belong to {@code pkg} (the caller groups by package), so no filtering
      * is needed — a co-located provider can reach its own package's package-private members.
+     *
+     * <p>Emission is conditional. A package that contains an intercepted bean has a
+     * {@code <bean>$$Intercepted} component, which only the <strong>bytecode</strong> generator can
+     * reference (it uses binary names resolved by the JVM, whereas a generated <em>source</em>
+     * provider cannot resolve a Filer-emitted {@code $$Intercepted} symbol — "cannot find symbol").
+     * Such packages are emitted as bytecode via the Class-File API; all others keep the readable
+     * source form.
      */
     private String writeComponentProvider(String pkg,
             List<io.vidocq.vauban.indexer.codegen.Component> components,
             List<io.vidocq.vauban.indexer.codegen.FieldInject> fieldInjects,
             List<io.vidocq.vauban.indexer.codegen.MethodInvoke> methodInvokes) {
+        boolean hasIntercepted = components.stream()
+                .anyMatch(c -> c.fqn().endsWith("$$Intercepted"));
+        if (hasIntercepted) {
+            return writeComponentProviderBytecode(pkg, components, fieldInjects, methodInvokes);
+        }
         var gen = ComponentProviderGenerator.generateFrom(pkg, components, fieldInjects, methodInvokes);
         try {
             var file = processingEnv.getFiler().createSourceFile(gen.className());
@@ -752,6 +770,30 @@ public class VaubanProcessor extends AbstractProcessor {
                     "[Vauban] Failed to write component provider: " + e.getMessage());
             return null;
         }
+    }
+
+    /**
+     * Bytecode variant of {@link #writeComponentProvider}: emits {@code _VaubanComponents} as a
+     * {@code .class} via the shared {@code ComponentProviderClassGenerator} (Class-File API) and the
+     * Filer. Used for packages with an intercepted bean, whose {@code $$Intercepted} component a
+     * generated source provider could not reference.
+     */
+    private String writeComponentProviderBytecode(String pkg,
+            List<io.vidocq.vauban.indexer.codegen.Component> components,
+            List<io.vidocq.vauban.indexer.codegen.FieldInject> fieldInjects,
+            List<io.vidocq.vauban.indexer.codegen.MethodInvoke> methodInvokes) {
+        var providerFqn = pkg.isEmpty()
+                ? ComponentProviderGenerator.SIMPLE_NAME
+                : pkg + "." + ComponentProviderGenerator.SIMPLE_NAME;
+        var gen = io.vidocq.vauban.core.provider.ComponentProviderClassGenerator.generate(
+                providerFqn, components, fieldInjects, methodInvokes);
+        generateClass(new GeneratedClass(gen.className(), gen.bytecode()));
+        processingEnv.getMessager().printMessage(Diagnostic.Kind.NOTE,
+                "[Vauban] Generated " + gen.className() + " (bytecode; " + components.size()
+                        + " component(s), " + fieldInjects.size() + " field(s), "
+                        + methodInvokes.size() + " method(s)). On the module path, add to module-info: "
+                        + "provides io.vidocq.vauban.api.VaubanComponentProvider with " + gen.className() + ";");
+        return gen.className();
     }
 
     /** Class-path fallback registration (ignored for named modules, which use {@code provides}). */

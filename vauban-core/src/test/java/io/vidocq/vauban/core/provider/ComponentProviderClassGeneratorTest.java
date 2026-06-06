@@ -2,6 +2,7 @@ package io.vidocq.vauban.core.provider;
 
 import io.vidocq.vauban.api.VaubanComponentProvider;
 import io.vidocq.vauban.core.container.ProvidedBean;
+import io.vidocq.vauban.indexer.codegen.Component;
 import io.vidocq.vauban.indexer.codegen.FieldInject;
 import io.vidocq.vauban.indexer.codegen.MethodInvoke;
 import org.junit.jupiter.api.DisplayName;
@@ -33,7 +34,7 @@ class ComponentProviderClassGeneratorTest {
     void generatesLoadableProvider() throws Exception {
         var gen = ComponentProviderClassGenerator.generate(
                 "io.vidocq.vauban.core.provider._GenTestComponents",
-                List.of(ProvidedBean.class.getName()));
+                List.of(new Component(ProvidedBean.class.getName(), List.of())));
 
         var loader = new ByteClassLoader(getClass().getClassLoader());
         var providerClass = loader.define(gen.className(), gen.bytecode());
@@ -49,6 +50,53 @@ class ComponentProviderClassGeneratorTest {
 
         assertTrue(providerClass.isAnnotationPresent(jakarta.enterprise.inject.Vetoed.class),
                 "@Vetoed keeps Weld (bean-discovery-mode=all) from loading it as a bean");
+    }
+
+    @Test
+    @DisplayName("create(String, Object[]) instantiates an injected-constructor bean in-module")
+    void generatesInjectedConstructorProvider() throws Exception {
+        var pkg = "io.vidocq.vauban.core.provider.test.ctor";
+        var beanFqn = pkg + ".CtorTarget";
+        var providerFqn = pkg + "._GenCtorComponents";
+
+        // class CtorTarget { final String dep; public CtorTarget(String dep) { this.dep = dep; } }
+        var cdBean = ClassDesc.of(beanFqn);
+        var cdObject = ConstantDescs.CD_Object;
+        var cdString = ConstantDescs.CD_String;
+        byte[] beanBytes = ClassFile.of().build(cdBean, clb -> {
+            clb.withFlags(ClassFile.ACC_PUBLIC | ClassFile.ACC_SUPER);
+            clb.withSuperclass(cdObject);
+            clb.withField("dep", cdString, ClassFile.ACC_PUBLIC | ClassFile.ACC_FINAL);
+            clb.withMethodBody(ConstantDescs.INIT_NAME,
+                    MethodTypeDesc.of(ConstantDescs.CD_void, cdString),
+                    ClassFile.ACC_PUBLIC, cob -> {
+                        cob.aload(0);
+                        cob.invokespecial(cdObject, ConstantDescs.INIT_NAME,
+                                MethodTypeDesc.of(ConstantDescs.CD_void));
+                        cob.aload(0);
+                        cob.aload(1);
+                        cob.putfield(cdBean, "dep", cdString);
+                        cob.return_();
+                    });
+        });
+
+        var component = new Component(beanFqn, List.of("java.lang.String"));
+        var gen = ComponentProviderClassGenerator.generate(providerFqn, List.of(component));
+
+        var loader = new ByteClassLoader(getClass().getClassLoader());
+        var beanClass = loader.define(beanFqn, beanBytes);
+        var providerClass = loader.define(gen.className(), gen.bytecode());
+        var provider = (VaubanComponentProvider) providerClass.getDeclaredConstructor().newInstance();
+
+        var instance = provider.create(beanFqn, new Object[]{"hello"});
+        assertInstanceOf(beanClass, instance, "create(String, Object[]) must instantiate the bean in-module");
+        var depField = beanClass.getDeclaredField("dep");
+        assertEquals("hello", depField.get(instance), "the constructor argument must be passed through");
+
+        // No/empty args must delegate to create(String); the bean has no no-arg ctor, so it yields null.
+        assertNull(provider.create(beanFqn, new Object[0]),
+                "empty args delegate to create(String), which does not list this injected-ctor bean");
+        assertNull(provider.create("does.not.Exist", new Object[]{"x"}), "unlisted class must return null");
     }
 
     /**

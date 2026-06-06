@@ -15,5 +15,17 @@ import io.vidocq.vauban.indexer.model.ClassInfo;
  *                      parameters via {@link ComponentCollector#instantiableCtorParams}; the caller
  *                      sets this based on its own eligibility rules (e.g. top-level type check in
  *                      APT, {@code classFileExists} in the plugin)
+ * @param intercepted   {@code true} when the caller pre-generated a {@code <fqn>$$Intercepted}
+ *                      subclass for this class; the collector then emits a second in-module
+ *                      {@link Component} so the container can instantiate the subclass via the
+ *                      provider ({@code new <fqn>$$Intercepted(args…)}) instead of reflectively.
+ *                      Only honoured by the bytecode provider path — a generated source provider
+ *                      cannot reference a Filer-emitted {@code $$Intercepted} symbol
  */
-public record ProvidedClass(String fqn, ClassInfo classInfo, boolean instantiable) {}
+public record ProvidedClass(String fqn, ClassInfo classInfo, boolean instantiable, boolean intercepted) {
+
+    /** Back-compatible constructor for callers that pre-generate no interceptor subclass. */
+    public ProvidedClass(String fqn, ClassInfo classInfo, boolean instantiable) {
+        this(fqn, classInfo, instantiable, false);
+    }
+}

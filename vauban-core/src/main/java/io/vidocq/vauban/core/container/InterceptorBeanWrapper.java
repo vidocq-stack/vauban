@@ -377,17 +377,27 @@ final class InterceptorBeanWrapper {
     }
 
     /**
-     * Instantiates an intercepted subclass. The statically generated {@code <bean>$$Intercepted}
-     * is a public class with a public constructor living in the bean's (exported) package, so the
-     * public {@link java.lang.invoke.MethodHandles#publicLookup() Lookup} can construct it with no
-     * {@code privateLookupIn} — hence <strong>no {@code opens … to io.vidocq.vauban.core}</strong>
-     * on the strict module path. Falls back to the private-lookup path for runtime-generated
-     * subclasses (class path, where access is unrestricted) or a bean in a non-exported package
-     * (which keeps its qualified {@code opens}).
+     * Instantiates an intercepted subclass, preferring zero reflection. Order:
+     * <ol>
+     *   <li><b>in-module provider</b> — when the Vauban APT pre-generated {@code <bean>$$Intercepted},
+     *       its co-located bytecode {@code _VaubanComponents} runs {@code new <bean>$$Intercepted(args…)}
+     *       directly (no reflection, no opens);</li>
+     *   <li><b>public Lookup</b> — the generated subclass is a public class with a public constructor
+     *       in the bean's exported package, constructible via {@code publicLookup} with no
+     *       {@code privateLookupIn} (hence no opens) — covers the runtime/plugin-generated case where
+     *       no provider owns the name;</li>
+     *   <li><b>private Lookup</b> — last resort for the class path (unrestricted) or a bean in a
+     *       non-exported package (which keeps its qualified {@code opens}).</li>
+     * </ol>
      */
     private Object instantiateIntercepted(java.lang.reflect.Constructor<?> ctor, Object[] args) {
-        var instance = vaubanLookup.newInstancePublic(ctor, args);
-        if (instance != null) return instance;
+        var providers = container.componentProviders();
+        if (providers != null) {
+            var inModule = providers.create(ctor.getDeclaringClass().getName(), args);
+            if (inModule != null) return inModule;
+        }
+        var viaPublic = vaubanLookup.newInstancePublic(ctor, args);
+        if (viaPublic != null) return viaPublic;
         return vaubanLookup.newInstance(ctor, args);
     }
 

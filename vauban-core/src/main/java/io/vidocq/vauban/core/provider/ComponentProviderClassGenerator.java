@@ -1,5 +1,6 @@
 package io.vidocq.vauban.core.provider;
 
+import io.vidocq.vauban.indexer.codegen.Component;
 import io.vidocq.vauban.indexer.codegen.FieldInject;
 import io.vidocq.vauban.indexer.codegen.MethodInvoke;
 
@@ -22,9 +23,13 @@ import java.util.List;
  * <p>This is the build-plugin counterpart of the APT's source generator
  * ({@code ComponentProviderGenerator}): the {@code vauban-maven-plugin} runs after compilation and
  * has no {@code javac}, so it must emit bytecode directly via the Class-File API. The generated
- * {@code create(String)} is a chain of {@code className.equals("fqn")} tests returning a fresh
- * instance, mirroring the source switch. Only public, top-level, no-arg beans are listed; anything
- * else is left to the reflective fallback.
+ * {@code create(String)} / {@code create(String, Object[])} are chains of {@code className.equals}
+ * tests returning a fresh instance ({@code new X()} or {@code new X((Dep) args[0], …)}), mirroring
+ * the source switch. Unlike the source generator, the bytecode references each bean by its
+ * <em>binary</em> name, so it can also instantiate a Filer-generated sibling such as
+ * {@code <bean>$$Intercepted} — which a generated source could not (javac cannot resolve a
+ * round-generated class symbol). Only public, top-level beans whose constructor parameters are all
+ * nameable reference types are listed; anything else is left to the reflective fallback.
  *
  * <p>The descriptor records ({@link FieldInject}, {@link MethodInvoke}) are defined in
  * {@code io.vidocq.vauban.indexer.codegen} and shared with the APT source generator
@@ -42,6 +47,8 @@ public final class ComponentProviderClassGenerator {
             MethodTypeDesc.of(ConstantDescs.CD_boolean, CD_Object);
     private static final MethodTypeDesc MTD_create =
             MethodTypeDesc.of(CD_Object, CD_String);
+    private static final MethodTypeDesc MTD_create2 =
+            MethodTypeDesc.of(CD_Object, CD_String, CD_Object.arrayType());
     private static final MethodTypeDesc MTD_injectField =
             MethodTypeDesc.of(ConstantDescs.CD_boolean, CD_Object, CD_String, CD_String, CD_Object);
 
@@ -53,31 +60,34 @@ public final class ComponentProviderClassGenerator {
     /**
      * @param providerClassName fully-qualified name of the provider to generate (in a package of
      *                          the current module, e.g. {@code app._VaubanComponents})
-     * @param noArgBeanFqns     fully-qualified names of public no-arg beans to instantiate
+     * @param components        public beans to instantiate in-module: no-arg ({@code new X()}) and
+     *                          injected-constructor ({@code new X((Dep) args[0], …)})
      */
-    public static Generated generate(String providerClassName, List<String> noArgBeanFqns) {
-        return generate(providerClassName, noArgBeanFqns, List.of(), List.of());
+    public static Generated generate(String providerClassName, List<Component> components) {
+        return generate(providerClassName, components, List.of(), List.of());
     }
 
     /**
      * @param providerClassName fully-qualified name of the provider to generate
-     * @param noArgBeanFqns     fully-qualified names of public no-arg beans to instantiate
+     * @param components        public beans to instantiate in-module (no-arg and injected-ctor)
      * @param fieldInjects      field injection descriptors for in-package, non-private fields
      */
-    public static Generated generate(String providerClassName, List<String> noArgBeanFqns,
+    public static Generated generate(String providerClassName, List<Component> components,
             List<FieldInject> fieldInjects) {
-        return generate(providerClassName, noArgBeanFqns, fieldInjects, List.of());
+        return generate(providerClassName, components, fieldInjects, List.of());
     }
 
     /**
      * @param providerClassName fully-qualified name of the provider to generate
-     * @param noArgBeanFqns     fully-qualified names of public no-arg beans to instantiate
+     * @param components        public beans to instantiate in-module (no-arg and injected-ctor)
      * @param fieldInjects      field injection descriptors for in-package, non-private fields
      * @param methodInvokes     method invocation descriptors for in-package methods
      */
-    public static Generated generate(String providerClassName, List<String> noArgBeanFqns,
+    public static Generated generate(String providerClassName, List<Component> components,
             List<FieldInject> fieldInjects, List<MethodInvoke> methodInvokes) {
         var providerCD = ClassDesc.of(providerClassName);
+        var noArg = components.stream().filter(Component::noArg).toList();
+        var withArgs = components.stream().filter(c -> !c.noArg()).toList();
         byte[] bytecode = ClassFile.of().build(providerCD, clb -> {
             clb.withFlags(ClassFile.ACC_PUBLIC | ClassFile.ACC_FINAL | ClassFile.ACC_SUPER);
             clb.withSuperclass(CD_Object);
@@ -100,11 +110,11 @@ public final class ComponentProviderClassGenerator {
             //     return null;
             // }
             clb.withMethodBody("create", MTD_create, ClassFile.ACC_PUBLIC, cob -> {
-                for (var fqn : noArgBeanFqns) {
-                    var beanCD = ClassDesc.of(fqn);
+                for (var c : noArg) {
+                    var beanCD = ClassDesc.of(c.fqn());
                     var next = cob.newLabel();
                     cob.aload(1);
-                    cob.ldc(fqn);
+                    cob.ldc(c.fqn());
                     cob.invokevirtual(CD_String, "equals", MTD_String_equals);
                     cob.ifeq(next);
                     cob.new_(beanCD);
@@ -116,6 +126,62 @@ public final class ComponentProviderClassGenerator {
                 cob.aconst_null();
                 cob.areturn();
             });
+
+            // Emit create(String, Object[]) only when there are injected-constructor beans, so the
+            // SPI default (which delegates to create(String)) stays in force otherwise.
+            //
+            // public Object create(String className, Object[] args) {
+            //     if (args == null || args.length == 0) return create(className);
+            //     if (className.equals("a.Svc")) return new a.Svc((Dep) args[0], …);
+            //     ...
+            //     return null;
+            // }
+            // slots: 0=this, 1=className, 2=args
+            if (!withArgs.isEmpty()) {
+                clb.withMethodBody("create", MTD_create2, ClassFile.ACC_PUBLIC, cob -> {
+                    var delegate = cob.newLabel();
+                    // if (args == null || args.length == 0) return create(className);
+                    cob.aload(2);
+                    cob.ifnull(delegate);
+                    cob.aload(2);
+                    cob.arraylength();
+                    cob.ifeq(delegate);
+                    for (var c : withArgs) {
+                        var beanCD = ClassDesc.of(c.fqn());
+                        var next = cob.newLabel();
+                        cob.aload(1);
+                        cob.ldc(c.fqn());
+                        cob.invokevirtual(CD_String, "equals", MTD_String_equals);
+                        cob.ifeq(next);
+                        cob.new_(beanCD);
+                        cob.dup();
+                        var params = c.ctorParamTypes();
+                        var paramDescs = new ClassDesc[params.size()];
+                        for (int i = 0; i < params.size(); i++) {
+                            cob.aload(2);
+                            loadIntConstant(cob, i);
+                            cob.aaload();
+                            var paramCD = resolveFieldTypeDesc(params.get(i));
+                            paramDescs[i] = paramCD;
+                            if (!paramCD.equals(CD_Object)) {
+                                cob.checkcast(paramCD);
+                            }
+                        }
+                        cob.invokespecial(beanCD, ConstantDescs.INIT_NAME,
+                                MethodTypeDesc.of(ConstantDescs.CD_void, paramDescs));
+                        cob.areturn();
+                        cob.labelBinding(next);
+                    }
+                    cob.aconst_null();
+                    cob.areturn();
+                    // delegate: return create(className);
+                    cob.labelBinding(delegate);
+                    cob.aload(0);
+                    cob.aload(1);
+                    cob.invokevirtual(providerCD, "create", MTD_create);
+                    cob.areturn();
+                });
+            }
 
             // public boolean injectField(Object bean, String className, String fieldName, Object value) {
             //     if (className.equals("a.B") && fieldName.equals("f")) {

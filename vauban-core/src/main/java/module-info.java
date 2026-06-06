@@ -29,6 +29,10 @@ module io.vidocq.vauban.core {
     exports io.vidocq.vauban.core.context;
     exports io.vidocq.vauban.core.event;
     exports io.vidocq.vauban.core.interceptor;
+    // Build-time only: the Vauban APT reuses the shared bytecode _VaubanComponents generator.
+    // Nothing in a user module references this package at runtime (the generated provider only
+    // references the io.vidocq.vauban.api SPI), so a qualified export to the processor suffices.
+    exports io.vidocq.vauban.core.provider to io.vidocq.vauban.processor;
     exports io.vidocq.vauban.core.enrichment;
     exports io.vidocq.vauban.core.extensions;
 

@@ -300,15 +300,11 @@ public final class VaubanGenerator {
 
         var providerFqns = new ArrayList<String>();
         for (var pkg : packages) {
-            // The bytecode generator takes List<String> noArgFqns — extract only no-arg components.
-            var noArgFqns = pkg.components().stream()
-                    .filter(io.vidocq.vauban.indexer.codegen.Component::noArg)
-                    .map(io.vidocq.vauban.indexer.codegen.Component::fqn)
-                    .toList();
             var providerFqn = pkg.providerFqn();
             try {
+                // Bytecode generator handles both no-arg and injected-constructor components.
                 var gen = io.vidocq.vauban.core.provider.ComponentProviderClassGenerator.generate(
-                        providerFqn, noArgFqns, pkg.fields(), pkg.methods());
+                        providerFqn, pkg.components(), pkg.fields(), pkg.methods());
                 writeClassFile(config.outputDir(), gen.className(), gen.bytecode());
                 providerFqns.add(providerFqn);
             } catch (Exception e) {

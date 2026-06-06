@@ -272,7 +272,17 @@ public final class ComponentCollector {
 
             if (provided.instantiable()) {
                 instantiableCtorParams(provided.classInfo())
-                        .ifPresent(params -> bundle.components().add(new Component(fqn, params)));
+                        .ifPresent(params -> {
+                            bundle.components().add(new Component(fqn, params));
+                            // The pre-generated <fqn>$$Intercepted subclass mirrors the bean's
+                            // selected constructor (InterceptedEmitter emits super(args…)). Listing
+                            // it as a co-located component lets the container instantiate it
+                            // in-module — no reflective newInstance. Only the bytecode provider can
+                            // reference it (a generated source provider cannot resolve the symbol).
+                            if (provided.intercepted()) {
+                                bundle.components().add(new Component(fqn + "$$Intercepted", params));
+                            }
+                        });
             }
 
             bundle.fields().addAll(collectFields(provided.classInfo(), warningsOut));
