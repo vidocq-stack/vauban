@@ -219,9 +219,20 @@ Reflective method invocation was the next forced `setAccessible`/`unreflect` kee
       endpoint: `/admin` admin-token → 200, user-token → 403, no-token → 401, `/public` → 200 — token
       validation ran in-module. cervantes is now ZERO opens-to-vauban.core. (Both still show only the
       separate `io.vidocq.cassini.core` adapter-generation warning — a cassini-codegen concern.)
-- [ ] APT path (`VaubanProcessor`/`ComponentProviderGenerator`) still emits a single common-package
-      provider — mirror the per-package split for consistency (the spec-wrapper proofs use the
-      plugin; examples use APT and still work with the single provider, so non-urgent).
+- [x] APT path (`VaubanProcessor`) mirrored to per-package: groups components/fields/methods by
+      package, emits one `_VaubanComponents` source per package, lists all in one service file;
+      `instantiableCtorParams` relaxed to package-private (co-located source provider). Removed the
+      now-unused `commonPackage`/`commonPrefixBySegments`. Build green. (End-to-end module-path proof
+      comes when a wrapper actually adopts APT — see the plugin-vs-APT note below.)
+- [ ] **Plugin = external jars, APT = own code (maintainer's intent).** Today every spec wrapper
+      (cervantes/knock/dirac/ravel/heisenberg/cyrano/humboldt/cassini-cdi) uses the *plugin* for its
+      OWN beans; per the maintainer the plugin should be reserved for non-APT-processed *dependency
+      jars* (Brique D), and a module's own beans should go through the APT. Migrating a wrapper from
+      plugin → APT is a separate chantier — caveats to check first: (1) the plugin also generates
+      `$$Intercepted` interceptor subclasses, which the incremental APT does not (only matters if the
+      wrapper has interceptor beans — cervantes/knock don't); (2) the two-step `src/main/module-info/`
+      workaround + `vauban-core` at test scope; (3) `vauban-processor` on the `annotationProcessorPath`
+      (it needs only vauban-api+indexer, not vauban-core). Pilot on one interceptor-free wrapper.
 
 ## Backlog (deferred)
 - [ ] `DirectoryScanner` - directory scanning

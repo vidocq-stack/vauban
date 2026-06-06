@@ -351,11 +351,34 @@ public class VaubanProcessor extends AbstractProcessor {
             }
         }
 
-        // Emit the per-module VaubanComponentProvider for those components.
-        if (!providerComponents.isEmpty()) {
-            writeComponentProvider(List.copyOf(providerComponents.values()),
-                    List.copyOf(providerFieldInjects),
-                    List.copyOf(providerMethodInvokes));
+        // Emit ONE _VaubanComponents per package that has beans (co-located so each can reach its
+        // own package's package-private members with a plain new/putfield/invoke), and list them all
+        // in the class-path service file. A single common-package provider could not reach
+        // package-private members in other packages.
+        record Bundle(List<ComponentProviderGenerator.Component> components,
+                List<ComponentProviderGenerator.FieldInject> fields,
+                List<ComponentProviderGenerator.MethodInvoke> methods) {}
+        var byPackage = new java.util.TreeMap<String, Bundle>();
+        java.util.function.Function<String, Bundle> newBundle = k -> new Bundle(
+                new java.util.ArrayList<>(), new java.util.ArrayList<>(), new java.util.ArrayList<>());
+        for (var c : providerComponents.values()) {
+            byPackage.computeIfAbsent(packageOf(c.fqn()), newBundle).components().add(c);
+        }
+        for (var fi : providerFieldInjects) {
+            byPackage.computeIfAbsent(packageOf(fi.declaringClassFqn()), newBundle).fields().add(fi);
+        }
+        for (var mi : providerMethodInvokes) {
+            byPackage.computeIfAbsent(packageOf(mi.declaringClassFqn()), newBundle).methods().add(mi);
+        }
+        var providerClassNames = new java.util.ArrayList<String>();
+        for (var e : byPackage.entrySet()) {
+            var b = e.getValue();
+            if (b.components().isEmpty() && b.fields().isEmpty() && b.methods().isEmpty()) continue;
+            var className = writeComponentProvider(e.getKey(), b.components(), b.fields(), b.methods());
+            if (className != null) providerClassNames.add(className);
+        }
+        if (!providerClassNames.isEmpty()) {
+            writeComponentProviderService(providerClassNames);
         }
 
         // Write META-INF/vauban-beans.list
@@ -667,19 +690,22 @@ public class VaubanProcessor extends AbstractProcessor {
      */
     private static java.util.Optional<List<String>> instantiableCtorParams(
             io.vidocq.vauban.indexer.model.ClassInfo ci) {
-        if (!ci.isPublic() || ci.isAbstract()) return java.util.Optional.empty();
+        // A co-located generated provider can instantiate a package-private (top-level) class with a
+        // non-private constructor in its own package, so only abstract/private classes are excluded
+        // (nested classes are filtered earlier by isTopLevelType).
+        if (ci.isAbstract()) return java.util.Optional.empty();
         var ctors = ci.methods().stream()
                 .filter(io.vidocq.vauban.indexer.model.MethodInfo::isConstructor)
                 .toList();
-        if (ctors.isEmpty()) return java.util.Optional.of(List.of()); // implicit public default ctor
-        if (ctors.stream().anyMatch(c -> c.parameters().isEmpty() && c.isPublic())) {
+        if (ctors.isEmpty()) return java.util.Optional.of(List.of()); // implicit default ctor
+        if (ctors.stream().anyMatch(c -> c.parameters().isEmpty() && !c.isPrivate())) {
             return java.util.Optional.of(List.of()); // prefer the simplest path
         }
         var injected = ctors.stream().filter(VaubanProcessor::hasInject).findFirst();
         if (injected.isEmpty() && ctors.size() == 1) {
             injected = java.util.Optional.of(ctors.get(0));
         }
-        if (injected.isEmpty() || !injected.get().isPublic()) return java.util.Optional.empty();
+        if (injected.isEmpty() || injected.get().isPrivate()) return java.util.Optional.empty();
         var casts = new java.util.ArrayList<String>();
         for (var p : injected.get().parameters()) {
             var cast = nameableErasure(p.type());
@@ -720,28 +746,6 @@ public class VaubanProcessor extends AbstractProcessor {
             }
             default -> null; // primitive, type variable, wildcard, void → reflective fallback
         };
-    }
-
-    /** Longest common package prefix (by segments) of the given component FQNs. */
-    private static String commonPackage(List<String> fqns) {
-        String prefix = null;
-        for (var fqn : fqns) {
-            var pkg = fqn.contains(".") ? fqn.substring(0, fqn.lastIndexOf('.')) : "";
-            prefix = (prefix == null) ? pkg : commonPrefixBySegments(prefix, pkg);
-        }
-        return prefix == null ? "" : prefix;
-    }
-
-    private static String commonPrefixBySegments(String a, String b) {
-        var as = a.split("\\.");
-        var bs = b.split("\\.");
-        var sb = new StringBuilder();
-        int n = Math.min(as.length, bs.length);
-        for (int i = 0; i < n && as[i].equals(bs[i]); i++) {
-            if (i > 0) sb.append('.');
-            sb.append(as[i]);
-        }
-        return sb.toString();
     }
 
     /**
@@ -862,63 +866,43 @@ public class VaubanProcessor extends AbstractProcessor {
     }
 
     /**
-     * Generates the per-module {@code _VaubanComponents} provider (in-module instantiation) and a
-     * class-path service file, then advises adding the {@code provides} clause for the module path.
+     * Generates the {@code <pkg>._VaubanComponents} provider for one package's beans (in-module
+     * instantiation, field injection and method invocation) and returns its fully-qualified name so
+     * the caller can list it (with the others) in the single class-path service file. The fields and
+     * methods passed in already belong to {@code pkg} (the caller groups by package), so no filtering
+     * is needed — a co-located provider can reach its own package's package-private members.
      */
-    private void writeComponentProvider(List<ComponentProviderGenerator.Component> components,
+    private String writeComponentProvider(String pkg,
+            List<ComponentProviderGenerator.Component> components,
             List<ComponentProviderGenerator.FieldInject> fieldInjects,
             List<ComponentProviderGenerator.MethodInvoke> methodInvokes) {
-        var componentFqns = components.stream().map(ComponentProviderGenerator.Component::fqn).toList();
-        var pkg = commonPackage(componentFqns);
-        if (pkg.isEmpty()) {
-            // disjoint packages — fall back to the first component's package (already sorted)
-            var first = componentFqns.get(0);
-            pkg = first.contains(".") ? first.substring(0, first.lastIndexOf('.')) : "";
-        }
-        // Only keep field injections and method invocations that are in the same package as the
-        // generated provider — direct calls to package-private members only compile from within the
-        // same package.
-        final var providerPkg = pkg;
-        var localFieldInjects = fieldInjects.stream()
-                .filter(fi -> {
-                    var fqn = fi.declaringClassFqn();
-                    var beanPkg = fqn.contains(".") ? fqn.substring(0, fqn.lastIndexOf('.')) : "";
-                    return beanPkg.equals(providerPkg);
-                })
-                .toList();
-        var localMethodInvokes = methodInvokes.stream()
-                .filter(mi -> {
-                    var fqn = mi.declaringClassFqn();
-                    var beanPkg = fqn.contains(".") ? fqn.substring(0, fqn.lastIndexOf('.')) : "";
-                    return beanPkg.equals(providerPkg);
-                })
-                .toList();
-        var gen = ComponentProviderGenerator.generateFrom(pkg, components, localFieldInjects, localMethodInvokes);
+        var gen = ComponentProviderGenerator.generateFrom(pkg, components, fieldInjects, methodInvokes);
         try {
             var file = processingEnv.getFiler().createSourceFile(gen.className());
             try (var w = file.openWriter()) {
                 w.write(gen.source());
             }
-            writeComponentProviderService(gen.className());
             processingEnv.getMessager().printMessage(Diagnostic.Kind.NOTE,
-                    "[Vauban] Generated " + gen.className() + " for " + componentFqns.size()
-                            + " component(s). On the module path, add to module-info: "
-                            + "provides io.vidocq.vauban.api.VaubanComponentProvider with "
-                            + gen.className() + ";");
+                    "[Vauban] Generated " + gen.className() + " (" + components.size() + " component(s), "
+                            + fieldInjects.size() + " field(s), " + methodInvokes.size() + " method(s)). "
+                            + "On the module path, add to module-info: provides "
+                            + "io.vidocq.vauban.api.VaubanComponentProvider with " + gen.className() + ";");
+            return gen.className();
         } catch (IOException e) {
             processingEnv.getMessager().printMessage(Diagnostic.Kind.WARNING,
                     "[Vauban] Failed to write component provider: " + e.getMessage());
+            return null;
         }
     }
 
     /** Class-path fallback registration (ignored for named modules, which use {@code provides}). */
-    private void writeComponentProviderService(String providerClassName) {
+    private void writeComponentProviderService(List<String> providerClassNames) {
         try {
             var resource = processingEnv.getFiler().createResource(
                     StandardLocation.CLASS_OUTPUT, "",
                     "META-INF/services/io.vidocq.vauban.api.VaubanComponentProvider");
             try (var w = new PrintWriter(resource.openOutputStream(), false, StandardCharsets.UTF_8)) {
-                w.println(providerClassName);
+                for (var name : providerClassNames) w.println(name);
             }
         } catch (IOException e) {
             processingEnv.getMessager().printMessage(Diagnostic.Kind.WARNING,
