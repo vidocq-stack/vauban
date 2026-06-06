@@ -82,4 +82,41 @@ public interface VaubanComponentProvider {
     default boolean injectField(Object bean, String className, String fieldName, Object value) {
         return false;
     }
+
+    /**
+     * Sentinel returned by {@link #invoke} when the provider does not own the requested method, so
+     * the container can tell "not handled" apart from a {@code void}/{@code null} return and fall
+     * back to reflective invocation. Identity comparison ({@code ==}) is intentional.
+     */
+    Object NOT_INVOKED = new Object();
+
+    /**
+     * Invokes a method (producer, observer, disposer, lifecycle callback or initializer) of one of
+     * this module's components in-module, so the container needs neither {@code unreflect}/
+     * {@code setAccessible} nor an {@code opens … to io.vidocq.vauban.core} to call it. The generated
+     * implementation performs a direct in-package call ({@code ((Decl) target).method((P) args[0],…)}
+     * — a bytecode {@code invokevirtual}/{@code invokestatic}), returning the method result (or
+     * {@code null} for a {@code void} method).
+     *
+     * <p>{@code vauban-core} resolves the arguments (event payload, injected parameters, qualifiers)
+     * and only delegates the call. A provider must own {@code className} <em>and</em> live in the
+     * same package as the declaring class (a direct call cannot reach a package-private method across
+     * packages); otherwise it returns {@link #NOT_INVOKED} and the container falls back to reflective
+     * invocation (which still needs the qualified {@code opens}). Exceptions thrown by the target
+     * method propagate as-is (no {@code InvocationTargetException} wrapping).
+     *
+     * <p>The default returns {@link #NOT_INVOKED}, so providers that only instantiate/inject keep
+     * working and the container keeps invoking their methods reflectively.
+     *
+     * @param target    the instance to call the method on, or {@code null} for a static method
+     * @param className  fully-qualified name of the method's declaring class
+     * @param methodId   method identity key {@code name(paramErasure,…)} (erased parameter types,
+     *                   in declared order), disambiguating overloads
+     * @param args       the container-resolved arguments, in declared order
+     * @return the method's return value ({@code null} for {@code void}), or {@link #NOT_INVOKED} if
+     *         this provider does not own the method
+     */
+    default Object invoke(Object target, String className, String methodId, Object[] args) {
+        return NOT_INVOKED;
+    }
 }

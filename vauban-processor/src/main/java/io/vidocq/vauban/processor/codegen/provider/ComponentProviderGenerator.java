@@ -80,6 +80,40 @@ public final class ComponentProviderGenerator {
     public record FieldInject(String declaringClassFqn, String fieldName, String fieldTypeErasure) {}
 
     /**
+     * Describes a method (producer, observer, disposer, lifecycle callback, initializer) that the
+     * generated provider can invoke in-module without reflection.
+     *
+     * <p>The method identity key ({@code methodId}) is {@code methodName(paramErasure0,…)}, using
+     * binary class names (dots for top-level, {@code $} for nested, {@code []} per array dimension),
+     * exactly matching the format produced by
+     * {@code io.vidocq.vauban.core.container.VaubanLookup#methodId(Method)}.
+     *
+     * @param declaringClassFqn fully-qualified name of the class declaring the method
+     * @param methodName        simple name of the method
+     * @param paramErasures     erased parameter type names in declared order (empty for no-arg)
+     * @param isStatic          {@code true} for a static method (no target cast)
+     * @param isVoid            {@code true} when the return type is {@code void}
+     * @param returnErasure     erased return type name, or {@code null} when {@code isVoid} is true
+     */
+    public record MethodInvoke(
+            String declaringClassFqn,
+            String methodName,
+            java.util.List<String> paramErasures,
+            boolean isStatic,
+            boolean isVoid,
+            String returnErasure) {
+
+        public MethodInvoke {
+            paramErasures = List.copyOf(paramErasures);
+        }
+
+        /** The runtime-compatible method identity key: {@code name(erasure0,erasure1,…)}. */
+        public String methodId() {
+            return methodName + "(" + String.join(",", paramErasures) + ")";
+        }
+    }
+
+    /**
      * Back-compatible no-arg entry point: every component is instantiated via {@code new X()}.
      *
      * @param packageName   package the provider lives in (a package of the current module)
@@ -106,6 +140,20 @@ public final class ComponentProviderGenerator {
      */
     public static Generated generateFrom(String packageName, List<Component> components,
             List<FieldInject> fieldInjects) {
+        return generateFrom(packageName, components, fieldInjects, List.of());
+    }
+
+    /**
+     * @param packageName   package the provider lives in (a package of the current module)
+     * @param components    components to instantiate, no-arg and/or injected-constructor
+     * @param fieldInjects  non-private, non-static {@code @Inject} fields in the provider's own
+     *                      package that the provider can assign directly (no reflection, no opens)
+     * @param methodInvokes methods in the provider's own package that the provider can invoke
+     *                      directly (no reflection, no opens): producers, observers, disposers,
+     *                      lifecycle callbacks, and initializers
+     */
+    public static Generated generateFrom(String packageName, List<Component> components,
+            List<FieldInject> fieldInjects, List<MethodInvoke> methodInvokes) {
         var className = packageName.isEmpty() ? SIMPLE_NAME : packageName + "." + SIMPLE_NAME;
         var noArg = components.stream().filter(Component::noArg).toList();
         var withArgs = components.stream().filter(c -> !c.noArg()).toList();
@@ -178,6 +226,53 @@ public final class ComponentProviderGenerator {
                 sb.append("            }\n");
             }
             sb.append("            default -> { return false; }\n");
+            sb.append("        }\n");
+            sb.append("    }\n");
+        }
+
+        if (!methodInvokes.isEmpty()) {
+            // Group method invocations by declaring class, preserving insertion order.
+            Map<String, List<MethodInvoke>> byClass = methodInvokes.stream()
+                    .collect(Collectors.groupingBy(MethodInvoke::declaringClassFqn,
+                            java.util.LinkedHashMap::new, Collectors.toList()));
+
+            sb.append("    @Override\n");
+            sb.append("    @SuppressWarnings({\"unchecked\", \"rawtypes\"})\n");
+            sb.append("    public Object invoke(Object target, String className, String methodId, Object[] args) {\n");
+            sb.append("        switch (className) {\n");
+            for (var entry : byClass.entrySet()) {
+                var declClass = entry.getKey();
+                sb.append("            case \"").append(declClass).append("\" -> {\n");
+                sb.append("                switch (methodId) {\n");
+                for (var mi : entry.getValue()) {
+                    sb.append("                    case \"").append(mi.methodId()).append("\" -> {\n");
+                    // Build the actual call expression
+                    var call = new StringBuilder();
+                    if (mi.isStatic()) {
+                        call.append(declClass).append(".").append(mi.methodName()).append("(");
+                    } else {
+                        call.append("((").append(declClass).append(") target).").append(mi.methodName()).append("(");
+                    }
+                    var erasures = mi.paramErasures();
+                    for (int i = 0; i < erasures.size(); i++) {
+                        if (i > 0) call.append(", ");
+                        call.append("(").append(erasures.get(i)).append(") args[").append(i).append("]");
+                    }
+                    call.append(")");
+
+                    if (mi.isVoid()) {
+                        sb.append("                        ").append(call).append(";\n");
+                        sb.append("                        return null;\n");
+                    } else {
+                        sb.append("                        return ").append(call).append(";\n");
+                    }
+                    sb.append("                    }\n");
+                }
+                sb.append("                    default -> { return ").append(SPI).append(".NOT_INVOKED; }\n");
+                sb.append("                }\n");
+                sb.append("            }\n");
+            }
+            sb.append("            default -> { return ").append(SPI).append(".NOT_INVOKED; }\n");
             sb.append("        }\n");
             sb.append("    }\n");
         }

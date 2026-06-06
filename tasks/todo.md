@@ -181,6 +181,38 @@ cervantes side-stepped it with `@Context`; this phase removes it generally.
       (method invocation) — needs the field-injector for package-private fields PLUS an observer-method
       invoker codegen. Tracked under Brique B producers / observer-invoker.
 
+## Phase 14 — Method-invoker codegen (producers / observers / disposers / lifecycle / initializers)
+
+Reflective method invocation was the next forced `setAccessible`/`unreflect` keeping the
+`opens … to vauban.core` on `.internal` packages (cervantes producers, knock observer).
+
+- [x] SPI: `VaubanComponentProvider.invoke(target, className, methodId, args)` (default →
+      `NOT_INVOKED` sentinel). Generated impl does a direct in-package call (invokevirtual/
+      invokestatic) — no reflection. Exceptions propagate as-is.
+- [x] `ComponentProviders.invoke(...)` delegator (does NOT swallow the target method's exceptions).
+- [x] Choke-point A: `VaubanLookup.invokeMethod` consults the provider first (keyed on declaring
+      class + `methodId(Method)`), reflective fallback otherwise. `methodId`/`typeKey` match the
+      generators' erasure exactly (binary names, `[]` arrays).
+- [x] Choke-point B: `EventDispatcher` observer invocation now routes through
+      `VaubanLookup.invokeMethod` (removed the eager `makeAccessible` + raw `method.invoke`; the
+      reflective lookup is now lazy, in the fallback). Observer/event tests still green.
+- [x] Both generators emit `invoke`: `ComponentProviderClassGenerator` (plugin bytecode) +
+      `ComponentProviderGenerator` (APT source). Select methods with `@Produces`/`@PostConstruct`/
+      `@PreDestroy`/`@Inject` or a param `@Observes`/`@ObservesAsync`/`@Disposes`; skip non-nameable/
+      nested-`$` params and non-void primitive returns (warned, no silent cap). Unit-tested (the
+      bytecode test actually invokes the generated methods).
+- [x] vauban `clean install` green — capability complete + tested, zero regression.
+- [ ] **BLOCKER to drop a real `.internal` opens — single common-package provider design.** To
+      actually drop knock-cdi-vauban's `opens .internal` AND cervantes-cdi's, the provider must be
+      co-located with EACH package's beans so it can `new`/inject/invoke package-private members:
+      - knock-cdi beans (`HealthCheckRegistrar`, `KnockCdiHealthCheckRegistry`) are PACKAGE-PRIVATE
+        → `create()`'s `isInstantiableNoArg` `ci.isPublic()` gate skips them.
+      - cervantes producers are PUBLIC but in `.internal` while the provider lands in `.cdi`
+        (commonPackage of `.cdi`+`.cdi.internal`) → cross-package package-private members unreachable.
+      → **Decision pending: per-package providers** (one `_VaubanComponents` per package, module-info
+      lists all via `provides … with A, B;`) vs piecemeal visibility-relaxed gates. Per-package is the
+      clean general fix (also removes the Phase-13 multi-package field-injection limitation).
+
 ## Backlog (deferred)
 - [ ] `DirectoryScanner` - directory scanning
 - [ ] Binary serialization IndexWriter/IndexReader

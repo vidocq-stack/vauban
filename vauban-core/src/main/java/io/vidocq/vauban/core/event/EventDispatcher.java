@@ -622,7 +622,10 @@ public final class EventDispatcher {
 
             var method = findMethod(beanClass, observer.methodName(), event.getClass());
             if (method != null) {
-                container.getVaubanLookup().makeAccessible(method);
+                // Invocation goes through VaubanLookup.invokeMethod: it calls the observer in-module
+                // via the module's generated provider when one owns it (no reflection, no opens), and
+                // only the reflective fallback needs deep access. makeAccessible is therefore done
+                // lazily inside that fallback, not eagerly here.
                 var bm = container.getBeanManager();
                 var exactBean = container.findManagedBeanByExactClass(beanClass);
                 boolean declaringIsDependent = exactBean != null
@@ -637,7 +640,7 @@ public final class EventDispatcher {
                                 : container.selectByBeanClass(beanClass));
                 try {
                     if (method.getParameterCount() == 1) {
-                        method.invoke(beanInstance, event);
+                        container.getVaubanLookup().invokeMethod(beanInstance, method, event);
                     } else {
                         var ctx = new io.vidocq.vauban.core.context.CreationalContextImpl<>();
                         var paramTypes = method.getParameterTypes();
@@ -701,7 +704,7 @@ public final class EventDispatcher {
                             }
                         }
                         try {
-                            method.invoke(beanInstance, args);
+                            container.getVaubanLookup().invokeMethod(beanInstance, method, args);
                         } finally {
                             ctx.release();
                         }
@@ -710,13 +713,6 @@ public final class EventDispatcher {
                     if (beanCtx != null) beanCtx.release();
                 }
             }
-        } catch (java.lang.reflect.InvocationTargetException e) {
-            var cause = e.getCause();
-            if (cause instanceof RuntimeException re) throw re;
-            if (cause instanceof Error err) throw err;
-            throw new jakarta.enterprise.event.ObserverException(
-                    "Failed to invoke observer: " + observer.declaringClass().value()
-                            + "." + observer.methodName(), cause);
         } catch (jakarta.enterprise.event.ObserverException e) {
             throw e;
         } catch (RuntimeException e) {

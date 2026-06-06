@@ -16,6 +16,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNotSame;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -117,6 +118,94 @@ class ComponentProviderClassGeneratorTest {
                 cob.return_();
             });
         });
+    }
+
+    /**
+     * Verifies {@code invoke()} dispatches to a void and a non-void in-module method, and returns
+     * the {@link VaubanComponentProvider#NOT_INVOKED} sentinel for unknown class/method ids.
+     *
+     * <p>Both the target bean class and the generated provider are loaded in the same
+     * {@link ByteClassLoader} (unnamed module), mirroring the production case where they share the
+     * same named module — the invokevirtual access check passes because they are in the same package.
+     */
+    @Test
+    @DisplayName("invoke() dispatches void and non-void methods and returns NOT_INVOKED for unknowns")
+    void invokeDispatchesMethodsAndReturnsSentinelForUnknowns() throws Exception {
+        var pkg = "io.vidocq.vauban.core.provider.test.invoke";
+        var beanFqn = pkg + ".InvokeTarget";
+        var providerFqn = pkg + "._GenInvokeComponents";
+
+        // Build a minimal target bean:
+        // class InvokeTarget {
+        //   String lastArg;
+        //   void record(String s) { this.lastArg = s; }
+        //   Object make() { return "result"; }
+        // }
+        var cdBean = ClassDesc.of(beanFqn);
+        var cdObject = ConstantDescs.CD_Object;
+        var cdString = ConstantDescs.CD_String;
+        var mtdVoid = MethodTypeDesc.of(ConstantDescs.CD_void);
+        byte[] beanBytes = ClassFile.of().build(cdBean, clb -> {
+            clb.withFlags(ClassFile.ACC_PUBLIC | ClassFile.ACC_SUPER);
+            clb.withSuperclass(cdObject);
+            clb.withField("lastArg", cdString, 0); // package-private
+            // default constructor
+            clb.withMethodBody(ConstantDescs.INIT_NAME, mtdVoid, ClassFile.ACC_PUBLIC, cob -> {
+                cob.aload(0);
+                cob.invokespecial(cdObject, ConstantDescs.INIT_NAME, mtdVoid);
+                cob.return_();
+            });
+            // void record(String s) { this.lastArg = s; }
+            var mtdRecordDesc = MethodTypeDesc.of(ConstantDescs.CD_void, cdString);
+            clb.withMethodBody("record", mtdRecordDesc, 0 /* package-private */, cob -> {
+                cob.aload(0);
+                cob.aload(1);
+                cob.putfield(cdBean, "lastArg", cdString);
+                cob.return_();
+            });
+            // Object make() { return "result"; }
+            var mtdMakeDesc = MethodTypeDesc.of(cdObject);
+            clb.withMethodBody("make", mtdMakeDesc, 0 /* package-private */, cob -> {
+                cob.ldc("result");
+                cob.areturn();
+            });
+        });
+
+        var miVoid = new ComponentProviderClassGenerator.MethodInvoke(
+                beanFqn, "record", List.of("java.lang.String"), false, true, null);
+        var miNonVoid = new ComponentProviderClassGenerator.MethodInvoke(
+                beanFqn, "make", List.of(), false, false, "java.lang.Object");
+
+        var gen = ComponentProviderClassGenerator.generate(
+                providerFqn, List.of(), List.of(), List.of(miVoid, miNonVoid));
+
+        var loader = new ByteClassLoader(getClass().getClassLoader());
+        var beanClass = loader.define(beanFqn, beanBytes);
+        var providerClass = loader.define(gen.className(), gen.bytecode());
+        var provider = (VaubanComponentProvider) providerClass.getDeclaredConstructor().newInstance();
+
+        var bean = beanClass.getDeclaredConstructor().newInstance();
+
+        // void method record(String): must return null (not NOT_INVOKED) and actually execute
+        var voidResult = provider.invoke(bean, beanFqn, "record(java.lang.String)", new Object[]{"x"});
+        assertNull(voidResult, "void method invoke must return null (successfully invoked)");
+        var lastArgField = beanClass.getDeclaredField("lastArg");
+        lastArgField.setAccessible(true);
+        assertEquals("x", lastArgField.get(bean), "record() must have stored the argument");
+
+        // non-void method make(): must return the method's return value
+        var makeResult = provider.invoke(bean, beanFqn, "make()", new Object[0]);
+        assertEquals("result", makeResult, "make() must return the method's return value");
+
+        // Unknown class — must return NOT_INVOKED
+        var unknownClass = provider.invoke(bean, "com.unknown.Bean", "record(java.lang.String)", new Object[]{"x"});
+        assertSame(VaubanComponentProvider.NOT_INVOKED, unknownClass,
+                "unknown class must return NOT_INVOKED sentinel");
+
+        // Unknown methodId for a known class — must return NOT_INVOKED
+        var unknownMethod = provider.invoke(bean, beanFqn, "nonexistent()", new Object[0]);
+        assertSame(VaubanComponentProvider.NOT_INVOKED, unknownMethod,
+                "unknown methodId must return NOT_INVOKED sentinel");
     }
 
     /** Minimal loader exposing {@code defineClass} for the generated provider bytecode. */

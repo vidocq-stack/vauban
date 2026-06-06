@@ -139,6 +139,9 @@ public final class VaubanContainer implements AutoCloseable {
         this.vaubanLookup = vaubanLookup;
         this.componentProviders = componentProviders == null
                 ? new ComponentProviders(List.of()) : componentProviders;
+        // Let reflective method invocation consult the in-module providers first (producers,
+        // disposers, lifecycle, initializers go through VaubanLookup.invokeMethod).
+        vaubanLookup.setComponentProviders(this.componentProviders);
         this.disposerInvoker = new DisposerInvoker(this, vaubanLookup);
         this.beanInjector = new BeanInjector(this, vaubanLookup);
         this.applicationContext = new ApplicationContext();

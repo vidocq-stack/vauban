@@ -306,6 +306,7 @@ public class VaubanProcessor extends AbstractProcessor {
         // Generate code for each bean
         var providerComponents = new java.util.TreeMap<String, ComponentProviderGenerator.Component>();
         var providerFieldInjects = new java.util.ArrayList<ComponentProviderGenerator.FieldInject>();
+        var providerMethodInvokes = new java.util.ArrayList<ComponentProviderGenerator.MethodInvoke>();
         for (var bean : beans) {
             if (bean.kind() == BeanDescriptor.BeanKind.MANAGED) {
                 var classInfo = index.getClassByName(bean.beanClass()).orElse(null);
@@ -343,13 +344,18 @@ public class VaubanProcessor extends AbstractProcessor {
                 // Collect non-private, non-static @Inject instance fields for in-module assignment.
                 // Fields in the same package as _VaubanComponents can be written without opens.
                 collectInjectFields(classInfo, providerFieldInjects);
+
+                // Collect invocable methods (producers, observers, disposers, lifecycle, initializers)
+                // for in-module direct dispatch — no reflection, no opens.
+                collectInvokeMethods(classInfo, providerMethodInvokes);
             }
         }
 
         // Emit the per-module VaubanComponentProvider for those components.
         if (!providerComponents.isEmpty()) {
             writeComponentProvider(List.copyOf(providerComponents.values()),
-                    List.copyOf(providerFieldInjects));
+                    List.copyOf(providerFieldInjects),
+                    List.copyOf(providerMethodInvokes));
         }
 
         // Write META-INF/vauban-beans.list
@@ -765,6 +771,90 @@ public class VaubanProcessor extends AbstractProcessor {
         }
     }
 
+    /**
+     * Annotations on a method (or on one of its parameters) that qualify it for in-module direct
+     * dispatch: producers, lifecycle callbacks, initializers, observers, and disposers.
+     */
+    private static final Set<String> INVOKABLE_METHOD_ANNOTATIONS = Set.of(
+            "jakarta.enterprise.inject.Produces",
+            "jakarta.annotation.PostConstruct",
+            "jakarta.annotation.PreDestroy",
+            "jakarta.inject.Inject"
+    );
+
+    private static final Set<String> INVOKABLE_PARAM_ANNOTATIONS = Set.of(
+            "jakarta.enterprise.event.Observes",
+            "jakarta.enterprise.event.ObservesAsync",
+            "jakarta.enterprise.inject.Disposes"
+    );
+
+    /**
+     * Collects invocable methods from {@code classInfo} into {@code sink}. A method is included
+     * when it carries one of the CDI lifecycle/producer/observer annotations (on the method itself
+     * or on a parameter). Constructors, private methods, abstract methods, and any method whose
+     * parameter or return erasure is not source-nameable (primitive return, nested type in
+     * parameter, etc.) are skipped — they fall back to the reflective path.
+     */
+    private void collectInvokeMethods(io.vidocq.vauban.indexer.model.ClassInfo classInfo,
+            List<ComponentProviderGenerator.MethodInvoke> sink) {
+        var beanFqn = classInfo.name().value();
+        for (var m : classInfo.methods()) {
+            if (m.isConstructor()) continue;
+            if (m.isPrivate()) continue;
+            if (m.isAbstract()) continue;
+
+            // Check whether the method or any of its parameters carry a qualifying annotation.
+            boolean qualifies = m.annotations().stream()
+                    .anyMatch(a -> INVOKABLE_METHOD_ANNOTATIONS.contains(a.name().value()));
+            if (!qualifies) {
+                qualifies = m.parameters().stream()
+                        .flatMap(p -> p.annotations().stream())
+                        .anyMatch(a -> INVOKABLE_PARAM_ANNOTATIONS.contains(a.name().value()));
+            }
+            if (!qualifies) continue;
+
+            // Compute parameter erasures; skip the method if any erasure is null or contains '$'
+            // (nested type — would break the source-level cast in the generated code).
+            var paramErasures = new java.util.ArrayList<String>();
+            boolean skip = false;
+            for (var p : m.parameters()) {
+                var erasure = nameableErasure(p.type());
+                if (erasure == null) {
+                    processingEnv.getMessager().printMessage(Diagnostic.Kind.NOTE,
+                            "[Vauban] Skipping in-module dispatch for method " + beanFqn + "#" + m.name()
+                                    + ": parameter type is not source-nameable (primitive or type variable)");
+                    skip = true;
+                    break;
+                }
+                if (erasure.contains("$")) {
+                    processingEnv.getMessager().printMessage(Diagnostic.Kind.NOTE,
+                            "[Vauban] Skipping in-module dispatch for method " + beanFqn + "#" + m.name()
+                                    + ": parameter erasure '" + erasure + "' contains '$' (nested type)"
+                                    + " — cast would not compile");
+                    skip = true;
+                    break;
+                }
+                paramErasures.add(erasure);
+            }
+            if (skip) continue;
+
+            // Determine return type: void is allowed; primitives are not (reference returns only).
+            var returnType = m.returnType();
+            boolean isVoid = returnType instanceof io.vidocq.vauban.indexer.model.TypeInfo.VoidType;
+            if (!isVoid && returnType instanceof io.vidocq.vauban.indexer.model.TypeInfo.PrimitiveType) {
+                processingEnv.getMessager().printMessage(Diagnostic.Kind.NOTE,
+                        "[Vauban] Skipping in-module dispatch for method " + beanFqn + "#" + m.name()
+                                + ": primitive return type — only void or reference returns are supported");
+                continue;
+            }
+            String returnErasure = isVoid ? null : nameableErasure(returnType);
+
+            sink.add(new ComponentProviderGenerator.MethodInvoke(
+                    beanFqn, m.name(), List.copyOf(paramErasures),
+                    m.isStatic(), isVoid, returnErasure));
+        }
+    }
+
     /** Returns the package name portion of a fully-qualified class name (empty for default pkg). */
     private static String packageOf(String fqn) {
         int dot = fqn.lastIndexOf('.');
@@ -776,7 +866,8 @@ public class VaubanProcessor extends AbstractProcessor {
      * class-path service file, then advises adding the {@code provides} clause for the module path.
      */
     private void writeComponentProvider(List<ComponentProviderGenerator.Component> components,
-            List<ComponentProviderGenerator.FieldInject> fieldInjects) {
+            List<ComponentProviderGenerator.FieldInject> fieldInjects,
+            List<ComponentProviderGenerator.MethodInvoke> methodInvokes) {
         var componentFqns = components.stream().map(ComponentProviderGenerator.Component::fqn).toList();
         var pkg = commonPackage(componentFqns);
         if (pkg.isEmpty()) {
@@ -784,8 +875,9 @@ public class VaubanProcessor extends AbstractProcessor {
             var first = componentFqns.get(0);
             pkg = first.contains(".") ? first.substring(0, first.lastIndexOf('.')) : "";
         }
-        // Only keep field injections that are in the same package as the generated provider —
-        // a putfield to a package-private field only compiles from within the same package.
+        // Only keep field injections and method invocations that are in the same package as the
+        // generated provider — direct calls to package-private members only compile from within the
+        // same package.
         final var providerPkg = pkg;
         var localFieldInjects = fieldInjects.stream()
                 .filter(fi -> {
@@ -794,7 +886,14 @@ public class VaubanProcessor extends AbstractProcessor {
                     return beanPkg.equals(providerPkg);
                 })
                 .toList();
-        var gen = ComponentProviderGenerator.generateFrom(pkg, components, localFieldInjects);
+        var localMethodInvokes = methodInvokes.stream()
+                .filter(mi -> {
+                    var fqn = mi.declaringClassFqn();
+                    var beanPkg = fqn.contains(".") ? fqn.substring(0, fqn.lastIndexOf('.')) : "";
+                    return beanPkg.equals(providerPkg);
+                })
+                .toList();
+        var gen = ComponentProviderGenerator.generateFrom(pkg, components, localFieldInjects, localMethodInvokes);
         try {
             var file = processingEnv.getFiler().createSourceFile(gen.className());
             try (var w = file.openWriter()) {

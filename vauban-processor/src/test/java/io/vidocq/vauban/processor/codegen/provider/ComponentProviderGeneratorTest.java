@@ -97,4 +97,58 @@ class ComponentProviderGeneratorTest {
 
         assertFalse(gen.source().contains("injectField"), gen.source());
     }
+
+    @Test
+    @DisplayName("emits invoke switch for void, non-void, and static methods")
+    void generatesInvokeSwitch() {
+        var methodInvokes = List.of(
+                // void instance method with one parameter
+                new ComponentProviderGenerator.MethodInvoke(
+                        "app.Service", "record",
+                        List.of("java.lang.String"),
+                        false, true, null),
+                // non-void instance method, no parameters
+                new ComponentProviderGenerator.MethodInvoke(
+                        "app.Service", "make",
+                        List.of(),
+                        false, false, "app.Product"),
+                // static producer method, no parameters
+                new ComponentProviderGenerator.MethodInvoke(
+                        "app.Service", "staticProduce",
+                        List.of(),
+                        true, false, "app.Product"));
+
+        var gen = ComponentProviderGenerator.generateFrom("app",
+                List.of(new ComponentProviderGenerator.Component("app.Service", List.of())),
+                List.of(),
+                methodInvokes);
+
+        var s = gen.source();
+        assertTrue(s.contains("public Object invoke(Object target, String className, String methodId, Object[] args)"), s);
+        // outer switch on className
+        assertTrue(s.contains("case \"app.Service\""), s);
+        // void method: call then return null
+        assertTrue(s.contains("case \"record(java.lang.String)\""), s);
+        assertTrue(s.contains("((app.Service) target).record((java.lang.String) args[0]);"), s);
+        assertTrue(s.contains("return null;"), s);
+        // non-void instance method
+        assertTrue(s.contains("case \"make()\""), s);
+        assertTrue(s.contains("return ((app.Service) target).make();"), s);
+        // static method — no target cast
+        assertTrue(s.contains("case \"staticProduce()\""), s);
+        assertTrue(s.contains("return app.Service.staticProduce();"), s);
+        // sentinel for unmatched method and unmatched class
+        assertTrue(s.contains("return io.vidocq.vauban.api.VaubanComponentProvider.NOT_INVOKED;"), s);
+    }
+
+    @Test
+    @DisplayName("no invoke method emitted when methodInvokes is empty")
+    void noInvokeMethodWhenEmpty() {
+        var gen = ComponentProviderGenerator.generateFrom("app",
+                List.of(new ComponentProviderGenerator.Component("app.Foo", List.of())),
+                List.of(),
+                List.of());
+
+        assertFalse(gen.source().contains("invoke"), gen.source());
+    }
 }

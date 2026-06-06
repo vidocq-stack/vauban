@@ -27,6 +27,17 @@ public final class VaubanLookup {
     private final ConcurrentHashMap<Class<?>, MethodHandles.Lookup> lookupCache = new ConcurrentHashMap<>();
 
     /**
+     * In-module providers consulted before reflective invocation; set once after the container is
+     * wired (may stay {@code null} for stand-alone lookups, e.g. tests, in which case everything
+     * goes through reflection).
+     */
+    private ComponentProviders componentProviders;
+
+    void setComponentProviders(ComponentProviders componentProviders) {
+        this.componentProviders = componentProviders;
+    }
+
+    /**
      * Create a VaubanLookup with the given root Lookup.
      * The root lookup should come from the user's module
      * (via {@code MethodHandles.lookup()} called in the user's code).
@@ -116,6 +127,14 @@ public final class VaubanLookup {
      * Handles both instance and static methods, and primitive return types.
      */
     public Object invokeMethod(Object instance, Method method, Object... args) {
+        // In-module call first: a generated provider that owns this method calls it directly (no
+        // reflection, no opens). NOT_INVOKED means "not owned" — fall through to reflection.
+        if (componentProviders != null) {
+            var callArgs = (args == null) ? new Object[0] : args;
+            var result = componentProviders.invoke(instance, method.getDeclaringClass().getName(),
+                    methodId(method), callArgs);
+            if (result != io.vidocq.vauban.api.VaubanComponentProvider.NOT_INVOKED) return result;
+        }
         try {
             var lookup = lookupFor(method.getDeclaringClass());
             var mh = lookup.unreflect(method);
@@ -146,6 +165,28 @@ public final class VaubanLookup {
      */
     public Object invokeStaticMethod(Method method, Object... args) {
         return invokeMethod(null, method, args);
+    }
+
+    /**
+     * Builds the {@code name(paramErasure,…)} identity key matching the one a generated
+     * {@code VaubanComponentProvider} emits, so the container can look an invocable method up by
+     * value. Parameter erasures use the same form as the code generators (binary class names with
+     * {@code $} for nested types, {@code []} suffix per array dimension), so the strings line up on
+     * both sides for any method whose parameters are all nameable reference types.
+     */
+    static String methodId(Method method) {
+        var sb = new StringBuilder(method.getName()).append('(');
+        var params = method.getParameterTypes();
+        for (int i = 0; i < params.length; i++) {
+            if (i > 0) sb.append(',');
+            sb.append(typeKey(params[i]));
+        }
+        return sb.append(')').toString();
+    }
+
+    private static String typeKey(Class<?> c) {
+        if (c.isArray()) return typeKey(c.getComponentType()) + "[]";
+        return c.getName();
     }
 
     /**

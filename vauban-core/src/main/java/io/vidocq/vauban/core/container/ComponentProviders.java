@@ -97,6 +97,21 @@ final class ComponentProviders {
         return false;
     }
 
+    /**
+     * Invokes a component method through the first provider that owns it, returning its result, or
+     * {@link VaubanComponentProvider#NOT_INVOKED} if none does (so the caller falls back to reflective
+     * invocation). Unlike {@link #create}/{@link #injectField}, exceptions are NOT swallowed: the
+     * owning provider performs a direct call, so a thrown exception is the target method's own and
+     * must propagate as-is (CDI producer/observer semantics).
+     */
+    Object invoke(Object target, String className, String methodId, Object[] args) {
+        for (var provider : providers) {
+            var result = provider.invoke(target, className, methodId, args);
+            if (result != VaubanComponentProvider.NOT_INVOKED) return result;
+        }
+        return VaubanComponentProvider.NOT_INVOKED;
+    }
+
     boolean isEmpty() {
         return providers.isEmpty();
     }
