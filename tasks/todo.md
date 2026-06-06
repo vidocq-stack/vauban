@@ -66,7 +66,13 @@ via ServiceLoader and consults it before any reflective `newInstance`.
       selects the injected ctor (mirrors bean discovery), emits `new X((Dep) args[i]…)` casting
       the container-resolved args; non-nameable params (primitive/type-var/wildcard) fall back to
       reflection. Generator + APT integration tests green
-- [ ] Module-path proof via jlink (ServiceLoader path, no opens)
+- [x] Module-path proof via jlink — cassini-rest example: `provides VaubanComponentProvider
+      with …_VaubanComponents` (APT-generated class) compiles (javac round-ordering OK) and the
+      jlink image boots + serves `/api/todos` CRUD with the provider path active, no
+      ServiceConfigurationError / InaccessibleObjectException. Also surfaced + fixed the nested-bean
+      package-clash regression. NOTE: cassini-rest keeps an *unqualified* `opens` for JSON-B, so it
+      proves the provider LOADS/instantiates in module-path but not the *opens removal* — that needs
+      a CDI-only wrapper (cervantes-jwt / knock) whose sole opens is `to io.vidocq.vauban.core`.
 
 ### Brique C — ServiceLoader fallback for residual BCE instantiation ✅
 (= existing backlog item "ExtensionLoader via ServiceLoader")
