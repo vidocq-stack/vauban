@@ -255,7 +255,83 @@ public final class VaubanGenerator {
             }
         }
 
+        // 9. Generate the per-module _VaubanComponents provider (bytecode — no javac in the plugin)
+        //    for THIS module's public no-arg beans, so the container instantiates them in-module
+        //    without reflection and the module can drop `opens … to io.vidocq.vauban.core`.
+        generateComponentProvider(config, index, beans, warnings);
+
         return new GenerationResult(sortedBeanClassNames, generatedProxies, generatedInterceptors, warnings);
+    }
+
+    /**
+     * Emits {@code <pkg>/_VaubanComponents.class} (and a class-path service file) for the public,
+     * top-level, no-arg managed beans compiled into this module ({@code projectClassesDir}). Beans
+     * from dependency jars are excluded — they carry their own provider. The module still needs a
+     * hand-written {@code provides io.vidocq.vauban.core.VaubanComponentProvider with …;} for the
+     * module path; the class-path service file covers the unnamed-module case.
+     */
+    private static void generateComponentProvider(Config config,
+            io.vidocq.vauban.indexer.VaubanIndex index,
+            List<BeanDescriptor> beans, List<String> warnings) {
+        var projectDir = config.projectClassesDir();
+        if (projectDir == null) return;
+
+        var fqns = new TreeSet<String>();
+        for (var bean : beans) {
+            if (bean.kind() != BeanKind.MANAGED) continue;
+            var fqn = bean.beanClass().value();
+            if (fqn.contains("$")) continue;                       // nested → reflective fallback
+            if (!classFileExists(projectDir, fqn)) continue;       // not part of this module
+            var ci = index.getClassByName(io.vidocq.vauban.indexer.model.DotName.of(fqn)).orElse(null);
+            if (ci != null && isInstantiableNoArg(ci)) fqns.add(fqn);
+        }
+        if (fqns.isEmpty()) return;
+
+        var pkg = commonPackage(List.copyOf(fqns));
+        var providerFqn = pkg.isEmpty() ? "_VaubanComponents" : pkg + "._VaubanComponents";
+        try {
+            var gen = io.vidocq.vauban.core.provider.ComponentProviderClassGenerator.generate(
+                    providerFqn, List.copyOf(fqns));
+            writeClassFile(config.outputDir(), gen.className(), gen.bytecode());
+            var svc = config.outputDir().resolve(
+                    "META-INF/services/io.vidocq.vauban.core.VaubanComponentProvider");
+            Files.createDirectories(svc.getParent());
+            Files.write(svc, List.of(providerFqn), StandardCharsets.UTF_8);
+        } catch (Exception e) {
+            warnings.add("Failed to generate component provider: " + e.getMessage());
+        }
+    }
+
+    /** Public, non-abstract class with a public no-arg (or implicit default) constructor. */
+    private static boolean isInstantiableNoArg(io.vidocq.vauban.indexer.model.ClassInfo ci) {
+        if (!ci.isPublic() || ci.isAbstract()) return false;
+        var ctors = ci.methods().stream()
+                .filter(io.vidocq.vauban.indexer.model.MethodInfo::isConstructor)
+                .toList();
+        if (ctors.isEmpty()) return true; // implicit public default constructor
+        return ctors.stream().anyMatch(c -> c.parameters().isEmpty() && c.isPublic());
+    }
+
+    /** Longest common package prefix (by segments) of the given component FQNs. */
+    private static String commonPackage(List<String> fqns) {
+        String prefix = null;
+        for (var fqn : fqns) {
+            var pkg = fqn.contains(".") ? fqn.substring(0, fqn.lastIndexOf('.')) : "";
+            if (prefix == null) {
+                prefix = pkg;
+            } else {
+                var a = prefix.split("\\.");
+                var b = pkg.split("\\.");
+                var sb = new StringBuilder();
+                int n = Math.min(a.length, b.length);
+                for (int i = 0; i < n && a[i].equals(b[i]); i++) {
+                    if (i > 0) sb.append('.');
+                    sb.append(a[i]);
+                }
+                prefix = sb.toString();
+            }
+        }
+        return prefix == null ? "" : prefix;
     }
 
     private static void scanClassesDirectory(Path classesDir, IndexBuilder indexBuilder,

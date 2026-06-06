@@ -98,9 +98,14 @@ enrich its index). So freezing them is this plugin's job, not only `vidocq-runti
       `META-INF/vauban-enhancements.properties` (Brique A for plugin-processed modules) — it
       already computed `enhMods`, now it writes the patch. Test:
       `shouldEnrichNonCdiBeanViaBceEnhancement` asserts the patch records the added @RequestScoped.
-- [ ] `vauban-maven-plugin` generates a bytecode `_VaubanComponents` (no javac in the plugin phase)
-      for the module's no-arg beans/contexts → lets cervantes' `JsonWebTokenContext` & JAX-RS
-      providers be instantiated in-module (needed to drop `opens io.vidocq.cervantes.cdi`).
+- [x] `vauban-maven-plugin` generates a bytecode `_VaubanComponents` (no javac in the plugin phase)
+      for the module's public no-arg beans/contexts → lets cervantes' `JsonWebTokenContext` & JAX-RS
+      providers be instantiated in-module. `ComponentProviderClassGenerator` (vauban-core, Class-File
+      API) emits `create(String)` as an equals-chain; `VaubanGenerator` collects this module's no-arg
+      beans (in projectClassesDir, top-level), writes `<pkg>/_VaubanComponents.class` + the class-path
+      service file. Tests: bytecode loads & instantiates; plugin writes provider+service for a project
+      bean. STILL TODO to actually drop the opens: hand-add `provides … with <pkg>._VaubanComponents`
+      to each module-info, and a module-path vehicle (jlink JWT / docker compose) to prove it.
 - [ ] Producer-method invokers (Brique B producers) → needed to drop `opens …cdi.internal`.
 - [ ] `vidocq-runtime-maven-plugin` (`VidocqGenerateMojo`) writes patch + factories + marker for
       untreated deps brought at packaging time.

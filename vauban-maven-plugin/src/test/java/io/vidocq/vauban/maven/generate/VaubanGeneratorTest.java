@@ -250,6 +250,25 @@ class VaubanGeneratorTest {
         }
     }
 
+    @Test
+    @DisplayName("generates a _VaubanComponents provider .class + service file for project no-arg beans")
+    void shouldGenerateComponentProviderForProjectBeans() throws Exception {
+        var classesDir = tempDir.resolve("classes");
+        writeClassToDir(classesDir, "com.myapp.MyResource", CD_APP_SCOPED);
+
+        var outputDir = tempDir.resolve("output");
+        var config = new VaubanGenerator.Config(List.of(), classesDir, outputDir);
+        VaubanGenerator.generate(config);
+
+        var providerClass = outputDir.resolve("com/myapp/_VaubanComponents.class");
+        assertTrue(Files.exists(providerClass), "_VaubanComponents.class should be generated in-module");
+        assertTrue(Files.size(providerClass) > 0, "provider .class must not be empty");
+
+        var svc = outputDir.resolve("META-INF/services/io.vidocq.vauban.core.VaubanComponentProvider");
+        assertTrue(Files.exists(svc), "class-path service file should be written");
+        assertEquals("com.myapp._VaubanComponents", Files.readString(svc, StandardCharsets.UTF_8).strip());
+    }
+
     /**
      * BCE de test : ajoute @RequestScoped aux classes @Named sans scope CDI.
      * Utilise @Named car jakarta.ws.rs.Path n'est pas sur le classpath maven-plugin.
