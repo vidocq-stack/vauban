@@ -251,8 +251,13 @@ public class VaubanProcessor extends AbstractProcessor {
                 // Promote non-beans that gained a scope via Enhancement
                 promoteEnhancedClasses(beans, bceResult.enhancementModifications(), index, discovery);
 
-                // Write the runtime replay list so the runtime container knows
-                // which BCEs to re-execute on which classes (bug #7).
+                // Freeze the enhancement *result* (target -> added annotation FQNs) so the
+                // runtime applies it WITHOUT re-instantiating the BCE on the module path.
+                // This is what lets application modules drop `opens ... to io.vidocq.vauban.core`.
+                writeEnhancementsPatch(bceResult.enhancementModifications());
+
+                // Legacy fallback: the (BCE, target) replay list, used by the runtime only
+                // when no frozen patch is present for a target (bug #7).
                 writeBceRuntimeList(bceResult.enhancementModifications());
             }
 
@@ -543,6 +548,47 @@ public class VaubanProcessor extends AbstractProcessor {
         } catch (IOException e) {
             processingEnv.getMessager().printMessage(Diagnostic.Kind.WARNING,
                     "[Vauban] Failed to write " + BCE_RUNTIME_LIST_PATH + ": " + e.getMessage());
+        }
+    }
+
+    /**
+     * Freezes the {@code @Enhancement} result as a {@code target FQN -> added annotation FQNs}
+     * patch ({@link EnhancementPatchSerializer#PATCH_PATH}). The runtime applies this patch
+     * directly, so it never re-instantiates the BCE — removing the deep-reflection that forced
+     * {@code opens ... to io.vidocq.vauban.core} on the module path.
+     *
+     * <p>Only added annotations expressed as a type are frozen (the runtime applies them as
+     * member-less annotations, matching {@code VaubanClassConfig.getAddedAnnotations()}).
+     * Annotations added with members fall back to the legacy replay list.
+     */
+    private void writeEnhancementsPatch(Map<DotName, List<VaubanClassConfig>> modifications) {
+        var patch = new java.util.TreeMap<String, List<String>>();
+        for (var entry : modifications.entrySet()) {
+            var added = new java.util.LinkedHashSet<String>();
+            for (var config : entry.getValue()) {
+                if (!config.isModified()) continue;
+                for (var ann : config.getAddedAnnotations()) {
+                    added.add(ann.getName());
+                }
+            }
+            if (!added.isEmpty()) {
+                patch.put(entry.getKey().value(), List.copyOf(added));
+            }
+        }
+        if (patch.isEmpty()) return;
+
+        try {
+            var resource = processingEnv.getFiler().createResource(
+                    StandardLocation.CLASS_OUTPUT, "",
+                    io.vidocq.vauban.core.extensions.EnhancementPatchSerializer.PATCH_PATH);
+            try (var os = resource.openOutputStream()) {
+                io.vidocq.vauban.core.extensions.EnhancementPatchSerializer.write(patch, os);
+            }
+            processingEnv.getMessager().printMessage(Diagnostic.Kind.NOTE,
+                    "[Vauban] Froze enhancement patch for " + patch.size() + " class(es)");
+        } catch (IOException e) {
+            processingEnv.getMessager().printMessage(Diagnostic.Kind.WARNING,
+                    "[Vauban] Failed to write enhancement patch: " + e.getMessage());
         }
     }
 

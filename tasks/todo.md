@@ -22,6 +22,39 @@
 - [x] Exclusion of disabled alternatives
 - [x] Improved type assignability (raw vs parameterized, wildcards)
 
+## Phase 12: Static BCE metadata — drop `opens … to io.vidocq.vauban.core` 🚧
+Branch (local): `pr/ybl/wip-bce-static-metadata` (rename to `pr/ybl/{issue}-…` before push).
+Goal: runtime never reflects a BCE nor a bean on the module-path → no `opens` needed.
+
+### Brique A — Serialize the @Enhancement *result* (replace reflective replay)
+Insight: runtime only applies `config.getAddedAnnotations()` as
+`new AnnotationInfo(DotName.of(fqn), Map.of())` (VaubanContainerBuilder:766). The effective
+enhancement result reduces to `target FQN → [annotation FQN…]` — trivially serializable.
+- [x] (TDD) `EnhancementPatchSerializerTest` — round-trip `Map<String,List<String>>` (5 green)
+- [x] `EnhancementPatchSerializer` (vauban-core/extensions), JDK-only, Properties,
+      `META-INF/vauban-enhancements.properties`
+- [x] APT writes the patch (`VaubanProcessor.writeEnhancementsPatch`) — Test 6 green
+- [x] Runtime reads + applies the patch (`VaubanContainerBuilder.loadEnhancementPatch` +
+      `effectiveReplayPairs`); reflective replay kept only as legacy fallback for
+      patch-less targets — Test 7 proves scope applied with NO BCE on the classpath
+- [x] Full `clean install` green (no regression); no `instantiateBce` on the patched path
+- Note: legacy `vauban-bce-runtime.list` still written as fallback; remove once Brique B/D
+  cover all jars and module-path validation passes.
+
+### Brique B — Co-located `_Factory` for producers/contexts/synthetic-creators
+- [ ] Extend codegen beyond client-proxies; runtime via factory, fallback `privateLookupIn`
+      (PoC: cervantes-jwt synthetic creator)
+
+### Brique C — ServiceLoader fallback for residual BCE instantiation
+(= existing backlog item "ExtensionLoader via ServiceLoader")
+- [ ] `uses BuildCompatibleExtension` in vauban-core/module-info; neutralize `instantiateBce`
+
+### Brique D — Packaging plugin freezes non-APT jars (vidocq-runtime-maven-plugin)
+- [ ] `VidocqGenerateMojo` writes patch + factories + marker for untreated deps
+
+### Verify (module-path, not classpath)
+- [ ] jlink cassini-rest / mansart-h2 boot + endpoint without opens; post-jlink smoke test
+
 ## Backlog (deferred)
 - [ ] `DirectoryScanner` - directory scanning
 - [ ] Binary serialization IndexWriter/IndexReader

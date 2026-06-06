@@ -257,6 +257,38 @@ public final class VaubanContainerBuilder {
     }
 
     /**
+     * Loads the frozen {@code @Enhancement} patch ({@code META-INF/vauban-enhancements.properties})
+     * from every source on the classpath, merged into {@code target -> added annotation DotNames}.
+     * This is the build-time <em>result</em> of the @Enhancement phases; applying it lets the
+     * container skip the reflective BCE replay — and therefore the {@code opens ... to
+     * io.vidocq.vauban.core} that replay required on the module path.
+     */
+    private static Map<DotName, List<DotName>> loadEnhancementPatch(ClassLoader cl) {
+        var merged = new java.util.LinkedHashMap<DotName, List<DotName>>();
+        try {
+            var urls = cl.getResources(
+                    io.vidocq.vauban.core.extensions.EnhancementPatchSerializer.PATCH_PATH);
+            while (urls.hasMoreElements()) {
+                try (var is = urls.nextElement().openStream()) {
+                    var patch = io.vidocq.vauban.core.extensions.EnhancementPatchSerializer.read(is);
+                    patch.forEach((target, anns) -> {
+                        var list = merged.computeIfAbsent(DotName.of(target), _ -> new ArrayList<>());
+                        for (var ann : anns) {
+                            var d = DotName.of(ann);
+                            if (!list.contains(d)) list.add(d);
+                        }
+                    });
+                } catch (IOException _) {
+                    // unreadable patch resource — skip
+                }
+            }
+        } catch (IOException _) {
+            // classpath scan failure — non-fatal
+        }
+        return merged;
+    }
+
+    /**
      * Checks whether a class comes from a source that was already BCE-processed at compile time.
      */
     private boolean isClassFromBceProcessedSource(Class<?> clazz) {
@@ -663,6 +695,14 @@ public final class VaubanContainerBuilder {
         // on a precise set of classes (no re-scan, no full BCE lifecycle).
         var runtimeReplayPairs = loadRuntimeReplayList(discoveryClassLoader);
 
+        // Frozen @Enhancement result (target -> added annotation FQNs). When present for a
+        // target, it replaces the reflective replay below: we apply the annotations directly
+        // and never re-instantiate the BCE (no `opens` needed on the module path).
+        var enhancementPatch = loadEnhancementPatch(discoveryClassLoader);
+        var effectiveReplayPairs = runtimeReplayPairs.stream()
+                .filter(p -> !enhancementPatch.containsKey(DotName.of(p.getValue().getName())))
+                .toList();
+
         // If ALL sources are pre-processed AND we have a replay list, skip full BCE
         // lifecycle (cleaner: BCEs from pre-processed JARs are already digested).
         boolean allSourcesProcessed = unprocessedArchiveClasses.isEmpty() && !bceProcessedSources.isEmpty();
@@ -749,23 +789,34 @@ public final class VaubanContainerBuilder {
                 enhMods.forEach((k, v) -> combinedEnhMods.computeIfAbsent(k, _ -> new ArrayList<>()).addAll(v));
             }
 
-            if (!runtimeReplayPairs.isEmpty()) {
+            // Legacy reflective replay — only for targets NOT covered by the frozen patch.
+            if (!effectiveReplayPairs.isEmpty()) {
                 var replayMods = io.vidocq.vauban.core.extensions.BceProcessor.replayEnhancementForTargets(
-                        runtimeReplayPairs, index);
+                        effectiveReplayPairs, index);
                 replayMods.forEach((k, v) -> combinedEnhMods.computeIfAbsent(k, _ -> new ArrayList<>()).addAll(v));
             }
 
-            // Rebuild index with synthetic annotations added by Enhancement (full or replay)
-            if (!combinedEnhMods.isEmpty()) {
+            // Rebuild index with annotations added by Enhancement: live modifications
+            // (full scan for unprocessed JARs / legacy replay) plus the frozen patch.
+            if (!combinedEnhMods.isEmpty() || !enhancementPatch.isEmpty()) {
                 var enrichedBuilder = new IndexBuilder();
                 for (var classInfo : index.getKnownClasses()) {
                     var mods = combinedEnhMods.get(classInfo.name());
-                    if (mods != null) {
+                    var patched = enhancementPatch.get(classInfo.name());
+                    if (mods != null || patched != null) {
                         var newAnnotations = new java.util.ArrayList<>(classInfo.annotations());
-                        for (var config : mods) {
-                            for (var ann : config.getAddedAnnotations()) {
+                        if (mods != null) {
+                            for (var config : mods) {
+                                for (var ann : config.getAddedAnnotations()) {
+                                    newAnnotations.add(new io.vidocq.vauban.indexer.model.AnnotationInfo(
+                                            DotName.of(ann.getName()), java.util.Map.of()));
+                                }
+                            }
+                        }
+                        if (patched != null) {
+                            for (var ann : patched) {
                                 newAnnotations.add(new io.vidocq.vauban.indexer.model.AnnotationInfo(
-                                        DotName.of(ann.getName()), java.util.Map.of()));
+                                        ann, java.util.Map.of()));
                             }
                         }
                         enrichedBuilder.add(new io.vidocq.vauban.indexer.model.ClassInfo(

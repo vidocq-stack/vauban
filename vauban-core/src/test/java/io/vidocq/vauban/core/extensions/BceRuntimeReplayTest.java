@@ -261,6 +261,71 @@ class BceRuntimeReplayTest {
     }
 
     // ======================================================================
+    // Test 7 - frozen enhancement patch applied WITHOUT the BCE (no opens)
+    // ======================================================================
+
+    @Nested
+    @DisplayName("Test 7 - patch applied with no BCE / no replay on the classpath")
+    class PatchWithoutBce {
+
+        private static final String PATCH_PATH = "META-INF/vauban-enhancements.properties";
+
+        @Test
+        @DisplayName("@RequestScoped from vauban-enhancements.properties — BCE absent, no reflection")
+        void shouldApplyScopeFromPatchWithoutBce() throws Exception {
+            // Pre-processed JAR carrying ONLY the frozen patch: no BCE class, no
+            // ServiceLoader file, no runtime-list. Proves the runtime applies the scope
+            // without ever instantiating the BCE — i.e. without needing `opens to vauban.core`.
+            var jar = buildPatchedJar(
+                    tempDir.resolve("patched.jar"),
+                    "app.PatchedResource",
+                    List.of("app.PatchedResource"),
+                    List.of("app.PatchedResource=jakarta.enterprise.context.RequestScoped"));
+
+            try (var cl = new URLClassLoader(
+                    new URL[]{jar.toUri().toURL()}, getClass().getClassLoader())) {
+                var clazz = Class.forName("app.PatchedResource", true, cl);
+                assertFalse(isAnnotationOnBytecode(clazz, RequestScoped.class),
+                        "Precondition: @RequestScoped must NOT be in the raw bytecode");
+
+                try (var container = VaubanContainer.builder()
+                        .classLoader(cl)
+                        .scanClasspath()
+                        .build()) {
+
+                    var bm = container.getBeanManager();
+                    var beans = bm.getBeans(clazz);
+
+                    assertFalse(beans.isEmpty(),
+                            "Patched resource must be a bean: scope comes from the frozen patch");
+                    assertEquals(RequestScoped.class, beans.iterator().next().getScope(),
+                            "@RequestScoped must be applied from vauban-enhancements.properties "
+                                    + "WITHOUT the BCE being present or instantiated");
+                }
+            }
+        }
+
+        private Path buildPatchedJar(Path target, String classFqn,
+                                     List<String> beansList, List<String> patchLines) throws Exception {
+            Files.createDirectories(target.getParent());
+            try (var fos = Files.newOutputStream(target);
+                 var jar = new JarOutputStream(fos)) {
+                writeJarEntry(jar, classFqn.replace('.', '/') + ".class",
+                        synthesizeTestResource(classFqn));
+                writeJarEntry(jar, BEANS_LIST_PATH,
+                        ("# beans\n" + String.join("\n", beansList) + "\n").getBytes(StandardCharsets.UTF_8));
+                writeJarEntry(jar, BCE_MARKER_PATH,
+                        "# bce processed\n".getBytes(StandardCharsets.UTF_8));
+                writeJarEntry(jar, PATCH_PATH,
+                        ("# Vauban enhancement patch (test)\n" + String.join("\n", patchLines) + "\n")
+                                .getBytes(StandardCharsets.UTF_8));
+                // Deliberately NO BCE class, NO ServiceLoader file, NO runtime-list.
+            }
+            return target;
+        }
+    }
+
+    // ======================================================================
     // Helpers
     // ======================================================================
 

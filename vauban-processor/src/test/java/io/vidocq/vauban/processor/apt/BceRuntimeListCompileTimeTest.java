@@ -226,6 +226,61 @@ class BceRuntimeListCompileTimeTest {
         }
     }
 
+    @Nested
+    @DisplayName("Test 6 — frozen @Enhancement patch (vauban-enhancements.properties)")
+    class EnhancementPatch {
+
+        private static final String PATCH_PATH = "META-INF/vauban-enhancements.properties";
+
+        @Test
+        @DisplayName("writes '<target>=<added annotation FQN>' so the runtime applies it without the BCE")
+        void shouldWriteEnhancementPatch() throws IOException {
+            var result = compileWithBce(
+                    List.of(WritingScopeBce.class),
+                    """
+                    import io.vidocq.vauban.processor.apt.testfixtures.PathLike;
+
+                    @PathLike("/patch")
+                    public class PatchResource {
+                        public String hello() { return "hello"; }
+                    }
+                    """
+            );
+
+            assertTrue(result.success(),
+                    "Compilation should succeed. Messages: " + result.messages());
+            assertTrue(result.hasFile(PATCH_PATH),
+                    "Expected " + PATCH_PATH + " to be generated when a BCE adds an annotation");
+
+            var raw = Files.readString(result.outputDir().resolve(PATCH_PATH), StandardCharsets.UTF_8);
+            assertTrue(raw.contains("PatchResource=jakarta.enterprise.context.RequestScoped"),
+                    "Patch should map the target to the added annotation FQN. Actual:\n" + raw);
+        }
+
+        @Test
+        @DisplayName("read-only BCE contributes no patch entry")
+        void readOnlyBceProducesNoPatchEntry() throws IOException {
+            var result = compileWithBce(
+                    List.of(ReadOnlyBce.class),
+                    """
+                    import io.vidocq.vauban.processor.apt.testfixtures.PathLike;
+
+                    @PathLike("/ro")
+                    public class RoOnlyResource {
+                        public String hello() { return "hello"; }
+                    }
+                    """
+            );
+
+            assertTrue(result.success(), "Compilation should succeed");
+            if (result.hasFile(PATCH_PATH)) {
+                var raw = Files.readString(result.outputDir().resolve(PATCH_PATH), StandardCharsets.UTF_8);
+                assertFalse(raw.contains("RoOnlyResource="),
+                        "Read-only BCE must not contribute a patch entry. Actual:\n" + raw);
+            }
+        }
+    }
+
     // ======================================================================
     // Helpers (reused from the BceCompileTimeTest pattern)
     // ======================================================================
