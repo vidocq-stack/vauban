@@ -21,6 +21,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -96,6 +97,40 @@ class ComponentProviderCompileTimeTest {
 
         assertTrue(Files.exists(result.outputDir().resolve("app/_VaubanComponents.class")),
                 "the generated provider (with the args overload) must compile to a .class");
+    }
+
+    @Test
+    @DisplayName("a nested bean is skipped (no bogus package, build still compiles)")
+    void nestedBeanIsSkipped() throws Exception {
+        var result = compile("Outer", """
+                package app;
+
+                public class Outer {
+                    @jakarta.enterprise.context.ApplicationScoped
+                    public static class Inner {
+                        public String v() { return "inner"; }
+                    }
+                }
+
+                @jakarta.enterprise.context.ApplicationScoped
+                class TopLevelBean {
+                    public String v() { return "top"; }
+                }
+                """);
+
+        assertTrue(result.success(), "compilation should succeed. Messages: " + result.messages());
+
+        var genSource = result.genDir().resolve("app/_VaubanComponents.java");
+        if (Files.exists(genSource)) {
+            var src = Files.readString(genSource);
+            assertTrue(src.contains("case \"app.TopLevelBean\" -> new app.TopLevelBean();"), src);
+            assertFalse(src.contains("Outer.Inner"),
+                    "nested bean must not be referenced by the generated provider: " + src);
+        }
+        // The key assertion is that no bogus `app.Outer` package provider was emitted and the
+        // round-2 compilation of the generated provider succeeded.
+        assertFalse(Files.exists(result.genDir().resolve("app/Outer/_VaubanComponents.java")),
+                "no provider must be generated into a class-as-package directory");
     }
 
     // ---- minimal in-process compilation harness (with -s for generated sources) ----

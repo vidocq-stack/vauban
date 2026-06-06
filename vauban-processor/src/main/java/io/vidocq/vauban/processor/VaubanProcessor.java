@@ -333,9 +333,11 @@ public class VaubanProcessor extends AbstractProcessor {
                 // (new X()) or injected-constructor (new X(args…) with container-resolved args) —
                 // so the container avoids reflection, and the module avoids `opens`.
                 var fqn = bean.beanClass().value();
-                instantiableCtorParams(classInfo)
-                        .ifPresent(params -> providerComponents.put(
-                                fqn, new ComponentProviderGenerator.Component(fqn, params)));
+                if (isTopLevelType(fqn)) {
+                    instantiableCtorParams(classInfo)
+                            .ifPresent(params -> providerComponents.put(
+                                    fqn, new ComponentProviderGenerator.Component(fqn, params)));
+                }
             }
         }
 
@@ -673,6 +675,21 @@ public class VaubanProcessor extends AbstractProcessor {
             casts.add(cast);
         }
         return java.util.Optional.of(List.copyOf(casts));
+    }
+
+    /**
+     * Only top-level types get an in-module provider entry. A nested/member type's canonical name
+     * is dot-separated in APT mode (e.g. {@code a.b.Outer.Inner}), which is indistinguishable from
+     * a package boundary by string analysis and would make the generator emit {@code _VaubanComponents}
+     * into a bogus package. Nested beans (mostly test fixtures) fall back to reflective instantiation.
+     * When the element is not resolvable (bytecode-only deps), fall back to the {@code $} marker.
+     */
+    private boolean isTopLevelType(String fqn) {
+        var te = processingEnv.getElementUtils().getTypeElement(fqn);
+        if (te != null) {
+            return te.getNestingKind() == javax.lang.model.element.NestingKind.TOP_LEVEL;
+        }
+        return !fqn.contains("$");
     }
 
     private static boolean hasInject(io.vidocq.vauban.indexer.model.MethodInfo m) {
