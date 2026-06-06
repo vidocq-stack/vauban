@@ -8,6 +8,7 @@ import org.junit.jupiter.api.Test;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNotSame;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * Proves the plugin's bytecode {@code _VaubanComponents} generator produces a loadable provider
@@ -34,6 +35,9 @@ class ComponentProviderClassGeneratorTest {
         assertNotSame(first, second, "each create() call must return a fresh instance");
 
         assertNull(provider.create("does.not.Exist"), "unlisted class must return null");
+
+        assertTrue(providerClass.isAnnotationPresent(jakarta.enterprise.inject.Vetoed.class),
+                "@Vetoed keeps Weld (bean-discovery-mode=all) from loading it as a bean");
     }
 
     /** Minimal loader exposing {@code defineClass} for the generated provider bytecode. */

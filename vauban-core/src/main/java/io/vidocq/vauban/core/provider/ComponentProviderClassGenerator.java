@@ -1,6 +1,8 @@
 package io.vidocq.vauban.core.provider;
 
+import java.lang.classfile.Annotation;
 import java.lang.classfile.ClassFile;
+import java.lang.classfile.attribute.RuntimeVisibleAnnotationsAttribute;
 import java.lang.constant.ClassDesc;
 import java.lang.constant.ConstantDescs;
 import java.lang.constant.MethodTypeDesc;
@@ -25,6 +27,7 @@ public final class ComponentProviderClassGenerator {
     private static final ClassDesc CD_String = ConstantDescs.CD_String;
     private static final ClassDesc CD_Provider =
             ClassDesc.of("io.vidocq.vauban.api.VaubanComponentProvider");
+    private static final ClassDesc CD_Vetoed = ClassDesc.of("jakarta.enterprise.inject.Vetoed");
     private static final MethodTypeDesc MTD_void = MethodTypeDesc.of(ConstantDescs.CD_void);
     private static final MethodTypeDesc MTD_String_equals =
             MethodTypeDesc.of(ConstantDescs.CD_boolean, CD_Object);
@@ -47,6 +50,10 @@ public final class ComponentProviderClassGenerator {
             clb.withFlags(ClassFile.ACC_PUBLIC | ClassFile.ACC_FINAL | ClassFile.ACC_SUPER);
             clb.withSuperclass(CD_Object);
             clb.withInterfaceSymbols(CD_Provider);
+            // @Vetoed: never a CDI bean — so even Weld in bean-discovery-mode=all (which would try
+            // to load every class) skips it, avoiding a NoClassDefFoundError when vauban-api is
+            // absent at runtime. Neutral for Vauban, which loads it via ServiceLoader, not scanning.
+            clb.with(RuntimeVisibleAnnotationsAttribute.of(Annotation.of(CD_Vetoed)));
 
             // public no-arg constructor (required so ServiceLoader can instantiate the provider)
             clb.withMethodBody(ConstantDescs.INIT_NAME, MTD_void, ClassFile.ACC_PUBLIC, cob -> {
