@@ -54,7 +54,10 @@ via ServiceLoader and consults it before any reflective `newInstance`.
       (~1234/1298/1325)
 - [ ] Producers (invokeMethod) / producer fields / disposers — generated invokers (B2)
 - [ ] @Inject-constructor beans (args) — provider `create(name, args)` overload
-- [ ] **APT generation** of `_VaubanComponents` + emit `provides` lint/suggestion (the big piece)
+- [x] **APT generation** of `_VaubanComponents` (source switch `new X()`) + class-path service
+      file + NOTE advising the module-info `provides` — covers public no-arg managed beans
+      (generator unit test + APT integration test: generated source compiles)
+- [ ] Extend generation to @Inject-constructor beans (resolve args) — B2
 - [ ] Module-path proof via jlink (ServiceLoader path, no opens)
 
 ### Brique C — ServiceLoader fallback for residual BCE instantiation ✅

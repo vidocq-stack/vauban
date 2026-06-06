@@ -303,6 +303,7 @@ public class VaubanProcessor extends AbstractProcessor {
         if (!errors.isEmpty()) return true;
 
         // Generate code for each bean
+        var providerComponents = new TreeSet<String>();
         for (var bean : beans) {
             if (bean.kind() == BeanDescriptor.BeanKind.MANAGED) {
                 var classInfo = index.getClassByName(bean.beanClass()).orElse(null);
@@ -326,7 +327,18 @@ public class VaubanProcessor extends AbstractProcessor {
                 if (bean.scope().isNormal()) {
                     generateClass(ClientProxyGenerator.generate(classInfo));
                 }
+
+                // Collect components the generated provider can instantiate in-module (new X()),
+                // so the container avoids reflection — and the module avoids `opens`.
+                if (isInstantiableNoArg(classInfo)) {
+                    providerComponents.add(bean.beanClass().value());
+                }
             }
+        }
+
+        // Emit the per-module VaubanComponentProvider for those components.
+        if (!providerComponents.isEmpty()) {
+            writeComponentProvider(List.copyOf(providerComponents));
         }
 
         // Write META-INF/vauban-beans.list
@@ -620,6 +632,86 @@ public class VaubanProcessor extends AbstractProcessor {
         } catch (IOException e) {
             processingEnv.getMessager().printMessage(Diagnostic.Kind.WARNING,
                     "[Vauban] Failed to write BCE marker: " + e.getMessage());
+        }
+    }
+
+    /**
+     * A managed class is instantiable via {@code new X()} when it is public, non-abstract, and
+     * exposes a public no-arg constructor (or only the implicit default one). Anything else is
+     * left to the runtime reflective fallback.
+     */
+    private static boolean isInstantiableNoArg(io.vidocq.vauban.indexer.model.ClassInfo ci) {
+        if (!ci.isPublic() || ci.isAbstract()) return false;
+        var ctors = ci.methods().stream()
+                .filter(io.vidocq.vauban.indexer.model.MethodInfo::isConstructor)
+                .toList();
+        if (ctors.isEmpty()) return true; // implicit public default constructor on a public class
+        return ctors.stream().anyMatch(c -> c.parameters().isEmpty() && c.isPublic());
+    }
+
+    /** Longest common package prefix (by segments) of the given component FQNs. */
+    private static String commonPackage(List<String> fqns) {
+        String prefix = null;
+        for (var fqn : fqns) {
+            var pkg = fqn.contains(".") ? fqn.substring(0, fqn.lastIndexOf('.')) : "";
+            prefix = (prefix == null) ? pkg : commonPrefixBySegments(prefix, pkg);
+        }
+        return prefix == null ? "" : prefix;
+    }
+
+    private static String commonPrefixBySegments(String a, String b) {
+        var as = a.split("\\.");
+        var bs = b.split("\\.");
+        var sb = new StringBuilder();
+        int n = Math.min(as.length, bs.length);
+        for (int i = 0; i < n && as[i].equals(bs[i]); i++) {
+            if (i > 0) sb.append('.');
+            sb.append(as[i]);
+        }
+        return sb.toString();
+    }
+
+    /**
+     * Generates the per-module {@code _VaubanComponents} provider (in-module instantiation) and a
+     * class-path service file, then advises adding the {@code provides} clause for the module path.
+     */
+    private void writeComponentProvider(List<String> componentFqns) {
+        var pkg = commonPackage(componentFqns);
+        if (pkg.isEmpty()) {
+            // disjoint packages — fall back to the first component's package (already sorted)
+            var first = componentFqns.get(0);
+            pkg = first.contains(".") ? first.substring(0, first.lastIndexOf('.')) : "";
+        }
+        var gen = io.vidocq.vauban.processor.codegen.provider.ComponentProviderGenerator.generate(pkg, componentFqns);
+        try {
+            var file = processingEnv.getFiler().createSourceFile(gen.className());
+            try (var w = file.openWriter()) {
+                w.write(gen.source());
+            }
+            writeComponentProviderService(gen.className());
+            processingEnv.getMessager().printMessage(Diagnostic.Kind.NOTE,
+                    "[Vauban] Generated " + gen.className() + " for " + componentFqns.size()
+                            + " component(s). On the module path, add to module-info: "
+                            + "provides io.vidocq.vauban.core.VaubanComponentProvider with "
+                            + gen.className() + ";");
+        } catch (IOException e) {
+            processingEnv.getMessager().printMessage(Diagnostic.Kind.WARNING,
+                    "[Vauban] Failed to write component provider: " + e.getMessage());
+        }
+    }
+
+    /** Class-path fallback registration (ignored for named modules, which use {@code provides}). */
+    private void writeComponentProviderService(String providerClassName) {
+        try {
+            var resource = processingEnv.getFiler().createResource(
+                    StandardLocation.CLASS_OUTPUT, "",
+                    "META-INF/services/io.vidocq.vauban.core.VaubanComponentProvider");
+            try (var w = new PrintWriter(resource.openOutputStream(), false, StandardCharsets.UTF_8)) {
+                w.println(providerClassName);
+            }
+        } catch (IOException e) {
+            processingEnv.getMessager().printMessage(Diagnostic.Kind.WARNING,
+                    "[Vauban] Failed to write component provider service file: " + e.getMessage());
         }
     }
 
