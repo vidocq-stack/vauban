@@ -107,7 +107,7 @@ final class InterceptorBeanWrapper {
                     }
                 }
 
-                var instance = vaubanLookup.newInstance(constructor, args);
+                var instance = instantiatePreferProvider(constructor, args);
                 container.beanInjector().injectFieldsByReflection(instance, null, ctx);
                 java.lang.reflect.Method pc = null;
                 for (var m : instance.getClass().getDeclaredMethods()) {
@@ -150,7 +150,7 @@ final class InterceptorBeanWrapper {
                     }
                 }
 
-                var instance = vaubanLookup.newInstance(constructor, args);
+                var instance = instantiatePreferProvider(constructor, args);
                 container.injectFields(instance, null, (CreationalContext<Object>) ctx);
                 container.callPostConstruct(instance, null, ctx);
 
@@ -377,20 +377,21 @@ final class InterceptorBeanWrapper {
     }
 
     /**
-     * Instantiates an intercepted subclass, preferring zero reflection. Order:
+     * Instantiates a managed class — an intercepted {@code $$Intercepted} subclass OR an
+     * {@code @Interceptor} bean — preferring zero reflection. Order:
      * <ol>
-     *   <li><b>in-module provider</b> — when the Vauban APT pre-generated {@code <bean>$$Intercepted},
-     *       its co-located bytecode {@code _VaubanComponents} runs {@code new <bean>$$Intercepted(args…)}
-     *       directly (no reflection, no opens);</li>
-     *   <li><b>public Lookup</b> — the generated subclass is a public class with a public constructor
-     *       in the bean's exported package, constructible via {@code publicLookup} with no
-     *       {@code privateLookupIn} (hence no opens) — covers the runtime/plugin-generated case where
-     *       no provider owns the name;</li>
-     *   <li><b>private Lookup</b> — last resort for the class path (unrestricted) or a bean in a
+     *   <li><b>in-module provider</b> — when the Vauban APT emitted a {@code _VaubanComponents} for the
+     *       class's module, its co-located provider runs {@code new <class>(args…)} directly
+     *       (no reflection, no opens). This covers both pre-generated {@code $$Intercepted} subclasses
+     *       and, since VAU-INT-004, the interceptor classes themselves;</li>
+     *   <li><b>public Lookup</b> — a public constructor in an exported package, constructible via
+     *       {@code publicLookup} with no {@code privateLookupIn} (hence no opens) — covers the
+     *       runtime/plugin-generated case where no provider owns the name;</li>
+     *   <li><b>private Lookup</b> — last resort for the class path (unrestricted) or a class in a
      *       non-exported package (which keeps its qualified {@code opens}).</li>
      * </ol>
      */
-    private Object instantiateIntercepted(java.lang.reflect.Constructor<?> ctor, Object[] args) {
+    private Object instantiatePreferProvider(java.lang.reflect.Constructor<?> ctor, Object[] args) {
         var providers = container.componentProviders();
         if (providers != null) {
             var inModule = providers.create(ctor.getDeclaringClass().getName(), args);
@@ -719,7 +720,7 @@ final class InterceptorBeanWrapper {
                         }
                         if (subclassCtor == null) subclassCtor = finalInterceptedClass.getDeclaredConstructors()[0];
 
-                        var instance = instantiateIntercepted(subclassCtor, finalArgs);
+                        var instance = instantiatePreferProvider(subclassCtor, finalArgs);
 
                         var initMethod = finalInterceptedClass.getMethod("$$init",
                                 io.vidocq.vauban.core.interceptor.InterceptorManager.class,
@@ -823,7 +824,7 @@ final class InterceptorBeanWrapper {
                             } else {
                             var ctor2 = finalInterceptedClass.getDeclaredConstructor();
                             Object[] finalArgs2 = new Object[0];
-                            var inst = instantiateIntercepted(ctor2, finalArgs2);
+                            var inst = instantiatePreferProvider(ctor2, finalArgs2);
                                     finalInterceptedClass.getMethod("$$init",
                                             io.vidocq.vauban.core.interceptor.InterceptorManager.class,
                                             java.util.Set.class,

@@ -92,8 +92,8 @@ subclass on the module path. (A vauban-local compile-time test mirroring it is a
 
 ---
 
-## VAU-INT-004 — `@Interceptor` beans are not emitted into `_VaubanComponents` (module-path needs an opens) — OPEN
-- **Date**: 2026-06-07 — **Status**: OPEN (gap, not a regression)
+## VAU-INT-004 — `@Interceptor` beans are not emitted into `_VaubanComponents` (module-path needs an opens)
+- **Date**: 2026-06-07 — **Status**: FIXED (APT emits interceptors as components; runtime routes their instantiation through the provider)
 - **Severity**: medium (a wrapper that declares `@Interceptor` beans cannot reach zero-opens on a strict
   module path: the interceptor instances fall back to reflective instantiation)
 - **Surfaced by**: `mansart-transactions-cdi-jpms-it` — `container.select(TxService.class)` on the module
@@ -109,17 +109,22 @@ beans, but never emits the interceptor classes themselves into `_VaubanComponent
 On the module path the container therefore instantiates them reflectively, which needs
 `opens … to io.vidocq.vauban.core`.
 
-### Proposed fix (not yet done)
-Add `jakarta.interceptor.Interceptor` to the component set in both generators so interceptor classes get a
-`_Factory`, a `create()` arm and `injectField` coverage like any other bean (their ctors are no-arg public
-and their `@Inject` fields are already package-private). Must re-verify dirac (Metrics 5.1) and heisenberg
-(FT 4.1) TCKs stay green and the golden/structural tests are unchanged. Lets dirac/heisenberg/mansart all
-drop their interceptor `opens`.
+### Fix
+Two parts. **(1) APT** — `jakarta.interceptor.Interceptor` is added to `VaubanProcessor.CDI_ANNOTATIONS`, so
+interceptor classes enter the APT round/index and `BeanDiscovery` (which already lists `@Interceptor` as a
+bean-defining annotation) returns them as `@Dependent` managed beans. They then flow through the normal
+component pipeline: a `_Factory`, a `_VaubanComponents.create()` arm and `injectField` coverage (their
+`@Inject` fields are package-private; inherited fields are keyed on the declaring class by `BeanInjector`,
+so the empty per-TxType subclasses are covered too). `isInterceptedTarget` now returns `false` for
+`@Interceptor` classes so no bogus `Interceptor$$Intercepted` is generated. **(2) Runtime** —
+`InterceptorBeanWrapper` routed both interceptor-instantiation sites through `instantiatePreferProvider(...)`
+(renamed from `instantiateIntercepted`): in-module provider → public Lookup → reflection. The interceptor's
+public `@AroundInvoke` is already reachable without opens (F3 public-member guard).
 
-### Workaround (current)
-The affected module keeps a single qualified `opens <interceptor-pkg> to io.vidocq.vauban.core` solely for
-interceptor instantiation (mansart-transactions-cdi); everything else (producers, contexts, @Path/@Provider
-beans) is already provider-instantiated and opens-free.
+Proven by `mansart-transactions-cdi-jpms-it` with **zero opens** (REQUIRED on the base interceptor and
+REQUIRES_NEW on an empty subclass with an inherited `@Inject` field). Non-regression: dirac Metrics 5.1
+127/127, heisenberg FT 4.1 463/463, vauban full suite green. The plugin (`VaubanGenerator`) is unchanged —
+all first-party interceptor wrappers use the APT; mirroring it for external jars is a follow-up.
 
 ---
 

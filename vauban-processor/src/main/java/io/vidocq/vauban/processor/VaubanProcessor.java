@@ -71,7 +71,13 @@ public class VaubanProcessor extends AbstractProcessor {
             "jakarta.enterprise.context.RequestScoped",
             "jakarta.enterprise.context.Dependent",
             "jakarta.inject.Singleton",
-            "jakarta.enterprise.inject.Produces"
+            "jakarta.enterprise.inject.Produces",
+            // @Interceptor classes are bean-defining too (BeanDiscovery treats them as @Dependent
+            // managed beans). Including them here brings them into the APT round/index so they get a
+            // _Factory and a _VaubanComponents arm — the container then instantiates and field-injects
+            // them in-module on the module path, with no `opens … to io.vidocq.vauban.core` (their
+            // public @AroundInvoke method is reachable without opens via the F3 public-member guard).
+            "jakarta.interceptor.Interceptor"
     );
 
     private static final String BEANS_LIST_PATH = "META-INF/vauban-beans.list";
@@ -701,6 +707,11 @@ public class VaubanProcessor extends AbstractProcessor {
      */
     private boolean isInterceptedTarget(TypeElement beanElement) {
         if (beanElement.getModifiers().contains(Modifier.FINAL)) return false;
+        // An @Interceptor class carries the interceptor binding to associate itself with its targets,
+        // but it is never itself an interception target — do not generate a $$Intercepted for it.
+        for (var am : beanElement.getAnnotationMirrors()) {
+            if (am.getAnnotationType().toString().equals("jakarta.interceptor.Interceptor")) return false;
+        }
         for (var am : processingEnv.getElementUtils().getAllAnnotationMirrors(beanElement)) {
             if (isInterceptorBinding(am)) return true;
         }
