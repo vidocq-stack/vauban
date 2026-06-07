@@ -90,10 +90,16 @@ public final class InterceptedSourceRenderer {
         sb.append("        this.$$context = c;\n");
         sb.append("    }\n\n");
 
-        for (MethodShape m : shape.methods()) {
-            renderOverride(sb, subSimple, m);
+        // The $$ti$ glue erases to (Object, Object[]) Object, so two overloaded methods would
+        // collide on the bare $$ti$<name>; give each overload a unique name (the $$super$<name>
+        // bridges keep distinct parameter lists and need no suffix).
+        var methods = shape.methods();
+        var tiNames = targetInvokerNames(methods);
+        for (int i = 0; i < methods.size(); i++) {
+            MethodShape m = methods.get(i);
+            renderOverride(sb, subSimple, m, tiNames.get(i));
             renderSuperBridge(sb, m);
-            renderTargetInvokerGlue(sb, subSimple, m);
+            renderTargetInvokerGlue(sb, subSimple, m, tiNames.get(i));
         }
 
         // Sneaky-throw: T appears only in `throws T`, so by JLS §18.4 it resolves to
@@ -108,7 +114,7 @@ public final class InterceptedSourceRenderer {
         return new Generated(subBinary, sb.toString());
     }
 
-    private static void renderOverride(StringBuilder sb, String subSimple, MethodShape m) {
+    private static void renderOverride(StringBuilder sb, String subSimple, MethodShape m, String tiName) {
         TypeRef ret = m.returnType();
         String retType = sourceName(ret);
         sb.append("    @Override\n");
@@ -131,8 +137,8 @@ public final class InterceptedSourceRenderer {
         sb.append("            java.util.List $$chain = this.$$manager.resolveChainForMethod(")
                 .append("this.$$bindings, $$m, this, this.$$context);\n");
         sb.append("            ").append(CTX).append(" $$ctx = new ").append(CTX)
-                .append("(this, $$m, null, $$args, $$chain, ").append(subSimple).append("::$$ti$")
-                .append(m.name()).append(");\n");
+                .append("(this, $$m, null, $$args, $$chain, ").append(subSimple).append("::")
+                .append(tiName).append(");\n");
         if (ret.isVoid()) {
             sb.append("            $$ctx.proceed();\n");
             sb.append("            this.$$manager.shareInstances(").append(IM)
@@ -162,7 +168,7 @@ public final class InterceptedSourceRenderer {
         sb.append("    }\n\n");
     }
 
-    private static void renderTargetInvokerGlue(StringBuilder sb, String subSimple, MethodShape m) {
+    private static void renderTargetInvokerGlue(StringBuilder sb, String subSimple, MethodShape m, String tiName) {
         TypeRef ret = m.returnType();
         var unboxed = new StringBuilder();
         var params = m.params();
@@ -172,7 +178,7 @@ public final class InterceptedSourceRenderer {
         }
         String call = "((" + subSimple + ") $$target).$$super$" + m.name() + "(" + unboxed + ")";
 
-        sb.append("    private static Object $$ti$").append(m.name())
+        sb.append("    private static Object ").append(tiName)
                 .append("(Object $$target, Object[] $$params) throws Exception {\n");
         if (ret.isVoid()) {
             sb.append("        ").append(call).append(";\n");
@@ -183,6 +189,24 @@ public final class InterceptedSourceRenderer {
             sb.append("        return ").append(call).append(";\n");
         }
         sb.append("    }\n\n");
+    }
+
+    /**
+     * Unique {@code $$ti$} glue name per method. Non-overloaded names stay {@code $$ti$<name>};
+     * overloaded names get a {@code $<occurrence>} suffix so the erased {@code (Object,Object[])}
+     * glues do not collide. Mirrors {@code InterceptedEmitter.targetInvokerNames}.
+     */
+    private static List<String> targetInvokerNames(List<MethodShape> methods) {
+        var total = new java.util.HashMap<String, Integer>();
+        for (MethodShape m : methods) total.merge(m.name(), 1, Integer::sum);
+        var seen = new java.util.HashMap<String, Integer>();
+        var names = new java.util.ArrayList<String>(methods.size());
+        for (MethodShape m : methods) {
+            int occ = seen.merge(m.name(), 1, Integer::sum) - 1;
+            String base = "$$ti$" + m.name();
+            names.add(total.get(m.name()) > 1 ? base + "$" + occ : base);
+        }
+        return names;
     }
 
     // ---- rendering helpers ----

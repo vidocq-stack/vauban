@@ -179,6 +179,38 @@ class ComponentProviderCompileTimeTest {
                         + provSrc);
     }
 
+    @Test
+    @DisplayName("overloaded intercepted methods get distinct $$ti$ glue names (compiles)")
+    void generatesDistinctGlueForOverloadedInterceptedMethods() throws Exception {
+        var result = compile("OverloadedService", """
+                package app;
+
+                @jakarta.interceptor.InterceptorBinding
+                @java.lang.annotation.Retention(java.lang.annotation.RetentionPolicy.RUNTIME)
+                @java.lang.annotation.Target({java.lang.annotation.ElementType.TYPE,
+                        java.lang.annotation.ElementType.METHOD})
+                @interface Audited {}
+
+                @jakarta.enterprise.context.ApplicationScoped
+                @Audited
+                public class OverloadedService {
+                    public String run() { return "0"; }
+                    public String run(int n) { return "" + n; }
+                    public String run(String s) { return s; }
+                }
+                """);
+
+        // The $$ti$ glue erases to (Object, Object[]) Object, so without per-overload disambiguation
+        // the three run(...) methods would emit three duplicate $$ti$run — invalid source/class.
+        assertTrue(result.success(), "compilation should succeed. Messages: " + result.messages());
+
+        var subSrc = Files.readString(
+                result.genDir().resolve("app/OverloadedService$$Intercepted.java"));
+        assertTrue(subSrc.contains("$$ti$run$0"), subSrc);
+        assertTrue(subSrc.contains("$$ti$run$1"), subSrc);
+        assertTrue(subSrc.contains("$$ti$run$2"), subSrc);
+    }
+
     // ---- minimal in-process compilation harness (with -s for generated sources) ----
 
     private CompilationResult compile(String simpleName, String source) throws IOException {

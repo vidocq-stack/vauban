@@ -5,6 +5,40 @@ suspected cause, status. Updated on every investigation.
 
 ---
 
+## VAU-INT-001 — overloaded intercepted methods collide on the `$$ti$<name>` glue
+- **Date**: 2026-06-07 — **Status**: FIXED (unique per-overload `$$ti$` names in both renderers)
+- **Severity**: medium (any bean with two intercepted methods of the same name fails to deploy)
+- **Surfaced by**: MicroProfile Metrics 5.1 TCK `OverloadedTimedMethodBeanTest` (dirac), via the
+  runtime `InterceptedEmitter`. Invisible to the vauban golden tests (no overloaded fixture).
+
+### Symptom
+```
+Cannot create interceptor subclass: Duplicate method name "$$ti$overloadedTimedMethod"
+with signature "(Ljava/lang/Object;[Ljava/lang/Object;)Ljava/lang/Object;"
+in class file …/OverloadedTimedMethodBean$$Intercepted
+```
+A bean with two `@Timed`/`@Audited` methods of the same name (overloads) fails at subclass
+generation/compilation.
+
+### Cause
+The `TargetInvoker` glue `$$ti$<name>` is named by method **name only** and erases to
+`(Object, Object[]) Object`. Two overloads → two `$$ti$<name>` methods with identical name **and**
+descriptor → invalid class file (bytecode) / duplicate method (source). The `$$super$<name>` bridges
+do **not** collide (they keep the methods' distinct parameter descriptors). Naming dates back to the
+B2 `invokedynamic`/`LambdaMetafactory` target-invoker work; the bug is pre-existing, shared by the
+runtime/plugin bytecode emitter (`InterceptedEmitter`) and the APT source renderer
+(`InterceptedSourceRenderer`).
+
+### Fix
+`targetInvokerNames(List<MethodShape>)` in both `InterceptedEmitter` and `InterceptedSourceRenderer`:
+a non-overloaded name stays `$$ti$<name>` (golden snapshots byte-for-byte stable); each overload of a
+repeated name gets a `$<occurrence>` suffix (`$$ti$run$0`, `$$ti$run$1`, …). The override's
+`invokedynamic`/method-reference and the glue definition use the same unique name. Verified: dirac MP
+Metrics TCK 127/127 (was 126+1 error) and a new compile-time test
+`generatesDistinctGlueForOverloadedInterceptedMethods` (source path).
+
+---
+
 ## VAU-DISC-002 — non-bean archive over-discovers an annotated, non-scanned class (trade-off vs VAU-DISC-001)
 - **Date**: 2026-06-07 — **Status**: FIXED (commit `80e953c` — explicit bean-discovery mode)
 - **Severity**: low (1 CDI TCK failure)

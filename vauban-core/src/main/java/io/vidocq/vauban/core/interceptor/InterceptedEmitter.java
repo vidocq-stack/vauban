@@ -136,13 +136,37 @@ public final class InterceptedEmitter {
                         cob.return_();
                     });
 
-            // Override each interceptable method + generate $$super$ bridge + $$ti$ glue
-            for (MethodShape method : shape.methods()) {
+            // Override each interceptable method + generate $$super$ bridge + $$ti$ glue. The $$ti$
+            // glue erases to (Object,Object[])Object, so two overloaded methods would collide on the
+            // bare $$ti$<name>; give each overload a unique name (the $$super$<name> bridges keep
+            // distinct descriptors and need no suffix).
+            var methods = shape.methods();
+            var tiNames = targetInvokerNames(methods);
+            for (int i = 0; i < methods.size(); i++) {
+                MethodShape method = methods.get(i);
                 generateSuperBridge(clb, beanCD, method);
-                generateInterceptedMethod(clb, subclassCD, beanCD, method);
-                generateTargetInvokerGlue(clb, subclassCD, method);
+                generateInterceptedMethod(clb, subclassCD, beanCD, method, tiNames.get(i));
+                generateTargetInvokerGlue(clb, subclassCD, method, tiNames.get(i));
             }
         });
+    }
+
+    /**
+     * Unique {@code $$ti$} glue method name per method. Non-overloaded names stay {@code $$ti$<name>}
+     * (byte-for-byte stable); overloaded names get a {@code $<occurrence>} suffix so the erased
+     * {@code (Object,Object[])Object} glues do not collide.
+     */
+    private static java.util.List<String> targetInvokerNames(java.util.List<MethodShape> methods) {
+        var total = new java.util.HashMap<String, Integer>();
+        for (MethodShape m : methods) total.merge(m.name(), 1, Integer::sum);
+        var seen = new java.util.HashMap<String, Integer>();
+        var names = new java.util.ArrayList<String>(methods.size());
+        for (MethodShape m : methods) {
+            int occ = seen.merge(m.name(), 1, Integer::sum) - 1;
+            String base = "$$ti$" + m.name();
+            names.add(total.get(m.name()) > 1 ? base + "$" + occ : base);
+        }
+        return names;
     }
 
     /**
@@ -174,7 +198,7 @@ public final class InterceptedEmitter {
 
     private static void generateInterceptedMethod(
             java.lang.classfile.ClassBuilder clb,
-            ClassDesc subclassCD, ClassDesc beanCD, MethodShape method) {
+            ClassDesc subclassCD, ClassDesc beanCD, MethodShape method, String tiName) {
 
         ClassDesc returnCD = method.returnType().classDesc();
         var paramCDs = method.params().stream()
@@ -283,7 +307,7 @@ public final class InterceptedEmitter {
                             MTD_TARGET_INVOKER,
                             MethodHandleDesc.ofMethod(
                                     DirectMethodHandleDesc.Kind.STATIC,
-                                    subclassCD, "$$ti$" + method.name(), MTD_TARGET_INVOKER),
+                                    subclassCD, tiName, MTD_TARGET_INVOKER),
                             MTD_TARGET_INVOKER));
                     cob.invokespecial(CD_VaubanInvocationContext, ConstantDescs.INIT_NAME,
                             MethodTypeDesc.of(ConstantDescs.CD_void,
@@ -323,7 +347,7 @@ public final class InterceptedEmitter {
      * {@code $$super$<name>} bridge, and boxes the result (or returns {@code null} for {@code void}).
      */
     private static void generateTargetInvokerGlue(ClassBuilder clb, ClassDesc subclassCD,
-            MethodShape method) {
+            MethodShape method, String tiName) {
         ClassDesc returnCD = method.returnType().classDesc();
         var paramCDs = method.params().stream()
                 .map(TypeRef::classDesc)
@@ -331,7 +355,7 @@ public final class InterceptedEmitter {
         var superType = MethodTypeDesc.of(returnCD, paramCDs);
 
         clb.withMethodBody(
-                "$$ti$" + method.name(),
+                tiName,
                 MTD_TARGET_INVOKER,
                 ClassFile.ACC_PRIVATE | ClassFile.ACC_STATIC | ClassFile.ACC_SYNTHETIC,
                 cob -> {
