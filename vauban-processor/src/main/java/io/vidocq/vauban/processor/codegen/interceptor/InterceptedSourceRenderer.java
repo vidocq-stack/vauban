@@ -121,16 +121,20 @@ public final class InterceptedSourceRenderer {
         sb.append("    public ").append(retType).append(" ").append(m.name())
                 .append("(").append(params(m.params())).append(") {\n");
 
-        // Pre-init guard: during construction the container has not called $$init yet.
+        sb.append("        try {\n");
+        // Pre-init guard: during construction the container has not called $$init yet. It lives
+        // INSIDE the try so that a checked exception thrown by the original method propagates through
+        // sneaky() — the override drops the `throws` clause (MethodShape carries no throws), so a bare
+        // `super.<m>(...)` here would otherwise be an unreported checked exception. sneaky() rethrows
+        // the very same throwable, so the behaviour matches the bytecode emitter (which has no checked
+        // enforcement).
         if (ret.isVoid()) {
-            sb.append("        if (this.$$manager == null) { super.").append(m.name())
+            sb.append("            if (this.$$manager == null) { super.").append(m.name())
                     .append("(").append(args(m.params().size())).append("); return; }\n");
         } else {
-            sb.append("        if (this.$$manager == null) return super.").append(m.name())
+            sb.append("            if (this.$$manager == null) return super.").append(m.name())
                     .append("(").append(args(m.params().size())).append(");\n");
         }
-
-        sb.append("        try {\n");
         sb.append("            java.lang.reflect.Method $$m = getClass().getDeclaredMethod(\"$$super$")
                 .append(m.name()).append("\"").append(classLiterals(m.params())).append(");\n");
         sb.append("            Object[] $$args = new Object[] {").append(boxedArgs(m.params())).append("};\n");

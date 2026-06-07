@@ -68,6 +68,61 @@ new compile-time test `generatesValidGlueForPrimitiveArrayInterceptedMethods` (s
 
 ---
 
+## VAU-INT-003 — source-rendered `$$Intercepted` of a method declaring `throws` fails to compile
+- **Date**: 2026-06-07 — **Status**: FIXED (`InterceptedSourceRenderer`: pre-init guard moved inside the try)
+- **Severity**: medium (any APT-generated subclass of a bean whose intercepted method declares a checked
+  exception fails `javac` — `unreported exception java.lang.Exception; must be caught or declared`)
+- **Surfaced by**: the new `mansart-transactions-cdi-jpms-it` module-path vehicle — `TxService.required(Block)`
+  declares `throws Exception`. Invisible to the golden/structural tests (no checked-throws fixture) and to
+  the bytecode emitter (the JVM does not enforce checked exceptions on `super.<m>()`), so only the SOURCE
+  renderer (APT) is affected, and only when a bean's intercepted method declares a checked exception.
+
+### Cause
+The generated override drops the original `throws` clause (a `MethodShape` carries no exceptions — by
+design, the intercepted path rethrows via `sneaky(...)`). But the **pre-init guard** that delegates to
+`super.<m>(...)` before `$$init` ran was emitted *outside* the `try { … } catch (Throwable) { throw
+sneaky(t); }` block, so `javac` saw an uncaught checked exception from the bare `super` call.
+
+### Fix
+The pre-init guard is now emitted as the first statement *inside* the `try`, so the checked exception from
+`super.<m>(...)` propagates through `sneaky(...)` (which rethrows the very same throwable — behaviour
+identical to the bytecode emitter). The vehicle's `TxModulePathTest` (a `@Transactional` bean whose
+methods `throws Exception`) is the live regression: it generates, compiles and runs the build-time
+subclass on the module path. (A vauban-local compile-time test mirroring it is a follow-up.)
+
+---
+
+## VAU-INT-004 — `@Interceptor` beans are not emitted into `_VaubanComponents` (module-path needs an opens) — OPEN
+- **Date**: 2026-06-07 — **Status**: OPEN (gap, not a regression)
+- **Severity**: medium (a wrapper that declares `@Interceptor` beans cannot reach zero-opens on a strict
+  module path: the interceptor instances fall back to reflective instantiation)
+- **Surfaced by**: `mansart-transactions-cdi-jpms-it` — `container.select(TxService.class)` on the module
+  path throws `Cannot reflectively access …TransactionalInterceptorRequiresNew … provide a generated
+  VaubanComponentProvider … or open the package`. Invisible to every class-path TCK (dirac Metrics,
+  heisenberg FT, etc. run on the class path, where reflection is unrestricted).
+
+### Cause
+`VaubanProcessor.CDI_ANNOTATIONS` (and the plugin's `VaubanGenerator`) select scope-annotated beans and
+`@Produces` only — **`jakarta.interceptor.Interceptor` is excluded**. So the APT discovers interceptors
+for binding resolution (`discoverInterceptors()`) and emits their `$$Intercepted` subclasses for target
+beans, but never emits the interceptor classes themselves into `_VaubanComponents.create()`/`_Factory`.
+On the module path the container therefore instantiates them reflectively, which needs
+`opens … to io.vidocq.vauban.core`.
+
+### Proposed fix (not yet done)
+Add `jakarta.interceptor.Interceptor` to the component set in both generators so interceptor classes get a
+`_Factory`, a `create()` arm and `injectField` coverage like any other bean (their ctors are no-arg public
+and their `@Inject` fields are already package-private). Must re-verify dirac (Metrics 5.1) and heisenberg
+(FT 4.1) TCKs stay green and the golden/structural tests are unchanged. Lets dirac/heisenberg/mansart all
+drop their interceptor `opens`.
+
+### Workaround (current)
+The affected module keeps a single qualified `opens <interceptor-pkg> to io.vidocq.vauban.core` solely for
+interceptor instantiation (mansart-transactions-cdi); everything else (producers, contexts, @Path/@Provider
+beans) is already provider-instantiated and opens-free.
+
+---
+
 ## VAU-DISC-002 — non-bean archive over-discovers an annotated, non-scanned class (trade-off vs VAU-DISC-001)
 - **Date**: 2026-06-07 — **Status**: FIXED (commit `80e953c` — explicit bean-discovery mode)
 - **Severity**: low (1 CDI TCK failure)
