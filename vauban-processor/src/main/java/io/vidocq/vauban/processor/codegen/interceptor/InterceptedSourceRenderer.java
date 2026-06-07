@@ -269,14 +269,12 @@ public final class InterceptedSourceRenderer {
 
     /** Java source type name: {@code int}, {@code java.lang.String}, {@code int[]}, {@code a.b.Outer.Inner}. */
     private static String sourceName(TypeRef t) {
-        String base;
-        if (t.isVoid()) {
-            base = "void";
-        } else if (t.isPrimitive()) {
-            base = t.primitiveKind().name().toLowerCase(java.util.Locale.ROOT);
-        } else {
-            base = t.binaryName().replace('$', '.');
-        }
+        // primitiveKind() is non-null for primitives (including arrays like int[]) and for void —
+        // binaryName is null in those cases — whereas isPrimitive() is false for arrays. Branch on
+        // primitiveKind() so int[] renders "int[]", not an NPE on a null binary name.
+        String base = t.primitiveKind() != null
+                ? t.primitiveKind().name().toLowerCase(java.util.Locale.ROOT)
+                : t.binaryName().replace('$', '.');
         return base + "[]".repeat(t.dims());
     }
 

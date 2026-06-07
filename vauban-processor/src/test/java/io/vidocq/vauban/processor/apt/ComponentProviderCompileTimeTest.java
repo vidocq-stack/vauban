@@ -211,6 +211,36 @@ class ComponentProviderCompileTimeTest {
         assertTrue(subSrc.contains("$$ti$run$2"), subSrc);
     }
 
+    @Test
+    @DisplayName("intercepted methods with primitive-array params/return compile (no VerifyError)")
+    void generatesValidGlueForPrimitiveArrayInterceptedMethods() throws Exception {
+        var result = compile("ArrayService", """
+                package app;
+
+                @jakarta.interceptor.InterceptorBinding
+                @java.lang.annotation.Retention(java.lang.annotation.RetentionPolicy.RUNTIME)
+                @java.lang.annotation.Target({java.lang.annotation.ElementType.TYPE,
+                        java.lang.annotation.ElementType.METHOD})
+                @interface Audited {}
+
+                @jakarta.enterprise.context.ApplicationScoped
+                @Audited
+                public class ArrayService {
+                    // int[]/long[] are reference types: must load as references, never box/unbox as
+                    // scalar int/long, and occupy one slot (regression for TypeRef array handling).
+                    public int[] compute(int[] xs, long[] ys, String s) { return xs; }
+                }
+                """);
+
+        assertTrue(result.success(), "compilation should succeed. Messages: " + result.messages());
+
+        var subSrc = Files.readString(result.genDir().resolve("app/ArrayService$$Intercepted.java"));
+        assertTrue(subSrc.contains("public int[] compute(int[] p0, long[] p1, java.lang.String p2)"), subSrc);
+        // params stored directly in Object[] (no Integer.valueOf on the array), unboxed by a cast.
+        assertTrue(subSrc.contains("(int[]) $$params[0]"), subSrc);
+        assertTrue(subSrc.contains("getDeclaredMethod(\"$$super$compute\", int[].class, long[].class, java.lang.String.class)"), subSrc);
+    }
+
     // ---- minimal in-process compilation harness (with -s for generated sources) ----
 
     private CompilationResult compile(String simpleName, String source) throws IOException {

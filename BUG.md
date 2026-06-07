@@ -39,6 +39,35 @@ Metrics TCK 127/127 (was 126+1 error) and a new compile-time test
 
 ---
 
+## VAU-INT-002 — primitive-array params/return mishandled in intercepted methods (`TypeRef` ignores array dims)
+- **Date**: 2026-06-07 — **Status**: FIXED (`TypeRef.isPrimitive()`/`isCategory2()` now require `dims == 0`)
+- **Severity**: medium (any intercepted method with an `int[]`/`long[]`/… param or return fails to load)
+- **Surfaced by**: MicroProfile Fault Tolerance 4.1 TCK CircuitBreaker tests (heisenberg) — beans with
+  `serviceA(int[])`. 458/463, 4 failures + 1 deployment error. Invisible to the vauban golden tests.
+
+### Symptom
+```
+java.lang.VerifyError: Bad local variable type … in CircuitBreaker…$$Intercepted.serviceA([I)…
+@39: iload_1  Reason: Type '[I' (locals[1]) is not assignable to int
+```
+The override loads an `int[]` parameter with `iload` (scalar int) instead of `aload` (reference).
+
+### Cause
+`TypeRef` stores a primitive-array as `primitive=INT, dims=1`, but `isPrimitive()` returned
+`primitive != null && primitive != VOID` — **ignoring `dims`**. So `int[]` was treated as a scalar
+`int`: `boxAndLoad`/`castOrUnboxParam` emitted `iload`/`Integer.valueOf`, and the slot arithmetic
+(`isCategory2()` likewise ignoring dims) under/over-counted for `long[]`/`double[]`. An array of a
+primitive is a **reference** type (one slot, `aload`/`areturn`, never boxed). Pre-existing since the
+Phase 15 `TypeRef` model; shared by `InterceptedEmitter` (bytecode) and `InterceptedSourceRenderer`.
+
+### Fix
+`isPrimitive()` and `isCategory2()` now also require `dims == 0`. `InterceptedSourceRenderer.sourceName`
+branches on `primitiveKind() != null` (non-null for primitive arrays, whose `binaryName` is null) so
+`int[]` renders as `int[]` rather than NPEing. Verified: heisenberg FT TCK 463/463 (was 458 + 5) and a
+new compile-time test `generatesValidGlueForPrimitiveArrayInterceptedMethods` (source path).
+
+---
+
 ## VAU-DISC-002 — non-bean archive over-discovers an annotated, non-scanned class (trade-off vs VAU-DISC-001)
 - **Date**: 2026-06-07 — **Status**: FIXED (commit `80e953c` — explicit bean-discovery mode)
 - **Severity**: low (1 CDI TCK failure)

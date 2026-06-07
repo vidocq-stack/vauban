@@ -71,7 +71,9 @@ public final class TypeRef {
     }
 
     public boolean isPrimitive() {
-        return primitive != null && primitive != Primitive.VOID;
+        // An array of a primitive (e.g. int[]) is a *reference* type, not a primitive: it must be
+        // loaded/stored as a reference (aload/areturn), never boxed, and occupies one slot.
+        return primitive != null && primitive != Primitive.VOID && dims == 0;
     }
 
     public boolean isPrimitiveOrVoid() {
@@ -83,7 +85,8 @@ public final class TypeRef {
      * computational types that occupy two local-variable slots (JVMS §2.11.1).
      */
     public boolean isCategory2() {
-        return primitive == Primitive.LONG || primitive == Primitive.DOUBLE;
+        // Only scalar long/double occupy two slots; long[]/double[] are references (one slot).
+        return (primitive == Primitive.LONG || primitive == Primitive.DOUBLE) && dims == 0;
     }
 
     public String binaryName() {
