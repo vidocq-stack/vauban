@@ -6,8 +6,7 @@ suspected cause, status. Updated on every investigation.
 ---
 
 ## VAU-DISC-002 — non-bean archive over-discovers an annotated, non-scanned class (trade-off vs VAU-DISC-001)
-- **Date**: 2026-06-07 — **Status**: OPEN (direct trade-off with VAU-DISC-001 — cannot be fixed
-  without a finer signal; fixing it the obvious way re-breaks the Mansart Data TCK)
+- **Date**: 2026-06-07 — **Status**: FIXED (commit `80e953c` — explicit bean-discovery mode)
 - **Severity**: low (1 CDI TCK failure)
 - **Surfaced by**: CDI TCK `CustomStereotypeTest` (`build.compatible.extensions.customStereotype`).
 
@@ -30,14 +29,15 @@ TCKs demand opposite answers for the *same* Vauban inputs — `beanArchive(false
 with `forcedBeanClasses.contains(...)` makes the CDI TCK 774/774 **but** regresses Mansart Data to
 73 errors ("DataSource bean not found"). Reverted.
 
-### Status
-Needs a finer discovery signal than `beanArchive(boolean)` — a true CDI bean-discovery-mode
-(NONE vs ANNOTATED). The synthetic BCE-test archive is mode=NONE (discover only contributed classes);
-Mansart's deployment is effectively annotated discovery. Both currently map to `beanArchive(false)`
-in `VaubanDeployableContainer`, so they are indistinguishable. A proper fix threads bean-discovery-mode
-through the deployable container(s) + `BeanDiscovery`, and must be verified against BOTH the CDI TCK
-(774) and the Mansart Data TCK (73). Out of scope for the interception chantier; the bypass stays so
-Mansart stays green.
+### Fix
+Made the discovery mode explicit instead of guessing from `beanArchive(boolean)`:
+`BeanDiscovery.setStrictScannedDiscovery` / builder `strictScannedDiscovery(boolean)`.
+`false` (default, "annotated") keeps the VAU-DISC-001 bypass → Mansart's non-scanned `@Produces`
+stays discovered; `true` ("none" / CDI-Lite synthetic) admits only `forcedBeanClasses` (BCE
+`ScannedClasses` + class-path bean-archive scan). The CDI TCK runner
+(`vauban-tck-runner` `VaubanDeployableContainer`) sets `strictScannedDiscovery(!hasBeansXml)`, so its
+`withoutBeansXml()` BCE archives use "none" mode; Mansart's runner leaves the default. Verified BOTH
+ways: **CDI TCK 774/774** (CustomStereotypeTest passes) and **Mansart Data TCK 73/73** (unchanged).
 
 ---
 
