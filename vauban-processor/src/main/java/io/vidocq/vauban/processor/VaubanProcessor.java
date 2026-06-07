@@ -4,6 +4,7 @@ import io.vidocq.vauban.processor.apt.ElementScanner;
 import io.vidocq.vauban.processor.codegen.GeneratedClass;
 import io.vidocq.vauban.processor.codegen.factory.BeanFactoryGenerator;
 import io.vidocq.vauban.processor.codegen.proxy.ClientProxyGenerator;
+import io.vidocq.vauban.processor.codegen.proxy.ClientProxySourceRenderer;
 import io.vidocq.vauban.processor.codegen.provider.ComponentProviderGenerator;
 import io.vidocq.vauban.processor.codegen.interceptor.InterceptedShapeFromElements;
 import io.vidocq.vauban.processor.codegen.interceptor.InterceptedSourceRenderer;
@@ -316,6 +317,10 @@ public class VaubanProcessor extends AbstractProcessor {
         // Generate code for each bean; also accumulate eligible managed classes for the
         // per-package _VaubanComponents provider.
         var providedClasses = new java.util.ArrayList<ProvidedClass>();
+        // <Bean>_ClientProxy names emitted as SOURCE (top-level normal-scoped beans with an accessible
+        // no-arg ctor): the per-package provider instantiates them in-module via createClientProxy, so
+        // the bean package needs no opens/exports for proxy creation.
+        var clientProxyFqns = new java.util.LinkedHashSet<String>();
         for (var bean : beans) {
             if (bean.kind() == BeanDescriptor.BeanKind.MANAGED) {
                 var classInfo = index.getClassByName(bean.beanClass()).orElse(null);
@@ -337,7 +342,23 @@ public class VaubanProcessor extends AbstractProcessor {
                 generateClass(BeanFactoryGenerator.generate(classInfo));
 
                 if (bean.scope().isNormal()) {
-                    generateClass(ClientProxyGenerator.generate(classInfo));
+                    var proxyBeanFqn = bean.beanClass().value();
+                    var proxyTypeElement = isTopLevelType(proxyBeanFqn)
+                            ? processingEnv.getElementUtils().getTypeElement(proxyBeanFqn) : null;
+                    if (proxyTypeElement != null && hasAccessibleNoArgCtor(proxyTypeElement)) {
+                        // SOURCE proxy: the sibling _VaubanComponents provider does
+                        // `new <Bean>_ClientProxy()` in-module (createClientProxy), so the bean package
+                        // needs no opens/exports for proxy creation. Source (not bytecode) so the
+                        // provider source can reference it by name (resolved in a later APT round).
+                        var gen = ClientProxySourceRenderer.render(proxyTypeElement,
+                                processingEnv.getElementUtils(), processingEnv.getTypeUtils());
+                        writeSourceFile(gen.className(), gen.source());
+                        clientProxyFqns.add(proxyBeanFqn + "_ClientProxy");
+                    } else {
+                        // No accessible no-arg ctor (or a nested type): keep the bytecode proxy; the
+                        // runtime instantiates it (its package must stay opened/exported as before).
+                        generateClass(ClientProxyGenerator.generate(classInfo));
+                    }
                 }
 
                 var fqn = bean.beanClass().value();
@@ -393,8 +414,12 @@ public class VaubanProcessor extends AbstractProcessor {
         // package-private members in other packages.
         var providerClassNames = new java.util.ArrayList<String>();
         for (var pkg : packages) {
+            // Proxies of this package's beans (their FQN package equals the provider's package).
+            var pkgProxies = clientProxyFqns.stream()
+                    .filter(p -> packageOfFqn(p).equals(pkg.packageName()))
+                    .toList();
             var className = writeComponentProvider(
-                    pkg.packageName(), pkg.components(), pkg.fields(), pkg.methods());
+                    pkg.packageName(), pkg.components(), pkg.fields(), pkg.methods(), pkgProxies);
             if (className != null) providerClassNames.add(className);
         }
         if (!providerClassNames.isEmpty()) {
@@ -764,6 +789,33 @@ public class VaubanProcessor extends AbstractProcessor {
     }
 
     /**
+     * {@code true} when {@code te} can be instantiated via {@code new Te()} from a co-located class:
+     * it has an accessible (non-private) no-arg constructor, or no explicit constructor at all (the
+     * implicit no-arg ctor inherits the class's access). Gates SOURCE client-proxy generation — the
+     * proxy's {@code super()} call must resolve, otherwise the bean keeps the bytecode proxy +
+     * runtime fallback.
+     */
+    private static boolean hasAccessibleNoArgCtor(javax.lang.model.element.TypeElement te) {
+        var ctors = javax.lang.model.util.ElementFilter.constructorsIn(te.getEnclosedElements());
+        if (ctors.isEmpty()) {
+            return true; // implicit no-arg constructor
+        }
+        for (var c : ctors) {
+            if (c.getParameters().isEmpty()
+                    && !c.getModifiers().contains(javax.lang.model.element.Modifier.PRIVATE)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /** Package of a top-level FQN — the substring before the last dot, or {@code ""} (default package). */
+    private static String packageOfFqn(String fqn) {
+        int dot = fqn.lastIndexOf('.');
+        return dot < 0 ? "" : fqn.substring(0, dot);
+    }
+
+    /**
      * Generates the {@code <pkg>._VaubanComponents} provider for one package's beans (in-module
      * instantiation, field injection and method invocation) and returns its fully-qualified name so
      * the caller can list it (with the others) in the single class-path service file. The fields and
@@ -779,8 +831,10 @@ public class VaubanProcessor extends AbstractProcessor {
     private String writeComponentProvider(String pkg,
             List<io.vidocq.vauban.indexer.codegen.Component> components,
             List<io.vidocq.vauban.indexer.codegen.FieldInject> fieldInjects,
-            List<io.vidocq.vauban.indexer.codegen.MethodInvoke> methodInvokes) {
-        var gen = ComponentProviderGenerator.generateFrom(pkg, components, fieldInjects, methodInvokes);
+            List<io.vidocq.vauban.indexer.codegen.MethodInvoke> methodInvokes,
+            List<String> clientProxyFqns) {
+        var gen = ComponentProviderGenerator.generateFrom(pkg, components, fieldInjects, methodInvokes,
+                clientProxyFqns);
         try {
             var file = processingEnv.getFiler().createSourceFile(gen.className());
             try (var w = file.openWriter()) {

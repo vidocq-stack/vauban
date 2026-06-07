@@ -84,6 +84,31 @@ public interface VaubanComponentProvider {
     }
 
     /**
+     * Instantiates the client proxy {@code <Bean>_ClientProxy} of a normal-scoped bean in-module and
+     * wires its delegate, so the container needs neither a reflective {@code newInstance}/
+     * {@code $$setDelegate} nor an {@code opens … to io.vidocq.vauban.core} — and crucially no
+     * {@code exports} of the bean package — to create the proxy. The generated implementation performs
+     * {@code new <Bean>_ClientProxy()} followed by {@code proxy.$$setDelegate(delegate)}, both
+     * in-package (a bytecode {@code new} + {@code invokevirtual}), so no reflection.
+     *
+     * <p>{@code vauban-core} builds the {@code delegate} supplier (it resolves the contextual instance
+     * of the bean per call) and only delegates the in-module instantiation + wiring. A provider must
+     * own {@code proxyClassName} — its APT-generated {@code _ClientProxy} lives in the provider's own
+     * package — otherwise it returns {@code null} and the container falls back to runtime proxy
+     * generation + reflective instantiation (which needs the bean package opened/exported).
+     *
+     * <p>The default returns {@code null}, so providers that predate this method keep working and the
+     * container keeps creating their proxies reflectively.
+     *
+     * @param proxyClassName fully-qualified name of the {@code <Bean>_ClientProxy} class to instantiate
+     * @param delegate       supplier of the contextual instance the proxy forwards calls to
+     * @return a fresh, delegate-wired proxy instance, or {@code null} if not owned by this provider
+     */
+    default Object createClientProxy(String proxyClassName, java.util.function.Supplier<?> delegate) {
+        return null;
+    }
+
+    /**
      * Sentinel returned by {@link #invoke} when the provider does not own the requested method, so
      * the container can tell "not handled" apart from a {@code void}/{@code null} return and fall
      * back to reflective invocation. Identity comparison ({@code ==}) is intentional.

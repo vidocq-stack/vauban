@@ -99,6 +99,24 @@ public final class ComponentProviderGenerator {
      */
     public static Generated generateFrom(String packageName, List<Component> components,
             List<FieldInject> fieldInjects, List<MethodInvoke> methodInvokes) {
+        return generateFrom(packageName, components, fieldInjects, methodInvokes, List.of());
+    }
+
+    /**
+     * @param packageName     package the provider lives in (a package of the current module)
+     * @param components      components to instantiate, no-arg and/or injected-constructor
+     * @param fieldInjects    non-private, non-static {@code @Inject} fields in the provider's own
+     *                        package that the provider can assign directly (no reflection, no opens)
+     * @param methodInvokes   methods in the provider's own package the provider can call directly
+     *                        (producers, observers, disposers, lifecycle callbacks, initializers)
+     * @param clientProxyFqns fully-qualified {@code <Bean>_ClientProxy} names (top-level normal-scoped
+     *                        beans of this package) the provider instantiates in-module — {@code new
+     *                        <Bean>_ClientProxy()} + {@code $$setDelegate(delegate)} — so the container
+     *                        creates the proxy without reflection and without exporting the package
+     */
+    public static Generated generateFrom(String packageName, List<Component> components,
+            List<FieldInject> fieldInjects, List<MethodInvoke> methodInvokes,
+            List<String> clientProxyFqns) {
         var className = packageName.isEmpty() ? SIMPLE_NAME : packageName + "." + SIMPLE_NAME;
         var noArg = components.stream().filter(Component::noArg).toList();
         var withArgs = components.stream().filter(c -> !c.noArg()).toList();
@@ -218,6 +236,27 @@ public final class ComponentProviderGenerator {
                 sb.append("            }\n");
             }
             sb.append("            default -> { return ").append(SPI).append(".NOT_INVOKED; }\n");
+            sb.append("        }\n");
+            sb.append("    }\n");
+        }
+
+        if (!clientProxyFqns.isEmpty()) {
+            // In-module client-proxy instantiation for this package's normal-scoped beans:
+            // `new <Bean>_ClientProxy()` + `$$setDelegate(delegate)` (both in-package, the proxy being
+            // a sibling generated source), so the container creates the proxy without reflection and
+            // the bean package needs no `opens`/`exports`.
+            sb.append("    @Override\n");
+            sb.append("    @SuppressWarnings({\"unchecked\", \"rawtypes\"})\n");
+            sb.append("    public Object createClientProxy(String proxyClassName, java.util.function.Supplier<?> delegate) {\n");
+            sb.append("        switch (proxyClassName) {\n");
+            for (var proxyFqn : clientProxyFqns) {
+                sb.append("            case \"").append(proxyFqn).append("\" -> {\n");
+                sb.append("                var p = new ").append(proxyFqn).append("();\n");
+                sb.append("                p.$$setDelegate(delegate);\n");
+                sb.append("                return p;\n");
+                sb.append("            }\n");
+            }
+            sb.append("            default -> { return null; }\n");
             sb.append("        }\n");
             sb.append("    }\n");
         }

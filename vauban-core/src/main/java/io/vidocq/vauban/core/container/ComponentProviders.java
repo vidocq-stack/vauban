@@ -98,6 +98,25 @@ final class ComponentProviders {
     }
 
     /**
+     * Creates the {@code <Bean>_ClientProxy} of a normal-scoped bean in-module (and wires its
+     * {@code delegate}) through the first provider that owns it, or {@code null} if none does (so the
+     * caller falls back to runtime proxy generation + reflective instantiation). Lets a strict-JPMS
+     * app keep its bean package closed — no {@code opens}, no {@code exports}. A provider that throws
+     * is skipped rather than failing proxy creation.
+     */
+    Object createClientProxy(String proxyClassName, java.util.function.Supplier<?> delegate) {
+        for (var provider : providers) {
+            try {
+                var proxy = provider.createClientProxy(proxyClassName, delegate);
+                if (proxy != null) return proxy;
+            } catch (RuntimeException _) {
+                // a misbehaving provider must not break proxy creation — try the next one
+            }
+        }
+        return null;
+    }
+
+    /**
      * Invokes a component method through the first provider that owns it, returning its result, or
      * {@link VaubanComponentProvider#NOT_INVOKED} if none does (so the caller falls back to reflective
      * invocation). Unlike {@link #create}/{@link #injectField}, exceptions are NOT swallowed: the

@@ -258,6 +258,30 @@ final class InterceptorBeanWrapper {
             }
 
             try {
+                var beanId = bean.descriptor().id();
+                java.util.function.Supplier<Object> delegate = () -> {
+                    var currentBean = container.beans.get(beanId);
+                    if (currentBean == null) currentBean = bean;
+                    var scopeClass = currentBean.getScope();
+                    var ctx = container.getFirstContext(scopeClass);
+                    if (ctx == null) ctx = container.dependentContext();
+                    return ctx.get((Contextual<Object>) (Contextual<?>) currentBean,
+                            new CreationalContextImpl<Object>());
+                };
+
+                // 1. In-module proxy creation via the component provider (zero-opens AND zero-export):
+                //    the APT-generated provider does `new <Bean>_ClientProxy()` + `$$setDelegate(delegate)`
+                //    in-package, so the container never reflects into the bean's package. Falls through to
+                //    reflective generation when no provider owns this proxy (class path, runtime-only proxy,
+                //    producer-bean proxy).
+                String proxyClassName =
+                        io.vidocq.vauban.core.proxy.RuntimeClientProxyGenerator.proxyClassName(beanClass);
+                Object provided = container.componentProviders().createClientProxy(proxyClassName, delegate);
+                if (provided != null) {
+                    return provided;
+                }
+
+                // 2. Fallback: runtime-generate the proxy + reflective instantiation/wiring.
                 var generated = io.vidocq.vauban.core.proxy.RuntimeClientProxyGenerator.generate(beanClass);
 
                 Class<?> proxyClass;
@@ -271,16 +295,6 @@ final class InterceptorBeanWrapper {
 
                 var setDelegate = proxyClass.getMethod("$$setDelegate",
                         java.util.function.Supplier.class);
-                var beanId = bean.descriptor().id();
-                java.util.function.Supplier<Object> delegate = () -> {
-                    var currentBean = container.beans.get(beanId);
-                    if (currentBean == null) currentBean = bean;
-                    var scopeClass = currentBean.getScope();
-                    var ctx = container.getFirstContext(scopeClass);
-                    if (ctx == null) ctx = container.dependentContext();
-                    return ctx.get((Contextual<Object>) (Contextual<?>) currentBean,
-                            new CreationalContextImpl<Object>());
-                };
                 setDelegate.invoke(proxy, delegate);
 
                 return proxy;
