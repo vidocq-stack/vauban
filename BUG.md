@@ -5,27 +5,39 @@ suspected cause, status. Updated on every investigation.
 
 ---
 
-## VAU-BCE-001 — `MetaAnnotations.addStereotype(...)` from a BCE is not honored
-- **Date**: 2026-06-07 — **Status**: OPEN
-- **Severity**: low (CDI Lite BCE feature gap; 1 CDI TCK failure)
+## VAU-DISC-002 — non-bean archive over-discovers an annotated, non-scanned class (trade-off vs VAU-DISC-001)
+- **Date**: 2026-06-07 — **Status**: OPEN (direct trade-off with VAU-DISC-001 — cannot be fixed
+  without a finer signal; fixing it the obvious way re-breaks the Mansart Data TCK)
+- **Severity**: low (1 CDI TCK failure)
 - **Surfaced by**: CDI TCK `CustomStereotypeTest` (`build.compatible.extensions.customStereotype`).
 
 ### Symptom
-`CustomStereotypeTest.test` fails with `expected [true] but found [false]`. The test's
-`@Enhancement` registers a **custom stereotype at build time** via
-`MetaAnnotations.addStereotype(MyCustomStereotype.class).addAnnotation(ApplicationScoped.class)`,
-then expects a `@MyCustomStereotype`-annotated bean (`MyService`) to inherit the stereotype's
-`@ApplicationScoped` scope. Vauban does not, so the bean is not application-scoped.
+`CustomStereotypeTest.test:49` fails with `expected [true] but found [false]`. The failing line is
+`assertTrue(getBeans(NotDiscoveredBean).isEmpty())` — i.e. **`NotDiscoveredBean` IS discovered when
+it must not be**. (The earlier two assertions pass, so the custom-stereotype *scope* — `addStereotype`
++ `@ApplicationScoped` on `MyService` — actually works; the initial "MetaAnnotations gap" reading was
+wrong.) The archive has no `beans.xml` (`beanArchive(false)`), the BCE `@Discovery` adds only
+`MyService` via `ScannedClasses.add`, and `NotDiscoveredBean` is `@Dependent` but neither scanned nor
+forced — yet it surfaces as a bean.
 
-### Cause (suspected)
-Vauban's `MetaAnnotations` / BCE `@Enhancement` implementation does not record a class registered
-via `addStereotype(...)` as a stereotype, nor apply the annotations configured on the returned
-`ClassConfig`. Bean discovery only recognises `@Stereotype`-meta-annotated types, so a
-build-time-registered stereotype (and its synthesized scope) is ignored. Unrelated to the
-interception/zero-opens work (no BCE/stereotype code touched there); pre-existing.
+### Cause
+`BeanDiscovery.isAllowedByScannedClassesFilter` admits any bean-defining-annotated class even in a
+non-bean archive (the VAU-DISC-001 fix). That is exactly what the Mansart Data TCK relies on: its
+`@Singleton @Produces DataSource` lives in a `beanArchive(false)` archive, is not scanned, and must
+still be discovered (else every `@Repository` is unsatisfied → `EntityTests.setup` NPEs). So the two
+TCKs demand opposite answers for the *same* Vauban inputs — `beanArchive(false)` + BCE
+`ScannedClasses.add` + an annotated, non-scanned class. Verified: replacing the annotation bypass
+with `forcedBeanClasses.contains(...)` makes the CDI TCK 774/774 **but** regresses Mansart Data to
+73 errors ("DataSource bean not found"). Reverted.
 
 ### Status
-Tracked for a dedicated BCE `MetaAnnotations` pass. Not blocking the interception chantier.
+Needs a finer discovery signal than `beanArchive(boolean)` — a true CDI bean-discovery-mode
+(NONE vs ANNOTATED). The synthetic BCE-test archive is mode=NONE (discover only contributed classes);
+Mansart's deployment is effectively annotated discovery. Both currently map to `beanArchive(false)`
+in `VaubanDeployableContainer`, so they are indistinguishable. A proper fix threads bean-discovery-mode
+through the deployable container(s) + `BeanDiscovery`, and must be verified against BOTH the CDI TCK
+(774) and the Mansart Data TCK (73). Out of scope for the interception chantier; the bypass stays so
+Mansart stays green.
 
 ---
 

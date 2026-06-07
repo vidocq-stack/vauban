@@ -71,19 +71,10 @@ plus shared members: fields `$$manager / $$bindings / $$constructorBindings / $$
 `$$init(...)` setter the container calls right after construction.
 
 ```mermaid
-classDiagram
-    class CountedService {
-        +work() String
-    }
-    class CountedService$$Intercepted {
-        -$$manager : InterceptorManager
-        -$$bindings : Set
-        +work() String  «override»
-        +$$super$work() String  «invokespecial super.work»
-        -$$ti$work(Object, Object[]) Object  «static glue»
-        +$$init(manager, bindings, ctorBindings, ctx)
-    }
-    CountedService <|-- CountedService$$Intercepted : extends
+flowchart TB
+    Sub["CountedService$$Intercepted &nbsp;—&nbsp; extends CountedService<br/>fields: $$manager, $$bindings, $$constructorBindings, $$context<br/>+ work() &nbsp;«override — drives the chain»<br/>+ $$super$work() &nbsp;«invokespecial super.work()»<br/>- $$ti$work(target, params) &nbsp;«static glue → TargetInvoker»<br/>+ $$init(manager, bindings, ctorBindings, ctx)"]
+    Bean["CountedService<br/>+ work()"]
+    Sub -->|"extends · super.work()"| Bean
 ```
 
 ---
