@@ -97,6 +97,19 @@ class ComponentProviderCompileTimeTest {
 
         assertTrue(Files.exists(result.outputDir().resolve("app/_VaubanComponents.class")),
                 "the generated provider (with the args overload) must compile to a .class");
+
+        // The normal-scoped bean has only an injected (arg-bearing) constructor, yet it still gets a
+        // SOURCE client proxy whose no-arg ctor calls the injected super ctor with default values —
+        // so it is proxyable in-module (no opens/exports) without a no-arg constructor on the bean.
+        var proxySource = result.genDir().resolve("app/GreetingService_ClientProxy.java");
+        assertTrue(Files.exists(proxySource), "expected generated proxy source at " + proxySource);
+        var proxySrc = Files.readString(proxySource);
+        assertTrue(proxySrc.contains("super((app.Repo) null)"),
+                "proxy ctor must call the injected super ctor with default values: " + proxySrc);
+        assertTrue(src.contains("case \"app.GreetingService_ClientProxy\""),
+                "createClientProxy must instantiate the proxy in-module: " + src);
+        assertTrue(Files.exists(result.outputDir().resolve("app/GreetingService_ClientProxy.class")),
+                "the generated proxy must compile to a .class");
     }
 
     @Test

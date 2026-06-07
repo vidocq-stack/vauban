@@ -68,8 +68,13 @@ public final class ClientProxySourceRenderer {
         // Delegate supplier — set lazily via $$setDelegate (aligned with RuntimeClientProxyGenerator).
         sb.append("    private ").append(SUPPLIER).append(" $$delegate;\n\n");
 
-        // Constructor: only emitted for beans with an accessible no-arg ctor (the caller gates this).
-        sb.append("    public ").append(proxySimple).append("() { super(); }\n\n");
+        // No-arg constructor calling the simplest non-private super constructor with default values
+        // (null / 0 / false) — the proxy never uses the super state, it forwards to the delegate.
+        // Mirrors RuntimeClientProxyGenerator.findSimplestConstructor + pushDefault, so beans with
+        // only an injected (arg-bearing) constructor are still proxyable in-module. The caller gates
+        // on the presence of a non-private constructor.
+        sb.append("    public ").append(proxySimple).append("() { super(")
+                .append(superDefaultArgs(bean, elements, types)).append("); }\n\n");
 
         // Setter.
         sb.append("    public void $$setDelegate(").append(SUPPLIER).append(" d) { this.$$delegate = d; }\n\n");
@@ -82,6 +87,47 @@ public final class ClientProxySourceRenderer {
 
         sb.append("}\n");
         return new Generated(proxyBinary, sb.toString());
+    }
+
+    /**
+     * Renders the {@code super(...)} argument list calling the simplest non-private constructor with
+     * default values: an empty string for a no-arg ctor (or no declared ctor), else
+     * {@code (T0) null, 0, false, …} matching the chosen ctor's (erased) parameter types. Each
+     * reference default is cast so the call resolves unambiguously to the chosen constructor.
+     */
+    private static String superDefaultArgs(TypeElement bean, Elements elements, Types types) {
+        ExecutableElement simplest = null;
+        for (ExecutableElement c : ElementFilter.constructorsIn(bean.getEnclosedElements())) {
+            if (c.getModifiers().contains(Modifier.PRIVATE)) continue;
+            if (simplest == null || c.getParameters().size() < simplest.getParameters().size()) {
+                simplest = c;
+            }
+        }
+        if (simplest == null || simplest.getParameters().isEmpty()) {
+            return ""; // implicit/declared no-arg ctor -> super()
+        }
+        var sb = new StringBuilder();
+        var params = simplest.getParameters();
+        for (int i = 0; i < params.size(); i++) {
+            if (i > 0) sb.append(", ");
+            sb.append(defaultValueExpr(params.get(i).asType(), elements, types));
+        }
+        return sb.toString();
+    }
+
+    /** Default-value expression for a super-ctor argument: typed primitive zero, or {@code (T) null}. */
+    private static String defaultValueExpr(TypeMirror t, Elements elements, Types types) {
+        return switch (t.getKind()) {
+            case BOOLEAN -> "false";
+            case BYTE    -> "(byte) 0";
+            case SHORT   -> "(short) 0";
+            case INT     -> "0";
+            case LONG    -> "0L";
+            case CHAR    -> "(char) 0";
+            case FLOAT   -> "0.0f";
+            case DOUBLE  -> "0.0";
+            default      -> "(" + sourceName(t, elements, types) + ") null";
+        };
     }
 
     /** Mirrors {@code ClientProxyGenerator.shouldProxy}: skip ctor/static/private/final/abstract/{@code $$}. */

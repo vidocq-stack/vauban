@@ -345,11 +345,13 @@ public class VaubanProcessor extends AbstractProcessor {
                     var proxyBeanFqn = bean.beanClass().value();
                     var proxyTypeElement = isTopLevelType(proxyBeanFqn)
                             ? processingEnv.getElementUtils().getTypeElement(proxyBeanFqn) : null;
-                    if (proxyTypeElement != null && hasAccessibleNoArgCtor(proxyTypeElement)) {
+                    if (proxyTypeElement != null && hasNonPrivateCtor(proxyTypeElement)) {
                         // SOURCE proxy: the sibling _VaubanComponents provider does
                         // `new <Bean>_ClientProxy()` in-module (createClientProxy), so the bean package
                         // needs no opens/exports for proxy creation. Source (not bytecode) so the
                         // provider source can reference it by name (resolved in a later APT round).
+                        // The proxy ctor calls the simplest non-private super ctor with default values,
+                        // so beans with only an injected (arg-bearing) constructor are covered too.
                         var gen = ClientProxySourceRenderer.render(proxyTypeElement,
                                 processingEnv.getElementUtils(), processingEnv.getTypeUtils());
                         writeSourceFile(gen.className(), gen.source());
@@ -789,20 +791,19 @@ public class VaubanProcessor extends AbstractProcessor {
     }
 
     /**
-     * {@code true} when {@code te} can be instantiated via {@code new Te()} from a co-located class:
-     * it has an accessible (non-private) no-arg constructor, or no explicit constructor at all (the
-     * implicit no-arg ctor inherits the class's access). Gates SOURCE client-proxy generation — the
-     * proxy's {@code super()} call must resolve, otherwise the bean keeps the bytecode proxy +
-     * runtime fallback.
+     * {@code true} when {@code te} has a non-private constructor the proxy can call via {@code super}
+     * (a subclass cannot reach a private super ctor): either no explicit constructor (implicit no-arg)
+     * or at least one non-private declared ctor. Gates SOURCE client-proxy generation — the proxy
+     * calls the simplest non-private super ctor with default values; an all-private-ctor bean is
+     * unproxyable by subclassing and keeps the bytecode proxy + runtime fallback.
      */
-    private static boolean hasAccessibleNoArgCtor(javax.lang.model.element.TypeElement te) {
+    private static boolean hasNonPrivateCtor(javax.lang.model.element.TypeElement te) {
         var ctors = javax.lang.model.util.ElementFilter.constructorsIn(te.getEnclosedElements());
         if (ctors.isEmpty()) {
             return true; // implicit no-arg constructor
         }
         for (var c : ctors) {
-            if (c.getParameters().isEmpty()
-                    && !c.getModifiers().contains(javax.lang.model.element.Modifier.PRIVATE)) {
+            if (!c.getModifiers().contains(javax.lang.model.element.Modifier.PRIVATE)) {
                 return true;
             }
         }
