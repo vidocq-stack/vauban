@@ -51,6 +51,11 @@ public final class ComponentProviderClassGenerator {
             MethodTypeDesc.of(CD_Object, CD_String, CD_Object.arrayType());
     private static final MethodTypeDesc MTD_injectField =
             MethodTypeDesc.of(ConstantDescs.CD_boolean, CD_Object, CD_String, CD_String, CD_Object);
+    private static final ClassDesc CD_Supplier = ClassDesc.of("java.util.function.Supplier");
+    private static final MethodTypeDesc MTD_createClientProxy =
+            MethodTypeDesc.of(CD_Object, CD_String, CD_Supplier);
+    private static final MethodTypeDesc MTD_setDelegate =
+            MethodTypeDesc.of(ConstantDescs.CD_void, CD_Supplier);
 
     private ComponentProviderClassGenerator() {}
 
@@ -85,6 +90,23 @@ public final class ComponentProviderClassGenerator {
      */
     public static Generated generate(String providerClassName, List<Component> components,
             List<FieldInject> fieldInjects, List<MethodInvoke> methodInvokes) {
+        return generate(providerClassName, components, fieldInjects, methodInvokes, List.of());
+    }
+
+    /**
+     * @param providerClassName fully-qualified name of the provider to generate
+     * @param components        public beans to instantiate in-module (no-arg and injected-ctor)
+     * @param fieldInjects      field injection descriptors for in-package, non-private fields
+     * @param methodInvokes     method invocation descriptors for in-package methods
+     * @param clientProxyFqns   fully-qualified {@code <Bean>_ClientProxy} names (normal-scoped beans
+     *                          of this package) the provider instantiates in-module — {@code new
+     *                          <Bean>_ClientProxy()} + {@code $$setDelegate(delegate)} — so the
+     *                          container creates the proxy without reflection and without exporting
+     *                          the package (parity with the APT source generator)
+     */
+    public static Generated generate(String providerClassName, List<Component> components,
+            List<FieldInject> fieldInjects, List<MethodInvoke> methodInvokes,
+            List<String> clientProxyFqns) {
         var providerCD = ClassDesc.of(providerClassName);
         var noArg = components.stream().filter(Component::noArg).toList();
         var withArgs = components.stream().filter(c -> !c.noArg()).toList();
@@ -311,6 +333,39 @@ public final class ComponentProviderClassGenerator {
                     }
                     // No className/methodId matched — return the NOT_INVOKED sentinel
                     cob.getstatic(CD_Provider, "NOT_INVOKED", CD_Object);
+                    cob.areturn();
+                });
+            }
+
+            // public Object createClientProxy(String proxyClassName, Supplier delegate) {
+            //     if (proxyClassName.equals("a.B_ClientProxy")) {
+            //         var p = new a.B_ClientProxy(); p.$$setDelegate(delegate); return p;
+            //     }
+            //     ...
+            //     return null;
+            // }
+            // The bytecode references the (bytecode) <Bean>_ClientProxy by binary name — no javac
+            // wall here, so the plugin path needs no source proxy (unlike the APT). slots: 0=this,
+            // 1=proxyClassName, 2=delegate.
+            if (!clientProxyFqns.isEmpty()) {
+                clb.withMethodBody("createClientProxy", MTD_createClientProxy, ClassFile.ACC_PUBLIC, cob -> {
+                    for (var proxyFqn : clientProxyFqns) {
+                        var proxyCD = ClassDesc.of(proxyFqn);
+                        var next = cob.newLabel();
+                        cob.aload(1);
+                        cob.ldc(proxyFqn);
+                        cob.invokevirtual(CD_String, "equals", MTD_String_equals);
+                        cob.ifeq(next);
+                        cob.new_(proxyCD);
+                        cob.dup();
+                        cob.invokespecial(proxyCD, ConstantDescs.INIT_NAME, MTD_void); // new proxy()
+                        cob.dup();
+                        cob.aload(2);                                                  // delegate
+                        cob.invokevirtual(proxyCD, "$$setDelegate", MTD_setDelegate);
+                        cob.areturn();
+                        cob.labelBinding(next);
+                    }
+                    cob.aconst_null();
                     cob.areturn();
                 });
             }

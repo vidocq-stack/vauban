@@ -258,6 +258,68 @@ class ComponentProviderClassGeneratorTest {
                 "unknown methodId must return NOT_INVOKED sentinel");
     }
 
+    /**
+     * Verifies {@code createClientProxy} instantiates the listed {@code <Bean>_ClientProxy} in-module
+     * (new + $$setDelegate) and returns {@code null} for an unlisted proxy. Both the synthetic proxy
+     * class and the generated provider are loaded in the same {@link ByteClassLoader} (same package),
+     * mirroring the production named-module case.
+     */
+    @Test
+    @DisplayName("createClientProxy instantiates the proxy in-module and wires its delegate")
+    void createsClientProxyInModule() throws Exception {
+        var pkg = "io.vidocq.vauban.core.provider.test.proxy";
+        var proxyFqn = pkg + ".Bean_ClientProxy";
+        var providerFqn = pkg + "._GenProxyComponents";
+
+        // Minimal proxy: class Bean_ClientProxy {
+        //   java.util.function.Supplier $$delegate;            // package-private (read back in test)
+        //   public Bean_ClientProxy() { super(); }
+        //   public void $$setDelegate(Supplier d) { this.$$delegate = d; }
+        // }
+        var cdProxy = ClassDesc.of(proxyFqn);
+        var cdObject = ConstantDescs.CD_Object;
+        var cdSupplier = ClassDesc.of("java.util.function.Supplier");
+        var mtdVoid = MethodTypeDesc.of(ConstantDescs.CD_void);
+        byte[] proxyBytes = ClassFile.of().build(cdProxy, clb -> {
+            clb.withFlags(ClassFile.ACC_PUBLIC | ClassFile.ACC_SUPER | ClassFile.ACC_FINAL);
+            clb.withSuperclass(cdObject);
+            clb.withField("$$delegate", cdSupplier, 0); // package-private
+            clb.withMethodBody(ConstantDescs.INIT_NAME, mtdVoid, ClassFile.ACC_PUBLIC, cob -> {
+                cob.aload(0);
+                cob.invokespecial(cdObject, ConstantDescs.INIT_NAME, mtdVoid);
+                cob.return_();
+            });
+            clb.withMethodBody("$$setDelegate", MethodTypeDesc.of(ConstantDescs.CD_void, cdSupplier),
+                    ClassFile.ACC_PUBLIC, cob -> {
+                        cob.aload(0);
+                        cob.aload(1);
+                        cob.putfield(cdProxy, "$$delegate", cdSupplier);
+                        cob.return_();
+                    });
+        });
+
+        var gen = ComponentProviderClassGenerator.generate(
+                providerFqn, List.of(), List.of(), List.of(), List.of(proxyFqn));
+
+        var loader = new ByteClassLoader(getClass().getClassLoader());
+        var proxyClass = loader.define(proxyFqn, proxyBytes);
+        var providerClass = loader.define(gen.className(), gen.bytecode());
+        var provider = (VaubanComponentProvider) providerClass.getDeclaredConstructor().newInstance();
+
+        java.util.function.Supplier<Object> delegate = () -> "contextual";
+        var proxy = provider.createClientProxy(proxyFqn, delegate);
+        assertInstanceOf(proxyClass, proxy, "createClientProxy must instantiate the proxy in-module");
+
+        var delegateField = proxyClass.getDeclaredField("$$delegate");
+        delegateField.setAccessible(true);
+        assertSame(delegate, delegateField.get(proxy), "$$setDelegate must have stored the delegate");
+
+        assertNotSame(proxy, provider.createClientProxy(proxyFqn, delegate),
+                "each createClientProxy call returns a fresh proxy");
+        assertNull(provider.createClientProxy("does.not.Exist_ClientProxy", delegate),
+                "unlisted proxy must return null");
+    }
+
     /** Minimal loader exposing {@code defineClass} for the generated provider bytecode. */
     private static final class ByteClassLoader extends ClassLoader {
         ByteClassLoader(ClassLoader parent) {

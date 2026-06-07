@@ -284,6 +284,10 @@ public final class VaubanGenerator {
 
         // Build the list of eligible managed classes: non-nested, in this module's classes dir.
         var provided = new ArrayList<ProvidedClass>();
+        // Normal-scoped beans of this module get a <Bean>_ClientProxy (generated above via
+        // RuntimeClientProxyGenerator); record them so the per-package provider can instantiate the
+        // proxy in-module (createClientProxy → new <Bean>_ClientProxy()), no opens/exports needed.
+        var clientProxyFqns = new java.util.LinkedHashSet<String>();
         for (var bean : beans) {
             if (bean.kind() != BeanKind.MANAGED) continue;
             var fqn = bean.beanClass().value();
@@ -293,6 +297,9 @@ public final class VaubanGenerator {
             if (ci == null) continue;
             // instantiable=true: let ComponentCollector determine the constructor strategy
             provided.add(new ProvidedClass(fqn, ci, true));
+            if (bean.scope().isNormal()) {
+                clientProxyFqns.add(fqn + "_ClientProxy");
+            }
         }
 
         var packages = ComponentCollector.collect(provided, warnings);
@@ -302,9 +309,13 @@ public final class VaubanGenerator {
         for (var pkg : packages) {
             var providerFqn = pkg.providerFqn();
             try {
+                // Proxies of this package's beans (FQN package equals the provider's package).
+                var pkgProxies = clientProxyFqns.stream()
+                        .filter(p -> packageOf(p).equals(pkg.packageName()))
+                        .toList();
                 // Bytecode generator handles both no-arg and injected-constructor components.
                 var gen = io.vidocq.vauban.core.provider.ComponentProviderClassGenerator.generate(
-                        providerFqn, pkg.components(), pkg.fields(), pkg.methods());
+                        providerFqn, pkg.components(), pkg.fields(), pkg.methods(), pkgProxies);
                 writeClassFile(config.outputDir(), gen.className(), gen.bytecode());
                 providerFqns.add(providerFqn);
             } catch (Exception e) {
@@ -441,6 +452,12 @@ public final class VaubanGenerator {
         var classFilePath = outputDir.resolve(className.replace('.', '/') + ".class");
         Files.createDirectories(classFilePath.getParent());
         Files.write(classFilePath, bytecode);
+    }
+
+    /** Package of a top-level FQN — the substring before the last dot, or {@code ""} (default package). */
+    private static String packageOf(String fqn) {
+        int dot = fqn.lastIndexOf('.');
+        return dot < 0 ? "" : fqn.substring(0, dot);
     }
 
     private static List<Class<?>> discoverBceClasses(ClassLoader cl) {
