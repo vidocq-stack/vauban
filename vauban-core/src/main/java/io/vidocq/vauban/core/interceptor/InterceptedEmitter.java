@@ -1,9 +1,13 @@
 package io.vidocq.vauban.core.interceptor;
 
+import java.lang.classfile.ClassBuilder;
 import java.lang.classfile.ClassFile;
 import java.lang.classfile.CodeBuilder;
 import java.lang.constant.ClassDesc;
 import java.lang.constant.ConstantDescs;
+import java.lang.constant.DirectMethodHandleDesc;
+import java.lang.constant.DynamicCallSiteDesc;
+import java.lang.constant.MethodHandleDesc;
 import java.lang.constant.MethodTypeDesc;
 
 /**
@@ -42,6 +46,28 @@ public final class InterceptedEmitter {
     private static final String FIELD_BINDINGS = "$$bindings";
     private static final String FIELD_CONTEXT = "$$context";
     private static final String METHOD_VALUEOF = "valueOf";
+
+    /** Erased signature of {@code TargetInvoker.invoke} and of every generated {@code $$ti$<name>}. */
+    private static final MethodTypeDesc MTD_TARGET_INVOKER =
+            MethodTypeDesc.of(CD_Object, CD_Object, CD_Object.arrayType());
+
+    /**
+     * Bootstrap handle for {@code LambdaMetafactory.metafactory} — turns a generated
+     * {@code $$ti$<name>} static method into a {@code TargetInvoker} instance at link time, so the
+     * interceptor chain invokes the original method through a plain (non-reflective) lambda call.
+     */
+    private static final DirectMethodHandleDesc BSM_LAMBDA_METAFACTORY = MethodHandleDesc.ofMethod(
+            DirectMethodHandleDesc.Kind.STATIC,
+            ClassDesc.of("java.lang.invoke.LambdaMetafactory"),
+            "metafactory",
+            MethodTypeDesc.of(
+                    ConstantDescs.CD_CallSite,
+                    ConstantDescs.CD_MethodHandles_Lookup,
+                    ConstantDescs.CD_String,
+                    ConstantDescs.CD_MethodType,
+                    ConstantDescs.CD_MethodType,
+                    ConstantDescs.CD_MethodHandle,
+                    ConstantDescs.CD_MethodType));
 
     private InterceptedEmitter() {}
 
@@ -110,10 +136,11 @@ public final class InterceptedEmitter {
                         cob.return_();
                     });
 
-            // Override each interceptable method + generate $$super$ bridge
+            // Override each interceptable method + generate $$super$ bridge + $$ti$ glue
             for (MethodShape method : shape.methods()) {
                 generateSuperBridge(clb, beanCD, method);
                 generateInterceptedMethod(clb, subclassCD, beanCD, method);
+                generateTargetInvokerGlue(clb, subclassCD, method);
             }
         });
     }
@@ -244,7 +271,20 @@ public final class InterceptedEmitter {
                     cob.aconst_null(); // constructor
                     cob.aload(aSlot);
                     cob.aload(cSlot);
-                    cob.aconst_null(); // targetInvoker
+                    // targetInvoker: an in-module lambda (no captures) calling $$ti$<name> →
+                    // $$super$<name> → super.<name>(…). So the chain end invokes the original method
+                    // with no reflection (the $$super$ Method above is still used only for binding
+                    // resolution / ctx.getMethod()). LambdaMetafactory spins the lambda in the bean's
+                    // own module — AOT-friendly, and needs no opens.
+                    cob.invokedynamic(DynamicCallSiteDesc.of(
+                            BSM_LAMBDA_METAFACTORY,
+                            "invoke",
+                            MethodTypeDesc.of(CD_TargetInvoker),
+                            MTD_TARGET_INVOKER,
+                            MethodHandleDesc.ofMethod(
+                                    DirectMethodHandleDesc.Kind.STATIC,
+                                    subclassCD, "$$ti$" + method.name(), MTD_TARGET_INVOKER),
+                            MTD_TARGET_INVOKER));
                     cob.invokespecial(CD_VaubanInvocationContext, ConstantDescs.INIT_NAME,
                             MethodTypeDesc.of(ConstantDescs.CD_void,
                                     CD_Object, CD_Method, CD_Constructor, CD_Object.arrayType(), CD_List,
@@ -274,6 +314,75 @@ public final class InterceptedEmitter {
                         cob.areturn();
                     }
                 });
+    }
+
+    /**
+     * Generate the {@code private static Object $$ti$<name>(Object target, Object[] params)} glue
+     * that the {@link DynamicCallSiteDesc} above lifts into a {@code TargetInvoker}. It casts the
+     * target to the subclass, unboxes each argument from {@code params}, calls the public
+     * {@code $$super$<name>} bridge, and boxes the result (or returns {@code null} for {@code void}).
+     */
+    private static void generateTargetInvokerGlue(ClassBuilder clb, ClassDesc subclassCD,
+            MethodShape method) {
+        ClassDesc returnCD = method.returnType().classDesc();
+        var paramCDs = method.params().stream()
+                .map(TypeRef::classDesc)
+                .toArray(ClassDesc[]::new);
+        var superType = MethodTypeDesc.of(returnCD, paramCDs);
+
+        clb.withMethodBody(
+                "$$ti$" + method.name(),
+                MTD_TARGET_INVOKER,
+                ClassFile.ACC_PRIVATE | ClassFile.ACC_STATIC | ClassFile.ACC_SYNTHETIC,
+                cob -> {
+                    cob.aload(0);              // target
+                    cob.checkcast(subclassCD); // -> <bean>$$Intercepted
+                    var params = method.params();
+                    for (int i = 0; i < params.size(); i++) {
+                        cob.aload(1);          // Object[] params
+                        cob.loadConstant(i);
+                        cob.aaload();
+                        castOrUnboxParam(cob, params.get(i));
+                    }
+                    cob.invokevirtual(subclassCD, "$$super$" + method.name(), superType);
+                    boxResultAndReturn(cob, method.returnType());
+                });
+    }
+
+    /** Stack: an {@code Object} (a {@code params[i]} element) → the typed/unboxed argument. */
+    private static void castOrUnboxParam(CodeBuilder cob, TypeRef p) {
+        if (!p.isPrimitive()) {
+            if (!p.classDesc().equals(CD_Object)) {
+                cob.checkcast(p.classDesc());
+            }
+            return;
+        }
+        ClassDesc wrapperCD = p.wrapperClassDesc();
+        ClassDesc primCD = p.classDesc();
+        cob.checkcast(wrapperCD);
+        switch (p.primitiveKind()) {
+            case BOOLEAN -> cob.invokevirtual(wrapperCD, "booleanValue", MethodTypeDesc.of(primCD));
+            case BYTE -> cob.invokevirtual(wrapperCD, "byteValue", MethodTypeDesc.of(primCD));
+            case CHAR -> cob.invokevirtual(wrapperCD, "charValue", MethodTypeDesc.of(primCD));
+            case SHORT -> cob.invokevirtual(wrapperCD, "shortValue", MethodTypeDesc.of(primCD));
+            case INT -> cob.invokevirtual(wrapperCD, "intValue", MethodTypeDesc.of(primCD));
+            case LONG -> cob.invokevirtual(wrapperCD, "longValue", MethodTypeDesc.of(primCD));
+            case FLOAT -> cob.invokevirtual(wrapperCD, "floatValue", MethodTypeDesc.of(primCD));
+            case DOUBLE -> cob.invokevirtual(wrapperCD, "doubleValue", MethodTypeDesc.of(primCD));
+            default -> { /* not reached */ }
+        }
+    }
+
+    /** Stack: the {@code $$super$} return value → boxed {@code Object} ({@code null} for void), then areturn. */
+    private static void boxResultAndReturn(CodeBuilder cob, TypeRef ret) {
+        if (ret.isVoid()) {
+            cob.aconst_null();
+        } else if (ret.isPrimitive()) {
+            ClassDesc wrapperCD = ret.wrapperClassDesc();
+            cob.invokestatic(wrapperCD, METHOD_VALUEOF,
+                    MethodTypeDesc.of(wrapperCD, ret.classDesc()));
+        }
+        cob.areturn();
     }
 
     private static int boxAndLoad(CodeBuilder cob, TypeRef type, int slot) {
