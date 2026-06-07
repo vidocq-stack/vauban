@@ -640,7 +640,11 @@ public final class EventDispatcher {
                                 : container.selectByBeanClass(beanClass));
                 try {
                     if (method.getParameterCount() == 1) {
-                        container.getVaubanLookup().invokeMethod(beanInstance, method, event);
+                        try {
+                            container.getVaubanLookup().invokeMethod(beanInstance, method, event);
+                        } catch (jakarta.enterprise.inject.CreationException ce) {
+                            throw asObserverException(ce, observer);
+                        }
                     } else {
                         var ctx = new io.vidocq.vauban.core.context.CreationalContextImpl<>();
                         var paramTypes = method.getParameterTypes();
@@ -705,6 +709,8 @@ public final class EventDispatcher {
                         }
                         try {
                             container.getVaubanLookup().invokeMethod(beanInstance, method, args);
+                        } catch (jakarta.enterprise.inject.CreationException ce) {
+                            throw asObserverException(ce, observer);
                         } finally {
                             ctx.release();
                         }
@@ -722,6 +728,29 @@ public final class EventDispatcher {
                     "Failed to invoke observer: " + observer.declaringClass().value()
                             + "." + observer.methodName(), e);
         }
+    }
+
+    /**
+     * Re-maps the exception {@link io.vidocq.vauban.core.container.VaubanLookup#invokeMethod} raises
+     * for an observer body. That method propagates a {@link RuntimeException} / {@link Error} from the
+     * target unwrapped, but wraps a <em>checked</em> exception in a
+     * {@link jakarta.enterprise.inject.CreationException}. CDI requires a checked exception from a
+     * synchronous observer to surface as an {@link jakarta.enterprise.event.ObserverException}, so a
+     * {@code CreationException} seen here (always wrapping the observer's own checked exception) is
+     * unwrapped and rewrapped accordingly.
+     */
+    private static RuntimeException asObserverException(
+            jakarta.enterprise.inject.CreationException ce, ObserverDescriptor observer) {
+        var cause = ce.getCause();
+        if (cause instanceof RuntimeException re) {
+            return re;
+        }
+        if (cause instanceof Error err) {
+            throw err;
+        }
+        return new jakarta.enterprise.event.ObserverException(
+                "Observer threw a checked exception: " + observer.declaringClass().value()
+                        + "." + observer.methodName(), cause != null ? cause : ce);
     }
 
     private Class<?> resolveObservedType(TypeInfo typeInfo) {
