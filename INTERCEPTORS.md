@@ -70,11 +70,15 @@ The generated subclass contains, per interceptable method `work`:
 plus shared members: fields `$$manager / $$bindings / $$constructorBindings / $$context`, and an
 `$$init(...)` setter the container calls right after construction.
 
+> In the diagrams below the generated `$$`-prefixed members are shown by role (the exact names
+> `$$manager`, `$$super$work`, `$$ti$work`, `$$init`, `$$Intercepted` are kept in the prose) — a `$`
+> in a mermaid label is parsed as a math delimiter by some renderers and breaks the diagram.
+
 ```mermaid
 flowchart TB
-    Sub["CountedService$$Intercepted &nbsp;—&nbsp; extends CountedService<br/>fields: $$manager, $$bindings, $$constructorBindings, $$context<br/>+ work() &nbsp;«override — drives the chain»<br/>+ $$super$work() &nbsp;«invokespecial super.work()»<br/>- $$ti$work(target, params) &nbsp;«static glue → TargetInvoker»<br/>+ $$init(manager, bindings, ctorBindings, ctx)"]
-    Bean["CountedService<br/>+ work()"]
-    Sub -->|"extends · super.work()"| Bean
+    Sub["CountedService (Intercepted subclass) — extends CountedService<br/>bookkeeping fields: manager, bindings, constructorBindings, context<br/>+ work() override — builds the context, drives the chain<br/>+ super-bridge — invokespecial super.work()<br/>- target-invoker glue — static, lifted to a TargetInvoker<br/>+ init(manager, bindings, ctorBindings, ctx)"]
+    Bean["CountedService (original)<br/>+ work()"]
+    Sub -->|"extends · calls super.work()"| Bean
 ```
 
 ---
@@ -114,18 +118,18 @@ sequenceDiagram
     participant Body as super.work()
 
     App->>Sub: work()
-    alt $$manager == null (pre-init)
+    alt manager not yet set (pre-init)
         Sub->>Body: super.work() directly
     else intercepted
-        Sub->>IM: resolveChainForMethod(bindings, $$super$work, this, ctx)
+        Sub->>IM: resolveChainForMethod(bindings, super-bridge, this, ctx)
         IM-->>Sub: ordered chain = [AuditInterceptor]
-        Sub->>Ctx: new(this, method, args, chain, targetInvoker = λ→$$ti$work)
+        Sub->>Ctx: new(this, method, args, chain, targetInvoker = lambda over glue)
         Sub->>Ctx: proceed()
         Ctx->>Int: audit(ctx)
         Int->>Ctx: ctx.proceed()
         Note over Ctx: chain exhausted → invoke targetInvoker (no reflection)
         Ctx->>TI: invoke(target, params)
-        TI->>Body: $$super$work() → super.work()
+        TI->>Body: super-bridge → super.work()
         Body-->>TI: "done"
         TI-->>Ctx: "done"
         Ctx-->>Int: "done"
@@ -167,8 +171,8 @@ module that keeps one.
 ```mermaid
 flowchart LR
     subgraph BeanMod["bean module — NO opens"]
-      Bean[CountedService] --> Sub[CountedService$$Intercepted]
-      Comp[_VaubanComponents<br/>create / injectField / invoke]
+      Bean[CountedService] --> Sub["CountedService (Intercepted subclass)"]
+      Comp["_VaubanComponents<br/>create / injectField / invoke"]
     end
     subgraph IntMod["interceptor module — keeps opens (site 4)"]
       Int[AuditInterceptor @AroundInvoke]
@@ -215,8 +219,8 @@ proof vehicle had to reproduce that two-step (`javac --patch-module … module-i
 flowchart TB
     subgraph BuildTime["Build time"]
       direction TB
-      APT[Vauban APT] --> A1[«bean»$$Intercepted .class]
-      APT --> A2[_VaubanComponents<br/>source, or BYTECODE if pkg has interceptor]
+      APT[Vauban APT] --> A1["(bean) Intercepted subclass .class"]
+      APT --> A2["_VaubanComponents<br/>source, or BYTECODE if pkg has interceptor"]
       APT --> A3[META-INF/vauban-beans.list]
     end
     subgraph RunTime["Run time"]
@@ -227,8 +231,8 @@ flowchart TB
       SPI[(VaubanComponentProvider SPI<br/>ServiceLoader / module 'provides')]
       I -->|create name,args| SPI
       SPI --> A2
-      I --> N[new «bean»$$Intercepted in-module]
-      N --> INIT[$$init: manager, bindings, ctx]
+      I --> N["new (bean) Intercepted subclass in-module"]
+      N --> INIT["init(): manager, bindings, ctx"]
     end
     A1 -. loaded as sibling .-> N
     A3 --> D
