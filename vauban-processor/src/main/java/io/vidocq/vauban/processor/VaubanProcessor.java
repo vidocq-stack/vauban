@@ -726,10 +726,26 @@ public class VaubanProcessor extends AbstractProcessor {
         return false;
     }
 
-    /** An interceptor binding is an annotation type itself meta-annotated {@code @InterceptorBinding}. */
+    /**
+     * An interceptor binding is an annotation type itself meta-annotated {@code @InterceptorBinding}.
+     *
+     * <p>Detected by NAME over the annotation type's own meta-mirrors, NOT via
+     * {@code getAnnotation(InterceptorBinding.class)}. The class-literal form forces javac to complete
+     * the {@code jakarta.interceptor.InterceptorBinding} symbol; that completion throws a
+     * {@code CompletionFailure} when the binding marker is declared in a dependency module that only
+     * {@code requires static jakarta.interceptor} (e.g. heisenberg's {@code @FaultToleranceBinding}) and
+     * is processed from a downstream module on a strict module path — the marker module's read edge to
+     * {@code jakarta.interceptor} is absent from the consumer's module graph. Reading a meta-mirror's
+     * type name only touches the constant pool, so it never triggers completion — the same name-based
+     * pattern already used for the {@code @Interceptor} check in {@link #isInterceptedTarget}.
+     */
     private static boolean isInterceptorBinding(javax.lang.model.element.AnnotationMirror am) {
-        return am.getAnnotationType().asElement()
-                .getAnnotation(jakarta.interceptor.InterceptorBinding.class) != null;
+        for (var meta : am.getAnnotationType().asElement().getAnnotationMirrors()) {
+            if (meta.getAnnotationType().toString().equals("jakarta.interceptor.InterceptorBinding")) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**
