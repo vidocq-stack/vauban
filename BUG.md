@@ -5,6 +5,52 @@ suspected cause, status. Updated on every investigation.
 
 ---
 
+## VAU-BCE-001 — `MetaAnnotations.addStereotype(...)` from a BCE is not honored
+- **Date**: 2026-06-07 — **Status**: OPEN
+- **Severity**: low (CDI Lite BCE feature gap; 1 CDI TCK failure)
+- **Surfaced by**: CDI TCK `CustomStereotypeTest` (`build.compatible.extensions.customStereotype`).
+
+### Symptom
+`CustomStereotypeTest.test` fails with `expected [true] but found [false]`. The test's
+`@Enhancement` registers a **custom stereotype at build time** via
+`MetaAnnotations.addStereotype(MyCustomStereotype.class).addAnnotation(ApplicationScoped.class)`,
+then expects a `@MyCustomStereotype`-annotated bean (`MyService`) to inherit the stereotype's
+`@ApplicationScoped` scope. Vauban does not, so the bean is not application-scoped.
+
+### Cause (suspected)
+Vauban's `MetaAnnotations` / BCE `@Enhancement` implementation does not record a class registered
+via `addStereotype(...)` as a stereotype, nor apply the annotations configured on the returned
+`ClassConfig`. Bean discovery only recognises `@Stereotype`-meta-annotated types, so a
+build-time-registered stereotype (and its synthesized scope) is ignored. Unrelated to the
+interception/zero-opens work (no BCE/stereotype code touched there); pre-existing.
+
+### Status
+Tracked for a dedicated BCE `MetaAnnotations` pass. Not blocking the interception chantier.
+
+---
+
+## VAU-EVT-001 — checked exception from a synchronous observer wrapped as CreationException
+- **Date**: 2026-06-07 — **Status**: FIXED (commit on `pr/ybl/wip-bce-static-metadata`)
+- **Severity**: medium (CDI TCK `CheckedExceptionWrappedTest`)
+
+### Symptom
+A synchronous observer throwing a **checked** exception surfaced as `CreationException` instead of
+the CDI-required `ObserverException`.
+
+### Cause
+When observer dispatch was rerouted through `VaubanLookup.invokeMethod` (in-module provider first,
+reflective fallback), `invokeMethod` wraps a non-runtime throwable in `CreationException` — correct
+for producers, wrong for observers. `CreationException extends RuntimeException`, so the dispatch's
+`catch (RuntimeException) rethrow` branch re-threw it verbatim and the
+`catch (Exception) -> ObserverException` branch became unreachable.
+
+### Fix
+`EventDispatcher` now wraps each observer-method invocation: a `CreationException` from
+`invokeMethod` (which always wraps the observer's own checked exception — runtime exceptions/errors
+are propagated unwrapped) is unwrapped and rethrown as `ObserverException`. CDI TCK: 2 → 1 failure.
+
+---
+
 ## VAU-DISC-001 — non-bean archive + BCE `ScannedClasses` suppressed annotated beans (incl. `@Produces`)
 - **Date**: 2026-06-02 — **Status**: FIXED
 - **Severity**: high (any non-bean archive whose Build Compatible Extension calls
