@@ -86,6 +86,10 @@ public class VaubanDeployableContainer implements DeployableContainer<VaubanCont
             var builder = VaubanContainer.builder();
             builder.classLoader(archiveClassLoader);
             builder.beanArchive(hasBeanArchiveDescriptor);
+            // A CDI TCK archive with no beans.xml is a CDI-Lite synthetic deployment: discover only
+            // BCE-contributed classes (ScannedClasses), never an otherwise-uncontributed annotated
+            // class (CustomStereotypeTest). Mansart's runner keeps the default "annotated" mode.
+            builder.strictScannedDiscovery(!hasBeanArchiveDescriptor);
             for (var className : classNames) {
                 try {
                     var clazz = archiveClassLoader.loadClass(className);

@@ -32,6 +32,7 @@ public final class VaubanContainerBuilder {
     private ClassLoader classLoader;
     private java.lang.invoke.MethodHandles.Lookup lookup;
     private boolean isBeanArchive = true;
+    private boolean strictScannedDiscovery = false;
     private final Set<Class<?>> forcedDiscoveryClasses = new java.util.LinkedHashSet<>();
     private VaubanLookup builderLookup;
     private final List<io.vidocq.vauban.classloader.spi.ByteSourcePlugin> byteSourcePlugins = new ArrayList<>();
@@ -100,6 +101,19 @@ public final class VaubanContainerBuilder {
 
     public VaubanContainerBuilder beanArchive(boolean isBeanArchive) {
         this.isBeanArchive = isBeanArchive;
+        return this;
+    }
+
+    /**
+     * Picks the bean-discovery mode for a non-bean archive whose discovery is restricted to a
+     * BCE-scanned set ({@code beanArchive(false)} + {@code ScannedClasses.add}).
+     * {@code true} = CDI-Lite "none" mode (discover only explicitly-contributed classes — used by the
+     * CDI TCK's {@code withoutBeansXml()} BCE archives); {@code false} (default) = "annotated" mode
+     * (a bean-defining annotation still triggers discovery — Mansart Data relies on this).
+     * See {@link io.vidocq.vauban.core.bean.discovery.BeanDiscovery#setStrictScannedDiscovery(boolean)}.
+     */
+    public VaubanContainerBuilder strictScannedDiscovery(boolean strict) {
+        this.strictScannedDiscovery = strict;
         return this;
     }
 
@@ -873,6 +887,7 @@ public final class VaubanContainerBuilder {
             }
 
             var discovery = new BeanDiscovery(index);
+            discovery.setStrictScannedDiscovery(strictScannedDiscovery);
 
             // Apply @Discovery results to BeanDiscovery
             if (discoveryResult != null) {

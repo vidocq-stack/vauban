@@ -94,9 +94,31 @@ public final class BeanDiscovery {
 
     private Set<DotName> scannedClassesFilter = Set.of();
     private Set<DotName> forcedBeanClasses = Set.of();
+    private boolean strictScannedDiscovery = false;
 
     public void setScannedClassesFilter(Set<DotName> filter) {
         this.scannedClassesFilter = filter;
+    }
+
+    /**
+     * Selects the bean-discovery mode for a non-bean archive whose discovery is restricted by a
+     * scanned-classes filter (a BCE used {@code ScannedClasses.add}).
+     *
+     * <ul>
+     *   <li>{@code false} (default, <em>annotated</em> mode): a bean-defining annotation also makes
+     *       a class a discovery candidate — so an annotated bean (e.g. a {@code @Produces} bean)
+     *       contributed to the deployment but not in the scanned set is still discovered
+     *       (VAU-DISC-001 — Mansart Data relies on this).</li>
+     *   <li>{@code true} (<em>none</em> / CDI-Lite synthetic mode): only explicitly-contributed
+     *       classes (BCE {@code ScannedClasses} + class-path bean-archive scan, i.e.
+     *       {@code forcedBeanClasses}) are beans; a bean-defining annotation alone does NOT make an
+     *       otherwise-uncontributed class a bean (CDI TCK {@code CustomStereotypeTest}: a non-scanned
+     *       {@code @Dependent} class stays undiscovered). The CDI TCK runner sets this for its
+     *       {@code withoutBeansXml()} BCE archives.</li>
+     * </ul>
+     */
+    public void setStrictScannedDiscovery(boolean strict) {
+        this.strictScannedDiscovery = strict;
     }
 
     /** Classes added via ScannedClasses that bypass bean-defining annotation check. */
@@ -115,10 +137,17 @@ public final class BeanDiscovery {
         if (scannedClassesFilter.isEmpty() || scannedClassesFilter.contains(classInfo.name())) {
             return true;
         }
-        // Annotated discovery mode: a class carrying a bean-defining annotation is always a
+        // "none" / CDI-Lite synthetic mode: only explicitly-contributed classes (forcedBeanClasses)
+        // are beans — a bean-defining annotation does NOT admit an otherwise-uncontributed class
+        // (CustomStereotypeTest: a non-scanned @Dependent class stays undiscovered).
+        if (strictScannedDiscovery) {
+            return forcedBeanClasses.contains(classInfo.name());
+        }
+        // "annotated" mode (default): a class carrying a bean-defining annotation is also a
         // discovery candidate. The scanned-classes filter only governs whether *non-annotated*
         // classes (those a BCE forces in via ScannedClasses.add in a non-bean archive) are scanned;
-        // it must never hide a legitimately-annotated bean — including its @Produces members.
+        // it must never hide a legitimately-annotated bean — including its @Produces members
+        // (VAU-DISC-001 — Mansart Data relies on this).
         return hasBeanDefiningAnnotation(classInfo)
                 || hasBeanDefiningAnnotationViaReflection(classInfo.name());
     }
