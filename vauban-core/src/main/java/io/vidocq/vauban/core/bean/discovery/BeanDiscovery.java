@@ -56,9 +56,9 @@ public final class BeanDiscovery {
     private static final DotName TYPED = DotName.of("jakarta.enterprise.inject.Typed");
     private static final DotName PRODUCES = DotName.of("jakarta.enterprise.inject.Produces");
     private static final DotName INJECT = DotName.of("jakarta.inject.Inject");
-    private static final DotName ALTERNATIVE = DotName.of("jakarta.enterprise.inject.Alternative");
+    static final DotName ALTERNATIVE = DotName.of("jakarta.enterprise.inject.Alternative");
     private static final DotName PRIORITY = DotName.of("jakarta.annotation.Priority");
-    private static final DotName NAMED = DotName.of("jakarta.inject.Named");
+    static final DotName NAMED = DotName.of("jakarta.inject.Named");
     static final DotName OBSERVES = DotName.of("jakarta.enterprise.event.Observes");
     static final DotName OBSERVES_ASYNC = DotName.of("jakarta.enterprise.event.ObservesAsync");
     static final DotName INTERCEPTOR = DotName.of("jakarta.interceptor.Interceptor");
@@ -66,7 +66,7 @@ public final class BeanDiscovery {
     static final DotName INTERCEPTOR_BINDING = DotName.of("jakarta.interceptor.InterceptorBinding");
     static final DotName AROUND_CONSTRUCT = DotName.of("jakarta.interceptor.AroundConstruct");
     static final DotName DISPOSES = DotName.of("jakarta.enterprise.inject.Disposes");
-    private static final DotName STEREOTYPE = DotName.of("jakarta.enterprise.inject.Stereotype");
+    static final DotName STEREOTYPE = DotName.of("jakarta.enterprise.inject.Stereotype");
 
     static final String PREFIX_JAVA_ANNOTATION = "java.lang.annotation.";
     static final String PREFIX_JAKARTA_INTERCEPTOR = "jakarta.interceptor.";
@@ -78,13 +78,14 @@ public final class BeanDiscovery {
     final VaubanIndex index;
     private Set<DotName> customQualifiers = Set.of();
     Set<DotName> customInterceptorBindings = Set.of();
-    private Set<DotName> customStereotypes = Set.of();
-    private Map<DotName, Set<Class<? extends java.lang.annotation.Annotation>>> customStereotypeAnnotations = Map.of();
+    Set<DotName> customStereotypes = Set.of();
+    Map<DotName, Set<Class<? extends java.lang.annotation.Annotation>>> customStereotypeAnnotations = Map.of();
     private Map<String, Set<String>> customNonbindingMembers = Map.of();
 
     // Topic-focused collaborators (extracted from this class — it stays the facade)
     private final ObserverDisposerDiscovery observerDisposers = new ObserverDisposerDiscovery(this);
     private final InterceptorDiscovery interceptorDiscovery = new InterceptorDiscovery(this);
+    private final StereotypeResolver stereotypes = new StereotypeResolver(this);
 
     public BeanDiscovery(VaubanIndex index) {
         this.index = Objects.requireNonNull(index);
@@ -350,132 +351,16 @@ public final class BeanDiscovery {
     }
 
     private boolean isAlternativeWithStereotypes(ClassInfo classInfo) {
-        if (classInfo.hasAnnotation(ALTERNATIVE)) return true;
-        // Check inherited @Alternative
-        for (var ann : getInheritedAnnotations(classInfo)) {
-            if (DotName.of(ann.annotationType().getName()).equals(ALTERNATIVE)) return true;
-        }
-        // Check stereotypes for @Alternative (direct + transitive)
-        var allAnnotationNames = getAllAnnotationNames(classInfo);
-        for (var annName : allAnnotationNames) {
-            if (isStereotype(annName) && isAlternativeStereotype(annName, new java.util.HashSet<>())) {
-                return true;
-            }
-        }
-        return false;
-    }
-
-    private boolean isAlternativeStereotype(DotName stereotypeName, Set<DotName> visited) {
-        if (!visited.add(stereotypeName)) return false;
-        var stereotypeClass = index.getClassByName(stereotypeName);
-        if (stereotypeClass.isPresent()) {
-            if (stereotypeClass.get().hasAnnotation(ALTERNATIVE)) return true;
-            // Check transitive stereotypes
-            for (var ann : stereotypeClass.get().annotations()) {
-                if (isStereotype(ann.name()) && isAlternativeStereotype(ann.name(), visited)) {
-                    return true;
-                }
-            }
-        } else {
-            // Reflection fallback
-            try {
-                var cl = Thread.currentThread().getContextClassLoader();
-                var annType = cl != null ? Class.forName(stereotypeName.value(), false, cl)
-                        : Class.forName(stereotypeName.value());
-                if (annType.isAnnotationPresent(jakarta.enterprise.inject.Alternative.class)) return true;
-                for (var metaAnn : annType.getAnnotations()) {
-                    if (metaAnn.annotationType().isAnnotationPresent(jakarta.enterprise.inject.Stereotype.class)
-                            && isAlternativeStereotype(DotName.of(metaAnn.annotationType().getName()), visited)) {
-                        return true;
-                    }
-                }
-            } catch (ClassNotFoundException e) { /* skip */ }
-        }
-        return false;
+        return stereotypes.isAlternativeWithStereotypes(classInfo);
     }
 
     private int extractPriorityWithStereotypes(ClassInfo classInfo) {
-        int priority = extractPriority(classInfo.annotations());
-        if (priority > 0) return priority;
-        // Check via reflection (more reliable for annotation member values)
-        try {
-            var cl = Thread.currentThread().getContextClassLoader();
-            var clazz = cl != null ? Class.forName(classInfo.name().value(), false, cl)
-                    : Class.forName(classInfo.name().value());
-            if (clazz.isAnnotationPresent(jakarta.annotation.Priority.class)) {
-                return clazz.getAnnotation(jakarta.annotation.Priority.class).value();
-            }
-        } catch (Exception e) { /* skip */ }
-        // Search through stereotypes (including transitive)
-        var allAnnotationNames = getAllAnnotationNames(classInfo);
-        for (var annName : allAnnotationNames) {
-            if (isStereotype(annName)) {
-                int stereotypePriority = extractPriorityFromStereotypeRecursive(annName, new java.util.HashSet<>());
-                if (stereotypePriority > 0) return stereotypePriority;
-            }
-        }
-        return 0;
+        return stereotypes.extractPriorityWithStereotypes(classInfo);
     }
 
-    private int extractPriorityFromStereotypeRecursive(DotName stereotypeName, Set<DotName> visited) {
-        if (!visited.add(stereotypeName)) return 0;
-        // Check index
-        var stereotypeClass = index.getClassByName(stereotypeName);
-        if (stereotypeClass.isPresent()) {
-            int p = extractPriority(stereotypeClass.get().annotations());
-            if (p > 0) return p;
-            // Check transitive stereotypes
-            for (var ann : stereotypeClass.get().annotations()) {
-                if (isStereotype(ann.name())) {
-                    int tp = extractPriorityFromStereotypeRecursive(ann.name(), visited);
-                    if (tp > 0) return tp;
-                }
-            }
-        }
-        // Reflection fallback
-        try {
-            var cl = Thread.currentThread().getContextClassLoader();
-            var annType = cl != null ? Class.forName(stereotypeName.value(), false, cl)
-                    : Class.forName(stereotypeName.value());
-            if (annType.isAnnotationPresent(jakarta.annotation.Priority.class)) {
-                return annType.getAnnotation(jakarta.annotation.Priority.class).value();
-            }
-            // Transitive via reflection
-            for (var metaAnn : annType.getAnnotations()) {
-                if (metaAnn.annotationType().isAnnotationPresent(jakarta.enterprise.inject.Stereotype.class)) {
-                    int tp = extractPriorityFromStereotypeRecursive(
-                            DotName.of(metaAnn.annotationType().getName()), visited);
-                    if (tp > 0) return tp;
-                }
-            }
-        } catch (Exception e) { /* skip */ }
-        return 0;
-    }
-
+    /** Stereotype detection — delegated to {@link StereotypeResolver}. */
     boolean isStereotype(DotName annotationName) {
-        if (customStereotypes.contains(annotationName)) {
-            return true;
-        }
-        String val = annotationName.value();
-        if (val.startsWith(PREFIX_JAVA_ANNOTATION) ||
-            val.startsWith(PREFIX_JAKARTA_INTERCEPTOR) ||
-            val.startsWith(PREFIX_JAKARTA_INJECT) ||
-            val.startsWith("jakarta.inject.")) {
-            return false;
-        }
-        var annClass = index.getClassByName(annotationName);
-        if (annClass.isPresent()) {
-            return annClass.get().hasAnnotation(STEREOTYPE);
-        }
-        // Fallback: check via reflection
-        try {
-            var cl = Thread.currentThread().getContextClassLoader();
-            var annType = cl != null ? Class.forName(val, false, cl)
-                    : Class.forName(val);
-            return annType.isAnnotationPresent(jakarta.enterprise.inject.Stereotype.class);
-        } catch (Exception e) {
-            return false;
-        }
+        return stereotypes.isStereotype(annotationName);
     }
 
     /**
@@ -1133,50 +1018,7 @@ public final class BeanDiscovery {
     }
 
     private String extractNameWithStereotypes(ClassInfo classInfo) {
-        // Check bean itself first (direct + inherited annotations)
-        var name = extractName(classInfo.annotations(), decapitalize(classInfo.name().simpleName()));
-        if (name != null) return name;
-        // Check inherited @Named
-        for (var ann : getInheritedAnnotations(classInfo)) {
-            if (ann.annotationType() == jakarta.inject.Named.class) {
-                var named = (jakarta.inject.Named) ann;
-                return named.value().isEmpty() ? decapitalize(classInfo.name().simpleName()) : named.value();
-            }
-        }
-
-        // Check stereotypes (direct + transitive)
-        var allAnnotationNames = getAllAnnotationNames(classInfo);
-        for (var annName : allAnnotationNames) {
-            if (isStereotype(annName)
-                    && hasNamedInStereotypeRecursive(annName, new java.util.HashSet<>())) {
-                return decapitalize(classInfo.name().simpleName());
-            }
-        }
-
-        return null;
-    }
-
-    private boolean hasNamedInStereotypeRecursive(DotName stereotypeName, Set<DotName> visited) {
-        if (!visited.add(stereotypeName)) return false;
-        var stereotypeClass = index.getClassByName(stereotypeName);
-        if (stereotypeClass.isPresent()) {
-            for (var ann : stereotypeClass.get().annotations()) {
-                if (ann.name().equals(NAMED)) return true;
-                if (isStereotype(ann.name()) && hasNamedInStereotypeRecursive(ann.name(), visited)) return true;
-            }
-        } else {
-            try {
-                var annType = Class.forName(stereotypeName.value());
-                if (annType.isAnnotationPresent(jakarta.inject.Named.class)) return true;
-                for (var meta : annType.getAnnotations()) {
-                    if (meta.annotationType().isAnnotationPresent(jakarta.enterprise.inject.Stereotype.class)
-                            && hasNamedInStereotypeRecursive(DotName.of(meta.annotationType().getName()), visited)) {
-                        return true;
-                    }
-                }
-            } catch (ClassNotFoundException e) { /* skip */ }
-        }
-        return false;
+        return stereotypes.extractNameWithStereotypes(classInfo);
     }
 
     /**
@@ -1184,7 +1026,7 @@ public final class BeanDiscovery {
      * Uses Java reflection — Class.getAnnotations() handles @Inherited automatically per JLS.
      */
     @SuppressWarnings("java:S1141") // Nested try needed for classloader fallback
-    private List<java.lang.annotation.Annotation> getInheritedAnnotations(ClassInfo classInfo) {
+    List<java.lang.annotation.Annotation> getInheritedAnnotations(ClassInfo classInfo) {
         try {
             // Use TCCL first (TCK sets this to its custom ClassLoader), fallback to system
             var cl = Thread.currentThread().getContextClassLoader();
@@ -1322,7 +1164,7 @@ public final class BeanDiscovery {
         var allAnnotationNames = getAllAnnotationNames(classInfo);
         for (var annName : allAnnotationNames) {
             if (isStereotype(annName)) {
-                var stereotypeScope = findScopeInStereotypeRecursive(annName, new java.util.HashSet<>());
+                var stereotypeScope = stereotypes.findScopeInStereotypeRecursive(annName, new java.util.HashSet<>());
                 if (stereotypeScope != null) return stereotypeScope;
             }
         }
@@ -1338,7 +1180,7 @@ public final class BeanDiscovery {
     /**
      * Returns all annotation DotNames on a class: direct + inherited via @Inherited.
      */
-    private Set<DotName> getAllAnnotationNames(ClassInfo classInfo) {
+    Set<DotName> getAllAnnotationNames(ClassInfo classInfo) {
         var names = new LinkedHashSet<DotName>();
         for (var ann : classInfo.annotations()) {
             names.add(ann.name());
@@ -1362,64 +1204,10 @@ public final class BeanDiscovery {
     }
 
     private ScopeInfo computeScopeWithStereotypes(List<AnnotationInfo> annotations) {
-        // 1. Explicit scope
-        for (var ann : annotations) {
-            var scope = mapScope(ann.name());
-            if (scope != null) return scope;
-        }
-        // 2. Scope from stereotype (transitively)
-        for (var ann : annotations) {
-            if (isStereotype(ann.name())) {
-                var scope = findScopeInStereotypeRecursive(ann.name(), new java.util.HashSet<>());
-                if (scope != null) return scope;
-            }
-        }
-        return ScopeInfo.DEPENDENT;
+        return stereotypes.computeScopeWithStereotypes(annotations);
     }
 
-    private ScopeInfo findScopeInStereotypeRecursive(DotName stereotypeName, Set<DotName> visited) {
-        if (!visited.add(stereotypeName)) return null;
-
-        // Check custom stereotype annotations (from @Discovery phase)
-        var customAnns = customStereotypeAnnotations.get(stereotypeName);
-        if (customAnns != null) {
-            for (var annClass : customAnns) {
-                var scope = mapScope(DotName.of(annClass.getName()));
-                if (scope != null) return scope;
-            }
-        }
-
-        var stereotypeClass = index.getClassByName(stereotypeName);
-        if (stereotypeClass.isPresent()) {
-            // Check direct scope annotations
-            for (var ann : stereotypeClass.get().annotations()) {
-                var scope = mapScope(ann.name());
-                if (scope != null) return scope;
-            }
-            // Recurse into transitive stereotypes
-            for (var ann : stereotypeClass.get().annotations()) {
-                if (isStereotype(ann.name())) {
-                    var scope = findScopeInStereotypeRecursive(ann.name(), visited);
-                    if (scope != null) return scope;
-                }
-            }
-        } else {
-            try {
-                var annType = Class.forName(stereotypeName.value());
-                for (var metaAnn : annType.getAnnotations()) {
-                    var scope = mapScope(DotName.of(metaAnn.annotationType().getName()));
-                    if (scope != null) return scope;
-                    if (metaAnn.annotationType().isAnnotationPresent(jakarta.enterprise.inject.Stereotype.class)) {
-                        var s = findScopeInStereotypeRecursive(DotName.of(metaAnn.annotationType().getName()), visited);
-                        if (s != null) return s;
-                    }
-                }
-            } catch (ClassNotFoundException e) { /* skip */ }
-        }
-        return null;
-    }
-
-    private ScopeInfo mapScope(DotName annotationName) {
+    ScopeInfo mapScope(DotName annotationName) {
         if (annotationName.equals(ScopeInfo.APPLICATION.annotationName())) return ScopeInfo.APPLICATION;
         if (annotationName.equals(ScopeInfo.REQUEST.annotationName())) return ScopeInfo.REQUEST;
         if (annotationName.equals(ScopeInfo.DEPENDENT.annotationName())) return ScopeInfo.DEPENDENT;
@@ -1605,7 +1393,7 @@ public final class BeanDiscovery {
         return null;
     }
 
-    private String extractName(List<AnnotationInfo> annotations, String defaultName) {
+    String extractName(List<AnnotationInfo> annotations, String defaultName) {
         for (var ann : annotations) {
             if (ann.name().equals(NAMED)) {
                 var value = ann.member(MEMBER_VALUE);

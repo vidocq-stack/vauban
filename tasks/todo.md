@@ -375,9 +375,13 @@ runtime), so only method SHAPES are needed → a ClassInfo/Elements front-end is
       `isStereotype`, `isDisabledAlternative`, `isQualifierAnnotation`, `extractPriority`,
       `hasAnnotation`, the DotName constants) — collaborators hold a host back-reference
 - [x] BeanDiscovery: **2185 → 1677 lines (−23%)**; full reactor green, TCK 774/774 PASS
-- [ ] Next slices (same pattern): `StereotypeResolver` (~300 L: isAlternative/priority/
-      name/scope-with-stereotypes recursions), `QualifierResolver` (~250 L), then
-      `BceProcessor` (1541 L) and `VaubanContainerBuilder` (1417 L)
+- [x] Slice 2: `StereotypeResolver` (280 L) extracted — is-a-stereotype detection + the four
+      transitive stereotype lookups (@Alternative, @Priority, @Named defaulting, scope),
+      all sharing the index-first/reflection-fallback duality and cycle guards.
+      BeanDiscovery: **1677 → 1465 lines** (cumulative −33%); reactor green, TCK 774/774
+- [ ] Next slices (same pattern): `QualifierResolver` (~250 L: computeQualifiers* family,
+      repeatables, inherited annotations), then `BceProcessor` (1541 L) and
+      `VaubanContainerBuilder` (1417 L)
 
 ## Backlog (deferred)
 - [ ] `DirectoryScanner` - directory scanning
