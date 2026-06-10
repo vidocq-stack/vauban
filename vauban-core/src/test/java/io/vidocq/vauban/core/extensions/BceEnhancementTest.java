@@ -87,10 +87,12 @@ class BceEnhancementTest {
     }
 
     /**
-     * Invoke the private static extractEnhancedScope(List) via reflection.
+     * Invoke the package-private static extractEnhancedScope(List) via reflection
+     * (the test lives in another package).
      */
     private static ScopeInfo invokeExtractEnhancedScope(List<VaubanClassConfig> configs) throws Exception {
-        Method m = VaubanContainerBuilder.class.getDeclaredMethod("extractEnhancedScope", java.util.List.class);
+        Class<?> registrar = Class.forName("io.vidocq.vauban.core.container.SyntheticComponentRegistrar");
+        Method m = registrar.getDeclaredMethod("extractEnhancedScope", java.util.List.class);
         m.setAccessible(true);
         return (ScopeInfo) m.invoke(null, configs);
     }

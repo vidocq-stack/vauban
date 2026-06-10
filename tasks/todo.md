@@ -396,7 +396,22 @@ runtime), so only method SHAPES are needed → a ClassInfo/Elements front-end is
 - [x] BceProcessor: **1541 → 739 lines (−52%)** — now pure phase orchestration
       (discovery/enhancement/registration/synthesis/validation invocation)
 - [x] Each slice: full reactor green + CDI TCK 774/774; heisenberg (BCE consumer) smoke green
-- [ ] Next (separate session, same pattern): `VaubanContainerBuilder` (1417 L)
+### 16g — God classes, slice 3: VaubanContainerBuilder decomposition ✅ 2026-06-11
+- [x] `ContainerScanner` (390 L) extracted — package/dir/JAR scanning, vauban-beans.list,
+      BCE ServiceLoader contract, forced beans.xml discovery, encrypted SJAR + plugin SPI;
+      public fluent API stays on the builder as one-line delegators (scanLocal kept whole:
+      StackWalker caller detection needs the builder as walked frame)
+- [x] `SyntheticComponentRegistrar` (340 L) extracted — @Synthesis bean/observer registration
+      (descriptor + factory + disposer) shared by the runtime BCE path and the APT-frozen
+      metadata path; BceEnhancementTest reflection retargeted
+- [x] BCE artifact loaders (runtime replay list, enhancement patch) and
+      buildCompositeClassLoader stay: they are build()'s own helpers
+- [x] VaubanContainerBuilder: **1417 → 804 lines (−43%)** — fluent config + build() orchestration
+- [x] Full reactor green + CDI TCK 774/774 per slice; heisenberg smoke green
+
+**God-classes campaign complete**: BeanDiscovery 2185→1270, BceProcessor 1541→739,
+VaubanContainerBuilder 1417→804. Remaining large-but-cohesive: build() (~400 L, documented
+orchestrator), VaubanContainer (runtime API surface).
 
 ## Backlog (deferred)
 - [ ] `DirectoryScanner` - directory scanning
