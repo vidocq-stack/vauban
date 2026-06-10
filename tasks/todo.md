@@ -365,6 +365,20 @@ runtime), so only method SHAPES are needed → a ClassInfo/Elements front-end is
       surefire ever silently degrades to the class path
 - [x] 7/7 green on module path, full reactor green, CDI TCK 774/774 PASS
 
+### 16e — God classes, slice 1: BeanDiscovery decomposition 🚧 2026-06-10
+- [x] `ObserverDisposerDiscovery` (275 L) extracted — observers + disposers discovery,
+      `BeanDiscovery` keeps the public facade and delegates
+- [x] `InterceptorDiscovery` (270 L) extracted — interceptor discovery + binding resolution
+      (the VAU-INT-004/005 zone); dead code dropped on the way (`seenClasses` set never
+      read, empty TCCL block in `discoverInterceptors`)
+- [x] Shared predicates relaxed to package-private (`isVetoed`, `hasBeanDefiningAnnotation`,
+      `isStereotype`, `isDisabledAlternative`, `isQualifierAnnotation`, `extractPriority`,
+      `hasAnnotation`, the DotName constants) — collaborators hold a host back-reference
+- [x] BeanDiscovery: **2185 → 1677 lines (−23%)**; full reactor green, TCK 774/774 PASS
+- [ ] Next slices (same pattern): `StereotypeResolver` (~300 L: isAlternative/priority/
+      name/scope-with-stereotypes recursions), `QualifierResolver` (~250 L), then
+      `BceProcessor` (1541 L) and `VaubanContainerBuilder` (1417 L)
+
 ## Backlog (deferred)
 - [ ] `DirectoryScanner` - directory scanning
 - [ ] Binary serialization IndexWriter/IndexReader

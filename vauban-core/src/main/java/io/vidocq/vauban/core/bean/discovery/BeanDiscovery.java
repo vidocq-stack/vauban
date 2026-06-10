@@ -24,7 +24,6 @@ import io.vidocq.vauban.indexer.VaubanIndex;
 import io.vidocq.vauban.indexer.model.*;
 
 import java.util.*;
-import java.util.Comparator;
 
 /**
  * Main orchestrator for CDI bean discovery.
@@ -60,28 +59,32 @@ public final class BeanDiscovery {
     private static final DotName ALTERNATIVE = DotName.of("jakarta.enterprise.inject.Alternative");
     private static final DotName PRIORITY = DotName.of("jakarta.annotation.Priority");
     private static final DotName NAMED = DotName.of("jakarta.inject.Named");
-    private static final DotName OBSERVES = DotName.of("jakarta.enterprise.event.Observes");
-    private static final DotName OBSERVES_ASYNC = DotName.of("jakarta.enterprise.event.ObservesAsync");
-    private static final DotName INTERCEPTOR = DotName.of("jakarta.interceptor.Interceptor");
-    private static final DotName AROUND_INVOKE = DotName.of("jakarta.interceptor.AroundInvoke");
-    private static final DotName INTERCEPTOR_BINDING = DotName.of("jakarta.interceptor.InterceptorBinding");
-    private static final DotName AROUND_CONSTRUCT = DotName.of("jakarta.interceptor.AroundConstruct");
-    private static final DotName DISPOSES = DotName.of("jakarta.enterprise.inject.Disposes");
+    static final DotName OBSERVES = DotName.of("jakarta.enterprise.event.Observes");
+    static final DotName OBSERVES_ASYNC = DotName.of("jakarta.enterprise.event.ObservesAsync");
+    static final DotName INTERCEPTOR = DotName.of("jakarta.interceptor.Interceptor");
+    static final DotName AROUND_INVOKE = DotName.of("jakarta.interceptor.AroundInvoke");
+    static final DotName INTERCEPTOR_BINDING = DotName.of("jakarta.interceptor.InterceptorBinding");
+    static final DotName AROUND_CONSTRUCT = DotName.of("jakarta.interceptor.AroundConstruct");
+    static final DotName DISPOSES = DotName.of("jakarta.enterprise.inject.Disposes");
     private static final DotName STEREOTYPE = DotName.of("jakarta.enterprise.inject.Stereotype");
 
-    private static final String PREFIX_JAVA_ANNOTATION = "java.lang.annotation.";
-    private static final String PREFIX_JAKARTA_INTERCEPTOR = "jakarta.interceptor.";
-    private static final String PREFIX_JAKARTA_INJECT = "jakarta.enterprise.inject.";
-    private static final String JAVA_LANG_OBJECT = "java.lang.Object";
+    static final String PREFIX_JAVA_ANNOTATION = "java.lang.annotation.";
+    static final String PREFIX_JAKARTA_INTERCEPTOR = "jakarta.interceptor.";
+    static final String PREFIX_JAKARTA_INJECT = "jakarta.enterprise.inject.";
+    static final String JAVA_LANG_OBJECT = "java.lang.Object";
     private static final String PARAM_PREFIX = "parameter ";
     private static final String MEMBER_VALUE = "value";
 
-    private final VaubanIndex index;
+    final VaubanIndex index;
     private Set<DotName> customQualifiers = Set.of();
-    private Set<DotName> customInterceptorBindings = Set.of();
+    Set<DotName> customInterceptorBindings = Set.of();
     private Set<DotName> customStereotypes = Set.of();
     private Map<DotName, Set<Class<? extends java.lang.annotation.Annotation>>> customStereotypeAnnotations = Map.of();
     private Map<String, Set<String>> customNonbindingMembers = Map.of();
+
+    // Topic-focused collaborators (extracted from this class — it stays the facade)
+    private final ObserverDisposerDiscovery observerDisposers = new ObserverDisposerDiscovery(this);
+    private final InterceptorDiscovery interceptorDiscovery = new InterceptorDiscovery(this);
 
     public BeanDiscovery(VaubanIndex index) {
         this.index = Objects.requireNonNull(index);
@@ -244,7 +247,7 @@ public final class BeanDiscovery {
         }
     }
 
-    private boolean isVetoed(ClassInfo classInfo) {
+    boolean isVetoed(ClassInfo classInfo) {
         if (classInfo.hasAnnotation(VETOED)) return true;
         // Check package-level @Vetoed via package-info class
         var packageName = classInfo.name().packageName();
@@ -305,7 +308,7 @@ public final class BeanDiscovery {
                 .anyMatch(m -> m.isConstructor() && m.parameters().isEmpty());
     }
 
-    private boolean hasBeanDefiningAnnotation(ClassInfo classInfo) {
+    boolean hasBeanDefiningAnnotation(ClassInfo classInfo) {
         for (var annotation : classInfo.annotations()) {
             if (BEAN_DEFINING_ANNOTATIONS.contains(annotation.name())) return true;
             if (isStereotype(annotation.name())) return true;
@@ -449,7 +452,7 @@ public final class BeanDiscovery {
         return 0;
     }
 
-    private boolean isStereotype(DotName annotationName) {
+    boolean isStereotype(DotName annotationName) {
         if (customStereotypes.contains(annotationName)) {
             return true;
         }
@@ -580,7 +583,7 @@ public final class BeanDiscovery {
     /**
      * CDI spec: disabled alternative = @Alternative without @Priority (directly or via stereotype).
      */
-    private boolean isDisabledAlternative(ClassInfo classInfo) {
+    boolean isDisabledAlternative(ClassInfo classInfo) {
         boolean isAlt = isAlternativeWithStereotypes(classInfo);
         if (!isAlt) return false;
         int priority = extractPriorityWithStereotypes(classInfo);
@@ -1250,7 +1253,7 @@ public final class BeanDiscovery {
         return result;
     }
 
-    private boolean isQualifierAnnotation(DotName name) {
+    boolean isQualifierAnnotation(DotName name) {
         // Built-in qualifiers
         if (name.equals(QualifierInstance.DEFAULT_NAME)
                 || name.equals(QualifierInstance.ANY_NAME)
@@ -1565,7 +1568,7 @@ public final class BeanDiscovery {
         return points;
     }
 
-    private int extractPriority(List<AnnotationInfo> annotations) {
+    int extractPriority(List<AnnotationInfo> annotations) {
         for (var ann : annotations) {
             if (ann.name().equals(PRIORITY)) {
                 var value = ann.member(MEMBER_VALUE);
@@ -1616,473 +1619,35 @@ public final class BeanDiscovery {
     }
 
     /**
-     * Discovers all observer methods in the index.
-     * An observer method has a parameter annotated with {@code @Observes} or {@code @ObservesAsync}.
+     * Discovers all observer methods in the index — delegated to {@link ObserverDisposerDiscovery}.
      */
-    @SuppressWarnings("java:S135")
     public List<ObserverDescriptor> discoverObservers() {
-        var result = new ArrayList<ObserverDescriptor>();
-
-        for (var classInfo : index.getKnownClasses()) {
-            if (isVetoed(classInfo)) continue;
-            if (!hasBeanDefiningAnnotation(classInfo)) continue;
-            // CDI spec: observer methods of disabled beans are NOT registered
-            if (isDisabledAlternative(classInfo)) continue;
-
-            // Check declared methods in the index
-            discoverObserversFromMethods(classInfo, classInfo.methods(), result);
-
-            // Check inherited methods via reflection (not in bytecode index)
-            try {
-                var clazz = Class.forName(classInfo.name().value());
-                for (var method : getAllInheritedMethods(clazz)) {
-                    for (var param : method.getParameters()) {
-                        if (param.isAnnotationPresent(jakarta.enterprise.event.Observes.class)
-                                || param.isAnnotationPresent(jakarta.enterprise.event.ObservesAsync.class)) {
-                            boolean async = param.isAnnotationPresent(jakarta.enterprise.event.ObservesAsync.class);
-
-                            var reception = "ALWAYS";
-                            var transactionPhase = "IN_PROGRESS";
-                            var observesAnn = param.getAnnotation(jakarta.enterprise.event.Observes.class);
-                            if (observesAnn != null) {
-                                reception = observesAnn.notifyObserver().name();
-                                transactionPhase = observesAnn.during().name();
-                            }
-
-                            var priority = jakarta.enterprise.inject.spi.ObserverMethod.DEFAULT_PRIORITY;
-                            if (method.isAnnotationPresent(jakarta.annotation.Priority.class)) {
-                                priority = method.getAnnotation(jakarta.annotation.Priority.class).value();
-                            }
-
-                            // Resolve generic type with type variable substitution from the concrete bean class
-                            var paramIndex = java.util.List.of(method.getParameters()).indexOf(param);
-                            var genericParamType = method.getGenericParameterTypes()[paramIndex];
-                            var resolvedReflectType = resolveReflectType(genericParamType, clazz);
-                            var eventType = reflectTypeToTypeInfo(resolvedReflectType);
-                            if (eventType == null) eventType = new TypeInfo.ClassType(DotName.of(param.getType().getName()));
-                            // Collect qualifier annotations from the parameter
-                            var qualifiers = new ArrayList<QualifierInstance>();
-                            for (var ann : param.getAnnotations()) {
-                                if (ann.annotationType() == jakarta.enterprise.event.Observes.class
-                                        || ann.annotationType() == jakarta.enterprise.event.ObservesAsync.class)
-                                    continue;
-                                if (isQualifierAnnotation(DotName.of(ann.annotationType().getName()))) {
-                                    qualifiers.add(QualifierInstance.from(
-                                            new AnnotationInfo(DotName.of(ann.annotationType().getName()), Map.of())));
-                                }
-                            }
-                            result.add(new ObserverDescriptor(
-                                    classInfo.name(), method.getName(), eventType,
-                                    qualifiers, async, priority, reception, transactionPhase));
-                            break;
-                        }
-                    }
-                }
-            } catch (ClassNotFoundException e) {
-                // skip
-            }
-        }
-
-        return List.copyOf(result);
-    }
-
-    private static List<java.lang.reflect.Method> getAllInheritedMethods(Class<?> clazz) {
-        var result = new ArrayList<java.lang.reflect.Method>();
-        var seen = new java.util.HashSet<String>();
-        // Record methods declared in the concrete class to skip overridden inherited methods
-        for (var m : clazz.getDeclaredMethods()) {
-            seen.add(m.getName() + ":" + java.util.Arrays.toString(m.getParameterTypes()));
-        }
-        // Walk superclass hierarchy for inherited methods
-        var current = clazz.getSuperclass();
-        while (current != null && current != Object.class) {
-            for (var m : current.getDeclaredMethods()) {
-                if (java.lang.reflect.Modifier.isPrivate(m.getModifiers())) continue;
-                var sig = m.getName() + ":" + java.util.Arrays.toString(m.getParameterTypes());
-                if (seen.add(sig)) {
-                    result.add(m);
-                }
-            }
-            current = current.getSuperclass();
-        }
-        return result;
-    }
-
-    private void discoverObserversFromMethods(ClassInfo classInfo, List<MethodInfo> methods,
-            List<ObserverDescriptor> result) {
-        for (var method : methods) {
-            if (method.isConstructor()) continue;
-            // CDI 4.1: static observer methods are supported
-
-            for (var param : method.parameters()) {
-                boolean isObserves = hasAnnotation(param.annotations(), OBSERVES);
-                boolean isObservesAsync = hasAnnotation(param.annotations(), OBSERVES_ASYNC);
-
-                if (isObserves || isObservesAsync) {
-                        // Qualifiers on the observed parameter (excluding @Observes/@ObservesAsync)
-                        var qualifiers = computeObserverQualifiers(param.annotations().stream()
-                                .filter(a -> !a.name().equals(OBSERVES) && !a.name().equals(OBSERVES_ASYNC))
-                                .toList());
-                        // CDI spec: @Priority on observer is on the @Observes parameter, not the method
-                        var priority = extractPriority(param.annotations());
-                        if (priority == 0) priority = extractPriority(method.annotations());
-                        if (priority == 0) priority = jakarta.enterprise.inject.spi.ObserverMethod.DEFAULT_PRIORITY;
-
-                        // Extract reception and transactionPhase from @Observes annotation
-                        var reception = "ALWAYS";
-                        var transactionPhase = "IN_PROGRESS";
-                        var observesAnn = param.annotations().stream()
-                                .filter(a -> a.name().equals(OBSERVES) || a.name().equals(OBSERVES_ASYNC))
-                                .findFirst();
-                        if (observesAnn.isPresent()) {
-                            var recVal = observesAnn.get().member("notifyObserver");
-                            if (recVal instanceof io.vidocq.vauban.indexer.model.AnnotationValue.EnumVal ev) {
-                                reception = ev.constantName();
-                            }
-                            var txVal = observesAnn.get().member("during");
-                            if (txVal instanceof io.vidocq.vauban.indexer.model.AnnotationValue.EnumVal ev) {
-                                transactionPhase = ev.constantName();
-                            }
-                        }
-
-                        // Try to get the parameterized type via reflection
-                        var eventType = resolveObserverParamType(
-                                classInfo.name().value(), method.name(),
-                                method.parameters().indexOf(param), method.parameters(), param.type());
-
-                        result.add(new ObserverDescriptor(
-                                classInfo.name(),
-                                method.name(),
-                                eventType,
-                                List.copyOf(qualifiers),
-                                isObservesAsync,
-                                priority,
-                                reception,
-                                transactionPhase
-                        ));
-                        break; // only one observed parameter per method
-                }
-            }
-        }
-    }
-
-    private String getBaseTypeName(TypeInfo t) {
-        return switch (t) {
-            case io.vidocq.vauban.indexer.model.TypeInfo.ClassType ct -> ct.name().value();
-            case io.vidocq.vauban.indexer.model.TypeInfo.ParameterizedType pt -> pt.rawType().value();
-            case io.vidocq.vauban.indexer.model.TypeInfo.ArrayType at -> getBaseTypeName(at.componentType()) + "[]";
-            case null, default -> "";
-        };
+        return observerDisposers.discoverObservers();
     }
 
     /**
-     * Resolve the observer parameter type to a ParameterizedType via reflection if possible.
+     * Discovers all disposer methods in the index — delegated to {@link ObserverDisposerDiscovery}.
      */
-    private TypeInfo resolveObserverParamType(String className, String methodName, int paramIndex, java.util.List<io.vidocq.vauban.indexer.model.ParameterInfo> params, TypeInfo fallback) {
-        try {
-            var cl = Thread.currentThread().getContextClassLoader();
-            var clazz = cl != null ? Class.forName(className, false, cl)
-                    : Class.forName(className);
-            for (var m : clazz.getDeclaredMethods()) {
-                if (m.getName().equals(methodName) && m.getParameterCount() == params.size()) {
-                    boolean match = true;
-                    for (int i = 0; i < m.getParameterTypes().length; i++) {
-                        var pClass = m.getParameterTypes()[i];
-                        var pTypeName = pClass.isArray() ? pClass.getName() : pClass.getName().replace('$', '.');
-                        String infoTypeName = getBaseTypeName(params.get(i).type());
-                        // Simple name check since rawName() might differ slightly for nested classes
-                        if (!infoTypeName.isEmpty() && !pTypeName.equals(infoTypeName) && !pClass.getSimpleName().equals(infoTypeName.substring(infoTypeName.lastIndexOf('.') + 1))) {
-                            match = false;
-                            break;
-                        }
-                    }
-                    if (match) {
-                        var genericParamTypes = m.getGenericParameterTypes();
-                        if (paramIndex < genericParamTypes.length) {
-                            var genericType = genericParamTypes[paramIndex];
-                            var resolved = reflectTypeToTypeInfo(genericType);
-                            if (resolved != null) return resolved;
-                        }
-                    }
-                }
-            }
-        } catch (Exception e) { /* fallback */ }
-        return fallback;
-    }
-
-    /**
-     * Discovers all disposer methods in the index.
-     * A disposer method has exactly one parameter annotated with {@code @Disposes}.
-
-     */
-    @SuppressWarnings("java:S135")
     public List<DisposerDescriptor> discoverDisposerMethods() {
-        var disposers = new ArrayList<DisposerDescriptor>();
-
-        for (var classInfo : index.getKnownClasses()) {
-            if (isVetoed(classInfo)) continue;
-            if (!hasBeanDefiningAnnotation(classInfo)) continue;
-
-            for (var method : classInfo.methods()) {
-                if (method.isConstructor()) continue;
-                // CDI spec: disposer methods can be static
-
-                for (int i = 0; i < method.parameters().size(); i++) {
-                    var param = method.parameters().get(i);
-                    if (hasAnnotation(param.annotations(), DISPOSES)) {
-                        // Qualifiers on the disposed parameter (excluding @Disposes)
-                        var qualifiers = computeQualifiers(param.annotations().stream()
-                                .filter(a -> !a.name().equals(DISPOSES))
-                                .toList());
-                        disposers.add(new DisposerDescriptor(
-                                classInfo.name(), method.name(), param.type(),
-                                qualifiers, i));
-                        break; // only one @Disposes per method
-                    }
-                }
-            }
-        }
-
-        return List.copyOf(disposers);
+        return observerDisposers.discoverDisposerMethods();
     }
 
     /**
-     * Discovers all interceptors in the index.
-     * An interceptor is a class annotated with {@code @jakarta.interceptor.Interceptor}.
+     * Discovers all interceptors in the index — delegated to {@link InterceptorDiscovery}.
      */
     public List<InterceptorDescriptor> discoverInterceptors() {
-        var interceptors = new ArrayList<InterceptorDescriptor>();
-
-        var seenClasses = new java.util.HashSet<DotName>();
-        for (var classInfo : index.getKnownClasses()) {
-            seenClasses.add(classInfo.name());
-            
-            boolean isInterceptor = classInfo.hasAnnotation(INTERCEPTOR);
-            if (!isInterceptor) {
-                // Fallback to reflection if index is incomplete
-                try {
-                    var cl = Thread.currentThread().getContextClassLoader();
-                    var clazz = cl != null ? Class.forName(classInfo.name().value(), false, cl)
-                            : Class.forName(classInfo.name().value());
-                    if (clazz.isAnnotationPresent(jakarta.interceptor.Interceptor.class)) {
-                        isInterceptor = true;
-                    }
-                } catch (Exception e) { /* skip */ }
-            }
-
-            if (!isInterceptor) {
-                continue;
-            }
-            addInterceptor(classInfo, interceptors);
-        }
-
-        // Check classes that might not be in the index but are known via reflection
-        // (This happens for some inner classes or classes added via Builder in tests)
-        var cl = Thread.currentThread().getContextClassLoader();
-        if (cl != null) {
-            // We can't easily list all classes in a classloader, but we can check the ones
-            // that were registered in the index or are being discovered as beans.
-            // For now, let's trust that known classes are in the index.
-        }
-
-        // Sort by priority
-        interceptors.sort(Comparator.comparingInt(InterceptorDescriptor::priority));
-        return interceptors;
-    }
-
-    private void addInterceptor(ClassInfo classInfo, List<InterceptorDescriptor> interceptors) {
-        // Find bindings: annotations on the class whose annotation type is @InterceptorBinding
-        var bindings = new LinkedHashSet<DotName>();
-        collectBindings(classInfo, bindings);
-        if (bindings.isEmpty()) {
-            return;
-        }
-
-        // Find @AroundInvoke and @AroundConstruct methods (from index + reflection fallback)
-        String aroundInvoke = null;
-        String aroundConstruct = null;
-        for (var method : classInfo.methods()) {
-            if (hasAnnotation(method.annotations(), AROUND_INVOKE)) {
-                aroundInvoke = method.name();
-            }
-            if (hasAnnotation(method.annotations(), AROUND_CONSTRUCT)) {
-                aroundConstruct = method.name();
-            }
-        }
-        // Reflection fallback for @AroundInvoke / @AroundConstruct
-        if (aroundInvoke == null || aroundConstruct == null) {
-            try {
-                var cl = Thread.currentThread().getContextClassLoader();
-                var clazz = cl != null ? Class.forName(classInfo.name().value(), false, cl)
-                        : Class.forName(classInfo.name().value());
-                for (var m : clazz.getDeclaredMethods()) {
-                    if (aroundInvoke == null && m.isAnnotationPresent(jakarta.interceptor.AroundInvoke.class)) {
-                        aroundInvoke = m.getName();
-                    }
-                    if (aroundConstruct == null && m.isAnnotationPresent(jakarta.interceptor.AroundConstruct.class)) {
-                        aroundConstruct = m.getName();
-                    }
-                }
-                // Also check superclass
-                if (aroundInvoke == null || aroundConstruct == null) {
-                    var superClass = clazz.getSuperclass();
-                    while (superClass != null && superClass != Object.class) {
-                        for (var m : superClass.getDeclaredMethods()) {
-                            if (aroundInvoke == null && m.isAnnotationPresent(jakarta.interceptor.AroundInvoke.class)) {
-                                aroundInvoke = m.getName();
-                            }
-                            if (aroundConstruct == null && m.isAnnotationPresent(jakarta.interceptor.AroundConstruct.class)) {
-                                aroundConstruct = m.getName();
-                            }
-                        }
-                        if (aroundInvoke != null && aroundConstruct != null) break;
-                        superClass = superClass.getSuperclass();
-                    }
-                }
-            } catch (ClassNotFoundException e) { /* skip */ }
-        }
-
-        // Collect actual binding annotations for member comparison
-        var bindingAnnotations = new ArrayList<java.lang.annotation.Annotation>();
-        try {
-            var cl = Thread.currentThread().getContextClassLoader();
-            var clazz2 = cl != null ? Class.forName(classInfo.name().value(), false, cl)
-                    : Class.forName(classInfo.name().value());
-            for (var ann : clazz2.getAnnotations()) {
-                if (ann.annotationType().isAnnotationPresent(jakarta.interceptor.InterceptorBinding.class)) {
-                    bindingAnnotations.add(ann);
-                }
-            }
-        } catch (ClassNotFoundException e) { /* skip */ }
-
-        var priority = extractPriority(classInfo.annotations());
-        boolean hasPriority = hasAnnotation(classInfo.annotations(), DotName.of("jakarta.annotation.Priority"));
-        // Reflection fallback for @Priority detection
-        if (!hasPriority) {
-            try {
-                var cl2 = Thread.currentThread().getContextClassLoader();
-                var clazz3 = cl2 != null ? Class.forName(classInfo.name().value(), false, cl2)
-                        : Class.forName(classInfo.name().value());
-                hasPriority = clazz3.isAnnotationPresent(jakarta.annotation.Priority.class);
-                if (hasPriority && priority == 0) {
-                    priority = clazz3.getAnnotation(jakarta.annotation.Priority.class).value();
-                }
-            } catch (Exception e) { /* skip */ }
-        }
-        interceptors.add(new InterceptorDescriptor(classInfo.name(), bindings, aroundInvoke, aroundConstruct, priority, hasPriority, bindingAnnotations));
+        return interceptorDiscovery.discoverInterceptors();
     }
 
     /**
-     * Checks if the given annotation name is an interceptor binding
-     * (i.e., it is itself annotated with {@code @InterceptorBinding} in the index).
+     * Checks if the given annotation name is an interceptor binding — delegated to
+     * {@link InterceptorDiscovery}.
      */
     public boolean isInterceptorBinding(DotName annotationName) {
-        if (customInterceptorBindings.contains(annotationName)) {
-            return true;
-        }
-        String val = annotationName.value();
-        if (val.startsWith(PREFIX_JAVA_ANNOTATION) ||
-            val.startsWith(PREFIX_JAKARTA_INTERCEPTOR) ||
-            val.startsWith(PREFIX_JAKARTA_INJECT) ||
-            val.startsWith("jakarta.inject.")) {
-            // These are never interceptor bindings themselves for application beans
-            return false;
-        }
-        var annClass = index.getClassByName(annotationName);
-        if (annClass.isPresent()) {
-            // Check direct @InterceptorBinding
-            if (annClass.get().hasAnnotation(INTERCEPTOR_BINDING)) return true;
-            // CDI spec: transitive interceptor bindings — check meta-annotations
-            for (var metaAnn : annClass.get().annotations()) {
-                if (metaAnn.name().equals(INTERCEPTOR_BINDING)) return true;
-                // Check if a meta-annotation is itself an interceptor binding (transitive)
-                var metaClass = index.getClassByName(metaAnn.name());
-                if (metaClass.isPresent() && metaClass.get().hasAnnotation(INTERCEPTOR_BINDING)) {
-                    return true;
-                }
-            }
-        }
-        // Fallback: check via reflection with TCCL
-        try {
-            var cl = Thread.currentThread().getContextClassLoader();
-            var annType = cl != null ? Class.forName(val, false, cl)
-                    : Class.forName(val);
-            if (annType.isAnnotationPresent(jakarta.interceptor.InterceptorBinding.class)) return true;
-            // Check transitive bindings via reflection
-            for (var metaAnn : annType.getAnnotations()) {
-                if (metaAnn.annotationType().isAnnotationPresent(jakarta.interceptor.InterceptorBinding.class)) {
-                    return true;
-                }
-            }
-            return false;
-        } catch (ClassNotFoundException e) {
-            return false;
-        }
+        return interceptorDiscovery.isInterceptorBinding(annotationName);
     }
 
-    private void collectBindings(ClassInfo classInfo, Set<DotName> bindings) {
-        var visited = new java.util.HashSet<DotName>();
-        var current = classInfo;
-        while (current != null) {
-            collectBindingsRecursively(current, bindings, visited);
-            // Check superclass from index
-            var superName = current.superName();
-            if (superName != null && !superName.value().equals(JAVA_LANG_OBJECT)) {
-                current = index.getClassByName(superName).orElse(null);
-            } else {
-                current = null;
-            }
-        }
-        
-        // Fallback for classes not fully indexed (e.g. inner classes in some environments)
-        // Check for bindings via reflection as well, walking the hierarchy
-        try {
-            var cl = Thread.currentThread().getContextClassLoader();
-            var clazz = cl != null ? Class.forName(classInfo.name().value(), false, cl)
-                    : Class.forName(classInfo.name().value());
-            var curr = clazz;
-            while (curr != null && curr != Object.class) {
-                for (var ann : curr.getAnnotations()) {
-                    var annType = ann.annotationType();
-                    if (isInterceptorBinding(DotName.of(annType.getName()))) {
-                        // EXPLICITLY SKIP built-in Jakarta/Java annotations in the final set
-                        String val = annType.getName();
-                        if (!val.startsWith(PREFIX_JAVA_ANNOTATION) && 
-                            !val.startsWith(PREFIX_JAKARTA_INTERCEPTOR) && 
-                            !val.startsWith(PREFIX_JAKARTA_INJECT)) {
-                            bindings.add(DotName.of(val));
-                        }
-                    }
-                }
-                curr = curr.getSuperclass();
-            }
-        } catch (Exception e) { /* skip */ }
-    }
-
-    private void collectBindingsRecursively(ClassInfo classInfo, Set<DotName> result, Set<DotName> visited) {
-        if (!visited.add(classInfo.name())) return;
-        
-        for (var ann : classInfo.annotations()) {
-            var name = ann.name();
-            
-            if (isInterceptorBinding(name)) {
-                result.add(name);
-                // Transitive bindings
-                var annClass = index.getClassByName(name);
-                if (annClass.isPresent()) {
-                    collectBindingsRecursively(annClass.get(), result, visited);
-                }
-            } else if (isStereotype(name)) {
-                // Stereotypes can have bindings
-                var annClass = index.getClassByName(name);
-                if (annClass.isPresent()) {
-                    collectBindingsRecursively(annClass.get(), result, visited);
-                }
-            }
-        }
-    }
-
-    private static boolean hasAnnotation(List<AnnotationInfo> annotations, DotName name) {
+    static boolean hasAnnotation(List<AnnotationInfo> annotations, DotName name) {
         return annotations.stream().anyMatch(a -> a.name().equals(name));
     }
 
