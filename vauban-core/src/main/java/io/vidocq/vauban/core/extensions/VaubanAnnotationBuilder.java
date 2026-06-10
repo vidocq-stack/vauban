@@ -325,30 +325,36 @@ public final class VaubanAnnotationBuilder implements AnnotationBuilder {
 
     @SuppressWarnings("unchecked")
     private static void addMemberValue(VaubanAnnotationBuilder builder, String name, Object val) {
-        if (val instanceof Boolean v) builder.member(name, v.booleanValue());
-        else if (val instanceof Byte v) builder.member(name, v.byteValue());
-        else if (val instanceof Short v) builder.member(name, v.shortValue());
-        else if (val instanceof Integer v) builder.member(name, v.intValue());
-        else if (val instanceof Long v) builder.member(name, v.longValue());
-        else if (val instanceof Float v) builder.member(name, v.floatValue());
-        else if (val instanceof Double v) builder.member(name, v.doubleValue());
-        else if (val instanceof Character v) builder.member(name, v.charValue());
-        else if (val instanceof String v) builder.member(name, v);
-        else if (val instanceof Annotation v) builder.member(name, v);
-        else if (val instanceof Enum<?> v) builder.member(name, v);
-        else if (val instanceof Class<?> v) builder.member(name, v);
-        else if (val instanceof boolean[] v) builder.member(name, v);
-        else if (val instanceof byte[] v) builder.member(name, v);
-        else if (val instanceof short[] v) builder.member(name, v);
-        else if (val instanceof int[] v) builder.member(name, v);
-        else if (val instanceof long[] v) builder.member(name, v);
-        else if (val instanceof float[] v) builder.member(name, v);
-        else if (val instanceof double[] v) builder.member(name, v);
-        else if (val instanceof char[] v) builder.member(name, v);
-        else if (val instanceof String[] v) builder.member(name, v);
-        else if (val instanceof Annotation[] v) builder.member(name, v);
-        else if (val instanceof Enum<?>[] v) builder.member(name, v);
-        else if (val instanceof Class<?>[] v) builder.member(name, v);
-        else throw new IllegalArgumentException("Unsupported annotation member type: " + val.getClass());
+        switch (val) {
+            case Boolean v -> builder.member(name, v.booleanValue());
+            case Byte v -> builder.member(name, v.byteValue());
+            case Short v -> builder.member(name, v.shortValue());
+            case Integer v -> builder.member(name, v.intValue());
+            case Long v -> builder.member(name, v.longValue());
+            case Float v -> builder.member(name, v.floatValue());
+            case Double v -> builder.member(name, v.doubleValue());
+            case Character v -> builder.member(name, v.charValue());
+            case String v -> builder.member(name, v);
+            case Annotation v -> builder.member(name, v);
+            case Enum<?> v -> builder.member(name, v);
+            case Class<?> v -> builder.member(name, v);
+            case boolean[] v -> builder.member(name, v);
+            case byte[] v -> builder.member(name, v);
+            case short[] v -> builder.member(name, v);
+            case int[] v -> builder.member(name, v);
+            case long[] v -> builder.member(name, v);
+            case float[] v -> builder.member(name, v);
+            case double[] v -> builder.member(name, v);
+            case char[] v -> builder.member(name, v);
+            case String[] v -> builder.member(name, v);
+            case Annotation[] v -> builder.member(name, v);
+            // Enum<?>[] and Class<?>[] are not valid case labels (javac cannot parse a
+            // wildcard followed by array dims there), so they fall back to instanceof
+            default -> {
+                if (val instanceof Enum<?>[] v) builder.member(name, v);
+                else if (val instanceof Class<?>[] v) builder.member(name, v);
+                else throw new IllegalArgumentException("Unsupported annotation member type: " + val.getClass());
+            }
+        }
     }
 }

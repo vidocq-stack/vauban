@@ -44,69 +44,87 @@ public class TypeHierarchyResolver {
         
         Type resolvedType = substitute(type, typeMap, new HashSet<>());
         result.add(resolvedType);
-        
-        if (resolvedType instanceof Class<?> c) {
-            resolveInternal(c.getGenericSuperclass(), typeMap, result);
-            for (Type gi : c.getGenericInterfaces()) {
-                resolveInternal(gi, typeMap, result);
+
+        switch (resolvedType) {
+            case Class<?> c -> {
+                resolveInternal(c.getGenericSuperclass(), typeMap, result);
+                for (Type gi : c.getGenericInterfaces()) {
+                    resolveInternal(gi, typeMap, result);
+                }
             }
-        } else if (resolvedType instanceof ParameterizedType pt) {
-            Class<?> raw = (Class<?>) pt.getRawType();
-            Map<String, Type> newMap = new HashMap<>(typeMap);
-            TypeVariable<?>[] typeVars = raw.getTypeParameters();
-            Type[] actualArgs = pt.getActualTypeArguments();
-            for (int i = 0; i < typeVars.length; i++) {
-                newMap.put(System.identityHashCode(typeVars[i].getGenericDeclaration()) + "#" + typeVars[i].getName(), actualArgs[i]);
+            case ParameterizedType pt -> {
+                Class<?> raw = (Class<?>) pt.getRawType();
+                Map<String, Type> newMap = new HashMap<>(typeMap);
+                TypeVariable<?>[] typeVars = raw.getTypeParameters();
+                Type[] actualArgs = pt.getActualTypeArguments();
+                for (int i = 0; i < typeVars.length; i++) {
+                    newMap.put(System.identityHashCode(typeVars[i].getGenericDeclaration()) + "#" + typeVars[i].getName(), actualArgs[i]);
+                }
+                resolveInternal(raw.getGenericSuperclass(), newMap, result);
+                for (Type gi : raw.getGenericInterfaces()) {
+                    resolveInternal(gi, newMap, result);
+                }
             }
-            resolveInternal(raw.getGenericSuperclass(), newMap, result);
-            for (Type gi : raw.getGenericInterfaces()) {
-                resolveInternal(gi, newMap, result);
-            }
+            default -> { }
         }
     }
 
     private static Type substitute(Type type, Map<String, Type> typeMap, Set<String> seen) {
-        if (type instanceof TypeVariable<?> tv) {
-            String key = System.identityHashCode(tv.getGenericDeclaration()) + "#" + tv.getName();
-            Type resolved = typeMap.get(key);
-            if (resolved != null && !seen.contains(key) && resolved != tv) {
-                seen.add(key);
-                Type result = substitute(resolved, typeMap, seen);
-                seen.remove(key);
-                return result;
+        return switch (type) {
+            case TypeVariable<?> tv -> {
+                String key = System.identityHashCode(tv.getGenericDeclaration()) + "#" + tv.getName();
+                Type resolved = typeMap.get(key);
+                if (resolved != null && !seen.contains(key) && resolved != tv) {
+                    seen.add(key);
+                    Type result = substitute(resolved, typeMap, seen);
+                    seen.remove(key);
+                    yield result;
+                }
+                yield tv;
             }
-            return tv;
+            case ParameterizedType pt -> {
+                Type[] args = pt.getActualTypeArguments();
+                boolean changed = false;
+                Type[] newArgs = new Type[args.length];
+                for (int i = 0; i < args.length; i++) {
+                    newArgs[i] = substitute(args[i], typeMap, seen);
+                    if (newArgs[i] != args[i]) changed = true;
+                }
+                yield changed
+                        ? new SubstitutedParameterizedType((Class<?>) pt.getRawType(), newArgs, pt.getOwnerType())
+                        : type;
+            }
+            case null, default -> type;
+        };
+    }
+
+    private record SubstitutedParameterizedType(Class<?> rawType, Type[] typeArguments, Type ownerType)
+            implements ParameterizedType {
+        @Override public Type[] getActualTypeArguments() { return typeArguments.clone(); }
+        @Override public Type getRawType() { return rawType; }
+        @Override public Type getOwnerType() { return ownerType; }
+
+        @Override
+        public boolean equals(Object o) {
+            return o instanceof ParameterizedType other
+                    && rawType.equals(other.getRawType())
+                    && java.util.Arrays.equals(typeArguments, other.getActualTypeArguments())
+                    && java.util.Objects.equals(ownerType, other.getOwnerType());
         }
-        if (type instanceof ParameterizedType pt) {
-            Type[] args = pt.getActualTypeArguments();
-            boolean changed = false;
-            Type[] newArgs = new Type[args.length];
-            for (int i = 0; i < args.length; i++) {
-                newArgs[i] = substitute(args[i], typeMap, seen);
-                if (newArgs[i] != args[i]) changed = true;
-            }
-            if (changed) {
-                return new ParameterizedType() {
-                    @Override public Type[] getActualTypeArguments() { return newArgs; }
-                    @Override public Type getRawType() { return pt.getRawType(); }
-                    @Override public Type getOwnerType() { return pt.getOwnerType(); }
-                    @Override public boolean equals(Object o) {
-                        if (o instanceof ParameterizedType other) {
-                            return pt.getRawType().equals(other.getRawType()) &&
-                                   java.util.Arrays.equals(newArgs, other.getActualTypeArguments());
-                        }
-                        return false;
-                    }
-                    @Override public int hashCode() {
-                        return java.util.Arrays.hashCode(newArgs) ^ pt.getRawType().hashCode();
-                    }
-                    @Override public String toString() {
-                        return pt.getRawType().getTypeName() + "<" + 
-                            java.util.Arrays.stream(newArgs).map(Type::getTypeName).reduce((a,b)->a+","+b).orElse("") + ">";
-                    }
-                };
-            }
+
+        @Override
+        public int hashCode() {
+            // Match sun.reflect.generics.reflectiveObjects.ParameterizedTypeImpl
+            return java.util.Arrays.hashCode(typeArguments)
+                    ^ java.util.Objects.hashCode(ownerType)
+                    ^ rawType.hashCode();
         }
-        return type;
+
+        @Override
+        public String toString() {
+            return rawType.getTypeName() + "<"
+                    + java.util.Arrays.stream(typeArguments).map(Type::getTypeName)
+                            .reduce((a, b) -> a + "," + b).orElse("") + ">";
+        }
     }
 }

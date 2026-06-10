@@ -59,10 +59,10 @@ public class VaubanContexts implements Contexts<Context> {
 
     @Override
     public void destroyContext(Context context) {
-        if (context instanceof io.vidocq.vauban.core.context.ApplicationContext ac) {
-            ac.deactivate();
-        } else if (context instanceof io.vidocq.vauban.core.context.RequestContext rc) {
-            rc.deactivate();
+        switch (context) {
+            case io.vidocq.vauban.core.context.ApplicationContext ac -> ac.deactivate();
+            case io.vidocq.vauban.core.context.RequestContext rc -> rc.deactivate();
+            case null, default -> { }
         }
     }
 }

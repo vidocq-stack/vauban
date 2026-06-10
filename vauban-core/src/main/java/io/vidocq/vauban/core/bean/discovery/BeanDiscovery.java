@@ -787,14 +787,17 @@ public final class BeanDiscovery {
         if (typedAnn.isPresent()) {
             var restrictedRawTypes = new LinkedHashSet<DotName>();
             var value = typedAnn.get().member(MEMBER_VALUE);
-            if (value instanceof io.vidocq.vauban.indexer.model.AnnotationValue.ArrayVal av) {
-                for (var v : av.values()) {
-                    if (v instanceof io.vidocq.vauban.indexer.model.AnnotationValue.ClassVal cv) {
-                        restrictedRawTypes.add(cv.className());
+            switch (value) {
+                case io.vidocq.vauban.indexer.model.AnnotationValue.ArrayVal av -> {
+                    for (var v : av.values()) {
+                        if (v instanceof io.vidocq.vauban.indexer.model.AnnotationValue.ClassVal cv) {
+                            restrictedRawTypes.add(cv.className());
+                        }
                     }
                 }
-            } else if (value instanceof io.vidocq.vauban.indexer.model.AnnotationValue.ClassVal cv) {
-                restrictedRawTypes.add(cv.className());
+                case io.vidocq.vauban.indexer.model.AnnotationValue.ClassVal cv ->
+                        restrictedRawTypes.add(cv.className());
+                case null, default -> { }
             }
             // Build restricted types — use parameterized versions when available
             var allParamTypes = new LinkedHashSet<TypeInfo>();
@@ -871,142 +874,62 @@ public final class BeanDiscovery {
     }
 
     private static TypeInfo reflectTypeToTypeInfo(java.lang.reflect.Type type, java.util.Set<java.lang.reflect.TypeVariable<?>> visited) {
-        if (type instanceof Class<?> c) {
-            if (c.isArray()) {
+        return switch (type) {
+            case Class<?> c when c.isArray() -> {
                 int dimensions = 0;
                 Class<?> comp = c;
                 while (comp.isArray()) {
                     dimensions++;
                     comp = comp.getComponentType();
                 }
-                TypeInfo componentInfo = reflectTypeToTypeInfo(comp, visited);
-                return new TypeInfo.ArrayType(componentInfo, dimensions);
+                yield new TypeInfo.ArrayType(reflectTypeToTypeInfo(comp, visited), dimensions);
             }
-            return new TypeInfo.ClassType(DotName.of(c.getName()));
-        }
-        if (type instanceof java.lang.reflect.GenericArrayType gat) {
-            TypeInfo componentInfo = reflectTypeToTypeInfo(gat.getGenericComponentType(), visited);
-            if (componentInfo instanceof TypeInfo.ArrayType at) {
-                return new TypeInfo.ArrayType(at.componentType(), at.dimensions() + 1);
+            case Class<?> c -> new TypeInfo.ClassType(DotName.of(c.getName()));
+            case java.lang.reflect.GenericArrayType gat -> {
+                TypeInfo componentInfo = reflectTypeToTypeInfo(gat.getGenericComponentType(), visited);
+                yield componentInfo instanceof TypeInfo.ArrayType at
+                        ? new TypeInfo.ArrayType(at.componentType(), at.dimensions() + 1)
+                        : new TypeInfo.ArrayType(componentInfo, 1);
             }
-            return new TypeInfo.ArrayType(componentInfo, 1);
-        }
-        if (type instanceof java.lang.reflect.ParameterizedType pt) {
-            var rawType = DotName.of(((Class<?>) pt.getRawType()).getName());
-            var args = new java.util.ArrayList<TypeInfo>();
-            for (var arg : pt.getActualTypeArguments()) {
-                var argInfo = reflectTypeToTypeInfo(arg, visited);
-                if (argInfo != null) args.add(argInfo);
-            }
-            if (args.isEmpty()) return new TypeInfo.ClassType(rawType);
-            return new TypeInfo.ParameterizedType(rawType, args);
-        }
-        if (type instanceof java.lang.reflect.TypeVariable<?> tv) {
-            if (!visited.add(tv)) {
-                return new TypeInfo.TypeVariable(tv.getName(), java.util.List.of());
-            }
-            var bounds = new java.util.ArrayList<TypeInfo>();
-            for (var bound : tv.getBounds()) {
-                if (bound != Object.class) {
-                    var boundInfo = reflectTypeToTypeInfo(bound, visited);
-                    if (boundInfo != null) bounds.add(boundInfo);
+            case java.lang.reflect.ParameterizedType pt -> {
+                var rawType = DotName.of(((Class<?>) pt.getRawType()).getName());
+                var args = new java.util.ArrayList<TypeInfo>();
+                for (var arg : pt.getActualTypeArguments()) {
+                    var argInfo = reflectTypeToTypeInfo(arg, visited);
+                    if (argInfo != null) args.add(argInfo);
                 }
+                yield args.isEmpty()
+                        ? new TypeInfo.ClassType(rawType)
+                        : new TypeInfo.ParameterizedType(rawType, args);
             }
-            visited.remove(tv);
-            return new TypeInfo.TypeVariable(tv.getName(), bounds);
-        }
-        if (type instanceof java.lang.reflect.WildcardType wt) {
-            TypeInfo upper = wt.getUpperBounds().length > 0 && wt.getUpperBounds()[0] != Object.class ? reflectTypeToTypeInfo(wt.getUpperBounds()[0], visited) : null;
-            TypeInfo lower = wt.getLowerBounds().length > 0 && wt.getLowerBounds()[0] != Object.class ? reflectTypeToTypeInfo(wt.getLowerBounds()[0], visited) : null;
-            return new TypeInfo.WildcardType(upper, lower);
-        }
-        // Fallback for GenericArrayType etc.
-        return null;
+            case java.lang.reflect.TypeVariable<?> tv -> {
+                if (!visited.add(tv)) {
+                    yield new TypeInfo.TypeVariable(tv.getName(), java.util.List.of());
+                }
+                var bounds = new java.util.ArrayList<TypeInfo>();
+                for (var bound : tv.getBounds()) {
+                    if (bound != Object.class) {
+                        var boundInfo = reflectTypeToTypeInfo(bound, visited);
+                        if (boundInfo != null) bounds.add(boundInfo);
+                    }
+                }
+                visited.remove(tv);
+                yield new TypeInfo.TypeVariable(tv.getName(), bounds);
+            }
+            case java.lang.reflect.WildcardType wt -> {
+                TypeInfo upper = wt.getUpperBounds().length > 0 && wt.getUpperBounds()[0] != Object.class ? reflectTypeToTypeInfo(wt.getUpperBounds()[0], visited) : null;
+                TypeInfo lower = wt.getLowerBounds().length > 0 && wt.getLowerBounds()[0] != Object.class ? reflectTypeToTypeInfo(wt.getLowerBounds()[0], visited) : null;
+                yield new TypeInfo.WildcardType(upper, lower);
+            }
+            case null, default -> null;
+        };
     }
 
     static java.lang.reflect.Type resolveReflectType(java.lang.reflect.Type type, Class<?> concreteClass) {
-        var mapping = buildReflectTypeVariableMapping(concreteClass);
-        return resolveReflectTypeWithMapping(type, mapping);
-    }
-
-    private static Map<java.lang.reflect.TypeVariable<?>, java.lang.reflect.Type> buildReflectTypeVariableMapping(Class<?> cls) {
-        var mapping = new java.util.HashMap<java.lang.reflect.TypeVariable<?>, java.lang.reflect.Type>();
-        Class<?> current = cls;
-        while (current != null && current != Object.class) {
-            var genericSuper = current.getGenericSuperclass();
-            if (genericSuper instanceof java.lang.reflect.ParameterizedType pt) {
-                var rawSuper = (Class<?>) pt.getRawType();
-                var typeParams = rawSuper.getTypeParameters();
-                var actualArgs = pt.getActualTypeArguments();
-                for (int i = 0; i < typeParams.length; i++) {
-                    var resolved = resolveReflectTypeWithMapping(actualArgs[i], mapping);
-                    mapping.put(typeParams[i], resolved);
-                }
-            }
-            current = current.getSuperclass();
-        }
-        return mapping;
-    }
-
-    private static java.lang.reflect.Type resolveReflectTypeWithMapping(
-            java.lang.reflect.Type type,
-            Map<java.lang.reflect.TypeVariable<?>, java.lang.reflect.Type> mapping) {
-        if (type instanceof java.lang.reflect.TypeVariable<?> tv) {
-            var resolved = mapping.get(tv);
-            return resolved != null ? resolved : type;
-        }
-        if (type instanceof java.lang.reflect.ParameterizedType pt) {
-            var args = pt.getActualTypeArguments();
-            var resolvedArgs = new java.lang.reflect.Type[args.length];
-            boolean changed = false;
-            for (int i = 0; i < args.length; i++) {
-                resolvedArgs[i] = resolveReflectTypeWithMapping(args[i], mapping);
-                if (resolvedArgs[i] != args[i]) changed = true;
-            }
-            if (!changed) return type;
-            return new ResolvedParamType((Class<?>) pt.getRawType(), resolvedArgs, pt.getOwnerType());
-        }
-        if (type instanceof java.lang.reflect.GenericArrayType gat) {
-            var resolvedComponent = resolveReflectTypeWithMapping(gat.getGenericComponentType(), mapping);
-            if (resolvedComponent instanceof Class<?> cc) {
-                return java.lang.reflect.Array.newInstance(cc, 0).getClass();
-            }
-            if (resolvedComponent != gat.getGenericComponentType()) {
-                return new ResolvedGenArrayType(resolvedComponent);
-            }
-        }
-        return type;
-    }
-
-    private record ResolvedParamType(Class<?> rawType, java.lang.reflect.Type[] typeArguments, java.lang.reflect.Type ownerType)
-            implements java.lang.reflect.ParameterizedType {
-        @Override public java.lang.reflect.Type[] getActualTypeArguments() { return typeArguments.clone(); }
-        @Override public java.lang.reflect.Type getRawType() { return rawType; }
-        @Override public java.lang.reflect.Type getOwnerType() { return ownerType; }
-        @Override public boolean equals(Object o) {
-            if (!(o instanceof java.lang.reflect.ParameterizedType other)) return false;
-            return java.util.Objects.equals(rawType, other.getRawType())
-                    && java.util.Arrays.equals(typeArguments, other.getActualTypeArguments())
-                    && java.util.Objects.equals(ownerType, other.getOwnerType());
-        }
-        @Override public int hashCode() {
-            return java.util.Arrays.hashCode(typeArguments) ^ java.util.Objects.hashCode(rawType)
-                    ^ java.util.Objects.hashCode(ownerType);
-        }
-        @Override public String toString() {
-            if (typeArguments.length == 0) return rawType.getTypeName();
-            var sb = new StringBuilder(rawType.getTypeName()).append('<');
-            for (int i = 0; i < typeArguments.length; i++) {
-                if (i > 0) sb.append(", ");
-                sb.append(typeArguments[i].getTypeName());
-            }
-            return sb.append('>').toString();
-        }
-    }
-
-    private record ResolvedGenArrayType(java.lang.reflect.Type componentType)
-            implements java.lang.reflect.GenericArrayType {
-        @Override public java.lang.reflect.Type getGenericComponentType() { return componentType; }
+        // Delegates to ManagedBean — this class used to carry an exact private copy of the
+        // substitution machinery (with a hashCode formula that diverged from ManagedBean's)
+        return io.vidocq.vauban.core.container.ManagedBean.resolveType(type,
+                io.vidocq.vauban.core.container.ManagedBean.buildTypeVariableMapping(concreteClass));
     }
 
     Set<TypeInfo> computeProducerTypes(TypeInfo producerType) {
@@ -1016,34 +939,35 @@ public final class BeanDiscovery {
         // Use TypeHierarchyResolver to correctly resolve both raw and parameterized supertypes
         try {
             var cl = Thread.currentThread().getContextClassLoader();
-            java.lang.reflect.Type refType = null;
-            if (producerType instanceof TypeInfo.ClassType ct) {
-                refType = cl != null ? Class.forName(ct.name().value(), false, cl)
+            java.lang.reflect.Type refType = switch (producerType) {
+                case TypeInfo.ClassType ct -> cl != null ? Class.forName(ct.name().value(), false, cl)
                         : Class.forName(ct.name().value());
-            } else if (producerType instanceof TypeInfo.ParameterizedType pt) {
-                // If it's parameterized, we still need the raw class to extract the tree
-                Class<?> clazz = cl != null ? Class.forName(pt.rawType().value(), false, cl)
-                        : Class.forName(pt.rawType().value());
-                
-                // Reconstruct a simple ParameterizedType to pass to TypeHierarchyResolver
-                java.lang.reflect.Type[] args = new java.lang.reflect.Type[pt.typeArguments().size()];
-                for (int i = 0; i < pt.typeArguments().size(); i++) {
-                    TypeInfo argInfo = pt.typeArguments().get(i);
-                    if (argInfo instanceof TypeInfo.ClassType act) {
-                        args[i] = cl != null ? Class.forName(act.name().value(), false, cl)
-                                : Class.forName(act.name().value());
-                    } else {
-                        // Fallback: Use Object or raw bounds if it's complex wildcard
-                        args[i] = Object.class;
+                case TypeInfo.ParameterizedType pt -> {
+                    // If it's parameterized, we still need the raw class to extract the tree
+                    Class<?> clazz = cl != null ? Class.forName(pt.rawType().value(), false, cl)
+                            : Class.forName(pt.rawType().value());
+
+                    // Reconstruct a simple ParameterizedType to pass to TypeHierarchyResolver
+                    java.lang.reflect.Type[] args = new java.lang.reflect.Type[pt.typeArguments().size()];
+                    for (int i = 0; i < pt.typeArguments().size(); i++) {
+                        TypeInfo argInfo = pt.typeArguments().get(i);
+                        if (argInfo instanceof TypeInfo.ClassType act) {
+                            args[i] = cl != null ? Class.forName(act.name().value(), false, cl)
+                                    : Class.forName(act.name().value());
+                        } else {
+                            // Fallback: Use Object or raw bounds if it's complex wildcard
+                            args[i] = Object.class;
+                        }
                     }
+                    final Class<?> finalClazz = clazz;
+                    yield new java.lang.reflect.ParameterizedType() {
+                        @Override public java.lang.reflect.Type[] getActualTypeArguments() { return args; }
+                        @Override public java.lang.reflect.Type getRawType() { return finalClazz; }
+                        @Override public java.lang.reflect.Type getOwnerType() { return null; }
+                    };
                 }
-                final Class<?> finalClazz = clazz;
-                refType = new java.lang.reflect.ParameterizedType() {
-                    @Override public java.lang.reflect.Type[] getActualTypeArguments() { return args; }
-                    @Override public java.lang.reflect.Type getRawType() { return finalClazz; }
-                    @Override public java.lang.reflect.Type getOwnerType() { return null; }
-                };
-            }
+                default -> null;
+            };
             
             if (refType != null) {
                 for (java.lang.reflect.Type t : io.vidocq.vauban.core.types.TypeHierarchyResolver.resolveAllSupertypes(refType)) {
@@ -1070,14 +994,17 @@ public final class BeanDiscovery {
         if (typedAnn.isPresent()) {
             var restrictedTypes = new LinkedHashSet<TypeInfo>();
             var value = typedAnn.get().member(MEMBER_VALUE);
-            if (value instanceof io.vidocq.vauban.indexer.model.AnnotationValue.ArrayVal av) {
-                for (var v : av.values()) {
-                    if (v instanceof io.vidocq.vauban.indexer.model.AnnotationValue.ClassVal cv) {
-                        restrictedTypes.add(new TypeInfo.ClassType(cv.className()));
+            switch (value) {
+                case io.vidocq.vauban.indexer.model.AnnotationValue.ArrayVal av -> {
+                    for (var v : av.values()) {
+                        if (v instanceof io.vidocq.vauban.indexer.model.AnnotationValue.ClassVal cv) {
+                            restrictedTypes.add(new TypeInfo.ClassType(cv.className()));
+                        }
                     }
                 }
-            } else if (value instanceof io.vidocq.vauban.indexer.model.AnnotationValue.ClassVal cv) {
-                restrictedTypes.add(new TypeInfo.ClassType(cv.className()));
+                case io.vidocq.vauban.indexer.model.AnnotationValue.ClassVal cv ->
+                        restrictedTypes.add(new TypeInfo.ClassType(cv.className()));
+                case null, default -> { }
             }
             restrictedTypes.add(new TypeInfo.ClassType(DotName.of(JAVA_LANG_OBJECT)));
             return restrictedTypes;
@@ -1291,18 +1218,16 @@ public final class BeanDiscovery {
             if (method.getParameterCount() == 0 && method.getDeclaringClass() == ann.annotationType()) {
                 try {
                     var value = method.invoke(ann);
-                    if (value instanceof String s) {
-                        members.put(method.getName(), new io.vidocq.vauban.indexer.model.AnnotationValue.StringVal(s));
-                    } else if (value instanceof Boolean b) {
-                        members.put(method.getName(), new io.vidocq.vauban.indexer.model.AnnotationValue.BooleanVal(b));
-                    } else if (value instanceof Integer i) {
-                        members.put(method.getName(), new io.vidocq.vauban.indexer.model.AnnotationValue.IntVal(i));
-                    } else if (value instanceof Class<?> c) {
-                        members.put(method.getName(), new io.vidocq.vauban.indexer.model.AnnotationValue.ClassVal(DotName.of(c.getName())));
-                    } else if (value instanceof Enum<?> e) {
-                        members.put(method.getName(), new io.vidocq.vauban.indexer.model.AnnotationValue.EnumVal(
-                                DotName.of(e.getClass().getName()), e.name()));
-                    }
+                    var converted = switch (value) {
+                        case String s -> new io.vidocq.vauban.indexer.model.AnnotationValue.StringVal(s);
+                        case Boolean b -> new io.vidocq.vauban.indexer.model.AnnotationValue.BooleanVal(b);
+                        case Integer i -> new io.vidocq.vauban.indexer.model.AnnotationValue.IntVal(i);
+                        case Class<?> c -> new io.vidocq.vauban.indexer.model.AnnotationValue.ClassVal(DotName.of(c.getName()));
+                        case Enum<?> e -> new io.vidocq.vauban.indexer.model.AnnotationValue.EnumVal(
+                                DotName.of(e.getClass().getName()), e.name());
+                        case null, default -> null;
+                    };
+                    if (converted != null) members.put(method.getName(), converted);
                 } catch (Exception e) { /* skip */ }
             }
         }
@@ -1842,10 +1767,12 @@ public final class BeanDiscovery {
     }
 
     private String getBaseTypeName(TypeInfo t) {
-        if (t instanceof io.vidocq.vauban.indexer.model.TypeInfo.ClassType ct) return ct.name().value();
-        if (t instanceof io.vidocq.vauban.indexer.model.TypeInfo.ParameterizedType pt) return pt.rawType().value();
-        if (t instanceof io.vidocq.vauban.indexer.model.TypeInfo.ArrayType at) return getBaseTypeName(at.componentType()) + "[]";
-        return "";
+        return switch (t) {
+            case io.vidocq.vauban.indexer.model.TypeInfo.ClassType ct -> ct.name().value();
+            case io.vidocq.vauban.indexer.model.TypeInfo.ParameterizedType pt -> pt.rawType().value();
+            case io.vidocq.vauban.indexer.model.TypeInfo.ArrayType at -> getBaseTypeName(at.componentType()) + "[]";
+            case null, default -> "";
+        };
     }
 
     /**

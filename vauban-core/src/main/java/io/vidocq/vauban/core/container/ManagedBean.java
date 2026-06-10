@@ -335,9 +335,11 @@ public final class ManagedBean<T> implements Bean<T> {
     }
 
     private static Class<?> rawTypeOf(Type type) {
-        if (type instanceof Class<?> c) return c;
-        if (type instanceof java.lang.reflect.ParameterizedType pt) return (Class<?>) pt.getRawType();
-        return null;
+        return switch (type) {
+            case Class<?> c -> c;
+            case java.lang.reflect.ParameterizedType pt -> (Class<?>) pt.getRawType();
+            case null, default -> null;
+        };
     }
 
     /**
@@ -352,23 +354,20 @@ public final class ManagedBean<T> implements Bean<T> {
     private static Set<Type> filterIllegalBeanTypes(Set<Type> types, Set<java.lang.reflect.TypeVariable<?>> allowedTypeVars, boolean addRawForRemoved) {
         var result = new LinkedHashSet<Type>();
         for (var t : types) {
-            if (t == Object.class || t instanceof Class<?>) {
-                result.add(t);
-            } else if (t instanceof java.lang.reflect.ParameterizedType pt) {
-                if (isLegalParameterizedType(pt, allowedTypeVars)) {
-                    result.add(t);
-                } else if (addRawForRemoved && pt.getRawType() instanceof Class<?>
-                        && containsTypeVariable(pt)) {
-                    // CDI spec 5.2.4: keep parameterized types with type variables for producers
-                    // so that assignability can match type variable bounds against required types
-                    result.add(t);
-                }
-            } else if (t instanceof java.lang.reflect.GenericArrayType gat) {
-                if (!containsUnresolvedTypeVariable(gat)) {
-                    result.add(t);
-                }
+            switch (t) {
+                case Class<?> c -> result.add(c);
+                case java.lang.reflect.ParameterizedType pt
+                        when isLegalParameterizedType(pt, allowedTypeVars) -> result.add(t);
+                case java.lang.reflect.ParameterizedType pt
+                        when addRawForRemoved && pt.getRawType() instanceof Class<?>
+                                && containsTypeVariable(pt) ->
+                        // CDI spec 5.2.4: keep parameterized types with type variables for producers
+                        // so that assignability can match type variable bounds against required types
+                        result.add(t);
+                case java.lang.reflect.GenericArrayType gat
+                        when !containsUnresolvedTypeVariable(gat) -> result.add(t);
+                case null, default -> { /* Skip TypeVariable, WildcardType */ }
             }
-            // Skip TypeVariable, WildcardType
         }
         return result;
     }
@@ -558,48 +557,31 @@ public final class ManagedBean<T> implements Bean<T> {
     }
 
     private static Type substituteTypeVariables(Type type, Map<java.lang.reflect.TypeVariable<?>, Type> mapping) {
-        if (type instanceof java.lang.reflect.TypeVariable<?> tv) {
-            var resolved = mapping.get(tv);
-            return resolved != null ? resolved : type;
-        }
-        if (type instanceof java.lang.reflect.ParameterizedType pt) {
-            var args = pt.getActualTypeArguments();
-            var newArgs = new Type[args.length];
-            boolean changed = false;
-            for (int i = 0; i < args.length; i++) {
-                newArgs[i] = substituteTypeVariables(args[i], mapping);
-                if (newArgs[i] != args[i]) changed = true;
+        return switch (type) {
+            case java.lang.reflect.TypeVariable<?> tv -> {
+                var resolved = mapping.get(tv);
+                yield resolved != null ? resolved : type;
             }
-            if (!changed) return type;
-            var rawType = pt.getRawType();
-            var owner = pt.getOwnerType();
-            return new java.lang.reflect.ParameterizedType() {
-                @Override public Type[] getActualTypeArguments() { return newArgs.clone(); }
-                @Override public Type getRawType() { return rawType; }
-                @Override public Type getOwnerType() { return owner; }
-                @Override public boolean equals(Object o) {
-                    if (!(o instanceof java.lang.reflect.ParameterizedType other)) return false;
-                    return rawType.equals(other.getRawType())
-                            && java.util.Arrays.equals(newArgs, other.getActualTypeArguments());
+            case java.lang.reflect.ParameterizedType pt -> {
+                var args = pt.getActualTypeArguments();
+                var newArgs = new Type[args.length];
+                boolean changed = false;
+                for (int i = 0; i < args.length; i++) {
+                    newArgs[i] = substituteTypeVariables(args[i], mapping);
+                    if (newArgs[i] != args[i]) changed = true;
                 }
-                @Override public int hashCode() {
-                    return java.util.Arrays.hashCode(newArgs) ^ rawType.hashCode();
-                }
-                @Override public String toString() {
-                    return rawType.getTypeName() + "<" +
-                            java.util.Arrays.stream(newArgs).map(Type::getTypeName)
-                                    .collect(java.util.stream.Collectors.joining(", ")) + ">";
-                }
-            };
-        }
-        if (type instanceof java.lang.reflect.GenericArrayType gat) {
-            var newComponent = substituteTypeVariables(gat.getGenericComponentType(), mapping);
-            if (newComponent == gat.getGenericComponentType()) return type;
-            return new java.lang.reflect.GenericArrayType() {
-                @Override public Type getGenericComponentType() { return newComponent; }
-            };
-        }
-        return type;
+                yield changed
+                        ? new ResolvedParameterizedType((Class<?>) pt.getRawType(), newArgs, pt.getOwnerType())
+                        : type;
+            }
+            case java.lang.reflect.GenericArrayType gat -> {
+                var newComponent = substituteTypeVariables(gat.getGenericComponentType(), mapping);
+                yield newComponent == gat.getGenericComponentType()
+                        ? type
+                        : new ResolvedGenericArrayType(newComponent);
+            }
+            case null, default -> type;
+        };
     }
 
     private boolean hasProducerTypedRestriction() {
@@ -665,26 +647,23 @@ public final class ManagedBean<T> implements Bean<T> {
 
     private static Class<?> resolveArrayClass(io.vidocq.vauban.indexer.model.TypeInfo.ArrayType at, ClassLoader cl) {
         try {
-            var component = at.componentType();
-            String desc;
-            if (component instanceof io.vidocq.vauban.indexer.model.TypeInfo.ClassType ct) {
-                desc = "[".repeat(at.dimensions()) + "L" + ct.name().value() + ";";
-            } else if (component instanceof io.vidocq.vauban.indexer.model.TypeInfo.PrimitiveType pt) {
-                var primDescriptor = switch (pt.kind()) {
-                    case BOOLEAN -> "Z";
-                    case BYTE -> "B";
-                    case CHAR -> "C";
-                    case SHORT -> "S";
-                    case INT -> "I";
-                    case LONG -> "J";
-                    case FLOAT -> "F";
-                    case DOUBLE -> "D";
-                };
-                desc = "[".repeat(at.dimensions()) + primDescriptor;
-            } else {
-                return null;
-            }
-            return Class.forName(desc, true, cl);
+            String desc = switch (at.componentType()) {
+                case io.vidocq.vauban.indexer.model.TypeInfo.ClassType ct ->
+                        "[".repeat(at.dimensions()) + "L" + ct.name().value() + ";";
+                case io.vidocq.vauban.indexer.model.TypeInfo.PrimitiveType pt ->
+                        "[".repeat(at.dimensions()) + switch (pt.kind()) {
+                            case BOOLEAN -> "Z";
+                            case BYTE -> "B";
+                            case CHAR -> "C";
+                            case SHORT -> "S";
+                            case INT -> "I";
+                            case LONG -> "J";
+                            case FLOAT -> "F";
+                            case DOUBLE -> "D";
+                        };
+                default -> null;
+            };
+            return desc == null ? null : Class.forName(desc, true, cl);
         } catch (ClassNotFoundException e) {
             return null;
         }
@@ -743,16 +722,18 @@ public final class ManagedBean<T> implements Bean<T> {
     }
 
     private static boolean containsUnresolvedTypeVariable(Type type) {
-        if (type instanceof java.lang.reflect.TypeVariable<?> _) return true;
-        if (type instanceof java.lang.reflect.ParameterizedType pt) {
-            for (var arg : pt.getActualTypeArguments()) {
-                if (containsUnresolvedTypeVariable(arg)) return true;
+        return switch (type) {
+            case java.lang.reflect.TypeVariable<?> _ -> true;
+            case java.lang.reflect.ParameterizedType pt -> {
+                for (var arg : pt.getActualTypeArguments()) {
+                    if (containsUnresolvedTypeVariable(arg)) yield true;
+                }
+                yield false;
             }
-        }
-        if (type instanceof java.lang.reflect.GenericArrayType gat) {
-            return containsUnresolvedTypeVariable(gat.getGenericComponentType());
-        }
-        return false;
+            case java.lang.reflect.GenericArrayType gat ->
+                    containsUnresolvedTypeVariable(gat.getGenericComponentType());
+            case null, default -> false;
+        };
     }
 
     private static void collectTypes(Class<?> clazz, Set<Type> types) {
@@ -765,103 +746,48 @@ public final class ManagedBean<T> implements Bean<T> {
             types.add(clazz);
         }
         // Collect supertypes (skip self)
-        collectTypesFromSupers(clazz, types, Map.of());
+        collectSupertypes(clazz, types, Map.of(), false);
     }
 
-    private static void collectTypesFromSupers(Class<?> clazz, Set<Type> types,
-            Map<java.lang.reflect.TypeVariable<?>, Type> typeMapping) {
+    /**
+     * Walks the generic supertype hierarchy (superclass + interfaces) of {@code clazz},
+     * adding every encountered type to {@code types}. Parameterized supertypes are resolved
+     * against {@code typeMapping} before being added; raw {@code Class} supertypes restart
+     * the walk with {@code addSelf = true} so they are added themselves.
+     *
+     * <p>Replaces the three historical near-identical methods
+     * ({@code collectTypesFromSupers} / {@code collectTypesWithMapping} /
+     * {@code collectTypesWithMappingSkipSelf}) — the only behavioral difference ever was
+     * whether {@code clazz} itself is added, captured by {@code addSelf}.</p>
+     */
+    private static void collectSupertypes(Class<?> clazz, Set<Type> types,
+            Map<java.lang.reflect.TypeVariable<?>, Type> typeMapping, boolean addSelf) {
         if (clazz == null || clazz == Object.class) return;
-        // Superclass
+        if (addSelf) types.add(clazz);
         var genericSuper = clazz.getGenericSuperclass();
         if (genericSuper != null && genericSuper != Object.class) {
-            if (genericSuper instanceof java.lang.reflect.ParameterizedType pt) {
-                var resolved = resolveParameterizedType(pt, typeMapping);
-                types.add(resolved);
-                var rawClass = (Class<?>) pt.getRawType();
-                var newMapping = buildTypeMapping(rawClass, resolved);
-                collectTypesFromSupers(rawClass, types, newMapping);
-            } else if (genericSuper instanceof Class<?> c) {
-                collectTypesWithMapping(c, types, typeMapping);
-            }
+            collectSupertype(genericSuper, types, typeMapping);
         } else if (clazz.getSuperclass() != null) {
-            collectTypesWithMapping(clazz.getSuperclass(), types, typeMapping);
+            collectSupertypes(clazz.getSuperclass(), types, typeMapping, true);
         }
-        // Interfaces
         for (var genericIface : clazz.getGenericInterfaces()) {
-            if (genericIface instanceof java.lang.reflect.ParameterizedType pt) {
-                var resolved = resolveParameterizedType(pt, typeMapping);
-                types.add(resolved);
-                var rawClass = (Class<?>) pt.getRawType();
-                var newMapping = buildTypeMapping(rawClass, resolved);
-                collectTypesFromSupers(rawClass, types, newMapping);
-            } else if (genericIface instanceof Class<?> c) {
-                collectTypesWithMapping(c, types, typeMapping);
-            }
+            collectSupertype(genericIface, types, typeMapping);
         }
     }
 
-    private static void collectTypesWithMapping(Class<?> clazz, Set<Type> types,
+    private static void collectSupertype(Type supertype, Set<Type> types,
             Map<java.lang.reflect.TypeVariable<?>, Type> typeMapping) {
-        if (clazz == null || clazz == Object.class) return;
-        types.add(clazz);
-        // Superclass
-        var genericSuper = clazz.getGenericSuperclass();
-        if (genericSuper != null && genericSuper != Object.class) {
-            if (genericSuper instanceof java.lang.reflect.ParameterizedType pt) {
-                // Resolve type arguments using the current mapping
-                var resolved = resolveParameterizedType(pt, typeMapping);
-                types.add(resolved);
-                // Build new mapping for the raw type's type parameters
-                var rawClass = (Class<?>) pt.getRawType();
-                var newMapping = buildTypeMapping(rawClass, resolved);
-                collectTypesWithMappingSkipSelf(rawClass, types, newMapping);
-            } else if (genericSuper instanceof Class<?> c) {
-                collectTypesWithMapping(c, types, typeMapping);
-            }
-        } else if (clazz.getSuperclass() != null) {
-            collectTypesWithMapping(clazz.getSuperclass(), types, typeMapping);
-        }
-        // Interfaces
-        for (var genericIface : clazz.getGenericInterfaces()) {
-            if (genericIface instanceof java.lang.reflect.ParameterizedType pt) {
+        switch (supertype) {
+            case java.lang.reflect.ParameterizedType pt -> {
+                // Resolve type arguments using the current mapping, then build a new
+                // mapping for the raw type's own type parameters before recursing
                 var resolved = resolveParameterizedType(pt, typeMapping);
                 types.add(resolved);
                 var rawClass = (Class<?>) pt.getRawType();
-                var newMapping = buildTypeMapping(rawClass, resolved);
-                collectTypesWithMappingSkipSelf(rawClass, types, newMapping);
-            } else if (genericIface instanceof Class<?> c) {
-                collectTypesWithMapping(c, types, typeMapping);
+                collectSupertypes(rawClass, types, buildTypeMapping(rawClass, resolved), false);
             }
-        }
-    }
-
-    private static void collectTypesWithMappingSkipSelf(Class<?> clazz, Set<Type> types,
-            Map<java.lang.reflect.TypeVariable<?>, Type> typeMapping) {
-        if (clazz == null || clazz == Object.class) return;
-        var genericSuper = clazz.getGenericSuperclass();
-        if (genericSuper != null && genericSuper != Object.class) {
-            if (genericSuper instanceof java.lang.reflect.ParameterizedType pt) {
-                var resolved = resolveParameterizedType(pt, typeMapping);
-                types.add(resolved);
-                var rawClass = (Class<?>) pt.getRawType();
-                var newMapping = buildTypeMapping(rawClass, resolved);
-                collectTypesWithMappingSkipSelf(rawClass, types, newMapping);
-            } else if (genericSuper instanceof Class<?> c) {
-                collectTypesWithMapping(c, types, typeMapping);
-            }
-        } else if (clazz.getSuperclass() != null) {
-            collectTypesWithMapping(clazz.getSuperclass(), types, typeMapping);
-        }
-        for (var genericIface : clazz.getGenericInterfaces()) {
-            if (genericIface instanceof java.lang.reflect.ParameterizedType pt) {
-                var resolved = resolveParameterizedType(pt, typeMapping);
-                types.add(resolved);
-                var rawClass = (Class<?>) pt.getRawType();
-                var newMapping = buildTypeMapping(rawClass, resolved);
-                collectTypesWithMappingSkipSelf(rawClass, types, newMapping);
-            } else if (genericIface instanceof Class<?> c) {
-                collectTypesWithMapping(c, types, typeMapping);
-            }
+            case Class<?> c -> collectSupertypes(c, types, typeMapping, true);
+            default -> { }
         }
     }
 
@@ -1027,31 +953,34 @@ public final class ManagedBean<T> implements Bean<T> {
     }
 
     public static Type resolveType(Type type, Map<java.lang.reflect.TypeVariable<?>, Type> mapping) {
-        if (type instanceof java.lang.reflect.TypeVariable<?> tv) {
-            var resolved = mapping.get(tv);
-            return resolved != null ? resolved : type;
-        }
-        if (type instanceof java.lang.reflect.ParameterizedType pt) {
-            var args = pt.getActualTypeArguments();
-            var resolvedArgs = new Type[args.length];
-            boolean changed = false;
-            for (int i = 0; i < args.length; i++) {
-                resolvedArgs[i] = resolveType(args[i], mapping);
-                if (resolvedArgs[i] != args[i]) changed = true;
+        return switch (type) {
+            case java.lang.reflect.TypeVariable<?> tv -> {
+                var resolved = mapping.get(tv);
+                yield resolved != null ? resolved : type;
             }
-            if (!changed) return type;
-            return new ResolvedParameterizedType((Class<?>) pt.getRawType(), resolvedArgs, pt.getOwnerType());
-        }
-        if (type instanceof java.lang.reflect.GenericArrayType gat) {
-            var resolvedComponent = resolveType(gat.getGenericComponentType(), mapping);
-            if (resolvedComponent instanceof Class<?> cc) {
-                return java.lang.reflect.Array.newInstance(cc, 0).getClass();
+            case java.lang.reflect.ParameterizedType pt -> {
+                var args = pt.getActualTypeArguments();
+                var resolvedArgs = new Type[args.length];
+                boolean changed = false;
+                for (int i = 0; i < args.length; i++) {
+                    resolvedArgs[i] = resolveType(args[i], mapping);
+                    if (resolvedArgs[i] != args[i]) changed = true;
+                }
+                yield changed
+                        ? new ResolvedParameterizedType((Class<?>) pt.getRawType(), resolvedArgs, pt.getOwnerType())
+                        : type;
             }
-            if (resolvedComponent != gat.getGenericComponentType()) {
-                return new ResolvedGenericArrayType(resolvedComponent);
+            case java.lang.reflect.GenericArrayType gat -> {
+                var resolvedComponent = resolveType(gat.getGenericComponentType(), mapping);
+                if (resolvedComponent instanceof Class<?> cc) {
+                    yield java.lang.reflect.Array.newInstance(cc, 0).getClass();
+                }
+                yield resolvedComponent != gat.getGenericComponentType()
+                        ? new ResolvedGenericArrayType(resolvedComponent)
+                        : type;
             }
-        }
-        return type;
+            case null, default -> type;
+        };
     }
 
     private record ResolvedParameterizedType(Class<?> rawType, Type[] typeArguments, Type ownerType)
@@ -1070,7 +999,11 @@ public final class ManagedBean<T> implements Bean<T> {
 
         @Override
         public int hashCode() {
-            return java.util.Arrays.hashCode(typeArguments) ^ rawType.hashCode();
+            // Must match sun.reflect.generics.reflectiveObjects.ParameterizedTypeImpl so that
+            // equal types coming from JDK reflection and from Vauban hash to the same bucket
+            return java.util.Arrays.hashCode(typeArguments)
+                    ^ Objects.hashCode(ownerType)
+                    ^ Objects.hashCode(rawType);
         }
 
         @Override
@@ -1091,6 +1024,24 @@ public final class ManagedBean<T> implements Bean<T> {
     private record ResolvedGenericArrayType(Type componentType)
             implements java.lang.reflect.GenericArrayType {
         @Override public Type getGenericComponentType() { return componentType; }
+
+        // The record-generated equals/hashCode would only match other ResolvedGenericArrayType
+        // instances; align with GenericArrayTypeImpl so JDK-built equal types interoperate
+        @Override
+        public boolean equals(Object o) {
+            return o instanceof java.lang.reflect.GenericArrayType other
+                    && componentType.equals(other.getGenericComponentType());
+        }
+
+        @Override
+        public int hashCode() {
+            return Objects.hashCode(componentType);
+        }
+
+        @Override
+        public String toString() {
+            return componentType.getTypeName() + "[]";
+        }
     }
 
     private static Set<java.lang.annotation.Annotation> extractParamQualifiers(java.lang.reflect.Parameter param) {

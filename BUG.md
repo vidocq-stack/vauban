@@ -649,3 +649,53 @@ all types (arrays, primitives, references). All
 `describeConstable().orElse(ClassDesc.of(...))` calls replaced by `classDescOf()`.
 
 CDI TCK **774/774 PASS** — 0 failures after Fix 3.
+
+---
+
+## VAU-TYP-001 — three private ParameterizedType/GenericArrayType copies with divergent equals/hashCode
+
+- **Date**: 2026-06-10 — **Status**: FIXED (uncommitted — Phase 16a modernization batch)
+
+**Symptom**: found by code review during the Java-modernization pass, no failing test
+observed yet. `vauban-core` carried **three** independent synthetic implementations of
+`java.lang.reflect.ParameterizedType` — `ManagedBean.ResolvedParameterizedType`,
+`BeanDiscovery.ResolvedParamType` and an anonymous class in
+`TypeHierarchyResolver.substitute` (plus a second anonymous one in
+`ManagedBean.substituteTypeVariables`) — each with a **different** `equals`/`hashCode`
+contract:
+
+| Copy | equals checks owner? | hashCode includes owner? |
+|---|---|---|
+| `ManagedBean.ResolvedParameterizedType` | yes | **no** |
+| `BeanDiscovery.ResolvedParamType` | yes | yes |
+| `TypeHierarchyResolver` anonymous | **no** | no |
+| JDK `ParameterizedTypeImpl` (reference) | yes | yes |
+
+**Risk**: bean types live in hash-based sets (`LinkedHashSet<Type>`) mixing JDK-built
+types and Vauban-built ones. Two equal types with different hash codes silently land in
+different buckets → duplicate bean types, missed assignability matches. Only observable
+when `ownerType != null` (nested generic classes) or when the laxer
+`TypeHierarchyResolver` equals deduplicated types it should not.
+
+Same family: `ManagedBean.ResolvedGenericArrayType` (record) kept the record-generated
+`equals`, which only matches its own record type — `jdkGat.equals(resolvedGat)` was true
+while `resolvedGat.equals(jdkGat)` was false (asymmetric), and the anonymous
+`GenericArrayType` in `substituteTypeVariables` had **identity** equals/hashCode.
+
+**Fix (2026-06-10)**:
+- `BeanDiscovery.resolveReflectType` now delegates to `ManagedBean.resolveType` /
+  `buildTypeVariableMapping`; the private copies (`resolveReflectTypeWithMapping`,
+  `ResolvedParamType`, `ResolvedGenArrayType`, ~80 lines) are deleted.
+- `ManagedBean.ResolvedParameterizedType.hashCode` aligned on the JDK formula
+  (`Arrays.hashCode(args) ^ Objects.hashCode(owner) ^ Objects.hashCode(raw)`).
+- `ManagedBean.ResolvedGenericArrayType` given explicit `equals`/`hashCode` matching
+  `GenericArrayTypeImpl` semantics (any `GenericArrayType` with equal component).
+- The two anonymous classes replaced by the records
+  (`ManagedBean.substituteTypeVariables` → `ResolvedParameterizedType` /
+  `ResolvedGenericArrayType`; `TypeHierarchyResolver.substitute` → new private
+  `SubstitutedParameterizedType` record with JDK-aligned contract).
+- Bonus dedup: the three near-identical `collectTypesFromSupers` /
+  `collectTypesWithMapping` / `collectTypesWithMappingSkipSelf` walkers merged into a
+  single `collectSupertypes(..., boolean addSelf)`.
+
+**Validation**: full reactor `clean install` green + CDI 4.1 Lite TCK **774/774 PASS**.

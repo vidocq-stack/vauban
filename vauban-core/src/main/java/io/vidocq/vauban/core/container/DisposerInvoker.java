@@ -162,9 +162,11 @@ final class DisposerInvoker {
                         var cl = Thread.currentThread().getContextClassLoader();
                         var disposedClass = Class.forName(dCt.name().value(), false, cl);
                         for (var bt : descriptor.types()) {
-                            String btName = null;
-                            if (bt instanceof TypeInfo.ClassType btCt) btName = btCt.name().value();
-                            else if (bt instanceof TypeInfo.ParameterizedType pt) btName = pt.rawType().value();
+                            String btName = switch (bt) {
+                                case TypeInfo.ClassType btCt -> btCt.name().value();
+                                case TypeInfo.ParameterizedType pt -> pt.rawType().value();
+                                case null, default -> null;
+                            };
                             if (btName != null) {
                                 var beanTypeClass = Class.forName(btName, false, cl);
                                 if (disposedClass.isAssignableFrom(beanTypeClass)) {
@@ -223,9 +225,11 @@ final class DisposerInvoker {
                 var cl = Thread.currentThread().getContextClassLoader();
                 var disposedClass = Class.forName(dCt.name().value(), false, cl);
                 for (var bt : descriptor.types()) {
-                    String btName = null;
-                    if (bt instanceof TypeInfo.ClassType btCt2) btName = btCt2.name().value();
-                    else if (bt instanceof TypeInfo.ParameterizedType pt) btName = pt.rawType().value();
+                    String btName = switch (bt) {
+                        case TypeInfo.ClassType btCt2 -> btCt2.name().value();
+                        case TypeInfo.ParameterizedType pt -> pt.rawType().value();
+                        case null, default -> null;
+                    };
                     if (btName != null) {
                         var beanTypeClass = Class.forName(btName, false, cl);
                         if (disposedClass.isAssignableFrom(beanTypeClass)) return true;

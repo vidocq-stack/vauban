@@ -269,17 +269,18 @@ public final class DeploymentValidator {
     }
 
     private void validateProxyableType(TypeInfo type, BeanDescriptor bean, List<ValidationError> errors, BeanDescriptor contextBean) {
-        if (type instanceof TypeInfo.PrimitiveType) {
+        switch (type) {
+        case TypeInfo.PrimitiveType _ ->
             errors.add(new ValidationError(
                     ValidationError.Kind.DEPLOYMENT_ERROR,
                     PREFIX_NORMAL_SCOPED + bean.beanClass() + " cannot have primitive type " + type,
                     contextBean));
-        } else if (type instanceof TypeInfo.ArrayType) {
+        case TypeInfo.ArrayType _ ->
             errors.add(new ValidationError(
                     ValidationError.Kind.DEPLOYMENT_ERROR,
                     PREFIX_NORMAL_SCOPED + bean.beanClass() + " cannot have array type " + type,
                     contextBean));
-        } else if (type instanceof TypeInfo.ClassType ct) {
+        case TypeInfo.ClassType ct -> {
             try {
                 var clazz = Class.forName(ct.name().value(), false, Thread.currentThread().getContextClassLoader());
                 // Interfaces are always proxyable — skip class-level checks
@@ -326,6 +327,8 @@ public final class DeploymentValidator {
             } catch (ClassNotFoundException e) {
                 // Ignore
             }
+        }
+        case null, default -> { }
         }
     }
 
@@ -378,12 +381,11 @@ public final class DeploymentValidator {
      * Raw metadata types and TypeVariable parameters are always illegal.
      */
     private static boolean isIllegalMetadataInjection(InjectionPointInfo ip, BeanDescriptor bean, boolean isInterceptor) {
-        String rawType = null;
-        if (ip.requiredType() instanceof TypeInfo.ClassType ct) {
-            rawType = ct.name().value();
-        } else if (ip.requiredType() instanceof TypeInfo.ParameterizedType pt) {
-            rawType = pt.rawType().value();
-        }
+        String rawType = switch (ip.requiredType()) {
+            case TypeInfo.ClassType ct -> ct.name().value();
+            case TypeInfo.ParameterizedType pt -> pt.rawType().value();
+            case null, default -> null;
+        };
         if (rawType == null || !METADATA_BUILT_IN_TYPES.contains(rawType)) {
             return false;
         }

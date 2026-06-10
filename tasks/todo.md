@@ -278,6 +278,39 @@ runtime), so only method SHAPES are needed → a ClassInfo/Elements front-end is
       the knock-cdi pilot), prove interception still works on the module path. Then the 7 no-interceptor
       wrappers (cervantes/ravel/cyrano/cassini/grimm/foy/…) as a mechanical sweep.
 
+## Phase 16 — Java modernization + interceptor codegen hardening 🚧 (2026-06-10)
+
+> Source: FABLE_REPORT.md workspace quality review. Baseline verified green before start
+> (`./mvnw clean install` — all modules SUCCESS, BUG.md 10/10 FIXED, no open bug).
+
+### 16a — Pattern-matching modernization (55 `else if instanceof` chains) ✅ 2026-06-10
+- [x] `VaubanAnnotationBuilder` (23 chains) → exhaustive `switch` pattern matching
+      (note: `Enum<?>[]` / `Class<?>[]` are not parseable as case labels — kept as
+      instanceof inside the `default` branch)
+- [x] `ManagedBean` (12 chains) — includes merging the three near-identical
+      `collectTypes*` walkers into one `collectSupertypes(..., boolean addSelf)`
+- [x] `BeanDiscovery` (7 chains) — includes deleting the private duplicate of
+      `ManagedBean.resolveType` (~80 lines) and delegating to it
+- [x] `DeploymentValidator` (3), `DisposerInvoker` (2) — `AssignabilityRules` (2) left
+      as-is: chains are inner refinements inside already-modern pattern switches
+- [x] Singles: `VaubanContexts`, `TypeHierarchyResolver` converted —
+      `VaubanProcessor` (tests two different expressions, not a dispatch),
+      `VaubanContainerBuilder` / `VaubanBeanManager` / `BeanInjector` (guards mixed with
+      non-type conditions, marginal gain) deliberately left as-is
+- [x] **Bug found & fixed along the way**: VAU-TYP-001 — divergent equals/hashCode
+      across the 3 synthetic ParameterizedType copies (see BUG.md)
+- [x] Constraint respected: every converted switch carries `case null` (or yields the
+      original null behavior) and preserves guard order
+- [x] Full `./mvnw clean install` green + CDI 4.1 Lite TCK **774/774 PASS**
+
+### 16b — Shared IR between InterceptedEmitter (bytecode) and InterceptedSourceRenderer (source)
+- [ ] Study: `InterceptedShape` already exists (fromClass/fromElements) — map what is
+      still duplicated in the two renderers (the VAU-INT-001..004 bug class lived there)
+- [ ] Extract the duplicated decisions (glue naming `$$ti$`, primitive-array loads,
+      checked-exception wrapping, super-bridge emission) into the shared model
+- [ ] Regression tests covering both renderers from the same fixtures
+- [ ] TCK 774/774 + cross-project smoke (heisenberg interceptors) before merge
+
 ## Backlog (deferred)
 - [ ] `DirectoryScanner` - directory scanning
 - [ ] Binary serialization IndexWriter/IndexReader
