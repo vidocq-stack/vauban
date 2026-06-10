@@ -1,0 +1,97 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+    Module-path regression vehicle for Vauban itself.
+
+    Every historical JPMS bug (VAU-INT-001..005, VAU-PRX-003) was caught by DOWNSTREAM
+    TCKs (mansart, heisenberg, dirac, cervantes) because the vauban test suite runs on
+    the class path, where opens/exports are not enforced. This module closes that blind
+    spot: a named module with NO `opens`, whose beans exercise the exact bug surface,
+    tested by surefire ON THE MODULE PATH (a main module-info makes surefire use it).
+-->
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>io.vidocq.vauban</groupId>
+        <artifactId>vauban-parent</artifactId>
+        <version>0.2.0-SNAPSHOT</version>
+    </parent>
+
+    <artifactId>vauban-jpms-it</artifactId>
+    <name>Vauban :: JPMS module-path IT</name>
+    <description>Module-path regression vehicle: build-time intercepted/proxied beans with zero
+        `opens`, covering the historical JPMS bug surface (VAU-INT-001..005, VAU-PRX-003).</description>
+
+    <properties>
+        <!-- Test vehicle: never released. -->
+        <maven.deploy.skip>true</maven.deploy.skip>
+        <maven.javadoc.skip>true</maven.javadoc.skip>
+        <maven.source.skip>true</maven.source.skip>
+        <gpg.skip>true</gpg.skip>
+    </properties>
+
+    <dependencies>
+        <dependency>
+            <groupId>io.vidocq.vauban</groupId>
+            <artifactId>vauban-core</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.vidocq.vauban</groupId>
+            <artifactId>vauban-classloader-spi</artifactId>
+            <scope>runtime</scope>
+        </dependency>
+        <dependency>
+            <groupId>jakarta.enterprise</groupId>
+            <artifactId>jakarta.enterprise.cdi-api</artifactId>
+        </dependency>
+
+        <dependency>
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter</artifactId>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <plugins>
+            <!--
+                The Vauban APT generates, at COMPILE time: the $$Intercepted subclass (as source —
+                with overloads, primitive arrays, checked throws), the _ClientProxy (the beans are
+                normal-scoped), and the in-module _VaubanComponents provider declared in
+                module-info. The container then instantiates and field-injects everything through
+                that provider — zero `opens` in this module.
+            -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-compiler-plugin</artifactId>
+                <configuration>
+                    <annotationProcessorPaths>
+                        <path>
+                            <groupId>io.vidocq.vauban</groupId>
+                            <artifactId>vauban-processor</artifactId>
+                            <version>${project.version}</version>
+                        </path>
+                    </annotationProcessorPaths>
+                </configuration>
+                <executions>
+                    <!-- No annotation processing on the test sources (the test is not a bean). -->
+                    <execution>
+                        <id>default-testCompile</id>
+                        <configuration>
+                            <proc>none</proc>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+            <plugin>
+                <groupId>org.sonatype.central</groupId>
+                <artifactId>central-publishing-maven-plugin</artifactId>
+                <configuration>
+                    <skipPublishing>true</skipPublishing>
+                </configuration>
+            </plugin>
+        </plugins>
+    </build>
+</project>

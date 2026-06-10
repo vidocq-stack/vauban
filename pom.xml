@@ -73,6 +73,7 @@
         <module>vauban-maven-plugin</module>
         <module>vauban-test-suite</module>
         <module>vauban-tck-runner</module>
+        <module>vauban-jpms-it</module>
         <module>vauban-examples</module>
     </modules>
 

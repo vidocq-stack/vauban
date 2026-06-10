@@ -350,6 +350,21 @@ runtime), so only method SHAPES are needed → a ClassInfo/Elements front-end is
       (non-modular Maven plugin reads the jar from the classpath, unaffected)
 - [x] Validation: full reactor green, CDI TCK **774/774 PASS**, heisenberg `clean install` green
 
+### 16d — Module-path regression vehicle (vauban-jpms-it) ✅ 2026-06-10
+> Every historical JPMS bug (VAU-INT-001..005, VAU-PRX-003) was caught by DOWNSTREAM TCKs,
+> never by the vauban suite — the class path does not enforce opens/exports. New reactor
+> module `vauban-jpms-it`, modeled on `mansart-transactions-cdi-jpms-it`.
+- [x] Named module, **zero `opens`**, `provides VaubanComponentProvider with _VaubanComponents`
+      (APT build-time); surefire runs the test ON the module path (main module-info)
+- [x] Fixtures pin the whole historical bug surface: `work()` overloads ×3 (VAU-INT-001),
+      `int[]`/`long`+`double` params (VAU-INT-002), `throws IOException` through the
+      source-rendered subclass (VAU-INT-003), `@Audited` MARKER binding (VAU-INT-005) +
+      `@Interceptor` instantiated in-module (VAU-INT-004), `Outer.Inner` nested types
+      (VAU-PRX-003), in-module field injection (Brique B putfield)
+- [x] Sentinel test: asserts `module.isNamed()` + `opens().isEmpty()` — fails loudly if
+      surefire ever silently degrades to the class path
+- [x] 7/7 green on module path, full reactor green, CDI TCK 774/774 PASS
+
 ## Backlog (deferred)
 - [ ] `DirectoryScanner` - directory scanning
 - [ ] Binary serialization IndexWriter/IndexReader
