@@ -19,39 +19,36 @@
  */
 package io.vidocq.vauban.processor.codegen.proxy;
 
-import javax.lang.model.element.ExecutableElement;
-import javax.lang.model.element.Modifier;
+import io.vidocq.vauban.core.interceptor.TypeRef;
+import io.vidocq.vauban.core.proxy.ClientProxyShape;
+import io.vidocq.vauban.core.proxy.ClientProxyShape.ProxyMethodShape;
+
 import javax.lang.model.element.TypeElement;
-import javax.lang.model.element.VariableElement;
-import javax.lang.model.type.ArrayType;
-import javax.lang.model.type.DeclaredType;
-import javax.lang.model.type.TypeKind;
-import javax.lang.model.type.TypeMirror;
-import javax.lang.model.util.ElementFilter;
 import javax.lang.model.util.Elements;
 import javax.lang.model.util.Types;
 import java.util.List;
 
 /**
  * Renders the {@code <Bean>_ClientProxy} normal-scoped client proxy as readable Java
- * <strong>source</strong> — the APT counterpart of the bytecode {@link ClientProxyGenerator}.
+ * <strong>source</strong> from the neutral {@link ClientProxyShape} — the source counterpart
+ * of the shared bytecode {@link io.vidocq.vauban.core.proxy.ClientProxyEmitter}.
  *
  * <p>Emitting source (instead of Filer bytecode) lets the sibling generated source
  * {@code _VaubanComponents} reference {@code <Bean>_ClientProxy} by name and perform
  * {@code new <Bean>_ClientProxy()} in-module — so the container creates the proxy without reflection
  * and the bean package needs no {@code opens}/{@code exports}. This dissolves the same
  * "generated source cannot see Filer-emitted bytecode" wall that moved {@code $$Intercepted} to
- * source. The bytecode {@link ClientProxyGenerator} is kept for the runtime classpath fallback and
+ * source. The bytecode emitter is kept for the runtime classpath fallback and
  * the Maven plugin (post-compile, external jars).
  *
  * <p>Only generated for top-level normal-scoped beans with an accessible no-arg constructor (the
  * proxy constructor is {@code super()}); other beans keep the bytecode proxy + runtime fallback —
  * see the caller in {@code VaubanProcessor}.
  *
- * <p>The override set mirrors the bytecode generator: <em>declared</em>, non-static, non-private,
- * non-final, non-abstract instance methods, in <em>erased</em> signatures (a valid override of the
- * bean method's erasure — the proven {@code $$Intercepted} approach). Each override forwards the call
- * to the contextual instance: {@code return ((Bean) $$delegate.get()).method(args);}.
+ * <p>The override set is decided by {@link ClientProxyShapeFromElements}, the naming
+ * ({@code _ClientProxy}, {@code $$delegate}, {@code $$setDelegate}) by {@link ClientProxyShape} —
+ * this class only renders. Each override forwards the call to the contextual instance:
+ * {@code return ((Bean) $$delegate.get()).method(args);}.
  */
 public final class ClientProxySourceRenderer {
 
@@ -64,12 +61,18 @@ public final class ClientProxySourceRenderer {
 
     /** Render {@code <Bean>_ClientProxy} as Java source from the bean's {@link TypeElement}. */
     public static Generated render(TypeElement bean, Elements elements, Types types) {
-        String beanBinary = elements.getBinaryName(bean).toString();
+        return render(ClientProxyShapeFromElements.from(bean, elements, types));
+    }
+
+    /** Render {@code shape.proxyClassName()} as Java source. */
+    public static Generated render(ClientProxyShape shape) {
+        String beanBinary = shape.beanBinaryName();
         String beanSource = beanBinary.replace('$', '.');
-        String proxyBinary = beanBinary + "_ClientProxy";
+        String proxyBinary = shape.proxyClassName();
         int lastDot = beanBinary.lastIndexOf('.');
         String pkg = lastDot >= 0 ? beanBinary.substring(0, lastDot) : "";
-        String proxySimple = (lastDot >= 0 ? beanBinary.substring(lastDot + 1) : beanBinary) + "_ClientProxy";
+        String proxySimple = (lastDot >= 0 ? beanBinary.substring(lastDot + 1) : beanBinary)
+                + ClientProxyShape.PROXY_SUFFIX;
 
         var sb = new StringBuilder();
         if (!pkg.isEmpty()) {
@@ -84,24 +87,25 @@ public final class ClientProxySourceRenderer {
         sb.append("public final class ").append(proxySimple).append(" extends ").append(beanSource)
                 .append(" {\n\n");
 
-        // Delegate supplier — set lazily via $$setDelegate (aligned with RuntimeClientProxyGenerator).
-        sb.append("    private ").append(SUPPLIER).append(" $$delegate;\n\n");
+        // Delegate supplier — set lazily via $$setDelegate (same contract as the bytecode emitter).
+        sb.append("    private ").append(SUPPLIER).append(" ")
+                .append(ClientProxyShape.FIELD_DELEGATE).append(";\n\n");
 
         // No-arg constructor calling the simplest non-private super constructor with default values
         // (null / 0 / false) — the proxy never uses the super state, it forwards to the delegate.
-        // Mirrors RuntimeClientProxyGenerator.findSimplestConstructor + pushDefault, so beans with
-        // only an injected (arg-bearing) constructor are still proxyable in-module. The caller gates
-        // on the presence of a non-private constructor.
+        // Mirrors the runtime front-end's findSimplestConstructor + the emitter's pushDefault, so
+        // beans with only an injected (arg-bearing) constructor are still proxyable in-module.
         sb.append("    public ").append(proxySimple).append("() { super(")
-                .append(superDefaultArgs(bean, elements, types)).append("); }\n\n");
+                .append(superDefaultArgs(shape.superCtorParams())).append("); }\n\n");
 
         // Setter.
-        sb.append("    public void $$setDelegate(").append(SUPPLIER).append(" d) { this.$$delegate = d; }\n\n");
+        sb.append("    public void ").append(ClientProxyShape.SET_DELEGATE_METHOD)
+                .append("(").append(SUPPLIER).append(" d) { this.")
+                .append(ClientProxyShape.FIELD_DELEGATE).append(" = d; }\n\n");
 
-        // Forwarding overrides (declared methods only, mirroring the bytecode generator).
-        for (ExecutableElement m : ElementFilter.methodsIn(bean.getEnclosedElements())) {
-            if (!shouldProxy(m)) continue;
-            renderForward(sb, beanSource, m, elements, types);
+        // Forwarding overrides.
+        for (ProxyMethodShape m : shape.methods()) {
+            renderForward(sb, beanSource, m);
         }
 
         sb.append("}\n");
@@ -109,34 +113,25 @@ public final class ClientProxySourceRenderer {
     }
 
     /**
-     * Renders the {@code super(...)} argument list calling the simplest non-private constructor with
-     * default values: an empty string for a no-arg ctor (or no declared ctor), else
-     * {@code (T0) null, 0, false, …} matching the chosen ctor's (erased) parameter types. Each
-     * reference default is cast so the call resolves unambiguously to the chosen constructor.
+     * Renders the {@code super(...)} argument list calling the chosen constructor with default
+     * values: an empty string for a no-arg ctor, else {@code (T0) null, 0, false, …} matching its
+     * (erased) parameter types. Each reference default is cast so the call resolves unambiguously.
      */
-    private static String superDefaultArgs(TypeElement bean, Elements elements, Types types) {
-        ExecutableElement simplest = null;
-        for (ExecutableElement c : ElementFilter.constructorsIn(bean.getEnclosedElements())) {
-            if (c.getModifiers().contains(Modifier.PRIVATE)) continue;
-            if (simplest == null || c.getParameters().size() < simplest.getParameters().size()) {
-                simplest = c;
-            }
-        }
-        if (simplest == null || simplest.getParameters().isEmpty()) {
-            return ""; // implicit/declared no-arg ctor -> super()
-        }
+    private static String superDefaultArgs(List<TypeRef> params) {
         var sb = new StringBuilder();
-        var params = simplest.getParameters();
         for (int i = 0; i < params.size(); i++) {
             if (i > 0) sb.append(", ");
-            sb.append(defaultValueExpr(params.get(i).asType(), elements, types));
+            sb.append(defaultValueExpr(params.get(i)));
         }
         return sb.toString();
     }
 
     /** Default-value expression for a super-ctor argument: typed primitive zero, or {@code (T) null}. */
-    private static String defaultValueExpr(TypeMirror t, Elements elements, Types types) {
-        return switch (t.getKind()) {
+    private static String defaultValueExpr(TypeRef t) {
+        if (!t.isPrimitive()) {
+            return "(" + t.sourceName() + ") null";
+        }
+        return switch (t.primitiveKind()) {
             case BOOLEAN -> "false";
             case BYTE    -> "(byte) 0";
             case SHORT   -> "(short) 0";
@@ -145,84 +140,40 @@ public final class ClientProxySourceRenderer {
             case CHAR    -> "(char) 0";
             case FLOAT   -> "0.0f";
             case DOUBLE  -> "0.0";
-            default      -> "(" + sourceName(t, elements, types) + ") null";
+            default      -> "0";
         };
     }
 
-    /** Mirrors {@code ClientProxyGenerator.shouldProxy}: skip ctor/static/private/final/abstract/{@code $$}. */
-    private static boolean shouldProxy(ExecutableElement m) {
-        var mods = m.getModifiers();
-        if (mods.contains(Modifier.STATIC)) return false;
-        if (mods.contains(Modifier.PRIVATE)) return false;
-        if (mods.contains(Modifier.FINAL)) return false;
-        if (mods.contains(Modifier.ABSTRACT)) return false;
-        return !m.getSimpleName().toString().startsWith("$$");
-    }
-
-    private static void renderForward(StringBuilder sb, String beanSource, ExecutableElement m,
-            Elements elements, Types types) {
-        String name = m.getSimpleName().toString();
-        boolean isVoid = m.getReturnType().getKind() == TypeKind.VOID;
-        List<? extends VariableElement> params = m.getParameters();
+    private static void renderForward(StringBuilder sb, String beanSource, ProxyMethodShape m) {
+        boolean isVoid = m.returnType().isVoid();
+        List<TypeRef> params = m.params();
 
         sb.append("    @Override\n");
-        sb.append("    public ").append(sourceName(m.getReturnType(), elements, types)).append(" ")
-                .append(name).append("(");
+        sb.append("    public ").append(m.returnType().sourceName()).append(" ")
+                .append(m.name()).append("(");
         for (int i = 0; i < params.size(); i++) {
             if (i > 0) sb.append(", ");
-            sb.append(sourceName(params.get(i).asType(), elements, types)).append(" p").append(i);
+            sb.append(params.get(i).sourceName()).append(" p").append(i);
         }
         sb.append(")");
         // Keep the bean method's (erased) checked-exception contract so the forwarding call compiles.
-        var thrown = m.getThrownTypes();
+        var thrown = m.thrownTypes();
         if (!thrown.isEmpty()) {
             sb.append(" throws ");
             for (int i = 0; i < thrown.size(); i++) {
                 if (i > 0) sb.append(", ");
-                sb.append(sourceName(thrown.get(i), elements, types));
+                sb.append(thrown.get(i).sourceName());
             }
         }
         sb.append(" {\n");
         sb.append("        ").append(isVoid ? "" : "return ")
-                .append("((").append(beanSource).append(") $$delegate.get()).").append(name).append("(");
+                .append("((").append(beanSource).append(") ")
+                .append(ClientProxyShape.FIELD_DELEGATE).append(".get()).").append(m.name()).append("(");
         for (int i = 0; i < params.size(); i++) {
             if (i > 0) sb.append(", ");
             sb.append("p").append(i);
         }
         sb.append(");\n");
         sb.append("    }\n\n");
-    }
-
-    /** Erased Java source type name: {@code int}, {@code java.lang.String}, {@code int[]}, {@code a.b.Outer.Inner}. */
-    private static String sourceName(TypeMirror tm, Elements elements, Types types) {
-        return sourceName(tm, elements, types, 0);
-    }
-
-    private static String sourceName(TypeMirror tm, Elements elements, Types types, int dims) {
-        return switch (tm.getKind()) {
-            case VOID    -> "void";
-            case BOOLEAN -> withDims("boolean", dims);
-            case BYTE    -> withDims("byte", dims);
-            case CHAR    -> withDims("char", dims);
-            case SHORT   -> withDims("short", dims);
-            case INT     -> withDims("int", dims);
-            case LONG    -> withDims("long", dims);
-            case FLOAT   -> withDims("float", dims);
-            case DOUBLE  -> withDims("double", dims);
-            case ARRAY   -> sourceName(((ArrayType) tm).getComponentType(), elements, types, dims + 1);
-            default      -> {
-                // Declared, type-var, wildcard, intersection — erase to a nameable reference type.
-                TypeMirror erased = types.erasure(tm);
-                if (erased instanceof DeclaredType dt) {
-                    yield withDims(elements.getBinaryName((TypeElement) dt.asElement()).toString()
-                            .replace('$', '.'), dims);
-                }
-                yield withDims("java.lang.Object", dims);
-            }
-        };
-    }
-
-    private static String withDims(String base, int dims) {
-        return dims == 0 ? base : base + "[]".repeat(dims);
     }
 }

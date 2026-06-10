@@ -251,6 +251,42 @@ public final class TypeRef {
         return new TypeRef(null, t.getName(), dims);
     }
 
+    // ---- factory from the indexer TypeInfo model ----
+
+    /**
+     * Builds a {@link TypeRef} from an indexer {@link io.vidocq.vauban.indexer.model.TypeInfo},
+     * erasing generics the same way bytecode descriptors do: parameterized types collapse to
+     * their raw type, type variables and wildcards to {@code java.lang.Object}.
+     */
+    public static TypeRef fromTypeInfo(io.vidocq.vauban.indexer.model.TypeInfo typeInfo) {
+        return switch (typeInfo) {
+            case io.vidocq.vauban.indexer.model.TypeInfo.VoidType _ -> ofVoid();
+            case io.vidocq.vauban.indexer.model.TypeInfo.PrimitiveType p -> ofPrimitive(switch (p.kind()) {
+                case BOOLEAN -> Primitive.BOOLEAN;
+                case BYTE -> Primitive.BYTE;
+                case CHAR -> Primitive.CHAR;
+                case SHORT -> Primitive.SHORT;
+                case INT -> Primitive.INT;
+                case LONG -> Primitive.LONG;
+                case FLOAT -> Primitive.FLOAT;
+                case DOUBLE -> Primitive.DOUBLE;
+            }, 0);
+            case io.vidocq.vauban.indexer.model.TypeInfo.ClassType c -> ofReference(c.name().value());
+            case io.vidocq.vauban.indexer.model.TypeInfo.ArrayType a -> {
+                TypeRef component = fromTypeInfo(a.componentType());
+                yield component.isPrimitiveOrVoid()
+                        ? new TypeRef(component.primitive, null, component.dims + a.dimensions())
+                        : new TypeRef(null, component.binaryName, component.dims + a.dimensions());
+            }
+            case io.vidocq.vauban.indexer.model.TypeInfo.ParameterizedType p ->
+                    ofReference(p.rawType().value());
+            case io.vidocq.vauban.indexer.model.TypeInfo.TypeVariable _ ->
+                    ofReference("java.lang.Object");
+            case io.vidocq.vauban.indexer.model.TypeInfo.WildcardType _ ->
+                    ofReference("java.lang.Object");
+        };
+    }
+
     // ---- Object ----
 
     @Override

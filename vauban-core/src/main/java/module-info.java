@@ -50,6 +50,10 @@ module io.vidocq.vauban.core {
     exports io.vidocq.vauban.core.interceptor;
     exports io.vidocq.vauban.core.enrichment;
     exports io.vidocq.vauban.core.extensions;
+    // Shared client-proxy IR + emitter, consumed by the APT front-ends only — qualified
+    // export to keep the package out of the public API (non-modular consumers like the
+    // Maven plugin read the jar from the classpath and are unaffected).
+    exports io.vidocq.vauban.core.proxy to io.vidocq.vauban.processor;
 
     provides jakarta.enterprise.inject.spi.CDIProvider
             with io.vidocq.vauban.core.container.VaubanCDIProvider;

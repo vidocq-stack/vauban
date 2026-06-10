@@ -175,7 +175,7 @@ public final class InterceptedShapeFromElements {
      *       matching {@link Class#getName()}).</li>
      * </ul>
      */
-    static TypeRef typeRefOf(TypeMirror tm, Elements elements, Types types, int dims) {
+    public static TypeRef typeRefOf(TypeMirror tm, Elements elements, Types types, int dims) {
         switch (tm.getKind()) {
             case VOID -> { return TypeRef.ofVoid(); }
             case BOOLEAN -> { return TypeRef.ofPrimitive(TypeRef.Primitive.BOOLEAN, dims); }

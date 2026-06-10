@@ -19,50 +19,26 @@
  */
 package io.vidocq.vauban.core.proxy;
 
-import java.lang.classfile.ClassBuilder;
-import java.lang.classfile.ClassFile;
-import java.lang.classfile.CodeBuilder;
-import java.lang.constant.ClassDesc;
-import java.lang.constant.ConstantDescs;
-import java.lang.constant.MethodTypeDesc;
+import io.vidocq.vauban.core.interceptor.TypeRef;
+import io.vidocq.vauban.core.proxy.ClientProxyShape.ProxyMethodShape;
+
 import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
+import java.util.ArrayList;
+import java.util.List;
 
 /**
- * Generates CDI client proxies at runtime using the JDK 25 Class-File API.
+ * Runtime ({@code Class<?>}-driven) front-end of the client-proxy generation: walks the
+ * full class hierarchy, selects the proxied methods, decides per method whether the
+ * override must dispatch through a {@code MethodHandle} (JVMS §4.10.1.9 — protected or
+ * package-private member declared in another runtime package), picks the simplest
+ * non-private super constructor, and builds the neutral {@link ClientProxyShape}.
  *
- * <p>A client proxy is a subclass of the bean that delegates every public
- * non-final non-static method to the contextual instance obtained from a
- * {@link java.util.function.Supplier}.
- *
- * <p><b>Protected method handling (§4.10.1.9 workaround) :</b> the JVM
- * bytecode verifier refuses {@code invokevirtual} on a {@code protected}
- * method of a superclass when the receiver type on the stack is not
- * assignable to the current class. Since our proxy {@code _ClientProxy}
- * extends {@code Bean}, invoking a protected bean method with receiver
- * {@code Bean} (the delegate) would be rejected. For these methods we
- * instead emit a {@link java.lang.invoke.MethodHandle#invokeExact} call
- * against a static-final {@code MethodHandle} initialized in {@code <clinit>}
- * via {@link java.lang.invoke.MethodHandles.Lookup#findVirtual}.
- *
- * <p>This differs from the compile-time {@code ClientProxyGenerator} in
- * {@code vauban-processor} — this version works with {@code Class<?>}
- * (reflection) instead of {@code ClassInfo} (bytecode index).
+ * <p>The bytecode itself is emitted once for all front-ends by {@link ClientProxyEmitter};
+ * the compile-time {@code ClientProxyGenerator} in {@code vauban-processor} builds the same
+ * shape from the indexer {@code ClassInfo} (declared methods only, no-arg constructor).
  */
 public final class RuntimeClientProxyGenerator {
-
-    private static final ClassDesc CD_Supplier = ClassDesc.of("java.util.function.Supplier");
-    private static final ClassDesc CD_Object = ConstantDescs.CD_Object;
-    private static final ClassDesc CD_MethodHandle = ClassDesc.of("java.lang.invoke.MethodHandle");
-    private static final ClassDesc CD_MethodHandles = ClassDesc.of("java.lang.invoke.MethodHandles");
-    private static final ClassDesc CD_MethodHandlesLookup = ClassDesc.of("java.lang.invoke.MethodHandles$Lookup");
-    private static final ClassDesc CD_MethodType = ClassDesc.of("java.lang.invoke.MethodType");
-    private static final ClassDesc CD_Class = ConstantDescs.CD_Class;
-    private static final ClassDesc CD_Throwable = ConstantDescs.CD_Throwable;
-    private static final ClassDesc CD_ExceptionInInitializerError = ClassDesc.of("java.lang.ExceptionInInitializerError");
-    private static final String FIELD_DELEGATE = "$$delegate";
-    private static final String MH_FIELD_PREFIX = "$$mh_";
-    private static final String PROXY_SUFFIX = "_ClientProxy";
 
     private RuntimeClientProxyGenerator() {}
 
@@ -71,7 +47,7 @@ public final class RuntimeClientProxyGenerator {
      * Useful for build-time pre-generation: the runtime will look for this exact name.
      */
     public static String proxyClassName(Class<?> beanClass) {
-        return beanClass.getName() + PROXY_SUFFIX;
+        return beanClass.getName() + ClientProxyShape.PROXY_SUFFIX;
     }
 
     /**
@@ -82,90 +58,45 @@ public final class RuntimeClientProxyGenerator {
      * @return the generated class name and bytecode
      */
     public static GeneratedProxy generate(Class<?> beanClass) {
-        String proxyClassName = proxyClassName(beanClass);
-        ClassDesc proxyCD = ClassDesc.of(proxyClassName);
-        ClassDesc beanCD = ClassDesc.of(beanClass.getName());
+        ClientProxyShape shape = shapeOf(beanClass);
+        return new GeneratedProxy(shape.proxyClassName(), ClientProxyEmitter.emit(shape));
+    }
 
-        // First pass : collect eligible methods and decide whether each needs MethodHandle.
-        String proxyPackage = packageOf(proxyClassName);
+    /** Builds the neutral shape: hierarchy walk + simplest-ctor defaults + MH decisions. */
+    private static ClientProxyShape shapeOf(Class<?> beanClass) {
+        // The proxy is generated in the bean's package (the suffix carries no dot).
+        String proxyPackage = packageOf(beanClass.getName());
         var proxiedSeen = new java.util.HashSet<String>();
-        var methods = new java.util.ArrayList<ProxiedMethod>();
+        var methods = new ArrayList<ProxyMethodShape>();
         var current = beanClass;
-        int mhIndex = 0;
         while (current != null) {
             for (var method : current.getDeclaredMethods()) {
                 var key = method.getName() + java.util.Arrays.toString(method.getParameterTypes());
                 if (proxiedSeen.add(key) && shouldProxy(method)) {
-                    boolean needsMh = needsMethodHandleDispatch(method, proxyPackage);
-                    String mhField = needsMh ? (MH_FIELD_PREFIX + method.getName() + "_" + (mhIndex++)) : null;
-                    methods.add(new ProxiedMethod(method, mhField));
+                    methods.add(new ProxyMethodShape(
+                            method.getName(),
+                            TypeRef.fromClass(method.getReturnType()),
+                            typeRefs(method.getParameterTypes()),
+                            typeRefs(method.getExceptionTypes()),
+                            needsMethodHandleDispatch(method, proxyPackage)));
                 }
             }
             current = current.getSuperclass();
         }
 
-        byte[] bytecode = ClassFile.of().build(proxyCD, clb -> {
-            clb.withFlags(ClassFile.ACC_PUBLIC | ClassFile.ACC_SUPER);
-            clb.withSuperclass(beanCD);
+        // CDI 4.1: beans with only @Inject constructors (no no-arg) must still be proxyable —
+        // the proxy's no-arg constructor calls the simplest super ctor with default values.
+        var superCtor = findSimplestConstructor(beanClass);
+        return new ClientProxyShape(
+                beanClass.getName(),
+                typeRefs(superCtor.getParameterTypes()),
+                methods);
+    }
 
-            // Field: private Supplier delegate
-            clb.withField(FIELD_DELEGATE, CD_Supplier, ClassFile.ACC_PRIVATE);
-
-            // Static final MethodHandle fields for protected/cross-package methods.
-            for (var pm : methods) {
-                if (pm.mhField() != null) {
-                    clb.withField(pm.mhField(), CD_MethodHandle,
-                            ClassFile.ACC_PRIVATE | ClassFile.ACC_STATIC | ClassFile.ACC_FINAL);
-                }
-            }
-
-            // Generate no-arg constructor calling the simplest available super constructor
-            // CDI 4.1: beans with only @Inject constructors (no no-arg) must still be proxyable
-            var superCtor = findSimplestConstructor(beanClass);
-            var superParamCDs = new ClassDesc[superCtor.getParameterCount()];
-            for (int i = 0; i < superParamCDs.length; i++) {
-                superParamCDs[i] = classDescOf(superCtor.getParameterTypes()[i]);
-            }
-            var superCtorType = MethodTypeDesc.of(ConstantDescs.CD_void, superParamCDs);
-            clb.withMethodBody(
-                    ConstantDescs.INIT_NAME,
-                    MethodTypeDesc.of(ConstantDescs.CD_void),
-                    ClassFile.ACC_PUBLIC,
-                    cob -> {
-                        cob.aload(0);
-                        // Push default values for each super constructor parameter
-                        for (var paramCD : superParamCDs) {
-                            pushDefault(cob, paramCD);
-                        }
-                        cob.invokespecial(beanCD, ConstantDescs.INIT_NAME, superCtorType);
-                        cob.return_();
-                    });
-
-            // Setter: public void $$setDelegate(Supplier)
-            clb.withMethodBody(
-                    "$$setDelegate",
-                    MethodTypeDesc.of(ConstantDescs.CD_void, CD_Supplier),
-                    ClassFile.ACC_PUBLIC,
-                    cob -> {
-                        cob.aload(0);
-                        cob.aload(1);
-                        cob.putfield(proxyCD, FIELD_DELEGATE, CD_Supplier);
-                        cob.return_();
-                    });
-
-            // <clinit> that initializes the MethodHandle fields (if any).
-            boolean hasMhFields = methods.stream().anyMatch(m -> m.mhField() != null);
-            if (hasMhFields) {
-                generateStaticInitializer(clb, proxyCD, beanCD, methods);
-            }
-
-            // Override each eligible method.
-            for (var pm : methods) {
-                generateProxyMethod(clb, proxyCD, beanCD, pm);
-            }
-        });
-
-        return new GeneratedProxy(proxyClassName, bytecode);
+    private static List<TypeRef> typeRefs(Class<?>[] types) {
+        var refs = new ArrayList<TypeRef>(types.length);
+        for (Class<?> t : types) refs.add(TypeRef.fromClass(t));
+        return refs;
     }
 
     /**
@@ -184,37 +115,6 @@ public final class RuntimeClientProxyGenerator {
         // All constructors are private — use the first one (proxy generation will still work
         // since the proxy class is in the same package)
         return beanClass.getDeclaredConstructors()[0];
-    }
-
-    /**
-     * Push a default value for the given type onto the stack.
-     * null for references, 0 for numerics, false for boolean.
-     */
-    private static void pushDefault(CodeBuilder cob, ClassDesc paramCD) {
-        String desc = paramCD.descriptorString();
-        switch (desc.charAt(0)) {
-            case 'Z', 'B', 'C', 'S', 'I' -> cob.iconst_0();
-            case 'J' -> cob.lconst_0();
-            case 'F' -> cob.fconst_0();
-            case 'D' -> cob.dconst_0();
-            default -> cob.aconst_null();
-        }
-    }
-
-    /**
-     * Returns a {@link ClassDesc} for the given type, handling arrays and primitives correctly.
-     *
-     * <p>{@link Class#describeConstable()} returns {@link java.util.Optional#empty()} for array types
-     * on some JDK builds, and {@link ClassDesc#of(String)} does not accept JVM descriptor strings
-     * (e.g. {@code "[Ljava.lang.String;"}).  {@link ClassDesc#ofDescriptor(String)} accepts those
-     * descriptor strings and is always correct.
-     */
-    private static ClassDesc classDescOf(Class<?> type) {
-        var opt = type.describeConstable();
-        if (opt.isPresent()) return opt.get();
-        // Fallback for array types and any other type whose describeConstable() is empty:
-        // use the JVM binary descriptor string (e.g. "[Ljava/lang/String;" or "[I").
-        return ClassDesc.ofDescriptor(type.descriptorString());
     }
 
     private static boolean shouldProxy(Method method) {
@@ -245,161 +145,6 @@ public final class RuntimeClientProxyGenerator {
         int dot = fqn.lastIndexOf('.');
         return dot < 0 ? "" : fqn.substring(0, dot);
     }
-
-    private static void generateProxyMethod(ClassBuilder clb,
-                                            ClassDesc proxyCD, ClassDesc beanCD, ProxiedMethod pm) {
-        Method method = pm.method();
-        var returnCD = classDescOf(method.getReturnType());
-        var paramCDs = new ClassDesc[method.getParameterCount()];
-        for (int i = 0; i < paramCDs.length; i++) {
-            paramCDs[i] = classDescOf(method.getParameterTypes()[i]);
-        }
-        var methodType = MethodTypeDesc.of(returnCD, paramCDs);
-
-        clb.withMethodBody(
-                method.getName(),
-                methodType,
-                ClassFile.ACC_PUBLIC,
-                cob -> {
-                    if (pm.mhField() != null) {
-                        emitMethodHandleInvocation(cob, proxyCD, beanCD, pm, methodType);
-                    } else {
-                        emitInvokevirtualInvocation(cob, proxyCD, beanCD, method, methodType, paramCDs);
-                    }
-                    emitReturn(cob, returnCD);
-                });
-    }
-
-    private static void emitInvokevirtualInvocation(CodeBuilder cob, ClassDesc proxyCD,
-                                                    ClassDesc beanCD, Method method,
-                                                    MethodTypeDesc methodType, ClassDesc[] paramCDs) {
-        // ((BeanClass) this.$$delegate.get()).method(params);
-        cob.aload(0);
-        cob.getfield(proxyCD, FIELD_DELEGATE, CD_Supplier);
-        cob.invokeinterface(CD_Supplier, "get", MethodTypeDesc.of(CD_Object));
-        cob.checkcast(beanCD);
-        int slot = 1;
-        for (var paramCD : paramCDs) slot = loadParam(cob, paramCD, slot);
-        cob.invokevirtual(beanCD, method.getName(), methodType);
-    }
-
-    private static void emitMethodHandleInvocation(CodeBuilder cob, ClassDesc proxyCD,
-                                                   ClassDesc beanCD, ProxiedMethod pm,
-                                                   MethodTypeDesc methodType) {
-        // MethodHandle mh = $$mh_name;
-        cob.getstatic(proxyCD, pm.mhField(), CD_MethodHandle);
-        // (BeanClass) this.$$delegate.get()
-        cob.aload(0);
-        cob.getfield(proxyCD, FIELD_DELEGATE, CD_Supplier);
-        cob.invokeinterface(CD_Supplier, "get", MethodTypeDesc.of(CD_Object));
-        cob.checkcast(beanCD);
-        // load params
-        int slot = 1;
-        for (var paramCD : methodType.parameterArray()) {
-            slot = loadParam(cob, paramCD, slot);
-        }
-        // invokeExact(delegate, params...) : returnType
-        // signature-polymorphic: descriptor must include the delegate type as first param.
-        var invokeExactType = methodType.insertParameterTypes(0, beanCD);
-        cob.invokevirtual(CD_MethodHandle, "invokeExact", invokeExactType);
-    }
-
-    private static void generateStaticInitializer(ClassBuilder clb, ClassDesc proxyCD,
-                                                  ClassDesc beanCD,
-                                                  java.util.List<ProxiedMethod> methods) {
-        clb.withMethodBody(
-                ConstantDescs.CLASS_INIT_NAME,
-                MethodTypeDesc.of(ConstantDescs.CD_void),
-                ClassFile.ACC_STATIC,
-                cob -> {
-                    var tryStart = cob.newBoundLabel();
-                    for (var pm : methods) {
-                        if (pm.mhField() == null) continue;
-                        emitMethodHandleLookup(cob, proxyCD, beanCD, pm);
-                    }
-                    var tryEnd = cob.newBoundLabel();
-                    cob.return_();
-
-                    var handler = cob.newBoundLabel();
-                    cob.exceptionCatch(tryStart, tryEnd, handler, CD_Throwable);
-                    // catch Throwable t: throw new ExceptionInInitializerError(t)
-                    cob.new_(CD_ExceptionInInitializerError);
-                    cob.dup_x1();
-                    cob.swap();
-                    cob.invokespecial(CD_ExceptionInInitializerError, ConstantDescs.INIT_NAME,
-                            MethodTypeDesc.of(ConstantDescs.CD_void, CD_Throwable));
-                    cob.athrow();
-                });
-    }
-
-    private static void emitMethodHandleLookup(CodeBuilder cob, ClassDesc proxyCD,
-                                               ClassDesc beanCD, ProxiedMethod pm) {
-        Method method = pm.method();
-        // Lookup lookup = MethodHandles.privateLookupIn(beanClass, MethodHandles.lookup());
-        cob.ldc(beanCD);
-        cob.invokestatic(CD_MethodHandles, "lookup",
-                MethodTypeDesc.of(CD_MethodHandlesLookup));
-        cob.invokestatic(CD_MethodHandles, "privateLookupIn",
-                MethodTypeDesc.of(CD_MethodHandlesLookup, CD_Class, CD_MethodHandlesLookup));
-        // target class
-        cob.ldc(beanCD);
-        // method name
-        cob.ldc(method.getName());
-        // MethodType: return type + param types
-        var returnCD = classDescOf(method.getReturnType());
-        var paramCDs = new ClassDesc[method.getParameterCount()];
-        for (int i = 0; i < paramCDs.length; i++) {
-            paramCDs[i] = classDescOf(method.getParameterTypes()[i]);
-        }
-        // MethodType.methodType(returnType) — build via methodType(Class,Class...) if params, else methodType(Class)
-        cob.ldc(returnCD);
-        if (paramCDs.length == 0) {
-            cob.invokestatic(CD_MethodType, "methodType",
-                    MethodTypeDesc.of(CD_MethodType, CD_Class));
-        } else {
-            // new Class[n]
-            cob.ldc(paramCDs.length);
-            cob.anewarray(CD_Class);
-            for (int i = 0; i < paramCDs.length; i++) {
-                cob.dup();
-                cob.ldc(i);
-                cob.ldc(paramCDs[i]);
-                cob.aastore();
-            }
-            cob.invokestatic(CD_MethodType, "methodType",
-                    MethodTypeDesc.of(CD_MethodType, CD_Class, CD_Class.arrayType()));
-        }
-        // findVirtual(beanClass, name, methodType)
-        cob.invokevirtual(CD_MethodHandlesLookup, "findVirtual",
-                MethodTypeDesc.of(CD_MethodHandle, CD_Class,
-                        ClassDesc.of("java.lang.String"), CD_MethodType));
-        cob.putstatic(proxyCD, pm.mhField(), CD_MethodHandle);
-    }
-
-    private static int loadParam(CodeBuilder cob, ClassDesc paramCD, int slot) {
-        String desc = paramCD.descriptorString();
-        return switch (desc.charAt(0)) {
-            case 'Z', 'B', 'C', 'S', 'I' -> { cob.iload(slot); yield slot + 1; }
-            case 'J' -> { cob.lload(slot); yield slot + 2; }
-            case 'F' -> { cob.fload(slot); yield slot + 1; }
-            case 'D' -> { cob.dload(slot); yield slot + 2; }
-            default -> { cob.aload(slot); yield slot + 1; }
-        };
-    }
-
-    private static void emitReturn(CodeBuilder cob, ClassDesc returnCD) {
-        String desc = returnCD.descriptorString();
-        switch (desc.charAt(0)) {
-            case 'V' -> cob.return_();
-            case 'Z', 'B', 'C', 'S', 'I' -> cob.ireturn();
-            case 'J' -> cob.lreturn();
-            case 'F' -> cob.freturn();
-            case 'D' -> cob.dreturn();
-            default -> cob.areturn();
-        }
-    }
-
-    private record ProxiedMethod(Method method, String mhField) {}
 
     public record GeneratedProxy(String className, byte[] bytecode) {
         @Override public boolean equals(Object o) {

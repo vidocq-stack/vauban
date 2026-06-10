@@ -326,6 +326,30 @@ runtime), so only method SHAPES are needed → a ClassInfo/Elements front-end is
 - [x] Validation: `GoldenBytecodeTest` 4/4 (byte-for-byte output preserved), full reactor
       green, CDI TCK **774/774 PASS**, cross-project smoke heisenberg `clean install` green
 
+### 16c — Client-proxy triple unified on a shared IR (ClientProxyShape) ✅ 2026-06-10
+> Study result: THREE generators — `RuntimeClientProxyGenerator` (core, bytecode from
+> `Class<?>`, full hierarchy walk, simplest-ctor defaults, MH dispatch),
+> `ClientProxyGenerator` (processor, bytecode from indexer `ClassInfo`, declared methods
+> only, no-arg ctor), `ClientProxySourceRenderer` (processor, source from `TypeElement`,
+> declared only, keeps `throws`). ~300 lines of Class-File emission duplicated between the
+> two bytecode generators. The semantic differences are intentional per-front-end choices —
+> they belong in the DATA (the shape), not in duplicated emitters.
+- [x] `ClientProxyShape` + `ProxyMethodShape` IR in `core.proxy` — naming authority
+      (`_ClientProxy`, `$$delegate`, `$$setDelegate`, `$$mh_<name>_<n>` sequence) +
+      `ClientProxyShapeTest` (TDD)
+- [x] `TypeRef.fromTypeInfo(TypeInfo)` factory (erasure mapping mirrors the old `toClassDesc`)
+- [x] Single `ClientProxyEmitter.emit(shape)` in core; both bytecode generators became
+      shape-building front-ends with unchanged public APIs (`generate(Class)` /
+      `generate(ClassInfo)` / `proxyClassName(Class)`); ~280 duplicated emission lines deleted
+- [x] `ClientProxyShapeFromElements` (reuses `InterceptedShapeFromElements.typeRefOf`, made
+      public); `ClientProxySourceRenderer` renders from the shape (TypeRef.sourceName,
+      thrownTypes for the `throws` contract)
+- [x] Front-end predicates (`shouldProxy` on Method / MethodInfo / ExecutableElement) stay
+      per-front-end — input models differ; the OUTPUT shape is the shared contract
+- [x] JPMS: `core.proxy` gets a **qualified** export to `io.vidocq.vauban.processor` only
+      (non-modular Maven plugin reads the jar from the classpath, unaffected)
+- [x] Validation: full reactor green, CDI TCK **774/774 PASS**, heisenberg `clean install` green
+
 ## Backlog (deferred)
 - [ ] `DirectoryScanner` - directory scanning
 - [ ] Binary serialization IndexWriter/IndexReader
