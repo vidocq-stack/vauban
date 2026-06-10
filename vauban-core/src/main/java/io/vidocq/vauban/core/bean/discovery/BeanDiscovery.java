@@ -73,10 +73,10 @@ public final class BeanDiscovery {
     static final String PREFIX_JAKARTA_INJECT = "jakarta.enterprise.inject.";
     static final String JAVA_LANG_OBJECT = "java.lang.Object";
     private static final String PARAM_PREFIX = "parameter ";
-    private static final String MEMBER_VALUE = "value";
+    static final String MEMBER_VALUE = "value";
 
     final VaubanIndex index;
-    private Set<DotName> customQualifiers = Set.of();
+    Set<DotName> customQualifiers = Set.of();
     Set<DotName> customInterceptorBindings = Set.of();
     Set<DotName> customStereotypes = Set.of();
     Map<DotName, Set<Class<? extends java.lang.annotation.Annotation>>> customStereotypeAnnotations = Map.of();
@@ -86,6 +86,7 @@ public final class BeanDiscovery {
     private final ObserverDisposerDiscovery observerDisposers = new ObserverDisposerDiscovery(this);
     private final InterceptorDiscovery interceptorDiscovery = new InterceptorDiscovery(this);
     private final StereotypeResolver stereotypes = new StereotypeResolver(this);
+    private final QualifierResolver qualifierResolver = new QualifierResolver(this);
 
     public BeanDiscovery(VaubanIndex index) {
         this.index = Objects.requireNonNull(index);
@@ -370,7 +371,7 @@ public final class BeanDiscovery {
     public BeanDescriptor buildManagedBean(ClassInfo classInfo) {
         var id = BeanId.of(classInfo.name());
         var types = computeBeanTypes(classInfo);
-        var qualifiers = computeQualifiersWithStereotypes(classInfo);
+        var qualifiers = qualifierResolver.computeQualifiersWithStereotypes(classInfo);
         var scope = computeScope(classInfo);
         var isAlternative = isAlternativeWithStereotypes(classInfo);
         var priority = extractPriorityWithStereotypes(classInfo);
@@ -382,7 +383,7 @@ public final class BeanDiscovery {
 
         // CDI spec: @Named without value defaults to the decapitalized class name
         if (name != null) {
-            qualifiers = resolveNamedDefault(qualifiers, name);
+            qualifiers = qualifierResolver.resolveNamedDefault(qualifiers, name);
         }
 
         return new BeanDescriptor(id, classInfo.name(), BeanDescriptor.BeanKind.MANAGED,
@@ -900,227 +901,31 @@ public final class BeanDiscovery {
         return computeProducerTypes(producerType);
     }
 
+    // Qualifier resolution — delegated to QualifierResolver.
+
     Set<QualifierInstance> computeQualifiers(List<AnnotationInfo> annotations) {
-        var qualifiers = new LinkedHashSet<QualifierInstance>();
-        boolean hasExplicitQualifier = false;
-
-        for (var ann : annotations) {
-            if (isQualifierAnnotation(ann.name())) {
-                qualifiers.add(QualifierInstance.from(ann));
-                if (!ann.name().equals(QualifierInstance.NAMED_NAME)
-                        && !ann.name().equals(QualifierInstance.ANY_NAME)) {
-                    hasExplicitQualifier = true;
-                }
-            } else {
-                // Unwrap repeatable qualifier container annotations
-                var unwrapped = unwrapRepeatableQualifiers(ann);
-                if (!unwrapped.isEmpty()) {
-                    qualifiers.addAll(unwrapped);
-                    hasExplicitQualifier = true;
-                }
-            }
-        }
-
-        if (!hasExplicitQualifier) {
-            qualifiers.add(QualifierInstance.DEFAULT);
-        }
-        qualifiers.add(QualifierInstance.ANY);
-
-        return qualifiers;
+        return qualifierResolver.computeQualifiers(annotations);
     }
 
     Set<QualifierInstance> computeInjectionPointQualifiers(List<AnnotationInfo> annotations) {
-        var qualifiers = new LinkedHashSet<QualifierInstance>();
-        boolean hasExplicitQualifier = false;
-
-        for (var ann : annotations) {
-            if (isQualifierAnnotation(ann.name())) {
-                qualifiers.add(QualifierInstance.from(ann));
-                if (!ann.name().equals(QualifierInstance.NAMED_NAME)) {
-                    hasExplicitQualifier = true;
-                }
-            } else {
-                var unwrapped = unwrapRepeatableQualifiers(ann);
-                if (!unwrapped.isEmpty()) {
-                    qualifiers.addAll(unwrapped);
-                    hasExplicitQualifier = true;
-                }
-            }
-        }
-
-        if (!hasExplicitQualifier) {
-            qualifiers.add(QualifierInstance.DEFAULT);
-        }
-        qualifiers.add(QualifierInstance.ANY);
-
-        return qualifiers;
+        return qualifierResolver.computeInjectionPointQualifiers(annotations);
     }
 
-    /**
-     * CDI spec: @Named without a value on an injection point defaults to the field name.
-     */
-    private Set<QualifierInstance> resolveNamedDefault(Set<QualifierInstance> qualifiers, String defaultName) {
-        var result = new LinkedHashSet<QualifierInstance>();
-        for (var q : qualifiers) {
-            if (q.annotationName().equals(QualifierInstance.NAMED_NAME) && q.members().isEmpty()) {
-                // @Named without value → default to field/parameter name
-                result.add(new QualifierInstance(QualifierInstance.NAMED_NAME,
-                        java.util.Map.of(MEMBER_VALUE, new io.vidocq.vauban.indexer.model.AnnotationValue.StringVal(defaultName))));
-            } else {
-                result.add(q);
-            }
-        }
-        return result;
-    }
-
-    /**
-     * Computes qualifiers for observer methods — only explicit qualifiers,
-     * no automatic @Default/@Any (CDI spec: an observer with no qualifiers
-     * observes all events of that type regardless of qualifiers).
-     */
     Set<QualifierInstance> computeObserverQualifiers(List<AnnotationInfo> annotations) {
-        var qualifiers = new LinkedHashSet<QualifierInstance>();
-        for (var ann : annotations) {
-            if (isQualifierAnnotation(ann.name())) {
-                qualifiers.add(QualifierInstance.from(ann));
-            } else {
-                qualifiers.addAll(unwrapRepeatableQualifiers(ann));
-            }
-        }
-        return qualifiers;
-    }
-
-    Set<QualifierInstance> computeQualifiersWithStereotypes(ClassInfo classInfo) {
-        var allAnnotations = new ArrayList<>(classInfo.annotations());
-
-        // Add inherited annotations from superclasses
-        for (var ann : getInheritedAnnotations(classInfo)) {
-            allAnnotations.add(toAnnotationInfo(ann));
-        }
-
-        // Add annotations from stereotypes (direct + inherited)
-        // CDI spec: @Named from stereotype gives name but is NOT added as qualifier
-        var allAnnotationNames = getAllAnnotationNames(classInfo);
-        for (var annName : allAnnotationNames) {
-            if (isStereotype(annName)) {
-                var stereotypeClass = index.getClassByName(annName);
-                if (stereotypeClass.isPresent()) {
-                    for (var sa : stereotypeClass.get().annotations()) {
-                        if (!sa.name().equals(NAMED)) {
-                            allAnnotations.add(sa);
-                        }
-                    }
-                }
-            }
-        }
-
-        return computeQualifiers(allAnnotations);
+        return qualifierResolver.computeObserverQualifiers(annotations);
     }
 
     private String extractNameWithStereotypes(ClassInfo classInfo) {
         return stereotypes.extractNameWithStereotypes(classInfo);
     }
 
-    /**
-     * Returns annotations inherited from superclasses (those NOT declared directly on classInfo).
-     * Uses Java reflection — Class.getAnnotations() handles @Inherited automatically per JLS.
-     */
-    @SuppressWarnings("java:S1141") // Nested try needed for classloader fallback
+    /** Inherited-annotation lookup — delegated to {@link QualifierResolver}. */
     List<java.lang.annotation.Annotation> getInheritedAnnotations(ClassInfo classInfo) {
-        try {
-            // Use TCCL first (TCK sets this to its custom ClassLoader), fallback to system
-            var cl = Thread.currentThread().getContextClassLoader();
-            Class<?> cls;
-            try {
-                cls = Class.forName(classInfo.name().value(), false, cl);
-            } catch (ClassNotFoundException e1) {
-                cls = Class.forName(classInfo.name().value());
-            }
-            var declared = cls.getDeclaredAnnotations();
-            var all = cls.getAnnotations();
-            var declaredNames = new HashSet<Class<?>>();
-            for (var d : declared) {
-                declaredNames.add(d.annotationType());
-            }
-            var inherited = new ArrayList<java.lang.annotation.Annotation>();
-            for (var a : all) {
-                if (!declaredNames.contains(a.annotationType())) {
-                    inherited.add(a);
-                }
-            }
-            return inherited;
-        } catch (ClassNotFoundException e) {
-            return List.of();
-        }
-    }
-
-    /**
-     * Converts a java.lang.annotation.Annotation to an AnnotationInfo for indexer compatibility.
-     */
-    private AnnotationInfo toAnnotationInfo(java.lang.annotation.Annotation ann) {
-        var members = new java.util.LinkedHashMap<String, io.vidocq.vauban.indexer.model.AnnotationValue>();
-        for (var method : ann.annotationType().getDeclaredMethods()) {
-            if (method.getParameterCount() == 0 && method.getDeclaringClass() == ann.annotationType()) {
-                try {
-                    var value = method.invoke(ann);
-                    var converted = switch (value) {
-                        case String s -> new io.vidocq.vauban.indexer.model.AnnotationValue.StringVal(s);
-                        case Boolean b -> new io.vidocq.vauban.indexer.model.AnnotationValue.BooleanVal(b);
-                        case Integer i -> new io.vidocq.vauban.indexer.model.AnnotationValue.IntVal(i);
-                        case Class<?> c -> new io.vidocq.vauban.indexer.model.AnnotationValue.ClassVal(DotName.of(c.getName()));
-                        case Enum<?> e -> new io.vidocq.vauban.indexer.model.AnnotationValue.EnumVal(
-                                DotName.of(e.getClass().getName()), e.name());
-                        case null, default -> null;
-                    };
-                    if (converted != null) members.put(method.getName(), converted);
-                } catch (Exception e) { /* skip */ }
-            }
-        }
-        return new AnnotationInfo(DotName.of(ann.annotationType().getName()), members);
-    }
-
-    private List<QualifierInstance> unwrapRepeatableQualifiers(AnnotationInfo ann) {
-        var result = new java.util.ArrayList<QualifierInstance>();
-        // Check if this annotation's value() contains repeatable qualifier annotations
-        var valueMember = ann.member(MEMBER_VALUE);
-        if (!(valueMember instanceof io.vidocq.vauban.indexer.model.AnnotationValue.ArrayVal arrayVal)) {
-            return result;
-        }
-        for (var item : arrayVal.values()) {
-            if (item instanceof io.vidocq.vauban.indexer.model.AnnotationValue.AnnotationVal av
-                    && isQualifierAnnotation(av.annotation().name())) {
-                result.add(QualifierInstance.from(av.annotation()));
-            }
-        }
-        return result;
+        return qualifierResolver.getInheritedAnnotations(classInfo);
     }
 
     boolean isQualifierAnnotation(DotName name) {
-        // Built-in qualifiers
-        if (name.equals(QualifierInstance.DEFAULT_NAME)
-                || name.equals(QualifierInstance.ANY_NAME)
-                || name.equals(QualifierInstance.NAMED_NAME)) {
-            return true;
-        }
-
-        // Custom qualifiers registered via @Discovery / MetaAnnotations
-        if (customQualifiers.contains(name)) {
-            return true;
-        }
-
-        // Check the index for the annotation class having @Qualifier
-        var annClass = index.getClassByName(name);
-        if (annClass.isPresent()) {
-            return annClass.get().hasAnnotation(DotName.of("jakarta.inject.Qualifier"));
-        }
-        // Fallback: check via reflection with TCCL
-        try {
-            var cl = Thread.currentThread().getContextClassLoader();
-            var annType = cl != null ? Class.forName(name.value(), false, cl) : Class.forName(name.value());
-            return annType.isAnnotationPresent(jakarta.inject.Qualifier.class);
-        } catch (ClassNotFoundException e) {
-            return false;
-        }
+        return qualifierResolver.isQualifierAnnotation(name);
     }
 
     ScopeInfo computeScope(ClassInfo classInfo) {
@@ -1317,7 +1122,7 @@ public final class BeanDiscovery {
             if (hasAnnotation(field.annotations(), INJECT)) {
                 var qualifiers = computeInjectionPointQualifiers(field.annotations());
                 // CDI spec: @Named without value on injection point defaults to the field name
-                qualifiers = resolveNamedDefault(qualifiers, field.name());
+                qualifiers = qualifierResolver.resolveNamedDefault(qualifiers, field.name());
                 var resolvedType = resolveGenericTypeForField(classInfo, field);
                 points.add(new InjectionPointInfo(
                         resolvedType, qualifiers,

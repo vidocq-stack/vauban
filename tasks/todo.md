@@ -379,8 +379,11 @@ runtime), so only method SHAPES are needed → a ClassInfo/Elements front-end is
       transitive stereotype lookups (@Alternative, @Priority, @Named defaulting, scope),
       all sharing the index-first/reflection-fallback duality and cycle guards.
       BeanDiscovery: **1677 → 1465 lines** (cumulative −33%); reactor green, TCK 774/774
-- [ ] Next slices (same pattern): `QualifierResolver` (~250 L: computeQualifiers* family,
-      repeatables, inherited annotations), then `BceProcessor` (1541 L) and
+- [x] Slice 3: `QualifierResolver` (266 L) extracted — computeQualifiers* family with their
+      CDI-spec variations (bean vs injection-point vs observer defaulting), repeatable
+      unwrapping, @Named defaulting, @Inherited lookup, is-a-qualifier detection.
+      BeanDiscovery: **1465 → 1270 lines** (cumulative −42%); reactor green, TCK 774/774
+- [ ] Next (separate sessions, same pattern): `BceProcessor` (1541 L) and
       `VaubanContainerBuilder` (1417 L)
 
 ## Backlog (deferred)
