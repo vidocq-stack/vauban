@@ -159,14 +159,15 @@ public final class TypeRef {
     }
 
     /**
-     * For a primitive (non-void) type, returns the {@link ClassDesc} of the corresponding
-     * wrapper class (e.g. {@code int} → {@code Integer}).
+     * For a primitive (non-void) type, returns the binary name of the corresponding wrapper
+     * class (e.g. {@code int} → {@code "java.lang.Integer"}). Single authority for the
+     * primitive→wrapper table — both code renderers (bytecode and source) derive from it.
      *
      * @throws IllegalStateException if this is not a non-void primitive
      */
-    public ClassDesc wrapperClassDesc() {
+    public String wrapperBinaryName() {
         if (!isPrimitive()) throw new IllegalStateException("Not a non-void primitive: " + this);
-        String wrapperName = switch (primitive) {
+        return switch (primitive) {
             case BOOLEAN -> "java.lang.Boolean";
             case BYTE -> "java.lang.Byte";
             case CHAR -> "java.lang.Character";
@@ -177,6 +178,38 @@ public final class TypeRef {
             case DOUBLE -> "java.lang.Double";
             default -> throw new IllegalStateException("unexpected: " + primitive);
         };
+    }
+
+    /**
+     * For a primitive (non-void) type, returns the name of the wrapper accessor used to unbox
+     * it (e.g. {@code int} → {@code "intValue"}). Single authority for the unbox table.
+     *
+     * @throws IllegalStateException if this is not a non-void primitive
+     */
+    public String unboxAccessorName() {
+        if (!isPrimitive()) throw new IllegalStateException("Not a non-void primitive: " + this);
+        return primitive.name().toLowerCase(java.util.Locale.ROOT) + "Value";
+    }
+
+    /**
+     * Java source syntax for this type: {@code int}, {@code int[]}, {@code java.lang.String},
+     * {@code a.b.Outer.Inner} (binary {@code '$'} becomes source {@code '.'}).
+     */
+    public String sourceName() {
+        String base = primitive != null
+                ? primitive.name().toLowerCase(java.util.Locale.ROOT)
+                : binaryName.replace('$', '.');
+        return base + "[]".repeat(dims);
+    }
+
+    /**
+     * For a primitive (non-void) type, returns the {@link ClassDesc} of the corresponding
+     * wrapper class (e.g. {@code int} → {@code Integer}).
+     *
+     * @throws IllegalStateException if this is not a non-void primitive
+     */
+    public ClassDesc wrapperClassDesc() {
+        String wrapperName = wrapperBinaryName();
         int dot = wrapperName.lastIndexOf('.');
         return ClassDesc.of(wrapperName.substring(0, dot), wrapperName.substring(dot + 1));
     }

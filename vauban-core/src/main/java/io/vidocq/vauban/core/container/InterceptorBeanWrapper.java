@@ -594,7 +594,7 @@ final class InterceptorBeanWrapper {
 
                 try {
                     Class<?> interceptedClass;
-                    var interceptedName = beanClass.getName() + "$$Intercepted";
+                    var interceptedName = beanClass.getName() + io.vidocq.vauban.core.interceptor.InterceptedShape.SUBCLASS_SUFFIX;
                     try {
                         // Prefer a PRE-GENERATED subclass (Vauban APT or Maven plugin). On the strict
                         // module path, defining the class at runtime would need deep access into the
@@ -755,7 +755,7 @@ final class InterceptorBeanWrapper {
 
                         var instance = instantiatePreferProvider(subclassCtor, finalArgs);
 
-                        var initMethod = finalInterceptedClass.getMethod("$$init",
+                        var initMethod = finalInterceptedClass.getMethod(io.vidocq.vauban.core.interceptor.InterceptedShape.INIT_METHOD,
                                 io.vidocq.vauban.core.interceptor.InterceptorManager.class,
                                 java.util.Set.class,
                                 java.util.Set.class,
@@ -848,7 +848,7 @@ final class InterceptorBeanWrapper {
                                         throw new jakarta.enterprise.inject.CreationException(
                                                 "Interceptor chain for @AroundConstruct failed to create an instance for " + finalInterceptedClass.getName());
                                     }
-                                    finalInterceptedClass.getMethod("$$init",
+                                    finalInterceptedClass.getMethod(io.vidocq.vauban.core.interceptor.InterceptedShape.INIT_METHOD,
                                             io.vidocq.vauban.core.interceptor.InterceptorManager.class,
                                             java.util.Set.class,
                                             java.util.Set.class,
@@ -858,7 +858,7 @@ final class InterceptorBeanWrapper {
                             var ctor2 = finalInterceptedClass.getDeclaredConstructor();
                             Object[] finalArgs2 = new Object[0];
                             var inst = instantiatePreferProvider(ctor2, finalArgs2);
-                                    finalInterceptedClass.getMethod("$$init",
+                                    finalInterceptedClass.getMethod(io.vidocq.vauban.core.interceptor.InterceptedShape.INIT_METHOD,
                                             io.vidocq.vauban.core.interceptor.InterceptorManager.class,
                                             java.util.Set.class,
                                             java.util.Set.class,

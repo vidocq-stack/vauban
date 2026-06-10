@@ -67,14 +67,14 @@ public final class InterceptedSourceRenderer {
     /** A generated source file: its fully-qualified class name and its textual content. */
     public record Generated(String className, String source) {}
 
-    /** Render {@code shape.beanBinaryName() + "$$Intercepted"} as Java source. */
+    /** Render {@code shape.subclassName()} as Java source. */
     public static Generated render(InterceptedShape shape) {
         String beanBinary = shape.beanBinaryName();
-        String subBinary = beanBinary + "$$Intercepted";
+        String subBinary = shape.subclassName();
         int lastDot = beanBinary.lastIndexOf('.');
         String pkg = lastDot >= 0 ? beanBinary.substring(0, lastDot) : "";
         String beanSimple = lastDot >= 0 ? beanBinary.substring(lastDot + 1) : beanBinary;
-        String subSimple = beanSimple + "$$Intercepted";
+        String subSimple = beanSimple + InterceptedShape.SUBCLASS_SUFFIX;
         String beanSource = beanBinary.replace('$', '.');
 
         var sb = new StringBuilder();
@@ -87,11 +87,11 @@ public final class InterceptedSourceRenderer {
         sb.append("@SuppressWarnings({\"unchecked\", \"rawtypes\"})\n");
         sb.append("public class ").append(subSimple).append(" extends ").append(beanSource).append(" {\n\n");
 
-        // Fields
-        sb.append("    private ").append(IM).append(" $$manager;\n");
-        sb.append("    private java.util.Set $$bindings;\n");
-        sb.append("    private java.util.Set $$constructorBindings;\n");
-        sb.append("    private ").append(CREATIONAL).append(" $$context;\n\n");
+        // Fields — names come from the shared IR (single authority with the bytecode emitter)
+        sb.append("    private ").append(IM).append(" ").append(InterceptedShape.FIELD_MANAGER).append(";\n");
+        sb.append("    private java.util.Set ").append(InterceptedShape.FIELD_BINDINGS).append(";\n");
+        sb.append("    private java.util.Set ").append(InterceptedShape.FIELD_CONSTRUCTOR_BINDINGS).append(";\n");
+        sb.append("    private ").append(CREATIONAL).append(" ").append(InterceptedShape.FIELD_CONTEXT).append(";\n\n");
 
         // Constructors mirroring each non-private super constructor
         for (CtorShape ctor : shape.constructors()) {
@@ -101,7 +101,8 @@ public final class InterceptedSourceRenderer {
         }
 
         // $$init setter
-        sb.append("    public void $$init(").append(IM).append(" m, java.util.Set b, ")
+        sb.append("    public void ").append(InterceptedShape.INIT_METHOD)
+                .append("(").append(IM).append(" m, java.util.Set b, ")
                 .append("java.util.Set cb, ").append(CREATIONAL).append(" c) {\n");
         sb.append("        this.$$manager = m;\n");
         sb.append("        this.$$bindings = b;\n");
@@ -113,7 +114,7 @@ public final class InterceptedSourceRenderer {
         // collide on the bare $$ti$<name>; give each overload a unique name (the $$super$<name>
         // bridges keep distinct parameter lists and need no suffix).
         var methods = shape.methods();
-        var tiNames = targetInvokerNames(methods);
+        var tiNames = shape.targetInvokerNames();
         for (int i = 0; i < methods.size(); i++) {
             MethodShape m = methods.get(i);
             renderOverride(sb, subSimple, m, tiNames.get(i));
@@ -154,8 +155,9 @@ public final class InterceptedSourceRenderer {
             sb.append("            if (this.$$manager == null) return super.").append(m.name())
                     .append("(").append(args(m.params().size())).append(");\n");
         }
-        sb.append("            java.lang.reflect.Method $$m = getClass().getDeclaredMethod(\"$$super$")
-                .append(m.name()).append("\"").append(classLiterals(m.params())).append(");\n");
+        sb.append("            java.lang.reflect.Method $$m = getClass().getDeclaredMethod(\"")
+                .append(InterceptedShape.superBridgeName(m.name())).append("\"")
+                .append(classLiterals(m.params())).append(");\n");
         sb.append("            Object[] $$args = new Object[] {").append(boxedArgs(m.params())).append("};\n");
         sb.append("            java.util.List $$chain = this.$$manager.resolveChainForMethod(")
                 .append("this.$$bindings, $$m, this, this.$$context);\n");
@@ -181,7 +183,8 @@ public final class InterceptedSourceRenderer {
 
     private static void renderSuperBridge(StringBuilder sb, MethodShape m) {
         TypeRef ret = m.returnType();
-        sb.append("    public ").append(sourceName(ret)).append(" $$super$").append(m.name())
+        sb.append("    public ").append(sourceName(ret)).append(" ")
+                .append(InterceptedShape.superBridgeName(m.name()))
                 .append("(").append(params(m.params())).append(") throws Exception {\n");
         if (ret.isVoid()) {
             sb.append("        super.").append(m.name()).append("(").append(args(m.params().size())).append(");\n");
@@ -199,7 +202,8 @@ public final class InterceptedSourceRenderer {
             if (i > 0) unboxed.append(", ");
             unboxed.append(unboxExpr(params.get(i), "$$params[" + i + "]"));
         }
-        String call = "((" + subSimple + ") $$target).$$super$" + m.name() + "(" + unboxed + ")";
+        String call = "((" + subSimple + ") $$target)." + InterceptedShape.superBridgeName(m.name())
+                + "(" + unboxed + ")";
 
         sb.append("    private static Object ").append(tiName)
                 .append("(Object $$target, Object[] $$params) throws Exception {\n");
@@ -212,24 +216,6 @@ public final class InterceptedSourceRenderer {
             sb.append("        return ").append(call).append(";\n");
         }
         sb.append("    }\n\n");
-    }
-
-    /**
-     * Unique {@code $$ti$} glue name per method. Non-overloaded names stay {@code $$ti$<name>};
-     * overloaded names get a {@code $<occurrence>} suffix so the erased {@code (Object,Object[])}
-     * glues do not collide. Mirrors {@code InterceptedEmitter.targetInvokerNames}.
-     */
-    private static List<String> targetInvokerNames(List<MethodShape> methods) {
-        var total = new java.util.HashMap<String, Integer>();
-        for (MethodShape m : methods) total.merge(m.name(), 1, Integer::sum);
-        var seen = new java.util.HashMap<String, Integer>();
-        var names = new java.util.ArrayList<String>(methods.size());
-        for (MethodShape m : methods) {
-            int occ = seen.merge(m.name(), 1, Integer::sum) - 1;
-            String base = "$$ti$" + m.name();
-            names.add(total.get(m.name()) > 1 ? base + "$" + occ : base);
-        }
-        return names;
     }
 
     // ---- rendering helpers ----
@@ -290,42 +276,18 @@ public final class InterceptedSourceRenderer {
         return "(" + sourceName(t) + ") " + objExpr;
     }
 
-    /** Java source type name: {@code int}, {@code java.lang.String}, {@code int[]}, {@code a.b.Outer.Inner}. */
+    /** Java source type name — delegates to the shared IR ({@link TypeRef#sourceName()}). */
     private static String sourceName(TypeRef t) {
-        // primitiveKind() is non-null for primitives (including arrays like int[]) and for void —
-        // binaryName is null in those cases — whereas isPrimitive() is false for arrays. Branch on
-        // primitiveKind() so int[] renders "int[]", not an NPE on a null binary name.
-        String base = t.primitiveKind() != null
-                ? t.primitiveKind().name().toLowerCase(java.util.Locale.ROOT)
-                : t.binaryName().replace('$', '.');
-        return base + "[]".repeat(t.dims());
+        return t.sourceName();
     }
 
+    /** Wrapper binary name — single authority is {@link TypeRef#wrapperBinaryName()}. */
     private static String wrapper(TypeRef t) {
-        return switch (t.primitiveKind()) {
-            case BOOLEAN -> "java.lang.Boolean";
-            case BYTE -> "java.lang.Byte";
-            case CHAR -> "java.lang.Character";
-            case SHORT -> "java.lang.Short";
-            case INT -> "java.lang.Integer";
-            case LONG -> "java.lang.Long";
-            case FLOAT -> "java.lang.Float";
-            case DOUBLE -> "java.lang.Double";
-            default -> throw new IllegalStateException("not a non-void primitive: " + t);
-        };
+        return t.wrapperBinaryName();
     }
 
+    /** Unbox accessor — single authority is {@link TypeRef#unboxAccessorName()}. */
     private static String primitiveAccessor(TypeRef t) {
-        return switch (t.primitiveKind()) {
-            case BOOLEAN -> "booleanValue";
-            case BYTE -> "byteValue";
-            case CHAR -> "charValue";
-            case SHORT -> "shortValue";
-            case INT -> "intValue";
-            case LONG -> "longValue";
-            case FLOAT -> "floatValue";
-            case DOUBLE -> "doubleValue";
-            default -> throw new IllegalStateException("not a non-void primitive: " + t);
-        };
+        return t.unboxAccessorName();
     }
 }

@@ -39,8 +39,8 @@ import java.util.function.Predicate;
 @SuppressWarnings({"java:S100", "java:S3776"}) // $$ methods are CDI container conventions for generated code
 public final class InterceptorManager {
 
-    private static final String INTERCEPTED_SUFFIX = "$$Intercepted";
-    private static final String SUPER_PREFIX = "$$super$";
+    private static final String INTERCEPTED_SUFFIX = InterceptedShape.SUBCLASS_SUFFIX;
+    private static final String SUPER_PREFIX = InterceptedShape.SUPER_BRIDGE_PREFIX;
 
     private final List<InterceptorDescriptor> interceptors;
     private final Map<DotName, Object> interceptorInstances = new LinkedHashMap<>();

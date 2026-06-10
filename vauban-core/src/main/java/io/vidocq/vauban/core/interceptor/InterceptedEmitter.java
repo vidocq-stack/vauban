@@ -61,9 +61,11 @@ public final class InterceptedEmitter {
     private static final ClassDesc CD_TargetInvoker =
             ClassDesc.of("io.vidocq.vauban.core.interceptor.VaubanInvocationContext$TargetInvoker");
 
-    private static final String FIELD_MANAGER = "$$manager";
-    private static final String FIELD_BINDINGS = "$$bindings";
-    private static final String FIELD_CONTEXT = "$$context";
+    // Naming authority is the shared IR (InterceptedShape) — aliased here for brevity
+    private static final String FIELD_MANAGER = InterceptedShape.FIELD_MANAGER;
+    private static final String FIELD_BINDINGS = InterceptedShape.FIELD_BINDINGS;
+    private static final String FIELD_CONSTRUCTOR_BINDINGS = InterceptedShape.FIELD_CONSTRUCTOR_BINDINGS;
+    private static final String FIELD_CONTEXT = InterceptedShape.FIELD_CONTEXT;
     private static final String METHOD_VALUEOF = "valueOf";
 
     /** Erased signature of {@code TargetInvoker.invoke} and of every generated {@code $$ti$<name>}. */
@@ -97,7 +99,7 @@ public final class InterceptedEmitter {
      * @return raw bytecode of the generated subclass
      */
     public static byte[] emit(InterceptedShape shape) {
-        String subclassName = shape.beanBinaryName() + "$$Intercepted";
+        String subclassName = shape.subclassName();
         ClassDesc subclassCD = classDescOf(subclassName);
         ClassDesc beanCD = classDescOf(shape.beanBinaryName());
 
@@ -108,7 +110,7 @@ public final class InterceptedEmitter {
             // Fields
             clb.withField(FIELD_MANAGER, CD_InterceptorManager, ClassFile.ACC_PRIVATE);
             clb.withField(FIELD_BINDINGS, CD_Set, ClassFile.ACC_PRIVATE);
-            clb.withField("$$constructorBindings", CD_Set, ClassFile.ACC_PRIVATE);
+            clb.withField(FIELD_CONSTRUCTOR_BINDINGS, CD_Set, ClassFile.ACC_PRIVATE);
             clb.withField(FIELD_CONTEXT, CD_CreationalContext, ClassFile.ACC_PRIVATE);
 
             // Constructors: for each non-private constructor in super class, generate one here
@@ -135,7 +137,7 @@ public final class InterceptedEmitter {
 
             // Setter: public void $$init(InterceptorManager, Set<DotName>, Set<DotName>, CreationalContext)
             clb.withMethodBody(
-                    "$$init",
+                    InterceptedShape.INIT_METHOD,
                     MethodTypeDesc.of(ConstantDescs.CD_void,
                             CD_InterceptorManager, CD_Set, CD_Set, CD_CreationalContext),
                     ClassFile.ACC_PUBLIC,
@@ -148,7 +150,7 @@ public final class InterceptedEmitter {
                         cob.putfield(subclassCD, FIELD_BINDINGS, CD_Set);
                         cob.aload(0);
                         cob.aload(3);
-                        cob.putfield(subclassCD, "$$constructorBindings", CD_Set);
+                        cob.putfield(subclassCD, FIELD_CONSTRUCTOR_BINDINGS, CD_Set);
                         cob.aload(0);
                         cob.aload(4);
                         cob.putfield(subclassCD, FIELD_CONTEXT, CD_CreationalContext);
@@ -160,7 +162,7 @@ public final class InterceptedEmitter {
             // bare $$ti$<name>; give each overload a unique name (the $$super$<name> bridges keep
             // distinct descriptors and need no suffix).
             var methods = shape.methods();
-            var tiNames = targetInvokerNames(methods);
+            var tiNames = shape.targetInvokerNames();
             for (int i = 0; i < methods.size(); i++) {
                 MethodShape method = methods.get(i);
                 generateSuperBridge(clb, beanCD, method);
@@ -168,24 +170,6 @@ public final class InterceptedEmitter {
                 generateTargetInvokerGlue(clb, subclassCD, method, tiNames.get(i));
             }
         });
-    }
-
-    /**
-     * Unique {@code $$ti$} glue method name per method. Non-overloaded names stay {@code $$ti$<name>}
-     * (byte-for-byte stable); overloaded names get a {@code $<occurrence>} suffix so the erased
-     * {@code (Object,Object[])Object} glues do not collide.
-     */
-    private static java.util.List<String> targetInvokerNames(java.util.List<MethodShape> methods) {
-        var total = new java.util.HashMap<String, Integer>();
-        for (MethodShape m : methods) total.merge(m.name(), 1, Integer::sum);
-        var seen = new java.util.HashMap<String, Integer>();
-        var names = new java.util.ArrayList<String>(methods.size());
-        for (MethodShape m : methods) {
-            int occ = seen.merge(m.name(), 1, Integer::sum) - 1;
-            String base = "$$ti$" + m.name();
-            names.add(total.get(m.name()) > 1 ? base + "$" + occ : base);
-        }
-        return names;
     }
 
     /**
@@ -201,7 +185,7 @@ public final class InterceptedEmitter {
         var methodType = MethodTypeDesc.of(returnCD, paramCDs);
 
         clb.withMethodBody(
-                "$$super$" + method.name(),
+                InterceptedShape.superBridgeName(method.name()),
                 methodType,
                 ClassFile.ACC_PUBLIC,
                 cob -> {
@@ -252,7 +236,7 @@ public final class InterceptedEmitter {
                     // this.getClass().getDeclaredMethod("$$super$name", paramTypes...)
                     cob.aload(0);
                     cob.invokevirtual(CD_Object, "getClass", MethodTypeDesc.of(CD_Class));
-                    cob.ldc("$$super$" + method.name());
+                    cob.ldc(InterceptedShape.superBridgeName(method.name()));
                     cob.loadConstant(paramCDs.length);
                     cob.anewarray(CD_Class);
                     for (int i = 0; i < paramCDs.length; i++) {
@@ -387,7 +371,7 @@ public final class InterceptedEmitter {
                         cob.aaload();
                         castOrUnboxParam(cob, params.get(i));
                     }
-                    cob.invokevirtual(subclassCD, "$$super$" + method.name(), superType);
+                    cob.invokevirtual(subclassCD, InterceptedShape.superBridgeName(method.name()), superType);
                     boxResultAndReturn(cob, method.returnType());
                 });
     }
@@ -401,19 +385,8 @@ public final class InterceptedEmitter {
             return;
         }
         ClassDesc wrapperCD = p.wrapperClassDesc();
-        ClassDesc primCD = p.classDesc();
         cob.checkcast(wrapperCD);
-        switch (p.primitiveKind()) {
-            case BOOLEAN -> cob.invokevirtual(wrapperCD, "booleanValue", MethodTypeDesc.of(primCD));
-            case BYTE -> cob.invokevirtual(wrapperCD, "byteValue", MethodTypeDesc.of(primCD));
-            case CHAR -> cob.invokevirtual(wrapperCD, "charValue", MethodTypeDesc.of(primCD));
-            case SHORT -> cob.invokevirtual(wrapperCD, "shortValue", MethodTypeDesc.of(primCD));
-            case INT -> cob.invokevirtual(wrapperCD, "intValue", MethodTypeDesc.of(primCD));
-            case LONG -> cob.invokevirtual(wrapperCD, "longValue", MethodTypeDesc.of(primCD));
-            case FLOAT -> cob.invokevirtual(wrapperCD, "floatValue", MethodTypeDesc.of(primCD));
-            case DOUBLE -> cob.invokevirtual(wrapperCD, "doubleValue", MethodTypeDesc.of(primCD));
-            default -> { /* not reached */ }
-        }
+        cob.invokevirtual(wrapperCD, p.unboxAccessorName(), MethodTypeDesc.of(p.classDesc()));
     }
 
     /** Stack: the {@code $$super$} return value → boxed {@code Object} ({@code null} for void), then areturn. */
@@ -463,17 +436,8 @@ public final class InterceptedEmitter {
     private static void unboxReturn(CodeBuilder cob, TypeRef type) {
         ClassDesc wrapperCD = type.wrapperClassDesc();
         cob.checkcast(wrapperCD);
-        switch (type.primitiveKind()) {
-            case BOOLEAN -> { cob.invokevirtual(wrapperCD, "booleanValue", MethodTypeDesc.of(ConstantDescs.CD_boolean)); cob.ireturn(); }
-            case BYTE -> { cob.invokevirtual(wrapperCD, "byteValue", MethodTypeDesc.of(ConstantDescs.CD_byte)); cob.ireturn(); }
-            case CHAR -> { cob.invokevirtual(wrapperCD, "charValue", MethodTypeDesc.of(ConstantDescs.CD_char)); cob.ireturn(); }
-            case SHORT -> { cob.invokevirtual(wrapperCD, "shortValue", MethodTypeDesc.of(ConstantDescs.CD_short)); cob.ireturn(); }
-            case INT -> { cob.invokevirtual(wrapperCD, "intValue", MethodTypeDesc.of(ConstantDescs.CD_int)); cob.ireturn(); }
-            case LONG -> { cob.invokevirtual(wrapperCD, "longValue", MethodTypeDesc.of(ConstantDescs.CD_long)); cob.lreturn(); }
-            case FLOAT -> { cob.invokevirtual(wrapperCD, "floatValue", MethodTypeDesc.of(ConstantDescs.CD_float)); cob.freturn(); }
-            case DOUBLE -> { cob.invokevirtual(wrapperCD, "doubleValue", MethodTypeDesc.of(ConstantDescs.CD_double)); cob.dreturn(); }
-            default -> cob.areturn();
-        }
+        cob.invokevirtual(wrapperCD, type.unboxAccessorName(), MethodTypeDesc.of(type.classDesc()));
+        emitReturn(cob, type.classDesc());
     }
 
     /**

@@ -303,13 +303,28 @@ runtime), so only method SHAPES are needed → a ClassInfo/Elements front-end is
       original null behavior) and preserves guard order
 - [x] Full `./mvnw clean install` green + CDI 4.1 Lite TCK **774/774 PASS**
 
-### 16b — Shared IR between InterceptedEmitter (bytecode) and InterceptedSourceRenderer (source)
-- [ ] Study: `InterceptedShape` already exists (fromClass/fromElements) — map what is
-      still duplicated in the two renderers (the VAU-INT-001..004 bug class lived there)
-- [ ] Extract the duplicated decisions (glue naming `$$ti$`, primitive-array loads,
-      checked-exception wrapping, super-bridge emission) into the shared model
-- [ ] Regression tests covering both renderers from the same fixtures
-- [ ] TCK 774/774 + cross-project smoke (heisenberg interceptors) before merge
+### 16b — Shared IR between InterceptedEmitter (bytecode) and InterceptedSourceRenderer (source) ✅ 2026-06-10
+- [x] Study: the IR (`InterceptedShape`/`MethodShape`/`CtorShape`/`TypeRef`) was already shared;
+      the residual duplication was the **semantic decisions** repeated in both renderers:
+      `targetInvokerNames()` copy-pasted verbatim (the VAU-INT-001 fix had to land twice),
+      the primitive→wrapper table, the unbox-accessor table, and the `$$…` name literals
+- [x] Hoisted into the IR as single authority:
+      `InterceptedShape.targetInvokerNames()` / `subclassName()` / `superBridgeName()` +
+      naming constants (`SUBCLASS_SUFFIX`, `SUPER_BRIDGE_PREFIX`, `TI_PREFIX`, `INIT_METHOD`,
+      `FIELD_*`); `TypeRef.wrapperBinaryName()` / `unboxAccessorName()` / `sourceName()`
+      (`wrapperClassDesc()` now derives from `wrapperBinaryName()`)
+- [x] Both renderers consume the authority; core-module consumers aligned too
+      (`InterceptorManager`, `InterceptorBeanWrapper`, `InterceptorSubclassGenerator`,
+      `VaubanInvocationContext`). The `$$Intercepted` literal stays in vauban-indexer /
+      vauban-maven-plugin recognition sites — module direction (core depends on indexer)
+      forbids importing the constant there; it is a cross-module protocol constant
+- [x] Out of scope (separate chantier): the client-proxy pair
+      (`RuntimeClientProxyGenerator` / `ClientProxySourceRenderer`) works on `TypeMirror`,
+      not `TypeRef` — unifying it means migrating it to the IR first
+- [x] TDD regression tests: `InterceptedShapeTest` (5 — incl. VAU-INT-001 overload cases),
+      `TypeRefTest` (4 — incl. VAU-INT-002 int[] guard, VAU-PRX-003 nested-class names)
+- [x] Validation: `GoldenBytecodeTest` 4/4 (byte-for-byte output preserved), full reactor
+      green, CDI TCK **774/774 PASS**, cross-project smoke heisenberg `clean install` green
 
 ## Backlog (deferred)
 - [ ] `DirectoryScanner` - directory scanning

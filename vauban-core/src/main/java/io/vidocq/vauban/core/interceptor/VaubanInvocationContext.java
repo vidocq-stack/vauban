@@ -94,8 +94,8 @@ public final class VaubanInvocationContext implements InvocationContext {
     @Override
     public Method getMethod() {
         // If method is a $$super$ bridge, return the original method
-        if (method != null && method.getName().startsWith("$$super$")) {
-            var originalName = method.getName().substring("$$super$".length());
+        if (method != null && method.getName().startsWith(InterceptedShape.SUPER_BRIDGE_PREFIX)) {
+            var originalName = method.getName().substring(InterceptedShape.SUPER_BRIDGE_PREFIX.length());
             try {
                 return method.getDeclaringClass().getSuperclass()
                         .getDeclaredMethod(originalName, method.getParameterTypes());

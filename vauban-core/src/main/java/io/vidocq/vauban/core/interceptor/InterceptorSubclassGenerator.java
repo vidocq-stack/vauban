@@ -53,7 +53,7 @@ public final class InterceptorSubclassGenerator {
     public static GeneratedInterceptedClass generate(Class<?> beanClass) {
         InterceptedShape shape = fromClass(beanClass);
         byte[] bytecode = InterceptedEmitter.emit(shape);
-        return new GeneratedInterceptedClass(shape.beanBinaryName() + "$$Intercepted", bytecode);
+        return new GeneratedInterceptedClass(shape.subclassName(), bytecode);
     }
 
     /**
