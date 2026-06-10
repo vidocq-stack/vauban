@@ -207,7 +207,7 @@ public final class BceProcessor {
         for (var bceClass : bceClasses) {
             try {
                 // Validate method signatures before processing
-                validateExtensionMethods(bceClass, definitionErrors);
+                ExtensionMethodValidator.validateExtensionMethods(bceClass, definitionErrors);
                 if (!definitionErrors.isEmpty()) continue;
 
                 // Reuse instance from Discovery phase to maintain state
@@ -317,8 +317,8 @@ public final class BceProcessor {
 
             // First try beans (normal CDI path)
             for (var bean : beans) {
-                if (!matchesTypes(enhancement.types(), bean, classLoader)) continue;
-                if (!matchesAnnotations(withAnnotations, bean.beanClass(), classLoader)) continue;
+                if (!BceTypeMatcher.matchesTypes(enhancement.types(), bean, classLoader)) continue;
+                if (!BceTypeMatcher.matchesAnnotations(withAnnotations, bean.beanClass(), classLoader)) continue;
                 processedClasses.add(bean.beanClass());
                 invokeEnhancement(method, bce, paramKind, bean.beanClass(), lookup, errors, modifications);
             }
@@ -328,8 +328,8 @@ public final class BceProcessor {
                 for (var archiveClass : archiveClasses) {
                     var className = DotName.of(archiveClass.getName());
                     if (processedClasses.contains(className)) continue;
-                    if (!matchesClass(enhancement.types(), enhancement.withSubtypes(), archiveClass)) continue;
-                    if (!matchesAnnotations(withAnnotations, archiveClass)) continue;
+                    if (!BceTypeMatcher.matchesClass(enhancement.types(), enhancement.withSubtypes(), archiveClass)) continue;
+                    if (!BceTypeMatcher.matchesAnnotations(withAnnotations, archiveClass)) continue;
                     processedClasses.add(className);
                     invokeEnhancement(method, bce, paramKind, className, lookup, errors, modifications);
                 }
@@ -348,55 +348,16 @@ public final class BceProcessor {
                 for (var classInfo : lookup.index().getKnownClasses()) {
                     if (processedClasses.contains(classInfo.name())) continue;
                     // Type matching: Object.class wildcard matches everything
-                    if (!isObjectWildcard && !matchesClassByIndex(enhancement.types(),
+                    if (!isObjectWildcard && !BceTypeMatcher.matchesClassByIndex(enhancement.types(),
                             enhancement.withSubtypes(), classInfo, lookup)) continue;
                     // Annotation matching via index
                     if (!withAnnotationNames.isEmpty()
-                            && !matchesAnnotationsByIndex(withAnnotationNames, classInfo)) continue;
+                            && !BceTypeMatcher.matchesAnnotationsByIndex(withAnnotationNames, classInfo)) continue;
                     processedClasses.add(classInfo.name());
                     invokeEnhancement(method, bce, paramKind, classInfo.name(), lookup, errors, modifications);
                 }
             }
         }
-    }
-
-    /** Index-based annotation matching: checks class, methods, fields, and constructors. */
-    private static boolean matchesAnnotationsByIndex(Set<DotName> annotationNames,
-                                                      io.vidocq.vauban.indexer.model.ClassInfo classInfo) {
-        for (var ann : annotationNames) {
-            if (classInfo.hasAnnotation(ann)) return true;
-            for (var m : classInfo.methods()) {
-                if (m.annotations().stream().anyMatch(a -> a.name().equals(ann))) return true;
-            }
-            for (var f : classInfo.fields()) {
-                if (f.annotations().stream().anyMatch(a -> a.name().equals(ann))) return true;
-            }
-        }
-        return false;
-    }
-
-    /** Index-based type matching using class hierarchy from the index. */
-    private static boolean matchesClassByIndex(Class<?>[] types, boolean withSubtypes,
-                                                io.vidocq.vauban.indexer.model.ClassInfo classInfo,
-                                                IndexLookup lookup) {
-        for (var type : types) {
-            if (type == Object.class) return true;
-            var typeName = DotName.of(type.getName());
-            if (typeName.equals(classInfo.name())) return true;
-            if (withSubtypes) {
-                // Walk superclass chain
-                var current = classInfo;
-                while (current != null && current.superName() != null) {
-                    if (typeName.equals(current.superName())) return true;
-                    current = lookup.getClass(current.superName()).orElse(null);
-                }
-                // Check interfaces
-                for (var iface : classInfo.interfaces()) {
-                    if (typeName.equals(iface)) return true;
-                }
-            }
-        }
-        return false;
     }
 
     private static void invokeEnhancement(Method method, Object bce, EnhancementParamKind paramKind,
@@ -458,57 +419,6 @@ public final class BceProcessor {
         return false;
     }
 
-    /** Check if a class matches Enhancement types filter. */
-    private static boolean matchesClass(Class<?>[] types, boolean withSubtypes, Class<?> targetClass) {
-        for (var type : types) {
-            // Object.class is the CDI default wildcard — matches all types
-            if (type == Object.class) return true;
-            if (withSubtypes) {
-                if (type.isAssignableFrom(targetClass)) return true;
-            } else {
-                if (type.equals(targetClass)) return true;
-            }
-        }
-        return false;
-    }
-
-    /** Check if a class has at least one of the required annotations (resolved via classLoader from DotName). */
-    private static boolean matchesAnnotations(Class<? extends java.lang.annotation.Annotation>[] withAnnotations,
-                                              DotName beanClass, ClassLoader classLoader) {
-        if (withAnnotations == null || withAnnotations.length == 0) return true;
-        try {
-            var clazz = classLoader.loadClass(beanClass.value());
-            return matchesAnnotations(withAnnotations, clazz);
-        } catch (ClassNotFoundException e) {
-            return false;
-        }
-    }
-
-    /** Check if a class has at least one of the required annotations (on class, methods, or fields). */
-    private static boolean matchesAnnotations(Class<? extends java.lang.annotation.Annotation>[] withAnnotations,
-                                              Class<?> targetClass) {
-        if (withAnnotations == null || withAnnotations.length == 0) return true;
-        for (var ann : withAnnotations) {
-            if (targetClass.isAnnotationPresent(ann)) return true;
-            for (var m : getDeclaredMethodsSafe(targetClass)) {
-                if (m.isAnnotationPresent(ann)) return true;
-            }
-            // Defensive: getDeclaredFields/Constructors may throw NoClassDefFoundError
-            // if a signature references an optional type absent from the classpath.
-            try {
-                for (var f : targetClass.getDeclaredFields()) {
-                    if (f.isAnnotationPresent(ann)) return true;
-                }
-            } catch (LinkageError ignored) { /* skip */ }
-            try {
-                for (var c : targetClass.getDeclaredConstructors()) {
-                    if (c.isAnnotationPresent(ann)) return true;
-                }
-            } catch (LinkageError ignored) { /* skip */ }
-        }
-        return false;
-    }
-
     @SuppressWarnings("java:S112") // CDI spec: container exceptions propagate as RuntimeException
     private static void invokeWithArg(Method method, Object bce, Class<?> targetType, Object arg) throws Exception {
         var params = method.getParameters();
@@ -543,7 +453,7 @@ public final class BceProcessor {
 
             if (hasObserverInfoParam(method)) {
                 for (var observer : observers) {
-                    if (!matchesObserverTypes(registration.types(), observer, classLoader)) continue;
+                    if (!BceTypeMatcher.matchesObserverTypes(registration.types(), observer, classLoader)) continue;
                     var observerInfo = new VaubanBceObserverInfo(observer, lookup);
                     invokeRegistrationMethodWithObserver(method, bce, observerInfo, types, errors);
                 }
@@ -560,7 +470,7 @@ public final class BceProcessor {
             boolean matched = false;
             for (var bean : beans) {
                 if (interceptorClassNames.contains(bean.beanClass().value())) continue;
-                if (!matchesTypes(registration.types(), bean, classLoader)) continue;
+                if (!BceTypeMatcher.matchesTypes(registration.types(), bean, classLoader)) continue;
                 matched = true;
 
                 var beanInfo = new VaubanBceBeanInfo(bean, lookup);
@@ -569,7 +479,7 @@ public final class BceProcessor {
 
             // Also try matching interceptors
             for (var interceptor : interceptors) {
-                if (!matchesInterceptorTypes(registration.types(), interceptor, classLoader)) continue;
+                if (!BceTypeMatcher.matchesInterceptorTypes(registration.types(), interceptor, classLoader)) continue;
                 matched = true;
 
                 var interceptorInfo = new VaubanBceInterceptorInfo(interceptor, lookup);
@@ -579,7 +489,7 @@ public final class BceProcessor {
             // If no beans matched and method doesn't use InvokerFactory, try archive classes
             if (!matched && allArchiveClasses != null && !usesInvokerFactory(method)) {
                 for (var archiveClass : allArchiveClasses) {
-                    if (!matchesClass(registration.types(), true, archiveClass)) continue;
+                    if (!BceTypeMatcher.matchesClass(registration.types(), true, archiveClass)) continue;
 
                     var className = DotName.of(archiveClass.getName());
                     var indexClass = lookup.getClass(className).orElse(null);
@@ -596,36 +506,6 @@ public final class BceProcessor {
     private static boolean hasObserverInfoParam(Method method) {
         for (var param : method.getParameters()) {
             if (ObserverInfo.class.isAssignableFrom(param.getType())) return true;
-        }
-        return false;
-    }
-
-    private static boolean matchesObserverTypes(Class<?>[] types, io.vidocq.vauban.core.bean.model.ObserverDescriptor observer, ClassLoader classLoader) {
-        String declaringClassName = observer.declaringClass().value();
-        try {
-            var declaringClass = classLoader.loadClass(declaringClassName);
-            for (var type : types) {
-                if (type.isAssignableFrom(declaringClass)) {
-                    return true;
-                }
-            }
-        } catch (ClassNotFoundException e) {
-            // skip
-        }
-        return false;
-    }
-
-    private static boolean matchesInterceptorTypes(Class<?>[] types, io.vidocq.vauban.core.bean.model.InterceptorDescriptor interceptor, ClassLoader classLoader) {
-        String className = interceptor.interceptorClass().value();
-        try {
-            var clazz = classLoader.loadClass(className);
-            for (var type : types) {
-                if (type.isAssignableFrom(clazz)) {
-                    return true;
-                }
-            }
-        } catch (ClassNotFoundException e) {
-            // skip
         }
         return false;
     }
@@ -692,55 +572,7 @@ public final class BceProcessor {
             errors.addAll(messages.getErrors());
         }
 
-        validateInvokerLookups(invokerFactory, allBeans, classLoader, errors);
-    }
-
-    private static final Set<Class<?>> SPECIAL_LOOKUP_TYPES = Set.of(
-            jakarta.enterprise.inject.Instance.class,
-            jakarta.enterprise.event.Event.class,
-            jakarta.enterprise.inject.spi.BeanManager.class
-    );
-
-    private static void validateInvokerLookups(VaubanInvokerFactory factory,
-                                                List<BeanDescriptor> allBeans,
-                                                ClassLoader classLoader,
-                                                List<String> errors) {
-        for (var builder : factory.getBuilders()) {
-            var argLookups = builder.getArgumentLookups();
-            if (argLookups.isEmpty()) continue;
-
-            var reflectMethod = builder.getMethod();
-            var paramTypes = reflectMethod.getParameterTypes();
-
-            for (int idx : argLookups) {
-                var paramType = paramTypes[idx];
-
-                if (SPECIAL_LOOKUP_TYPES.stream().anyMatch(t -> t.isAssignableFrom(paramType))) {
-                    continue;
-                }
-
-                int matchCount = 0;
-                for (var bean : allBeans) {
-                    try {
-                        var beanClass = classLoader.loadClass(bean.beanClass().value());
-                        if (paramType.isAssignableFrom(beanClass)) {
-                            matchCount++;
-                        }
-                    } catch (ClassNotFoundException ignored) { // intentionally empty
-                    }
-                }
-
-                if (matchCount == 0) {
-                    errors.add("Invoker argument lookup unsatisfied: no bean found for parameter type "
-                            + paramType.getName() + " at position " + idx
-                            + " of method " + reflectMethod.getDeclaringClass().getName() + "." + reflectMethod.getName());
-                } else if (matchCount > 1) {
-                    errors.add("Invoker argument lookup ambiguous: " + matchCount + " beans found for parameter type "
-                            + paramType.getName() + " at position " + idx
-                            + " of method " + reflectMethod.getDeclaringClass().getName() + "." + reflectMethod.getName());
-                }
-            }
-        }
+        ExtensionMethodValidator.validateInvokerLookups(invokerFactory, allBeans, classLoader, errors);
     }
 
     private static Object[] resolveRegistrationArgs(Method method, BeanInfo beanInfo,
@@ -847,100 +679,6 @@ public final class BceProcessor {
         return args;
     }
 
-    /**
-     * Check if a bean matches any of the Registration/Enhancement types.
-     * CDI spec: matches if the bean's set of bean types contains a type
-     * that is assignable from at least one of the listed types.
-     */
-    private static boolean matchesTypes(Class<?>[] types, BeanDescriptor bean, ClassLoader classLoader) {
-        for (var beanTypeInfo : bean.types()) {
-            String beanTypeName = switch (beanTypeInfo) {
-                case io.vidocq.vauban.indexer.model.TypeInfo.ClassType ct -> ct.name().value();
-                case io.vidocq.vauban.indexer.model.TypeInfo.ParameterizedType pt -> pt.rawType().value();
-                default -> null;
-            };
-            if (beanTypeName == null) continue;
-            try {
-                var beanType = classLoader.loadClass(beanTypeName);
-                for (var type : types) {
-                    if (type.isAssignableFrom(beanType)) {
-                        return true;
-                    }
-                }
-            } catch (ClassNotFoundException e) {
-                // skip
-            }
-        }
-        return false;
-    }
-
-    // Valid parameter types for each extension phase
-    private static final java.util.Set<Class<?>> ENHANCEMENT_CONFIG_TYPES = java.util.Set.of(
-            ClassConfig.class, MethodConfig.class, FieldConfig.class,
-            jakarta.enterprise.lang.model.declarations.ClassInfo.class,
-            jakarta.enterprise.lang.model.declarations.MethodInfo.class,
-            jakarta.enterprise.lang.model.declarations.FieldInfo.class
-    );
-    private static final java.util.Set<Class<?>> ENHANCEMENT_OPTIONAL_TYPES = java.util.Set.of(
-            Messages.class, jakarta.enterprise.inject.build.compatible.spi.Types.class
-    );
-    private static final java.util.Set<Class<?>> REGISTRATION_PRIMARY_TYPES = java.util.Set.of(
-            BeanInfo.class, InterceptorInfo.class, ObserverInfo.class
-    );
-    private static final java.util.Set<Class<?>> REGISTRATION_OPTIONAL_TYPES = java.util.Set.of(
-            Messages.class, InvokerFactory.class, jakarta.enterprise.inject.build.compatible.spi.Types.class
-    );
-
-    /**
-     * Validate BCE method signatures. Invalid signatures → DefinitionException.
-     */
-    private static void validateExtensionMethods(Class<?> bceClass, List<String> errors) {
-        for (var method : getDeclaredMethodsSafe(bceClass)) {
-            if (method.getAnnotation(Enhancement.class) != null) {
-                validateEnhancementMethod(method, errors);
-            }
-            if (method.getAnnotation(Registration.class) != null) {
-                validateRegistrationMethod(method, errors);
-            }
-        }
-    }
-
-    private static void validateEnhancementMethod(Method method, List<String> errors) {
-        var params = method.getParameterTypes();
-        // Must have exactly 1 config/declaration parameter
-        int configCount = 0;
-        for (var p : params) {
-            if (ENHANCEMENT_CONFIG_TYPES.stream().anyMatch(t -> t.isAssignableFrom(p))) {
-                configCount++;
-            } else if (ENHANCEMENT_OPTIONAL_TYPES.stream().noneMatch(t -> t.isAssignableFrom(p))) {
-                errors.add("@Enhancement method " + method.getName() + " has invalid parameter type: " + p.getName());
-                return;
-            }
-        }
-        if (configCount != 1) {
-            errors.add("@Enhancement method " + method.getName()
-                    + " must have exactly one ClassConfig/MethodConfig/FieldConfig parameter, found " + configCount);
-        }
-    }
-
-    private static void validateRegistrationMethod(Method method, List<String> errors) {
-        var params = method.getParameterTypes();
-        // Must have exactly 1 BeanInfo or InterceptorInfo parameter
-        int primaryCount = 0;
-        for (var p : params) {
-            if (REGISTRATION_PRIMARY_TYPES.stream().anyMatch(t -> t.isAssignableFrom(p))) {
-                primaryCount++;
-            } else if (REGISTRATION_OPTIONAL_TYPES.stream().noneMatch(t -> t.isAssignableFrom(p))) {
-                errors.add("@Registration method " + method.getName() + " has invalid parameter type: " + p.getName());
-                return;
-            }
-        }
-        if (primaryCount != 1) {
-            errors.add("@Registration method " + method.getName()
-                    + " must have exactly one BeanInfo/InterceptorInfo parameter, found " + primaryCount);
-        }
-    }
-
     // Application of @Enhancement modifications — delegated to EnhancementApplier.
 
     public static List<InterceptorDescriptor> applyInterceptorEnhancements(
@@ -974,7 +712,7 @@ public final class BceProcessor {
      * We catch it and skip this layer of the hierarchy — the class simply cannot
      * be inspected method-by-method in this context.</p>
      */
-    private static Method[] getDeclaredMethodsSafe(Class<?> cls) {
+    static Method[] getDeclaredMethodsSafe(Class<?> cls) {
         var methods = new ArrayList<Method>();
         for (var c = cls; c != null && c != Object.class; c = c.getSuperclass()) {
             try {

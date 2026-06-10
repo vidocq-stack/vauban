@@ -79,13 +79,11 @@ class BceEnhancementTest {
     // ---- Helpers ----
 
     /**
-     * Invoke the private static matchesClass(Class<?>[], boolean, Class<?>) via reflection.
+     * Call the package-private matchesClass(Class<?>[], boolean, Class<?>) directly.
      */
     private static boolean invokeMatchesClass(Class<?>[] types, boolean withSubtypes, Class<?> targetClass)
             throws Exception {
-        Method m = BceProcessor.class.getDeclaredMethod("matchesClass", Class[].class, boolean.class, Class.class);
-        m.setAccessible(true);
-        return (boolean) m.invoke(null, types, withSubtypes, targetClass);
+        return BceTypeMatcher.matchesClass(types, withSubtypes, targetClass);
     }
 
     /**

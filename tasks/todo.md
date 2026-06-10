@@ -383,8 +383,20 @@ runtime), so only method SHAPES are needed → a ClassInfo/Elements front-end is
       CDI-spec variations (bean vs injection-point vs observer defaulting), repeatable
       unwrapping, @Named defaulting, @Inherited lookup, is-a-qualifier detection.
       BeanDiscovery: **1465 → 1270 lines** (cumulative −42%); reactor green, TCK 774/774
-- [ ] Next (separate sessions, same pattern): `BceProcessor` (1541 L) and
-      `VaubanContainerBuilder` (1417 L)
+### 16f — God classes, slice 2: BceProcessor decomposition ✅ 2026-06-10
+- [x] `EnhancementApplier` (440 L) extracted — applies recorded @Enhancement modifications
+      back onto bean/interceptor/observer descriptors + the annotation bridge only it used
+      (qualifier/binding detection, AnnotationInfo↔QualifierInstance, BuiltAnnotationInfo proxy)
+- [x] `SyntheticBeanConverter` (185 L) extracted — @Synthesis builder → BeanDescriptor
+      (shared runtime/APT), with the VAU-BCE-001 qualifier-member capture helpers
+- [x] `BceTypeMatcher` (186 L) extracted — the seven matches* filters (index-based and
+      classloader-based); BceEnhancementTest now calls it directly (reflection dropped)
+- [x] `ExtensionMethodValidator` (163 L) extracted — @Enhancement/@Registration signature
+      validation + invoker argument-lookup validation, with their parameter-type sets
+- [x] BceProcessor: **1541 → 739 lines (−52%)** — now pure phase orchestration
+      (discovery/enhancement/registration/synthesis/validation invocation)
+- [x] Each slice: full reactor green + CDI TCK 774/774; heisenberg (BCE consumer) smoke green
+- [ ] Next (separate session, same pattern): `VaubanContainerBuilder` (1417 L)
 
 ## Backlog (deferred)
 - [ ] `DirectoryScanner` - directory scanning
