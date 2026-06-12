@@ -110,6 +110,22 @@ class SjarArchiveReaderTest {
         }
     }
 
+    @Test
+    void readsInternalResourceViaIndex() throws Exception {
+        var key = SjarKeyProvider.generateKey();
+        var jarPath = createModularJar();
+        var original = readEntry(jarPath, "com/example/internal/data.bin");
+
+        SjarEncryptor.encryptJar(jarPath, key, "test");
+
+        var ctx = SjarKeyProvider.withKey(key);
+        try (var reader = new SjarArchiveReader(jarPath, ctx)) {
+            var res = reader.readResource("com/example/internal/data.bin");
+            assertTrue(res.isPresent());
+            assertArrayEquals(original, res.get());
+        }
+    }
+
     private Path createModularJar() throws Exception {
         var jarPath = tempDir.resolve("modular.jar");
         var manifest = new Manifest();
@@ -132,6 +148,10 @@ class SjarArchiveReaderTest {
 
             jos.putNextEntry(new JarEntry("com/example/internal/Impl.class"));
             jos.write(fakeClassBytes());
+            jos.closeEntry();
+
+            jos.putNextEntry(new JarEntry("com/example/internal/data.bin"));
+            jos.write(new byte[]{9, 8, 7, 6, 5});
             jos.closeEntry();
         }
         return jarPath;

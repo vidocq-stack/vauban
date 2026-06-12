@@ -23,7 +23,9 @@ import io.vidocq.vauban.classloader.spi.ArchiveReader;
 import io.vidocq.vauban.classloader.spi.PluginContext;
 
 import javax.crypto.SecretKey;
+import java.io.ByteArrayInputStream;
 import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.nio.file.Path;
 import java.security.GeneralSecurityException;
 import java.util.ArrayList;
@@ -33,49 +35,61 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.jar.JarFile;
 
 /**
- * Reads a JAR with encrypted internal classes (marked by {@code META-INF/vauban.encrypted}).
- * Clear-text classes are read normally; encrypted classes ({@code .class.enc}) are decrypted on demand.
+ * Reads a v2 SJAR: a clear {@code META-INF/vauban.header} bootstraps the key,
+ * the encrypted {@code META-INF/vauban.index} maps each internal entry path to
+ * a UUID blob under {@code META-INF/vauban/}, and exported entries stay clear.
  */
 public final class SjarArchiveReader implements ArchiveReader {
 
     private final JarFile jarFile;
-    private final SjarMetadata metadata;
+    private final SjarMetadata index;
     private final SecretKey key;
     private final ConcurrentHashMap<String, byte[]> cache = new ConcurrentHashMap<>();
 
     public SjarArchiveReader(Path jarPath, PluginContext context) throws IOException {
         this.jarFile = new JarFile(jarPath.toFile());
 
-        var metadataEntry = jarFile.getEntry(SjarMetadata.METADATA_ENTRY);
-        if (metadataEntry == null) {
+        var headerEntry = jarFile.getEntry(SjarHeader.HEADER_ENTRY);
+        if (headerEntry == null) {
             jarFile.close();
-            throw new IOException("Not an encrypted JAR — missing " + SjarMetadata.METADATA_ENTRY);
+            throw new IOException("Not a v2 encrypted JAR — missing " + SjarHeader.HEADER_ENTRY);
         }
-        try (var is = jarFile.getInputStream(metadataEntry)) {
-            this.metadata = SjarMetadata.readFrom(is);
+        SjarHeader header;
+        try (var is = jarFile.getInputStream(headerEntry)) {
+            header = SjarHeader.readFrom(is);
         }
+        this.key = context.resolveKey(header.keyAlias());
 
-        this.key = context.resolveKey(metadata.keyAlias());
+        var indexEntry = jarFile.getEntry(SjarMetadata.INDEX_ENTRY);
+        if (indexEntry == null) {
+            jarFile.close();
+            throw new IOException("Corrupt SJAR — missing " + SjarMetadata.INDEX_ENTRY);
+        }
+        try (var is = jarFile.getInputStream(indexEntry)) {
+            var decrypted = SjarEncryptor.decryptBytes(is.readAllBytes(), key);
+            this.index = SjarMetadata.readFrom(new ByteArrayInputStream(decrypted));
+        } catch (GeneralSecurityException e) {
+            jarFile.close();
+            throw new IOException("Failed to decrypt " + SjarMetadata.INDEX_ENTRY, e);
+        }
     }
 
     @Override
     public List<String> classEntries() throws IOException {
         var result = new ArrayList<String>();
+        // Clear classes (exported packages)
         var entries = jarFile.entries();
         while (entries.hasMoreElements()) {
-            var entry = entries.nextElement();
-            var name = entry.getName();
-
+            var name = entries.nextElement().getName();
             if (name.endsWith(".class") && !name.equals("module-info.class")
                     && !name.startsWith("META-INF/")) {
-                // Clear-text class
                 result.add(name);
-            } else if (name.endsWith(".class.enc")) {
-                // Encrypted class — return as the original .class name
-                var meta = metadata.entries().get(name);
-                if (meta != null) {
-                    result.add(meta.originalEntry());
-                }
+            }
+        }
+        // Encrypted internal classes (from the index, original paths)
+        for (var e : index.entries().entrySet()) {
+            if ("class".equals(e.getValue().kind())) {
+                result.add(e.getKey());
             }
         }
         return result;
@@ -83,40 +97,56 @@ public final class SjarArchiveReader implements ArchiveReader {
 
     @Override
     public byte[] readClass(String entryName) throws IOException {
-        return cache.computeIfAbsent(entryName, name -> {
-            try {
-                // Try clear-text first
-                var entry = jarFile.getEntry(name);
-                if (entry != null) {
-                    try (var is = jarFile.getInputStream(entry)) {
-                        return is.readAllBytes();
-                    }
-                }
-
-                // Try encrypted
-                var encName = name + ".enc";
-                var encEntry = jarFile.getEntry(encName);
-                if (encEntry != null) {
-                    try (var is = jarFile.getInputStream(encEntry)) {
-                        return SjarEncryptor.decryptBytes(is.readAllBytes(), key);
-                    } catch (GeneralSecurityException e) {
-                        throw new IOException("Failed to decrypt " + encName, e);
-                    }
-                }
-
-                throw new IOException("Class entry not found: " + name);
-            } catch (IOException e) {
-                throw new java.io.UncheckedIOException(e);
-            }
-        });
+        return readEntry(entryName);
     }
 
     @Override
     public Optional<byte[]> readResource(String entryName) throws IOException {
+        // Clear resource present directly?
         var entry = jarFile.getEntry(entryName);
-        if (entry == null) return Optional.empty();
-        try (var is = jarFile.getInputStream(entry)) {
-            return Optional.of(is.readAllBytes());
+        if (entry != null) {
+            try (var is = jarFile.getInputStream(entry)) {
+                return Optional.of(is.readAllBytes());
+            }
+        }
+        // Encrypted internal resource via index?
+        if (index.entries().containsKey(entryName)) {
+            return Optional.of(readEntry(entryName));
+        }
+        return Optional.empty();
+    }
+
+    private byte[] readEntry(String entryName) throws IOException {
+        try {
+            return cache.computeIfAbsent(entryName, name -> {
+                try {
+                    // Clear entry?
+                    var entry = jarFile.getEntry(name);
+                    if (entry != null) {
+                        try (var is = jarFile.getInputStream(entry)) {
+                            return is.readAllBytes();
+                        }
+                    }
+                    // Encrypted via index?
+                    var meta = index.entries().get(name);
+                    if (meta != null) {
+                        var blob = jarFile.getEntry(SjarMetadata.BLOB_DIR + meta.uuid());
+                        if (blob == null) {
+                            throw new IOException("Missing blob for " + name + " (uuid " + meta.uuid() + ")");
+                        }
+                        try (var is = jarFile.getInputStream(blob)) {
+                            return SjarEncryptor.decryptBytes(is.readAllBytes(), key);
+                        } catch (GeneralSecurityException e) {
+                            throw new IOException("Failed to decrypt " + name, e);
+                        }
+                    }
+                    throw new IOException("Entry not found: " + name);
+                } catch (IOException e) {
+                    throw new UncheckedIOException(e);
+                }
+            });
+        } catch (UncheckedIOException e) {
+            throw e.getCause();
         }
     }
 
@@ -129,8 +159,8 @@ public final class SjarArchiveReader implements ArchiveReader {
         }
     }
 
-    public SjarMetadata metadata() {
-        return metadata;
+    public SjarMetadata index() {
+        return index;
     }
 
     @Override
