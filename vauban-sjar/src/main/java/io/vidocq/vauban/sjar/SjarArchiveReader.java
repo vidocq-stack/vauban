@@ -29,6 +29,7 @@ import java.io.UncheckedIOException;
 import java.nio.file.Path;
 import java.security.GeneralSecurityException;
 import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
@@ -76,7 +77,9 @@ public final class SjarArchiveReader implements ArchiveReader {
 
     @Override
     public List<String> classEntries() throws IOException {
-        var result = new ArrayList<String>();
+        // Dedupe defensively: a drift in the clear/index disjoint-set invariant
+        // must not surface duplicate class names. LinkedHashSet preserves order.
+        var result = new LinkedHashSet<String>();
         // Clear classes (exported packages)
         var entries = jarFile.entries();
         while (entries.hasMoreElements()) {
@@ -92,7 +95,7 @@ public final class SjarArchiveReader implements ArchiveReader {
                 result.add(e.getKey());
             }
         }
-        return result;
+        return new ArrayList<>(result);
     }
 
     @Override

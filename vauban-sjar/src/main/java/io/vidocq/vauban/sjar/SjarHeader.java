@@ -55,7 +55,11 @@ public final class SjarHeader {
 
     public static SjarHeader readFrom(InputStream in) throws IOException {
         var json = new String(in.readAllBytes(), StandardCharsets.UTF_8);
-        return new SjarHeader(extractStringValue(json, "keyAlias"));
+        var keyAlias = extractStringValue(json, "keyAlias");
+        if (keyAlias.isEmpty()) {
+            throw new IOException("Malformed SJAR header: missing keyAlias");
+        }
+        return new SjarHeader(keyAlias);
     }
 
     private static String extractStringValue(String json, String key) {
@@ -63,8 +67,11 @@ public final class SjarHeader {
         var idx = json.indexOf(keyPattern);
         if (idx < 0) return "";
         var colonIdx = json.indexOf(':', idx + keyPattern.length());
+        if (colonIdx < 0) return "";
         var quoteStart = json.indexOf('"', colonIdx + 1);
+        if (quoteStart < 0) return "";
         var quoteEnd = json.indexOf('"', quoteStart + 1);
+        if (quoteEnd < 0) return "";
         return json.substring(quoteStart + 1, quoteEnd);
     }
 

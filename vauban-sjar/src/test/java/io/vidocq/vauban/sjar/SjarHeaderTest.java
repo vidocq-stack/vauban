@@ -51,4 +51,10 @@ class SjarHeaderTest {
         assertFalse(json.contains(".class"));
         assertFalse(json.contains("uuid"));
     }
+
+    @Test
+    void malformedHeaderThrowsIOException() {
+        var garbage = new java.io.ByteArrayInputStream("{ not a header }".getBytes());
+        assertThrows(java.io.IOException.class, () -> SjarHeader.readFrom(garbage));
+    }
 }

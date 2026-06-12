@@ -236,6 +236,15 @@ class SjarEncryptorTest {
         );
     }
 
+    @Test
+    void subpackageOfExportedIsEncrypted() {
+        var clearPackages = java.util.Set.of("com/example/api");
+        // exported package itself stays clear
+        assertFalse(SjarEncryptor.shouldEncrypt("com/example/api/Service.class", clearPackages));
+        // a subpackage is NOT exported by JPMS — must be obfuscated
+        assertTrue(SjarEncryptor.shouldEncrypt("com/example/api/sub/Helper.class", clearPackages));
+    }
+
     private byte[] fakeClassBytes() {
         return new byte[]{
                 (byte) 0xCA, (byte) 0xFE, (byte) 0xBA, (byte) 0xBE,

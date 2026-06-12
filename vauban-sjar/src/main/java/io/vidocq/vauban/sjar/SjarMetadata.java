@@ -167,8 +167,11 @@ public final class SjarMetadata {
         var idx = json.indexOf(keyPattern);
         if (idx < 0) return "";
         var colonIdx = json.indexOf(':', idx + keyPattern.length());
+        if (colonIdx < 0) return "";
         var quoteStart = json.indexOf('"', colonIdx + 1);
+        if (quoteStart < 0) return "";
         var quoteEnd = json.indexOf('"', quoteStart + 1);
+        if (quoteEnd < 0) return "";
         return json.substring(quoteStart + 1, quoteEnd);
     }
 
