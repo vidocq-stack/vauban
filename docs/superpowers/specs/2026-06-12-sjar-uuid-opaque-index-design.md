@@ -69,8 +69,7 @@ Minimal bootstrap, no class name ever:
 {
   "version": 2,
   "algorithm": "AES/GCM/NoPadding",
-  "keyAlias": "vidocq-prod",
-  "indexIv": "<base64 12-byte IV of vauban.index>"
+  "keyAlias": "vidocq-prod"
 }
 ```
 
@@ -80,9 +79,11 @@ a class or package name.
 
 ### `META-INF/vauban.index` (encrypted with the master key)
 
-Layout on disk: `[ciphertext + 16-byte GCM tag]` (the IV is in the header).
-Once decrypted, the plaintext is JSON, reusing the existing hand-rolled
-JSON writer/reader in `SjarMetadata` (zero new dependency):
+Layout on disk: `[12-byte IV][ciphertext + 16-byte GCM tag]` — self-describing,
+exactly like every other encrypted blob, so it reuses `SjarEncryptor.encryptBytes`
+/ `decryptBytes` unchanged (the GCM IV is not secret). Once decrypted, the
+plaintext is JSON, reusing the existing hand-rolled JSON writer/reader in
+`SjarMetadata` (zero new dependency):
 
 ```json
 {
