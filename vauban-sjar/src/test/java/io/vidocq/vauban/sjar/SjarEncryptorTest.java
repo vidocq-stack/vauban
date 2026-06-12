@@ -61,43 +61,60 @@ class SjarEncryptorTest {
     }
 
     @Test
-    void encryptJarInPlace() throws Exception {
+    void encryptJarInPlaceProducesOpaqueLayout() throws Exception {
         var key = SjarKeyProvider.generateKey();
         var jarPath = createModularJar();
 
         SjarEncryptor.encryptJar(jarPath, key, "test-key");
 
-        // Verify JAR structure
         try (var jar = new JarFile(jarPath.toFile())) {
-            // Marker must exist
-            assertNotNull(jar.getEntry(SjarMetadata.METADATA_ENTRY));
+            // Clear bootstrap header + encrypted index exist
+            assertNotNull(jar.getEntry(SjarHeader.HEADER_ENTRY));
+            assertNotNull(jar.getEntry(SjarMetadata.INDEX_ENTRY));
 
-            // module-info stays clear
+            // module-info + exported class stay clear
             assertNotNull(jar.getEntry("module-info.class"));
-
-            // Exported class stays clear
             assertNotNull(jar.getEntry("com/example/api/Service.class"));
 
-            // Internal class is encrypted
+            // Internal class/resource no longer visible under their real path
             assertNull(jar.getEntry("com/example/internal/Impl.class"));
-            assertNotNull(jar.getEntry("com/example/internal/Impl.class.enc"));
+            assertNull(jar.getEntry("com/example/internal/Impl.class.enc"));
+            assertNull(jar.getEntry("com/example/internal/data.bin"));
+
+            // No ZIP entry leaks an internal package path
+            var names = jar.stream().map(java.util.zip.ZipEntry::getName).toList();
+            assertTrue(names.stream().noneMatch(n -> n.contains("com/example/internal")));
+
+            // The internal entries are present as UUID blobs under META-INF/vauban/
+            var blobCount = names.stream().filter(n -> n.startsWith(SjarMetadata.BLOB_DIR)).count();
+            assertEquals(2, blobCount); // Impl.class + data.bin
         }
     }
 
     @Test
-    void encryptedClassIsDecryptable() throws Exception {
+    void internalEntriesAreDecryptableViaIndex() throws Exception {
         var key = SjarKeyProvider.generateKey();
         var jarPath = createModularJar();
-        var originalBytes = readEntryBytes(jarPath, "com/example/internal/Impl.class");
+        var originalClass = readEntryBytes(jarPath, "com/example/internal/Impl.class");
+        var originalRes = readEntryBytes(jarPath, "com/example/internal/data.bin");
 
         SjarEncryptor.encryptJar(jarPath, key, "test-key");
 
         try (var jar = new JarFile(jarPath.toFile())) {
-            var encEntry = jar.getEntry("com/example/internal/Impl.class.enc");
-            try (var is = jar.getInputStream(encEntry)) {
-                var decrypted = SjarEncryptor.decryptBytes(is.readAllBytes(), key);
-                assertArrayEquals(originalBytes, decrypted);
-            }
+            // Decrypt the index to find the UUID mapping
+            var indexBytes = readJarEntry(jar, SjarMetadata.INDEX_ENTRY);
+            var index = SjarMetadata.readFrom(
+                    new java.io.ByteArrayInputStream(SjarEncryptor.decryptBytes(indexBytes, key)));
+
+            var classMeta = index.entries().get("com/example/internal/Impl.class");
+            assertEquals("class", classMeta.kind());
+            var classBlob = readJarEntry(jar, SjarMetadata.BLOB_DIR + classMeta.uuid());
+            assertArrayEquals(originalClass, SjarEncryptor.decryptBytes(classBlob, key));
+
+            var resMeta = index.entries().get("com/example/internal/data.bin");
+            assertEquals("resource", resMeta.kind());
+            var resBlob = readJarEntry(jar, SjarMetadata.BLOB_DIR + resMeta.uuid());
+            assertArrayEquals(originalRes, SjarEncryptor.decryptBytes(resBlob, key));
         }
     }
 
@@ -114,20 +131,22 @@ class SjarEncryptorTest {
     void shouldEncryptLogic() {
         var clearPackages = Set.of("com/example/api", "com/example/spi");
 
-        // Internal class — encrypt
+        // Internal class — obfuscate
         assertTrue(SjarEncryptor.shouldEncrypt("com/example/internal/Impl.class", clearPackages));
+        // Internal resource — obfuscate too (v2)
+        assertTrue(SjarEncryptor.shouldEncrypt("com/example/internal/data.bin", clearPackages));
 
-        // Exported class — don't encrypt
+        // Exported class — keep clear
         assertFalse(SjarEncryptor.shouldEncrypt("com/example/api/Service.class", clearPackages));
+        // Exported-package resource — keep clear
+        assertFalse(SjarEncryptor.shouldEncrypt("com/example/api/messages.properties", clearPackages));
 
-        // module-info — never encrypt
+        // module-info — never
         assertFalse(SjarEncryptor.shouldEncrypt("module-info.class", clearPackages));
-
-        // META-INF — never encrypt
+        // META-INF — never
         assertFalse(SjarEncryptor.shouldEncrypt("META-INF/beans.xml", clearPackages));
-
-        // Non-class — never encrypt
-        assertFalse(SjarEncryptor.shouldEncrypt("com/example/internal/data.txt", clearPackages));
+        // default package — never
+        assertFalse(SjarEncryptor.shouldEncrypt("Foo.class", clearPackages));
     }
 
     @Test
@@ -165,6 +184,11 @@ class SjarEncryptorTest {
             jos.write(fakeClassBytes());
             jos.closeEntry();
 
+            // Internal resource (must also be obfuscated in v2)
+            jos.putNextEntry(new JarEntry("com/example/internal/data.bin"));
+            jos.write(new byte[]{10, 20, 30, 40, 50});
+            jos.closeEntry();
+
             // Resource
             jos.putNextEntry(new JarEntry("META-INF/beans.xml"));
             jos.write("<beans/>".getBytes());
@@ -189,6 +213,12 @@ class SjarEncryptorTest {
             try (var is = jar.getInputStream(entry)) {
                 return is.readAllBytes();
             }
+        }
+    }
+
+    private byte[] readJarEntry(JarFile jar, String name) throws Exception {
+        try (var is = jar.getInputStream(jar.getEntry(name))) {
+            return is.readAllBytes();
         }
     }
 
