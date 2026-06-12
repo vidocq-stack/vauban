@@ -31,28 +31,34 @@ import static org.junit.jupiter.api.Assertions.*;
 class SjarMetadataTest {
 
     @Test
-    void roundTripSerialization() throws Exception {
+    void roundTripIndexSerialization() throws Exception {
         var iv = new byte[]{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12};
         var entries = Map.of(
-                "com/example/internal/Impl.class.enc",
-                new SjarMetadata.EntryMetadata(iv, 1024, "com/example/internal/Impl.class")
+                "com/example/internal/Impl.class",
+                new SjarMetadata.EntryMetadata("3f2a-uuid", iv, 1024, "class"),
+                "com/example/internal/templates/x.json",
+                new SjarMetadata.EntryMetadata("a87e-uuid", iv, 42, "resource")
         );
         var clearPackages = Set.of("com/example/api");
-        var metadata = new SjarMetadata("my-key", entries, clearPackages, "com.example.mylib");
+        var index = new SjarMetadata(entries, clearPackages, "com.example.mylib");
 
         var out = new ByteArrayOutputStream();
-        metadata.writeTo(out);
+        index.writeTo(out);
 
         var parsed = SjarMetadata.readFrom(new ByteArrayInputStream(out.toByteArray()));
-        assertEquals("my-key", parsed.keyAlias());
         assertEquals("com.example.mylib", parsed.moduleName());
         assertTrue(parsed.clearPackages().contains("com/example/api"));
-        assertEquals(1, parsed.entries().size());
+        assertEquals(2, parsed.entries().size());
 
-        var entry = parsed.entries().get("com/example/internal/Impl.class.enc");
-        assertNotNull(entry);
-        assertEquals(1024, entry.originalSize());
-        assertEquals("com/example/internal/Impl.class", entry.originalEntry());
-        assertArrayEquals(iv, entry.iv());
+        var classEntry = parsed.entries().get("com/example/internal/Impl.class");
+        assertNotNull(classEntry);
+        assertEquals("3f2a-uuid", classEntry.uuid());
+        assertEquals(1024, classEntry.originalSize());
+        assertEquals("class", classEntry.kind());
+        assertArrayEquals(iv, classEntry.iv());
+
+        var resEntry = parsed.entries().get("com/example/internal/templates/x.json");
+        assertEquals("resource", resEntry.kind());
+        assertEquals("a87e-uuid", resEntry.uuid());
     }
 }

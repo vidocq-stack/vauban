@@ -30,38 +30,49 @@ import java.util.Map;
 import java.util.Set;
 
 /**
- * Represents the {@code META-INF/vauban.encrypted} marker file inside a JAR.
- * Contains encryption metadata: which entries are encrypted, which packages are clear,
- * and the module name.
+ * In-memory model of the decrypted {@code META-INF/vauban.index} blob.
+ *
+ * <p>Maps each obfuscated original entry path (class or resource of a
+ * non-exported package) to the UUID under which its encrypted bytes are stored
+ * in {@code META-INF/vauban/<uuid>}, plus the per-entry GCM IV, original size,
+ * and kind. The mapping only ever exists inside the encrypted index, never in
+ * clear text.
  */
 public final class SjarMetadata {
 
-    public static final String METADATA_ENTRY = "META-INF/vauban.encrypted";
-    static final int VERSION = 1;
+    /** Encrypted index blob entry name. */
+    public static final String INDEX_ENTRY = "META-INF/vauban.index";
+    /** Directory holding the UUID-named encrypted blobs. */
+    public static final String BLOB_DIR = "META-INF/vauban/";
+
+    static final int VERSION = 2;
     static final String ALGORITHM = "AES/GCM/NoPadding";
     static final int KEY_LENGTH = 256;
     static final int IV_LENGTH = 12;
     static final int TAG_LENGTH = 128;
 
-    private final String keyAlias;
     private final Map<String, EntryMetadata> entries;
     private final Set<String> clearPackages;
     private final String moduleName;
 
-    public SjarMetadata(String keyAlias, Map<String, EntryMetadata> entries,
+    public SjarMetadata(Map<String, EntryMetadata> entries,
                         Set<String> clearPackages, String moduleName) {
-        this.keyAlias = keyAlias;
         this.entries = Map.copyOf(entries);
         this.clearPackages = Set.copyOf(clearPackages);
         this.moduleName = moduleName;
     }
 
-    public String keyAlias() { return keyAlias; }
     public Map<String, EntryMetadata> entries() { return entries; }
     public Set<String> clearPackages() { return clearPackages; }
     public String moduleName() { return moduleName; }
 
-    public record EntryMetadata(byte[] iv, int originalSize, String originalEntry) {
+    /**
+     * @param uuid         blob file name under {@link #BLOB_DIR}
+     * @param iv           per-entry 12-byte GCM IV
+     * @param originalSize plaintext size in bytes
+     * @param kind         {@code "class"} or {@code "resource"}
+     */
+    public record EntryMetadata(String uuid, byte[] iv, int originalSize, String kind) {
         public String ivBase64() {
             return Base64.getEncoder().encodeToString(iv);
         }
@@ -71,11 +82,8 @@ public final class SjarMetadata {
         var sb = new StringBuilder();
         sb.append("{\n");
         sb.append("  \"version\": ").append(VERSION).append(",\n");
-        sb.append("  \"algorithm\": \"").append(ALGORITHM).append("\",\n");
-        sb.append("  \"keyAlias\": \"").append(escapeJson(keyAlias)).append("\",\n");
         sb.append("  \"moduleName\": \"").append(escapeJson(moduleName)).append("\",\n");
 
-        // Clear packages
         sb.append("  \"clearPackages\": [");
         var cpIt = clearPackages.iterator();
         while (cpIt.hasNext()) {
@@ -84,16 +92,16 @@ public final class SjarMetadata {
         }
         sb.append("],\n");
 
-        // Encrypted entries
-        sb.append("  \"encryptedEntries\": {\n");
+        sb.append("  \"entries\": {\n");
         var it = entries.entrySet().iterator();
         while (it.hasNext()) {
             var entry = it.next();
             var meta = entry.getValue();
             sb.append("    \"").append(escapeJson(entry.getKey())).append("\": {");
+            sb.append(" \"uuid\": \"").append(escapeJson(meta.uuid())).append("\",");
             sb.append(" \"iv\": \"").append(meta.ivBase64()).append("\",");
             sb.append(" \"originalSize\": ").append(meta.originalSize()).append(",");
-            sb.append(" \"originalEntry\": \"").append(escapeJson(meta.originalEntry())).append("\"");
+            sb.append(" \"kind\": \"").append(escapeJson(meta.kind())).append("\"");
             sb.append(" }");
             if (it.hasNext()) sb.append(",");
             sb.append("\n");
@@ -105,10 +113,8 @@ public final class SjarMetadata {
 
     public static SjarMetadata readFrom(InputStream in) throws IOException {
         var json = new String(in.readAllBytes(), StandardCharsets.UTF_8);
-        var keyAlias = extractStringValue(json, "keyAlias");
         var moduleName = extractStringValue(json, "moduleName");
 
-        // Parse clearPackages array
         var clearPackages = new LinkedHashSet<String>();
         var cpStart = json.indexOf("\"clearPackages\"");
         if (cpStart >= 0) {
@@ -125,11 +131,10 @@ public final class SjarMetadata {
             }
         }
 
-        // Parse encryptedEntries
         var entries = new LinkedHashMap<String, EntryMetadata>();
-        var entriesStart = json.indexOf("\"encryptedEntries\"");
+        var entriesStart = json.indexOf("\"entries\"");
         if (entriesStart >= 0) {
-            var braceStart = json.indexOf('{', entriesStart + 18);
+            var braceStart = json.indexOf('{', entriesStart + "\"entries\"".length());
             var braceEnd = findMatchingBrace(json, braceStart);
             var entriesBlock = json.substring(braceStart + 1, braceEnd);
 
@@ -144,16 +149,17 @@ public final class SjarMetadata {
                 var entryBraceEnd = entriesBlock.indexOf('}', entryBraceStart);
                 var entryBlock = entriesBlock.substring(entryBraceStart, entryBraceEnd + 1);
 
+                var uuid = extractStringValue(entryBlock, "uuid");
                 var iv = Base64.getDecoder().decode(extractStringValue(entryBlock, "iv"));
                 var originalSize = extractIntValue(entryBlock, "originalSize");
-                var originalEntry = extractStringValue(entryBlock, "originalEntry");
+                var kind = extractStringValue(entryBlock, "kind");
 
-                entries.put(entryName, new EntryMetadata(iv, originalSize, originalEntry));
+                entries.put(entryName, new EntryMetadata(uuid, iv, originalSize, kind));
                 pos = entryBraceEnd + 1;
             }
         }
 
-        return new SjarMetadata(keyAlias, entries, clearPackages, moduleName);
+        return new SjarMetadata(entries, clearPackages, moduleName);
     }
 
     private static String extractStringValue(String json, String key) {
