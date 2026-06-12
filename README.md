@@ -431,15 +431,15 @@ This module is **always required at runtime** by `vauban-core`, `vauban-indexer`
 | Class | Role |
 |--------|------|
 | `SjarEncryptor` | Encrypts the internal classes of a modular JAR in-place |
-| `SjarPlugin` | `ByteSourcePlugin` implementation — detects `META-INF/vauban.encrypted` |
-| `SjarArchiveReader` | Reads and decrypts the `.class.enc` files with an in-memory cache |
+| `SjarPlugin` | `ByteSourcePlugin` implementation — detects `META-INF/vauban.header` |
+| `SjarArchiveReader` | Reads and decrypts the opaque UUID blobs with an in-memory cache |
 | `SjarKeyProvider` | Key resolution (env, keystore, programmatic) |
 | `SjarClassLoader` | Custom ClassLoader for encrypted classes |
 
 Encryption is driven by `module-info.class`:
 - `exports`/`opens` packages → in clear (compilable)
-- All other packages → encrypted (`.class.enc`)
-- `META-INF/vauban.encrypted` → JSON metadata
+- All other classes and resources → encrypted as opaque `META-INF/vauban/<uuid>` blobs (no name leaks on disk)
+- `META-INF/vauban.index` → encrypted path→UUID mapping; `META-INF/vauban.header` → tiny clear bootstrap (key alias)
 
 Full documentation: [vauban-sjar/README.md](vauban-sjar/README.md)
 
