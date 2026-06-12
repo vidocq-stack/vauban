@@ -41,14 +41,16 @@ import java.util.jar.JarOutputStream;
 import java.util.zip.ZipEntry;
 
 /**
- * Encrypts internal classes of a modular JAR in-place using AES-256-GCM.
+ * Encrypts internal classes and resources of a modular JAR in-place using AES-256-GCM.
  *
- * <p>Classes in {@code exports} and {@code opens} packages (from {@code module-info.class})
- * remain in clear text for compilation. All other classes are encrypted and renamed
- * to {@code .class.enc}. A {@code META-INF/vauban.encrypted} marker file stores metadata.
+ * <p>Entries of {@code exports}/{@code opens} packages (from {@code module-info.class})
+ * stay clear for compilation and reflection. Every other class and resource is encrypted
+ * and stored under an opaque {@code META-INF/vauban/<uuid>} name; the path→UUID mapping
+ * lives only inside the encrypted {@code META-INF/vauban.index}. A tiny clear
+ * {@code META-INF/vauban.header} carries the key alias to bootstrap decryption.
  *
- * <p>The result is a standard JAR that is compilable (exported types visible),
- * distributable via Maven, and has internal implementation classes protected.
+ * <p>The result is a standard JAR: compilable (exported types visible), distributable
+ * via Maven, with internal implementation fully opaque on disk.
  */
 public final class SjarEncryptor {
 

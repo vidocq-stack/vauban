@@ -28,9 +28,9 @@ import java.nio.file.Path;
 import java.util.jar.JarFile;
 
 /**
- * Plugin that handles JARs with encrypted internal classes.
- * Detects the {@code META-INF/vauban.encrypted} marker file to determine
- * if a JAR contains encrypted classes.
+ * Plugin that handles SJAR archives with encrypted internal classes and resources.
+ * Detects the clear {@code META-INF/vauban.header} marker of a v2 SJAR to determine
+ * if a JAR carries an encrypted index and opaque blobs.
  */
 public final class SjarPlugin implements ByteSourcePlugin {
 

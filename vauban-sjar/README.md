@@ -12,17 +12,21 @@ The encryption is driven by `module-info.class`:
 - `exports` packages → **clear** (needed for compilation)
 - `opens` packages → **clear** (needed for reflection)
 - `module-info.class`, `META-INF/*` → **clear**
-- **Everything else** → encrypted (`.class` → `.class.enc`)
+- **Everything else** (classes **and** resources) → encrypted into opaque
+  `META-INF/vauban/<uuid>` blobs
 
-A marker file `META-INF/vauban.encrypted` stores the metadata (algorithm, IVs,
-key alias, list of encrypted entries, clear packages).
+A clear `META-INF/vauban.header` carries the key alias to bootstrap decryption.
+The path→UUID mapping plus per-entry metadata (algorithm, IVs, original sizes,
+clear packages) lives only inside the **encrypted** `META-INF/vauban.index` — so
+no internal package or class name ever appears on disk.
 
 ```
 my-library.jar
-  module-info.class                      # clear — module system
-  META-INF/vauban.encrypted              # metadata
-  com/example/api/MyService.class        # clear — exported
-  com/example/internal/Impl.class.enc    # encrypted
+  module-info.class                          # clear — module system
+  META-INF/vauban.header                     # clear — key alias bootstrap
+  META-INF/vauban.index                      # encrypted — path→UUID map + metadata
+  com/example/api/MyService.class            # clear — exported
+  META-INF/vauban/3f2a...-uuid               # encrypted — opaque internal blob
 ```
 
 ## Quick Start
@@ -120,7 +124,7 @@ classes from any custom source — not just encrypted JARs.
 ```
 scanClasspath()
   │
-  ├─ Detect META-INF/vauban.encrypted in JARs on classpath
+  ├─ Detect META-INF/vauban.header in JARs on classpath
   │    ├─ ServiceLoader.load(ByteSourcePlugin.class)  ← finds all plugins
   │    ├─ plugin.handles(jarPath) → first match wins (sorted by priority)
   │    └─ plugin.open(jar, ctx) → ArchiveReader
@@ -181,7 +185,7 @@ Example with multiple plugins:
 
 | Plugin | Priority | Handles |
 |--------|----------|---------|
-| `SjarPlugin` | 100 | JARs with `META-INF/vauban.encrypted` |
+| `SjarPlugin` | 100 | JARs with `META-INF/vauban.header` |
 | `RemotePlugin` | 200 | JARs downloaded from a remote server |
 | `VaultPlugin` | 300 | Keys resolved from HashiCorp Vault |
 
