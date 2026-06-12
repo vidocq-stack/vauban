@@ -358,7 +358,26 @@ public class VaubanProcessor extends AbstractProcessor {
                     continue;
                 }
 
-                generateClass(BeanFactoryGenerator.generate(classInfo));
+                // SOURCE factory when possible (APT-first rule, CG-02): javac emits the
+                // erasure bridge itself and the artifact is readable/debuggable. Source is
+                // only viable when (a) the generated code can resolve BeanFactory at the
+                // user module's compile time (bytecode references resolve at load time
+                // instead — some consumers run this APT without a vauban-core compile
+                // dependency), and (b) the bean is top-level with an accessible no-arg
+                // constructor. Everything else keeps the bytecode fallback.
+                var factoryBeanFqn = bean.beanClass().value();
+                var factoryTypeElement = isTopLevelType(factoryBeanFqn)
+                        ? processingEnv.getElementUtils().getTypeElement(factoryBeanFqn) : null;
+                boolean beanFactoryResolvable = processingEnv.getElementUtils()
+                        .getTypeElement("io.vidocq.vauban.core.BeanFactory") != null;
+                if (factoryTypeElement != null && beanFactoryResolvable
+                        && hasNonPrivateNoArgCtor(factoryTypeElement)) {
+                    var factoryGen = io.vidocq.vauban.processor.codegen.factory.BeanFactorySourceRenderer
+                            .render(factoryTypeElement);
+                    writeSourceFile(factoryGen.className(), factoryGen.source());
+                } else {
+                    generateClass(BeanFactoryGenerator.generate(classInfo));
+                }
 
                 if (bean.scope().isNormal()) {
                     var proxyBeanFqn = bean.beanClass().value();
@@ -816,6 +835,25 @@ public class VaubanProcessor extends AbstractProcessor {
      * calls the simplest non-private super ctor with default values; an all-private-ctor bean is
      * unproxyable by subclassing and keeps the bytecode proxy + runtime fallback.
      */
+    /**
+     * True if the type has an accessible (non-private) no-arg constructor — explicit or
+     * implicit. Gates SOURCE factory generation: the rendered {@code new Bean()} must
+     * compile, whereas the bytecode factory defers resolution to load time.
+     */
+    private static boolean hasNonPrivateNoArgCtor(javax.lang.model.element.TypeElement te) {
+        var ctors = javax.lang.model.util.ElementFilter.constructorsIn(te.getEnclosedElements());
+        if (ctors.isEmpty()) {
+            return true; // implicit no-arg constructor
+        }
+        for (var c : ctors) {
+            if (c.getParameters().isEmpty()
+                    && !c.getModifiers().contains(javax.lang.model.element.Modifier.PRIVATE)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     private static boolean hasNonPrivateCtor(javax.lang.model.element.TypeElement te) {
         var ctors = javax.lang.model.util.ElementFilter.constructorsIn(te.getEnclosedElements());
         if (ctors.isEmpty()) {
