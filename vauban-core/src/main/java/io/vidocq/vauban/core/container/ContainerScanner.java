@@ -267,12 +267,14 @@ final class ContainerScanner {
     }
 
     /**
-     * Scan the classpath for JARs containing {@code META-INF/vauban.encrypted}
+     * Scan the classpath for JARs containing {@code META-INF/vauban.header}
      * and automatically load their encrypted classes via the plugin system.
      */
     private void scanEncryptedJarsOnClasspath(ClassLoader cl) {
         try {
-            var markers = cl.getResources("META-INF/vauban.encrypted");
+            // SJAR v2 marker entry. Must match io.vidocq.vauban.sjar.SjarHeader.HEADER_ENTRY.
+            // Referenced as a literal to avoid a vauban-core -> vauban-sjar module dependency.
+            var markers = cl.getResources("META-INF/vauban.header");
             while (markers.hasMoreElements()) {
                 var markerUrl = markers.nextElement().toString();
                 if (markerUrl.startsWith("jar:file:")) {

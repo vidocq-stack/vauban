@@ -131,12 +131,28 @@ class ExampleAppEndToEndTest {
         // Verify the securized JAR has encrypted entries (not just running from target/classes)
         var securizedJar = System.getProperty("jar.example.securized");
         try (var jar = new java.util.jar.JarFile(securizedJar)) {
-            assertNotNull(jar.getEntry("META-INF/vauban.encrypted"),
-                    "JAR should have encryption marker");
-            assertNotNull(jar.getEntry("io/vidocq/vauban/example/securized/internal/CryptoServiceImpl.class.enc"),
-                    "Internal class should be encrypted (.class.enc)");
+            // SJAR v2 layout: clear header marker + encrypted opaque index.
+            assertNotNull(jar.getEntry("META-INF/vauban.header"),
+                    "JAR should have v2 header marker");
+            assertNotNull(jar.getEntry("META-INF/vauban.index"),
+                    "JAR should have v2 encrypted path->uuid index");
+
+            // No legacy v1 .class.enc entries remain, and internal classes are now
+            // stored as opaque META-INF/vauban/<uuid> blobs.
+            var entries = jar.entries();
+            boolean hasOpaqueBlob = false;
+            while (entries.hasMoreElements()) {
+                var name = entries.nextElement().getName();
+                assertFalse(name.endsWith(".class.enc"),
+                        "No v1 .class.enc entry should remain. Found: " + name);
+                if (name.startsWith("META-INF/vauban/")) {
+                    hasOpaqueBlob = true;
+                }
+            }
+            assertTrue(hasOpaqueBlob, "JAR should contain at least one opaque META-INF/vauban/<uuid> blob");
+
             assertNull(jar.getEntry("io/vidocq/vauban/example/securized/internal/CryptoServiceImpl.class"),
-                    "Plain internal class should NOT exist");
+                    "Plain internal class should NOT exist (bytes live under an opaque blob)");
             assertNotNull(jar.getEntry("io/vidocq/vauban/example/securized/api/CryptoService.class"),
                     "Exported interface should be in clear");
         }
