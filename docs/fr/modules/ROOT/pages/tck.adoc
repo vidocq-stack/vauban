@@ -2,7 +2,7 @@
 :description: État de conformité du container Vauban au TCK officiel CDI 4.1.
 
 [.lead]
-Cette page consolide l'état des tests TCK officiels CDI 4.1 exécutés contre Vauban. La source de vérité au quotidien est link:{repo-vauban}/src/branch/main/tasks/tck-results.md[tasks/tck-results.md] dans le repo. Cette page reflète le snapshot de référence.
+Cette page consolide l'état des tests TCK officiels CDI 4.1 exécutés contre Vauban. La source de vérité est le `vauban-tck-runner`, exécuté à chaque build : **774/774 tests CDI Lite passent (100 %)**.
 
 == Synthèse
 
@@ -15,25 +15,25 @@ Cette page consolide l'état des tests TCK officiels CDI 4.1 exécutés contre V
 | Sous-ensemble du TCK 4.1
 | Le profil Full n'est pas ciblé.
 
-| Date du dernier run référencé
-| 2026-03-30
+| Date du dernier run
+| 2026-06-14
 | Vauban `0.1.0-SNAPSHOT`
-| Voir link:{repo-vauban}/src/branch/main/tasks/tck-results.md[tck-results.md].
+| Profil `-Ptck` sur `vauban-tck-runner`.
 
 | Tests CDI Lite (non skippés)
-| ~769
+| 774
 |
 | Subset officiel CDI Lite.
 
 | Passés
-| ~404
-| ~52,5 %
-| // TODO@user: actualiser après le prochain run, le repo indique "774/774" dans le README.
+| 774
+| 100 %
+| Intégralité du profil Lite.
 
 | Échoués
-| ~365
+| 0
 |
-| En cours d'investigation, regroupés par catégorie ci-dessous.
+| —
 
 | Erreurs
 | 0
@@ -46,18 +46,14 @@ Cette page consolide l'état des tests TCK officiels CDI 4.1 exécutés contre V
 | Sur la machine du dernier run (voir link:{repo-vauban}/src/branch/main/BENCH.md[BENCH.md]).
 |===
 
-[CAUTION]
-====
-Le README du repo indique « 774/774 » pour le runner `vauban-tck-runner`, alors que `tasks/tck-results.md` (2026-03-30) annonce 52,5 %. L'écart vient du périmètre : le runner local couvre une suite réduite, le run TCK officiel couvre l'intégralité du profil Lite. // TODO@user: réconcilier les deux chiffres avant publication.
-====
-
 == Progression historique
 
 [source]
 ----
 Début     ~12%   ██████░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░
-Session 1 38,2%  ██████████████████████████████████░░░░░░  (+200)
-Session 2 52,5%  █████████████████████████████████████████  (+113)
+Session 1 38,2%  ████████████████░░░░░░░░░░░░░░░░░░░░░░░░  (+200)
+Session 2 52,5%  █████████████████████░░░░░░░░░░░░░░░░░░░  (+113)
+Actuel    100 %  ████████████████████████████████████████  (774/774)
 ----
 
 == Fonctionnalités majeures couvertes
@@ -167,7 +163,7 @@ Tracés dans link:{repo-vauban}/src/branch/main/BUG.md[BUG.md] :
 ----
 cd vauban
 sdk env
-./mvnw -ntp -pl vauban-tck-runner test
+mvn install -DskipTests -q && mvn test -pl vauban-tck-runner -Ptck
 ----
 
 Le runner exécute Arquillian + TestNG. Le rapport Surefire est généré dans `vauban-tck-runner/target/surefire-reports/`.
