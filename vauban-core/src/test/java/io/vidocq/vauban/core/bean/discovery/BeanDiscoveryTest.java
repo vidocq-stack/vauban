@@ -108,6 +108,21 @@ class BeanDiscoveryTest {
         );
     }
 
+    static ClassInfo makeClassWithNamedInjectField(String name, String fieldType, String namedValue) {
+        return new ClassInfo(
+                DotName.of(name), DotName.of("java.lang.Object"), List.of(),
+                0x0001,
+                List.of(new FieldInfo("service", new TypeInfo.ClassType(DotName.of(fieldType)), 0x0002,
+                        List.of(
+                                new AnnotationInfo(DotName.of("jakarta.inject.Inject"), Map.of()),
+                                new AnnotationInfo(DotName.of("jakarta.inject.Named"),
+                                        Map.of("value", new AnnotationValue.StringVal(namedValue)))))),
+                List.of(new MethodInfo("<init>", new TypeInfo.VoidType(), List.of(), List.of(), 0x0001, List.of())),
+                List.of(new AnnotationInfo(DotName.of("jakarta.enterprise.context.ApplicationScoped"), Map.of())),
+                ClassKind.CLASS
+        );
+    }
+
     static ClassInfo makeClassWithProducerMethod(String className, String methodName, String returnType) {
         return new ClassInfo(
                 DotName.of(className), DotName.of("java.lang.Object"), List.of(),
@@ -267,6 +282,23 @@ class BeanDiscoveryTest {
             assertEquals(1, bean.injectionPoints().size());
             var ip = bean.injectionPoints().getFirst();
             assertInstanceOf(TypeInfo.ClassType.class, ip.requiredType());
+        }
+
+        @Test
+        @DisplayName("a @Named injection point is qualified — @Default is NOT assumed (CDI 4.1 §5.2.2)")
+        void namedInjectionPointDoesNotAssumeDefault() {
+            var builder = new IndexBuilder();
+            builder.add(makeClassWithNamedInjectField(
+                    "com.example.MyController", "com.example.MyService", "audit"));
+            var discovery = new BeanDiscovery(builder.build());
+
+            var ip = discovery.discoverBeans().getFirst().injectionPoints().getFirst();
+            assertTrue(ip.qualifiers().stream().anyMatch(q -> q.annotationName().equals(QualifierInstance.NAMED_NAME)),
+                    "the @Named qualifier must be present");
+            assertTrue(ip.qualifiers().stream().anyMatch(QualifierInstance::isAny),
+                    "@Any is always present on an injection point");
+            assertFalse(ip.qualifiers().stream().anyMatch(QualifierInstance::isDefault),
+                    "@Default must NOT be assumed for a @Named injection point — it already declares a qualifier");
         }
     }
 

@@ -81,9 +81,13 @@ final class QualifierResolver {
         for (var ann : annotations) {
             if (isQualifierAnnotation(ann.name())) {
                 qualifiers.add(QualifierInstance.from(ann));
-                if (!ann.name().equals(QualifierInstance.NAMED_NAME)) {
-                    hasExplicitQualifier = true;
-                }
+                // CDI 4.1 §5.2.2: an injection point that declares ANY qualifier — including @Named —
+                // is qualified, so @Default is NOT assumed for it. The "@Named (and @Any) do not count"
+                // rule is bean-side only (§2.5.2, see computeQualifiers above), which keeps a @Named bean
+                // injectable by @Default; but a @Named injection point must not silently also require
+                // @Default — that would make it unsatisfiable by a @Named bean that carries its own
+                // explicit (non-@Default) qualifier.
+                hasExplicitQualifier = true;
             } else {
                 var unwrapped = unwrapRepeatableQualifiers(ann);
                 if (!unwrapped.isEmpty()) {
