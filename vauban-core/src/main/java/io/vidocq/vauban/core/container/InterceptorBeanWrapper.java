@@ -503,36 +503,6 @@ final class InterceptorBeanWrapper {
             }
             try {
                 beanClass = container.loadClass(descriptor.beanClass().value());
-
-                if (java.lang.reflect.Modifier.isFinal(beanClass.getModifiers())) {
-                    throw new jakarta.enterprise.inject.spi.DefinitionException(
-                            "Bean class " + beanClass.getName() + " with interceptor bindings must not be final");
-                }
-                for (var m : beanClass.getDeclaredMethods()) {
-                    if (java.lang.reflect.Modifier.isFinal(m.getModifiers())
-                            && !java.lang.reflect.Modifier.isPrivate(m.getModifiers())
-                            && !java.lang.reflect.Modifier.isStatic(m.getModifiers())) {
-                        throw new jakarta.enterprise.inject.spi.DeploymentException(
-                                "Intercepted bean " + beanClass.getName() + " has final method " + m.getName());
-                    }
-                }
-
-                // CDI 4.1: no-arg constructor is NOT required for intercepted beans.
-                // However, a bean with ONLY a private no-arg constructor is still unproxyable.
-                boolean hasPrivateNoArgCtor2 = false;
-                for (var ctor : beanClass.getDeclaredConstructors()) {
-                    if (ctor.getParameterCount() == 0
-                            && java.lang.reflect.Modifier.isPrivate(ctor.getModifiers())) {
-                        hasPrivateNoArgCtor2 = true;
-                        break;
-                    }
-                }
-                if (hasPrivateNoArgCtor2) {
-                    throw new jakarta.enterprise.inject.spi.DeploymentException(
-                            "Intercepted bean " + beanClass.getName()
-                                    + " has only private no-arg constructor (unproxyable)");
-                }
-
                 interceptorManager.setClassLoader(beanClass.getClassLoader());
 
                 var classBindings = interceptorManager.findBindingsOnClass(beanClass, interceptorManager::isInterceptorBinding);
@@ -590,6 +560,41 @@ final class InterceptorBeanWrapper {
                         }
                     }
                     if (!hasInterceptors) continue;
+                }
+
+                // The bean is actually intercepted (class/method/constructor binding or a target
+                // @AroundInvoke). Only NOW do the proxyability constraints apply: a non-intercepted
+                // bean may legally be final, carry final methods, or expose only a private no-arg
+                // constructor. Enforcing them earlier wrongly rejected beans that merely coexist with
+                // interceptors elsewhere in the deployment — e.g. a generated, pseudo-scoped final
+                // @Named DataSource holder. The proxyability constraints bind to intercepted beans only.
+                if (java.lang.reflect.Modifier.isFinal(beanClass.getModifiers())) {
+                    throw new jakarta.enterprise.inject.spi.DefinitionException(
+                            "Bean class " + beanClass.getName() + " with interceptor bindings must not be final");
+                }
+                for (var m : beanClass.getDeclaredMethods()) {
+                    if (java.lang.reflect.Modifier.isFinal(m.getModifiers())
+                            && !java.lang.reflect.Modifier.isPrivate(m.getModifiers())
+                            && !java.lang.reflect.Modifier.isStatic(m.getModifiers())) {
+                        throw new jakarta.enterprise.inject.spi.DeploymentException(
+                                "Intercepted bean " + beanClass.getName() + " has final method " + m.getName());
+                    }
+                }
+
+                // CDI 4.1: no-arg constructor is NOT required for intercepted beans.
+                // However, a bean with ONLY a private no-arg constructor is still unproxyable.
+                boolean hasPrivateNoArgCtor2 = false;
+                for (var ctor : beanClass.getDeclaredConstructors()) {
+                    if (ctor.getParameterCount() == 0
+                            && java.lang.reflect.Modifier.isPrivate(ctor.getModifiers())) {
+                        hasPrivateNoArgCtor2 = true;
+                        break;
+                    }
+                }
+                if (hasPrivateNoArgCtor2) {
+                    throw new jakarta.enterprise.inject.spi.DeploymentException(
+                            "Intercepted bean " + beanClass.getName()
+                                    + " has only private no-arg constructor (unproxyable)");
                 }
 
                 try {
