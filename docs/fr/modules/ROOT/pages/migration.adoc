@@ -3,7 +3,7 @@
 
 [CAUTION]
 ====
-Vauban est en `0.1.0-SNAPSHOT`. Une migration réelle d'application est prématurée tant que la couverture TCK n'est pas consolidée (voir xref:tck.adoc[état TCK]). Cette page documente les correspondances de modèle et les pièges connus pour préparer la transition.
+Vauban est en `0.2.0`. Une migration réelle d'application est prématurée tant que la couverture TCK n'est pas consolidée (voir xref:tck.adoc[état TCK]). Cette page documente les correspondances de modèle et les pièges connus pour préparer la transition.
 ====
 
 [.lead]

@@ -17,7 +17,7 @@ This page consolidates the state of the official CDI 4.1 TCK runs against Vauban
 
 | Last run
 | 2026-06-14
-| Vauban `0.1.0-SNAPSHOT`
+| Vauban `0.2.0`
 | Profile `-Ptck` on `vauban-tck-runner`.
 
 | CDI Lite tests (non-skipped)

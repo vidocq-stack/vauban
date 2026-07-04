@@ -17,7 +17,7 @@ Cette page consolide l'état des tests TCK officiels CDI 4.1 exécutés contre V
 
 | Date du dernier run
 | 2026-06-14
-| Vauban `0.1.0-SNAPSHOT`
+| Vauban `0.2.0`
 | Profil `-Ptck` sur `vauban-tck-runner`.
 
 | Tests CDI Lite (non skippés)
