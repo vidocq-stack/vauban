@@ -62,6 +62,22 @@ class DotNameTest {
     }
 
     @Test
+    @DisplayName("converts an array descriptor to a Class.forName-compatible binary name")
+    void shouldConvertArrayDescriptor() {
+        // Annotation class members may carry array types, e.g.
+        // @Schema(implementation = Pet[].class) in the MP OpenAPI TCK petstore app.
+        var name = DotName.fromDescriptor("[Lorg/acme/Pet;");
+        assertEquals("[Lorg.acme.Pet;", name.value());
+    }
+
+    @Test
+    @DisplayName("converts a primitive descriptor to the primitive type name")
+    void shouldConvertPrimitiveDescriptor() {
+        assertEquals("int", DotName.fromDescriptor("I").value());
+        assertEquals("void", DotName.fromDescriptor("V").value());
+    }
+
+    @Test
     @DisplayName("returns the simple name")
     void shouldReturnSimpleName() {
         assertEquals("String", DotName.of("java.lang.String").simpleName());

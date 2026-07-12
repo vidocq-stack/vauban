@@ -42,6 +42,29 @@ public record DotName(String value) implements Comparable<DotName> {
         if (desc.startsWith("L") && desc.endsWith(";")) {
             return fromInternal(desc.substring(1, desc.length() - 1));
         }
+        if (desc.startsWith("[")) {
+            // Array type (annotation class members may carry them, e.g.
+            // @Schema(implementation = Pet[].class)): keep the JVM binary name,
+            // dots for slashes — the form Class.forName understands.
+            return new DotName(desc.replace('/', '.'));
+        }
+        if (desc.length() == 1) {
+            String primitive = switch (desc.charAt(0)) {
+                case 'Z' -> "boolean";
+                case 'B' -> "byte";
+                case 'C' -> "char";
+                case 'S' -> "short";
+                case 'I' -> "int";
+                case 'J' -> "long";
+                case 'F' -> "float";
+                case 'D' -> "double";
+                case 'V' -> "void";
+                default -> null;
+            };
+            if (primitive != null) {
+                return new DotName(primitive);
+            }
+        }
         throw new IllegalArgumentException("Invalid class descriptor: " + desc);
     }
 
