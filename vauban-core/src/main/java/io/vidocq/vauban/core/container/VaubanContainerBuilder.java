@@ -664,13 +664,24 @@ public final class VaubanContainerBuilder {
                     throw new jakarta.enterprise.inject.spi.DefinitionException(msg.toString());
                 }
 
-                // BCE deployment errors → DeploymentException
+                // BCE deployment errors → DeploymentException. The first typed
+                // exception a BCE threw becomes the cause (VAU-BCE-003): specs
+                // define the exception a failed deployment must surface, and TCKs
+                // assert it through the cause chain (@ShouldThrowException).
                 if (!bceResult.deploymentErrors().isEmpty()) {
                     var msg = new StringBuilder("CDI deployment validation failed:\n");
                     for (var error : bceResult.deploymentErrors()) {
                         msg.append("  - ").append(error).append("\n");
                     }
-                    throw new jakarta.enterprise.inject.spi.DeploymentException(msg.toString());
+                    var failure = new jakarta.enterprise.inject.spi.DeploymentException(msg.toString());
+                    var causes = bceResult.deploymentErrorCauses();
+                    if (!causes.isEmpty()) {
+                        failure.initCause(causes.getFirst());
+                        for (var extra : causes.subList(1, causes.size())) {
+                            failure.addSuppressed(extra);
+                        }
+                    }
+                    throw failure;
                 }
 
                 // Register synthetic beans
