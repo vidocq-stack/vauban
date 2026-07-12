@@ -699,3 +699,24 @@ while `resolvedGat.equals(jdkGat)` was false (asymmetric), and the anonymous
   single `collectSupertypes(..., boolean addSelf)`.
 
 **Validation**: full reactor `clean install` green + CDI 4.1 Lite TCK **774/774 PASS**.
+
+## BUG-20260712-01 — vauban-api ships a hardcoded VERSION constant
+
+- **Date** : 2026-07-12
+- **Statut** : FIXED (branch fix/build-derived-version — ships with the next release)
+- **Module touché** : vauban-api / Vauban.java
+- **Symptôme** : the artifact published on Maven Central as 0.2.0 reports
+  `Vauban.VERSION = "0.1.0-SNAPSHOT"` — the constant is maintained by hand and was
+  never updated by the release train. Same class as vidocq BUG-20260704-01 (CLI banner).
+- **Reproduction minimale** :
+  ```
+  jshell --class-path vauban-api-0.2.0.jar -q \
+    -s <(echo 'System.out.println(io.vidocq.vauban.api.Vauban.VERSION)')
+  ```
+- **Hypothèse de cause** : compile-time constant, no build filtering.
+- **Investigations** :
+  - 2026-07-12 : found by grepping for stale version strings after the issue #3
+    follow-up. Fixed: `version.properties` filtered by Maven next to the class,
+    constant loaded at class init (same-module JPMS resource, no opens needed).
+    No runtime consumers existed; the constant is no longer compile-time-inlineable,
+    which also protects future consumers from the javac inlining trap.
