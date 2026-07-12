@@ -529,6 +529,10 @@ public final class VaubanContainerBuilder {
             // --- Collect Enhancement modifications: full BCE for unprocessed JARs +
             //     targeted replay for pre-processed JARs (vauban-bce-runtime.list) ---
             var combinedEnhMods = new java.util.HashMap<DotName, List<io.vidocq.vauban.core.extensions.VaubanClassConfig>>();
+            // VAU-BCE-002: signatures of every synthetic bean registered during this boot,
+            // shared between the runtime BCE path and the APT metadata path so identical
+            // registrations (duplicated BCE discovery, wrapper subclasses) collapse to one.
+            var seenSyntheticSignatures = new java.util.HashSet<String>();
 
             // BCEs available for the full Enhancement scan = explicit beanClasses BCEs
             // + BCEs declared in the runtime-list (they live in pre-processed JARs).
@@ -671,7 +675,8 @@ public final class VaubanContainerBuilder {
 
                 // Register synthetic beans
                 for (var synBean : bceResult.syntheticBeans()) {
-                    SyntheticComponentRegistrar.registerSyntheticBean(synBean, descriptors, factories, syntheticDisposers);
+                    SyntheticComponentRegistrar.registerSyntheticBean(synBean, descriptors, factories,
+                            syntheticDisposers, seenSyntheticSignatures);
                 }
 
                 // Register synthetic observers
@@ -723,7 +728,8 @@ public final class VaubanContainerBuilder {
 
             // Load synthetic beans/observers from APT-generated metadata (if BCE was processed at compile time)
             if (!bceProcessedSources.isEmpty()) {
-                SyntheticComponentRegistrar.loadSyntheticMetadataFromApt(discoveryClassLoader, descriptors, factories, syntheticDisposers, observers);
+                SyntheticComponentRegistrar.loadSyntheticMetadataFromApt(discoveryClassLoader, descriptors, factories,
+                        syntheticDisposers, observers, seenSyntheticSignatures);
             }
 
             // Validate observer/disposer method parameters (CDI spec)

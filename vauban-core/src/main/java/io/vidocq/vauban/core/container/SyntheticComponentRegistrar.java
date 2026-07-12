@@ -48,11 +48,13 @@ final class SyntheticComponentRegistrar {
                                              List<BeanDescriptor> descriptors,
                                              Map<DotName, BeanFactory<?>> factories,
                                              Map<DotName, java.util.function.BiConsumer<Object, CreationalContext<?>>> syntheticDisposers,
-                                             List<io.vidocq.vauban.core.bean.model.ObserverDescriptor> observers) {
+                                             List<io.vidocq.vauban.core.bean.model.ObserverDescriptor> observers,
+                                             java.util.Set<String> seenSyntheticSignatures) {
         try {
             var urls = cl.getResources(io.vidocq.vauban.core.extensions.SyntheticMetadataSerializer.METADATA_PATH);
             while (urls.hasMoreElements()) {
-                loadMetadataResource(urls.nextElement(), cl, descriptors, factories, syntheticDisposers, observers);
+                loadMetadataResource(urls.nextElement(), cl, descriptors, factories, syntheticDisposers, observers,
+                        seenSyntheticSignatures);
             }
         } catch (java.io.IOException _) {
             // No metadata file or read error — skip
@@ -63,13 +65,14 @@ final class SyntheticComponentRegistrar {
                                              List<BeanDescriptor> descriptors,
                                              Map<DotName, BeanFactory<?>> factories,
                                              Map<DotName, java.util.function.BiConsumer<Object, CreationalContext<?>>> syntheticDisposers,
-                                             List<io.vidocq.vauban.core.bean.model.ObserverDescriptor> observers) {
+                                             List<io.vidocq.vauban.core.bean.model.ObserverDescriptor> observers,
+                                             java.util.Set<String> seenSyntheticSignatures) {
         try (var is = url.openStream()) {
             var props = new java.util.Properties();
             props.load(new java.io.InputStreamReader(is, java.nio.charset.StandardCharsets.UTF_8));
 
             for (var synDesc : io.vidocq.vauban.core.extensions.SyntheticMetadataSerializer.readBeans(props)) {
-                registerAptBean(synDesc, cl, descriptors, factories, syntheticDisposers);
+                registerAptBean(synDesc, cl, descriptors, factories, syntheticDisposers, seenSyntheticSignatures);
             }
             for (var synDesc : io.vidocq.vauban.core.extensions.SyntheticMetadataSerializer.readObservers(props)) {
                 registerAptObserver(synDesc, cl, observers);
@@ -84,7 +87,8 @@ final class SyntheticComponentRegistrar {
                                         ClassLoader cl,
                                         List<BeanDescriptor> descriptors,
                                         Map<DotName, BeanFactory<?>> factories,
-                                        Map<DotName, java.util.function.BiConsumer<Object, CreationalContext<?>>> syntheticDisposers) {
+                                        Map<DotName, java.util.function.BiConsumer<Object, CreationalContext<?>>> syntheticDisposers,
+                                        java.util.Set<String> seenSyntheticSignatures) {
         try {
             var beanClass = Class.forName(synDesc.beanClassName(), false, cl);
             var builder = new io.vidocq.vauban.core.extensions.VaubanSyntheticBeanBuilder(beanClass);
@@ -112,7 +116,7 @@ final class SyntheticComponentRegistrar {
                 applyParam(builder, paramEntry.getKey(), paramEntry.getValue());
             }
 
-            registerSyntheticBean(builder, descriptors, factories, syntheticDisposers);
+            registerSyntheticBean(builder, descriptors, factories, syntheticDisposers, seenSyntheticSignatures);
         } catch (ClassNotFoundException _) {
             // Synthetic bean class not found — skip
         }
@@ -268,12 +272,50 @@ final class SyntheticComponentRegistrar {
         );
     }
 
+    /**
+     * Full identity of a synthetic bean registration: bean class, bean types,
+     * qualifiers, scope, name, creator and creation parameters. Two builders with
+     * the same signature register indistinguishable beans.
+     */
+    private static String syntheticSignature(
+            io.vidocq.vauban.core.extensions.VaubanSyntheticBeanBuilder<?> synBean) {
+        var types = new java.util.TreeSet<String>();
+        for (var type : synBean.getTypes()) {
+            types.add(type.getTypeName());
+        }
+        for (var type : synBean.getIndexTypes()) {
+            types.add(type.toString());
+        }
+        var qualifiers = new java.util.TreeSet<String>();
+        for (var qualifier : synBean.getQualifiers()) {
+            qualifiers.add(qualifier.toString());
+        }
+        var params = new java.util.TreeMap<String, String>();
+        synBean.getParams().forEach((k, v) -> params.put(k, java.util.Objects.toString(v)));
+        return synBean.getBeanClass().getName()
+                + "|types=" + types
+                + "|qualifiers=" + qualifiers
+                + "|scope=" + (synBean.getScopeAnnotation() != null ? synBean.getScopeAnnotation().getName() : "")
+                + "|name=" + synBean.getName()
+                + "|creator=" + (synBean.getCreatorClass() != null ? synBean.getCreatorClass().getName() : "")
+                + "|params=" + params;
+    }
+
     @SuppressWarnings({"unchecked", "rawtypes"})
     static void registerSyntheticBean(
             io.vidocq.vauban.core.extensions.VaubanSyntheticBeanBuilder<?> synBean,
             List<BeanDescriptor> descriptors,
             Map<DotName, BeanFactory<?>> factories,
-            Map<DotName, java.util.function.BiConsumer<Object, CreationalContext<?>>> syntheticDisposers) {
+            Map<DotName, java.util.function.BiConsumer<Object, CreationalContext<?>>> syntheticDisposers,
+            java.util.Set<String> seenSyntheticSignatures) {
+        // VAU-BCE-002: the same synthesis logic can run more than once in a single boot
+        // (a BCE visible both through the classpath scan and as an explicit bean class,
+        // or re-exported as a subclass by an extension wrapper). Registering the same
+        // synthetic bean twice makes every matching injection point ambiguous, so
+        // identical registrations collapse to the first one.
+        if (!seenSyntheticSignatures.add(syntheticSignature(synBean))) {
+            return;
+        }
         // Descriptor construction is shared with the APT pipeline so the deployment validator
         // sees the same view of synthetic beans at compile time and at runtime.
         var descriptor = io.vidocq.vauban.core.extensions.BceProcessor
