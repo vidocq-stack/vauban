@@ -687,8 +687,7 @@ public final class VaubanBeanManager implements BeanManager {
 
             @Override
             public void inject(T instance, CreationalContext<T> ctx) {
-                container.beanInjector().injectFieldsByReflection(instance, null, ctx);
-                container.beanInjector().callInitializerMethods(instance, ctx);
+                container.beanInjector().performInjection(instance, null, ctx);
             }
 
             @Override

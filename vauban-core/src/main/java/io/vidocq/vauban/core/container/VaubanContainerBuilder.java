@@ -150,6 +150,23 @@ public final class VaubanContainerBuilder {
     }
 
     /**
+     * Add a class that is explicitly contributed to the deployment as if it belonged to a
+     * synthetic bean archive with {@code bean-discovery-mode=all} — the CDI SE contract for
+     * {@link jakarta.enterprise.inject.se.SeContainerInitializer#addBeanClasses}. Such a class
+     * becomes a managed bean regardless of whether it carries a bean-defining annotation
+     * (e.g. a plain dependency class with neither a scope nor an {@code @Inject} constructor,
+     * such as the atinject TCK {@code FuelTank}). Build Compatible Extension classes are never
+     * forced — they are wiring, not beans.
+     */
+    public VaubanContainerBuilder addSyntheticArchiveClass(Class<?> beanClass) {
+        addBeanClass(beanClass);
+        if (!ReflectionValidator.isBuildCompatibleExtension(beanClass)) {
+            forcedDiscoveryClasses.add(beanClass);
+        }
+        return this;
+    }
+
+    /**
      * Register a custom factory for a bean class.
      */
     /**

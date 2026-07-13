@@ -148,7 +148,10 @@ public final class VaubanSeContainerInitializer extends SeContainerInitializer {
         }
 
         for (var cls : beanClasses) {
-            builder.addBeanClass(cls);
+            // CDI SE: classes passed to addBeanClasses form a synthetic bean archive with
+            // bean-discovery-mode=all, so they become beans even without a bean-defining
+            // annotation. Force them (BCE classes are excluded inside the builder).
+            builder.addSyntheticArchiveClass(cls);
         }
 
         return new VaubanSeContainer(builder.build());

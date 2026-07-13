@@ -144,9 +144,23 @@ public final class InstanceImpl<T> implements Instance<T> {
         // carries the selected type and qualifiers, as other containers do.
         // Synthetic bean creators rely on it — MP Config's @ConfigProperties
         // creator reads the target bean class and prefix from there.
-        var syntheticQualifiers = new java.util.LinkedHashSet<Annotation>(Arrays.asList(qualifiers));
-        var syntheticIp = new VaubanInjectionPoint(resolveType, syntheticQualifiers, null, null);
-        return ScopedValue.where(VaubanContainer.CURRENT_INJECTION_POINT, syntheticIp).call(action);
+        //
+        // Two CDI 4.1 constraints bound this, both exercised by the CDI TCK
+        // SyntheticBeanInjectionPointTest:
+        //   1. The built-in InjectionPoint bean is meaningful only while a
+        //      @Dependent bean is being created; for a normal-scoped bean's
+        //      creation function (or a destruction function) it must stay null.
+        //      So never expose a synthetic injection point when resolving a
+        //      non-@Dependent bean.
+        //   2. Looking up InjectionPoint itself must reflect the real current
+        //      injection point (here: none), never a synthesized self-reference.
+        if (bean.getScope() == jakarta.enterprise.context.Dependent.class
+                && resolveType != jakarta.enterprise.inject.spi.InjectionPoint.class) {
+            var syntheticQualifiers = new java.util.LinkedHashSet<Annotation>(Arrays.asList(qualifiers));
+            var syntheticIp = new VaubanInjectionPoint(resolveType, syntheticQualifiers, null, null);
+            return ScopedValue.where(VaubanContainer.CURRENT_INJECTION_POINT, syntheticIp).call(action);
+        }
+        return action.call();
     }
 
     @Override
