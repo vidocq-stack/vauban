@@ -529,6 +529,10 @@ public final class VaubanContainerBuilder {
             // --- Collect Enhancement modifications: full BCE for unprocessed JARs +
             //     targeted replay for pre-processed JARs (vauban-bce-runtime.list) ---
             var combinedEnhMods = new java.util.HashMap<DotName, List<io.vidocq.vauban.core.extensions.VaubanClassConfig>>();
+            // VAU-BCE-002: signatures of every synthetic bean registered during this boot,
+            // shared between the runtime BCE path and the APT metadata path so identical
+            // registrations (duplicated BCE discovery, wrapper subclasses) collapse to one.
+            var seenSyntheticSignatures = new java.util.HashSet<String>();
 
             // BCEs available for the full Enhancement scan = explicit beanClasses BCEs
             // + BCEs declared in the runtime-list (they live in pre-processed JARs).
@@ -660,18 +664,30 @@ public final class VaubanContainerBuilder {
                     throw new jakarta.enterprise.inject.spi.DefinitionException(msg.toString());
                 }
 
-                // BCE deployment errors → DeploymentException
+                // BCE deployment errors → DeploymentException. The first typed
+                // exception a BCE threw becomes the cause (VAU-BCE-003): specs
+                // define the exception a failed deployment must surface, and TCKs
+                // assert it through the cause chain (@ShouldThrowException).
                 if (!bceResult.deploymentErrors().isEmpty()) {
                     var msg = new StringBuilder("CDI deployment validation failed:\n");
                     for (var error : bceResult.deploymentErrors()) {
                         msg.append("  - ").append(error).append("\n");
                     }
-                    throw new jakarta.enterprise.inject.spi.DeploymentException(msg.toString());
+                    var failure = new jakarta.enterprise.inject.spi.DeploymentException(msg.toString());
+                    var causes = bceResult.deploymentErrorCauses();
+                    if (!causes.isEmpty()) {
+                        failure.initCause(causes.getFirst());
+                        for (var extra : causes.subList(1, causes.size())) {
+                            failure.addSuppressed(extra);
+                        }
+                    }
+                    throw failure;
                 }
 
                 // Register synthetic beans
                 for (var synBean : bceResult.syntheticBeans()) {
-                    SyntheticComponentRegistrar.registerSyntheticBean(synBean, descriptors, factories, syntheticDisposers);
+                    SyntheticComponentRegistrar.registerSyntheticBean(synBean, descriptors, factories,
+                            syntheticDisposers, seenSyntheticSignatures);
                 }
 
                 // Register synthetic observers
@@ -723,7 +739,8 @@ public final class VaubanContainerBuilder {
 
             // Load synthetic beans/observers from APT-generated metadata (if BCE was processed at compile time)
             if (!bceProcessedSources.isEmpty()) {
-                SyntheticComponentRegistrar.loadSyntheticMetadataFromApt(discoveryClassLoader, descriptors, factories, syntheticDisposers, observers);
+                SyntheticComponentRegistrar.loadSyntheticMetadataFromApt(discoveryClassLoader, descriptors, factories,
+                        syntheticDisposers, observers, seenSyntheticSignatures);
             }
 
             // Validate observer/disposer method parameters (CDI spec)

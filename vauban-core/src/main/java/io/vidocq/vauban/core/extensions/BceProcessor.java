@@ -72,11 +72,13 @@ public final class BceProcessor {
         var lookup = new IndexLookup(index);
         var modifications = new HashMap<DotName, List<VaubanClassConfig>>();
         var errors = new ArrayList<String>();
+        var errorCauses = new ArrayList<Throwable>();
 
         for (var bceClass : bceClasses) {
             try {
                 var bce = instantiateBce(bceClass);
-                processEnhancement(bce, bceClass, List.of(), archiveClasses, lookup, classLoader, errors, modifications);
+                processEnhancement(bce, bceClass, List.of(), archiveClasses, lookup, classLoader, errors,
+                        errorCauses, modifications);
             } catch (Exception e) {
                 // Enhancement-only errors are non-fatal
             }
@@ -114,7 +116,7 @@ public final class BceProcessor {
                     if (method.getAnnotation(Enhancement.class) == null) continue;
                     makeAccessibleSafe(method);
                     var paramKind = detectEnhancementParamKind(method);
-                    invokeEnhancement(method, bce, paramKind, targetName, lookup, errors, modifications);
+                    invokeEnhancement(method, bce, paramKind, targetName, lookup, errors, new ArrayList<>(), modifications);
                 }
             } catch (Exception e) {
                 // Replay errors are non-fatal — skip pair
@@ -132,7 +134,14 @@ public final class BceProcessor {
             List<VaubanSyntheticObserverBuilder<?>> syntheticObservers,
             List<String> definitionErrors,
             List<String> deploymentErrors,
-            Map<io.vidocq.vauban.indexer.model.DotName, List<VaubanClassConfig>> enhancementModifications
+            Map<io.vidocq.vauban.indexer.model.DotName, List<VaubanClassConfig>> enhancementModifications,
+            /*
+             * Typed exceptions behind deploymentErrors (VAU-BCE-003): specs define the
+             * exception a failed deployment must surface (e.g. MP Fault Tolerance's
+             * FaultToleranceDefinitionException) and TCKs assert it through the
+             * DeploymentException cause chain — the flattened messages alone lose it.
+             */
+            List<Throwable> deploymentErrorCauses
     ) {}
 
     public record DiscoveryResult(
@@ -200,6 +209,7 @@ public final class BceProcessor {
         var lookup = new IndexLookup(index);
         var definitionErrors = new ArrayList<String>();
         var deploymentErrors = new ArrayList<String>();
+        var deploymentErrorCauses = new ArrayList<Throwable>();
         var allSyntheticBeans = new ArrayList<VaubanSyntheticBeanBuilder<?>>();
         var allSyntheticObservers = new ArrayList<VaubanSyntheticObserverBuilder<?>>();
         var allEnhancementMods = new HashMap<io.vidocq.vauban.indexer.model.DotName, List<VaubanClassConfig>>();
@@ -217,7 +227,8 @@ public final class BceProcessor {
                 var types = new VaubanTypes(lookup);
 
                 // Phase: @Enhancement — iterates over beans, fallback to archive classes if none match
-                processEnhancement(bce, bceClass, beans, allArchiveClasses, lookup, classLoader, deploymentErrors, allEnhancementMods);
+                processEnhancement(bce, bceClass, beans, allArchiveClasses, lookup, classLoader, deploymentErrors,
+                        deploymentErrorCauses, allEnhancementMods);
 
                 // Phase: @Registration
                 processRegistration(bce, bceClass, beans, observers, interceptors, lookup, classLoader, types, deploymentErrors, allArchiveClasses);
@@ -233,10 +244,12 @@ public final class BceProcessor {
             } catch (Exception e) {
                 var className = bceClass != null ? bceClass.getName() : "unknown";
                 deploymentErrors.add("BCE processing failed for " + className + ": " + e.getMessage());
+                deploymentErrorCauses.add(e);
             }
         }
 
-        return new Result(allSyntheticBeans, allSyntheticObservers, definitionErrors, deploymentErrors, allEnhancementMods);
+        return new Result(allSyntheticBeans, allSyntheticObservers, definitionErrors, deploymentErrors,
+                allEnhancementMods, deploymentErrorCauses);
     }
 
     private static void makeAccessibleSafe(java.lang.reflect.AccessibleObject member) {
@@ -304,6 +317,7 @@ public final class BceProcessor {
                                            List<Class<?>> archiveClasses,
                                            IndexLookup lookup, ClassLoader classLoader,
                                            List<String> errors,
+                                           List<Throwable> errorCauses,
                                            Map<io.vidocq.vauban.indexer.model.DotName, List<VaubanClassConfig>> modifications) {
         for (var method : getDeclaredMethodsSafe(bceClass)) {
             var enhancement = method.getAnnotation(Enhancement.class);
@@ -320,7 +334,7 @@ public final class BceProcessor {
                 if (!BceTypeMatcher.matchesTypes(enhancement.types(), bean, classLoader)) continue;
                 if (!BceTypeMatcher.matchesAnnotations(withAnnotations, bean.beanClass(), classLoader)) continue;
                 processedClasses.add(bean.beanClass());
-                invokeEnhancement(method, bce, paramKind, bean.beanClass(), lookup, errors, modifications);
+                invokeEnhancement(method, bce, paramKind, bean.beanClass(), lookup, errors, errorCauses, modifications);
             }
 
             // Also check archive classes for non-bean classes (e.g. added via ScannedClasses)
@@ -331,7 +345,7 @@ public final class BceProcessor {
                     if (!BceTypeMatcher.matchesClass(enhancement.types(), enhancement.withSubtypes(), archiveClass)) continue;
                     if (!BceTypeMatcher.matchesAnnotations(withAnnotations, archiveClass)) continue;
                     processedClasses.add(className);
-                    invokeEnhancement(method, bce, paramKind, className, lookup, errors, modifications);
+                    invokeEnhancement(method, bce, paramKind, className, lookup, errors, errorCauses, modifications);
                 }
             }
 
@@ -354,7 +368,7 @@ public final class BceProcessor {
                     if (!withAnnotationNames.isEmpty()
                             && !BceTypeMatcher.matchesAnnotationsByIndex(withAnnotationNames, classInfo)) continue;
                     processedClasses.add(classInfo.name());
-                    invokeEnhancement(method, bce, paramKind, classInfo.name(), lookup, errors, modifications);
+                    invokeEnhancement(method, bce, paramKind, classInfo.name(), lookup, errors, errorCauses, modifications);
                 }
             }
         }
@@ -363,6 +377,7 @@ public final class BceProcessor {
     private static void invokeEnhancement(Method method, Object bce, EnhancementParamKind paramKind,
                                            DotName className, IndexLookup lookup,
                                            List<String> errors,
+                                           List<Throwable> errorCauses,
                                            Map<DotName, List<VaubanClassConfig>> modifications) {
         var indexClass = lookup.getClass(className).orElse(null);
         if (indexClass == null) return;
@@ -408,6 +423,7 @@ public final class BceProcessor {
             var unwrapped = e instanceof java.lang.reflect.InvocationTargetException ite
                     ? java.util.Objects.requireNonNullElse(ite.getCause(), ite) : e;
             errors.add("@Enhancement error: " + unwrapped.getMessage());
+            errorCauses.add(unwrapped);
         }
     }
 
