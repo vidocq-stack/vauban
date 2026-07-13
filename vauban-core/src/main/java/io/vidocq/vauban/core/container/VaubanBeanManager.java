@@ -363,8 +363,12 @@ public final class VaubanBeanManager implements BeanManager {
         }
         if (allSame) return first;
 
+        var matching = new java.util.ArrayList<String>(beans.size());
+        for (var b : beans) {
+            matching.add(b.getBeanClass().getName() + b.getQualifiers());
+        }
         throw new jakarta.enterprise.inject.AmbiguousResolutionException(
-            "Ambiguous dependency: " + beans.size() + " beans match");
+            "Ambiguous dependency: " + beans.size() + " beans match: " + matching);
     }
 
     @Override

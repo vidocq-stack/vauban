@@ -1158,7 +1158,45 @@ public final class BeanDiscovery {
             }
         }
 
+        // Observer method non-event parameters are injection points too
+        // (CDI 4.1 §10.4.3): they must be visible to deployment validation and
+        // to build compatible extensions (BeanInfo.injectionPoints()) — MP
+        // Config validates @ConfigProperty observer parameters there and
+        // synthesizes the beans that satisfy them. EventMetadata is
+        // container-provided, never resolved from beans.
+        for (var method : classInfo.methods()) {
+            if (method.isConstructor() || method.isStatic()) continue;
+            boolean isObserver = method.parameters().stream().anyMatch(
+                    p -> hasObserverAnnotation(p.annotations()));
+            if (!isObserver) continue;
+            for (int i = 0; i < method.parameters().size(); i++) {
+                var param = method.parameters().get(i);
+                if (hasObserverAnnotation(param.annotations())) continue;
+                var resolvedType = resolveGenericTypeForMethodParameter(classInfo, method, i);
+                if (resolvedType instanceof TypeInfo.ClassType ct
+                        && ct.name().value().equals("jakarta.enterprise.inject.spi.EventMetadata")) {
+                    continue;
+                }
+                points.add(new InjectionPointInfo(
+                        resolvedType, computeInjectionPointQualifiers(param.annotations()),
+                        InjectionPointInfo.InjectionKind.METHOD_PARAMETER,
+                        PARAM_PREFIX + i + " of " + classInfo.name().simpleName() + "." + method.name() + "()"
+                ));
+            }
+        }
+
         return points;
+    }
+
+    private static boolean hasObserverAnnotation(List<AnnotationInfo> annotations) {
+        for (var ann : annotations) {
+            var name = ann.name().value();
+            if (name.equals("jakarta.enterprise.event.Observes")
+                    || name.equals("jakarta.enterprise.event.ObservesAsync")) {
+                return true;
+            }
+        }
+        return false;
     }
 
     int extractPriority(List<AnnotationInfo> annotations) {
