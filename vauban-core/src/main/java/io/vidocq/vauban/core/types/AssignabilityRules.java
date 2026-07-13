@@ -323,9 +323,63 @@ public final class AssignabilityRules {
     private boolean isAssignableToArray(TypeInfo beanType, ArrayType required) {
         if (beanType instanceof ArrayType beanArray) {
             if (beanArray.dimensions() != required.dimensions()) return false;
-            return isAssignable(beanArray.componentType(), required.componentType());
+            return arrayElementMatches(beanArray.componentType(), required.componentType());
         }
         return false;
+    }
+
+    /**
+     * CDI 4.1 §5.2.4: array types match only when their element types are
+     * identical. Identity is structural — no subtype walking and no
+     * primitive boxing ({@code boolean[]} is not {@code Boolean[]}) — but the
+     * raw ↔ parameterized equivalence still applies to reference element
+     * types (a {@code Class[]} bean type satisfies a {@code Class<?>[]}
+     * injection point). Cf. VAU-BCE-004.
+     */
+    private boolean arrayElementMatches(TypeInfo bean, TypeInfo required) {
+        if (bean.equals(required)) return true;
+        if (bean instanceof ClassType && required instanceof ClassType) return false;
+        if (bean instanceof PrimitiveType || required instanceof PrimitiveType) {
+            // Cross-representation primitive identity only (PrimitiveType(BOOLEAN)
+            // vs ClassType("boolean")) — never boxing.
+            var beanName = primitiveName(bean);
+            var requiredName = primitiveName(required);
+            return beanName != null && beanName.equals(requiredName);
+        }
+        if (bean instanceof ClassType b && required instanceof ParameterizedType r) {
+            return b.name().equals(r.rawType()) && allArgumentsUnbounded(r.typeArguments());
+        }
+        if (bean instanceof ParameterizedType b && required instanceof ClassType r) {
+            return b.rawType().equals(r.name()) && allArgumentsUnbounded(b.typeArguments());
+        }
+        return isAssignable(bean, required);
+    }
+
+    private static String primitiveName(TypeInfo type) {
+        return switch (type) {
+            case PrimitiveType p -> p.kind().name().toLowerCase();
+            case ClassType c -> c.name().value();
+            default -> null;
+        };
+    }
+
+    private static boolean allArgumentsUnbounded(java.util.List<TypeInfo> arguments) {
+        for (var argument : arguments) {
+            boolean unbounded = switch (argument) {
+                case WildcardType w -> w.lowerBound() == null
+                        && (w.upperBound() == null || isObjectClass(w.upperBound()));
+                case ClassType c -> c.name().value().equals(JAVA_LANG_OBJECT);
+                case TypeVariable tv -> tv.bounds().isEmpty()
+                        || tv.bounds().stream().allMatch(AssignabilityRules::isObjectClass);
+                default -> false;
+            };
+            if (!unbounded) return false;
+        }
+        return true;
+    }
+
+    private static boolean isObjectClass(TypeInfo type) {
+        return type instanceof ClassType c && c.name().value().equals(JAVA_LANG_OBJECT);
     }
 
     private boolean isAssignableToBounds(TypeInfo beanType, TypeVariable required) {

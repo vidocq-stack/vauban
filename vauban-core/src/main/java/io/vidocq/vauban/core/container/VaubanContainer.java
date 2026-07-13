@@ -242,7 +242,12 @@ public final class VaubanContainer implements AutoCloseable {
     public <T> T select(Class<T> type) {
         // CDI spec: primitive types and their wrappers are considered identical
         var lookupType = type.isPrimitive() ? wrapPrimitive(type) : type;
-        var typeInfo = new TypeInfo.ClassType(DotName.of(lookupType.getName()));
+        // Array classes must map to the index model's ArrayType — a flat
+        // ClassType("[Ljava.lang.Class;") can never match a bean's array type.
+        // Cf. VAU-BCE-004.
+        var typeInfo = lookupType.isArray()
+                ? io.vidocq.vauban.core.types.TypeInfoUtils.fromReflectType(lookupType)
+                : new TypeInfo.ClassType(DotName.of(lookupType.getName()));
         var resolved = resolver.resolve(typeInfo, Set.of(QualifierInstance.DEFAULT));
         if (resolved.isEmpty()) {
             throw new jakarta.enterprise.inject.UnsatisfiedResolutionException(

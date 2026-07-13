@@ -648,8 +648,21 @@ public final class ManagedBean<T> implements Bean<T> {
     private static Class<?> resolveArrayClass(io.vidocq.vauban.indexer.model.TypeInfo.ArrayType at, ClassLoader cl) {
         try {
             String desc = switch (at.componentType()) {
+                // The discovery index models primitive injection-point components as
+                // ClassType("boolean") — map those names to descriptor chars too,
+                // "[Lboolean;" is not loadable. Cf. VAU-BCE-004.
                 case io.vidocq.vauban.indexer.model.TypeInfo.ClassType ct ->
-                        "[".repeat(at.dimensions()) + "L" + ct.name().value() + ";";
+                        "[".repeat(at.dimensions()) + switch (ct.name().value()) {
+                            case "boolean" -> "Z";
+                            case "byte" -> "B";
+                            case "char" -> "C";
+                            case "short" -> "S";
+                            case "int" -> "I";
+                            case "long" -> "J";
+                            case "float" -> "F";
+                            case "double" -> "D";
+                            default -> "L" + ct.name().value() + ";";
+                        };
                 case io.vidocq.vauban.indexer.model.TypeInfo.PrimitiveType pt ->
                         "[".repeat(at.dimensions()) + switch (pt.kind()) {
                             case BOOLEAN -> "Z";
@@ -661,6 +674,10 @@ public final class ManagedBean<T> implements Bean<T> {
                             case FLOAT -> "F";
                             case DOUBLE -> "D";
                         };
+                // A parameterized component (Class<?>[] from the lang-model side)
+                // erases to its raw array class for the runtime bean-type set.
+                case io.vidocq.vauban.indexer.model.TypeInfo.ParameterizedType pt ->
+                        "[".repeat(at.dimensions()) + "L" + pt.rawType().value() + ";";
                 default -> null;
             };
             return desc == null ? null : Class.forName(desc, true, cl);

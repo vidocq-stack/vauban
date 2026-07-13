@@ -57,6 +57,27 @@ final class SyntheticBeanConverter {
      * No factory or creator is materialized here; that is a runtime-only concern handled by the
      * container.
      */
+    /**
+     * Maps a runtime {@code Class} bean type to the index model. Array classes
+     * (whose {@code getName()} is the JVM binary form {@code [Ljava.lang.Boolean;}
+     * / {@code [Z}) become {@link TypeInfo.ArrayType} so they can match injection
+     * points, which the discovery index always models as {@code ArrayType}.
+     * Primitive components keep the {@code ClassType("boolean")} form the
+     * discovery index uses for injection-point types. Cf. VAU-BCE-004.
+     */
+    private static TypeInfo runtimeClassToTypeInfo(Class<?> cls) {
+        if (cls.isArray()) {
+            int dimensions = 0;
+            Class<?> component = cls;
+            while (component.isArray()) {
+                dimensions++;
+                component = component.getComponentType();
+            }
+            return new TypeInfo.ArrayType(runtimeClassToTypeInfo(component), dimensions);
+        }
+        return new TypeInfo.ClassType(DotName.of(cls.getName()));
+    }
+
     static BeanDescriptor toBeanDescriptor(VaubanSyntheticBeanBuilder<?> synBean, int slot) {
         var beanClass = synBean.getBeanClass();
         var beanName = DotName.of(beanClass.getName());
@@ -64,7 +85,7 @@ final class SyntheticBeanConverter {
         var beanTypes = new LinkedHashSet<TypeInfo>();
         for (var type : synBean.getTypes()) {
             if (type instanceof Class<?> cls) {
-                beanTypes.add(new TypeInfo.ClassType(DotName.of(cls.getName())));
+                beanTypes.add(runtimeClassToTypeInfo(cls));
             }
         }
         // Bean types added via the lang-model API (type(jakarta...Type)) are stored
