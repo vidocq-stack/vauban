@@ -497,10 +497,9 @@ public final class VaubanContainer implements AutoCloseable {
     }
 
     void injectFields(Object instance, BeanDescriptor descriptor, CreationalContext<?> parentCtx) {
-        beanInjector.injectFieldsByReflection(instance, descriptor, parentCtx);
-
-        // 2. Call @Inject initializer methods
-        beanInjector.callInitializerMethods(instance, parentCtx);
+        // 1. + 2. @Inject fields and initializer methods, in JSR-330 supertype-before-subtype
+        // order with override resolution (fields of a class before its methods).
+        beanInjector.performInjection(instance, descriptor, parentCtx);
 
         // 3. Call @PostConstruct
         callPostConstruct(instance, descriptor, parentCtx);

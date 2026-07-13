@@ -28,7 +28,15 @@ import jakarta.enterprise.inject.Instance;
 import jakarta.enterprise.inject.spi.BeanManager;
 import jakarta.enterprise.inject.spi.InjectionPoint;
 
+import java.lang.reflect.Field;
+import java.lang.reflect.Method;
+import java.lang.reflect.Modifier;
 import java.lang.reflect.ParameterizedType;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collections;
+import java.util.List;
+import java.util.Map;
 
 final class BeanInjector {
 
@@ -42,99 +50,179 @@ final class BeanInjector {
         this.vaubanLookup = vaubanLookup;
     }
 
-    void injectFieldsByReflection(Object instance, BeanDescriptor descriptor, CreationalContext<?> parentCtx) {
-        var beanClass = instance.getClass();
+    /**
+     * Full JSR-330 / CDI member injection for a managed bean instance: {@code @Inject} fields and
+     * initializer methods, injected in the order mandated by the Jakarta Dependency Injection spec:
+     *
+     * <ul>
+     *   <li>supertype members are injected before subtype members;</li>
+     *   <li>within a class, fields are injected before methods — so a supertype's initializer
+     *       methods run before a subtype's fields;</li>
+     *   <li>an {@code @Inject} method that is overridden by a subtype method is injected at most
+     *       once (via the override, and only if the override is itself {@code @Inject}); qualifiers
+     *       are taken from the overriding method, never inherited from the overridden one;</li>
+     *   <li>static members are never injected (CDI does not support static injection).</li>
+     * </ul>
+     */
+    void performInjection(Object instance, BeanDescriptor descriptor, CreationalContext<?> ctx) {
+        var beanClass = unwrapInterceptedSubclass(instance.getClass());
+        var hierarchy = hierarchySuperFirst(beanClass);
+        var ownerBean = container.findBeanForInstance(instance);
         var typeMapping = ManagedBean.buildTypeVariableMapping(beanClass);
-        var clazz = beanClass;
-        while (clazz != null && clazz != Object.class) {
+
+        for (int i = 0; i < hierarchy.size(); i++) {
+            var clazz = hierarchy.get(i);
+            // Fields of this class first (supertype-before-subtype guaranteed by outer loop order).
             for (var field : clazz.getDeclaredFields()) {
                 if (!field.isAnnotationPresent(jakarta.inject.Inject.class)) continue;
-                try {
+                if (Modifier.isStatic(field.getModifiers())) continue;
+                injectSingleField(instance, field, descriptor, ctx, typeMapping);
+            }
+            // Then initializer methods of this class, skipping any that a subtype overrides.
+            var subclasses = hierarchy.subList(i + 1, hierarchy.size());
+            for (var method : clazz.getDeclaredMethods()) {
+                if (!method.isAnnotationPresent(jakarta.inject.Inject.class)) continue;
+                if (Modifier.isStatic(method.getModifiers())) continue;
+                if (isOverriddenInSubclasses(method, subclasses)) continue;
+                injectSingleMethod(instance, method, ctx, ownerBean, typeMapping);
+            }
+        }
+    }
 
-                if (field.getType() == InjectionPoint.class) {
-                    writeField(instance, field,VaubanContainer.getCurrentInjectionPoint());
-                    continue;
-                }
+    /**
+     * Field-only injection (used to wire {@code @Inject} fields of interceptor instances, which have
+     * no initializer-method phase). Injects supertype fields before subtype fields; skips statics.
+     */
+    void injectFieldsByReflection(Object instance, BeanDescriptor descriptor, CreationalContext<?> parentCtx) {
+        var beanClass = unwrapInterceptedSubclass(instance.getClass());
+        var typeMapping = ManagedBean.buildTypeVariableMapping(beanClass);
+        for (var clazz : hierarchySuperFirst(beanClass)) {
+            for (var field : clazz.getDeclaredFields()) {
+                if (!field.isAnnotationPresent(jakarta.inject.Inject.class)) continue;
+                if (Modifier.isStatic(field.getModifiers())) continue;
+                injectSingleField(instance, field, descriptor, parentCtx, typeMapping);
+            }
+        }
+    }
 
-                if (field.getType() == Instance.class
-                        || field.getType() == jakarta.inject.Provider.class) {
-                    Class<?> instanceType = Object.class;
-                    java.lang.reflect.Type instanceLookupType = Object.class;
-                    var genericType = ManagedBean.resolveType(field.getGenericType(), typeMapping);
-                    if (genericType instanceof ParameterizedType pt) {
-                        var typeArg = pt.getActualTypeArguments()[0];
-                        if (typeArg instanceof Class<?> c) {
-                            instanceType = c;
-                            instanceLookupType = c;
-                        } else if (typeArg instanceof ParameterizedType nestedPt) {
-                            // e.g. Provider<Optional<String>>, Provider<Set<String>> — preserve the
-                            // full parameterized type so getBeans() can match synthetic beans exactly.
-                            instanceType = (nestedPt.getRawType() instanceof Class<?> raw) ? raw : Object.class;
-                            instanceLookupType = nestedPt;
-                        }
+    @SuppressWarnings({"java:S3776", "java:S1181"})
+    private void injectSingleField(Object instance, Field field, BeanDescriptor descriptor,
+                                   CreationalContext<?> parentCtx,
+                                   Map<java.lang.reflect.TypeVariable<?>, java.lang.reflect.Type> typeMapping) {
+        try {
+            if (field.getType() == InjectionPoint.class) {
+                writeField(instance, field, VaubanContainer.getCurrentInjectionPoint());
+                return;
+            }
+
+            if (field.getType() == Instance.class
+                    || field.getType() == jakarta.inject.Provider.class) {
+                Class<?> instanceType = Object.class;
+                java.lang.reflect.Type instanceLookupType = Object.class;
+                var genericType = ManagedBean.resolveType(field.getGenericType(), typeMapping);
+                if (genericType instanceof ParameterizedType pt) {
+                    var typeArg = pt.getActualTypeArguments()[0];
+                    if (typeArg instanceof Class<?> c) {
+                        instanceType = c;
+                        instanceLookupType = c;
+                    } else if (typeArg instanceof ParameterizedType nestedPt) {
+                        // e.g. Provider<Optional<String>>, Provider<Set<String>> — preserve the
+                        // full parameterized type so getBeans() can match synthetic beans exactly.
+                        instanceType = (nestedPt.getRawType() instanceof Class<?> raw) ? raw : Object.class;
+                        instanceLookupType = nestedPt;
                     }
-                    var fieldQualifiers = QualifierHelper.extractFieldQualifiers(field);
-                    var ownerBean = container.findBeanForInstance(instance);
-                    var ip = new VaubanInjectionPoint(field, ownerBean);
-                    writeField(instance, field,new InstanceImpl<>(container, instanceType, instanceLookupType, fieldQualifiers, ip, null));
-                    continue;
                 }
-
-                if (BeanManager.class.isAssignableFrom(field.getType())
-                        || field.getType() == jakarta.enterprise.inject.spi.BeanContainer.class) {
-                    writeField(instance, field,container.getBeanManager());
-                    continue;
-                }
-
-                if (field.getType() == Event.class) {
-                    var eventQualifiers = QualifierHelper.collectEventQualifiers(field.getAnnotations());
-                    var ownerBean = container.findBeanForInstance(instance);
-                    var eventIp = new VaubanInjectionPoint(field, ownerBean);
-                    writeField(instance, field,new EventImpl<>(container.eventDispatcher(), eventQualifiers, eventIp));
-                    continue;
-                }
-
+                var fieldQualifiers = QualifierHelper.extractFieldQualifiers(field);
                 var ownerBean = container.findBeanForInstance(instance);
-                VaubanContainer.withInjectionPoint(new VaubanInjectionPoint(field, ownerBean), () -> {
-                    var fieldQuals = QualifierHelper.extractFieldQualifiersWithEnhancement(field, descriptor);
-                    Object value;
-                    var bm = container.getBeanManager();
-                    var fieldType = ManagedBean.resolveType(field.getGenericType(), typeMapping);
-                    var resolvedBeans = bm.getBeans(fieldType, fieldQuals);
-                    if (resolvedBeans.isEmpty()) {
-                        value = container.select(field.getType());
-                    } else {
-                        var resolved = bm.resolve(resolvedBeans);
-                        boolean needsFreshCtx = resolved instanceof ManagedBean<?> mb
-                                && resolved.getScope() == jakarta.enterprise.context.Dependent.class
-                                && mb.descriptor().kind() == BeanDescriptor.BeanKind.MANAGED
-                                && container.interceptorManager() != null && container.interceptorManager().hasInterceptors()
-                                && container.hasMethodOrClassInterceptors(mb);
-                        var ctx = (parentCtx != null
-                                && resolved.getScope() == jakarta.enterprise.context.Dependent.class
-                                && !needsFreshCtx)
-                                ? parentCtx
-                                : bm.createCreationalContext(resolved);
-                        value = bm.getReference(resolved, fieldType, ctx);
-                        if (needsFreshCtx
-                                && parentCtx instanceof CreationalContextImpl<?> parentVCtx
-                                && value != null) {
-                            parentVCtx.addDependentInstance(resolved, value, ctx);
-                        }
-                    }
-                    if (value != null || !field.getType().isPrimitive()) {
-                        writeField(instance, field,value);
-                    }
-                });
-            } catch (jakarta.enterprise.inject.IllegalProductException | jakarta.enterprise.inject.UnproxyableResolutionException e) {
-                throw e;
-            } catch (Exception e) {
-                if (e.getCause() instanceof jakarta.enterprise.inject.IllegalProductException ipe) throw ipe;
-                LOG.log(System.Logger.Level.ERROR,
-                        "Injection failed for " + field.getName() + " on " + instance.getClass(), e);
+                var ip = new VaubanInjectionPoint(field, ownerBean);
+                writeField(instance, field, new InstanceImpl<>(container, instanceType, instanceLookupType, fieldQualifiers, ip, null));
+                return;
             }
+
+            if (BeanManager.class.isAssignableFrom(field.getType())
+                    || field.getType() == jakarta.enterprise.inject.spi.BeanContainer.class) {
+                writeField(instance, field, container.getBeanManager());
+                return;
             }
-            clazz = clazz.getSuperclass();
+
+            if (field.getType() == Event.class) {
+                var eventQualifiers = QualifierHelper.collectEventQualifiers(field.getAnnotations());
+                var ownerBean = container.findBeanForInstance(instance);
+                var eventIp = new VaubanInjectionPoint(field, ownerBean);
+                writeField(instance, field, new EventImpl<>(container.eventDispatcher(), eventQualifiers, eventIp));
+                return;
+            }
+
+            var ownerBean = container.findBeanForInstance(instance);
+            VaubanContainer.withInjectionPoint(new VaubanInjectionPoint(field, ownerBean), () -> {
+                var fieldQuals = QualifierHelper.extractFieldQualifiersWithEnhancement(field, descriptor);
+                Object value;
+                var bm = container.getBeanManager();
+                var fieldType = ManagedBean.resolveType(field.getGenericType(), typeMapping);
+                var resolvedBeans = bm.getBeans(fieldType, fieldQuals);
+                if (resolvedBeans.isEmpty()) {
+                    value = container.select(field.getType());
+                } else {
+                    var resolved = bm.resolve(resolvedBeans);
+                    boolean needsFreshCtx = resolved instanceof ManagedBean<?> mb
+                            && resolved.getScope() == jakarta.enterprise.context.Dependent.class
+                            && mb.descriptor().kind() == BeanDescriptor.BeanKind.MANAGED
+                            && container.interceptorManager() != null && container.interceptorManager().hasInterceptors()
+                            && container.hasMethodOrClassInterceptors(mb);
+                    var ctx = (parentCtx != null
+                            && resolved.getScope() == jakarta.enterprise.context.Dependent.class
+                            && !needsFreshCtx)
+                            ? parentCtx
+                            : bm.createCreationalContext(resolved);
+                    value = bm.getReference(resolved, fieldType, ctx);
+                    if (needsFreshCtx
+                            && parentCtx instanceof CreationalContextImpl<?> parentVCtx
+                            && value != null) {
+                        parentVCtx.addDependentInstance(resolved, value, ctx);
+                    }
+                }
+                if (value != null || !field.getType().isPrimitive()) {
+                    writeField(instance, field, value);
+                }
+            });
+        } catch (jakarta.enterprise.inject.IllegalProductException | jakarta.enterprise.inject.UnproxyableResolutionException e) {
+            throw e;
+        } catch (Exception e) {
+            if (e.getCause() instanceof jakarta.enterprise.inject.IllegalProductException ipe) throw ipe;
+            LOG.log(System.Logger.Level.ERROR,
+                    "Injection failed for " + field.getName() + " on " + instance.getClass(), e);
+        }
+    }
+
+    private void injectSingleMethod(Object instance, Method method, CreationalContext<?> ctx,
+                                    jakarta.enterprise.inject.spi.Bean<?> ownerBean,
+                                    Map<java.lang.reflect.TypeVariable<?>, java.lang.reflect.Type> typeMapping) {
+        try {
+            var paramTypes = method.getParameterTypes();
+            var rawGenericParamTypes = method.getGenericParameterTypes();
+            var genericParamTypes = new java.lang.reflect.Type[rawGenericParamTypes.length];
+            for (int i = 0; i < rawGenericParamTypes.length; i++) {
+                genericParamTypes[i] = ManagedBean.resolveType(rawGenericParamTypes[i], typeMapping);
+            }
+            var params = method.getParameters();
+            var args = new Object[paramTypes.length];
+            var transientContexts = new ArrayList<CreationalContextImpl<?>>();
+            for (int i = 0; i < paramTypes.length; i++) {
+                var paramQuals = QualifierHelper.extractParamQualifiers(params[i]);
+                if (params[i].isAnnotationPresent(jakarta.enterprise.inject.TransientReference.class)) {
+                    var transientCtx = new CreationalContextImpl<>();
+                    args[i] = container.resolveParameter(paramTypes[i], genericParamTypes[i], transientCtx, paramQuals, method, ownerBean, params[i], i);
+                    transientContexts.add(transientCtx);
+                } else {
+                    args[i] = container.resolveParameter(paramTypes[i], genericParamTypes[i], ctx, paramQuals, method, ownerBean, params[i], i);
+                }
+            }
+            vaubanLookup.invokeMethod(instance, method, args);
+            for (var tc : transientContexts) {
+                tc.release();
+            }
+        } catch (Exception e) {
+            throw new RuntimeException("Failed to call initializer method: " + method.getName(), e);
         }
     }
 
@@ -146,7 +234,7 @@ final class BeanInjector {
      * path). The provider is keyed on the field's declaring class, so a field inherited from a
      * superclass is routed to that superclass's provider.
      */
-    private void writeField(Object instance, java.lang.reflect.Field field, Object value) {
+    private void writeField(Object instance, Field field, Object value) {
         var declaringClass = field.getDeclaringClass().getName();
         if (container.componentProviders().injectField(instance, declaringClass, field.getName(), value)) {
             return;
@@ -154,47 +242,48 @@ final class BeanInjector {
         vaubanLookup.setField(instance, field, value);
     }
 
-    void callInitializerMethods(Object instance, CreationalContext<?> ctx) {
-        var clazz = instance.getClass();
-        if (clazz.getName().contains("$$Intercepted")) {
-            clazz = clazz.getSuperclass();
+    // ---- Hierarchy / override resolution (JSR-330 §Injectable methods) ----
+
+    private static Class<?> unwrapInterceptedSubclass(Class<?> clazz) {
+        return clazz.getName().contains("$$Intercepted") ? clazz.getSuperclass() : clazz;
+    }
+
+    /** Class hierarchy from the top-most non-{@code Object} supertype down to {@code leaf}. */
+    private static List<Class<?>> hierarchySuperFirst(Class<?> leaf) {
+        var list = new ArrayList<Class<?>>();
+        for (var c = leaf; c != null && c != Object.class; c = c.getSuperclass()) {
+            list.add(c);
         }
-        var ownerBean = container.findBeanForInstance(instance);
-        var typeMapping = ManagedBean.buildTypeVariableMapping(clazz);
-        var current = clazz;
-        while (current != null && current != Object.class) {
-            for (var method : current.getDeclaredMethods()) {
-                if (method.isAnnotationPresent(jakarta.inject.Inject.class)) {
-                try {
-                    var paramTypes = method.getParameterTypes();
-                    var rawGenericParamTypes = method.getGenericParameterTypes();
-                    var genericParamTypes = new java.lang.reflect.Type[rawGenericParamTypes.length];
-                    for (int i = 0; i < rawGenericParamTypes.length; i++) {
-                        genericParamTypes[i] = ManagedBean.resolveType(rawGenericParamTypes[i], typeMapping);
-                    }
-                    var params = method.getParameters();
-                    var args = new Object[paramTypes.length];
-                    var transientContexts = new java.util.ArrayList<CreationalContextImpl<?>>();
-                    for (int i = 0; i < paramTypes.length; i++) {
-                        var paramQuals = QualifierHelper.extractParamQualifiers(params[i]);
-                        if (params[i].isAnnotationPresent(jakarta.enterprise.inject.TransientReference.class)) {
-                            var transientCtx = new CreationalContextImpl<>();
-                            args[i] = container.resolveParameter(paramTypes[i], genericParamTypes[i], transientCtx, paramQuals, method, ownerBean, params[i], i);
-                            transientContexts.add(transientCtx);
-                        } else {
-                            args[i] = container.resolveParameter(paramTypes[i], genericParamTypes[i], ctx, paramQuals, method, ownerBean, params[i], i);
-                        }
-                    }
-                    vaubanLookup.invokeMethod(instance, method, args);
-                    for (var tc : transientContexts) {
-                        tc.release();
-                    }
-                } catch (Exception e) {
-                    throw new RuntimeException("Failed to call initializer method: " + method.getName(), e);
-                }
-                }
+        Collections.reverse(list);
+        return list;
+    }
+
+    private static boolean isOverriddenInSubclasses(Method superMethod, List<Class<?>> subclasses) {
+        for (var subclass : subclasses) {
+            for (var candidate : subclass.getDeclaredMethods()) {
+                if (overrides(candidate, superMethod)) return true;
             }
-            current = current.getSuperclass();
         }
+        return false;
+    }
+
+    /**
+     * Whether {@code sub} (declared in a subtype) overrides {@code sup} per the Jakarta Dependency
+     * Injection override rules (JLS 8.4.8.1): same name and parameter types, neither static nor
+     * private, and — for a package-private supertype method — declared in the same package.
+     */
+    private static boolean overrides(Method sub, Method sup) {
+        if (!sub.getName().equals(sup.getName())) return false;
+        if (!Arrays.equals(sub.getParameterTypes(), sup.getParameterTypes())) return false;
+        int subMod = sub.getModifiers();
+        int supMod = sup.getModifiers();
+        if (Modifier.isStatic(subMod) || Modifier.isStatic(supMod)) return false;
+        // A private method neither overrides nor is overridden.
+        if (Modifier.isPrivate(subMod) || Modifier.isPrivate(supMod)) return false;
+        boolean supPackagePrivate = !Modifier.isPublic(supMod) && !Modifier.isProtected(supMod);
+        if (supPackagePrivate) {
+            return sub.getDeclaringClass().getPackageName().equals(sup.getDeclaringClass().getPackageName());
+        }
+        return true;
     }
 }
