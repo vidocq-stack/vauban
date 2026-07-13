@@ -384,8 +384,22 @@ public final class VaubanContainerBuilder {
         for (var clazz : beanClasses) {
             if (clazz.getClassLoader() != null) loaders.add(clazz.getClassLoader());
         }
+        // Keep the caller-installed context loader in the composite: an embedded
+        // deployment may contribute no class of its own (parent-first loaders
+        // whose classes also exist on the application classpath) yet still
+        // carry deployment resources — microprofile-config.properties,
+        // META-INF/services — that libraries read through the build-time TCCL.
+        var entryTccl = Thread.currentThread().getContextClassLoader();
+        if (entryTccl != null) loaders.add(entryTccl);
         if (loaders.size() <= 1) return loaders.iterator().next();
-        // Composite ClassLoader that delegates to all bean ClassLoaders
+        // Composite ClassLoader that delegates to all bean ClassLoaders — for
+        // classes AND resources. Resources matter as much as classes: this
+        // loader is installed as TCCL for the whole build, and libraries read
+        // configuration through it (MP Config reads
+        // META-INF/microprofile-config.properties and META-INF/services
+        // ConfigSources via TCCL.getResources during BCE validation). The
+        // default getResources only consults the parent and findResources, so
+        // both findResource and findResources must aggregate every loader.
         var loaderList = java.util.List.copyOf(loaders);
         return new ClassLoader(loaderList.getFirst()) {
             @Override
@@ -402,6 +416,29 @@ public final class VaubanContainerBuilder {
                     if (is != null) return is;
                 }
                 return super.getResourceAsStream(name);
+            }
+            @Override
+            protected java.net.URL findResource(String name) {
+                for (var loader : loaderList) {
+                    var url = loader.getResource(name);
+                    if (url != null) return url;
+                }
+                return null;
+            }
+            @Override
+            protected java.util.Enumeration<java.net.URL> findResources(String name) throws IOException {
+                var all = new java.util.LinkedHashSet<java.net.URL>();
+                for (var loader : loaderList) {
+                    all.addAll(java.util.Collections.list(loader.getResources(name)));
+                }
+                // getResources() = parent.getResources() + findResources(): the
+                // parent is loaderList.getFirst(), so drop its results here to
+                // avoid duplicates in the concatenated enumeration.
+                var parent = getParent();
+                if (parent != null) {
+                    java.util.Collections.list(parent.getResources(name)).forEach(all::remove);
+                }
+                return java.util.Collections.enumeration(all);
             }
         };
     }
