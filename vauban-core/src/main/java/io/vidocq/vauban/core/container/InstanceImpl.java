@@ -133,7 +133,20 @@ public final class InstanceImpl<T> implements Instance<T> {
         if (injectionPoint != null) {
             return ScopedValue.where(VaubanContainer.CURRENT_INJECTION_POINT, injectionPoint).call(action);
         }
-        return action.call();
+        // Keep an enclosing injection point visible: a synthetic bean creator's
+        // internal lookup (e.g. lookup.select(InjectionPoint.class)) must see
+        // the injection point of the bean being created, not a new one.
+        if (VaubanContainer.getCurrentInjectionPoint() != null) {
+            return action.call();
+        }
+        // Programmatic lookup (CDI.current().select / Instance without an
+        // underlying injection point): expose a synthetic InjectionPoint that
+        // carries the selected type and qualifiers, as other containers do.
+        // Synthetic bean creators rely on it — MP Config's @ConfigProperties
+        // creator reads the target bean class and prefix from there.
+        var syntheticQualifiers = new java.util.LinkedHashSet<Annotation>(Arrays.asList(qualifiers));
+        var syntheticIp = new VaubanInjectionPoint(resolveType, syntheticQualifiers, null, null);
+        return ScopedValue.where(VaubanContainer.CURRENT_INJECTION_POINT, syntheticIp).call(action);
     }
 
     @Override
