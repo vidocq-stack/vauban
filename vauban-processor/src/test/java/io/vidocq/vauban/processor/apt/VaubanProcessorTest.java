@@ -71,7 +71,7 @@ class VaubanProcessorTest {
         var outputDir = tempDir.resolve("classes");
         Files.createDirectories(outputDir);
 
-        // Build classpath from module locations (JPMS puts jars on module path, not classpath)
+        // Build classpath from module locations (Java Modules puts jars on module path, not classpath)
         var classpath = resolveCompilationClasspath();
 
         var fullOptions = new ArrayList<String>();
@@ -116,7 +116,7 @@ class VaubanProcessorTest {
 
     /**
      * Build a compilation classpath by resolving jar/directory locations from loaded classes.
-     * In a JPMS environment, System.getProperty("java.class.path") may be empty,
+     * In a Java Modules environment, System.getProperty("java.class.path") may be empty,
      * so we resolve locations from key classes that must be available during compilation.
      */
     private static String resolveCompilationClasspath() {

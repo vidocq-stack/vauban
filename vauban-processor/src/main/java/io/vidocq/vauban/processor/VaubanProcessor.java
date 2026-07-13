@@ -117,7 +117,7 @@ public class VaubanProcessor extends AbstractProcessor {
      * DotNames of classes added via {@code ScannedClasses.add()} during a BCE @Discovery phase.
      * These classes originate from dependency jars, not from the module being compiled.
      * Generating {@code _Factory} / {@code _ClientProxy} in the user module for such classes
-     * would create a split-package violation under JPMS (the package is already exported by the
+     * would create a split-package violation under Java Modules (the package is already exported by the
      * source jar). They are kept in the index and in {@code vauban-beans.list} so injection
      * resolution works, but no bytecode is emitted for them.
      */
@@ -347,7 +347,7 @@ public class VaubanProcessor extends AbstractProcessor {
 
                 // Skip factory/proxy generation for classes that originate from dependency jars
                 // (added via ScannedClasses.add() during @Discovery). Generating artifacts in
-                // the user module for such classes would create a JPMS split-package violation
+                // the user module for such classes would create a Java Modules split-package violation
                 // because the package is already exported by the source jar.
                 // The class remains in vauban-beans.list for injection resolution.
                 if (externalClassNames.contains(bean.beanClass())) {

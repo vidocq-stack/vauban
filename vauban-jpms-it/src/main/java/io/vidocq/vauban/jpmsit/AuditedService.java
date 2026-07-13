@@ -27,7 +27,7 @@ import java.io.IOException;
 /**
  * The fixture bean: normal-scoped (build-time {@code _ClientProxy}) and {@code @Audited}
  * (build-time, source-rendered {@code $$Intercepted}). Each method targets one historical
- * JPMS bug — see the test for the mapping.
+ * Java Modules bug — see the test for the mapping.
  */
 @ApplicationScoped
 @Audited

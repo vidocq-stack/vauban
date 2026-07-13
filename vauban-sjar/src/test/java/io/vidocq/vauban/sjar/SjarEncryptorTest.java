@@ -241,7 +241,7 @@ class SjarEncryptorTest {
         var clearPackages = java.util.Set.of("com/example/api");
         // exported package itself stays clear
         assertFalse(SjarEncryptor.shouldEncrypt("com/example/api/Service.class", clearPackages));
-        // a subpackage is NOT exported by JPMS — must be obfuscated
+        // a subpackage is NOT exported by Java Modules — must be obfuscated
         assertTrue(SjarEncryptor.shouldEncrypt("com/example/api/sub/Helper.class", clearPackages));
     }
 

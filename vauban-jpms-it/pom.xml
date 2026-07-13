@@ -2,7 +2,7 @@
 <!--
     Module-path regression vehicle for Vauban itself.
 
-    Every historical JPMS bug (VAU-INT-001..005, VAU-PRX-003) was caught by DOWNSTREAM
+    Every historical Java Modules bug (VAU-INT-001..005, VAU-PRX-003) was caught by DOWNSTREAM
     TCKs (mansart, heisenberg, dirac, cervantes) because the vauban test suite runs on
     the class path, where opens/exports are not enforced. This module closes that blind
     spot: a named module with NO `opens`, whose beans exercise the exact bug surface,
@@ -20,9 +20,9 @@
     </parent>
 
     <artifactId>vauban-jpms-it</artifactId>
-    <name>Vauban :: JPMS module-path IT</name>
+    <name>Vauban :: Java module-path IT</name>
     <description>Module-path regression vehicle: build-time intercepted/proxied beans with zero
-        `opens`, covering the historical JPMS bug surface (VAU-INT-001..005, VAU-PRX-003).</description>
+        `opens`, covering the historical Java Modules bug surface (VAU-INT-001..005, VAU-PRX-003).</description>
 
     <properties>
         <!-- Test vehicle: never released. -->

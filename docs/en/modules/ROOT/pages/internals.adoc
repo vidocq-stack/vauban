@@ -112,7 +112,7 @@ No `Class.forName`, no `Method.invoke`, no `Class.getDeclaredFields()` runs hot.
 
 Consequence: Vauban compiles to a GraalVM native image without a `reflect-config.json`. It works with Project Leyden CDS and with a minimal JLink image.
 
-== Exported JPMS modules
+== Exported Java modules
 
 [cols="2,3"]
 |===

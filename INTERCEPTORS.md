@@ -141,7 +141,7 @@ sequenceDiagram
 
 ---
 
-## 5. The real difficulty: run-time touch-points vs. JPMS `opens`
+## 5. The real difficulty: run-time touch-points vs. Java Modules `opens`
 
 Generating `$$Intercepted` is done by the APT. But the container still has to **use** that class, and
 each interaction is, naïvely, a reflective operation. On the strict module path,

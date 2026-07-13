@@ -717,7 +717,7 @@ while `resolvedGat.equals(jdkGat)` was false (asymmetric), and the anonymous
 - **Investigations** :
   - 2026-07-12 : found by grepping for stale version strings after the issue #3
     follow-up. Fixed: `version.properties` filtered by Maven next to the class,
-    constant loaded at class init (same-module JPMS resource, no opens needed).
+    constant loaded at class init (same-module Java Modules resource, no opens needed).
     No runtime consumers existed; the constant is no longer compile-time-inlineable,
     which also protects future consumers from the javac inlining trap.
 

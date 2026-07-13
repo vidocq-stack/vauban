@@ -19,7 +19,7 @@
  */
 /**
  * Module-path regression vehicle for Vauban: a strict named module with <strong>zero
- * {@code opens}</strong> whose beans cover the historical JPMS bug surface —
+ * {@code opens}</strong> whose beans cover the historical Java Modules bug surface —
  * overloaded intercepted methods (VAU-INT-001), primitive-array parameters (VAU-INT-002),
  * checked exceptions through the source-rendered subclass (VAU-INT-003), {@code @Interceptor}
  * beans instantiated in-module (VAU-INT-004), marker interceptor bindings detected by name

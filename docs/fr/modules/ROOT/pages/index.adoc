@@ -1,12 +1,12 @@
 = Vauban
-:description: Container CDI 4.1 Lite, JPMS-natif, génération de code à la compilation, zéro dépendance runtime.
+:description: Container CDI 4.1 Lite, natif Java Modules, génération de code à la compilation, zéro dépendance runtime.
 
 [.text-center]
 image::vauban-logo.png[Vauban,300,role=module-logo]
 
 
 [.lead]
-Vauban est un container CDI 4.1 qui résout l'injection au moment de la compilation. JPMS-natif, zéro dépendance runtime, pas de proxy dynamique — la résolution des dépendances se calcule comme une trajectoire balistique : sur plan, avant le premier coup de pelle.
+Vauban est un container CDI 4.1 qui résout l'injection au moment de la compilation. Natif Java Modules, zéro dépendance runtime, pas de proxy dynamique — la résolution des dépendances se calcule comme une trajectoire balistique : sur plan, avant le premier coup de pelle.
 
 == Origine du nom
 
@@ -21,7 +21,7 @@ Vauban faisait de la défense un art mathématique : trajectoires, sape, contre-
 | Spec implémentée | {spec-cdi-4-1}[Jakarta CDI 4.1 — profil Lite]
 | Repo | {repo-vauban}
 | Java | 25 (LTS)
-| Module JPMS | `io.vidocq.vauban.api`, `io.vidocq.vauban.core`, `io.vidocq.vauban.indexer`, `io.vidocq.vauban.processor`, `io.vidocq.vauban.junit`, `io.vidocq.vauban.classloader.spi`, `io.vidocq.vauban.sjar`
+| Module Java | `io.vidocq.vauban.api`, `io.vidocq.vauban.core`, `io.vidocq.vauban.indexer`, `io.vidocq.vauban.processor`, `io.vidocq.vauban.junit`, `io.vidocq.vauban.classloader.spi`, `io.vidocq.vauban.sjar`
 | Dépendances runtime | Aucune au-delà de `jakarta.cdi` et `jakarta.cdi.lang.model`
 | TCK CDI 4.1 Lite | partiel — voir xref:tck.adoc[état détaillé]
 |===
@@ -30,7 +30,7 @@ Vauban faisait de la défense un art mathématique : trajectoires, sape, contre-
 
 . **Zéro dépendance runtime** — uniquement la spec Jakarta CDI. Pas de Weld, pas d'ArC, pas de Guice.
 . **Codegen statique** — Class-File API (JEP 484) à `process-classes`. Aucune réflexion au démarrage. Aucun proxy dynamique. Aucune librairie de génération externe (ASM, Byte Buddy).
-. **JPMS strict** — chaque artefact Vauban a son `module-info.java`. Pas de classpath, pas d'`opens` non justifié, pas d'`add-opens` au lancement.
+. **Java Modules strict** — chaque artefact Vauban a son `module-info.java`. Pas de classpath, pas d'`opens` non justifié, pas d'`add-opens` au lancement.
 
 == Positionnement dans l'écosystème
 

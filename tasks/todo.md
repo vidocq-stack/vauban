@@ -1,7 +1,7 @@
 # Vauban - Work plan
 
 ## Completed phases
-- **Phase 0**: Project bootstrap (Maven 4 parent POM, 9 JPMS modules) ✅
+- **Phase 0**: Project bootstrap (Maven 4 parent POM, 9 Java modules) ✅
 - **Phase 1**: Class indexer (ClassFileScanner, JarScanner, 64 tests) ✅
 - **Phase 2**: CDI Language Model (declarations, types, AssignabilityRules, 33 tests) ✅
 - **Phase 3**: Bean discovery and resolution (BeanDiscovery, BeanResolver, DependencyGraph, 25 tests) ✅
@@ -346,12 +346,12 @@ runtime), so only method SHAPES are needed → a ClassInfo/Elements front-end is
       thrownTypes for the `throws` contract)
 - [x] Front-end predicates (`shouldProxy` on Method / MethodInfo / ExecutableElement) stay
       per-front-end — input models differ; the OUTPUT shape is the shared contract
-- [x] JPMS: `core.proxy` gets a **qualified** export to `io.vidocq.vauban.processor` only
+- [x] Java Modules: `core.proxy` gets a **qualified** export to `io.vidocq.vauban.processor` only
       (non-modular Maven plugin reads the jar from the classpath, unaffected)
 - [x] Validation: full reactor green, CDI TCK **774/774 PASS**, heisenberg `clean install` green
 
 ### 16d — Module-path regression vehicle (vauban-jpms-it) ✅ 2026-06-10
-> Every historical JPMS bug (VAU-INT-001..005, VAU-PRX-003) was caught by DOWNSTREAM TCKs,
+> Every historical Java Modules bug (VAU-INT-001..005, VAU-PRX-003) was caught by DOWNSTREAM TCKs,
 > never by the vauban suite — the class path does not enforce opens/exports. New reactor
 > module `vauban-jpms-it`, modeled on `mansart-transactions-cdi-jpms-it`.
 - [x] Named module, **zero `opens`**, `provides VaubanComponentProvider with _VaubanComponents`

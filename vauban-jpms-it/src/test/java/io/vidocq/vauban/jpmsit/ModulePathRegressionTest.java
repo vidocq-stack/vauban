@@ -40,7 +40,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * deliberately NOT through {@code @Inject} into the test instance, so nothing reflects into
  * the test class and the module needs no {@code opens}.
  *
- * <p>Each assertion below pins one historical JPMS bug that the class-path test suite could
+ * <p>Each assertion below pins one historical Java Modules bug that the class-path test suite could
  * not see (all of them were originally caught by downstream TCKs):</p>
  * <ul>
  *   <li>VAU-INT-001 — overloaded intercepted methods (distinct {@code $$ti$} glues);</li>
@@ -52,7 +52,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  *   <li>in-module field injection via the generated provider ({@code putfield}, no opens).</li>
  * </ul>
  */
-@DisplayName("Vauban on the module path — historical JPMS bug surface, zero opens")
+@DisplayName("Vauban on the module path — historical Java Modules bug surface, zero opens")
 class ModulePathRegressionTest {
 
     private static VaubanContainer container;
