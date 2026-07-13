@@ -19,7 +19,7 @@
         <version>0.3.0-SNAPSHOT</version>
     </parent>
 
-    <artifactId>vauban-jpms-it</artifactId>
+    <artifactId>vauban-module-it</artifactId>
     <name>Vauban :: Java module-path IT</name>
     <description>Module-path regression vehicle: build-time intercepted/proxied beans with zero
         `opens`, covering the historical Java Modules bug surface (VAU-INT-001..005, VAU-PRX-003).</description>

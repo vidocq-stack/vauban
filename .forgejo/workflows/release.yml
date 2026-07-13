@@ -55,7 +55,7 @@ jobs:
           excluded-modules: |
             vauban-test-suite
             vauban-tck-runner
-            vauban-jpms-it
+            vauban-module-it
             vauban-examples
           central-username: ${{ secrets.CENTRAL_USERNAME }}
           central-password: ${{ secrets.CENTRAL_PASSWORD }}

@@ -17,7 +17,7 @@
  *
  * SPDX-License-Identifier: EPL-2.0 OR EUPL-1.2 OR GPL-2.0-or-later
  */
-package io.vidocq.vauban.jpmsit;
+package io.vidocq.vauban.moduleit;
 
 import io.vidocq.vauban.core.container.VaubanContainer;
 import org.junit.jupiter.api.AfterAll;
@@ -76,9 +76,9 @@ class ModulePathRegressionTest {
     @Test
     @DisplayName("the $$Intercepted subclass and the _ClientProxy are BUILD-time classes")
     void buildTimeArtifactsExist() throws Exception {
-        assertNotNull(Class.forName("io.vidocq.vauban.jpmsit.AuditedService$$Intercepted"),
+        assertNotNull(Class.forName("io.vidocq.vauban.moduleit.AuditedService$$Intercepted"),
                 "the APT must have generated AuditedService$$Intercepted at build time");
-        assertNotNull(Class.forName("io.vidocq.vauban.jpmsit.AuditedService_ClientProxy"),
+        assertNotNull(Class.forName("io.vidocq.vauban.moduleit.AuditedService_ClientProxy"),
                 "the APT must have generated AuditedService_ClientProxy at build time");
     }
 
@@ -127,7 +127,7 @@ class ModulePathRegressionTest {
     void runsOnTheModulePath() {
         Module module = AuditedService.class.getModule();
         assertTrue(module.isNamed(), "fixtures must live in a named module, not the unnamed one");
-        assertEquals("io.vidocq.vauban.jpmsit", module.getName());
+        assertEquals("io.vidocq.vauban.moduleit", module.getName());
         assertTrue(module.getDescriptor().opens().isEmpty(),
                 "the whole point: ZERO opens directives in this module");
     }

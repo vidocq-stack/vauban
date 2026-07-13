@@ -350,10 +350,10 @@ runtime), so only method SHAPES are needed → a ClassInfo/Elements front-end is
       (non-modular Maven plugin reads the jar from the classpath, unaffected)
 - [x] Validation: full reactor green, CDI TCK **774/774 PASS**, heisenberg `clean install` green
 
-### 16d — Module-path regression vehicle (vauban-jpms-it) ✅ 2026-06-10
+### 16d — Module-path regression vehicle (vauban-module-it) ✅ 2026-06-10
 > Every historical Java Modules bug (VAU-INT-001..005, VAU-PRX-003) was caught by DOWNSTREAM TCKs,
 > never by the vauban suite — the class path does not enforce opens/exports. New reactor
-> module `vauban-jpms-it`, modeled on `mansart-transactions-cdi-jpms-it`.
+> module `vauban-module-it`, modeled on `mansart-transactions-cdi-module-it`.
 - [x] Named module, **zero `opens`**, `provides VaubanComponentProvider with _VaubanComponents`
       (APT build-time); surefire runs the test ON the module path (main module-info)
 - [x] Fixtures pin the whole historical bug surface: `work()` overloads ×3 (VAU-INT-001),
