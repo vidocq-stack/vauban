@@ -363,8 +363,12 @@ public final class VaubanBeanManager implements BeanManager {
         }
         if (allSame) return first;
 
+        var matching = new java.util.ArrayList<String>(beans.size());
+        for (var b : beans) {
+            matching.add(b.getBeanClass().getName() + b.getQualifiers());
+        }
         throw new jakarta.enterprise.inject.AmbiguousResolutionException(
-            "Ambiguous dependency: " + beans.size() + " beans match");
+            "Ambiguous dependency: " + beans.size() + " beans match: " + matching);
     }
 
     @Override
@@ -939,6 +943,40 @@ public final class VaubanBeanManager implements BeanManager {
 
     // Name comparison intentional throughout: CDI cross-classloader type matching
     @SuppressWarnings("java:S1872")
+    /**
+     * Erases a {@code GenericArrayType} to its runtime array class, but only
+     * when the component's type arguments are all unbounded wildcards (e.g.
+     * {@code Class<?>[]} → {@code Class[].class}). Returns {@code null} for
+     * components with concrete type arguments ({@code List<String>[]}), which
+     * must not silently match the erased bean type.
+     */
+    private static Class<?> erasedArrayClassIfUnbounded(java.lang.reflect.GenericArrayType gat) {
+        int dimensions = 1;
+        Type component = gat.getGenericComponentType();
+        while (component instanceof java.lang.reflect.GenericArrayType inner) {
+            dimensions++;
+            component = inner.getGenericComponentType();
+        }
+        Class<?> rawComponent;
+        if (component instanceof java.lang.reflect.ParameterizedType pt
+                && pt.getRawType() instanceof Class<?> raw) {
+            for (Type argument : pt.getActualTypeArguments()) {
+                boolean unbounded = argument instanceof java.lang.reflect.WildcardType w
+                        && w.getLowerBounds().length == 0
+                        && (w.getUpperBounds().length == 0 || w.getUpperBounds()[0] == Object.class);
+                if (!unbounded && argument != Object.class) {
+                    return null;
+                }
+            }
+            rawComponent = raw;
+        } else if (component instanceof Class<?> c) {
+            rawComponent = c;
+        } else {
+            return null;
+        }
+        return java.lang.reflect.Array.newInstance(rawComponent, new int[dimensions]).getClass();
+    }
+
     private static boolean typesMatch(Type beanType, Type requiredType) {
         if (beanType.equals(requiredType)) return true;
 
@@ -946,6 +984,22 @@ public final class VaubanBeanManager implements BeanManager {
         if (requiredType instanceof Class<?> reqClass && beanType instanceof Class<?> btClass
                 && isPrimitiveWrapperMatch(reqClass, btClass)) {
             return true;
+        }
+
+        // Array injection points with a generic component (Class<?>[] is a
+        // GenericArrayType) match a bean's erased array class when every type
+        // argument of the component is an unbounded wildcard — CDI 4.1 §5.2.4
+        // raw ↔ parameterized equivalence applied to array element types.
+        // Cf. VAU-BCE-004.
+        if (requiredType instanceof java.lang.reflect.GenericArrayType reqGat) {
+            Class<?> reqErased = erasedArrayClassIfUnbounded(reqGat);
+            if (reqErased != null && beanType instanceof Class<?> btClass && btClass.isArray()) {
+                return reqErased == btClass || reqErased.getName().equals(btClass.getName());
+            }
+            if (beanType instanceof java.lang.reflect.GenericArrayType btGat) {
+                return btGat.getTypeName().equals(reqGat.getTypeName());
+            }
+            return false;
         }
 
         // CDI 4.1 Section 5.2.5: raw types must be identical

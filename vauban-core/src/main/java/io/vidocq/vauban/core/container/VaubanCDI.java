@@ -45,19 +45,29 @@ public class VaubanCDI extends CDI<Object> {
 
     @Override
     public Instance<Object> select(Annotation... qualifiers) {
-        return new InstanceImpl<>(getContainer(), Object.class);
+        // CDI 4.1 §11.1: programmatic lookup must honor the given qualifiers —
+        // they used to be silently dropped, resolving @Default instead.
+        return new InstanceImpl<>(getContainer(), Object.class, qualifiers, null);
     }
 
     @Override
     public <U> Instance<U> select(Class<U> subtype, Annotation... qualifiers) {
-        return new InstanceImpl<>(getContainer(), subtype);
+        return new InstanceImpl<>(getContainer(), subtype, qualifiers, null);
     }
 
     @Override
     public <U> Instance<U> select(TypeLiteral<U> subtype, Annotation... qualifiers) {
         @SuppressWarnings("unchecked")
-        var clazz = (Class<U>) subtype.getType();
-        return new InstanceImpl<>(getContainer(), clazz);
+        var clazz = (Class<U>) rawClassOf(subtype.getType());
+        // Preserve the full generic type so parameterized lookups keep matching.
+        return new InstanceImpl<>(getContainer(), clazz, subtype.getType(), qualifiers, null, null);
+    }
+
+    private static Class<?> rawClassOf(java.lang.reflect.Type type) {
+        if (type instanceof Class<?> c) return c;
+        if (type instanceof java.lang.reflect.ParameterizedType pt
+                && pt.getRawType() instanceof Class<?> raw) return raw;
+        return Object.class;
     }
 
     @Override

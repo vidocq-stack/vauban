@@ -720,3 +720,77 @@ while `resolvedGat.equals(jdkGat)` was false (asymmetric), and the anonymous
     constant loaded at class init (same-module JPMS resource, no opens needed).
     No runtime consumers existed; the constant is no longer compile-time-inlineable,
     which also protects future consumers from the javac inlining trap.
+
+## VAU-BCE-004 — Synthetic bean types given as runtime array classes never resolve
+
+- **Date** : 2026-07-13
+- **Statut** : FIXED (2026-07-13, branch pr/ybl/synthetic-array-bean-types)
+- **Module touché** : vauban-core (SyntheticBeanConverter, AssignabilityRules, ManagedBean, VaubanContainer, VaubanBeanManager)
+- **Symptôme** : a BCE registering `addBean(Boolean[].class).type(Boolean[].class)`
+  (MP Config's ConfigCdiExtension does, for `@ConfigProperty` array injection points)
+  yields "Unsatisfied dependency" for every `ArrayType` injection point: the bean type
+  was recorded as a flat `ClassType(DotName("[Ljava.lang.Boolean;"))`.
+- **Reproduction minimale** : `SyntheticArrayBeanTypeTest` (boxed, primitive, `Class<?>[]`).
+- **Hypothèse de cause** : `SyntheticBeanConverter.toBeanDescriptor` mapped every runtime
+  `Class` to `ClassType(cls.getName())`; array matching, runtime bean-type resolution
+  (`resolveArrayClass` on primitive-named components), `select(Class)` and
+  `typesMatch(GenericArrayType)` each had the same blind spot.
+- **Investigations** :
+  - 2026-07-13 : found by migrating the MP Config TCK runner to the assembled Vidocq
+    runtime (ravel BUG-20260713-01 family 1). Fixed end to end; array element matching
+    now follows CDI 4.1 §5.2.4 (identical element types, no boxing, raw ↔ unbounded
+    parameterized equivalence).
+
+## VAU-LKP-001 — Programmatic lookup drops qualifiers and hides the injection point
+
+- **Date** : 2026-07-13
+- **Statut** : FIXED (2026-07-13, branch pr/ybl/synthetic-array-bean-types)
+- **Module touché** : vauban-core (VaubanCDI, InstanceImpl)
+- **Symptôme** : `CDI.current().select(type, qualifiers...)` ignored the given
+  qualifiers (resolved `@Default` or failed `UnsatisfiedResolution`); synthetic bean
+  creators invoked through a programmatic lookup saw an EMPTY `InjectionPoint`
+  (type `Object`) instead of the selected type/qualifiers, breaking MP Config's
+  `@ConfigProperties` programmatic lookups (`ClassCastException: Object`).
+- **Reproduction minimale** : `VaubanCDISelectQualifierTest`.
+- **Investigations** :
+  - 2026-07-13 : ravel BUG-20260713-01 family 2 (programmatic side). select now
+    forwards qualifiers (CDI 4.1 §11.1) and `Instance.get()` without an underlying
+    injection point installs a synthetic `InjectionPoint` carrying the selected
+    type and qualifiers; an enclosing injection point stays visible to a creator's
+    internal lookups.
+
+## VAU-DSC-002 — Build-time composite discovery loader hides source-loader resources
+
+- **Date** : 2026-07-13
+- **Statut** : FIXED (2026-07-13, branch pr/ybl/synthetic-array-bean-types)
+- **Module touché** : vauban-core (VaubanContainerBuilder.buildCompositeClassLoader)
+- **Symptôme** : during the build (BCE phases included) the TCCL is a composite
+  loader that only delegated classes and `getResourceAsStream`; `getResources`
+  (plural) fell through to the parent, so a deployment's
+  `META-INF/microprofile-config.properties` and ServiceLoader `ConfigSource`s were
+  invisible to MP Config during deployment validation. An embedded deployment
+  contributing no class of its own (parent-first loader over classes that also
+  exist on the application classpath) lost its resources entirely.
+- **Reproduction minimale** : `CompositeLoaderResourceTest` (multi-loader + entry-TCCL).
+- **Investigations** :
+  - 2026-07-13 : ravel BUG-20260713-01 family 3. `findResource`/`findResources` now
+    aggregate every source loader, and the caller-installed context loader joins the
+    composite.
+
+## VAU-OBS-002 — Observer method non-event parameters are not injection points
+
+- **Date** : 2026-07-13
+- **Statut** : FIXED (2026-07-13, branch pr/ybl/synthetic-array-bean-types)
+- **Module touché** : vauban-core (BeanDiscovery)
+- **Symptôme** : the non-event parameters of observer methods (CDI 4.1 §10.4.3) were
+  absent from the bean descriptor: deployment validation skipped any parameter with a
+  custom qualifier (ad-hoc check) and BCEs never saw them through
+  `BeanInfo.injectionPoints()` — MP Config could neither validate
+  `@ConfigProperty` observer parameters nor synthesize the beans satisfying them
+  (TCK `MissingValueOnObserverMethodInjectionTest`).
+- **Reproduction minimale** : `ObserverParamValidationTest`.
+- **Investigations** :
+  - 2026-07-13 : ravel BUG-20260713-01 family 4 (observer side). Observer non-event
+    parameters are now collected as `METHOD_PARAMETER` injection points
+    (EventMetadata excluded); the typed-resolution `AmbiguousResolutionException`
+    message now lists the matching beans.
