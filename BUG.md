@@ -794,3 +794,28 @@ while `resolvedGat.equals(jdkGat)` was false (asymmetric), and the anonymous
     parameters are now collected as `METHOD_PARAMETER` injection points
     (EventMetadata excluded); the typed-resolution `AmbiguousResolutionException`
     message now lists the matching beans.
+
+## VAU-BCE-005 — @Vetoed added at @Enhancement ignored for index-discovered beans
+
+- **Date** : 2026-07-14
+- **Statut** : FIXED (2026-07-14)
+- **Module touché** : vauban-core (EnhancementApplier)
+- **Symptôme** : a BCE adding `@Vetoed` to a bean class in its `@Enhancement` phase
+  (the CDI Lite idiom for replacing a discovered managed bean with a synthetic one)
+  only takes effect when the class goes through the pre-discovery archive pass. For a
+  bean already discovered — the normal case for pre-indexed application classes on the
+  module path — `EnhancementApplier.applyEnhancements` applied qualifier/scope changes
+  but silently ignored the added `@Vetoed`, so the managed bean stayed registered and
+  every injection point of its interface became `AmbiguousResolution` once the
+  replacing synthetic bean was added.
+- **Reproduction minimale** : mansart MANSART-005 — `AuditEntryRepositoryImpl`
+  (managed `@Singleton`, vetoed by `MansartDataExtension`) + the routing synthetic
+  bean; boot `vidocq-runtime-mansart-h2-example` on the module path.
+- **Hypothèse de cause** : `applyEnhancements` only rewrote descriptors; it never
+  dropped one. Bean discovery must see enhancement-modified annotations, so an added
+  `@Vetoed` has to exclude the class exactly like a source-level one.
+- **Investigations** :
+  - 2026-07-14 : fixed — `applyEnhancements` drops any descriptor whose enhancement
+    configs add `@Vetoed` (class-level, `getAddedAnnotations` + `getAddedAnnotationInfos`).
+    Regression test `BceVetoedEnhancementTest`; full reactor green; CDI Lite TCK re-run
+    774/774.

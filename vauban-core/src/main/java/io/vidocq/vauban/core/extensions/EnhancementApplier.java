@@ -88,6 +88,11 @@ final class EnhancementApplier {
 
     /**
      * Apply enhancement modifications to bean descriptors. Returns the modified list.
+     *
+     * <p>A class that gains {@code @Vetoed} through an enhancement is excluded entirely —
+     * bean discovery must see the enhanced annotations, so an added {@code @Vetoed} has the
+     * same effect as a source-level one (CDI 4.1). This covers index-discovered beans; classes
+     * vetoed before discovery are already filtered by {@code BeanDiscovery.isVetoed}.
      */
     static List<BeanDescriptor> applyEnhancements(
             List<BeanDescriptor> descriptors,
@@ -102,9 +107,25 @@ final class EnhancementApplier {
                 result.add(bean);
                 continue;
             }
+            if (addsVeto(configs)) continue;
             result.add(applyClassConfigs(bean, configs));
         }
         return result;
+    }
+
+    /** True when any enhancement config adds {@code @Vetoed} at class level. */
+    private static boolean addsVeto(List<VaubanClassConfig> configs) {
+        for (var config : configs) {
+            if (config.getAddedAnnotations().contains(jakarta.enterprise.inject.Vetoed.class)) {
+                return true;
+            }
+            for (var annInfo : config.getAddedAnnotationInfos()) {
+                if ("jakarta.enterprise.inject.Vetoed".equals(annInfo.name())) {
+                    return true;
+                }
+            }
+        }
+        return false;
     }
 
     /**
