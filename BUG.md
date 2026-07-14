@@ -819,3 +819,32 @@ while `resolvedGat.equals(jdkGat)` was false (asymmetric), and the anonymous
     configs add `@Vetoed` (class-level, `getAddedAnnotations` + `getAddedAnnotationInfos`).
     Regression test `BceVetoedEnhancementTest`; full reactor green; CDI Lite TCK re-run
     774/774.
+
+## VAU-CTX-001 — BCE-registered custom contexts silently dropped on the module path
+
+- **Date** : 2026-07-14
+- **Statut** : FIXED (2026-07-14)
+- **Module touché** : vauban-core (VaubanContainerBuilder, InterceptorBeanWrapper)
+- **Symptôme** : a context registered through `MetaAnnotations.addContext(scope, isNormal,
+  contextClass)` was never installed when the app runs on the strict module path: the
+  builder instantiated the context class via `privateLookupIn` (needs `opens`), caught the
+  failure and **silently skipped** the context. Every normal-scoped bean of that scope then
+  hit the client-proxy delegate's **silent `@Dependent` fallback** — a fresh instance per
+  proxy call, so state written through the proxy vanished on the next call. Seen as
+  mansart's `@TransactionScoped` bean always being empty in
+  `vidocq-runtime-mansart-h2-example` ("TX audit: []").
+- **Reproduction minimale** : `TxModulePathTest.transaction_scoped_context_works_on_the_module_path`
+  (mansart-transactions-cdi-jpms-it) — red before the fix (`expected: <2> but was: <0>`).
+- **Hypothèse de cause** : two compounding silent fallbacks. (1) The custom-context
+  registration only knew the provider path and the private-lookup path; a public context
+  class in an exported package (the normal case, and what the BCE API implies) needs
+  neither. (2) The proxy delegate treated "no context registered for this scope" as
+  "@Dependent", violating CDI 4.1 §6.5.1.
+- **Investigations** :
+  - 2026-07-14 : fixed — context instantiation now tries the module's
+    `VaubanComponentProvider`, then the PUBLIC no-arg constructor via
+    `MethodHandles.publicLookup()` (no opens needed for an exported package), then the
+    private lookup; an uninstallable declared context is now a `DeploymentException`
+    instead of a silent skip. The proxy delegate throws `ContextNotActiveException` when
+    no context is registered for a normal scope instead of handing out per-call
+    `@Dependent` instances. CDI Lite TCK re-run 774/774.

@@ -851,17 +851,37 @@ public final class VaubanContainerBuilder {
             var vaubanLookup = getBuilderLookup();
             var container = new VaubanContainer(index, descriptors, observers, interceptors, disposers, factories, syntheticDisposers, beanClassLoader, classDefiner, vaubanLookup, componentProviders);
 
-            // Register custom contexts from Build Compatible Extensions
+            // Register custom contexts from Build Compatible Extensions (MetaAnnotations.addContext).
+            // Instantiation order: module's VaubanComponentProvider (zero reflection), then the
+            // PUBLIC constructor path — a BCE context class is public with a public no-arg
+            // constructor, so in an exported package this needs no `opens` on the module path —
+            // and only then the private-lookup path (classpath, or an opened package).
+            // A declared scope whose context cannot be installed is a deployment error: silently
+            // skipping it makes every bean of that scope silently fall back to per-lookup
+            // instances (VAU-CTX-001, surfaced as mansart's "empty @TransactionScoped" bug).
             if (discoveryResult != null) {
                 for (var reg : discoveryResult.metaAnnotations().getCustomContexts()) {
+                    var contextClass = reg.contextClass();
                     try {
-                        var contextClass = reg.contextClass();
-                        var provided = componentProviders.create(contextClass.getName());
-                        var ctx = (jakarta.enterprise.context.spi.Context)
-                                (provided != null ? provided : vaubanLookup.newInstance(contextClass));
+                        Object instance = componentProviders.create(contextClass.getName());
+                        if (instance == null) {
+                            try {
+                                instance = vaubanLookup.newInstancePublic(contextClass.getConstructor());
+                            } catch (NoSuchMethodException noPublicNoArgCtor) {
+                                // fall through to the private-lookup path
+                            }
+                        }
+                        if (instance == null) {
+                            instance = vaubanLookup.newInstance(contextClass);
+                        }
+                        var ctx = (jakarta.enterprise.context.spi.Context) instance;
                         container.contexts.computeIfAbsent(reg.scopeAnnotation(), k -> new java.util.ArrayList<>()).add(ctx);
                     } catch (Exception e) {
-                        // Skip context if instantiation fails
+                        throw new jakarta.enterprise.inject.spi.DeploymentException(
+                                "Cannot install the context " + contextClass.getName()
+                                        + " registered for scope " + reg.scopeAnnotation().getName()
+                                        + " (MetaAnnotations.addContext). The context class must be public"
+                                        + " with a public no-arg constructor in an exported package.", e);
                     }
                 }
             }
