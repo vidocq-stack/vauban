@@ -225,7 +225,15 @@ final class InterceptorBeanWrapper {
                     if (currentBean == null) currentBean = bean;
                     var scopeClass = currentBean.getScope();
                     var ctx = container.getFirstContext(scopeClass);
-                    if (ctx == null) ctx = container.dependentContext();
+                    if (ctx == null) {
+                        // A normal-scoped proxy call without a registered context must fail loudly
+                        // (CDI 4.1 §6.5.1) — the previous silent @Dependent fallback handed out a
+                        // fresh instance per proxy call, so state written through the proxy
+                        // vanished on the next call (VAU-CTX-001).
+                        throw new jakarta.enterprise.context.ContextNotActiveException(
+                                "No context registered for scope " + scopeClass.getName()
+                                        + " (bean " + currentBean.getBeanClass().getName() + ")");
+                    }
                     return ctx.get((Contextual<Object>) (Contextual<?>) currentBean,
                             new CreationalContextImpl<Object>());
                 };
@@ -283,7 +291,15 @@ final class InterceptorBeanWrapper {
                     if (currentBean == null) currentBean = bean;
                     var scopeClass = currentBean.getScope();
                     var ctx = container.getFirstContext(scopeClass);
-                    if (ctx == null) ctx = container.dependentContext();
+                    if (ctx == null) {
+                        // A normal-scoped proxy call without a registered context must fail loudly
+                        // (CDI 4.1 §6.5.1) — the previous silent @Dependent fallback handed out a
+                        // fresh instance per proxy call, so state written through the proxy
+                        // vanished on the next call (VAU-CTX-001).
+                        throw new jakarta.enterprise.context.ContextNotActiveException(
+                                "No context registered for scope " + scopeClass.getName()
+                                        + " (bean " + currentBean.getBeanClass().getName() + ")");
+                    }
                     return ctx.get((Contextual<Object>) (Contextual<?>) currentBean,
                             new CreationalContextImpl<Object>());
                 };
