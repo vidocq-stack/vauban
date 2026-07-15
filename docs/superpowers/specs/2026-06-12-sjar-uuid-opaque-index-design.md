@@ -8,7 +8,7 @@
 
 The SJAR format (`vauban-sjar`) encrypts the bytecode of internal classes
 (packages **not** exported/opened by `module-info`) with AES-256-GCM, while
-keeping JPMS-exposed classes in clear text so they remain usable for
+keeping Java Modules-exposed classes in clear text so they remain usable for
 compilation and reflection.
 
 The current format (`VERSION = 1`) has a confidentiality leak that defeats the
@@ -24,7 +24,7 @@ purpose of encrypting the bytecode: **the class names are still fully visible**.
 
 The goal of this change is that a packaged SJAR reveals **no internal package or
 class name on disk**. The only names visible in the ZIP listing are the ones
-JPMS forces to be public (module name + exported/opened packages via
+Java Modules forces to be public (module name + exported/opened packages via
 `module-info.class`), which is inherent to the module system and accepted.
 
 ## Decisions (locked)
@@ -32,7 +32,7 @@ JPMS forces to be public (module name + exported/opened packages via
 - **Disk-only obfuscation.** Internal entries are renamed to a UUID **on disk
   only**. At runtime the classloader calls `defineClass` with the *real* class
   name, so `Class.getName()`, stack traces, reflection, annotations, CDI and
-  JPMS all see the real FQCN. No bytecode is rewritten.
+  Java Modules all see the real FQCN. No bytecode is rewritten.
 - **Scope: classes *and* internal resources.** Every entry of a non-exposed
   package (`.class` or any resource) is renamed + encrypted. Resources of
   exposed packages stay clear.
@@ -48,7 +48,7 @@ JPMS forces to be public (module name + exported/opened packages via
 After packaging, the ZIP listing exposes no internal path:
 
 ```
-module-info.class                       ← clear (JPMS API, unavoidable)
+module-info.class                       ← clear (Java Modules API, unavoidable)
 io/vidocq/api/Service.class             ← clear (exports/opens packages only)
 io/vidocq/api/messages.properties       ← clear (resource of an exposed package)
 META-INF/MANIFEST.MF
@@ -103,7 +103,7 @@ ever exists inside the encrypted blob.
 ### `META-INF/vauban/<uuid>` (encrypted blobs)
 
 Same per-entry encryption as today: `[12-byte IV][ciphertext + 16-byte GCM
-tag]`, AES-256-GCM, unique IV per entry. Placed under `META-INF/` so the JPMS
+tag]`, AES-256-GCM, unique IV per entry. Placed under `META-INF/` so the Java Modules
 module reader and the `classEntries()` scan ignore them. The UUID is a random
 v4 UUID string; the file has no extension.
 
@@ -163,6 +163,6 @@ v4 UUID string; the file has no extension.
 
 - Runtime bytecode renaming (explicitly rejected — breaks the ecosystem).
 - Backward-compatible reading of v1 archives.
-- Hiding the module name / exported packages (inherent to JPMS).
+- Hiding the module name / exported packages (inherent to Java Modules).
 - Defeating a runtime attacker who already holds the master key (this is
   on-disk opacity, not key escrow).

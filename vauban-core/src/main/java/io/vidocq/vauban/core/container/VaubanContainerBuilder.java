@@ -185,7 +185,7 @@ public final class VaubanContainerBuilder {
 
     /**
      * Provide a {@link java.lang.invoke.MethodHandles.Lookup} from the user's module.
-     * This enables JPMS-compliant access to private bean members without
+     * This enables Java Modules-compliant access to private bean members without
      * {@code setAccessible(true)}. The lookup should be obtained via
      * {@code MethodHandles.lookup()} in the user's code.
      *

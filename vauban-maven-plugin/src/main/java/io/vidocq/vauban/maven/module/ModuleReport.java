@@ -30,7 +30,7 @@ public final class ModuleReport {
      */
     public static String generate(List<ModuleAnalysisResult> results, List<SplitPackage> splitPackages) {
         var sb = new StringBuilder();
-        sb.append("=== JPMS Module Analysis Report ===\n\n");
+        sb.append("=== Java Module Analysis Report ===\n\n");
 
         int explicit = 0, automatic = 0, unnamed = 0;
 

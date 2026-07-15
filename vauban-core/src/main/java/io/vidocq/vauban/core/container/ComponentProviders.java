@@ -119,7 +119,7 @@ final class ComponentProviders {
     /**
      * Creates the {@code <Bean>_ClientProxy} of a normal-scoped bean in-module (and wires its
      * {@code delegate}) through the first provider that owns it, or {@code null} if none does (so the
-     * caller falls back to runtime proxy generation + reflective instantiation). Lets a strict-JPMS
+     * caller falls back to runtime proxy generation + reflective instantiation). Lets a strict Java Modules
      * app keep its bean package closed — no {@code opens}, no {@code exports}. A provider that throws
      * is skipped rather than failing proxy creation.
      */

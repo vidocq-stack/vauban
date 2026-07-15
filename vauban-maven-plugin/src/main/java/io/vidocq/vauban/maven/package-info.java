@@ -18,6 +18,6 @@
  * SPDX-License-Identifier: EPL-2.0 OR EUPL-1.2 OR GPL-2.0-or-later
  */
 /**
- * Maven plugin for dependency indexing and JPMS analysis.
+ * Maven plugin for dependency indexing and Java Modules analysis.
  */
 package io.vidocq.vauban.maven;

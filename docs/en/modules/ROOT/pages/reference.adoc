@@ -1,8 +1,8 @@
 = Reference
-:description: Maven artefacts, exported JPMS packages, Maven plugin, JUnit extension, Lite vs Full comparison.
+:description: Maven artefacts, exported Java Modules packages, Maven plugin, JUnit extension, Lite vs Full comparison.
 
 [.lead]
-This page lists every artefact published by Vauban, the JPMS packages they export, the Maven-plugin goals, and the comparison between the CDI Lite and Full profiles.
+This page lists every artefact published by Vauban, the Java Modules packages they export, the Maven-plugin goals, and the comparison between the CDI Lite and Full profiles.
 
 == Maven artefacts
 
@@ -47,7 +47,7 @@ This page lists every artefact published by Vauban, the JPMS packages they expor
 | Official integration test suite
 |===
 
-== Exported JPMS modules
+== Exported Java modules
 
 [cols="2,3"]
 |===
@@ -93,7 +93,7 @@ This page lists every artefact published by Vauban, the JPMS packages they expor
 | Emits `_Factory`, `_ClientProxy`, `_ProducerFactory` via Class-File API.
 
 | `vauban:analyze`
-| JPMS analysis, detects split packages and inconsistent exports.
+| Java Modules analysis, detects split packages and inconsistent exports.
 
 | `vauban:dist`
 | Packages a runnable distribution (jlink + image).
@@ -198,7 +198,7 @@ Three discovery modes:
 
 Vauban needs no application configuration file. Bean selection happens via:
 
-* the `module-info.java` (JPMS visibility);
+* the `module-info.java` (Java Modules visibility);
 * the bootstrap strategy (`scanLocal()`, `scanClasspath()`, `addBeanClass()`).
 
 For dynamic application configuration, use MicroProfile Config through xref:vidocq::index.adoc[Vidocq Runtime].
@@ -211,6 +211,6 @@ For dynamic application configuration, use MicroProfile Config through xref:vido
 == Compatibility
 
 * Java 25 (LTS), Maven 3.9.16.
-* Strict JPMS, named modules only.
+* Strict Java Modules, named modules only.
 * CDI 4.1 — Lite profile.
 * Compatible with GraalVM `native-image` and Project Leyden CDS.

@@ -74,7 +74,7 @@
         <module>vauban-test-suite</module>
         <module>vauban-tck-runner</module>
         <module>vauban-atinject-tck-runner</module>
-        <module>vauban-jpms-it</module>
+        <module>vauban-module-it</module>
         <module>vauban-examples</module>
     </modules>
 

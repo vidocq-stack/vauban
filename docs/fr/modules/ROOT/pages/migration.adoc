@@ -78,7 +78,7 @@ Spécificités du profil Lite à connaître avant migration :
 == Stratégie recommandée
 
 . Faire tourner le code existant sous Vauban dans une branche dédiée.
-. Lancer `vauban:analyze` pour détecter les split packages et exports JPMS manquants.
+. Lancer `vauban:analyze` pour détecter les split packages et exports Java Modules manquants.
 . Exécuter `vauban-test-suite` adapté au domaine applicatif.
 . Activer la TCK CDI 4.1 Lite sur l'application elle-même via `vauban-junit`.
 . Itérer sur les BCE pour remplacer les portable extensions.

@@ -31,7 +31,7 @@ import java.util.concurrent.ConcurrentHashMap;
  * Centralized reflective access utility using {@link MethodHandles.Lookup}.
  * <p>
  * All reflective access goes through {@link MethodHandles#privateLookupIn} —
- * no {@code setAccessible(true)} anywhere. Works for both JPMS modules and
+ * no {@code setAccessible(true)} anywhere. Works for both Java modules and
  * classpath (unnamed modules).
  * <p>
  * The user's module consents to access either by:
@@ -303,13 +303,13 @@ public final class VaubanLookup {
 
     /**
      * Get a private Lookup for the given target class.
-     * Uses cache for performance. Works for both JPMS modules (with opens)
+     * Uses cache for performance. Works for both Java modules (with opens)
      * and unnamed modules (classpath).
      */
     MethodHandles.Lookup lookupFor(Class<?> targetClass) {
         return lookupCache.computeIfAbsent(targetClass, clazz -> {
             try {
-                // Ensure vauban.core can read the target module (required for JPMS)
+                // Ensure vauban.core can read the target module (required for Java Modules)
                 Module vaubanModule = VaubanLookup.class.getModule();
                 Module targetModule = clazz.getModule();
                 if (!vaubanModule.canRead(targetModule)) {

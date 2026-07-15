@@ -6,7 +6,7 @@
 
 <p align="center">
   <strong>Java Modules-native CDI 4.1 container :)</strong><br>
-  <a href="https://jakarta.ee/specifications/cdi/4.1/">CDI 4.1</a> | JDK 25 | JPMS | Virtual Threads | Zero reflection
+  <a href="https://jakarta.ee/specifications/cdi/4.1/">CDI 4.1</a> | JDK 25 | Java Modules | Virtual Threads | Zero reflection
 </p>
 
 <p align="center">
@@ -21,20 +21,20 @@
 
 ## What is Vauban?
 
-Vauban is an implementation of [Jakarta CDI 4.1](https://jakarta.ee/specifications/cdi/4.1/) designed from the ground up for the Java Platform Module System (JPMS). It generates all the required code (factories, proxies, interceptors) at compile time using the JDK 25 Class-File API, with no external bytecode dependency.
+Vauban is an implementation of [Jakarta CDI 4.1](https://jakarta.ee/specifications/cdi/4.1/) designed from the ground up for the Java Platform Module System (Java Modules). It generates all the required code (factories, proxies, interceptors) at compile time using the JDK 25 Class-File API, with no external bytecode dependency.
 
 ### Why Vauban?
 
 | | Weld | ArC (Quarkus) | **Vauban** |
 |---|---|---|---|
 | Approach | Runtime / reflection | Build-time / Jandex + ASM | **Build-time / Class-File API** |
-| JPMS | No | No | **Native** |
+| Java Modules | No | No | **Native** |
 | Bytecode dependencies | ASM / ByteBuddy | ASM | **None** (pure JDK) |
 | CDI Lite TCK | ~100% | ~100% | **100% (774/774)** |
 
 ### Philosophy
 
-- **JPMS-first**: every component is an explicit Java module (`module-info.java`)
+- **Java Modules-first**: every component is an explicit Java module (`module-info.java`)
 - **Zero reflection**: static code generation via the JDK 25 Class-File API
 - **Virtual threads ready**: `ScopedValue` (JEP 487) instead of `ThreadLocal` everywhere
 - **Minimal dependencies**: the indexer has no external dependency
@@ -271,7 +271,7 @@ Produces an immutable `VaubanIndex` containing the metadata of every scanned cla
 | `TypeInfo` | Type representation (class, parameterized, wildcard, type variable, array) |
 | `DotName` | Internal qualified name (`jakarta.inject.Inject`) |
 
-**JPMS module**: `io.vidocq.vauban.indexer` — zero external dependency.
+**Java module**: `io.vidocq.vauban.indexer` — zero external dependency.
 
 ```java
 var index = new IndexBuilder()
@@ -288,7 +288,7 @@ var beans = index.getAnnotatedClasses(DotName.of("jakarta.enterprise.context.App
 
 Provides the `Vauban` facade and re-exports the CDI 4.1 contracts.
 
-**JPMS module**: `io.vidocq.vauban.api` — depends on the Jakarta CDI API (transitive).
+**Java module**: `io.vidocq.vauban.api` — depends on the Jakarta CDI API (transitive).
 
 ### vauban-core
 
@@ -359,7 +359,7 @@ Generated via the Class-File API — zero reflection at runtime:
 - Binding matching by name + member values
 - Support for inherited and transitive bindings (via stereotypes)
 
-**JPMS module**: `io.vidocq.vauban.core` — provides `CDIProvider` and `BuildServices`.
+**Java module**: `io.vidocq.vauban.core` — provides `CDIProvider` and `BuildServices`.
 
 ### vauban-processor
 
@@ -378,7 +378,7 @@ Generated via the Class-File API — zero reflection at runtime:
 3. `BeanDiscovery` + `DeploymentValidator`
 4. Bytecode generation via the Class-File API for each managed bean
 
-**JPMS module**: `io.vidocq.vauban.processor` — depends on `java.compiler`.
+**Java module**: `io.vidocq.vauban.processor` — depends on `java.compiler`.
 
 ### vauban-junit
 
@@ -408,7 +408,7 @@ class MyServiceTest {
 }
 ```
 
-**JPMS module**: `io.vidocq.vauban.junit` — depends on `org.junit.jupiter.api`.
+**Java module**: `io.vidocq.vauban.junit` — depends on `org.junit.jupiter.api`.
 
 ### vauban-classloader-spi
 
@@ -422,7 +422,7 @@ This module is **always required at runtime** by `vauban-core`, `vauban-indexer`
 | `ArchiveReader` | Provides the (decrypted) bytes of an archive's classes |
 | `PluginContext` | Provides keys and configuration to plugins |
 
-**JPMS module**: `io.vidocq.vauban.classloader.spi` — no external dependency.
+**Java module**: `io.vidocq.vauban.classloader.spi` — no external dependency.
 
 ### vauban-sjar
 
@@ -443,7 +443,7 @@ Encryption is driven by `module-info.class`:
 
 Full documentation: [vauban-sjar/README.md](vauban-sjar/README.md)
 
-**JPMS module**: `io.vidocq.vauban.sjar` — provides `ByteSourcePlugin` via `ServiceLoader`.
+**Java module**: `io.vidocq.vauban.sjar` — provides `ByteSourcePlugin` via `ServiceLoader`.
 
 ### vauban-maven-plugin
 
@@ -455,7 +455,7 @@ Full documentation: [vauban-sjar/README.md](vauban-sjar/README.md)
 | `GenerateMojo` | `vauban:generate` goal, `process-classes` phase |
 | `EncryptMojo` | `vauban:encrypt` goal, `package` phase — encrypts the internal classes |
 | `DistMojo` | `vauban:dist` goal, `package` phase — distribution ZIP with scripts |
-| `ModuleAnalyzer` | JPMS analysis (explicit/automatic modules, split packages) |
+| `ModuleAnalyzer` | Java Modules analysis (explicit/automatic modules, split packages) |
 
 | Goal | Phase | Description |
 |------|-------|-------------|

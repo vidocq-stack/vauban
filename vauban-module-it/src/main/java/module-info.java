@@ -19,7 +19,7 @@
  */
 /**
  * Module-path regression vehicle for Vauban: a strict named module with <strong>zero
- * {@code opens}</strong> whose beans cover the historical JPMS bug surface —
+ * {@code opens}</strong> whose beans cover the historical Java Modules bug surface —
  * overloaded intercepted methods (VAU-INT-001), primitive-array parameters (VAU-INT-002),
  * checked exceptions through the source-rendered subclass (VAU-INT-003), {@code @Interceptor}
  * beans instantiated in-module (VAU-INT-004), marker interceptor bindings detected by name
@@ -30,7 +30,7 @@
  * below. Surefire runs the test on the MODULE PATH because this module-info exists — the
  * class-path test suite cannot see these bugs (opens/exports are not enforced there).</p>
  */
-module io.vidocq.vauban.jpmsit {
+module io.vidocq.vauban.moduleit {
     requires io.vidocq.vauban.core;
 
     requires jakarta.cdi;
@@ -38,10 +38,10 @@ module io.vidocq.vauban.jpmsit {
     requires jakarta.interceptor;
     requires jakarta.annotation;
 
-    exports io.vidocq.vauban.jpmsit;
+    exports io.vidocq.vauban.moduleit;
 
     // Build-time, in-module instantiation + field injection of every bean and interceptor —
     // the container needs no `opens … to io.vidocq.vauban.core`.
     provides io.vidocq.vauban.api.VaubanComponentProvider
-            with io.vidocq.vauban.jpmsit._VaubanComponents;
+            with io.vidocq.vauban.moduleit._VaubanComponents;
 }

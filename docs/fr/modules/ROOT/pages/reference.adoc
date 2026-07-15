@@ -1,8 +1,8 @@
 = Référence
-:description: Artefacts Maven, packages JPMS exportés, plugin Maven, extension JUnit, comparaison Lite vs Full.
+:description: Artefacts Maven, packages Java Modules exportés, plugin Maven, extension JUnit, comparaison Lite vs Full.
 
 [.lead]
-Cette page liste l'ensemble des artefacts publiés par Vauban, les packages JPMS qu'ils exportent, les goals du plugin Maven et la comparaison entre les profils CDI Lite et Full.
+Cette page liste l'ensemble des artefacts publiés par Vauban, les packages Java Modules qu'ils exportent, les goals du plugin Maven et la comparaison entre les profils CDI Lite et Full.
 
 == Artefacts Maven
 
@@ -47,7 +47,7 @@ Cette page liste l'ensemble des artefacts publiés par Vauban, les packages JPMS
 | Suite officielle de tests d'intégration
 |===
 
-== Modules JPMS exportés
+== Modules Java Modules exportés
 
 [cols="2,3"]
 |===
@@ -93,7 +93,7 @@ Cette page liste l'ensemble des artefacts publiés par Vauban, les packages JPMS
 | Génère les `_Factory`, `_ClientProxy`, `_ProducerFactory` via Class-File API.
 
 | `vauban:analyze`
-| Analyse JPMS, détecte split packages et exports incohérents.
+| Analyse Java Modules, détecte split packages et exports incohérents.
 
 | `vauban:dist`
 | Packaging d'une distribution prête à l'exécution (jlink + image).
@@ -198,7 +198,7 @@ Trois modes de découverte :
 
 Vauban ne nécessite aucun fichier de configuration applicatif. La sélection des beans se fait via :
 
-* le `module-info.java` (visibilité JPMS) ;
+* le `module-info.java` (visibilité Java Modules) ;
 * la stratégie de bootstrap (`scanLocal()`, `scanClasspath()`, `addBeanClass()`).
 
 Pour la configuration applicative dynamique, utiliser MicroProfile Config via xref:vidocq::index.adoc[Vidocq Runtime].
@@ -211,6 +211,6 @@ Pour la configuration applicative dynamique, utiliser MicroProfile Config via xr
 == Compatibilité
 
 * Java 25 (LTS), Maven 3.9.16.
-* JPMS strict, modules nommés exclusivement.
+* Java Modules strict, modules nommés exclusivement.
 * CDI 4.1 — profil Lite.
 * Compatible GraalVM `native-image` et Project Leyden CDS.

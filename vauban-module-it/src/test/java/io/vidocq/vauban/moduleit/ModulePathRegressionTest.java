@@ -17,7 +17,7 @@
  *
  * SPDX-License-Identifier: EPL-2.0 OR EUPL-1.2 OR GPL-2.0-or-later
  */
-package io.vidocq.vauban.jpmsit;
+package io.vidocq.vauban.moduleit;
 
 import io.vidocq.vauban.core.container.VaubanContainer;
 import org.junit.jupiter.api.AfterAll;
@@ -40,7 +40,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * deliberately NOT through {@code @Inject} into the test instance, so nothing reflects into
  * the test class and the module needs no {@code opens}.
  *
- * <p>Each assertion below pins one historical JPMS bug that the class-path test suite could
+ * <p>Each assertion below pins one historical Java Modules bug that the class-path test suite could
  * not see (all of them were originally caught by downstream TCKs):</p>
  * <ul>
  *   <li>VAU-INT-001 — overloaded intercepted methods (distinct {@code $$ti$} glues);</li>
@@ -52,7 +52,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  *   <li>in-module field injection via the generated provider ({@code putfield}, no opens).</li>
  * </ul>
  */
-@DisplayName("Vauban on the module path — historical JPMS bug surface, zero opens")
+@DisplayName("Vauban on the module path — historical Java Modules bug surface, zero opens")
 class ModulePathRegressionTest {
 
     private static VaubanContainer container;
@@ -76,9 +76,9 @@ class ModulePathRegressionTest {
     @Test
     @DisplayName("the $$Intercepted subclass and the _ClientProxy are BUILD-time classes")
     void buildTimeArtifactsExist() throws Exception {
-        assertNotNull(Class.forName("io.vidocq.vauban.jpmsit.AuditedService$$Intercepted"),
+        assertNotNull(Class.forName("io.vidocq.vauban.moduleit.AuditedService$$Intercepted"),
                 "the APT must have generated AuditedService$$Intercepted at build time");
-        assertNotNull(Class.forName("io.vidocq.vauban.jpmsit.AuditedService_ClientProxy"),
+        assertNotNull(Class.forName("io.vidocq.vauban.moduleit.AuditedService_ClientProxy"),
                 "the APT must have generated AuditedService_ClientProxy at build time");
     }
 
@@ -127,7 +127,7 @@ class ModulePathRegressionTest {
     void runsOnTheModulePath() {
         Module module = AuditedService.class.getModule();
         assertTrue(module.isNamed(), "fixtures must live in a named module, not the unnamed one");
-        assertEquals("io.vidocq.vauban.jpmsit", module.getName());
+        assertEquals("io.vidocq.vauban.moduleit", module.getName());
         assertTrue(module.getDescriptor().opens().isEmpty(),
                 "the whole point: ZERO opens directives in this module");
     }

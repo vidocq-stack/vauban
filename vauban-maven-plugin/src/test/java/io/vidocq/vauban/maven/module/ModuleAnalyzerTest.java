@@ -29,7 +29,7 @@ import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-@DisplayName("ModuleAnalyzer - JPMS compatibility analysis")
+@DisplayName("ModuleAnalyzer - Java Modules compatibility analysis")
 class ModuleAnalyzerTest {
 
     // Find a JAR on the test classpath

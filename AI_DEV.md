@@ -21,7 +21,7 @@
 
 **Cross-cutting characteristics**
 
-- Native JPMS — each module has its own `module-info.java`
+- Native Java Modules — each module has its own `module-info.java`
 - Zero external bytecode dependency — generation via the JDK 25 Class-File API
 - Virtual threads — `ScopedValue` (JEP 487) instead of `ThreadLocal` everywhere
 - Build Compatible Extensions — 5 phases, compile-time + runtime + replay
@@ -41,7 +41,7 @@
 | Build Compatible Extensions — 5 phases | 2 months |
 | Maven plugin + SJAR | 1.5 months |
 | TCK — reaching 100% (774/774) | 2 months |
-| Cross-cutting JPMS friction | +30% across the board |
+| Cross-cutting Java Modules friction | +30% across the board |
 | **Total** | **~15–18 months** |
 
 > The TCK alone is chronically underestimated. Each failure on a CDI spec corner case
@@ -81,7 +81,7 @@ generate correct bytecode (factories, proxies, intercepted subclasses) without
 long iterations on class-format errors.
 
 ### Cognitive parallelism
-While making architectural decisions (choosing a JPMS trade-off, designing a public API),
+While making architectural decisions (choosing a Java Modules trade-off, designing a public API),
 the code was already being written. The developer's thinking time no longer
 blocked code production.
 
@@ -94,14 +94,14 @@ fixed without a prolonged debugging spiral.
 
 ## What AI did not replace
 
-- **Architectural vision** — decisions about JPMS module structure,
+- **Architectural vision** — decisions about Java module structure,
   the compile-time / runtime boundary, the BCE extension model.
 - **Judgment on elegance** — distinguishing a hack that passes the tests from a solution
   that is correct per the spec.
 - **Domain knowledge** — knowing *what* to test, *which* CDI corner cases
   are worth covering, *where* the spec is ambiguous.
 - **Product decisions** — scope (CDI Lite vs Full), the choice not to depend on ASM,
-  prioritizing native JPMS from the start.
+  prioritizing native Java Modules from the start.
 
 ---
 
@@ -132,7 +132,7 @@ fixed without a prolonged debugging spiral.
 ## Conclusion
 
 For a project of this technical complexity — a formal spec (CDI 4.1), bytecode
-generation, JPMS, an official TCK — AI assistance represented a
+generation, Java Modules, an official TCK — AI assistance represented a
 **~15x** multiplier on development speed.
 
 The gain is not uniform: it is maximal on mechanical and structural code

@@ -456,7 +456,7 @@ final class InterceptorBeanWrapper {
             return targetClass.getClassLoader().loadClass(className);
         } catch (ClassNotFoundException cnfe) {
             // Use the container's VaubanLookup which has the user-provided root Lookup
-            // (no sun.misc.Unsafe needed — addReads + privateLookupIn handles JPMS)
+            // (no sun.misc.Unsafe needed — addReads + privateLookupIn handles Java Modules)
             var lookup = vaubanLookup.lookupFor(targetClass);
             return lookup.defineClass(bytecode);
         }

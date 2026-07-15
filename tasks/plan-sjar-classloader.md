@@ -2,7 +2,7 @@
 
 ## Context
 
-Vauban is a JPMS-native CDI 4.1 container with 774/774 TCK. The goal is to introduce a **plugin classloader system** to support advanced use cases, starting with **encrypted JARs** (`.sjar`). This makes it possible to distribute CDI libraries whose classes are protected by AES-256-GCM encryption.
+Vauban is a native Java Modules CDI 4.1 container with 774/774 TCK. The goal is to introduce a **plugin classloader system** to support advanced use cases, starting with **encrypted JARs** (`.sjar`). This makes it possible to distribute CDI libraries whose classes are protected by AES-256-GCM encryption.
 
 ### Current classloading entry points
 
@@ -187,7 +187,7 @@ public static List<ClassInfo> scan(Path archivePath,
 ### Phase 2: Full integration
 
 1. Build-time `VaubanGenerator` with SJAR
-2. JPMS `ModuleLayer` for named modules in SJARs
+2. Java Modules `ModuleLayer` for named modules in SJARs
 3. `SjarTool` CLI tool
 
 ### Phase 3: Hardening

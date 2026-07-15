@@ -29,7 +29,7 @@ public final class ModuleAnalyzer {
     private ModuleAnalyzer() {}
 
     /**
-     * Analyze a single JAR for JPMS compatibility.
+     * Analyze a single JAR for Java Modules compatibility.
      */
     public static ModuleAnalysisResult analyze(Path jarPath) throws IOException {
         var fileName = jarPath.getFileName().toString();

@@ -112,7 +112,7 @@ Aucun `Class.forName`, aucun `Method.invoke`, aucun `Class.getDeclaredFields()` 
 
 Conséquence : Vauban se compile en image native GraalVM sans fichier `reflect-config.json`. Il est compatible avec Project Leyden CDS et avec une image JLink minimale.
 
-== Modules JPMS exportés
+== Modules Java Modules exportés
 
 [cols="2,3"]
 |===

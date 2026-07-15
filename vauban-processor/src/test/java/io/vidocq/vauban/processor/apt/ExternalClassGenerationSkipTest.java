@@ -45,7 +45,7 @@ import static org.junit.jupiter.api.Assertions.*;
  * When a BCE calls {@code scanned.add("some.ExternalClass")} in {@code @Discovery},
  * the class is indexed from the dependency jar (via loadClassBytes). If VaubanProcessor
  * generated {@code ExternalClass_Factory.class} in the user module, it would create
- * a JPMS "split-package" violation: the package is already exported by the source jar.
+ * a Java Modules "split-package" violation: the package is already exported by the source jar.
  *
  * <h2>After the patch</h2>
  * External classes (added via scanned.add) remain in the index and in

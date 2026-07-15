@@ -35,7 +35,7 @@ import static org.junit.jupiter.api.Assertions.*;
  * Tests for Vauban's centralized reflective access utility.
  *
  * <h2>Vidocq context</h2>
- * Vidocq is a modular JPMS framework. The user application is a named module
+ * Vidocq is a modular Java Modules framework. The user application is a named module
  * ({@code module io.vidocq.runtime.app}) that opens its packages to
  * {@code io.vidocq.vauban.core}. But {@code opens ... to} is not enough:
  * the calling module must also <em>read</em> the target module via
@@ -52,11 +52,11 @@ import static org.junit.jupiter.api.Assertions.*;
  * {@code IMPL_LOOKUP} as a fallback. This API has been terminally deprecated
  * since JDK 23 and will be removed. The fix uses the root {@code Lookup}
  * provided by the user via {@code VaubanContainer.builder()
- * .lookup(MethodHandles.lookup())} — cleaner and JPMS-compliant.
+ * .lookup(MethodHandles.lookup())} — cleaner and Java Modules-compliant.
  *
  * <h2>Why the TCK does not cover this case</h2>
  * The CDI 4.1 TCK runs on the classpath (unnamed module). The {@code addReads}
- * problems only appear when the application is a named JPMS module, which the
+ * problems only appear when the application is a named Java module, which the
  * TCK never tests. The classpath workaround ({@code --add-reads} on the CLI)
  * hid the bug in dev but not in modular production.
  */
@@ -113,7 +113,7 @@ class VaubanLookupTest {
     // -- Tests --
 
     /**
-     * Tests the core of the JPMS fix: {@code lookupFor} must call
+     * Tests the core of the Java Modules fix: {@code lookupFor} must call
      * {@code Module.addReads()} before {@code privateLookupIn()} so that
      * vauban.core can read JDK or application modules.
      * The tests with java.sql and java.logging verify that

@@ -1,12 +1,12 @@
 = Vauban
-:description: CDI 4.1 Lite container, JPMS-native, build-time code generation, zero runtime dependency.
+:description: CDI 4.1 Lite container, native Java Modules, build-time code generation, zero runtime dependency.
 
 [.text-center]
 image::vauban-logo.png[Vauban,300,role=module-logo]
 
 
 [.lead]
-Vauban is a CDI 4.1 container that resolves injection at compile time. JPMS-native, zero runtime dependency, no dynamic proxies — dependency wiring computed like artillery trajectories: drawn on paper before the first shovel of dirt is turned.
+Vauban is a CDI 4.1 container that resolves injection at compile time. Native Java Modules, zero runtime dependency, no dynamic proxies — dependency wiring computed like artillery trajectories: drawn on paper before the first shovel of dirt is turned.
 
 == Origin of the name
 
@@ -21,7 +21,7 @@ Vauban turned defence into a mathematical art: trajectories, sapping, counter-mi
 | Implemented spec | {spec-cdi-4-1}[Jakarta CDI 4.1 — Lite profile]
 | Repo | {repo-vauban}
 | Java | 25 (LTS)
-| JPMS modules | `io.vidocq.vauban.api`, `io.vidocq.vauban.core`, `io.vidocq.vauban.indexer`, `io.vidocq.vauban.processor`, `io.vidocq.vauban.junit`, `io.vidocq.vauban.classloader.spi`, `io.vidocq.vauban.sjar`
+| Java modules | `io.vidocq.vauban.api`, `io.vidocq.vauban.core`, `io.vidocq.vauban.indexer`, `io.vidocq.vauban.processor`, `io.vidocq.vauban.junit`, `io.vidocq.vauban.classloader.spi`, `io.vidocq.vauban.sjar`
 | Runtime dependencies | None beyond `jakarta.cdi` and `jakarta.cdi.lang.model`
 | CDI 4.1 Lite TCK | partial — see xref:tck.adoc[detailed status]
 |===
@@ -30,7 +30,7 @@ Vauban turned defence into a mathematical art: trajectories, sapping, counter-mi
 
 . **Zero runtime dependency** — Jakarta CDI spec only. No Weld, no ArC, no Guice.
 . **Static code generation** — Class-File API (JEP 484) at `process-classes`. No reflection at startup. No dynamic proxy. No external bytecode library (ASM, Byte Buddy).
-. **Strict JPMS** — every Vauban artefact has its own `module-info.java`. No classpath, no unjustified `opens`, no `add-opens` at launch.
+. **Strict Java Modules** — every Vauban artefact has its own `module-info.java`. No classpath, no unjustified `opens`, no `add-opens` at launch.
 
 == Position in the ecosystem
 

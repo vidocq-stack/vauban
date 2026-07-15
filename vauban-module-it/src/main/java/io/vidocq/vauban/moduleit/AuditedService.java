@@ -17,7 +17,7 @@
  *
  * SPDX-License-Identifier: EPL-2.0 OR EUPL-1.2 OR GPL-2.0-or-later
  */
-package io.vidocq.vauban.jpmsit;
+package io.vidocq.vauban.moduleit;
 
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
@@ -27,7 +27,7 @@ import java.io.IOException;
 /**
  * The fixture bean: normal-scoped (build-time {@code _ClientProxy}) and {@code @Audited}
  * (build-time, source-rendered {@code $$Intercepted}). Each method targets one historical
- * JPMS bug — see the test for the mapping.
+ * Java Modules bug — see the test for the mapping.
  */
 @ApplicationScoped
 @Audited
