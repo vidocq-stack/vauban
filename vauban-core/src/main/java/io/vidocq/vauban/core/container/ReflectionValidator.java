@@ -43,18 +43,30 @@ final class ReflectionValidator {
         for (var clazz : beanClasses) {
             if (clazz.isInterface() || clazz.isAnnotation() || clazz.isEnum()) continue;
 
-            validateStereotypeNamed(clazz, errors);
-            validateGenericBeanScope(clazz, errors);
-            validateNamedOnParameters(clazz, errors);
-            validateNormalScopedPublicFields(clazz, errors);
-            validateTypedValues(clazz, errors);
-            validateInjectFields(clazz, errors);
-            validateMethods(clazz, errors);
-            validateProducerFields(clazz, errors);
-            validateConstructors(clazz, errors);
-            validateStereotypePriorities(clazz, errors);
-            validateStereotypeScopes(clazz, errors);
-            validateInterceptorBindings(clazz, errors);
+            // Defensive: every check below inspects members reflectively, and
+            // getDeclaredFields/Methods/Constructors throw a LinkageError (typically
+            // NoClassDefFoundError) as soon as one member signature references a type that
+            // cannot be resolved here — an optional dependency declared 'requires static'
+            // and absent at runtime, or a stale .class left by an interrupted build.
+            // Such a class cannot be inspected member-by-member, so we skip it rather than
+            // let validation abort the whole deployment. Same guard as BceTypeMatcher,
+            // BceProcessor.getDeclaredMethodsSafe, ContainerScanner and VaubanContainerBuilder.
+            try {
+                validateStereotypeNamed(clazz, errors);
+                validateGenericBeanScope(clazz, errors);
+                validateNamedOnParameters(clazz, errors);
+                validateNormalScopedPublicFields(clazz, errors);
+                validateTypedValues(clazz, errors);
+                validateInjectFields(clazz, errors);
+                validateMethods(clazz, errors);
+                validateProducerFields(clazz, errors);
+                validateConstructors(clazz, errors);
+                validateStereotypePriorities(clazz, errors);
+                validateStereotypeScopes(clazz, errors);
+                validateInterceptorBindings(clazz, errors);
+            } catch (LinkageError ignored) {
+                // Uninspectable in this context — skip this class.
+            }
         }
         return errors;
     }
