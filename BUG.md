@@ -5,6 +5,51 @@ suspected cause, status. Updated on every investigation.
 
 ---
 
+## VAU-APT-001 — `@Inject` of a bean from another module rejected at compile time
+- **Date**: 2026-08-09 — **Status**: FIXED (`pr/ybl/vauban-23-cross-module-index`)
+- **Severity**: high (viral at every module boundary; no workaround for third-party beans)
+- **Surfaced by**: Sébastien Blanc, Vidocq/vauban#23, while building Rossignol on Vidocq.
+
+### Symptom
+```
+[ERROR] [Vauban] Unsatisfied dependency: field HelloResource.greeter of type
+        ClassType[name=io.repro.core.Greeter] with qualifiers [... Any ..., ... Default ...]
+```
+`Greeter` is an `@ApplicationScoped` bean of a **different** Maven / Java module. The same
+injection point wrapped in `Instance<Greeter>` compiled and resolved correctly at runtime,
+against the same bean and the same module graph — so the build-time rejection was a false
+negative, not a real deployment error.
+
+### Repro
+Two modules: `core` exports an `@ApplicationScoped Greeter`; `app` requires `core` and injects it
+directly. `mvn install` fails. Reproduced as `CrossModuleInjectionTest` in `vauban-processor`.
+
+### Cause
+`VaubanProcessor` built its index solely from the types of the current compilation round
+(`accumulatedIndex`), while the dependency scan lived only in `vauban-maven-plugin`
+(`VaubanGenerator`, which reads each dependency's `META-INF/vauban-beans.list`). The validator
+therefore judged the deployment on a partial index. The reporter's two checks confirmed the
+runtime index was fine: `Instance<T>` worked end to end, and adding a local `@Produces` bridge
+produced *Ambiguous dependency* — an ambiguity impossible to report without knowing the other
+module's bean.
+
+### Fix
+No jar scanning was needed: `Elements` already sees the whole compile classpath. A required type
+that is missing from the index is now looked up there, scanned in, and bean discovery is replayed
+to obtain its descriptor (`resolveDependencyBeans`). Such a type goes into `externalClassNames`,
+so no `_Factory` / `_ClientProxy` is emitted for it here — its own module ships those, and
+emitting them again would split the package.
+
+What still cannot be resolved is classified rather than rejected: an **interface or abstract
+class from outside the Java platform** may be implemented by a bean this compilation cannot see,
+so it is reported as a warning and deferred to the container (which re-validates on start). A
+concrete type that was indexed and did not become a bean carries no scope, and a platform type is
+nobody's bean — both keep failing the build. The in-module check therefore stays strict.
+
+### Impact on the reported workarounds
+`@Inject Instance<JwtValidator>` (cervantes) is no longer necessary, and neither is the
+"library modules carry no CDI beans" restructuring the reporter had to adopt.
+
 ## VAU-INT-001 — overloaded intercepted methods collide on the `$$ti$<name>` glue
 - **Date**: 2026-06-07 — **Status**: FIXED (unique per-overload `$$ti$` names in both renderers)
 - **Severity**: medium (any bean with two intercepted methods of the same name fails to deploy)
