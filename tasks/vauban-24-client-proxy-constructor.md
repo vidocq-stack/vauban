@@ -33,9 +33,9 @@ La JVM impose que tout `<init>` chaîne vers un `<init>` de sa propre classe ou 
 **superclasse directe**. Le proxy doit être assignable au type injecté ; quand ce type est une
 classe concrète (`@Inject Oidc` chez le rapporteur), le proxy doit l'étendre, donc il ne peut
 appeler que `Oidc.<init>`. **Il est impossible d'éviter le constructeur du bean sans agir sur le
-bean lui-même.** Toute solution passe par l'une de ces trois familles.
+bean lui-même.** Toute solution passe par l'une des familles ci-dessous.
 
-## 3. Les trois familles, évaluées
+## 3. Les familles évaluées
 
 ### A. Constructeur marqueur ajouté au bean (post-compile, Class-File API)
 
@@ -76,6 +76,35 @@ exécuter aucun constructeur.
 Ne fonctionne que si le point d'injection porte sur une interface. Le cas rapporté
 (`@Inject Oidc`, classe concrète) n'est pas couvert. **Ne résout pas le problème**, seulement une
 partie ; à ne considérer que comme optimisation ultérieure.
+
+### D. Solution 100 % APT, sans passe Class-File (réétudiée le 2026-08-10 — impossible)
+
+Question légitime : le proxy est déjà généré en source par l'APT (`ClientProxySourceRenderer`),
+pourquoi ne pas y régler le problème et éviter la transformation post-compile ? Trois murs :
+
+1. **JSR 269 ne sait que créer, jamais modifier.** L'API officielle (`Filer.createSourceFile`,
+   `createClassFile`) produit de *nouveaux* fichiers ; retoucher une unité de compilation
+   existante est hors API. Or la contrainte du §2 impose que le constructeur marqueur vive **dans
+   la classe du bean** — du code utilisateur, hors de portée de l'APT. Lombok n'y arrive qu'en
+   mutant l'AST via les internes de javac (`com.sun.tools.javac.tree.TreeMaker` + agent /
+   `--add-opens jdk.compiler`) : non supporté, fragile sous l'encapsulation forte du JDK 25,
+   cassé sous ECJ, et contraire à la règle du projet (pas d'API interne, pas de magie cachée).
+2. **Même le côté proxy ne peut pas rester en source pur.** Un constructeur écrit en Java appelle
+   forcément un constructeur *existant* de la superclasse : `super(new VaubanProxyMarker())` ne
+   compile pas tant que le bean n'a pas ce constructeur — et il ne l'aura jamais par APT (mur 1).
+   Œuf et poule à l'intérieur du même round de compilation.
+3. **Le bytecode lui-même n'offre pas d'échappatoire.** Le vérifieur JVM exige qu'un `<init>`
+   chaîne vers un `<init>` de sa classe ou de la superclasse directe ; « ne pas appeler de
+   constructeur » n'est exprimable ni en source ni en bytecode vérifiable — seules les voies
+   runtime de B (`ReflectionFactory`/`Unsafe`) le contournent, avec les défauts déjà listés.
+
+Ce que l'APT peut en revanche apporter à **A** : émettre à la compilation la liste exacte des
+beans proxyables (manifeste), pour que la passe `process-classes` soit une transformation ciblée
+O(beans) et non un scan du jar. À intégrer au chantier A.
+
+À noter aussi : la passe Class-File n'est **pas un mécanisme de build nouveau** — le
+`GenerateMojo` de `vauban-maven-plugin` tourne déjà en `process-classes` ; A y ajoute une
+transformation de classes existantes, rien de plus.
 
 ## 4. Recommandation
 
