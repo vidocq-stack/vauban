@@ -53,6 +53,27 @@ public record ClientProxyShape(
     public static final String SET_DELEGATE_METHOD = "$$setDelegate";
     /** Prefix of the static-final {@code MethodHandle} fields ({@code $$mh_<name>_<n>}). */
     public static final String MH_FIELD_PREFIX = "$$mh_";
+    /** Marker parameter type of the opt-in client-proxy entry constructor (Vidocq/vauban#24). */
+    public static final String PROXY_LINK_CLASS = io.vidocq.vauban.api.ProxyLink.CLASS_NAME;
+
+    /**
+     * {@code true} when {@code ctor} is the opt-in {@code (ProxyLink)} client-proxy entry
+     * constructor. Every front-end prefers it over the historical simplest-constructor
+     * default chaining, and the container never selects it for constructor injection.
+     */
+    public static boolean isProxyLinkConstructor(java.lang.reflect.Constructor<?> ctor) {
+        return ctor.getParameterCount() == 1
+                && PROXY_LINK_CLASS.equals(ctor.getParameterTypes()[0].getName());
+    }
+
+    /** Index-model variant of {@link #isProxyLinkConstructor(java.lang.reflect.Constructor)}. */
+    public static boolean isProxyLinkConstructor(io.vidocq.vauban.indexer.model.MethodInfo method) {
+        return method.isConstructor()
+                && method.parameters().size() == 1
+                && method.parameters().getFirst().type()
+                        instanceof io.vidocq.vauban.indexer.model.TypeInfo.ClassType ct
+                && PROXY_LINK_CLASS.equals(ct.name().value());
+    }
 
     public ClientProxyShape {
         java.util.Objects.requireNonNull(beanBinaryName, "beanBinaryName");

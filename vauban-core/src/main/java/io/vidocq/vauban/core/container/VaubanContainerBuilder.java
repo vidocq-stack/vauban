@@ -808,7 +808,7 @@ public final class VaubanContainerBuilder {
             var assignability = new AssignabilityRules(index);
             var tempResolver = new BeanResolver(descriptors, interceptors, assignability);
             var validator = new io.vidocq.vauban.core.bean.validation.DeploymentValidator(
-                    descriptors, tempResolver);
+                    descriptors, tempResolver, index);
             var errors = validator.validate();
             if (!errors.isEmpty()) {
                 var definitionErrors = errors.stream()

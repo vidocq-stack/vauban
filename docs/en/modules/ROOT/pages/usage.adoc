@@ -38,6 +38,39 @@ CDI 4.1 Lite ships four standard scopes. Vauban supports all of them, plus `@Req
 Normal-scoped beans (`@ApplicationScoped`, `@RequestScoped`) get a `_ClientProxy` generated at compile time. The proxy intercepts each call and delegates to the active context. `@Dependent` and `@Singleton` beans do not.
 ====
 
+=== Proxyable beans and the `ProxyLink` constructor
+
+Because the client proxy subclasses the bean, CDI 4.1 declares some classes _unproxyable_
+for normal scopes: `final` classes, classes with non-private `final` methods, and classes
+without a non-private no-arg constructor. Vauban reports these as errors — at compile time
+when the bean belongs to the current compilation, at container start otherwise.
+
+The last case covers the common single-`@Inject`-constructor style. To keep it usable,
+declare one extra constructor taking `io.vidocq.vauban.api.ProxyLink` (a Vauban extension,
+comparable to Weld's relaxed construction):
+
+[source,java]
+----
+@ApplicationScoped
+public class Oidc {
+    private final String issuer;
+
+    @Inject
+    public Oidc(Config config) {
+        this.issuer = config.issuer();
+    }
+
+    protected Oidc(ProxyLink link) {   // client-proxy entry point — keep the body empty
+        this.issuer = null;            // javac requires blank finals to be assigned
+    }
+}
+----
+
+The generated proxy chains to that constructor (always passing `null`), so creating the
+proxy runs no bean logic — no duplicated side effects, no `NullPointerException` on
+dereferenced parameters. The container never selects this constructor for injection.
+Field initializers still run in every constructor: keep them side-effect free.
+
 == Qualifiers
 
 Discriminate multiple implementations of the same type.

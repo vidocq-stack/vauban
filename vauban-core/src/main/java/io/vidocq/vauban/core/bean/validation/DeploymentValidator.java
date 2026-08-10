@@ -23,6 +23,8 @@ import io.vidocq.vauban.core.bean.model.BeanDescriptor;
 import io.vidocq.vauban.core.bean.model.InjectionPointInfo;
 import io.vidocq.vauban.core.bean.resolution.BeanResolver;
 import io.vidocq.vauban.core.bean.resolution.DependencyGraph;
+import io.vidocq.vauban.core.proxy.ClientProxyShape;
+import io.vidocq.vauban.indexer.VaubanIndex;
 import io.vidocq.vauban.indexer.model.DotName;
 import io.vidocq.vauban.indexer.model.TypeInfo;
 
@@ -40,13 +42,29 @@ public final class DeploymentValidator {
     private static final String MSG_OF_TYPE = " of type ";
     private static final String PREFIX_NORMAL_SCOPED = "Normal-scoped bean ";
     private static final String BEAN_TYPE_NAME = "jakarta.enterprise.inject.spi.Bean";
+    private static final String MSG_UNPROXYABLE_CTOR =
+            " must have a non-private no-arg constructor, or declare a non-private constructor"
+            + " taking " + ClientProxyShape.PROXY_LINK_CLASS
+            + " as its client-proxy entry point (Vauban extension, Vidocq/vauban#24)";
 
     private final List<BeanDescriptor> beans;
     private final BeanResolver resolver;
+    private final VaubanIndex index;
 
+    /** Reflection-only fallback — proxyability checks are blind to unloadable classes. */
     public DeploymentValidator(List<BeanDescriptor> beans, BeanResolver resolver) {
+        this(beans, resolver, null);
+    }
+
+    /**
+     * Index-backed validator: proxyability (CDI 4.1 "Unproxyable bean types") is checked
+     * against {@code index} first, so it works at annotation-processing time and on the
+     * module path where {@code Class.forName} over the TCCL cannot see the bean classes.
+     */
+    public DeploymentValidator(List<BeanDescriptor> beans, BeanResolver resolver, VaubanIndex index) {
         this.beans = List.copyOf(beans);
         this.resolver = Objects.requireNonNull(resolver);
+        this.index = index;
     }
 
     @SuppressWarnings("java:S135")
@@ -268,6 +286,13 @@ public final class DeploymentValidator {
         }
     }
 
+    /**
+     * CDI 4.1 "Unproxyable bean types", checked <strong>against the index first</strong>:
+     * reflection over the TCCL cannot see classes being compiled (annotation processing) nor
+     * app modules on the module path, and used to skip silently — letting an unproxyable bean
+     * through validation to fail later inside the generated proxy (Vidocq/vauban#24).
+     * Reflection remains the fallback for types absent from the index.
+     */
     private void validateProxyableType(TypeInfo type, BeanDescriptor bean, List<ValidationError> errors, BeanDescriptor contextBean) {
         switch (type) {
         case TypeInfo.PrimitiveType _ ->
@@ -281,54 +306,112 @@ public final class DeploymentValidator {
                     PREFIX_NORMAL_SCOPED + bean.beanClass() + " cannot have array type " + type,
                     contextBean));
         case TypeInfo.ClassType ct -> {
-            try {
-                var clazz = Class.forName(ct.name().value(), false, Thread.currentThread().getContextClassLoader());
-                // Interfaces are always proxyable — skip class-level checks
-                if (clazz.isInterface()) {
-                    // no further checks needed
-                } else if (java.lang.reflect.Modifier.isFinal(clazz.getModifiers())) {
-                    errors.add(new ValidationError(
-                            ValidationError.Kind.DEPLOYMENT_ERROR,
-                            PREFIX_NORMAL_SCOPED + bean.beanClass() + " cannot be a final class",
-                            contextBean));
-                } else {
-                    boolean hasNoArgCtor = false;
-                    for (var ctor : clazz.getDeclaredConstructors()) {
-                        if (ctor.getParameterCount() == 0 && !java.lang.reflect.Modifier.isPrivate(ctor.getModifiers())) {
-                            hasNoArgCtor = true;
-                            break;
-                        }
-                    }
-                    if (!hasNoArgCtor) {
-                        errors.add(new ValidationError(
-                                ValidationError.Kind.DEPLOYMENT_ERROR,
-                                PREFIX_NORMAL_SCOPED + bean.beanClass() + " must have a non-private no-arg constructor",
-                                contextBean));
-                    }
-                    
-                    Class<?> proxyCheck = clazz;
-                    boolean proxyFinalFound = false;
-                    while (proxyCheck != null && proxyCheck != Object.class && !proxyFinalFound) {
-                        for (var method : proxyCheck.getDeclaredMethods()) {
-                            if (java.lang.reflect.Modifier.isFinal(method.getModifiers())
-                                    && !java.lang.reflect.Modifier.isPrivate(method.getModifiers())
-                                    && !java.lang.reflect.Modifier.isStatic(method.getModifiers())) {
-                                errors.add(new ValidationError(
-                                        ValidationError.Kind.DEPLOYMENT_ERROR,
-                                        PREFIX_NORMAL_SCOPED + bean.beanClass() + " has final method " + method.getName(),
-                                        contextBean));
-                                proxyFinalFound = true;
-                                break;
-                            }
-                        }
-                        proxyCheck = proxyCheck.getSuperclass();
-                    }
-                }
-            } catch (ClassNotFoundException e) {
-                // Ignore
+            var indexed = index == null
+                    ? java.util.Optional.<io.vidocq.vauban.indexer.model.ClassInfo>empty()
+                    : index.getClassByName(ct.name());
+            if (indexed.isPresent()) {
+                validateProxyableClassInfo(indexed.get(), bean, errors, contextBean);
+            } else {
+                validateProxyableByReflection(ct, bean, errors, contextBean);
             }
         }
         case null, default -> { }
+        }
+    }
+
+    private void validateProxyableClassInfo(io.vidocq.vauban.indexer.model.ClassInfo info,
+            BeanDescriptor bean, List<ValidationError> errors, BeanDescriptor contextBean) {
+        // Interfaces are always proxyable — skip class-level checks
+        if (info.isInterface()) {
+            return;
+        }
+        if (info.isFinal()) {
+            errors.add(new ValidationError(
+                    ValidationError.Kind.DEPLOYMENT_ERROR,
+                    PREFIX_NORMAL_SCOPED + bean.beanClass() + " cannot be a final class",
+                    contextBean));
+            return;
+        }
+
+        boolean hasExplicitCtor = info.methods().stream().anyMatch(m -> m.isConstructor());
+        boolean hasProxyEntryCtor = !hasExplicitCtor // implicit no-arg constructor
+                || info.methods().stream().anyMatch(m -> m.isConstructor() && !m.isPrivate()
+                        && (m.parameters().isEmpty() || ClientProxyShape.isProxyLinkConstructor(m)));
+        if (!hasProxyEntryCtor) {
+            errors.add(new ValidationError(
+                    ValidationError.Kind.DEPLOYMENT_ERROR,
+                    PREFIX_NORMAL_SCOPED + bean.beanClass() + MSG_UNPROXYABLE_CTOR,
+                    contextBean));
+        }
+
+        // Final methods, walking the hierarchy through the index; a superclass absent from
+        // the index ends the walk (its members are re-checked by the runtime container).
+        var current = info;
+        while (current != null && !"java.lang.Object".equals(current.name().value())) {
+            for (var method : current.methods()) {
+                if (method.isConstructor() || method.isStaticInitializer()) continue;
+                if (method.isFinal() && !method.isPrivate() && !method.isStatic()) {
+                    errors.add(new ValidationError(
+                            ValidationError.Kind.DEPLOYMENT_ERROR,
+                            PREFIX_NORMAL_SCOPED + bean.beanClass() + " has final method " + method.name(),
+                            contextBean));
+                    return;
+                }
+            }
+            var superName = current.superName();
+            current = superName == null || index == null
+                    ? null : index.getClassByName(superName).orElse(null);
+        }
+    }
+
+    private void validateProxyableByReflection(TypeInfo.ClassType ct, BeanDescriptor bean,
+            List<ValidationError> errors, BeanDescriptor contextBean) {
+        try {
+            var clazz = Class.forName(ct.name().value(), false, Thread.currentThread().getContextClassLoader());
+            // Interfaces are always proxyable — skip class-level checks
+            if (clazz.isInterface()) {
+                // no further checks needed
+            } else if (java.lang.reflect.Modifier.isFinal(clazz.getModifiers())) {
+                errors.add(new ValidationError(
+                        ValidationError.Kind.DEPLOYMENT_ERROR,
+                        PREFIX_NORMAL_SCOPED + bean.beanClass() + " cannot be a final class",
+                        contextBean));
+            } else {
+                boolean hasProxyEntryCtor = false;
+                for (var ctor : clazz.getDeclaredConstructors()) {
+                    if (java.lang.reflect.Modifier.isPrivate(ctor.getModifiers())) continue;
+                    if (ctor.getParameterCount() == 0 || ClientProxyShape.isProxyLinkConstructor(ctor)) {
+                        hasProxyEntryCtor = true;
+                        break;
+                    }
+                }
+                if (!hasProxyEntryCtor) {
+                    errors.add(new ValidationError(
+                            ValidationError.Kind.DEPLOYMENT_ERROR,
+                            PREFIX_NORMAL_SCOPED + bean.beanClass() + MSG_UNPROXYABLE_CTOR,
+                            contextBean));
+                }
+
+                Class<?> proxyCheck = clazz;
+                boolean proxyFinalFound = false;
+                while (proxyCheck != null && proxyCheck != Object.class && !proxyFinalFound) {
+                    for (var method : proxyCheck.getDeclaredMethods()) {
+                        if (java.lang.reflect.Modifier.isFinal(method.getModifiers())
+                                && !java.lang.reflect.Modifier.isPrivate(method.getModifiers())
+                                && !java.lang.reflect.Modifier.isStatic(method.getModifiers())) {
+                            errors.add(new ValidationError(
+                                    ValidationError.Kind.DEPLOYMENT_ERROR,
+                                    PREFIX_NORMAL_SCOPED + bean.beanClass() + " has final method " + method.getName(),
+                                    contextBean));
+                            proxyFinalFound = true;
+                            break;
+                        }
+                    }
+                    proxyCheck = proxyCheck.getSuperclass();
+                }
+            }
+        } catch (ClassNotFoundException e) {
+            // Ignore — the type is not loadable here; the runtime container re-validates.
         }
     }
 

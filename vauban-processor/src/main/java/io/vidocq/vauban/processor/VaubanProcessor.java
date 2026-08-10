@@ -327,7 +327,7 @@ public class VaubanProcessor extends AbstractProcessor {
         if (validationEnabled()) {
             var assignability = new AssignabilityRules(index);
             var resolver = new BeanResolver(beans, assignability);
-            var validator = new DeploymentValidator(beans, resolver);
+            var validator = new DeploymentValidator(beans, resolver, index);
             errors = validator.validate();
         } else {
             processingEnv.getMessager().printMessage(Diagnostic.Kind.NOTE,

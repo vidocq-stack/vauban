@@ -1,7 +1,15 @@
 # vauban#24 — réétude : le constructeur du bean s'exécute à la création du client proxy
 
-Statut : **étude, pas de correctif**. Décision demandée avant implémentation.
+Statut : **phases 0 et 1 implémentées** (`pr/ybl/vauban-24-proxy-link`, 2026-08-10) —
+diagnostic unproxyable index-based + constructeur marqueur `ProxyLink` opt-in ; TCK CDI Lite
+774/774 inchangé. Reste la phase 2 (marqueur automatique Class-File, post-0.3.0).
 Date : 2026-08-09. Rapporteur d'origine : Sébastien Blanc (Rossignol).
+
+Note d'implémentation (phase 0) : les contrôles spec existaient déjà dans
+`DeploymentValidator` mais reposaient sur `Class.forName(TCCL)` avec un
+`catch (ClassNotFoundException)` muet — inertes à la compilation et sur module path,
+précisément le déploiement Rossignol. La phase 0 a donc consisté à les rendre index-based
+(réflexion en repli), pas à les créer.
 
 ## 1. Ce qui est établi
 

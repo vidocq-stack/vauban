@@ -38,6 +38,41 @@ CDI 4.1 Lite couvre quatre scopes. Vauban les supporte tous, plus `@RequestScope
 Les scopes normaux (`@ApplicationScoped`, `@RequestScoped`) reçoivent un client proxy `_ClientProxy` généré à la compilation. Le proxy intercepte chaque appel et délègue au contexte actif. Les beans `@Dependent` et `@Singleton` n'en reçoivent pas.
 ====
 
+=== Beans proxyables et constructeur `ProxyLink`
+
+Le client proxy étant une sous-classe du bean, CDI 4.1 déclare certaines classes
+_non proxyables_ pour les scopes normaux : classes `final`, classes portant des méthodes
+`final` non privées, et classes sans constructeur no-arg non privé. Vauban signale ces cas
+en erreur — à la compilation quand le bean fait partie de l'unité compilée, au démarrage du
+container sinon.
+
+Le dernier cas couvre le style courant du constructeur `@Inject` unique. Pour le garder
+utilisable, déclarez un constructeur supplémentaire prenant `io.vidocq.vauban.api.ProxyLink`
+(extension Vauban, comparable à la construction « relaxed » de Weld) :
+
+[source,java]
+----
+@ApplicationScoped
+public class Oidc {
+    private final String issuer;
+
+    @Inject
+    public Oidc(Config config) {
+        this.issuer = config.issuer();
+    }
+
+    protected Oidc(ProxyLink link) {   // porte d'entrée du proxy — corps vide
+        this.issuer = null;            // javac exige l'assignation des final non initialisés
+    }
+}
+----
+
+Le proxy généré chaîne vers ce constructeur (en passant toujours `null`) : sa création
+n'exécute plus aucune logique du bean — ni effets de bord dupliqués, ni
+`NullPointerException` sur un paramètre déréférencé. Le container ne sélectionne jamais ce
+constructeur pour l'injection. Les initialiseurs de champs s'exécutent dans tous les
+constructeurs : gardez-les sans effet de bord.
+
 == Qualifiers
 
 Permettent de discriminer plusieurs implémentations d'un même type.

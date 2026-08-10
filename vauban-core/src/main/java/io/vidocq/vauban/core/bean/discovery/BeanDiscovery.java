@@ -439,17 +439,28 @@ public final class BeanDiscovery {
         }
     }
 
+    /**
+     * A constructor the container may select for injection — i.e. anything but the
+     * {@code (ProxyLink)} client-proxy entry constructor, which exists solely for the
+     * generated proxy to chain to (Vidocq/vauban#24).
+     */
+    private static boolean isInjectionCandidateCtor(MethodInfo method) {
+        return method.isConstructor()
+                && !io.vidocq.vauban.core.proxy.ClientProxyShape.isProxyLinkConstructor(method);
+    }
+
     private Set<DotName> extractConstructorBindings(ClassInfo classInfo) {
         var bindings = new java.util.LinkedHashSet<DotName>();
-        // @Inject constructor
+        // @Inject constructor — the (ProxyLink) client-proxy entry constructor is never an
+        // injection candidate (Vidocq/vauban#24)
         var injectConstructor = classInfo.methods().stream()
-                .filter(m -> m.isConstructor() && hasAnnotation(m.annotations(), INJECT))
+                .filter(m -> isInjectionCandidateCtor(m) && hasAnnotation(m.annotations(), INJECT))
                 .findFirst();
 
         // CDI 2.0+: if no @Inject constructor, and exactly one constructor, use it
         if (injectConstructor.isEmpty()) {
             var allConstructors = classInfo.methods().stream()
-                    .filter(MethodInfo::isConstructor)
+                    .filter(BeanDiscovery::isInjectionCandidateCtor)
                     .toList();
             if (allConstructors.size() == 1) {
                 injectConstructor = Optional.of(allConstructors.get(0));
@@ -1089,20 +1100,22 @@ public final class BeanDiscovery {
     List<InjectionPointInfo> discoverInjectionPoints(ClassInfo classInfo) {
         var points = new ArrayList<InjectionPointInfo>();
 
-        // @Inject constructor parameters
+        // @Inject constructor parameters — the (ProxyLink) client-proxy entry constructor
+        // is never an injection candidate (Vidocq/vauban#24)
         var injectConstructor = classInfo.methods().stream()
-                .filter(m -> m.isConstructor() && hasAnnotation(m.annotations(), INJECT))
+                .filter(m -> isInjectionCandidateCtor(m) && hasAnnotation(m.annotations(), INJECT))
                 .findFirst();
 
         // CDI 2.0+: if no @Inject constructor, and exactly one constructor, use it
         if (injectConstructor.isEmpty()) {
             var allConstructors = classInfo.methods().stream()
-                    .filter(MethodInfo::isConstructor)
+                    .filter(BeanDiscovery::isInjectionCandidateCtor)
                     .toList();
             if (allConstructors.size() == 1) {
                 injectConstructor = Optional.of(allConstructors.get(0));
             }
         }
+
 
         if (injectConstructor.isPresent()) {
             var ctor = injectConstructor.get();
