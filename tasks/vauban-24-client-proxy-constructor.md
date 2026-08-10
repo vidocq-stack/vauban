@@ -106,21 +106,60 @@ O(beans) et non un scan du jar. À intégrer au chantier A.
 `GenerateMojo` de `vauban-maven-plugin` tourne déjà en `process-classes` ; A y ajoute une
 transformation de classes existantes, rien de plus.
 
-## 4. Recommandation
+## 4. Correction sur la spec (2026-08-10)
 
-1. Retenir **A**, avec **B en repli explicite et documenté** pour les beans issus de jars sans
-   marqueur — le repli conserve le comportement d'aujourd'hui plutôt que d'échouer.
-2. Avant de coder : écrire les deux tests de non-régression (compteur de constructions, et bean à
-   constructeur `@Inject` déréférençant son paramètre) dans `vauban-module-it`. Ils sont rouges
-   aujourd'hui et constituent la définition de « corrigé ».
-3. Vérifier au passage que `@PostConstruct` n'est pas déclenché sur le proxy.
-4. Le TCK CDI Lite passe 774/774 avec le comportement actuel : il ne couvre pas ce point. Ne pas
-   se fier au TCK comme garde-fou ici.
+La première version de ce document affirmait que refuser un bean normal-scoped sans constructeur
+no-arg « restreindrait la spec ». C'est **l'inverse** : la section *Unproxyable bean types* de
+CDI 4.1 liste explicitement — classe `final`, méthodes `final` non privées, **absence de
+constructeur no-arg non privé** — et impose au container d'en faire une **erreur de
+déploiement**. Le bean du rapporteur (unique constructeur `@Inject` à paramètres) est donc déjà
+non-proxyable au sens strict de la spec : l'erreur franche est la réponse *portable*, et le
+constructeur marqueur est une **extension de confort** (comme la construction « relaxed » de
+Weld), pas une obligation. C'est cohérent avec le TCK CDI Lite qui passe 774/774 sans couvrir ce
+point.
 
-## 5. Question ouverte pour la décision
+## 5. Plan retenu (2026-08-10, après échange mainteneur)
 
-La NPE du constructeur `@Inject` est-elle un défaut à traiter **avant** la 0.3.0 (elle rend
-l'injection par constructeur inutilisable sur un bean normal-scoped), ou peut-elle attendre le
-chantier A complet ? Un correctif partiel existe : refuser à la compilation un bean normal-scoped
-dont le seul constructeur a des paramètres, avec un message qui explique — ce serait honnête
-plutôt que silencieux, mais restreint la spec (CDI 4.1 exige que ces beans soient proxyables).
+Trois phases incrémentales ; rien n'est jeté d'une phase à l'autre.
+
+### Phase 0 — diagnostic conforme spec (avec la 0.3.0)
+
+Détecter les beans normal-scoped non-proxyables (pas de constructeur no-arg non privé, classe
+`final`, méthode `final` non privée, champ public) et **refuser avec un message clair** : à la
+compilation par l'APT quand le bean est dans l'unité courante, au boot sinon. Transforme la NPE
+silencieuse d'aujourd'hui en erreur explicite — comportement exigé par la spec. ~1 j.
+
+### Phase 1 — convention `ProxyLink` manuelle, opt-in (avec la 0.3.0)
+
+Le développeur peut déclarer `Bean(ProxyLink)` (corps vide, champs `final` assignés à leurs
+défauts) ; le bean devient alors proxyable proprement :
+
+- `vauban-api` : type marqueur `ProxyLink` (non instanciable hors container) ;
+- `ClientProxyShapeFromElements`/`ClientProxySourceRenderer` (source) et
+  `ClientProxyEmitter`/`RuntimeClientProxyGenerator` (bytecode) : cibler ce constructeur
+  quand il existe, au lieu de `super(<défauts>)` ;
+- indexeur : exclure le constructeur marqueur des candidats à l'injection ;
+- le diagnostic de la phase 0 accepte un bean porteur du marqueur (extension documentée).
+
+100 % APT côté build, aucune transformation de bytecode : le mur n°2 de l'option D tombe dès
+lors que le constructeur existe dans la source. TDD : compteur de constructions + bean
+`@Inject` déréférençant son paramètre, rouges d'abord, dans `vauban-module-it`. Vérifier au
+passage que `@PostConstruct` ne se déclenche pas sur le proxy. ~1–2 j. Débloque Rossignol.
+
+### Phase 2 — automatisation Class-File (chantier A complet, post-0.3.0)
+
+`vauban-maven-plugin`, phase `process-classes` : ajouter le marqueur `ACC_SYNTHETIC` à tout bean
+proxyable qui ne le déclare pas (manifeste APT des beans proxyables pour une passe ciblée
+O(beans)), et faire pointer le `<init>` du proxy dessus. La convention manuelle de la phase 1
+devient inutile mais reste honorée. Beans de jars tiers sans marqueur : diagnostic phase 0
+(erreur spec) par défaut ; l'option B (`ReflectionFactory`) reste un repli *opt-in* documenté si
+un besoin réel apparaît. ~2 j (réduits par la phase 1). L'option C (proxy `implements` pur
+delegate quand le point d'injection est une interface) s'y greffe comme optimisation : pas de
+constructeur du tout dans ce cas.
+
+## 6. Garde-fous
+
+- Le TCK CDI Lite (774/774) ne couvre ni la double construction ni la NPE : nos tests de
+  non-régression de la phase 1 sont le seul filet — les garder.
+- Les phases 0 et 1 sont recommandées **avant la 0.3.0** : petites, conformes spec, et elles
+  débloquent le cas Rossignol sans attendre le chantier Class-File.
