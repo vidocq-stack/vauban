@@ -347,6 +347,17 @@ public class VaubanProcessor extends AbstractProcessor {
                                 + "resolution deferred to the runtime container.");
                 continue;
             }
+            // A missing proxy-entry constructor is fixable without touching the source: the
+            // vauban-maven-plugin weaves a synthetic (ProxyLink) constructor at process-classes
+            // (Vidocq/vauban#24 phase 2). Warn here; a deployment that skips the plugin still
+            // fails at container start. Final classes/methods stay fatal — weaving cannot fix them.
+            if (error.kind() == DeploymentValidator.ValidationError.Kind.UNPROXYABLE_BEAN) {
+                processingEnv.getMessager().printMessage(Diagnostic.Kind.WARNING,
+                        "[Vauban] " + error.message()
+                                + " — the vauban-maven-plugin weaves this constructor at "
+                                + "process-classes; without the plugin this fails at container start.");
+                continue;
+            }
             fatal = true;
             processingEnv.getMessager().printMessage(Diagnostic.Kind.ERROR,
                 "[Vauban] " + error.message());

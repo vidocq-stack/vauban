@@ -84,8 +84,8 @@ class UnproxyableBeanValidationTest {
             """;
 
     @Test
-    @DisplayName("a normal-scoped bean with only an @Inject constructor fails the build")
-    void injectOnlyConstructorBeanIsRejected() throws IOException {
+    @DisplayName("a normal-scoped bean with only an @Inject constructor compiles with a warning — the plugin weaves the marker")
+    void injectOnlyConstructorBeanWarnsAndDefersToWeaving() throws IOException {
         var result = compile(CONFIG, CONSUMER, """
                 package io.repro.app;
 
@@ -105,13 +105,15 @@ class UnproxyableBeanValidationTest {
                 }
                 """);
 
-        assertFalse(result.success(),
-                "an unproxyable bean must fail the build (CDI 4.1 deployment problem): "
-                        + result.messages());
-        assertTrue(hasVaubanError(result, "constructor"),
-                "the error must explain the missing constructor: " + result.messages());
-        assertTrue(hasVaubanError(result, "ProxyLink"),
-                "the error must point at the ProxyLink escape hatch: " + result.messages());
+        // The vauban-maven-plugin weaves the synthetic (ProxyLink) constructor at
+        // process-classes (phase 2 of vauban#24), so this is not fatal at compile time —
+        // but it must be VISIBLE: a deployment without the plugin fails at container start.
+        assertTrue(result.success(),
+                "a weavable bean must not fail the build: " + result.messages());
+        assertTrue(result.messages().stream()
+                        .anyMatch(m -> m.startsWith("WARNING") && m.contains("[Vauban]")
+                                && m.contains("ProxyLink") && m.contains("process-classes")),
+                "the deferral to weaving must be visible as a warning: " + result.messages());
     }
 
     @Test

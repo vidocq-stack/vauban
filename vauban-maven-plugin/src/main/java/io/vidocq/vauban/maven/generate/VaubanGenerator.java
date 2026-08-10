@@ -152,7 +152,7 @@ public final class VaubanGenerator {
         // 3. Build merged index
         var index = indexBuilder.build();
         if (index.size() == 0 && alreadyKnownBeans.isEmpty()) {
-            return new GenerationResult(List.of(), List.of(), List.of(), warnings);
+            return new GenerationResult(List.of(), List.of(), List.of(), List.of(), warnings);
         }
 
         // 3b. Run BCE @Enhancement for non-pre-processed classes (if ClassLoader available)
@@ -219,6 +219,15 @@ public final class VaubanGenerator {
             writeBeansList(config.outputDir(), sortedBeanClassNames);
         }
 
+        // 7b. Weave the synthetic (ProxyLink) client-proxy entry constructor into this
+        //     module's normal-scoped beans (Vidocq/vauban#24 phase 2) — the app's source
+        //     never declares it. Runs BEFORE proxy generation so classes loaded below
+        //     already carry the marker and the generators chain to it.
+        var wovenBeans = config.projectClassesDir() == null
+                ? List.<String>of()
+                : ProxyLinkWeaving.weave(config.projectClassesDir(), index, config.classLoader(),
+                        beans, warnings);
+
         // 8. Pre-generate proxies and interceptor subclasses (if ClassLoader provided)
         //    Skip classes whose proxy/interceptor already exists on disk
         var generatedProxies = new ArrayList<String>();
@@ -276,12 +285,20 @@ public final class VaubanGenerator {
             }
         }
 
+        // 8b. Point the proxies of woven beans at the marker — APT-emitted proxies predate it
+        //     and still chain a business constructor; freshly generated ones already target it
+        //     (the rewrite is idempotent).
+        if (config.projectClassesDir() != null && !wovenBeans.isEmpty()) {
+            ProxyLinkWeaving.retargetProxies(config.projectClassesDir(), wovenBeans, warnings);
+        }
+
         // 9. Generate the per-module _VaubanComponents provider (bytecode — no javac in the plugin)
         //    for THIS module's public no-arg beans, so the container instantiates them in-module
         //    without reflection and the module can drop `opens … to io.vidocq.vauban.core`.
         generateComponentProvider(config, index, beans, warnings);
 
-        return new GenerationResult(sortedBeanClassNames, generatedProxies, generatedInterceptors, warnings);
+        return new GenerationResult(sortedBeanClassNames, generatedProxies, generatedInterceptors,
+                wovenBeans, warnings);
     }
 
     /**

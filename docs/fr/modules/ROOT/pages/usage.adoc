@@ -38,17 +38,25 @@ CDI 4.1 Lite couvre quatre scopes. Vauban les supporte tous, plus `@RequestScope
 Les scopes normaux (`@ApplicationScoped`, `@RequestScoped`) reçoivent un client proxy `_ClientProxy` généré à la compilation. Le proxy intercepte chaque appel et délègue au contexte actif. Les beans `@Dependent` et `@Singleton` n'en reçoivent pas.
 ====
 
-=== Beans proxyables et constructeur `ProxyLink`
+=== Beans proxyables et constructeur d'entrée `ProxyLink`
 
 Le client proxy étant une sous-classe du bean, CDI 4.1 déclare certaines classes
 _non proxyables_ pour les scopes normaux : classes `final`, classes portant des méthodes
-`final` non privées, et classes sans constructeur no-arg non privé. Vauban signale ces cas
-en erreur — à la compilation quand le bean fait partie de l'unité compilée, au démarrage du
-container sinon.
+`final` non privées, et classes sans constructeur no-arg non privé. Les membres `final`
+sont signalés en erreur (le tissage ne peut pas les corriger) ; le cas du constructeur
+manquant — le style courant du constructeur `@Inject` unique — est traité automatiquement :
 
-Le dernier cas couvre le style courant du constructeur `@Inject` unique. Pour le garder
-utilisable, déclarez un constructeur supplémentaire prenant `io.vidocq.vauban.api.ProxyLink`
-(extension Vauban, comparable à la construction « relaxed » de Weld) :
+**Quand le module est construit avec `vauban-maven-plugin` (le montage Vidocq standard),
+rien à faire.** En `process-classes`, le plugin tisse un constructeur d'entrée synthétique
+`(ProxyLink)` dans la classe compilée du bean et fait pointer le constructeur du proxy
+généré dessus. Votre source ne le déclare jamais. La création du proxy n'exécute alors
+aucune logique du bean — ni effets de bord dupliqués, ni `NullPointerException` sur un
+paramètre `@Inject` déréférencé. Le compilateur émet un warning `[Vauban]` sur ces beans,
+pour rappeler qu'un déploiement construit _sans_ le plugin échoue au démarrage du container.
+
+**Sans le plugin**, déclarez vous-même le constructeur d'entrée
+(`io.vidocq.vauban.api.ProxyLink`, extension Vauban comparable à la construction
+« relaxed » de Weld) :
 
 [source,java]
 ----
@@ -67,11 +75,10 @@ public class Oidc {
 }
 ----
 
-Le proxy généré chaîne vers ce constructeur (en passant toujours `null`) : sa création
-n'exécute plus aucune logique du bean — ni effets de bord dupliqués, ni
-`NullPointerException` sur un paramètre déréférencé. Le container ne sélectionne jamais ce
-constructeur pour l'injection. Les initialiseurs de champs s'exécutent dans tous les
-constructeurs : gardez-les sans effet de bord.
+Dans les deux cas le proxy chaîne vers ce constructeur (en passant toujours `null`), et le
+container ne le sélectionne jamais pour l'injection ni pour instancier le bean. Les
+initialiseurs de champs s'exécutent dans tous les constructeurs — gardez-les sans effet de
+bord.
 
 == Qualifiers
 

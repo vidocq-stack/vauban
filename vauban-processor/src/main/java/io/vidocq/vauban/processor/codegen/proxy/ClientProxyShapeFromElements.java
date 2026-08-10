@@ -107,7 +107,7 @@ public final class ClientProxyShapeFromElements {
     }
 
     /** True when {@code c} is the opt-in {@code (ProxyLink)} client-proxy entry constructor. */
-    private static boolean isProxyLinkConstructor(ExecutableElement c) {
+    public static boolean isProxyLinkConstructor(ExecutableElement c) {
         return c.getParameters().size() == 1
                 && c.getParameters().getFirst().asType() instanceof javax.lang.model.type.DeclaredType dt
                 && dt.asElement() instanceof TypeElement te

@@ -6,7 +6,7 @@ suspected cause, status. Updated on every investigation.
 ---
 
 ## VAU-PROXY-001 — client proxy replays the bean constructor (side effects doubled, NPE on `@Inject` ctor)
-- **Date**: 2026-08-10 — **Status**: FIXED, phases 0+1 (`pr/ybl/vauban-24-proxy-link`); phase 2 (automatic Class-File marker) pending
+- **Date**: 2026-08-10 — **Status**: FIXED, phases 0+1+2 (`pr/ybl/vauban-24-proxy-link`) — phase 2 weaves the marker automatically at `process-classes` (no app-code change required)
 - **Severity**: high (constructor injection unusable on normal-scoped beans; silent double side effects)
 - **Surfaced by**: Sébastien Blanc, Vidocq/vauban#24, while building Rossignol on Vidocq.
 
@@ -30,11 +30,16 @@ time and on the module path (the Vidocq runtime deployment), so nothing ever fir
 
 ### Fix
 Phase 0: proxyability checks (final class, non-private final methods, missing no-arg ctor)
-are now index-based with reflection as fallback — they fire at compile time and at boot,
-with a message pointing at the escape hatch. Phase 1: opt-in `ProxyLink` marker constructor
-(`vauban-api`); all three proxy front-ends chain to it when declared, and the container
-never selects it for injection. Full study: `tasks/vauban-24-client-proxy-constructor.md`.
-Verified: reactor 523 tests + CDI Lite TCK 774/774 green.
+are now index-based with reflection as fallback — final members fail the build; the
+missing-constructor case is a compile-time warning (weavable) and a container-start error.
+Phase 1: opt-in `ProxyLink` marker constructor (`vauban-api`); all three proxy front-ends
+chain to it when declared, and the container never selects it for injection. Phase 2
+(the actual no-app-change fix): `vauban-maven-plugin` weaves a synthetic `(ProxyLink)`
+constructor into the compiled bean at `process-classes` (`ProxyLinkWeaver` +
+`ProxyLinkWeaving`) and retargets APT-emitted proxies onto it — the application source
+never mentions `ProxyLink`. Full study: `tasks/vauban-24-client-proxy-constructor.md`.
+Verified: reactor 526 tests + CDI Lite TCK 774/774 green, weaving exercised for real by
+the examples modules during the reactor build.
 
 ---
 

@@ -338,8 +338,10 @@ public final class DeploymentValidator {
                 || info.methods().stream().anyMatch(m -> m.isConstructor() && !m.isPrivate()
                         && (m.parameters().isEmpty() || ClientProxyShape.isProxyLinkConstructor(m)));
         if (!hasProxyEntryCtor) {
+            // Distinct kind: the vauban-maven-plugin can weave the marker at process-classes,
+            // so the processor downgrades this one to a warning (final members it cannot fix).
             errors.add(new ValidationError(
-                    ValidationError.Kind.DEPLOYMENT_ERROR,
+                    ValidationError.Kind.UNPROXYABLE_BEAN,
                     PREFIX_NORMAL_SCOPED + bean.beanClass() + MSG_UNPROXYABLE_CTOR,
                     contextBean));
         }
@@ -387,7 +389,7 @@ public final class DeploymentValidator {
                 }
                 if (!hasProxyEntryCtor) {
                     errors.add(new ValidationError(
-                            ValidationError.Kind.DEPLOYMENT_ERROR,
+                            ValidationError.Kind.UNPROXYABLE_BEAN,
                             PREFIX_NORMAL_SCOPED + bean.beanClass() + MSG_UNPROXYABLE_CTOR,
                             contextBean));
                 }

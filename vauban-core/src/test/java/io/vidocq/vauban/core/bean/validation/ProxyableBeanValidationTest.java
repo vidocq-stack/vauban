@@ -66,10 +66,12 @@ class ProxyableBeanValidationTest {
 
         var errors = validate(bean);
 
+        // Distinct kind: the container start treats it as a DeploymentException, while the
+        // processor downgrades it to a warning (the plugin weaves the marker at process-classes).
         assertTrue(errors.stream().anyMatch(e ->
-                        e.kind() == DeploymentValidator.ValidationError.Kind.DEPLOYMENT_ERROR
+                        e.kind() == DeploymentValidator.ValidationError.Kind.UNPROXYABLE_BEAN
                                 && e.message().contains("constructor")),
-                "expected an unproxyable-bean deployment error, got: " + errors);
+                "expected an unproxyable-bean error, got: " + errors);
         assertTrue(errors.stream().anyMatch(e -> e.message().contains("ProxyLink")),
                 "the error must point at the ProxyLink escape hatch: " + errors);
     }

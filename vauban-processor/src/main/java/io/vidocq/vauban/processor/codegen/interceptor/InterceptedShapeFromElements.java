@@ -76,10 +76,14 @@ public final class InterceptedShapeFromElements {
     public static InterceptedShape from(TypeElement bean, Elements elements, Types types) {
         String beanBinaryName = elements.getBinaryName(bean).toString();
 
-        // Constructors
+        // Constructors — the (ProxyLink) client-proxy entry constructor is not mirrored:
+        // the $$Intercepted subclass IS the contextual instance and must run business
+        // constructors only (Vidocq/vauban#24).
         var ctors = new ArrayList<CtorShape>();
         for (ExecutableElement ctor : ElementFilter.constructorsIn(bean.getEnclosedElements())) {
             if (ctor.getModifiers().contains(Modifier.PRIVATE)) continue;
+            if (io.vidocq.vauban.processor.codegen.proxy.ClientProxyShapeFromElements
+                    .isProxyLinkConstructor(ctor)) continue;
             ctors.add(new CtorShape(paramShapes(ctor, elements, types)));
         }
 

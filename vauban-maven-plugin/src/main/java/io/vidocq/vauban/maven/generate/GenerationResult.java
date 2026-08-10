@@ -27,18 +27,22 @@ import java.util.List;
  * @param discoveredBeanClasses fully-qualified names of discovered CDI beans
  * @param generatedProxies      class names of generated client proxies (normal-scoped beans)
  * @param generatedInterceptors class names of generated interceptor subclasses
+ * @param wovenBeanClasses      class names into which the synthetic {@code (ProxyLink)}
+ *                              client-proxy entry constructor was woven (Vidocq/vauban#24)
  * @param warnings              non-fatal issues encountered during generation
  */
 public record GenerationResult(
         List<String> discoveredBeanClasses,
         List<String> generatedProxies,
         List<String> generatedInterceptors,
+        List<String> wovenBeanClasses,
         List<String> warnings
 ) {
     public GenerationResult {
         discoveredBeanClasses = List.copyOf(discoveredBeanClasses);
         generatedProxies = List.copyOf(generatedProxies);
         generatedInterceptors = List.copyOf(generatedInterceptors);
+        wovenBeanClasses = List.copyOf(wovenBeanClasses);
         warnings = List.copyOf(warnings);
     }
 }

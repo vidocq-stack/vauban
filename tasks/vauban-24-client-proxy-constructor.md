@@ -1,8 +1,13 @@
 # vauban#24 — réétude : le constructeur du bean s'exécute à la création du client proxy
 
-Statut : **phases 0 et 1 implémentées** (`pr/ybl/vauban-24-proxy-link`, 2026-08-10) —
-diagnostic unproxyable index-based + constructeur marqueur `ProxyLink` opt-in ; TCK CDI Lite
-774/774 inchangé. Reste la phase 2 (marqueur automatique Class-File, post-0.3.0).
+Statut : **phases 0, 1 et 2 implémentées** (`pr/ybl/vauban-24-proxy-link`, 2026-08-10) —
+diagnostic unproxyable index-based, constructeur marqueur `ProxyLink` opt-in, et **tissage
+automatique par le plugin** (`ProxyLinkWeaver`/`ProxyLinkWeaving`, `process-classes`) :
+l'application ne déclare jamais le marqueur, exigence mainteneur du 2026-08-10. Le cas
+« constructeur manquant » est rétrogradé en warning à la compilation (kind
+`UNPROXYABLE_BEAN`), reste une erreur au boot sans plugin. TCK CDI Lite 774/774 inchangé.
+Restent en option post-0.3.0 : proxy pur delegate `implements` pour les points d'injection
+typés interface, et repli `ReflectionFactory` opt-in pour les jars tiers non tissés.
 Date : 2026-08-09. Rapporteur d'origine : Sébastien Blanc (Rossignol).
 
 Note d'implémentation (phase 0) : les contrôles spec existaient déjà dans
