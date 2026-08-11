@@ -1,0 +1,239 @@
+/*
+ * Copyright (c) 2026 Yann Blazart, Antoine Sabot-Durand and the Vidocq contributors
+ *
+ * This program and the accompanying materials are made available under the
+ * terms of the Eclipse Public License 2.0 which is available at
+ * https://www.eclipse.org/legal/epl-2.0/
+ *
+ * This Source Code may also be made available under the following Secondary
+ * Licenses when the conditions for such availability set forth in the Eclipse
+ * Public License, v. 2.0 are satisfied: GNU General Public License, version 2
+ * or any later version, which is available at
+ * https://www.gnu.org/licenses/old-licenses/gpl-2.0.html
+ *
+ * It is also made available under the European Union Public Licence v. 1.2,
+ * which is available at
+ * https://joinup.ec.europa.eu/collection/eupl/eupl-text-eupl-12
+ *
+ * SPDX-License-Identifier: EPL-2.0 OR EUPL-1.2 OR GPL-2.0-or-later
+ */
+package io.vidocq.vauban.processor.apt;
+
+import io.vidocq.vauban.api.ProxyLink;
+import io.vidocq.vauban.processor.VaubanProcessor;
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
+
+import javax.tools.DiagnosticCollector;
+import javax.tools.JavaFileObject;
+import javax.tools.SimpleJavaFileObject;
+import javax.tools.ToolProvider;
+import java.io.File;
+import java.io.IOException;
+import java.net.URLClassLoader;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.List;
+
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
+/**
+ * The auto-started javac plugin must weave the {@code (ProxyLink)} entry constructor into
+ * normal-scoped beans <strong>during plain javac compilation</strong> — no Maven plugin,
+ * no {@code -Xplugin} flag, no app-code change. This is what covers IDE-internal builds
+ * (IntelliJ), Gradle and bare javac: everywhere the annotation processor rides, the
+ * weaving rides along (Vidocq/vauban#24, tiered architecture — see
+ * {@code tasks/vauban-classloader-universal.md} §7).
+ *
+ * <p>The harness compiles through {@code ToolProvider.getSystemJavaCompiler()} exactly
+ * like an IDE or Gradle would: the plugin must be discovered via {@code ServiceLoader}
+ * and started by its {@code autoStart()} contract, never requested explicitly.
+ */
+@DisplayName("Auto-started javac plugin — weaving without Maven and without app changes")
+class WeavingJavacPluginTest {
+
+    @TempDir
+    Path tempDir;
+
+    private static final String CONFIG = """
+            package io.repro.app;
+
+            import jakarta.enterprise.context.ApplicationScoped;
+
+            @ApplicationScoped
+            public class Config {
+                public String issuer() { return "https://issuer"; }
+            }
+            """;
+
+    private static final String CONSUMER = """
+            package io.repro.app;
+
+            import jakarta.enterprise.context.ApplicationScoped;
+            import jakarta.inject.Inject;
+
+            @ApplicationScoped
+            public class Consumer {
+                @Inject
+                Oidc oidc;
+            }
+            """;
+
+    /** The exact Rossignol case: single @Inject constructor that dereferences a parameter. */
+    private static final String OIDC = """
+            package io.repro.app;
+
+            import jakarta.enterprise.context.ApplicationScoped;
+            import jakarta.inject.Inject;
+
+            @ApplicationScoped
+            public class Oidc {
+                private final String issuer;
+
+                @Inject
+                public Oidc(Config config) {
+                    this.issuer = config.issuer();
+                }
+
+                public String issuer() { return issuer; }
+            }
+            """;
+
+    @Test
+    @DisplayName("a plain javac compile weaves the marker and the proxy instantiates without NPE")
+    void plainJavacCompileProducesWovenClasses() throws Exception {
+        Path out = compile(CONFIG, CONSUMER, OIDC);
+
+        try (var loader = new URLClassLoader(new java.net.URL[]{out.toUri().toURL()},
+                getClass().getClassLoader())) {
+            Class<?> bean = loader.loadClass("io.repro.app.Oidc");
+            var marker = Arrays.stream(bean.getDeclaredConstructors())
+                    .filter(c -> c.getParameterCount() == 1
+                            && c.getParameterTypes()[0].getName().equals(ProxyLink.CLASS_NAME))
+                    .findFirst();
+            assertTrue(marker.isPresent(),
+                    "javac alone must produce a woven bean — no Maven plugin involved");
+            assertTrue(marker.get().isSynthetic(), "the woven constructor must be ACC_SYNTHETIC");
+
+            Class<?> proxy = loader.loadClass("io.repro.app.Oidc_ClientProxy");
+            assertDoesNotThrow(() -> proxy.getDeclaredConstructor().newInstance(),
+                    "the proxy must chain to the woven marker, not dereference a null Config");
+        }
+    }
+
+    @Test
+    @DisplayName("the weave plan does not leak into the output directory")
+    void weavePlanLeavesNoResidue() throws Exception {
+        Path out = compile(CONFIG, CONSUMER, OIDC);
+
+        try (var walk = Files.walk(out)) {
+            assertFalse(walk.anyMatch(p -> p.getFileName().toString().contains("weave")),
+                    "the processor/plugin handshake must clean up after itself");
+        }
+    }
+
+    // ---- Harness (mirrors UnproxyableBeanValidationTest, without -Xplugin) ----------------------
+
+    /** Compiles and returns the class-output directory. */
+    private Path compile(String... sources) throws IOException {
+        var compiler = ToolProvider.getSystemJavaCompiler();
+        var diagnostics = new DiagnosticCollector<JavaFileObject>();
+
+        Path out = tempDir.resolve("classes");
+        Path generated = tempDir.resolve("generated-sources");
+        Files.createDirectories(out);
+        Files.createDirectories(generated);
+
+        var options = List.of(
+                "-d", out.toString(),
+                "-s", generated.toString(),
+                "--release", "25",
+                "-classpath", resolveCompilationClasspath(),
+                "-proc:full");
+
+        try (var fileManager = compiler.getStandardFileManager(diagnostics, null, null)) {
+            var task = compiler.getTask(null, fileManager, diagnostics, options, null,
+                    writeSources(tempDir.resolve("src"), sources));
+            task.setProcessors(List.of(new VaubanProcessor()));
+            boolean success = task.call();
+
+            var messages = new ArrayList<String>();
+            for (var d : diagnostics.getDiagnostics()) {
+                messages.add(d.getKind() + ": " + d.getMessage(null));
+            }
+            assertTrue(success, "compilation must succeed: " + messages);
+        }
+        return out;
+    }
+
+    private List<JavaFileObject> writeSources(Path root, String... sources) throws IOException {
+        var files = new ArrayList<JavaFileObject>();
+        for (var source : sources) {
+            String pkg = extractPackageName(source);
+            Path dir = pkg == null ? root : root.resolve(pkg.replace('.', '/'));
+            Files.createDirectories(dir);
+            Path file = dir.resolve(extractClassName(source) + ".java");
+            Files.writeString(file, source);
+            files.add(new SimpleJavaFileObject(file.toUri(), JavaFileObject.Kind.SOURCE) {
+                @Override
+                public CharSequence getCharContent(boolean ignoreEncodingErrors) throws IOException {
+                    return Files.readString(file);
+                }
+            });
+        }
+        return files;
+    }
+
+    private static String extractClassName(String source) {
+        var matcher = java.util.regex.Pattern
+                .compile("(?:class|interface|record|enum)\\s+(\\w+)").matcher(source);
+        if (!matcher.find()) throw new IllegalArgumentException("no type declaration in source");
+        return matcher.group(1);
+    }
+
+    private static String extractPackageName(String source) {
+        var matcher = java.util.regex.Pattern.compile("package\\s+([\\w.]+);").matcher(source);
+        return matcher.find() ? matcher.group(1) : null;
+    }
+
+    private static String resolveCompilationClasspath() {
+        var paths = new java.util.LinkedHashSet<String>();
+
+        var cp = System.getProperty("java.class.path");
+        if (cp != null && !cp.isBlank()) {
+            java.util.Collections.addAll(paths, cp.split(File.pathSeparator));
+        }
+
+        for (var clazz : List.of(jakarta.enterprise.context.ApplicationScoped.class,
+                jakarta.inject.Inject.class,
+                jakarta.interceptor.Interceptor.class,
+                io.vidocq.vauban.api.ProxyLink.class)) {
+            try {
+                var location = clazz.getProtectionDomain().getCodeSource().getLocation();
+                if (location != null) {
+                    paths.add(Path.of(location.toURI()).toString());
+                }
+            } catch (Exception ignored) {
+                // Platform-layer class without a file location — nothing to add.
+            }
+        }
+
+        ModuleLayer.boot().configuration().modules().forEach(resolved ->
+                resolved.reference().location().ifPresent(uri -> {
+                    try {
+                        if ("file".equals(uri.getScheme())) {
+                            paths.add(Path.of(uri).toString());
+                        }
+                    } catch (Exception ignored) {
+                        // Non-file module reference (jrt:) — not a classpath entry.
+                    }
+                }));
+
+        return String.join(File.pathSeparator, paths);
+    }
+}

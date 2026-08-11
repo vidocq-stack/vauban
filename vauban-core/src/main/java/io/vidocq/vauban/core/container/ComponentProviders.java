@@ -61,7 +61,39 @@ final class ComponentProviders {
         } catch (Throwable _) {
             // misconfigured/absent services — keep the explicit providers, fall back otherwise
         }
+        // Trampoline re-layering (Vidocq.run from an IDE launch) resolves the application
+        // BOTH in the boot layer and in the Vauban layer: ServiceLoader then yields each
+        // generated provider twice — the layer one (woven world) and its boot-layer twin
+        // (un-woven world). Deduplicate by class name, preferring the layer's copy;
+        // providers that exist only once (runtime extensions, explicit ones) are kept.
+        var layerLoader = layerLoaderOf(cl);
+        if (layerLoader != null) {
+            var byName = new java.util.LinkedHashMap<String, VaubanComponentProvider>();
+            for (var provider : all) {
+                var name = provider.getClass().getName();
+                var existing = byName.putIfAbsent(name, provider);
+                if (existing != null && definedUnderLayer(provider, layerLoader)
+                        && !definedUnderLayer(existing, layerLoader)) {
+                    byName.put(name, provider);
+                }
+            }
+            all = new ArrayList<>(byName.values());
+        }
         return new ComponentProviders(all);
+    }
+
+    private static ClassLoader layerLoaderOf(ClassLoader cl) {
+        for (ClassLoader l = cl; l != null; l = l.getParent()) {
+            if (l instanceof io.vidocq.vauban.classloader.VaubanClassLoader) return l;
+        }
+        return null;
+    }
+
+    private static boolean definedUnderLayer(VaubanComponentProvider provider, ClassLoader layerLoader) {
+        for (ClassLoader l = provider.getClass().getClassLoader(); l != null; l = l.getParent()) {
+            if (l == layerLoader) return true;
+        }
+        return false;
     }
 
     /**

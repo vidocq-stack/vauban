@@ -21,6 +21,13 @@ module io.vidocq.vauban.core {
     requires transitive io.vidocq.vauban.api;
     requires io.vidocq.vauban.indexer;
     requires io.vidocq.vauban.classloader.spi;
+    // Canonical vauban#24 weaving transforms, shared with the build-time weavers; the
+    // load-time tier (io.vidocq.vauban.core.weaving) detects unwoven build output and
+    // attaches the same artifact as an instrumentation agent.
+    requires io.vidocq.vauban.weaver;
+    // Universal loader engine — the scanner defines sjar classes through it (source
+    // plugins chained with the cdi-proxifier transformer before definition).
+    requires io.vidocq.vauban.classloader;
     requires transitive jakarta.cdi.lang.model;
     requires jakarta.el;
     requires jdk.unsupported;
@@ -50,6 +57,9 @@ module io.vidocq.vauban.core {
     exports io.vidocq.vauban.core.interceptor;
     exports io.vidocq.vauban.core.enrichment;
     exports io.vidocq.vauban.core.extensions;
+    // vauban#24 load-time weaving entry point: the Vidocq bootstrap (and any custom
+    // launcher) must be able to run it before application classes get loaded.
+    exports io.vidocq.vauban.core.weaving;
     // Shared client-proxy IR + emitter, consumed by the APT front-ends only — qualified
     // export to keep the package out of the public API (non-modular consumers like the
     // Maven plugin read the jar from the classpath and are unaffected).

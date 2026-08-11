@@ -51,6 +51,13 @@ public final class DeploymentValidator {
     private final BeanResolver resolver;
     private final VaubanIndex index;
 
+    /**
+     * Bean classes the load-time weaving agent will equip with the {@code (ProxyLink)}
+     * constructor at class definition (vauban#24 IDE-build fallback) — their build output
+     * legitimately lacks the marker, so the unproxyable-constructor check must not fire.
+     */
+    private Set<String> loadTimeWoven = Set.of();
+
     /** Reflection-only fallback — proxyability checks are blind to unloadable classes. */
     public DeploymentValidator(List<BeanDescriptor> beans, BeanResolver resolver) {
         this(beans, resolver, null);
@@ -65,6 +72,12 @@ public final class DeploymentValidator {
         this.beans = List.copyOf(beans);
         this.resolver = Objects.requireNonNull(resolver);
         this.index = index;
+    }
+
+    /** Declares classes that will be woven at load time; returns {@code this}. */
+    public DeploymentValidator loadTimeWoven(Set<String> beanClassNames) {
+        this.loadTimeWoven = Set.copyOf(beanClassNames);
+        return this;
     }
 
     @SuppressWarnings("java:S135")
@@ -337,7 +350,7 @@ public final class DeploymentValidator {
         boolean hasProxyEntryCtor = !hasExplicitCtor // implicit no-arg constructor
                 || info.methods().stream().anyMatch(m -> m.isConstructor() && !m.isPrivate()
                         && (m.parameters().isEmpty() || ClientProxyShape.isProxyLinkConstructor(m)));
-        if (!hasProxyEntryCtor) {
+        if (!hasProxyEntryCtor && !loadTimeWoven.contains(info.name().value())) {
             // Distinct kind: the vauban-maven-plugin can weave the marker at process-classes,
             // so the processor downgrades this one to a warning (final members it cannot fix).
             errors.add(new ValidationError(
@@ -387,7 +400,7 @@ public final class DeploymentValidator {
                         break;
                     }
                 }
-                if (!hasProxyEntryCtor) {
+                if (!hasProxyEntryCtor && !loadTimeWoven.contains(clazz.getName())) {
                     errors.add(new ValidationError(
                             ValidationError.Kind.UNPROXYABLE_BEAN,
                             PREFIX_NORMAL_SCOPED + bean.beanClass() + MSG_UNPROXYABLE_CTOR,

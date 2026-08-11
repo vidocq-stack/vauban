@@ -65,6 +65,8 @@
     <modules>
         <module>vauban-api</module>
         <module>vauban-classloader-spi</module>
+        <module>vauban-weaver</module>
+        <module>vauban-classloader</module>
         <module>vauban-core</module>
         <module>vauban-indexer</module>
         <module>vauban-processor</module>
@@ -136,6 +138,16 @@
             <dependency>
                 <groupId>io.vidocq.vauban</groupId>
                 <artifactId>vauban-sjar</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>io.vidocq.vauban</groupId>
+                <artifactId>vauban-weaver</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>io.vidocq.vauban</groupId>
+                <artifactId>vauban-classloader</artifactId>
                 <version>${project.version}</version>
             </dependency>
         </dependencies>

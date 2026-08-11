@@ -17,24 +17,23 @@
  *
  * SPDX-License-Identifier: EPL-2.0 OR EUPL-1.2 OR GPL-2.0-or-later
  */
-module io.vidocq.vauban.processor {
-    requires io.vidocq.vauban.core;
-    requires io.vidocq.vauban.indexer;
+
+/**
+ * The universal Vauban class loader engine: resolves application archives through
+ * {@code ByteSourcePlugin}s (plain jar and exploded directory built in, sjar via
+ * vauban-sjar), pipes every class through the {@code ClassTransformerPlugin} chain
+ * (cdi-proxifier built in), then defines it. Deliberately container-free: the loader
+ * precedes the container.
+ */
+module io.vidocq.vauban.classloader {
+    requires transitive io.vidocq.vauban.classloader.spi;
     requires io.vidocq.vauban.weaver;
-    requires java.compiler;
-    requires jdk.compiler;
 
-    uses jakarta.enterprise.inject.build.compatible.spi.BuildCompatibleExtension;
+    uses io.vidocq.vauban.classloader.spi.ByteSourcePlugin;
+    uses io.vidocq.vauban.classloader.spi.ClassTransformerPlugin;
 
-    exports io.vidocq.vauban.processor;
-    exports io.vidocq.vauban.processor.apt;
-    exports io.vidocq.vauban.processor.codegen;
-    exports io.vidocq.vauban.processor.codegen.factory;
-    exports io.vidocq.vauban.processor.codegen.proxy;
-    exports io.vidocq.vauban.processor.codegen.interceptor;
+    exports io.vidocq.vauban.classloader;
 
-    provides javax.annotation.processing.Processor
-        with io.vidocq.vauban.processor.VaubanProcessor;
-    provides com.sun.source.util.Plugin
-        with io.vidocq.vauban.processor.weave.VaubanWeavingPlugin;
+    provides io.vidocq.vauban.classloader.spi.ClassTransformerPlugin
+            with io.vidocq.vauban.classloader.CdiProxifierTransformer;
 }

@@ -30,6 +30,18 @@
             <groupId>io.vidocq.vauban</groupId>
             <artifactId>vauban-classloader-spi</artifactId>
         </dependency>
+        <dependency>
+            <!-- Canonical client-proxy weaving transforms (vauban#24), also consumed by
+                 LoadTimeWeaving; the same artifact is embedded below as the agent jar. -->
+            <groupId>io.vidocq.vauban</groupId>
+            <artifactId>vauban-weaver</artifactId>
+        </dependency>
+        <dependency>
+            <!-- Universal loader engine: ContainerScanner defines sjar classes through it
+                 (source plugins chained with the cdi-proxifier transformer). -->
+            <groupId>io.vidocq.vauban</groupId>
+            <artifactId>vauban-classloader</artifactId>
+        </dependency>
 
         <dependency>
             <groupId>org.junit.jupiter</groupId>
@@ -37,4 +49,36 @@
             <scope>test</scope>
         </dependency>
     </dependencies>
+
+    <build>
+        <plugins>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-dependency-plugin</artifactId>
+                <executions>
+                    <execution>
+                        <!-- LoadTimeWeaving extracts this embedded copy to a temp file and
+                             dynamically attaches it when the build output was not woven
+                             (IDE builds) — see io.vidocq.vauban.core.weaving. -->
+                        <id>embed-weaver-agent</id>
+                        <phase>generate-resources</phase>
+                        <goals>
+                            <goal>copy</goal>
+                        </goals>
+                        <configuration>
+                            <artifactItems>
+                                <artifactItem>
+                                    <groupId>io.vidocq.vauban</groupId>
+                                    <artifactId>vauban-weaver</artifactId>
+                                    <version>${project.version}</version>
+                                    <destFileName>vauban-weaver-agent.jar</destFileName>
+                                </artifactItem>
+                            </artifactItems>
+                            <outputDirectory>${project.build.outputDirectory}/io/vidocq/vauban/core/weaving</outputDirectory>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+        </plugins>
+    </build>
 </project>
