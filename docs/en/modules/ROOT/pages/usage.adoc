@@ -46,15 +46,27 @@ without a non-private no-arg constructor. Final members are reported as errors (
 cannot fix them); the missing-constructor case — the common single-`@Inject`-constructor
 style — is handled automatically:
 
-**When the module builds with `vauban-maven-plugin` (the standard Vidocq setup), nothing to
-do.** At `process-classes` the plugin weaves a synthetic `(ProxyLink)` entry constructor
-into the compiled bean class and points the generated proxy's constructor at it. Your
-source never declares it. Creating the proxy then runs no bean logic — no duplicated
-construction side effects, no `NullPointerException` on dereferenced `@Inject` parameters.
-The compiler surfaces a `[Vauban]` warning on such beans as a reminder that a deployment
-built _without_ the plugin fails at container start.
+**In any javac-based build (Maven, Gradle, plain `javac`, the standard Vidocq setup),
+nothing to do.** The Vauban annotation processor ships an auto-started javac plugin that,
+when compilation finishes, weaves a synthetic `(ProxyLink)` entry constructor into the
+compiled bean class and points the generated proxy's constructor at it. Your source never
+declares it. Creating the proxy then runs no bean logic — no duplicated construction side
+effects, no `NullPointerException` on dereferenced `@Inject` parameters. The
+`vauban-maven-plugin` applies the same weaving at `process-classes` as a second layer and
+for ecosystem jars that do not go through javac.
 
-**Without the plugin**, declare the entry constructor yourself
+**When the build output was not woven** — typically an IDE build: IntelliJ's build system
+writes classes to disk after javac finishes, which defeats the javac plugin — the
+container detects it at boot, before any bean class is loaded, and attaches the
+`vauban-weaver` agent to the current JVM: the same transformation is applied when the
+class is defined. You will see a Vauban warning listing the affected beans plus the JDK's
+standard dynamic-agent notice; behaviour is otherwise identical to a woven build. Disable
+this tier with `-Dvauban.weaving.loadtime=disabled`, or avoid it entirely in IntelliJ by
+enabling _Delegate IDE build/run actions to Maven_. See
+xref:internals.adoc#weaving-tiers[Internals — client-proxy weaving tiers] for the full
+mechanics.
+
+**Without any weaving tier**, declare the entry constructor yourself
 (`io.vidocq.vauban.api.ProxyLink`, a Vauban extension comparable to Weld's relaxed
 construction):
 
