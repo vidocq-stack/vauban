@@ -23,7 +23,7 @@ Vauban turned defence into a mathematical art: trajectories, sapping, counter-mi
 | Java | 25 (LTS)
 | Java modules | `io.vidocq.vauban.api`, `io.vidocq.vauban.core`, `io.vidocq.vauban.indexer`, `io.vidocq.vauban.processor`, `io.vidocq.vauban.junit`, `io.vidocq.vauban.classloader.spi`, `io.vidocq.vauban.sjar`
 | Runtime dependencies | None beyond `jakarta.cdi` and `jakarta.cdi.lang.model`
-| CDI 4.1 Lite TCK | partial — see xref:tck.adoc[detailed status]
+| CDI 4.1 Lite TCK | **774/774** — see xref:tck.adoc[detailed status]
 |===
 
 == Three identifying traits
