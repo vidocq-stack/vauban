@@ -100,13 +100,16 @@ public final class RuntimeClientProxyGenerator {
     }
 
     /**
-     * Find the simplest non-private constructor (fewest parameters).
-     * Prefers no-arg, then smallest parameter count.
+     * The super constructor the proxy chains to: the opt-in {@code (ProxyLink)} entry
+     * constructor when the bean declares one (side-effect-free by contract —
+     * Vidocq/vauban#24), else the simplest non-private constructor (no-arg first, then
+     * smallest parameter count) called with default values.
      */
     private static java.lang.reflect.Constructor<?> findSimplestConstructor(Class<?> beanClass) {
         java.lang.reflect.Constructor<?> best = null;
         for (var ctor : beanClass.getDeclaredConstructors()) {
             if (java.lang.reflect.Modifier.isPrivate(ctor.getModifiers())) continue;
+            if (ClientProxyShape.isProxyLinkConstructor(ctor)) return ctor;
             if (best == null || ctor.getParameterCount() < best.getParameterCount()) {
                 best = ctor;
             }

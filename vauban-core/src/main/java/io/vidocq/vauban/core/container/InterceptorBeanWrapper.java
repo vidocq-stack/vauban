@@ -194,7 +194,12 @@ final class InterceptorBeanWrapper {
     }
 
     private java.lang.reflect.Constructor<?> findConstructor(Class<?> clazz) throws NoSuchMethodException {
-        for (var c : clazz.getDeclaredConstructors()) {
+        // The (ProxyLink) client-proxy entry constructor is never an instantiation
+        // candidate (Vidocq/vauban#24) — real instances must run a business constructor.
+        var candidates = java.util.Arrays.stream(clazz.getDeclaredConstructors())
+                .filter(c -> !io.vidocq.vauban.core.proxy.ClientProxyShape.isProxyLinkConstructor(c))
+                .toList();
+        for (var c : candidates) {
             if (c.isAnnotationPresent(jakarta.inject.Inject.class)) {
                 return c;
             }
@@ -202,8 +207,8 @@ final class InterceptorBeanWrapper {
         try {
             return clazz.getDeclaredConstructor();
         } catch (NoSuchMethodException e) {
-            if (clazz.getDeclaredConstructors().length == 1) {
-                return clazz.getDeclaredConstructors()[0];
+            if (candidates.size() == 1) {
+                return candidates.getFirst();
             }
             throw e;
         }

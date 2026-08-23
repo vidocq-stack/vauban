@@ -38,6 +38,48 @@ CDI 4.1 Lite couvre quatre scopes. Vauban les supporte tous, plus `@RequestScope
 Les scopes normaux (`@ApplicationScoped`, `@RequestScoped`) reçoivent un client proxy `_ClientProxy` généré à la compilation. Le proxy intercepte chaque appel et délègue au contexte actif. Les beans `@Dependent` et `@Singleton` n'en reçoivent pas.
 ====
 
+=== Beans proxyables et constructeur d'entrée `ProxyLink`
+
+Le client proxy étant une sous-classe du bean, CDI 4.1 déclare certaines classes
+_non proxyables_ pour les scopes normaux : classes `final`, classes portant des méthodes
+`final` non privées, et classes sans constructeur no-arg non privé. Les membres `final`
+sont signalés en erreur (le tissage ne peut pas les corriger) ; le cas du constructeur
+manquant — le style courant du constructeur `@Inject` unique — est traité automatiquement :
+
+**Quand le module est construit avec `vauban-maven-plugin` (le montage Vidocq standard),
+rien à faire.** En `process-classes`, le plugin tisse un constructeur d'entrée synthétique
+`(ProxyLink)` dans la classe compilée du bean et fait pointer le constructeur du proxy
+généré dessus. Votre source ne le déclare jamais. La création du proxy n'exécute alors
+aucune logique du bean — ni effets de bord dupliqués, ni `NullPointerException` sur un
+paramètre `@Inject` déréférencé. Le compilateur émet un warning `[Vauban]` sur ces beans,
+pour rappeler qu'un déploiement construit _sans_ le plugin échoue au démarrage du container.
+
+**Sans le plugin**, déclarez vous-même le constructeur d'entrée
+(`io.vidocq.vauban.api.ProxyLink`, extension Vauban comparable à la construction
+« relaxed » de Weld) :
+
+[source,java]
+----
+@ApplicationScoped
+public class Oidc {
+    private final String issuer;
+
+    @Inject
+    public Oidc(Config config) {
+        this.issuer = config.issuer();
+    }
+
+    protected Oidc(ProxyLink link) {   // porte d'entrée du proxy — corps vide
+        this.issuer = null;            // javac exige l'assignation des final non initialisés
+    }
+}
+----
+
+Dans les deux cas le proxy chaîne vers ce constructeur (en passant toujours `null`), et le
+container ne le sélectionne jamais pour l'injection ni pour instancier le bean. Les
+initialiseurs de champs s'exécutent dans tous les constructeurs — gardez-les sans effet de
+bord.
+
 == Qualifiers
 
 Permettent de discriminer plusieurs implémentations d'un même type.

@@ -85,19 +85,33 @@ public final class ClientProxyShapeFromElements {
     }
 
     /**
-     * Parameter types of the simplest non-private declared constructor — empty for a no-arg
-     * (or absent) constructor, meaning a plain {@code super()} call.
+     * Parameter types of the constructor the proxy chains to: the opt-in {@code (ProxyLink)}
+     * entry constructor when the bean declares one (side-effect-free by contract —
+     * Vidocq/vauban#24), else the simplest non-private declared constructor — empty for a
+     * no-arg (or absent) constructor, meaning a plain {@code super()} call.
      */
     private static List<TypeRef> superCtorParams(TypeElement bean, Elements elements, Types types) {
         ExecutableElement simplest = null;
         for (ExecutableElement c : ElementFilter.constructorsIn(bean.getEnclosedElements())) {
             if (c.getModifiers().contains(Modifier.PRIVATE)) continue;
+            if (isProxyLinkConstructor(c)) {
+                simplest = c;
+                break;
+            }
             if (simplest == null || c.getParameters().size() < simplest.getParameters().size()) {
                 simplest = c;
             }
         }
         if (simplest == null) return List.of();
         return typeRefs(simplest.getParameters(), elements, types);
+    }
+
+    /** True when {@code c} is the opt-in {@code (ProxyLink)} client-proxy entry constructor. */
+    public static boolean isProxyLinkConstructor(ExecutableElement c) {
+        return c.getParameters().size() == 1
+                && c.getParameters().getFirst().asType() instanceof javax.lang.model.type.DeclaredType dt
+                && dt.asElement() instanceof TypeElement te
+                && te.getQualifiedName().contentEquals(ClientProxyShape.PROXY_LINK_CLASS);
     }
 
     private static List<TypeRef> typeRefs(List<? extends VariableElement> params,

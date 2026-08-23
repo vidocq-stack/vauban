@@ -38,6 +38,47 @@ CDI 4.1 Lite ships four standard scopes. Vauban supports all of them, plus `@Req
 Normal-scoped beans (`@ApplicationScoped`, `@RequestScoped`) get a `_ClientProxy` generated at compile time. The proxy intercepts each call and delegates to the active context. `@Dependent` and `@Singleton` beans do not.
 ====
 
+=== Proxyable beans and the `ProxyLink` entry constructor
+
+Because the client proxy subclasses the bean, CDI 4.1 declares some classes _unproxyable_
+for normal scopes: `final` classes, classes with non-private `final` methods, and classes
+without a non-private no-arg constructor. Final members are reported as errors (weaving
+cannot fix them); the missing-constructor case — the common single-`@Inject`-constructor
+style — is handled automatically:
+
+**When the module builds with `vauban-maven-plugin` (the standard Vidocq setup), nothing to
+do.** At `process-classes` the plugin weaves a synthetic `(ProxyLink)` entry constructor
+into the compiled bean class and points the generated proxy's constructor at it. Your
+source never declares it. Creating the proxy then runs no bean logic — no duplicated
+construction side effects, no `NullPointerException` on dereferenced `@Inject` parameters.
+The compiler surfaces a `[Vauban]` warning on such beans as a reminder that a deployment
+built _without_ the plugin fails at container start.
+
+**Without the plugin**, declare the entry constructor yourself
+(`io.vidocq.vauban.api.ProxyLink`, a Vauban extension comparable to Weld's relaxed
+construction):
+
+[source,java]
+----
+@ApplicationScoped
+public class Oidc {
+    private final String issuer;
+
+    @Inject
+    public Oidc(Config config) {
+        this.issuer = config.issuer();
+    }
+
+    protected Oidc(ProxyLink link) {   // client-proxy entry point — keep the body empty
+        this.issuer = null;            // javac requires blank finals to be assigned
+    }
+}
+----
+
+Either way the proxy chains to that constructor (always passing `null`), and the container
+never selects it for injection or bean instantiation. Field initializers still run in every
+constructor — keep them side-effect free.
+
 == Qualifiers
 
 Discriminate multiple implementations of the same type.

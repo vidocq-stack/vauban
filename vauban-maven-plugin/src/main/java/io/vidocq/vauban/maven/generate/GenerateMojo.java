@@ -91,7 +91,9 @@ public class GenerateMojo extends AbstractMojo {
             } else {
                 log.info("Vauban: discovered " + result.discoveredBeanClasses().size() + " CDI beans, "
                         + "generated " + result.generatedProxies().size() + " proxies, "
-                        + result.generatedInterceptors().size() + " interceptor subclasses");
+                        + result.generatedInterceptors().size() + " interceptor subclasses, "
+                        + "wove the ProxyLink entry constructor into "
+                        + result.wovenBeanClasses().size() + " beans");
                 for (var beanClass : result.discoveredBeanClasses()) {
                     log.debug("  " + beanClass);
                 }

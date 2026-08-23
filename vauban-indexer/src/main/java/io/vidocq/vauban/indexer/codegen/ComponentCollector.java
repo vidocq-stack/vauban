@@ -55,6 +55,8 @@ public final class ComponentCollector {
 
     // CDI annotation names used to identify qualifying fields and methods.
     private static final String INJECT        = "jakarta.inject.Inject";
+    /** Mirrors {@code ClientProxyShape.PROXY_LINK_CLASS} — the indexer sits below vauban-api. */
+    private static final String PROXY_LINK    = "io.vidocq.vauban.api.ProxyLink";
     private static final String PRODUCES      = "jakarta.enterprise.inject.Produces";
     private static final String POST_CONSTRUCT = "jakarta.annotation.PostConstruct";
     private static final String PRE_DESTROY   = "jakarta.annotation.PreDestroy";
@@ -123,6 +125,10 @@ public final class ComponentCollector {
         if (ci.isAbstract()) return Optional.empty();
         var ctors = ci.methods().stream()
                 .filter(MethodInfo::isConstructor)
+                // The (ProxyLink) client-proxy entry constructor (manual or woven at
+                // process-classes) is never an instantiation candidate (Vidocq/vauban#24).
+                .filter(c -> !(c.parameters().size() == 1
+                        && PROXY_LINK.equals(erasure(c.parameters().getFirst().type()))))
                 .toList();
         if (ctors.isEmpty()) return Optional.of(List.of()); // implicit default ctor
         if (ctors.stream().anyMatch(c -> c.parameters().isEmpty() && !c.isPrivate())) {

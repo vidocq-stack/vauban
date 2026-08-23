@@ -76,7 +76,15 @@ public final class ClientProxyGenerator {
                     List.of(),
                     needsMethodHandleDispatch(method, beanClassName, proxyPackage)));
         }
-        return new ClientProxyShape(beanClassName, List.of(), methods);
+
+        // Chain to the opt-in (ProxyLink) entry constructor when the bean declares one
+        // (side-effect-free by contract — Vidocq/vauban#24); else plain super().
+        var superCtorParams = beanClass.methods().stream()
+                .filter(m -> !m.isPrivate() && ClientProxyShape.isProxyLinkConstructor(m))
+                .findFirst()
+                .map(m -> List.of(TypeRef.fromTypeInfo(m.parameters().getFirst().type())))
+                .orElse(List.of());
+        return new ClientProxyShape(beanClassName, superCtorParams, methods);
     }
 
     private static List<TypeRef> paramTypeRefs(MethodInfo method) {

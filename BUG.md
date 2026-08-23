@@ -5,6 +5,44 @@ suspected cause, status. Updated on every investigation.
 
 ---
 
+## VAU-PROXY-001 — client proxy replays the bean constructor (side effects doubled, NPE on `@Inject` ctor)
+- **Date**: 2026-08-10 — **Status**: FIXED, phases 0+1+2 (`pr/ybl/vauban-24-proxy-link`) — phase 2 weaves the marker automatically at `process-classes` (no app-code change required)
+- **Severity**: high (constructor injection unusable on normal-scoped beans; silent double side effects)
+- **Surfaced by**: Sébastien Blanc, Vidocq/vauban#24, while building Rossignol on Vidocq.
+
+### Symptom
+Creating the `_ClientProxy` of a normal-scoped bean chains `super(<defaults>)` into a business
+constructor: construction side effects run once per proxy on top of the contextual instance
+(reporter's case, 2 constructions for 1 instance), and a bean whose only constructor is an
+`@Inject` one that dereferences a parameter throws `NullPointerException` at proxy creation
+(the proxy passes null for every parameter).
+
+### Repro
+`ProxyLinkConstructorTest` (vauban-core) and `UnproxyableBeanValidationTest` (vauban-processor).
+
+### Cause
+Two independent defects. (1) The JVM forces the proxy's `<init>` to chain to a bean
+constructor, and every generator picked the "simplest" business constructor with default
+arguments. (2) Such beans are *unproxyable* per CDI 4.1 and should have been reported as a
+deployment problem — but `DeploymentValidator`'s proxyability checks used `Class.forName`
+over the TCCL with a silent `catch (ClassNotFoundException)`: inert at annotation-processing
+time and on the module path (the Vidocq runtime deployment), so nothing ever fired.
+
+### Fix
+Phase 0: proxyability checks (final class, non-private final methods, missing no-arg ctor)
+are now index-based with reflection as fallback — final members fail the build; the
+missing-constructor case is a compile-time warning (weavable) and a container-start error.
+Phase 1: opt-in `ProxyLink` marker constructor (`vauban-api`); all three proxy front-ends
+chain to it when declared, and the container never selects it for injection. Phase 2
+(the actual no-app-change fix): `vauban-maven-plugin` weaves a synthetic `(ProxyLink)`
+constructor into the compiled bean at `process-classes` (`ProxyLinkWeaver` +
+`ProxyLinkWeaving`) and retargets APT-emitted proxies onto it — the application source
+never mentions `ProxyLink`. Full study: `tasks/vauban-24-client-proxy-constructor.md`.
+Verified: reactor 526 tests + CDI Lite TCK 774/774 green, weaving exercised for real by
+the examples modules during the reactor build.
+
+---
+
 ## VAU-APT-001 — `@Inject` of a bean from another module rejected at compile time
 - **Date**: 2026-08-09 — **Status**: FIXED (`pr/ybl/vauban-23-cross-module-index`)
 - **Severity**: high (viral at every module boundary; no workaround for third-party beans)

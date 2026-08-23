@@ -808,7 +808,7 @@ public final class VaubanContainerBuilder {
             var assignability = new AssignabilityRules(index);
             var tempResolver = new BeanResolver(descriptors, interceptors, assignability);
             var validator = new io.vidocq.vauban.core.bean.validation.DeploymentValidator(
-                    descriptors, tempResolver);
+                    descriptors, tempResolver, index);
             var errors = validator.validate();
             if (!errors.isEmpty()) {
                 var definitionErrors = errors.stream()
@@ -826,6 +826,7 @@ public final class VaubanContainerBuilder {
                 // Ambiguous or unsatisfied dependencies are DeploymentExceptions in CDI
                 var deploymentErrors = errors.stream()
                         .filter(e -> e.kind() == io.vidocq.vauban.core.bean.validation.DeploymentValidator.ValidationError.Kind.DEPLOYMENT_ERROR
+                                || e.kind() == io.vidocq.vauban.core.bean.validation.DeploymentValidator.ValidationError.Kind.UNPROXYABLE_BEAN
                                 || e.kind() == io.vidocq.vauban.core.bean.validation.DeploymentValidator.ValidationError.Kind.UNSATISFIED_DEPENDENCY
                                 || e.kind() == io.vidocq.vauban.core.bean.validation.DeploymentValidator.ValidationError.Kind.AMBIGUOUS_DEPENDENCY
                                 || e.kind() == io.vidocq.vauban.core.bean.validation.DeploymentValidator.ValidationError.Kind.CIRCULAR_DEPENDENCY)
