@@ -18,7 +18,7 @@
 
     <name>Vauban</name>
     <description>CDI 4.1 container, Java Modules native</description>
-    <url>https://codeberg.org/Vidocq/vauban</url>
+    <url>https://codefloe.com/Vidocq/vauban</url>
 
     <developers>
         <developer>
@@ -57,9 +57,9 @@
     </licenses>
 
     <scm>
-        <connection>scm:git:https://codeberg.org/Vidocq/vauban.git</connection>
-        <developerConnection>scm:git:ssh://git@codeberg.org/Vidocq/vauban.git</developerConnection>
-        <url>https://codeberg.org/Vidocq/vauban</url>
+        <connection>scm:git:https://codefloe.com/Vidocq/vauban.git</connection>
+        <developerConnection>scm:git:ssh://git@codefloe.com/Vidocq/vauban.git</developerConnection>
+        <url>https://codefloe.com/Vidocq/vauban</url>
     </scm>
 
     <modules>
