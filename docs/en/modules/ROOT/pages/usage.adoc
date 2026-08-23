@@ -38,7 +38,7 @@ CDI 4.1 Lite ships four standard scopes. Vauban supports all of them, plus `@Req
 Normal-scoped beans (`@ApplicationScoped`, `@RequestScoped`) get a `_ClientProxy` generated at compile time. The proxy intercepts each call and delegates to the active context. `@Dependent` and `@Singleton` beans do not.
 ====
 
-=== Proxyable beans and the `ProxyLink` entry constructor
+=== Proxyable beans and the `ProxyLink` entry constructor [.tag-new]#NEW#
 
 Because the client proxy subclasses the bean, CDI 4.1 declares some classes _unproxyable_
 for normal scopes: `final` classes, classes with non-private `final` methods, and classes
