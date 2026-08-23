@@ -41,6 +41,7 @@ import io.vidocq.vauban.indexer.IndexBuilder;
 import io.vidocq.vauban.indexer.codegen.ComponentCollector;
 import io.vidocq.vauban.indexer.codegen.ProvidedClass;
 import io.vidocq.vauban.indexer.model.DotName;
+import io.vidocq.vauban.indexer.model.TypeInfo;
 import io.vidocq.vauban.indexer.scanner.ClassFileScanner;
 
 import jakarta.enterprise.inject.build.compatible.spi.BuildCompatibleExtension;
@@ -309,6 +310,14 @@ public class VaubanProcessor extends AbstractProcessor {
             bceProcessed = true;
         }
 
+        // Injection points may target beans that live in a dependency. Such a type is absent from
+        // this compilation's index — but javac can see it, so resolve it lazily rather than
+        // rejecting a deployment the runtime container resolves without trouble (vauban#23).
+        var dependencyTypes = resolveDependencyBeans(beans, indexBuilder, scanner, discoveryResult);
+        if (dependencyTypes.indexGrew()) {
+            index = indexBuilder.build();
+        }
+
         // Validate deployment — unless explicitly skipped (cf. APT options on the class javadoc).
         // The runtime container always re-validates on container start; this only silences the
         // compile-time check for projects whose beans depend on BCE-produced injections that
@@ -326,12 +335,24 @@ public class VaubanProcessor extends AbstractProcessor {
                             + "Runtime container will still validate on start.");
         }
 
+        boolean fatal = false;
         for (var error : errors) {
+            // An unsatisfied point whose required type comes from a dependency is deferred to the
+            // container, not rejected here: this compilation cannot see that module's producers,
+            // and the runtime — which merges the vauban-beans.list of every archive — can.
+            if (dependencyTypes.isDeferred(error)) {
+                processingEnv.getMessager().printMessage(Diagnostic.Kind.WARNING,
+                        "[Vauban] " + error.message()
+                                + " — the required type is not declared by this compilation unit; "
+                                + "resolution deferred to the runtime container.");
+                continue;
+            }
+            fatal = true;
             processingEnv.getMessager().printMessage(Diagnostic.Kind.ERROR,
                 "[Vauban] " + error.message());
         }
 
-        if (!errors.isEmpty()) return true;
+        if (fatal) return true;
 
         // Generate code for each bean; also accumulate eligible managed classes for the
         // per-package _VaubanComponents provider.
@@ -525,6 +546,148 @@ public class VaubanProcessor extends AbstractProcessor {
                     "[Vauban] Discovered " + bceClasses.size() + " Build Compatible Extension(s)");
         }
         return bceClasses;
+    }
+
+    /**
+     * Outcome of the dependency-bean resolution pass: whether the index gained anything, and which
+     * types could not be turned into beans here and must therefore be left to the container.
+     *
+     * @param indexGrew     whether a dependency type was added to the index
+     * @param deferredTypes fully-qualified names that exist on the compile classpath but did not
+     *                      yield a bean in this compilation — a producer in the other module, say
+     */
+    private record DependencyTypes(boolean indexGrew, Set<String> deferredTypes) {
+
+        /** Whether this error is about a type this compilation cannot see the whole story of. */
+        boolean isDeferred(DeploymentValidator.ValidationError error) {
+            if (error.kind() != DeploymentValidator.ValidationError.Kind.UNSATISFIED_DEPENDENCY) {
+                return false;
+            }
+            return deferredTypes.stream().anyMatch(fqn -> error.message().contains(fqn));
+        }
+    }
+
+    /**
+     * Brings the beans an injection point needs from a <strong>dependency</strong> into the index.
+     *
+     * <p>The processor only indexes the types of the current compilation, so
+     * {@code @Inject Greeter} where {@code Greeter} is an {@code @ApplicationScoped} bean of another
+     * Maven module used to fail the build — while the very same injection point resolved at
+     * runtime, where the container merges the {@code vauban-beans.list} of every archive. That
+     * false negative was viral at each module boundary: it forced {@code Instance<T>} everywhere,
+     * losing the compile-time checking that is the point of build-time CDI, and it had no answer at
+     * all for a third-party module's beans (Vidocq/vauban#23).
+     *
+     * <p>No jar scanning is needed to fix it: {@code Elements} already sees the whole compile
+     * classpath, so a missing required type is looked up there, scanned into the index, and bean
+     * discovery is replayed to obtain its descriptor. Such a type is recorded in
+     * {@link #externalClassNames} so no {@code _Factory} / {@code _ClientProxy} is emitted for it
+     * here — its own module already ships those, and emitting them again would split the package.
+     *
+     * @param beans           the discovered beans; grown in place with the dependency beans found
+     * @param indexBuilder    the accumulated index, enriched in place
+     * @param scanner         element scanner used to turn a {@code TypeElement} into a ClassInfo
+     * @param discoveryResult BCE discovery result to replay on the second discovery pass, or null
+     * @return what was resolved, and what has to be deferred to the runtime container
+     */
+    private DependencyTypes resolveDependencyBeans(List<BeanDescriptor> beans,
+                                                   IndexBuilder indexBuilder,
+                                                   ElementScanner scanner,
+                                                   BceProcessor.DiscoveryResult discoveryResult) {
+        Set<DotName> required = new LinkedHashSet<>();
+        for (var bean : beans) {
+            for (var ip : bean.injectionPoints()) {
+                collectClassNames(ip.requiredType(), required);
+            }
+        }
+
+        var elements = processingEnv.getElementUtils();
+        Set<DotName> added = new LinkedHashSet<>();
+        Set<String> deferred = new LinkedHashSet<>();
+        for (var name : required) {
+            if (indexBuilder.contains(name)) {
+                continue;
+            }
+            var typeElement = elements.getTypeElement(name.value());
+            if (typeElement == null) {
+                // Not on the compile classpath either: a genuine mistake, left to the validator.
+                continue;
+            }
+            indexBuilder.add(scanner.scan(typeElement));
+            added.add(name);
+        }
+
+        if (added.isEmpty()) {
+            return new DependencyTypes(false, Set.of());
+        }
+
+        var enrichedIndex = indexBuilder.build();
+        var discovery = new BeanDiscovery(enrichedIndex);
+        if (discoveryResult != null) {
+            applyDiscoveryResult(discovery, discoveryResult);
+        }
+
+        Set<DotName> becameBeans = new LinkedHashSet<>();
+        for (var candidate : discovery.discoverBeans()) {
+            if (added.contains(candidate.beanClass())) {
+                beans.add(candidate);
+                becameBeans.add(candidate.beanClass());
+                // The dependency ships its own generated artefacts; emitting ours would split the package.
+                externalClassNames.add(candidate.beanClass());
+                processingEnv.getMessager().printMessage(Diagnostic.Kind.NOTE,
+                        "[Vauban] Resolved " + candidate.beanClass().value()
+                                + " from a dependency (injection point of this module)");
+            }
+        }
+
+        for (var name : added) {
+            if (!becameBeans.contains(name) && mayBeSatisfiedElsewhere(elements.getTypeElement(name.value()))) {
+                deferred.add(name.value());
+            }
+        }
+        return new DependencyTypes(true, deferred);
+    }
+
+    /**
+     * Whether an unresolved required type could still be satisfied by a bean this compilation
+     * cannot see — the only case worth deferring to the container instead of failing the build.
+     *
+     * <p>True for an interface or an abstract class outside the Java platform: its implementation
+     * may well be a bean of another module, which this compilation has no way of knowing. False for
+     * anything else — a concrete type from a dependency has been indexed above, so if it did not
+     * become a bean it carries no scope and the injection point is genuinely unsatisfied, and a
+     * platform type ({@code java.*}, {@code jdk.*}) is never anyone's bean.
+     */
+    private boolean mayBeSatisfiedElsewhere(TypeElement typeElement) {
+        if (typeElement == null) {
+            return false;
+        }
+        boolean abstractType = typeElement.getKind().isInterface()
+                || typeElement.getModifiers().contains(javax.lang.model.element.Modifier.ABSTRACT);
+        if (!abstractType) {
+            return false;
+        }
+        var module = processingEnv.getElementUtils().getModuleOf(typeElement);
+        if (module == null || module.isUnnamed()) {
+            return true;
+        }
+        String moduleName = module.getQualifiedName().toString();
+        return !moduleName.equals("java.base")
+                && !moduleName.startsWith("java.")
+                && !moduleName.startsWith("jdk.");
+    }
+
+    /** Collects the class names a required type refers to (raw type and type arguments alike). */
+    private static void collectClassNames(TypeInfo type, Set<DotName> out) {
+        switch (type) {
+            case TypeInfo.ClassType ct -> out.add(ct.name());
+            case TypeInfo.ParameterizedType pt -> {
+                out.add(pt.rawType());
+                pt.typeArguments().forEach(arg -> collectClassNames(arg, out));
+            }
+            case TypeInfo.ArrayType at -> collectClassNames(at.componentType(), out);
+            default -> { /* primitives, void, type variables and wildcards name no bean */ }
+        }
     }
 
     private void applyDiscoveryResult(BeanDiscovery discovery, BceProcessor.DiscoveryResult discoveryResult) {
