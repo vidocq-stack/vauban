@@ -10,39 +10,39 @@ This page lists every artefact published by Vauban, the Java Modules packages th
 |===
 | Artefact | Recommended scope | Role
 
-| `io.vidocq.vauban:vauban-api:0.2.0`
+| `io.vidocq.vauban:vauban-api:{project-version}`
 | `compile`
 | Public API (`Vauban.bootstrap()`, `BeanFactory<T>`, etc.)
 
-| `io.vidocq.vauban:vauban-core:0.2.0`
+| `io.vidocq.vauban:vauban-core:{project-version}`
 | `runtime`
 | CDI 4.1 Lite container runtime
 
-| `io.vidocq.vauban:vauban-processor:0.2.0`
+| `io.vidocq.vauban:vauban-processor:{project-version}`
 | `provided`
 | APT (emits `_Factory`, `_ClientProxy` at `process-classes`)
 
-| `io.vidocq.vauban:vauban-indexer:0.2.0`
+| `io.vidocq.vauban:vauban-indexer:{project-version}`
 | `provided`
 | Build-time bean indexer (zero dependency)
 
-| `io.vidocq.vauban:vauban-maven-plugin:0.2.0`
+| `io.vidocq.vauban:vauban-maven-plugin:{project-version}`
 | `build`
 | Maven plugin (goals: `index`, `process`, `generate`, `analyze`, `dist`, `encrypt`)
 
-| `io.vidocq.vauban:vauban-classloader-spi:0.2.0`
+| `io.vidocq.vauban:vauban-classloader-spi:{project-version}`
 | `runtime`
 | ClassLoader SPI (`ByteSourcePlugin`, `ArchiveReader`)
 
-| `io.vidocq.vauban:vauban-sjar:0.2.0`
+| `io.vidocq.vauban:vauban-sjar:{project-version}`
 | `runtime` (optional)
 | `.sjar` (AES-256-GCM encrypted) implementation
 
-| `io.vidocq.vauban:vauban-junit:0.2.0`
+| `io.vidocq.vauban:vauban-junit:{project-version}`
 | `test`
 | JUnit 5 extension (`@VaubanTest`)
 
-| `io.vidocq.vauban:vauban-test-suite:0.2.0`
+| `io.vidocq.vauban:vauban-test-suite:{project-version}`
 | `test`
 | Official integration test suite
 |===
