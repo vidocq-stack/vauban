@@ -46,15 +46,28 @@ _non proxyables_ pour les scopes normaux : classes `final`, classes portant des 
 sont signalés en erreur (le tissage ne peut pas les corriger) ; le cas du constructeur
 manquant — le style courant du constructeur `@Inject` unique — est traité automatiquement :
 
-**Quand le module est construit avec `vauban-maven-plugin` (le montage Vidocq standard),
-rien à faire.** En `process-classes`, le plugin tisse un constructeur d'entrée synthétique
-`(ProxyLink)` dans la classe compilée du bean et fait pointer le constructeur du proxy
-généré dessus. Votre source ne le déclare jamais. La création du proxy n'exécute alors
-aucune logique du bean — ni effets de bord dupliqués, ni `NullPointerException` sur un
-paramètre `@Inject` déréférencé. Le compilateur émet un warning `[Vauban]` sur ces beans,
-pour rappeler qu'un déploiement construit _sans_ le plugin échoue au démarrage du container.
+**Dans tout build basé sur javac (Maven, Gradle, `javac` nu, le montage Vidocq standard),
+rien à faire.** Le processeur d'annotations Vauban embarque un plugin javac auto-démarré
+qui, à la fin de la compilation, tisse un constructeur d'entrée synthétique `(ProxyLink)`
+dans la classe compilée du bean et fait pointer le constructeur du proxy généré dessus.
+Votre source ne le déclare jamais. La création du proxy n'exécute alors aucune logique du
+bean — ni effets de bord dupliqués, ni `NullPointerException` sur un paramètre `@Inject`
+déréférencé. Le `vauban-maven-plugin` applique le même tissage en `process-classes`, en
+seconde couche et pour les jars de l'écosystème qui ne passent pas par javac.
 
-**Sans le plugin**, déclarez vous-même le constructeur d'entrée
+**Quand la sortie du build n'est pas tissée** — typiquement un build d'IDE : le
+compilateur d'IntelliJ écrit les classes sur disque après la fin de javac, ce qui met le
+plugin javac en échec — le container le détecte au démarrage, avant tout chargement de
+classe de bean, et attache l'agent `vauban-weaver` à la JVM courante : la même
+transformation est appliquée au moment où la classe est définie. Vous verrez un warning
+Vauban listant les beans concernés, plus l'avertissement standard du JDK sur les agents
+dynamiques ; le comportement est sinon identique à un build tissé. Cet étage se désactive
+avec `-Dvauban.weaving.loadtime=disabled`, ou s'évite entièrement dans IntelliJ en cochant
+_Delegate IDE build/run actions to Maven_. Voir
+xref:internals.adoc#weaving-tiers[Fonctionnement interne — étages de tissage] pour la
+mécanique complète.
+
+**Sans aucun étage de tissage**, déclarez vous-même le constructeur d'entrée
 (`io.vidocq.vauban.api.ProxyLink`, extension Vauban comparable à la construction
 « relaxed » de Weld) :
 

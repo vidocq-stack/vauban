@@ -1,0 +1,63 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>io.vidocq.vauban</groupId>
+        <artifactId>vauban-parent</artifactId>
+        <version>0.3.0-SNAPSHOT</version>
+    </parent>
+
+    <artifactId>vauban-classloader</artifactId>
+    <name>Vauban :: ClassLoader</name>
+    <description>Universal Vauban class loader engine — single control point for
+        application class loading: byte-source plugins (jar, exploded dir, sjar…) chained
+        with class-transformer plugins (cdi-proxifier…) before defineClass; module-layer
+        factory for the Vidocq launcher. Container-free by design.</description>
+
+    <dependencies>
+        <dependency>
+            <groupId>io.vidocq.vauban</groupId>
+            <artifactId>vauban-classloader-spi</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.vidocq.vauban</groupId>
+            <artifactId>vauban-weaver</artifactId>
+        </dependency>
+
+        <dependency>
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <!-- Tests load woven classes whose marker constructor references ProxyLink -->
+            <groupId>io.vidocq.vauban</groupId>
+            <artifactId>vauban-api</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <!-- The decrypt → weave composition test needs a real encrypted archive -->
+            <groupId>io.vidocq.vauban</groupId>
+            <artifactId>vauban-sjar</artifactId>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <plugins>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <configuration>
+                    <!-- vauban-sjar is a test-only dependency (encrypted-archive fixture);
+                         it is not in module-info, so the patched test module needs the
+                         read edge explicitly. -->
+                    <argLine>--add-reads io.vidocq.vauban.classloader=io.vidocq.vauban.sjar</argLine>
+                </configuration>
+            </plugin>
+        </plugins>
+    </build>
+</project>

@@ -20,7 +20,9 @@
 module io.vidocq.vauban.processor {
     requires io.vidocq.vauban.core;
     requires io.vidocq.vauban.indexer;
+    requires io.vidocq.vauban.weaver;
     requires java.compiler;
+    requires jdk.compiler;
 
     uses jakarta.enterprise.inject.build.compatible.spi.BuildCompatibleExtension;
 
@@ -33,4 +35,6 @@ module io.vidocq.vauban.processor {
 
     provides javax.annotation.processing.Processor
         with io.vidocq.vauban.processor.VaubanProcessor;
+    provides com.sun.source.util.Plugin
+        with io.vidocq.vauban.processor.weave.VaubanWeavingPlugin;
 }

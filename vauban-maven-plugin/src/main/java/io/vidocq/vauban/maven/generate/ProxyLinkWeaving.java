@@ -21,8 +21,8 @@ package io.vidocq.vauban.maven.generate;
 
 import io.vidocq.vauban.core.bean.model.BeanDescriptor;
 import io.vidocq.vauban.core.proxy.ClientProxyShape;
-import io.vidocq.vauban.core.proxy.ProxyLinkWeaver;
-import io.vidocq.vauban.core.proxy.ProxyLinkWeaver.SuperChain;
+import io.vidocq.vauban.weaver.ProxyLinkWeaver;
+import io.vidocq.vauban.weaver.ProxyLinkWeaver.SuperChain;
 import io.vidocq.vauban.indexer.VaubanIndex;
 import io.vidocq.vauban.indexer.model.ClassInfo;
 import io.vidocq.vauban.indexer.model.DotName;

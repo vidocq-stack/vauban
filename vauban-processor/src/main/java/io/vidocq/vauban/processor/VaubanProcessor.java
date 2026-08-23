@@ -501,12 +501,114 @@ public class VaubanProcessor extends AbstractProcessor {
         // Write META-INF/vauban-beans.list
         writeBeansList(beans);
 
+        // Publish the (ProxyLink) weave plan for the auto-started javac plugin — see
+        // io.vidocq.vauban.processor.weave (Vidocq/vauban#24, javac tier of the weaving).
+        publishWeavePlan(beans, index);
+
         // Write BCE processed marker
         if (bceProcessed) {
             writeBceProcessedMarker();
         }
 
         return true;
+    }
+
+    // --- ProxyLink weave plan (javac tier) ---
+
+    private boolean weavePlanPublished;
+
+    /**
+     * Publishes the weave plan executed by {@code VaubanWeavingPlugin} at the end of this
+     * javac task: the processor cannot patch class files that are not written yet, and the
+     * plugin — public API only — cannot know the output directory; the plan is the bridge.
+     * Covers every top-level normal-scoped managed bean of this compilation that does not
+     * declare the {@code (ProxyLink)} entry constructor; their generated proxies are
+     * retargeted onto it.
+     */
+    private void publishWeavePlan(java.util.List<BeanDescriptor> beans,
+            io.vidocq.vauban.indexer.VaubanIndex index) {
+        if (weavePlanPublished) return;
+        var lines = new java.util.ArrayList<io.vidocq.vauban.processor.weave.WeavePlan.Line>();
+        var planned = new java.util.LinkedHashSet<String>();
+        for (var bean : beans) {
+            if (bean.kind() != BeanDescriptor.BeanKind.MANAGED || !bean.scope().isNormal()) continue;
+            var fqn = bean.beanClass().value();
+            if (!isTopLevelType(fqn) || externalClassNames.contains(bean.beanClass())) continue;
+            if (planBeanWeaving(fqn, index, planned, lines)) {
+                lines.add(io.vidocq.vauban.processor.weave.WeavePlan.Line.proxy(fqn + "_ClientProxy"));
+            }
+        }
+        if (lines.isEmpty()) return;
+        try {
+            io.vidocq.vauban.processor.weave.WeavePlan.publish(processingEnv.getFiler(), lines);
+            weavePlanPublished = true;
+        } catch (java.io.IOException e) {
+            processingEnv.getMessager().printMessage(Diagnostic.Kind.WARNING,
+                    "[Vauban] could not publish the ProxyLink weave plan: " + e.getMessage());
+        }
+    }
+
+    /**
+     * Plans the weaving of {@code fqn} (recursively covering superclasses compiled in this
+     * unit). Returns {@code true} when the bean will carry the marker — already declared
+     * manually, or planned here.
+     */
+    private boolean planBeanWeaving(String fqn, io.vidocq.vauban.indexer.VaubanIndex index,
+            java.util.Set<String> planned,
+            java.util.List<io.vidocq.vauban.processor.weave.WeavePlan.Line> lines) {
+        if (planned.contains(fqn)) return true;
+        var type = processingEnv.getElementUtils().getTypeElement(fqn);
+        if (type == null) return false;
+
+        var ctors = javax.lang.model.util.ElementFilter.constructorsIn(type.getEnclosedElements());
+        if (ctors.stream().anyMatch(io.vidocq.vauban.processor.codegen.proxy
+                .ClientProxyShapeFromElements::isProxyLinkConstructor)) {
+            planned.add(fqn); // manual phase-1 constructor — nothing to weave
+            return true;
+        }
+
+        var chain = superChainFor(type, index, planned, lines);
+        if (chain == null) return false; // unweavable — the UNPROXYABLE warning already fired
+
+        lines.add(io.vidocq.vauban.processor.weave.WeavePlan.Line.bean(fqn, chain));
+        planned.add(fqn);
+        return true;
+    }
+
+    /** How {@code type}'s woven marker chains to its superclass — {@code null} when it cannot. */
+    private io.vidocq.vauban.weaver.ProxyLinkWeaver.SuperChain superChainFor(
+            javax.lang.model.element.TypeElement type,
+            io.vidocq.vauban.indexer.VaubanIndex index,
+            java.util.Set<String> planned,
+            java.util.List<io.vidocq.vauban.processor.weave.WeavePlan.Line> lines) {
+        if (!(type.getSuperclass() instanceof javax.lang.model.type.DeclaredType declared)
+                || !(declared.asElement() instanceof javax.lang.model.element.TypeElement superType)) {
+            return null;
+        }
+        var superFqn = superType.getQualifiedName().toString();
+        if ("java.lang.Object".equals(superFqn)) {
+            return io.vidocq.vauban.weaver.ProxyLinkWeaver.SuperChain.NO_ARG;
+        }
+        var superCtors = javax.lang.model.util.ElementFilter
+                .constructorsIn(superType.getEnclosedElements());
+        if (superCtors.stream().anyMatch(io.vidocq.vauban.processor.codegen.proxy
+                .ClientProxyShapeFromElements::isProxyLinkConstructor)) {
+            return io.vidocq.vauban.weaver.ProxyLinkWeaver.SuperChain.MARKER;
+        }
+        if (superCtors.isEmpty() || superCtors.stream().anyMatch(c ->
+                c.getParameters().isEmpty()
+                        && !c.getModifiers().contains(javax.lang.model.element.Modifier.PRIVATE))) {
+            return io.vidocq.vauban.weaver.ProxyLinkWeaver.SuperChain.NO_ARG;
+        }
+        // The superclass itself needs the marker — only weavable when compiled here too.
+        var superName = io.vidocq.vauban.indexer.model.DotName.of(superFqn);
+        boolean compiledHere = index.getClassByName(superName).isPresent()
+                && !externalClassNames.contains(superName)
+                && isTopLevelType(superFqn);
+        if (compiledHere && planBeanWeaving(superFqn, index, planned, lines)) {
+            return io.vidocq.vauban.weaver.ProxyLinkWeaver.SuperChain.MARKER;
+        }
+        return null;
     }
 
     // --- APT options ---

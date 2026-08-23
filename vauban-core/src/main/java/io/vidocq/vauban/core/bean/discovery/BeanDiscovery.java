@@ -1076,6 +1076,10 @@ public final class BeanDiscovery {
                     : Class.forName(classInfo.name().value());
             if (method.isConstructor()) {
                 for (var ctor : clazz.getDeclaredConstructors()) {
+                    // The (ProxyLink) client-proxy entry constructor (manual or woven) has the
+                    // same arity as many business constructors — matching it here would swap
+                    // the injection-point type for ProxyLink (Vidocq/vauban#24).
+                    if (io.vidocq.vauban.core.proxy.ClientProxyShape.isProxyLinkConstructor(ctor)) continue;
                     if (ctor.getParameterCount() == method.parameters().size()) {
                         var reflType = ctor.getGenericParameterTypes()[paramIndex];
                         var typeInfo = reflectTypeToTypeInfo(reflType);

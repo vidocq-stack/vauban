@@ -60,6 +60,8 @@ class ExampleAppEndToEndTest {
         addJar(jars, "jar.vauban.indexer");
         addJar(jars, "jar.vauban.sjar");
         addJar(jars, "jar.vauban.classloader.spi");
+        addJar(jars, "jar.vauban.weaver");
+        addJar(jars, "jar.vauban.classloader");
 
         // Jakarta APIs
         addJar(jars, "jar.jakarta.cdi");

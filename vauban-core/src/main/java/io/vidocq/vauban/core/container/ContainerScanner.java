@@ -311,23 +311,23 @@ final class ContainerScanner {
         var ctx = getPluginContext();
         var cl = effectiveClassLoader();
 
-        for (var plugin : host.byteSourcePlugins) {
-            if (plugin.handles(sjarPath)) {
-                try (var reader = plugin.open(sjarPath, ctx)) {
-                    // Create an SjarClassLoader for these classes
-                    var sjarClassLoader = createPluginClassLoader(reader, cl);
-                    for (var entry : reader.classEntries()) {
-                        var className = entry.replace('/', '.').replace(".class", "");
-                        tryAddBeanClass(className, sjarClassLoader);
-                    }
-                } catch (IOException e) {
-                    throw new RuntimeException("Failed to scan SJAR: " + sjarPath, e);
-                }
-                return;
-            }
+        var handled = host.byteSourcePlugins.stream().anyMatch(p -> p.handles(sjarPath));
+        if (!handled) {
+            throw new IllegalStateException("No plugin can handle: " + sjarPath
+                    + ". Register a ByteSourcePlugin or add vauban-sjar to the module path.");
         }
-        throw new IllegalStateException("No plugin can handle: " + sjarPath
-                + ". Register a ByteSourcePlugin or add vauban-sjar to the module path.");
+        // Universal loader engine: byte-source resolution (sjar decryption) chained with
+        // the class transformers (cdi-proxifier weaving) before definition — the
+        // decrypt → weave composition is only possible here.
+        try {
+            var engineLoader = io.vidocq.vauban.classloader.VaubanClassLoader.of(
+                    java.util.List.of(sjarPath), cl, ctx, host.byteSourcePlugins);
+            for (var className : engineLoader.managedClassNames()) {
+                tryAddBeanClass(className, engineLoader);
+            }
+        } catch (IOException e) {
+            throw new RuntimeException("Failed to scan SJAR: " + sjarPath, e);
+        }
     }
 
     private void loadPluginsIfNeeded() {
@@ -350,33 +350,4 @@ final class ContainerScanner {
         }
     }
 
-    private static ClassLoader createPluginClassLoader(
-            io.vidocq.vauban.classloader.spi.ArchiveReader reader, ClassLoader parent) throws IOException {
-        // Build an in-memory classloader with decrypted bytes
-        var classBytes = new java.util.concurrent.ConcurrentHashMap<String, byte[]>();
-        for (var entry : reader.classEntries()) {
-            var className = entry.replace('/', '.').replace(".class", "");
-            classBytes.put(className, reader.readClass(entry));
-        }
-        return new ClassLoader(parent) {
-            @Override
-            protected Class<?> findClass(String name) throws ClassNotFoundException {
-                var bytes = classBytes.get(name);
-                if (bytes != null) {
-                    return defineClass(name, bytes, 0, bytes.length);
-                }
-                throw new ClassNotFoundException(name);
-            }
-
-            @Override
-            public java.io.InputStream getResourceAsStream(String name) {
-                if (name.endsWith(".class")) {
-                    var cn = name.replace('/', '.').replace(".class", "");
-                    var bytes = classBytes.get(cn);
-                    if (bytes != null) return new java.io.ByteArrayInputStream(bytes);
-                }
-                return super.getResourceAsStream(name);
-            }
-        };
-    }
 }

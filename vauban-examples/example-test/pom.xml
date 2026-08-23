@@ -38,6 +38,8 @@
                         <jar.vauban.indexer>${project.basedir}/../../vauban-indexer/target/vauban-indexer-${project.version}.jar</jar.vauban.indexer>
                         <jar.vauban.sjar>${project.basedir}/../../vauban-sjar/target/vauban-sjar-${project.version}.jar</jar.vauban.sjar>
                         <jar.vauban.classloader.spi>${project.basedir}/../../vauban-classloader-spi/target/vauban-classloader-spi-${project.version}.jar</jar.vauban.classloader.spi>
+                        <jar.vauban.weaver>${project.basedir}/../../vauban-weaver/target/vauban-weaver-${project.version}.jar</jar.vauban.weaver>
+                        <jar.vauban.classloader>${project.basedir}/../../vauban-classloader/target/vauban-classloader-${project.version}.jar</jar.vauban.classloader>
                         <dist.zip>${project.basedir}/../example-app/target/example-app-${project.version}-dist.zip</dist.zip>
                         <jar.jakarta.cdi>${settings.localRepository}/jakarta/enterprise/jakarta.enterprise.cdi-api/4.1.0/jakarta.enterprise.cdi-api-4.1.0.jar</jar.jakarta.cdi>
                         <jar.jakarta.annotation>${settings.localRepository}/jakarta/annotation/jakarta.annotation-api/3.0.0/jakarta.annotation-api-3.0.0.jar</jar.jakarta.annotation>

@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>io.vidocq.vauban</groupId>
+        <artifactId>vauban-parent</artifactId>
+        <version>0.3.0-SNAPSHOT</version>
+    </parent>
+
+    <artifactId>vauban-weaver</artifactId>
+    <name>Vauban :: Weaver</name>
+    <description>Client-proxy constructor weaving (Vidocq/vauban#24) — Class-File API library
+        shared by the javac plugin, the Maven plugin and the container, doubling as a
+        java.lang.instrument agent for load-time weaving when the build did not weave
+        (IDE builds)</description>
+
+    <dependencies>
+        <dependency>
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter</artifactId>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <plugins>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-jar-plugin</artifactId>
+                <configuration>
+                    <archive>
+                        <manifestEntries>
+                            <!-- Same jar serves as -javaagent and as the dynamically
+                                 attached agent (AttachBack child process). -->
+                            <Premain-Class>io.vidocq.vauban.weaver.WeavingAgent</Premain-Class>
+                            <Agent-Class>io.vidocq.vauban.weaver.WeavingAgent</Agent-Class>
+                            <Main-Class>io.vidocq.vauban.weaver.AttachBack</Main-Class>
+                        </manifestEntries>
+                    </archive>
+                </configuration>
+            </plugin>
+        </plugins>
+    </build>
+</project>

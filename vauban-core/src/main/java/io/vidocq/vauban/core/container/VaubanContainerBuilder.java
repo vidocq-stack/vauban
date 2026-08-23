@@ -409,6 +409,20 @@ public final class VaubanContainerBuilder {
         var entryTccl = Thread.currentThread().getContextClassLoader();
         if (entryTccl != null) loaders.add(entryTccl);
         if (loaders.size() <= 1) return loaders.iterator().next();
+        // A VaubanClassLoader (application module layer) must become the composite's
+        // PARENT, whatever the bean scan order put first: module-mode ServiceLoader only
+        // walks the parent chain's service catalogs, and the layer loader's own chain
+        // already reaches the application loader — a composite parented elsewhere would
+        // hide the layer's providers (generated _VaubanComponents, Cassini adapters…).
+        var layerLoader = loaders.stream()
+                .filter(io.vidocq.vauban.classloader.VaubanClassLoader.class::isInstance)
+                .findFirst();
+        if (layerLoader.isPresent() && !loaders.getFirst().equals(layerLoader.get())) {
+            var reordered = new java.util.LinkedHashSet<ClassLoader>();
+            reordered.add(layerLoader.get());
+            reordered.addAll(loaders);
+            loaders = reordered;
+        }
         // Composite ClassLoader that delegates to all bean ClassLoaders — for
         // classes AND resources. Resources matter as much as classes: this
         // loader is installed as TCCL for the whole build, and libraries read
@@ -643,6 +657,18 @@ public final class VaubanContainerBuilder {
                 index = enrichedBuilder.build();
             }
 
+            // vauban#24 load-time weaving tier (backstop — the Vidocq bootstrap already ran
+            // it before its extensions could load application classes): must run BEFORE
+            // discovery/validation, both may load bean classes, and a class loaded before
+            // the agent is attached can no longer gain its (ProxyLink) constructor.
+            var weavingLoader = classLoader != null
+                    ? classLoader : Thread.currentThread().getContextClassLoader();
+            var loadTimeWeaving =
+                    io.vidocq.vauban.core.weaving.LoadTimeWeaving.prepare(weavingLoader);
+            if (loadTimeWeaving.failure() != null) {
+                LOG.log(System.Logger.Level.WARNING, loadTimeWeaving.failure());
+            }
+
             var discovery = new BeanDiscovery(index);
             discovery.setStrictScannedDiscovery(strictScannedDiscovery);
 
@@ -808,7 +834,8 @@ public final class VaubanContainerBuilder {
             var assignability = new AssignabilityRules(index);
             var tempResolver = new BeanResolver(descriptors, interceptors, assignability);
             var validator = new io.vidocq.vauban.core.bean.validation.DeploymentValidator(
-                    descriptors, tempResolver, index);
+                    descriptors, tempResolver, index)
+                    .loadTimeWoven(loadTimeWeaving.planned());
             var errors = validator.validate();
             if (!errors.isEmpty()) {
                 var definitionErrors = errors.stream()

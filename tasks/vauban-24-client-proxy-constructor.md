@@ -1,178 +1,241 @@
-# vauban#24 — réétude : le constructeur du bean s'exécute à la création du client proxy
+# vauban#24 — re-study: the bean constructor runs when the client proxy is created
 
-Statut : **phases 0, 1 et 2 implémentées** (`pr/ybl/vauban-24-proxy-link`, 2026-08-10) —
-diagnostic unproxyable index-based, constructeur marqueur `ProxyLink` opt-in, et **tissage
-automatique par le plugin** (`ProxyLinkWeaver`/`ProxyLinkWeaving`, `process-classes`) :
-l'application ne déclare jamais le marqueur, exigence mainteneur du 2026-08-10. Le cas
-« constructeur manquant » est rétrogradé en warning à la compilation (kind
-`UNPROXYABLE_BEAN`), reste une erreur au boot sans plugin. TCK CDI Lite 774/774 inchangé.
-Restent en option post-0.3.0 : proxy pur delegate `implements` pour les points d'injection
-typés interface, et repli `ReflectionFactory` opt-in pour les jars tiers non tissés.
-Date : 2026-08-09. Rapporteur d'origine : Sébastien Blanc (Rossignol).
+Status: **phases 0, 1 and 2 implemented** (`pr/ybl/vauban-24-proxy-link`, 2026-08-10) —
+index-based unproxyable diagnostic, opt-in `ProxyLink` marker constructor, and **automatic
+weaving by the plugin** (`ProxyLinkWeaver`/`ProxyLinkWeaving`, `process-classes`): the
+application never declares the marker, per the maintainer requirement of 2026-08-10. The
+"missing constructor" case is downgraded to a compile-time warning (kind
+`UNPROXYABLE_BEAN`) and remains a boot error without the plugin. CDI Lite TCK unchanged at
+774/774. Follow-up architecture (javac plugin, universal loader): see
+`tasks/vauban-classloader-universal.md`. Still optional post-0.3.0: pure-delegate
+`implements` proxies for interface-typed injection points.
+Date: 2026-08-09. Original reporter: Sébastien Blanc (Rossignol).
 
-Note d'implémentation (phase 0) : les contrôles spec existaient déjà dans
-`DeploymentValidator` mais reposaient sur `Class.forName(TCCL)` avec un
-`catch (ClassNotFoundException)` muet — inertes à la compilation et sur module path,
-précisément le déploiement Rossignol. La phase 0 a donc consisté à les rendre index-based
-(réflexion en repli), pas à les créer.
+Implementation note (phase 0): the spec checks already existed in `DeploymentValidator`
+but relied on `Class.forName(TCCL)` with a silent `catch (ClassNotFoundException)` —
+inert at compile time and on the module path, which is precisely the Rossignol deployment.
+Phase 0 therefore consisted in making them index-based (reflection as fallback), not in
+creating them.
 
-## 1. Ce qui est établi
+## 1. What is established
 
-Le proxy client étend le bean, et son constructeur sans argument chaîne vers un constructeur du
-bean — des deux côtés du codegen :
+The client proxy extends the bean, and its no-arg constructor chains into a bean
+constructor — on both sides of the codegen:
 
-- source : `ClientProxySourceRenderer` → `public Bean_ClientProxy() { super(<défauts>); }`
-- bytecode : `ClientProxyEmitter` → `invokespecial Bean.<init>` avec `pushDefault` par paramètre
+- source: `ClientProxySourceRenderer` → `public Bean_ClientProxy() { super(<defaults>); }`
+- bytecode: `ClientProxyEmitter` → `invokespecial Bean.<init>` with one `pushDefault` per
+  parameter
 
-Mesuré (sonde jetable sur `RuntimeClientProxyGenerator`, non commitée) :
+Measured (throwaway probe on `RuntimeClientProxyGenerator`, not committed):
 
-| Cas | Résultat observé |
+| Case | Observed result |
 |---|---|
-| bean `@ApplicationScoped` à constructeur no-arg | **2 constructions** pour une seule instance contextuelle — exactement le rapport |
-| bean dont l'unique constructeur est `@Inject Foo(Collaborator c)` **et qui déréférence `c`** | **`NullPointerException`** à la création du proxy : `Cannot invoke "Collaborator.name()" because "collaborator" is null` |
+| `@ApplicationScoped` bean with a no-arg constructor | **2 constructions** for a single contextual instance — exactly the report |
+| bean whose only constructor is `@Inject Foo(Collaborator c)` **and which dereferences `c`** | **`NullPointerException`** at proxy creation: `Cannot invoke "Collaborator.name()" because "collaborator" is null` |
 
-**Le second cas n'était pas dans le rapport et change la nature du problème.** Il ne s'agit pas
-seulement d'un effet de bord dupliqué que l'utilisateur pourrait éviter par discipline : l'injection
-par constructeur — le style recommandé par la spec CDI — fait **planter** tout bean normal-scoped
-dès que son constructeur utilise un de ses paramètres. Le proxy lui passe `null`
-(`findSimplestConstructor` + `pushDefault`).
+**The second case was not in the report and changes the nature of the problem.** This is
+not merely a duplicated side effect the user could avoid through discipline: constructor
+injection — the style the CDI specification recommends — makes any normal-scoped bean
+**crash** as soon as its constructor uses one of its parameters. The proxy passes it
+`null` (`findSimplestConstructor` + `pushDefault`).
 
-Cela invalide l'option « documenter et recommander `@PostConstruct` » comme réponse suffisante :
-aucune discipline sur les effets de bord ne sauve `this.name = collaborator.name()`.
+That invalidates the "document it and recommend `@PostConstruct`" option as a sufficient
+answer: no side-effect discipline saves `this.name = collaborator.name()`.
 
-## 2. La contrainte incontournable
+## 2. The unavoidable constraint
 
-La JVM impose que tout `<init>` chaîne vers un `<init>` de sa propre classe ou de sa
-**superclasse directe**. Le proxy doit être assignable au type injecté ; quand ce type est une
-classe concrète (`@Inject Oidc` chez le rapporteur), le proxy doit l'étendre, donc il ne peut
-appeler que `Oidc.<init>`. **Il est impossible d'éviter le constructeur du bean sans agir sur le
-bean lui-même.** Toute solution passe par l'une des familles ci-dessous.
+The JVM requires every `<init>` to chain to an `<init>` of its own class or of its
+**direct superclass**. The proxy must be assignable to the injected type; when that type
+is a concrete class (`@Inject Oidc` in the reporter's case), the proxy must extend it and
+can therefore only call `Oidc.<init>`. **It is impossible to avoid the bean constructor
+without acting on the bean itself.** Every solution goes through one of the families
+below.
 
-## 3. Les familles évaluées
+## 3. The evaluated families
 
-### A. Constructeur marqueur ajouté au bean (post-compile, Class-File API)
+### A. Marker constructor added to the bean (post-compile, Class-File API)
 
-`vauban-maven-plugin`, phase `process-classes` : ajouter à chaque bean proxyable un constructeur
-synthétique `Bean(VaubanProxyMarker)` au corps vide (chaînage récursif si la superclasse a un
-constructeur), puis réécrire l'unique `invokespecial` du `<init>` de `Bean_ClientProxy` — déjà
-compilé — pour le cibler.
+`vauban-maven-plugin`, `process-classes` phase: add to every proxyable bean a synthetic
+`Bean(VaubanProxyMarker)` constructor with an empty body (recursive chaining when the
+superclass has a constructor), then rewrite the single `invokespecial` of the — already
+compiled — `Bean_ClientProxy.<init>` to target it.
 
-- ✅ 100 % statique, AOT/GraalVM-safe, zéro réflexion : conforme à la philosophie du projet.
-- ✅ Préserve le `new Bean_ClientProxy()` en-module généré dans `_VaubanComponents` (aucun `opens`
-  ni réflexion réintroduits).
-- ✅ Résout les deux cas du tableau, y compris la NPE.
-- ⚠️ Modifie le bytecode du code utilisateur. Le constructeur ajouté doit être `ACC_SYNTHETIC` et
-  filtré par l'indexeur, sinon il devient candidat à l'injection par constructeur.
-- ⚠️ Les beans venant d'un **jar déjà compilé** ne peuvent pas être patchés par le build courant :
-  ils ont besoin du marqueur produit par leur propre build. Acceptable dans l'écosystème Vidocq
-  (tout module passe par le plugin), avec repli sur le comportement actuel sinon.
-- Infrastructure existante : `ModuleAnalyzer` parse déjà des classes compilées avec
-  `ClassFile.of().parse(...)` ; `InterceptedEmitter` en produit. Il manque la transformation.
-- Effort estimé : 2–4 j avec les tests d'héritage et de repli.
+- ✅ 100% static, AOT/GraalVM-safe, zero reflection: matches the project philosophy.
+- ✅ Preserves the in-module `new Bean_ClientProxy()` generated in `_VaubanComponents`
+  (no `opens` or reflection reintroduced).
+- ✅ Solves both cases of the table, including the NPE.
+- ⚠️ Modifies user bytecode. The added constructor must be `ACC_SYNTHETIC` and filtered by
+  the indexer, otherwise it becomes a constructor-injection candidate.
+- ⚠️ Beans coming from an **already-compiled jar** cannot be patched by the current build:
+  they need the marker produced by their own build. Acceptable in the Vidocq ecosystem
+  (every module goes through the plugin), with a fallback to today's behaviour otherwise.
+- Existing infrastructure: `ModuleAnalyzer` already parses compiled classes with
+  `ClassFile.of().parse(...)`; `InterceptedEmitter` produces some. Only the transformation
+  is missing.
+- Estimated effort: 2–4 d with the inheritance and fallback tests.
 
-### B. Instanciation sans appel de `<init>` (voie Weld)
+### B. Instantiation without calling `<init>` (the Weld way)
 
-`ReflectionFactory.newConstructorForSerialization(proxyClass, Object::new)` alloue le proxy sans
-exécuter aucun constructeur.
+`ReflectionFactory.newConstructorForSerialization(proxyClass, Object::new)` allocates the
+proxy without running any constructor.
 
-- ✅ ~10 lignes, résout tout, y compris la NPE.
-- ❌ Réflexion à chaud + `jdk.unsupported` : contraire à la règle « génération statique, pas de
-  réflexion runtime » du projet, et demande une configuration GraalVM dédiée.
-- ❌ Casse le chemin statique actuel : `_VaubanComponents` fait `new Bean_ClientProxy()` en-module
-  précisément pour éviter la réflexion. Y renoncer annulerait le gain du chantier BCE static
-  metadata (`opens` retirés).
+- ✅ ~10 lines, solves everything, including the NPE.
+- ❌ Runtime reflection + `jdk.unsupported`: against the project's "static generation, no
+  runtime reflection" rule, and requires dedicated GraalVM configuration.
+- ❌ Breaks the current static path: `_VaubanComponents` does `new Bean_ClientProxy()`
+  in-module precisely to avoid reflection. Giving that up would undo the gains of the BCE
+  static-metadata effort (removed `opens`).
 
-À écarter, sauf comme repli runtime pour les beans de jars non patchables (cf. limite de A).
+To be discarded, except as a runtime fallback for beans from unpatchable jars (cf. limit
+of A). **2026-08-10 update: definitively abandoned — the universal loader
+(`tasks/vauban-classloader-universal.md`) makes it unnecessary.**
 
-### C. Proxy par interface
+### C. Interface-based proxy
 
-Ne fonctionne que si le point d'injection porte sur une interface. Le cas rapporté
-(`@Inject Oidc`, classe concrète) n'est pas couvert. **Ne résout pas le problème**, seulement une
-partie ; à ne considérer que comme optimisation ultérieure.
+Only works when the injection point is typed by an interface. The reported case
+(`@Inject Oidc`, a concrete class) is not covered. **Does not solve the problem**, only a
+part of it; to be considered only as a later optimisation.
 
-### D. Solution 100 % APT, sans passe Class-File (réétudiée le 2026-08-10 — impossible)
+### D. 100% APT solution, without the Class-File pass (re-studied 2026-08-10 — impossible)
 
-Question légitime : le proxy est déjà généré en source par l'APT (`ClientProxySourceRenderer`),
-pourquoi ne pas y régler le problème et éviter la transformation post-compile ? Trois murs :
+Legitimate question: the proxy is already generated as source by the APT
+(`ClientProxySourceRenderer`), why not solve the problem there and avoid the post-compile
+transformation? Three walls:
 
-1. **JSR 269 ne sait que créer, jamais modifier.** L'API officielle (`Filer.createSourceFile`,
-   `createClassFile`) produit de *nouveaux* fichiers ; retoucher une unité de compilation
-   existante est hors API. Or la contrainte du §2 impose que le constructeur marqueur vive **dans
-   la classe du bean** — du code utilisateur, hors de portée de l'APT. Lombok n'y arrive qu'en
-   mutant l'AST via les internes de javac (`com.sun.tools.javac.tree.TreeMaker` + agent /
-   `--add-opens jdk.compiler`) : non supporté, fragile sous l'encapsulation forte du JDK 25,
-   cassé sous ECJ, et contraire à la règle du projet (pas d'API interne, pas de magie cachée).
-2. **Même le côté proxy ne peut pas rester en source pur.** Un constructeur écrit en Java appelle
-   forcément un constructeur *existant* de la superclasse : `super(new VaubanProxyMarker())` ne
-   compile pas tant que le bean n'a pas ce constructeur — et il ne l'aura jamais par APT (mur 1).
-   Œuf et poule à l'intérieur du même round de compilation.
-3. **Le bytecode lui-même n'offre pas d'échappatoire.** Le vérifieur JVM exige qu'un `<init>`
-   chaîne vers un `<init>` de sa classe ou de la superclasse directe ; « ne pas appeler de
-   constructeur » n'est exprimable ni en source ni en bytecode vérifiable — seules les voies
-   runtime de B (`ReflectionFactory`/`Unsafe`) le contournent, avec les défauts déjà listés.
+1. **JSR 269 can only create, never modify.** The official API (`Filer.createSourceFile`,
+   `createClassFile`) produces *new* files; touching an existing compilation unit is
+   outside the API. Yet the §2 constraint requires the marker constructor to live **in
+   the bean class** — user code, out of the APT's reach. Lombok only manages it by
+   mutating the AST through javac internals (`com.sun.tools.javac.tree.TreeMaker` +
+   agent / `--add-opens jdk.compiler`): unsupported, fragile under JDK 25 strong
+   encapsulation, broken under ECJ, and contrary to the project rule (no internal APIs, no
+   hidden magic).
+2. **Even the proxy side cannot stay pure source.** A constructor written in Java
+   necessarily calls an *existing* superclass constructor:
+   `super(new VaubanProxyMarker())` does not compile while the bean lacks that
+   constructor — and it never gets it through APT (wall 1). Chicken-and-egg inside a
+   single compilation round.
+3. **Bytecode itself offers no escape.** The JVM verifier requires every `<init>` to chain
+   to an `<init>` of its class or direct superclass; "call no constructor" is expressible
+   neither in source nor in verifiable bytecode — only the runtime routes of B
+   (`ReflectionFactory`/`Unsafe`) bypass it, with the flaws already listed.
 
-Ce que l'APT peut en revanche apporter à **A** : émettre à la compilation la liste exacte des
-beans proxyables (manifeste), pour que la passe `process-classes` soit une transformation ciblée
-O(beans) et non un scan du jar. À intégrer au chantier A.
+What the APT *can* contribute to **A**: emit at compile time the exact list of proxyable
+beans (a manifest), so the `process-classes` pass is a targeted O(beans) transformation
+rather than a jar scan. To fold into the A effort.
 
-À noter aussi : la passe Class-File n'est **pas un mécanisme de build nouveau** — le
-`GenerateMojo` de `vauban-maven-plugin` tourne déjà en `process-classes` ; A y ajoute une
-transformation de classes existantes, rien de plus.
+Also worth noting: the Class-File pass is **not a new build mechanism** — the
+`vauban-maven-plugin` `GenerateMojo` already runs at `process-classes`; A adds a
+transformation of existing classes to it, nothing more.
 
-## 4. Correction sur la spec (2026-08-10)
+## 4. Correction about the spec (2026-08-10)
 
-La première version de ce document affirmait que refuser un bean normal-scoped sans constructeur
-no-arg « restreindrait la spec ». C'est **l'inverse** : la section *Unproxyable bean types* de
-CDI 4.1 liste explicitement — classe `final`, méthodes `final` non privées, **absence de
-constructeur no-arg non privé** — et impose au container d'en faire une **erreur de
-déploiement**. Le bean du rapporteur (unique constructeur `@Inject` à paramètres) est donc déjà
-non-proxyable au sens strict de la spec : l'erreur franche est la réponse *portable*, et le
-constructeur marqueur est une **extension de confort** (comme la construction « relaxed » de
-Weld), pas une obligation. C'est cohérent avec le TCK CDI Lite qui passe 774/774 sans couvrir ce
-point.
+The first version of this document claimed that rejecting a normal-scoped bean without a
+no-arg constructor "would restrict the spec". It is the **opposite**: the *Unproxyable
+bean types* section of CDI 4.1 explicitly lists — `final` class, non-private `final`
+methods, **absence of a non-private no-arg constructor** — and requires the container to
+treat them as a **deployment error**. The reporter's bean (single parameterized `@Inject`
+constructor) is therefore already unproxyable in the strict sense of the spec: the honest
+error is the *portable* answer, and the marker constructor is a **convenience extension**
+(like Weld's relaxed construction), not an obligation. Consistent with the CDI Lite TCK
+passing 774/774 without covering this point.
 
-## 5. Plan retenu (2026-08-10, après échange mainteneur)
+## 5. Adopted plan (2026-08-10, after maintainer discussion)
 
-Trois phases incrémentales ; rien n'est jeté d'une phase à l'autre.
+Three incremental phases; nothing is thrown away between phases.
 
-### Phase 0 — diagnostic conforme spec (avec la 0.3.0)
+### Phase 0 — spec-mandated diagnostic (with 0.3.0)
 
-Détecter les beans normal-scoped non-proxyables (pas de constructeur no-arg non privé, classe
-`final`, méthode `final` non privée, champ public) et **refuser avec un message clair** : à la
-compilation par l'APT quand le bean est dans l'unité courante, au boot sinon. Transforme la NPE
-silencieuse d'aujourd'hui en erreur explicite — comportement exigé par la spec. ~1 j.
+Detect unproxyable normal-scoped beans (no non-private no-arg constructor, `final` class,
+non-private `final` method) and **reject with a clear message**: at compile time through
+the APT when the bean belongs to the current compilation unit, at boot otherwise. Turns
+today's silent NPE into an explicit error — the behaviour the spec requires. ~1 d.
 
-### Phase 1 — convention `ProxyLink` manuelle, opt-in (avec la 0.3.0)
+*As implemented*: the checks became index-based (reflection fallback); the
+missing-constructor case uses the dedicated `UNPROXYABLE_BEAN` kind, downgraded to a
+compile-time warning because phase 2 weaves it later in the same build; it remains a
+`DeploymentException` at container start. Final members stay fatal.
 
-Le développeur peut déclarer `Bean(ProxyLink)` (corps vide, champs `final` assignés à leurs
-défauts) ; le bean devient alors proxyable proprement :
+### Phase 1 — manual, opt-in `ProxyLink` convention (with 0.3.0)
 
-- `vauban-api` : type marqueur `ProxyLink` (non instanciable hors container) ;
-- `ClientProxyShapeFromElements`/`ClientProxySourceRenderer` (source) et
-  `ClientProxyEmitter`/`RuntimeClientProxyGenerator` (bytecode) : cibler ce constructeur
-  quand il existe, au lieu de `super(<défauts>)` ;
-- indexeur : exclure le constructeur marqueur des candidats à l'injection ;
-- le diagnostic de la phase 0 accepte un bean porteur du marqueur (extension documentée).
+The developer may declare `Bean(ProxyLink)` (empty body, blank `final` fields assigned to
+their defaults); the bean then becomes cleanly proxyable:
 
-100 % APT côté build, aucune transformation de bytecode : le mur n°2 de l'option D tombe dès
-lors que le constructeur existe dans la source. TDD : compteur de constructions + bean
-`@Inject` déréférençant son paramètre, rouges d'abord, dans `vauban-module-it`. Vérifier au
-passage que `@PostConstruct` ne se déclenche pas sur le proxy. ~1–2 j. Débloque Rossignol.
+- `vauban-api`: `ProxyLink` marker type (not instantiable outside the container);
+- `ClientProxyShapeFromElements`/`ClientProxySourceRenderer` (source) and
+  `ClientProxyEmitter`/`RuntimeClientProxyGenerator` (bytecode): target that constructor
+  when it exists, instead of `super(<defaults>)`;
+- indexer: exclude the marker constructor from injection candidates;
+- the phase-0 diagnostic accepts a bean carrying the marker (documented extension).
 
-### Phase 2 — automatisation Class-File (chantier A complet, post-0.3.0)
+100% APT on the build side, no bytecode transformation: wall 2 of option D falls as soon
+as the constructor exists in the source. TDD: construction counter + `@Inject` bean
+dereferencing its parameter, red first. Also verify `@PostConstruct` does not fire on the
+proxy. ~1–2 d. Unblocks Rossignol (at the cost of an app change — superseded by phase 2).
 
-`vauban-maven-plugin`, phase `process-classes` : ajouter le marqueur `ACC_SYNTHETIC` à tout bean
-proxyable qui ne le déclare pas (manifeste APT des beans proxyables pour une passe ciblée
-O(beans)), et faire pointer le `<init>` du proxy dessus. La convention manuelle de la phase 1
-devient inutile mais reste honorée. Beans de jars tiers sans marqueur : diagnostic phase 0
-(erreur spec) par défaut ; l'option B (`ReflectionFactory`) reste un repli *opt-in* documenté si
-un besoin réel apparaît. ~2 j (réduits par la phase 1). L'option C (proxy `implements` pur
-delegate quand le point d'injection est une interface) s'y greffe comme optimisation : pas de
-constructeur du tout dans ce cas.
+### Phase 2 — automatic weaving (2026-08-10 requirement: no app change at all)
 
-## 6. Garde-fous
+`vauban-maven-plugin`, `process-classes` phase: weave the `ACC_SYNTHETIC` marker into
+every proxyable bean that does not declare it (`ProxyLinkWeaver` in core,
+`ProxyLinkWeaving` in the plugin; superclasses compiled by the same module woven
+recursively), and retarget APT-emitted proxies onto it. The manual phase-1 convention
+becomes unnecessary but stays honoured. Real-instantiation paths never select the marker:
+`BeanDiscovery`, `ComponentCollector`, `InterceptorBeanWrapper` and both `$$Intercepted`
+mirrors exclude it.
 
-- Le TCK CDI Lite (774/774) ne couvre ni la double construction ni la NPE : nos tests de
-  non-régression de la phase 1 sont le seul filet — les garder.
-- Les phases 0 et 1 sont recommandées **avant la 0.3.0** : petites, conformes spec, et elles
-  débloquent le cas Rossignol sans attendre le chantier Class-File.
+*Follow-up decided in discussion (2026-08-10)*: the Maven plugin does not cover ECJ or
+IDE-internal builds (IntelliJ), and cannot weave third-party jars. The retained target
+architecture is tiered — `autoStart` **javac plugin** embedded in the APT jar (nominal
+static path: Maven, Gradle, bare javac), Maven plugin kept for ecosystem jar
+builds and sjar encryption, and the **universal loader** with source + transformer plugins
+for everything else (ECJ, unwoven third-party jars, sjars). Full design:
+`tasks/vauban-classloader-universal.md`.
+
+### Phase 3 — load-time weaving agent (2026-08-10, after the IntelliJ field test)
+
+Empirical finding, running cassini-rest-example from IntelliJ with its native builder: the
+javac plugin does NOT cover the IDE build. IntelliJ's build system (JPS) flushes the
+hand-written classes to disk from memory ~4 s AFTER javac's `COMPILATION finished` event
+(generated-source classes were flushed before it), so the plugin wove stale files, its
+idempotence check saw the previous Maven output and self-cleaned, and JPS then overwrote
+the beans unwoven — a hybrid state (proxies retargeted, beans without marker) that fails
+at boot. Conclusion: post-hoc disk weaving cannot cover the IDE build, structurally.
+
+`ReflectionFactory` relaxed construction (option B) was re-examined for this case and
+stays rejected: Vidocq app modules keep bean packages fully encapsulated (zero
+`opens`/`exports`), which blocks reflective instantiation under Java Modules entirely.
+
+Adopted and implemented instead: a **load-time weaving tier**.
+
+- New zero-dependency module `vauban-weaver` — the canonical `ProxyLinkWeaver`
+  transformations moved there (core/processor/maven-plugin now depend on it), packaged as
+  an instrumentation agent (`Premain-Class`/`Agent-Class`, plan-driven
+  `ClassFileTransformer`, `AttachBack` child-process attacher). `requires
+  java.instrument` is deliberately non-static: on the module path the dynamically
+  attached agent classes resolve to the named module, and a static requires leaves
+  `java.instrument` unresolved (`IllegalAccessError` — found the hard way).
+- `vauban-core` `LoadTimeWeaving`: detection driven exclusively by
+  `META-INF/vauban-beans.list` (present in every APT build, including IDE builds; absent
+  from synthetic/TCK archives, which therefore keep the spec-mandated unproxyable
+  errors), byte-level (never loads classes), self-attaches via a child process, per-JVM
+  idempotent. Deployment validation skips the planned classes. Opt-out:
+  `-Dvauban.weaving.loadtime=disabled`.
+- Hook runs twice: **early in `VidocqBootstrap.start()`** — mandatory, because Cassini's
+  scope extension loads `@Path` classes in `beforeStart`, and a class loaded before the
+  attach can no longer be woven (adding a constructor is not a valid retransformation) —
+  and as a no-op backstop in `VaubanContainerBuilder.build()` for plain Vauban SE usage.
+- Proof: simulated IDE state on cassini-rest-example (full `javac -proc:none` recompile
+  over a Maven build: beans unwoven, proxies chaining the business constructor), run on
+  the module path with zero `opens` — boots through the agent and `/api/stats` answers
+  200, identical to the woven build.
+
+Docs: `docs/en|fr … internals.adoc#weaving-tiers` (tier table + mechanics) and
+`usage.adoc` (IDE note).
+
+## 6. Guardrails
+
+- The CDI Lite TCK (774/774) covers neither the double construction nor the NPE: the
+  phase-1/2 non-regression tests are the only net — keep them.
+- Phases 0–2 are implemented on `pr/ybl/vauban-24-proxy-link` (PR #26, stacked on #25):
+  reactor 526 tests green, weaving exercised for real by the examples modules, TCK
+  774/774 unchanged.

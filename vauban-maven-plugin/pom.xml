@@ -28,6 +28,10 @@
             <groupId>io.vidocq.vauban</groupId>
             <artifactId>vauban-sjar</artifactId>
         </dependency>
+        <dependency>
+            <groupId>io.vidocq.vauban</groupId>
+            <artifactId>vauban-weaver</artifactId>
+        </dependency>
 
         <!-- Maven Plugin API (provided by Maven at runtime) -->
         <dependency>

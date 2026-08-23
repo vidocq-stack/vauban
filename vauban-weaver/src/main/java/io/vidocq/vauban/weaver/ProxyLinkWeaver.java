@@ -17,7 +17,7 @@
  *
  * SPDX-License-Identifier: EPL-2.0 OR EUPL-1.2 OR GPL-2.0-or-later
  */
-package io.vidocq.vauban.core.proxy;
+package io.vidocq.vauban.weaver;
 
 import java.lang.classfile.ClassFile;
 import java.lang.classfile.ClassTransform;
@@ -25,6 +25,7 @@ import java.lang.classfile.MethodModel;
 import java.lang.constant.ClassDesc;
 import java.lang.constant.ConstantDescs;
 import java.lang.constant.MethodTypeDesc;
+import java.lang.reflect.AccessFlag;
 
 /**
  * Class-File transformations behind phase 2 of Vidocq/vauban#24: make a compiled
@@ -33,8 +34,10 @@ import java.lang.constant.MethodTypeDesc;
  * <p>The JVM forces the client proxy's {@code <init>} to chain to a constructor of the bean
  * (its direct superclass), so the side-effect-free entry point must exist in the bean class
  * itself — and annotation processing cannot add it (JSR 269 only creates new files). The
- * {@code vauban-maven-plugin} therefore rewrites the compiled classes at
- * {@code process-classes}:
+ * compiled classes are therefore rewritten after javac: by the auto-started javac plugin
+ * (Maven/Gradle/CLI builds), by the {@code vauban-maven-plugin} at {@code process-classes}
+ * (ecosystem jars), or at class load time by {@link WeavingAgent} when the build did not
+ * weave (IDE builds):
  *
  * <ul>
  *   <li>{@link #addMarkerConstructor(byte[], SuperChain)} weaves a synthetic
@@ -48,10 +51,17 @@ import java.lang.constant.MethodTypeDesc;
  * fields unassigned (definite assignment is a javac rule, not a verifier one), so no
  * per-field default assignments are needed. Beans that declare a manual {@code (ProxyLink)}
  * constructor (phase 1) are left untouched.
+ *
+ * <p>This module is dependency-free on purpose (it doubles as a self-contained agent jar),
+ * so the marker type is referenced by name only — kept in sync with
+ * {@code io.vidocq.vauban.api.ProxyLink.CLASS_NAME}.
  */
 public final class ProxyLinkWeaver {
 
-    private static final ClassDesc CD_PROXY_LINK = ClassDesc.of(ClientProxyShape.PROXY_LINK_CLASS);
+    /** Binary name of the marker type — mirror of {@code io.vidocq.vauban.api.ProxyLink.CLASS_NAME}. */
+    public static final String PROXY_LINK_CLASS = "io.vidocq.vauban.api.ProxyLink";
+
+    private static final ClassDesc CD_PROXY_LINK = ClassDesc.of(PROXY_LINK_CLASS);
     private static final MethodTypeDesc MTD_MARKER =
             MethodTypeDesc.of(ConstantDescs.CD_void, CD_PROXY_LINK);
     private static final MethodTypeDesc MTD_VOID = MethodTypeDesc.of(ConstantDescs.CD_void);
@@ -74,12 +84,24 @@ public final class ProxyLinkWeaver {
         return false;
     }
 
+    /** {@code true} when the class declares a non-private no-arg constructor. */
+    public static boolean hasNonPrivateNoArgConstructor(byte[] classBytes) {
+        for (var method : ClassFile.of().parse(classBytes).methods()) {
+            if (method.methodName().equalsString(ConstantDescs.INIT_NAME)
+                    && method.methodTypeSymbol().parameterCount() == 0
+                    && !method.flags().has(AccessFlag.PRIVATE)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     /**
      * Weaves the synthetic {@code protected <init>(ProxyLink)} entry constructor into
      * {@code beanClass}, chaining to the superclass per {@code chain}.
      *
      * @return the patched bytecode, or {@code null} when the class already declares the
-     *         marker (manual phase-1 constructor, or a previous plugin run)
+     *         marker (manual phase-1 constructor, or a previous weaving run)
      */
     public static byte[] addMarkerConstructor(byte[] beanClass, SuperChain chain) {
         var cf = ClassFile.of();
