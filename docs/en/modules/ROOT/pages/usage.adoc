@@ -38,59 +38,6 @@ CDI 4.1 Lite ships four standard scopes. Vauban supports all of them, plus `@Req
 Normal-scoped beans (`@ApplicationScoped`, `@RequestScoped`) get a `_ClientProxy` generated at compile time. The proxy intercepts each call and delegates to the active context. `@Dependent` and `@Singleton` beans do not.
 ====
 
-=== Proxyable beans and the `ProxyLink` entry constructor
-
-Because the client proxy subclasses the bean, CDI 4.1 declares some classes _unproxyable_
-for normal scopes: `final` classes, classes with non-private `final` methods, and classes
-without a non-private no-arg constructor. Final members are reported as errors (weaving
-cannot fix them); the missing-constructor case — the common single-`@Inject`-constructor
-style — is handled automatically:
-
-**In any javac-based build (Maven, Gradle, plain `javac`, the standard Vidocq setup),
-nothing to do.** The Vauban annotation processor ships an auto-started javac plugin that,
-when compilation finishes, weaves a synthetic `(ProxyLink)` entry constructor into the
-compiled bean class and points the generated proxy's constructor at it. Your source never
-declares it. Creating the proxy then runs no bean logic — no duplicated construction side
-effects, no `NullPointerException` on dereferenced `@Inject` parameters. The
-`vauban-maven-plugin` applies the same weaving at `process-classes` as a second layer and
-for ecosystem jars that do not go through javac.
-
-**When the build output was not woven** — typically an IDE build: IntelliJ's build system
-writes classes to disk after javac finishes, which defeats the javac plugin — the
-container detects it at boot, before any bean class is loaded, and attaches the
-`vauban-weaver` agent to the current JVM: the same transformation is applied when the
-class is defined. You will see a Vauban warning listing the affected beans plus the JDK's
-standard dynamic-agent notice; behaviour is otherwise identical to a woven build. Disable
-this tier with `-Dvauban.weaving.loadtime=disabled`, or avoid it entirely in IntelliJ by
-enabling _Delegate IDE build/run actions to Maven_. See
-xref:internals.adoc#weaving-tiers[Internals — client-proxy weaving tiers] for the full
-mechanics.
-
-**Without any weaving tier**, declare the entry constructor yourself
-(`io.vidocq.vauban.api.ProxyLink`, a Vauban extension comparable to Weld's relaxed
-construction):
-
-[source,java]
-----
-@ApplicationScoped
-public class Oidc {
-    private final String issuer;
-
-    @Inject
-    public Oidc(Config config) {
-        this.issuer = config.issuer();
-    }
-
-    protected Oidc(ProxyLink link) {   // client-proxy entry point — keep the body empty
-        this.issuer = null;            // javac requires blank finals to be assigned
-    }
-}
-----
-
-Either way the proxy chains to that constructor (always passing `null`), and the container
-never selects it for injection or bean instantiation. Field initializers still run in every
-constructor — keep them side-effect free.
-
 == Qualifiers
 
 Discriminate multiple implementations of the same type.
