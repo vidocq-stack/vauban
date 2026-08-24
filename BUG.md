@@ -931,3 +931,46 @@ while `resolvedGat.equals(jdkGat)` was false (asymmetric), and the anonymous
     instead of a silent skip. The proxy delegate throws `ContextNotActiveException` when
     no context is registered for a normal scope instead of handing out per-call
     `@Dependent` instances. CDI Lite TCK re-run 774/774.
+
+## BUG-20260824-01 — BCE on the compile path but absent from the processor path is silently ignored
+
+- **Date** : 2026-08-24
+- **Statut** : OPEN
+- **Module touché** : `vauban-processor` (`VaubanProcessor.init()` / `discoverBceClasses`)
+- **Symptôme** : in a standalone Vauban + Mansart app, declaring Maven
+  `<annotationProcessorPaths>` (e.g. for `mansart-data-processor`) narrows javac's
+  `-processorpath` to those entries only. `VaubanProcessor` discovers
+  `BuildCompatibleExtension` implementations via
+  `ServiceLoader.load(BuildCompatibleExtension.class, VaubanProcessor.class.getClassLoader())`
+  (`VaubanProcessor.java:146-147`, `:647-661`), i.e. on the processor path — so a BCE
+  living in a regular dependency jar (`mansart-data-cdi`'s `MansartDataExtension`) never
+  runs, its `ScannedClasses.add(...)` contributions are missing, and the user gets a
+  confusing hard error much later:
+  `[Vauban] Unsatisfied dependency: parameter 0 of <Repo>Impl() of type ClassType[name=io.vidocq.mansart.data.core.RepositoryRuntime] ...`
+  (concrete final type → `mayBeSatisfiedElsewhere()` returns false → not deferred).
+  Reported by an external user following the Mansart README/getting-started.
+- **Reproduction minimale** :
+  ```
+  App with mansart-data-{core,cdi,dialect-postgresql} as dependencies, one @Repository
+  interface + entity, and:
+    <annotationProcessorPaths>
+      <path>io.vidocq.mansart:mansart-data-processor</path>
+    </annotationProcessorPaths>
+  mvn compile → [Vauban] Unsatisfied dependency ... RepositoryRuntime
+  Workaround/fix: add io.vidocq.mansart:mansart-data-cdi as an extra <path> (reference:
+  mansart-transactions/mansart-transactions-cdi-module-it/pom.xml:88-110, plus
+  -Avauban.validation=false for cross-module bean resolution the APT cannot see).
+  ```
+- **Hypothèse de cause** : not a resolution bug — a DX gap. The APT cannot load BCEs from
+  the compile/module path (javac gives it no classloader over it), but it *can* detect the
+  mismatch: dependency jars are visible as `-classpath`/`--module-path` entries and a scan
+  for `META-INF/services/jakarta.enterprise.inject.build.compatible.spi.BuildCompatibleExtension`
+  (or `provides` in `module-info.class`) would identify BCEs its own ServiceLoader cannot
+  see. Proposed fix: emit a `Diagnostic.Kind.WARNING` (and enrich the unsatisfied-dependency
+  error) naming the jar and suggesting the `<annotationProcessorPaths>` addition.
+- **Investigations** :
+  - 2026-08-24 : root cause traced end to end (processor-path ServiceLoader at
+    `VaubanProcessor.java:650`; `GenerateMojo` runs BCEs later but `processEnhancementOnly`,
+    no `@Discovery`/validation, so it cannot compensate). Docs fixed on the Mansart side
+    (getting-started now wires `mansart-data-cdi` on the processor path); this entry tracks
+    the diagnostic improvement in the APT itself.
