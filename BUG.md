@@ -969,6 +969,8 @@ while `resolvedGat.equals(jdkGat)` was false (asymmetric), and the anonymous
   see. Proposed fix: emit a `Diagnostic.Kind.WARNING` (and enrich the unsatisfied-dependency
   error) naming the jar and suggesting the `<annotationProcessorPaths>` addition.
 - **Investigations** :
+  - 2026-08-24 : tracked publicly as codefloe issue vauban#29 (companion: mansart#9,
+    the original support case + doc fixes).
   - 2026-08-24 : root cause traced end to end (processor-path ServiceLoader at
     `VaubanProcessor.java:650`; `GenerateMojo` runs BCEs later but `processEnhancementOnly`,
     no `@Discovery`/validation, so it cannot compensate). Docs fixed on the Mansart side
