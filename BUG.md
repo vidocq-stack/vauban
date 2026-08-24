@@ -935,7 +935,7 @@ while `resolvedGat.equals(jdkGat)` was false (asymmetric), and the anonymous
 ## BUG-20260824-01 — BCE on the compile path but absent from the processor path is silently ignored
 
 - **Date** : 2026-08-24
-- **Statut** : OPEN
+- **Statut** : FIXED 726dc38
 - **Module touché** : `vauban-processor` (`VaubanProcessor.init()` / `discoverBceClasses`)
 - **Symptôme** : in a standalone Vauban + Mansart app, declaring Maven
   `<annotationProcessorPaths>` (e.g. for `mansart-data-processor`) narrows javac's
