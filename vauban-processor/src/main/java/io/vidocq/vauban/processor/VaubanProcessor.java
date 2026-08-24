@@ -112,6 +112,17 @@ public class VaubanProcessor extends AbstractProcessor {
     private final IndexBuilder accumulatedIndex = new IndexBuilder();
     private boolean finalized = false;
     private List<Class<?>> discoveredBceClasses;
+
+    /**
+     * BCE implementations declared on the compile/module path that the processor-path
+     * {@code ServiceLoader} could not load — {@code null} until first computed (lazy: needs the
+     * round's {@code Elements}). See {@link #unloadableBcesOnCompilePath()} (vauban#29).
+     */
+    private Set<String> unloadableBcesCache;
+    private boolean warnedUnloadableBces;
+
+    /** Named modules this compilation is building — never complete their directives. */
+    private final Set<String> compiledModuleNames = new HashSet<>();
     private Set<String> bceAnnotationTypes = Set.of();
 
     /**
@@ -179,6 +190,17 @@ public class VaubanProcessor extends AbstractProcessor {
     @Override
     public boolean process(Set<? extends TypeElement> annotations, RoundEnvironment roundEnv) {
         if (finalized) return false;
+
+        // Remember which module(s) this compilation is building: reading the module *directives*
+        // of a module still being compiled (as unloadableBcesOnCompilePath does for dependency
+        // modules) completes it prematurely and freezes `provides` resolution errors before the
+        // last-round generated classes exist. getModuleOf only walks ownership — no completion.
+        for (var root : roundEnv.getRootElements()) {
+            var module = processingEnv.getElementUtils().getModuleOf(root);
+            if (module != null && !module.isUnnamed()) {
+                compiledModuleNames.add(module.getQualifiedName().toString());
+            }
+        }
 
         // Accumulate types annotated this round into the cross-round index.
         var scanner = new ElementScanner(processingEnv.getElementUtils(), processingEnv.getTypeUtils());
@@ -323,6 +345,8 @@ public class VaubanProcessor extends AbstractProcessor {
         // compile-time check for projects whose beans depend on BCE-produced injections that
         // aren't visible to the static analyser (typical pattern with @ConfigProperty / @Claim /
         // @RegisterRestClient used in test code without the producing BCE on the APT classpath).
+        warnUnloadableBces();
+
         var errors = java.util.Collections.<DeploymentValidator.ValidationError>emptyList();
         if (validationEnabled()) {
             var assignability = new AssignabilityRules(index);
@@ -359,8 +383,18 @@ public class VaubanProcessor extends AbstractProcessor {
                 continue;
             }
             fatal = true;
+            var hint = "";
+            if (error.kind() == DeploymentValidator.ValidationError.Kind.UNSATISFIED_DEPENDENCY) {
+                var unloadable = unloadableBcesOnCompilePath();
+                if (!unloadable.isEmpty()) {
+                    hint = " Hint: Build Compatible Extension(s) " + unloadable
+                            + " found on the compile/module path cannot run (not on the"
+                            + " annotation-processor path) and may contribute the missing bean —"
+                            + " add their artifact(s) to <annotationProcessorPaths>.";
+                }
+            }
             processingEnv.getMessager().printMessage(Diagnostic.Kind.ERROR,
-                "[Vauban] " + error.message());
+                "[Vauban] " + error.message() + hint);
         }
 
         if (fatal) return true;
@@ -643,6 +677,80 @@ public class VaubanProcessor extends AbstractProcessor {
     }
 
     // --- BCE Discovery ---
+
+    /**
+     * BCE implementations declared on the <em>compile/module path</em> that the processor-path
+     * {@code ServiceLoader} of {@link #discoverBceClasses(ClassLoader)} could not load, and which
+     * therefore silently never run (vauban#29 — Maven's {@code <annotationProcessorPaths>}
+     * narrows javac's {@code -processorpath} to its entries only).
+     *
+     * <p>The processor cannot load those classes — javac gives it no classloader over the compile
+     * path — but their <em>declarations</em> are visible through supported APIs: the
+     * {@code provides} directives of every observable module ({@code Elements}), and the
+     * {@code META-INF/services} resource of the classpath ({@code Filer}). Anything declared
+     * there but absent from the loaded set is reported.
+     */
+    private Set<String> unloadableBcesOnCompilePath() {
+        if (unloadableBcesCache != null) return unloadableBcesCache;
+        var declared = new LinkedHashSet<String>();
+        var bceFqn = BuildCompatibleExtension.class.getName();
+
+        // (a) module path: `provides BuildCompatibleExtension with ...` in observable modules.
+        // Modules under compilation are skipped: completing their directives here would freeze
+        // `provides` resolution errors before the last-round generated classes exist.
+        try {
+            for (var module : processingEnv.getElementUtils().getAllModuleElements()) {
+                if (module.isUnnamed()
+                        || compiledModuleNames.contains(module.getQualifiedName().toString())) {
+                    continue;
+                }
+                for (var directive : module.getDirectives()) {
+                    if (directive.getKind() != ModuleElement.DirectiveKind.PROVIDES) continue;
+                    var provides = (ModuleElement.ProvidesDirective) directive;
+                    if (!bceFqn.contentEquals(provides.getService().getQualifiedName())) continue;
+                    provides.getImplementations()
+                            .forEach(impl -> declared.add(impl.getQualifiedName().toString()));
+                }
+            }
+        } catch (Exception e) {
+            // Module elements unavailable in this javac configuration — classpath probe still runs.
+        }
+
+        // (b) classpath: the ServiceLoader descriptor as a compile-classpath resource.
+        try {
+            var resource = processingEnv.getFiler()
+                    .getResource(StandardLocation.CLASS_PATH, "", "META-INF/services/" + bceFqn);
+            try (var reader = new BufferedReader(
+                    new InputStreamReader(resource.openInputStream(), StandardCharsets.UTF_8))) {
+                reader.lines()
+                        .map(line -> line.replaceFirst("#.*", "").trim())
+                        .filter(line -> !line.isEmpty())
+                        .forEach(declared::add);
+            }
+        } catch (Exception e) {
+            // No such resource on the classpath — the normal case.
+        }
+
+        discoveredBceClasses.forEach(loaded -> declared.remove(loaded.getName()));
+        unloadableBcesCache = declared;
+        return declared;
+    }
+
+    /** One-shot warning naming the BCEs of {@link #unloadableBcesOnCompilePath()}. */
+    private void warnUnloadableBces() {
+        if (warnedUnloadableBces) return;
+        warnedUnloadableBces = true;
+        var unloadable = unloadableBcesOnCompilePath();
+        if (unloadable.isEmpty()) return;
+        processingEnv.getMessager().printMessage(Diagnostic.Kind.WARNING,
+                "[Vauban] " + unloadable.size() + " Build Compatible Extension(s) present on the"
+                        + " compile/module path are NOT on the annotation-processor path and will"
+                        + " not run: " + unloadable + ". Maven's <annotationProcessorPaths> narrows"
+                        + " javac's -processorpath to its entries — add the artifact(s) shipping"
+                        + " these extensions as additional <path> entries (or pass"
+                        + " -Avauban.validation=false to defer bean validation to the runtime"
+                        + " container).");
+    }
 
     private List<Class<?>> discoverBceClasses(ClassLoader cl) {
         var bceClasses = new ArrayList<Class<?>>();

@@ -969,6 +969,12 @@ while `resolvedGat.equals(jdkGat)` was false (asymmetric), and the anonymous
   see. Proposed fix: emit a `Diagnostic.Kind.WARNING` (and enrich the unsatisfied-dependency
   error) naming the jar and suggesting the `<annotationProcessorPaths>` addition.
 - **Investigations** :
+  - 2026-08-24 : fix implemented (warning + error hint; detection via module `provides`
+    directives and the classpath services resource). Javac trap found on the way: reading
+    the directives of a module STILL BEING COMPILED completes it prematurely and freezes
+    `provides` resolution errors before last-round generated classes exist (broke
+    vauban-module-it) — the scan now skips the modules owning this compilation's root
+    elements. Covered by BceProcessorPathDiagnosticTest (3 tests); full reactor green.
   - 2026-08-24 : tracked publicly as codefloe issue vauban#29 (companion: mansart#9,
     the original support case + doc fixes).
   - 2026-08-24 : root cause traced end to end (processor-path ServiceLoader at
