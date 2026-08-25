@@ -12,7 +12,7 @@ This page lists every artefact published by Vauban, the Java Modules packages th
 
 | `io.vidocq.vauban:vauban-api:{project-version}`
 | `compile`
-| Public API (`Vauban.bootstrap()`, `BeanFactory<T>`, etc.)
+| Version marker (`Vauban.VERSION`) and the generated-code SPI (`ProxyLink`, `VaubanComponentProvider`)
 
 | `io.vidocq.vauban:vauban-core:{project-version}`
 | `runtime`
@@ -28,11 +28,19 @@ This page lists every artefact published by Vauban, the Java Modules packages th
 
 | `io.vidocq.vauban:vauban-maven-plugin:{project-version}`
 | `build`
-| Maven plugin (goals: `index`, `process`, `generate`, `analyze`, `dist`, `encrypt`)
+| Maven plugin (goals: `generate`, `dist`, `encrypt`)
 
 | `io.vidocq.vauban:vauban-classloader-spi:{project-version}`
 | `runtime`
 | ClassLoader SPI (`ByteSourcePlugin`, `ArchiveReader`)
+
+| `io.vidocq.vauban:vauban-classloader:{project-version}`
+| `runtime`
+| Universal class-loader engine (`VaubanClassLoader`, `VaubanLayerFactory`)
+
+| `io.vidocq.vauban:vauban-weaver:{project-version}`
+| `runtime`
+| Client-proxy weaving transforms (Class-File API), also packaged as a load-time agent
 
 | `io.vidocq.vauban:vauban-sjar:{project-version}`
 | `runtime` (optional)
@@ -57,16 +65,22 @@ This page lists every artefact published by Vauban, the Java Modules packages th
 | `io.vidocq.vauban.api`
 
 | `io.vidocq.vauban.core`
-| `io.vidocq.vauban.core`, `.container`, `.langmodel`, `.langmodel.declarations`, `.langmodel.types`, `.types`, `.bean.model`, `.bean.discovery`, `.bean.resolution`, `.bean.validation`, `.context`, `.event`, `.interceptor`, `.enrichment`, `.extensions`
+| `io.vidocq.vauban.core`, `.container`, `.langmodel`, `.langmodel.declarations`, `.langmodel.types`, `.types`, `.bean.model`, `.bean.discovery`, `.bean.resolution`, `.bean.validation`, `.context`, `.event`, `.interceptor`, `.enrichment`, `.extensions`, `.weaving`; `.proxy` is a qualified export to `io.vidocq.vauban.processor`
 
 | `io.vidocq.vauban.indexer`
-| `io.vidocq.vauban.indexer`, `.indexer.model`, `.indexer.scanner`
+| `io.vidocq.vauban.indexer`, `.indexer.codegen`, `.indexer.model`, `.indexer.scanner`
 
 | `io.vidocq.vauban.processor`
 | (internal — requires `java.compiler`)
 
 | `io.vidocq.vauban.classloader.spi`
 | `io.vidocq.vauban.classloader.spi`
+
+| `io.vidocq.vauban.classloader`
+| `io.vidocq.vauban.classloader`
+
+| `io.vidocq.vauban.weaver`
+| `io.vidocq.vauban.weaver`
 
 | `io.vidocq.vauban.sjar`
 | `io.vidocq.vauban.sjar`, `.sjar.cli`
@@ -75,7 +89,7 @@ This page lists every artefact published by Vauban, the Java Modules packages th
 | `io.vidocq.vauban.junit`
 |===
 
-`io.vidocq.vauban.core` provides `jakarta.enterprise.inject.spi.CDIProvider` via `provides`. No unjustified `opens`.
+`io.vidocq.vauban.core` provides `jakarta.enterprise.inject.spi.CDIProvider` (`VaubanCDIProvider`), `jakarta.enterprise.inject.se.SeContainerInitializer` (`VaubanSeContainerInitializer`) and `jakarta.enterprise.inject.build.compatible.spi.BuildServices` (`VaubanBuildServices`) via `provides`. No unjustified `opens`.
 
 == Maven plugin goals
 
@@ -83,23 +97,29 @@ This page lists every artefact published by Vauban, the Java Modules packages th
 |===
 | Goal | Role
 
-| `vauban:index`
-| Scans the module path and writes `META-INF/vauban/index.bin`.
-
-| `vauban:process`
-| Runs the APT (equivalent to `javac -processor`).
-
 | `vauban:generate`
-| Emits `_Factory`, `_ClientProxy`, `_ProducerFactory` via Class-File API.
-
-| `vauban:analyze`
-| Java Modules analysis, detects split packages and inconsistent exports.
+| Bound to `process-classes`. Scans the dependency JARs and the project classes for CDI beans, writes the `META-INF/vauban-beans.list` bean index into `${project.build.outputDirectory}`, and weaves the client-proxy marker constructor into the compiled normal-scoped beans.
 
 | `vauban:dist`
-| Packages a runnable distribution (jlink + image).
+| Bound to `package`. Packages the application as a distribution ZIP (launch scripts, application JAR and all dependencies), attached with classifier `dist`.
 
 | `vauban:encrypt`
-| Encrypts a signed jar via `vauban-sjar` (optional).
+| Bound to `package`. Encrypts the internal classes of a modular JAR in-place with AES-256-GCM (`vauban-sjar` reads it back); classes in `exports`/`opens` packages stay in clear text.
+|===
+
+== Annotation-processor options
+
+`vauban-processor` accepts two APT options (`-A` flags on `javac`, `<compilerArgs>` in Maven):
+
+[cols="1,3"]
+|===
+| Option | Effect
+
+| `-Avauban.validation=false`
+| Skips the static deployment validation (unsatisfied/ambiguous, unproxyable and circular-dependency checks). Useful when beans rely on injections that only a runtime Build Compatible Extension can satisfy (e.g. MicroProfile `@ConfigProperty`, `@Claim`, `@RegisterRestClient`) and the BCE is not on the APT classpath. The runtime container still runs the full validation at start; this option only silences the compile-time check, it does not disable wiring.
+
+| `-Avauban.validation.scope=all`
+| Default `main`: validation only runs on the principal source set and is skipped automatically when the processor detects a `testCompile` invocation (default output pointing at `target/test-classes`). Set to `all` to enforce validation on test sources too.
 |===
 
 [#junit-extension]
@@ -110,6 +130,7 @@ This page lists every artefact published by Vauban, the Java Modules packages th
 [source,java]
 ----
 @VaubanTest
+@AddBeans(GreetingService.class)
 class GreetingServiceTest {
     @Inject GreetingService greeting;
 
@@ -120,11 +141,10 @@ class GreetingServiceTest {
 }
 ----
 
-Three discovery modes:
+Bean selection:
 
-* `@VaubanTest` alone — `scanLocal()` of the test's package.
-* `@VaubanTest(scan = ScanMode.CLASSPATH)` — full `scanClasspath()`.
-* `@VaubanTest(beans = {Foo.class, Bar.class})` — `addBeanClass(...)`.
+* `@VaubanTest` — a plain marker (no members). Boots the container via `VaubanContainer.builder()` before all tests, closes it after the last one, and injects the test instance's `@Inject` fields.
+* `@AddBeans({Foo.class, Bar.class})` — a separate annotation that registers the listed classes on the container builder (`addBeanClass(...)`).
 
 [#lite-vs-full]
 == CDI 4.1 Lite vs Full comparison
@@ -203,10 +223,9 @@ Vauban needs no application configuration file. Bean selection happens via:
 
 For dynamic application configuration, use MicroProfile Config through xref:vidocq::index.adoc[Vidocq Runtime].
 
-== Bugs and benchmarks
+== Bugs
 
 * link:{repo-vauban}/src/branch/main/BUG.md[BUG.md] — tracked reproducible bugs.
-* link:{repo-vauban}/src/branch/main/BENCH.md[BENCH.md] — benchmarks (to create if missing).
 
 == Compatibility
 

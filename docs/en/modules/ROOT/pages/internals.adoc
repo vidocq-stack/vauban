@@ -10,26 +10,26 @@ CDI 4.1 describes a richly reflective object model: `Bean<T>`, `BeanManager`, `I
 
 Two tools run at `process-classes`:
 
-. **`vauban-indexer`** — walks the module path at compile time and writes an index file (`META-INF/vauban/index.bin`). The static equivalent of Weld's runtime `BeanArchive`. Zero dependency.
+. **`vauban-indexer`** — walks the module path at compile time and builds the bean index, persisted as `META-INF/vauban-beans.list`. The static equivalent of Weld's runtime `BeanArchive`. Zero dependency.
 . **`vauban-processor`** — a `javax.annotation.processing.Processor` that consumes the index and emits bytecode through the **Class-File API** (https://openjdk.org/jeps/484[JEP 484]). No ASM, no Byte Buddy, no Gizmo.
 
-For each bean the processor generates:
+The processor generates:
 
 [cols="1,3"]
 |===
 | Generated artefact | Role
 
-| `MyBean$$_Factory`
-| Implements `BeanFactory<MyBean>`. No-arg constructor. Calls the target constructor with dependencies already resolved, then runs `@PostConstruct`.
+| `MyBean_Factory`
+| One per bean. Implements `io.vidocq.vauban.core.BeanFactory<MyBean>`. No-arg constructor. Instantiates the bean via direct constructor invocation — no reflection.
 
-| `MyBean$$_ClientProxy`
-| Subclass generated for normal scopes. Intercepts every public method and delegates to the active context via `Context.get(bean, ctx)`.
+| `MyBean_ClientProxy`
+| Subclass generated for normal scopes. Intercepts every public method and delegates to the active context.
 
-| `MyProducer$$_ProducerFactory`
-| For each `@Produces` method, encapsulates creation and destruction (`@Disposes`).
+| `MyBean$$Intercepted`
+| Subclass generated for beans with interceptor bindings — routes the intercepted methods through the interceptor chain.
 
-| `MyObserver$$_ObserverMethod`
-| For each `@Observes` method, exposes `notify(event)` reflection-free.
+| `_VaubanComponents`
+| One per module. Implements `io.vidocq.vauban.api.VaubanComponentProvider`: instantiates the module's components in-module (`new X(…)`), injects fields, creates client proxies and invokes producers, observers, disposers and lifecycle callbacks — no reflection, no `opens`.
 |===
 
 [NOTE]
@@ -57,7 +57,8 @@ PROC -> PROC : BceProcessor\n(Build Compatible Extensions)
 PROC -> CFA : ClassBuilder\nper bean
 CFA -> F : write _Factory.class
 CFA -> F : write _ClientProxy.class
-CFA -> F : write _ProducerFactory.class
+CFA -> F : write $$Intercepted.class
+PROC -> F : write _VaubanComponents.java\n+ META-INF/vauban-beans.list
 F -> JC : generated-sources\n+ generated-classes
 @enduml
 ....
@@ -195,14 +196,14 @@ sequenceDiagram
   participant BM as BeanManager
   participant CTX as Contexts
 
-  App->>Vauban: Vauban.bootstrap()
+  App->>Vauban: VaubanContainer.builder().build()
   Vauban->>Loader: load BeanFactory<*>\n(through generated _Factory)
   Loader-->>Vauban: list of _Factory
   Vauban->>BM: instantiate VaubanBeanManager
   Vauban->>CTX: ApplicationContext.activate()
   Vauban->>BM: fire @Initialized(Application)
   Vauban-->>App: VaubanContainer
-  App->>BM: select(HelloApp.class).get()
+  App->>BM: select(HelloApp.class)
   BM->>CTX: Context.get(bean)
   CTX-->>App: instance (proxy if normal-scoped)
 ....
@@ -239,19 +240,25 @@ Consequence: Vauban compiles to a GraalVM native image without a `reflect-config
 | Module | Main exports
 
 | `io.vidocq.vauban.api`
-| `io.vidocq.vauban.api` (`Vauban` façade, `BeanFactory`)
+| `io.vidocq.vauban.api` (`Vauban` version marker, `ProxyLink`, `VaubanComponentProvider`)
 
 | `io.vidocq.vauban.core`
 | `io.vidocq.vauban.core.container`, `io.vidocq.vauban.core.bean.model`, `io.vidocq.vauban.core.context`, `io.vidocq.vauban.core.event`, `io.vidocq.vauban.core.interceptor`, `io.vidocq.vauban.core.extensions`
 
 | `io.vidocq.vauban.indexer`
-| `io.vidocq.vauban.indexer`, `io.vidocq.vauban.indexer.model`, `io.vidocq.vauban.indexer.scanner`
+| `io.vidocq.vauban.indexer`, `io.vidocq.vauban.indexer.codegen`, `io.vidocq.vauban.indexer.model`, `io.vidocq.vauban.indexer.scanner`
 
 | `io.vidocq.vauban.processor`
 | (internal, requires `java.compiler`)
 
 | `io.vidocq.vauban.classloader.spi`
 | `io.vidocq.vauban.classloader.spi` — `ByteSourcePlugin` SPI
+
+| `io.vidocq.vauban.classloader`
+| `io.vidocq.vauban.classloader` — universal loader engine (`VaubanClassLoader`, `VaubanLayerFactory`)
+
+| `io.vidocq.vauban.weaver`
+| `io.vidocq.vauban.weaver` — canonical vauban#24 weaving transforms, packaged as a load-time agent
 
 | `io.vidocq.vauban.sjar`
 | AES-256-GCM encrypted implementation of the SPI (optional)

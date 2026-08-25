@@ -134,7 +134,7 @@ public class DataSourceProducer {
 }
 ----
 
-The `@Disposes` callback runs when the producing bean is destroyed. Vauban emits a dedicated `_ProducerFactory` per producer method.
+The `@Disposes` callback runs when the producing bean is destroyed. No dedicated class is generated per producer method: the container invokes producers and disposers through the module's generated `_VaubanComponents` provider, with reflection only as a fallback.
 
 == Events
 

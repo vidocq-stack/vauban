@@ -43,7 +43,7 @@ This page consolidates the state of the official CDI 4.1 TCK runs against Vauban
 | Wall-clock time
 | ~5 s
 |
-| On the last-run host (see link:{repo-vauban}/src/branch/main/BENCH.md[BENCH.md]).
+| On the last-run host.
 |===
 
 == Historical progression
