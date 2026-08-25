@@ -57,7 +57,7 @@ This page lists every artefact published by Vauban, the Java Modules packages th
 | `io.vidocq.vauban.api`
 
 | `io.vidocq.vauban.core`
-| `io.vidocq.vauban.core`, `.container`, `.langmodel`, `.langmodel.declarations`, `.langmodel.types`, `.types`, `.bean.model`, `.bean.discovery`, `.bean.resolution`, `.bean.validation`, `.context`, `.event`, `.interceptor`, `.enrichment`, `.extensions`
+| `io.vidocq.vauban.core`, `.container`, `.langmodel`, `.langmodel.declarations`, `.langmodel.types`, `.types`, `.bean.model`, `.bean.discovery`, `.bean.resolution`, `.bean.validation`, `.context`, `.event`, `.interceptor`, `.enrichment`, `.extensions`; qualified: `.proxy` (client-proxy IR + emitter, exported to `io.vidocq.vauban.processor` only)
 
 | `io.vidocq.vauban.indexer`
 | `io.vidocq.vauban.indexer`, `.indexer.codegen`, `.indexer.model`, `.indexer.scanner`
