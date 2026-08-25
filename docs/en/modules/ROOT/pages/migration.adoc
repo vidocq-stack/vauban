@@ -78,7 +78,7 @@ Lite-profile specifics worth knowing before migrating:
 == Recommended strategy
 
 . Run the existing code on Vauban in a dedicated branch.
-. Run `vauban:analyze` to detect split packages and missing Java Modules exports.
+. Build with the Vauban toolchain (`vauban-processor` plus the `vauban-maven-plugin` `generate` goal): the compile-time deployment validation surfaces unsatisfied or ambiguous dependencies, unproxyable beans and circular dependencies at `process-classes`.
 . Execute a `vauban-test-suite` adapted to your domain.
 . Activate the CDI 4.1 Lite TCK on the application itself via `vauban-junit`.
 . Iterate on BCEs to replace portable extensions.

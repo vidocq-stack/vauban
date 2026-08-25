@@ -99,7 +99,7 @@ Both field and constructor injection are supported. Constructor injection is rec
 ----
 module io.example {
     requires jakarta.cdi;
-    requires io.vidocq.vauban.api;
+    requires io.vidocq.vauban.core;
     exports io.example;
 }
 ----
@@ -108,11 +108,11 @@ module io.example {
 
 [source,java]
 ----
-import io.vidocq.vauban.api.Vauban;
+import io.vidocq.vauban.core.container.VaubanContainer;
 
 void main() {
-    try (var container = Vauban.bootstrap()) {
-        var app = container.select(HelloApp.class).get();
+    try (var container = VaubanContainer.builder().scanLocal().build()) {
+        var app = container.select(HelloApp.class);
         app.run();
     }
 }
@@ -129,7 +129,7 @@ sdk env
 java --module-path target/modules --module io.example/io.example.Main
 ----
 
-The Maven plugin has emitted the `_Factory` classes for each bean into `target/generated-sources/`. No reflection runs at startup: Vauban merely instantiates those factories then invokes the generated methods.
+The annotation processor has emitted the `_Factory` classes for each bean, and the Maven plugin's `generate` goal has written the `META-INF/vauban-beans.list` bean index — both land in `${project.build.outputDirectory}` (`target/classes`). No reflection runs at startup: Vauban merely instantiates those factories then invokes the generated methods.
 
 == Three bean discovery modes
 
@@ -141,15 +141,15 @@ Vauban ships three strategies, depending on context:
 
 | `scanLocal()`
 | Standard single-module application
-| `Vauban.builder().scanLocal().build()`
+| `VaubanContainer.builder().scanLocal().build()`
 
 | `scanClasspath()`
 | Multi-module application with transitive CDI dependencies
-| `Vauban.builder().scanClasspath().build()`
+| `VaubanContainer.builder().scanClasspath().build()`
 
 | `addBeanClass(...)`
 | Unit tests, programmatic selection
-| `Vauban.builder().addBeanClass(MyBean.class).build()`
+| `VaubanContainer.builder().addBeanClass(MyBean.class).build()`
 |===
 
 == Next step

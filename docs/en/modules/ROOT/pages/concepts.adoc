@@ -16,7 +16,7 @@ Three conditions are enough for a class to become a Vauban bean:
 
 At compile time, every bean receives two generated artefacts:
 
-* a `_Factory` — implements `BeanFactory<T>` and knows how to instantiate the bean;
+* a `_Factory` — implements `io.vidocq.vauban.core.BeanFactory<T>` (a `vauban-core` type) and knows how to instantiate the bean;
 * a `_ClientProxy` — only for normal scopes; intercepts calls and delegates to the active context.
 
 == Scope
@@ -58,7 +58,7 @@ A _qualifier_ is a runtime annotation that discriminates beans of the same type.
 
 == Producer
 
-A `@Produces` method or field produces a bean whose instantiation is not controlled by the container but by user code. The associated _disposer_ (`@Disposes`) runs on destruction. Vauban emits a `_ProducerFactory` per producer method.
+A `@Produces` method or field produces a bean whose instantiation is not controlled by the container but by user code. The associated _disposer_ (`@Disposes`) runs on destruction. No dedicated class is generated per producer: the container builds the producer bean at runtime from the declaring bean (created through its `_Factory`) and invokes the producer and disposer through the module's generated `_VaubanComponents` provider, falling back to reflection only when no provider arm exists.
 
 == Observer
 
@@ -86,17 +86,17 @@ graph LR
   subgraph Compile["Compile time"]
     SRC[CDI-annotated<br/>source code] --> IDX[Indexer]
     IDX --> PROC[Processor APT]
-    PROC --> FAC[(_Factory<br/>_ClientProxy<br/>_ProducerFactory)]
+    PROC --> FAC[(_Factory<br/>_ClientProxy<br/>_VaubanComponents)]
   end
   subgraph Runtime["Runtime"]
-    BOOT[Vauban.bootstrap] --> BM[BeanManager]
+    BOOT[VaubanContainer.builder] --> BM[BeanManager]
     BM --> CTX[Contexts<br/>Application/Request/Dependent]
     CTX --> INST[Managed instances]
   end
   FAC --> BM
 ....
 
-The user never touches the `_Factory` classes. They call `Vauban.bootstrap()`, select a root bean, and the container does the rest.
+The user never touches the `_Factory` classes. They call `VaubanContainer.builder().build()`, select a root bean, and the container does the rest.
 
 == Build Compatible Extensions
 

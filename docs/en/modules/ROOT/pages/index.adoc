@@ -22,7 +22,7 @@ Vauban turned defence into a mathematical art: trajectories, sapping, counter-mi
 | Repo | {repo-vauban}
 | Java | 25 (LTS)
 | Java modules | `io.vidocq.vauban.api`, `io.vidocq.vauban.core`, `io.vidocq.vauban.indexer`, `io.vidocq.vauban.processor`, `io.vidocq.vauban.junit`, `io.vidocq.vauban.classloader.spi`, `io.vidocq.vauban.sjar`
-| Runtime dependencies | None beyond `jakarta.cdi` and `jakarta.cdi.lang.model`
+| Runtime dependencies | Spec APIs only: `jakarta.cdi`, `jakarta.cdi.lang.model` and `jakarta.el` — `vauban-core` also requires the JDK's `jdk.unsupported` module
 | CDI 4.1 Lite TCK | partial — see xref:tck.adoc[detailed status]
 |===
 
@@ -45,8 +45,8 @@ graph TB
     PROC --> PLUGIN
   end
   subgraph Runtime["Runtime (zero reflection)"]
-    API[vauban-api<br/>Vauban.bootstrap]
-    CORE[vauban-core<br/>BeanManager, contexts, events]
+    API[vauban-api<br/>version marker + generated-code SPI]
+    CORE[vauban-core<br/>VaubanContainer.builder<br/>BeanManager, contexts, events]
     API --> CORE
   end
   PROC -.generates.-> FACT[_Factory<br/>_ClientProxy]
@@ -70,5 +70,5 @@ graph TB
 
 [NOTE]
 ====
-Performance numbers live in link:{repo-vauban}/src/branch/main/BENCH.md[BENCH.md]. None appear inline in this page.
+No performance numbers appear inline in this page.
 ====
