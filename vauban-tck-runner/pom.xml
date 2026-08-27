@@ -174,5 +174,118 @@
                 </plugins>
             </build>
         </profile>
+
+        <!--
+            CDI TCK 4.1 signature test: asserts that jakarta.decorator, jakarta.enterprise.**
+            and jakarta.interceptor match the official signature file exactly. Vauban ships the
+            pristine jakarta.enterprise.cdi-api / jakarta.enterprise.lang-model jars (no
+            repackaging), so this checks the untouched official API rather than a Vauban-authored
+            implementation — same principle as the Champollion (JSON-P/JSON-B) and Annotations
+            signature tests. The signature file itself (cdi-api-jdk17.sig) ships inside the
+            official cdi-tck-core-impl artifact, so no separate EFTL download is required.
+        -->
+        <profile>
+            <id>cdi-sigtest</id>
+            <properties>
+                <cdi.sigtest.dir>${project.build.directory}/cdi-sigtest</cdi.sigtest.dir>
+            </properties>
+            <dependencies>
+                <dependency>
+                    <groupId>jakarta.annotation</groupId>
+                    <artifactId>jakarta.annotation-api</artifactId>
+                    <version>3.0.0</version>
+                    <scope>test</scope>
+                </dependency>
+                <dependency>
+                    <groupId>jakarta.el</groupId>
+                    <artifactId>jakarta.el-api</artifactId>
+                    <version>6.0.0</version>
+                    <scope>test</scope>
+                </dependency>
+                <dependency>
+                    <groupId>jakarta.interceptor</groupId>
+                    <artifactId>jakarta.interceptor-api</artifactId>
+                    <version>2.2.0</version>
+                    <scope>test</scope>
+                </dependency>
+                <dependency>
+                    <groupId>jakarta.inject</groupId>
+                    <artifactId>jakarta.inject-api</artifactId>
+                    <version>2.0.1</version>
+                    <scope>test</scope>
+                </dependency>
+                <dependency>
+                    <groupId>jakarta.enterprise</groupId>
+                    <artifactId>jakarta.enterprise.cdi-api</artifactId>
+                    <scope>test</scope>
+                </dependency>
+                <dependency>
+                    <groupId>jakarta.enterprise</groupId>
+                    <artifactId>jakarta.enterprise.lang-model</artifactId>
+                    <scope>test</scope>
+                </dependency>
+            </dependencies>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-dependency-plugin</artifactId>
+                        <executions>
+                            <!-- Explode the pristine API jars so sigtest can walk their .class files. -->
+                            <execution>
+                                <id>unpack-cdi-api-jars</id>
+                                <phase>process-test-resources</phase>
+                                <goals>
+                                    <goal>unpack-dependencies</goal>
+                                </goals>
+                                <configuration>
+                                    <includeArtifactIds>
+                                        jakarta.annotation-api,jakarta.el-api,jakarta.interceptor-api,jakarta.inject-api,jakarta.enterprise.cdi-api,jakarta.enterprise.lang-model
+                                    </includeArtifactIds>
+                                    <outputDirectory>${cdi.sigtest.dir}/classes</outputDirectory>
+                                    <overWriteReleases>true</overWriteReleases>
+                                    <overWriteSnapshots>true</overWriteSnapshots>
+                                </configuration>
+                            </execution>
+                            <!-- Extract the official signature file bundled inside cdi-tck-core-impl. -->
+                            <execution>
+                                <id>unpack-cdi-sigfile</id>
+                                <phase>process-test-resources</phase>
+                                <goals>
+                                    <goal>unpack-dependencies</goal>
+                                </goals>
+                                <configuration>
+                                    <includeArtifactIds>cdi-tck-core-impl</includeArtifactIds>
+                                    <includes>cdi-api-jdk17.sig</includes>
+                                    <outputDirectory>${cdi.sigtest.dir}</outputDirectory>
+                                    <overWriteReleases>true</overWriteReleases>
+                                </configuration>
+                            </execution>
+                        </executions>
+                    </plugin>
+                    <plugin>
+                        <groupId>jakarta.tck</groupId>
+                        <artifactId>sigtest-maven-plugin</artifactId>
+                        <version>2.6</version>
+                        <executions>
+                            <execution>
+                                <id>cdi-sigtest-check</id>
+                                <phase>verify</phase>
+                                <goals>
+                                    <goal>check</goal>
+                                </goals>
+                                <configuration>
+                                    <sigfile>${cdi.sigtest.dir}/cdi-api-jdk17.sig</sigfile>
+                                    <classes>${cdi.sigtest.dir}/classes</classes>
+                                    <packages>jakarta.decorator,jakarta.enterprise.**,jakarta.interceptor</packages>
+                                    <release>17</release>
+                                    <report>${project.build.directory}/cdi-sig-report.txt</report>
+                                </configuration>
+                            </execution>
+                        </executions>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
     </profiles>
 </project>
