@@ -15,7 +15,10 @@
     <description>Jakarta Dependency Injection 2.0 (atinject) TCK runner for Vauban</description>
 
     <properties>
-        <atinject.tck.version>2.0.2</atinject.tck.version>
+        <!-- 2.0.1 is the latest version published to Maven Central. The EFTL-certified
+             binary is 2.0.2 (identical content, not on Central): for a certifying run,
+             install it from the EFTL zip and override with -Datinject.tck.version=2.0.2. -->
+        <atinject.tck.version>2.0.1</atinject.tck.version>
         <!-- TCK harness — not a public artifact, never published to Central. -->
         <maven.deploy.skip>true</maven.deploy.skip>
         <maven.install.skip>true</maven.install.skip>
