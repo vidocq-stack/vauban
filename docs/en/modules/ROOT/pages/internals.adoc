@@ -66,7 +66,7 @@ F -> JC : generated-sources\n+ generated-classes
 The whole index, the whole injection grid, every proxy is written before `javac` finishes its job.
 
 [#weaving-tiers]
-== Client-proxy weaving tiers [.tag-new]#NEW#
+== Client-proxy weaving tiers
 
 A normal-scoped bean without a non-private no-arg constructor needs a side-effect-free
 client-proxy entry point: the synthetic `protected <init>(ProxyLink)` constructor
