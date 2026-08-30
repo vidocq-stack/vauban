@@ -55,6 +55,7 @@ jobs:
           excluded-modules: |
             vauban-test-suite
             vauban-tck-runner
+            vauban-atinject-tck-runner
             vauban-module-it
             vauban-examples
           central-username: ${{ secrets.CENTRAL_USERNAME }}
