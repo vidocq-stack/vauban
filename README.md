@@ -534,13 +534,13 @@ The container is validated against the official [CDI TCK 4.1](https://github.com
 
 ```
 CDI Lite TCK :  774/774 tests (100%)
-CDI Full TCK :  not targeted (future vauban-full module)
+CDI Full TCK :  not targeted yet — planning in CDI-FULL.md (future vauban-full module)
 ```
 
 | Profile | Scope | Status |
 |--------|-------|--------|
 | **CDI Lite** | Managed beans, injection, events, producers, interceptors, BCE | **100% TCK** |
-| **CDI Full** | + Portable Extensions, decorators, conversation scope, EL | Future (`vauban-full`) |
+| **CDI Full** | + Portable Extensions, decorators, conversation scope, EL | Planning — see [`CDI-FULL.md`](CDI-FULL.md) |
 
 ## Documentation
 
