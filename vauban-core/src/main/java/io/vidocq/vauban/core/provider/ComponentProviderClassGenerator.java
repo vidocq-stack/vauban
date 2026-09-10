@@ -78,6 +78,14 @@ public final class ComponentProviderClassGenerator {
 
     private ComponentProviderClassGenerator() {}
 
+    /**
+     * A build-time client proxy for a normal-scoped producer of a fully-public external class
+     * (issue #42), whose container lookup {@code key} ({@code <producedType>_ClientProxy}) differs
+     * from {@code proxyFqn}, the proxy class actually instantiated (in the producer's package).
+     * Bytecode parity with {@code ComponentProviderGenerator.ProducerProxy} (APT source path).
+     */
+    public record ProducerProxy(String key, String proxyFqn) {}
+
     /** A generated class: its fully-qualified name and its bytecode. */
     public record Generated(String className, byte[] bytecode) {}
 
@@ -126,6 +134,18 @@ public final class ComponentProviderClassGenerator {
     public static Generated generate(String providerClassName, List<Component> components,
             List<FieldInject> fieldInjects, List<MethodInvoke> methodInvokes,
             List<String> clientProxyFqns) {
+        return generate(providerClassName, components, fieldInjects, methodInvokes,
+                clientProxyFqns, List.of());
+    }
+
+    /**
+     * Full overload also emitting {@link ProducerProxy} cases (issue #42, Stage 1.6): build-time
+     * proxies for normal-scoped producers of fully-public external classes, keyed by the produced
+     * type but instantiated from the producer's own package.
+     */
+    public static Generated generate(String providerClassName, List<Component> components,
+            List<FieldInject> fieldInjects, List<MethodInvoke> methodInvokes,
+            List<String> clientProxyFqns, List<ProducerProxy> producerProxies) {
         var providerCD = ClassDesc.of(providerClassName);
         var noArg = components.stream().filter(Component::noArg).toList();
         var withArgs = components.stream().filter(c -> !c.noArg()).toList();
@@ -366,7 +386,7 @@ public final class ComponentProviderClassGenerator {
             // The bytecode references the (bytecode) <Bean>_ClientProxy by binary name — no javac
             // wall here, so the plugin path needs no source proxy (unlike the APT). slots: 0=this,
             // 1=proxyClassName, 2=delegate.
-            if (!clientProxyFqns.isEmpty()) {
+            if (!clientProxyFqns.isEmpty() || !producerProxies.isEmpty()) {
                 clb.withMethodBody("createClientProxy", MTD_createClientProxy, ClassFile.ACC_PUBLIC, cob -> {
                     for (var proxyFqn : clientProxyFqns) {
                         var proxyCD = ClassDesc.of(proxyFqn);
@@ -380,6 +400,24 @@ public final class ComponentProviderClassGenerator {
                         cob.invokespecial(proxyCD, ConstantDescs.INIT_NAME, MTD_void); // new proxy()
                         cob.dup();
                         cob.aload(2);                                                  // delegate
+                        cob.invokevirtual(proxyCD, "$$setDelegate", MTD_setDelegate);
+                        cob.areturn();
+                        cob.labelBinding(next);
+                    }
+                    // Producer proxies (issue #42): the equals-key is the produced type, the
+                    // instantiated class is the proxy in the producer's package.
+                    for (var pp : producerProxies) {
+                        var proxyCD = ClassDesc.of(pp.proxyFqn());
+                        var next = cob.newLabel();
+                        cob.aload(1);
+                        cob.ldc(pp.key());
+                        cob.invokevirtual(CD_String, "equals", MTD_String_equals);
+                        cob.ifeq(next);
+                        cob.new_(proxyCD);
+                        cob.dup();
+                        cob.invokespecial(proxyCD, ConstantDescs.INIT_NAME, MTD_void);
+                        cob.dup();
+                        cob.aload(2);
                         cob.invokevirtual(proxyCD, "$$setDelegate", MTD_setDelegate);
                         cob.areturn();
                         cob.labelBinding(next);

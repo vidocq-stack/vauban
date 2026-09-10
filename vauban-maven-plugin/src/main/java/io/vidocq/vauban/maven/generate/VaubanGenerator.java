@@ -312,6 +312,32 @@ public final class VaubanGenerator {
      * pkgB._VaubanComponents;} (all providers) for the module path; the class-path service file
      * covers the unnamed-module case.
      */
+    /**
+     * The produced concrete class of a producer bean, loaded via {@code cl}, or {@code null} when
+     * the produced type is an interface (reflect.Proxy at runtime) or cannot be loaded. Mirrors the
+     * runtime {@code InterceptorBeanWrapper.resolveProxyTargetClass}: first concrete bean type.
+     */
+    private static Class<?> resolveProducedClass(BeanDescriptor bean, ClassLoader cl) {
+        for (var t : bean.types()) {
+            if (!(t instanceof io.vidocq.vauban.indexer.model.TypeInfo.ClassType ct)) {
+                continue;
+            }
+            var fqn = ct.name().value();
+            if ("java.lang.Object".equals(fqn)) {
+                continue;
+            }
+            try {
+                var c = Class.forName(fqn, false, cl);
+                if (!c.isInterface()) {
+                    return c;
+                }
+            } catch (ClassNotFoundException | NoClassDefFoundError ignore) {
+                // produced type not on the plugin's classpath — leave it to the runtime
+            }
+        }
+        return null;
+    }
+
     private static void generateComponentProvider(Config config,
             io.vidocq.vauban.indexer.VaubanIndex index,
             List<BeanDescriptor> beans, List<String> warnings) {
@@ -338,10 +364,67 @@ public final class VaubanGenerator {
             }
         }
 
+        // Build-time proxies for normal-scoped producers of fully-public external classes (issue
+        // #42, Stage 1.6 — bytecode parity with the APT source path). The proxy is written into the
+        // producer's own package (this module) and registered under the produced-type key the
+        // runtime looks up before its reflective fallback → zero opens on the module path.
+        var producerProxiesByPackage =
+                new java.util.LinkedHashMap<String,
+                        java.util.List<io.vidocq.vauban.core.provider.ComponentProviderClassGenerator.ProducerProxy>>();
+        if (config.classLoader() != null) {
+            for (var bean : beans) {
+                if (bean.kind() != BeanKind.PRODUCER_METHOD && bean.kind() != BeanKind.PRODUCER_FIELD) {
+                    continue;
+                }
+                if (!bean.scope().isNormal()) {
+                    continue;
+                }
+                var holderFqn = bean.beanClass().value();
+                if (!classFileExists(projectDir, holderFqn)) {
+                    continue; // the producer holder is not part of this module
+                }
+                var producedClass = resolveProducedClass(bean, config.classLoader());
+                if (producedClass == null) {
+                    continue; // interface-typed (reflect.Proxy at runtime) or unresolvable
+                }
+                var verdict = io.vidocq.vauban.core.proxy.ProducerProxyEligibility.of(producedClass);
+                if (!verdict.eligible()) {
+                    warnings.add("Producer of " + producedClass.getName()
+                            + " is not build-time proxyable (" + verdict
+                            + "); the runtime will generate its proxy (needs `opens "
+                            + packageOf(producedClass.getName()) + " to io.vidocq.vauban.core;`).");
+                    continue;
+                }
+                var producerPkg = packageOf(holderFqn);
+                var producedFqn = producedClass.getName();
+                var producedSimple = producedFqn.substring(producedFqn.lastIndexOf('.') + 1)
+                        .replace('$', '_');
+                var proxyFqn = (producerPkg.isEmpty() ? "" : producerPkg + ".")
+                        + producedSimple + "$$"
+                        + Integer.toHexString(producedFqn.hashCode()) + "_ClientProxy";
+                if (!classFileExists(config.outputDir(), proxyFqn)) {
+                    try {
+                        var gen = RuntimeClientProxyGenerator.generateProducerProxyAt(
+                                producedClass, proxyFqn);
+                        writeClassFile(config.outputDir(), gen.className(), gen.bytecode());
+                    } catch (Exception e) {
+                        warnings.add("Failed to generate producer proxy for " + producedFqn
+                                + ": " + e.getMessage());
+                        continue;
+                    }
+                }
+                producerProxiesByPackage
+                        .computeIfAbsent(producerPkg, k -> new ArrayList<>())
+                        .add(new io.vidocq.vauban.core.provider.ComponentProviderClassGenerator
+                                .ProducerProxy(producedFqn + "_ClientProxy", proxyFqn));
+            }
+        }
+
         var packages = ComponentCollector.collect(provided, warnings);
-        if (packages.isEmpty()) return;
+        if (packages.isEmpty() && producerProxiesByPackage.isEmpty()) return;
 
         var providerFqns = new ArrayList<String>();
+        var emittedProviderPackages = new java.util.HashSet<String>();
         for (var pkg : packages) {
             var providerFqn = pkg.providerFqn();
             try {
@@ -349,14 +432,35 @@ public final class VaubanGenerator {
                 var pkgProxies = clientProxyFqns.stream()
                         .filter(p -> packageOf(p).equals(pkg.packageName()))
                         .toList();
+                var pkgProducerProxies =
+                        producerProxiesByPackage.getOrDefault(pkg.packageName(), List.of());
                 // Bytecode generator handles both no-arg and injected-constructor components.
                 var gen = io.vidocq.vauban.core.provider.ComponentProviderClassGenerator.generate(
-                        providerFqn, pkg.components(), pkg.fields(), pkg.methods(), pkgProxies);
+                        providerFqn, pkg.components(), pkg.fields(), pkg.methods(),
+                        pkgProxies, pkgProducerProxies);
                 writeClassFile(config.outputDir(), gen.className(), gen.bytecode());
                 providerFqns.add(providerFqn);
+                emittedProviderPackages.add(pkg.packageName());
             } catch (Exception e) {
                 warnings.add("Failed to generate component provider for package "
                         + pkg.packageName() + ": " + e.getMessage());
+            }
+        }
+        // A producer whose holder package has no other in-module component still needs a provider
+        // for its produced-type proxy (issue #42). The module-info `provides` for such a package is
+        // the user's responsibility (as for any bean package).
+        for (var entry : producerProxiesByPackage.entrySet()) {
+            if (emittedProviderPackages.contains(entry.getKey())) continue;
+            var providerFqn = entry.getKey().isEmpty()
+                    ? "_VaubanComponents" : entry.getKey() + "._VaubanComponents";
+            try {
+                var gen = io.vidocq.vauban.core.provider.ComponentProviderClassGenerator.generate(
+                        providerFqn, List.of(), List.of(), List.of(), List.of(), entry.getValue());
+                writeClassFile(config.outputDir(), gen.className(), gen.bytecode());
+                providerFqns.add(providerFqn);
+            } catch (Exception e) {
+                warnings.add("Failed to generate producer-only component provider for package "
+                        + entry.getKey() + ": " + e.getMessage());
             }
         }
         if (providerFqns.isEmpty()) return;

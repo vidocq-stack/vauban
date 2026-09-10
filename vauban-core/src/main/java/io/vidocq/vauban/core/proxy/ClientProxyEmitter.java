@@ -61,9 +61,21 @@ public final class ClientProxyEmitter {
 
     private ClientProxyEmitter() {}
 
-    /** Emit the bytecode of {@code shape.proxyClassName()}. */
+    /** Emit the bytecode of {@code shape.proxyClassName()} (proxy co-located with the bean). */
     public static byte[] emit(ClientProxyShape shape) {
-        ClassDesc proxyCD = ClassDesc.of(shape.proxyClassName());
+        return emitAt(shape, shape.proxyClassName());
+    }
+
+    /**
+     * Emit the bytecode at an explicit {@code proxyBinaryName} while still extending the shape's
+     * {@code beanBinaryName} — the bytecode counterpart of
+     * {@code ClientProxySourceRenderer.renderAt}. The producer-proxy path (issue #42, Stage 1.6)
+     * passes a name in the producer's own package so the proxy of a fully-public produced type from
+     * a non-opened module lands in-module; {@link #emit(ClientProxyShape)} passes the co-located
+     * {@code shape.proxyClassName()} (behaviour-preserving for managed beans).
+     */
+    public static byte[] emitAt(ClientProxyShape shape, String proxyBinaryName) {
+        ClassDesc proxyCD = ClassDesc.of(proxyBinaryName);
         ClassDesc beanCD = ClassDesc.of(shape.beanBinaryName());
         List<ProxyMethodShape> methods = shape.methods();
         List<String> mhFields = shape.methodHandleFieldNames();

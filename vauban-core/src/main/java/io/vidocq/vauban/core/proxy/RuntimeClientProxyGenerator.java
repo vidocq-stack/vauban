@@ -62,6 +62,21 @@ public final class RuntimeClientProxyGenerator {
         return new GeneratedProxy(shape.proxyClassName(), ClientProxyEmitter.emit(shape));
     }
 
+    /**
+     * Generate a client proxy for a normal-scoped producer's produced type at an explicit
+     * {@code proxyBinaryName} (in the producer's own package), extending {@code producedType}
+     * (issue #42, Stage 1.6 — the bytecode counterpart of the APT producer-proxy path). Only call
+     * for a produced type deemed {@link ProducerProxyEligibility#eligible eligible}: a cross-package
+     * proxy forwards only public methods, so all overridable methods must be public.
+     *
+     * @param producedType   the fully-public produced class the proxy extends and forwards to
+     * @param proxyBinaryName the binary name of the generated proxy (producer's package)
+     */
+    public static GeneratedProxy generateProducerProxyAt(Class<?> producedType, String proxyBinaryName) {
+        ClientProxyShape shape = shapeOf(producedType);
+        return new GeneratedProxy(proxyBinaryName, ClientProxyEmitter.emitAt(shape, proxyBinaryName));
+    }
+
     /** Builds the neutral shape: hierarchy walk + simplest-ctor defaults + MH decisions. */
     private static ClientProxyShape shapeOf(Class<?> beanClass) {
         // The proxy is generated in the bean's package (the suffix carries no dot).
