@@ -20,6 +20,8 @@
         <module>example-lib-securized</module>
         <module>example-app</module>
         <module>example-test</module>
+        <module>example-cdi1015-lib</module>
+        <module>example-cdi1015-app</module>
     </modules>
 
     <properties>

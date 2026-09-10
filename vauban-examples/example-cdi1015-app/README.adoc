@@ -1,0 +1,104 @@
+= CDI SE example: the jakartaee/cdi#1015 case, solved with zero `opens`
+:toc: macro
+
+A runnable **CDI SE** application, on the **module path**, that reproduces the problem the CDI
+expert group discussed in https://github.com/jakartaee/cdi/issues/1015[jakartaee/cdi#1015] — and
+resolves it with **zero `--add-opens`** and **zero runtime reflection**, thanks to Vauban's
+build-time proxy generation.
+
+toc::[]
+
+== The problem (from the expert group)
+
+CDI hands out a *client proxy* for every normal-scoped bean. Runtime implementations (Weld, ArC)
+generate that proxy **in the proxied type's own package** so it can honour package-private access,
+then `defineClass` it there. Under Java Modules that needs the target module to `opens` its package
+to the CDI implementation.
+
+The hard case #1015 raises:
+
+[quote]
+____
+An SE application. Library *A* is a plain Java module that knows nothing about CDI and opens
+nothing. Library *B* is a bean archive that declares `@Produces @ApplicationScoped Foo`, where
+`Foo` is a class from *A*. The proxy for `Foo` has to land in *A*'s package — so the app fails
+unless it is launched with `--add-opens A/pkg=<cdi-impl>`.
+____
+
+Ron Pressler's *integrity by default* (JEP draft 8305968) makes `--add-opens` a dead end long-term,
+so the expert group is looking for a portable answer.
+
+== What this example shows
+
+[cols="1,3"]
+|===
+|Module |Role
+
+|`example-cdi1015-lib`
+|The **CDI-agnostic** library (the "library A"): a strict Java module that `exports` its types,
+declares **no `opens`**, and has **no dependency on any CDI implementation**. It ships a
+fully-public class `PaymentGateway` and an interface `AuditLog`.
+
+|`example-cdi1015-app`
+|The **CDI SE** application (the "bean archive B"): it `@Produces` both library types as
+`@ApplicationScoped`, injects them into a `CheckoutService`, and boots the container with the
+standard `SeContainerInitializer`. Its `module-info.java` has **zero `opens`**.
+|===
+
+Run it — no `--add-opens`, no agent, no reflection:
+
+[source,shell]
+----
+../../mvnw -o -pl :example-cdi1015-lib,:example-cdi1015-app -am install   # from the vauban repo root
+# then, on the module path:
+java -p <module-path> \
+  -m io.vidocq.vauban.example.cdi1015.app/io.vidocq.vauban.example.cdi1015.app.Main
+----
+
+Expected output:
+
+[source,text]
+----
+PaymentGateway proxy : io.vidocq.vauban.example.cdi1015.app.PaymentGateway$$<hash>_ClientProxy  (reflect.Proxy? false)
+AuditLog proxy       : io.vidocq.vauban.example.cdi1015.app.AuditLog$$<hash>_ClientProxy         (reflect.Proxy? false)
+
+[audit] checkout:order-7
+Checkout: charged 1999 cents to acct-42
+----
+
+Both proxies live in the **application's** package, not the library's — and neither is a
+`java.lang.reflect.Proxy`.
+
+== How Vauban answers each case
+
+[cols="1,2"]
+|===
+|Produced type |Vauban strategy
+
+|`PaymentGateway` — a **fully-public class** from a non-opened module
+|The annotation processor emits `PaymentGateway_ClientProxy` **at compile time, in the producer's
+package** (never the library's — that would be a split package), registered under the produced-type
+key the runtime looks up first. A subclass with a `super(defaults)` constructor, forwarding every
+public method to the contextual instance. **Zero `opens`, zero runtime class definition.**
+
+|`AuditLog` — an **interface**
+|The processor emits a build-time static class `implements AuditLog`, forwarding every method —
+abstract *and* `default` — to the contextual instance. No `java.lang.reflect.Proxy`, no reflection.
+|===
+
+Weld would place the `PaymentGateway` proxy into the library's package and require
+`--add-opens io.vidocq.vauban.example.cdi1015.lib/…=weld.core.impl`. Vauban needs nothing.
+
+== The residual case (not covered here)
+
+If a produced class is **not** fully public (package-private or protected methods, no accessible
+constructor, a final method), it cannot be proxied at build time across the module boundary. Vauban
+then offers two `--add-opens`-free levers, described in the reference docs:
+
+* the container opens the module itself at boot via `Instrumentation.redefineModule` (an accepted
+  deployment-time trust choice), or
+* the opt-in `vauban:enhance-dependencies` goal, which rewrites a copy of the dependency jar so the
+  proxy is co-located in the type's own package.
+
+See the xref:vauban:internals.adoc#proxy-strategies[client-proxy strategies] in the Vauban docs for
+the full decision table.
