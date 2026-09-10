@@ -50,6 +50,10 @@ public final class WeavingAgent {
     }
 
     private static synchronized void install(String agentArgs, Instrumentation inst) {
+        // Capture the Instrumentation first, so it is available even for an empty plan — an
+        // empty-plan attach is exactly how vauban-core obtains it to open a third-party module's
+        // package at boot (issue #42, Stage 3b) without weaving anything.
+        AgentAccess.set(inst);
         if (agentArgs == null || agentArgs.isBlank()) {
             System.err.println("[vauban-weaver] missing agent argument (weaving plan path) — agent inactive");
             return;

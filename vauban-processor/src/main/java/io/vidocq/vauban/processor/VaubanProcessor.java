@@ -105,6 +105,7 @@ public class VaubanProcessor extends AbstractProcessor {
     );
 
     private static final String BEANS_LIST_PATH = "META-INF/vauban-beans.list";
+    private static final String REQUIRED_OPENS_PATH = "META-INF/vauban/required-opens.list";
     private static final String BCE_RUNTIME_LIST_PATH = "META-INF/vauban-bce-runtime.list";
 
     // Beans accumulate across APT rounds: companion processors (e.g. mansart-data-processor)
@@ -414,6 +415,10 @@ public class VaubanProcessor extends AbstractProcessor {
         // keyed by the produced type, so the runtime's provider-first lookup wins with zero opens.
         var producerProxiesByPackage =
                 new java.util.LinkedHashMap<String, java.util.List<ComponentProviderGenerator.ProducerProxy>>();
+        // Produced class types that fall to runtime proxy generation (Stage 3b): the boot-time
+        // OpensApplier opens their package to io.vidocq.vauban.core via the agent, but only if the
+        // type turns out to be in a NAMED module at runtime (classpath types need nothing).
+        var requiredOpens = new java.util.LinkedHashSet<String>();
         for (var bean : beans) {
             if (bean.kind() == BeanDescriptor.BeanKind.MANAGED) {
                 var classInfo = index.getClassByName(bean.beanClass()).orElse(null);
@@ -531,6 +536,10 @@ public class VaubanProcessor extends AbstractProcessor {
                         processingEnv.getElementUtils().getBinaryName(producedType).toString();
                 var verdict = ProducerProxyEligibility.of(producedType);
                 if (!verdict.eligible()) {
+                    // Stage 3b: record the produced type so the boot-time OpensApplier can open its
+                    // package to the container via the agent (only if it is in a named module at
+                    // runtime), keeping zero hand-written --add-opens for the runtime fallback.
+                    requiredOpens.add(producedFqn);
                     // Stage 3: the produced class type is not build-time proxyable across a module
                     // boundary. On the module path the runtime falls back to reflective generation,
                     // which needs an `opens`. Severity is configurable via -Avauban.producerProxy
@@ -607,6 +616,8 @@ public class VaubanProcessor extends AbstractProcessor {
 
         // Write META-INF/vauban-beans.list
         writeBeansList(beans);
+
+        writeRequiredOpens(requiredOpens);
 
         // Publish the (ProxyLink) weave plan for the auto-started javac plugin — see
         // io.vidocq.vauban.processor.weave (Vidocq/vauban#24, javac tier of the weaving).
@@ -1091,6 +1102,29 @@ public class VaubanProcessor extends AbstractProcessor {
     }
 
     // --- File writing ---
+
+    /**
+     * Write {@code META-INF/vauban/required-opens.list} (issue #42, Stage 3b): the produced class
+     * types whose proxy falls to runtime generation. At boot the OpensApplier loads each, and — only
+     * if it is in a named module — opens its package to {@code io.vidocq.vauban.core} via the agent,
+     * so the runtime fallback needs no hand-written {@code --add-opens}.
+     */
+    private void writeRequiredOpens(java.util.Set<String> producedTypeFqns) {
+        if (producedTypeFqns.isEmpty()) return;
+        try {
+            var resource = processingEnv.getFiler().createResource(
+                    StandardLocation.CLASS_OUTPUT, "", REQUIRED_OPENS_PATH);
+            try (var writer = new PrintWriter(resource.openOutputStream(), false, StandardCharsets.UTF_8)) {
+                writer.println("# Vauban produced types needing a boot-time opens (Stage 3b) — one FQN per line");
+                for (var fqn : producedTypeFqns) {
+                    writer.println(fqn);
+                }
+            }
+        } catch (IOException e) {
+            processingEnv.getMessager().printMessage(Diagnostic.Kind.WARNING,
+                    "[Vauban] Failed to write " + REQUIRED_OPENS_PATH + ": " + e.getMessage());
+        }
+    }
 
     private void writeBeansList(List<BeanDescriptor> beans) {
         var beanClassNames = beans.stream()

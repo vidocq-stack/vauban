@@ -25,6 +25,7 @@ module io.vidocq.vauban.core {
     // load-time tier (io.vidocq.vauban.core.weaving) detects unwoven build output and
     // attaches the same artifact as an instrumentation agent.
     requires io.vidocq.vauban.weaver;
+    requires java.instrument;
     // Universal loader engine — the scanner defines sjar classes through it (source
     // plugins chained with the cdi-proxifier transformer before definition).
     requires io.vidocq.vauban.classloader;

@@ -20,6 +20,7 @@
 package it.beanb;
 
 import it.liba.Foo;
+import it.liba.Gadget;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.enterprise.inject.Produces;
 
@@ -36,5 +37,16 @@ public class FooProducer {
     @ApplicationScoped
     public Foo produceFoo() {
         return new Foo();
+    }
+
+    /**
+     * An ineligible produced type (Gadget has a package-private method): its proxy cannot be built at
+     * compile time in this package, so it falls to runtime generation. Stage 3b opens {@code it.liba}
+     * to the container at boot so that fallback resolves with zero hand-written --add-opens.
+     */
+    @Produces
+    @ApplicationScoped
+    public Gadget produceGadget() {
+        return new Gadget();
     }
 }

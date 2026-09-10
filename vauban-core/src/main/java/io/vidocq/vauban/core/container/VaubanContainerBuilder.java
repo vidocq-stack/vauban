@@ -669,6 +669,12 @@ public final class VaubanContainerBuilder {
                 LOG.log(System.Logger.Level.WARNING, loadTimeWeaving.failure());
             }
 
+            // issue #42, Stage 3b: open the packages of produced types that fall to runtime proxy
+            // generation to the container (via the agent), so the runtime fallback needs no
+            // hand-written --add-opens. A strict no-op when no META-INF/vauban/required-opens.list
+            // is present (the common case, including the TCK).
+            io.vidocq.vauban.core.opens.OpensApplier.apply(weavingLoader);
+
             var discovery = new BeanDiscovery(index);
             discovery.setStrictScannedDiscovery(strictScannedDiscovery);
 

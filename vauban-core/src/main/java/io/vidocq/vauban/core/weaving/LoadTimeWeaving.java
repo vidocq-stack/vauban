@@ -245,6 +245,30 @@ public final class LoadTimeWeaving {
         }
     }
 
+    /**
+     * Ensure the load-time weaving agent is attached so its {@link java.lang.instrument.Instrumentation}
+     * is available (issue #42, Stage 3b — the OpensApplier reuses it to open a third-party module's
+     * package to the container). If no agent is present yet, self-attach with an <em>empty</em>
+     * weaving plan (nothing is woven; only the agent, hence the Instrumentation, is installed).
+     *
+     * @return {@code true} if an agent is available afterwards
+     */
+    public static synchronized boolean ensureAgentAttached() {
+        if (io.vidocq.vauban.weaver.AgentAccess.available()) {
+            return true;
+        }
+        if ("disabled".equalsIgnoreCase(System.getProperty(MODE_PROPERTY, ""))) {
+            return false;
+        }
+        try {
+            attach(new WeavingPlan(new java.util.LinkedHashMap<>(), new java.util.LinkedHashSet<>()));
+        } catch (Exception e) {
+            LOG.log(System.Logger.Level.DEBUG, () -> "Could not self-attach the weaving agent: "
+                    + e.getMessage());
+        }
+        return io.vidocq.vauban.weaver.AgentAccess.available();
+    }
+
     private static void attach(WeavingPlan plan) throws Exception {
         var planFile = Files.createTempFile("vauban-weave-plan-", ".txt");
         plan.writeTo(planFile);
