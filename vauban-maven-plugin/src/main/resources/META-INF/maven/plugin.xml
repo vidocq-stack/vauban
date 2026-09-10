@@ -49,6 +49,51 @@
             </requirements>
         </mojo>
         <mojo>
+            <goal>enhance-dependencies</goal>
+            <description>Enhance a copy of a third-party dependency jar so a produced type that is not fully public can be proxied at build time; rewrites the jar's module-info to provide the generated component provider (issue #42, opt-in).</description>
+            <implementation>io.vidocq.vauban.maven.enhance.EnhanceDependenciesMojo</implementation>
+            <language>java</language>
+            <instantiationStrategy>per-lookup</instantiationStrategy>
+            <phase>package</phase>
+            <requiresDependencyResolution>compile+runtime</requiresDependencyResolution>
+            <threadSafe>true</threadSafe>
+            <parameters>
+                <parameter>
+                    <name>project</name>
+                    <type>org.apache.maven.project.MavenProject</type>
+                    <required>true</required>
+                    <editable>false</editable>
+                    <description>The Maven project</description>
+                </parameter>
+                <parameter>
+                    <name>outputDirectory</name>
+                    <type>java.io.File</type>
+                    <required>true</required>
+                    <editable>true</editable>
+                    <description>Directory for the enhanced dependency copies (default: target/vauban-enhanced-deps)</description>
+                </parameter>
+                <parameter>
+                    <name>enhancedTypes</name>
+                    <type>java.util.List</type>
+                    <required>false</required>
+                    <editable>true</editable>
+                    <description>Fully-qualified produced types to enhance (opt-in; empty means the goal is a no-op)</description>
+                </parameter>
+            </parameters>
+            <configuration>
+                <project implementation="org.apache.maven.project.MavenProject"
+                         default-value="${project}"/>
+                <outputDirectory implementation="java.io.File"
+                                 default-value="${project.build.directory}/vauban-enhanced-deps"/>
+            </configuration>
+            <requirements>
+                <requirement>
+                    <role>org.apache.maven.project.MavenProject</role>
+                    <field-name>project</field-name>
+                </requirement>
+            </requirements>
+        </mojo>
+        <mojo>
             <goal>encrypt</goal>
             <description>Encrypt internal classes of a modular JAR in-place with AES-256-GCM. Exported/opened packages stay clear; all others are encrypted.</description>
             <implementation>io.vidocq.vauban.maven.generate.EncryptMojo</implementation>
