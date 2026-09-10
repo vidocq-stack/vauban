@@ -33,7 +33,7 @@ The processor generates:
 |===
 
 [#proxy-strategies]
-== Client proxies — one strategy per case
+== Client proxies — one strategy per case [.tag-new]#NEW#
 
 A normal-scoped bean is never handed out directly: the container returns a `_ClientProxy`
 subclass that forwards every business method to the contextual instance. *Where* that
@@ -61,8 +61,12 @@ public*: public non-final non-sealed class, only public overridable methods, an 
 |Zero `opens`, zero runtime class definition (#42, Stage 1).
 
 |**Producer of an interface**
-|A plain `java.lang.reflect.Proxy` is created at runtime.
-|Needs only `exports` on the interface's package.
+|The APT emits a build-time static class `implements <Iface>` in the producer's package
+(`InterfaceProxySourceRenderer`), forwarding every method — abstract *and* `default` — to the
+contextual instance. No dynamic proxy, no reflection. On the class path (non-APT) a runtime
+`java.lang.reflect.Proxy` is the fallback.
+|Zero `opens`; zero reflection on the build-time path (a `reflect.Proxy` only as the class-path
+fallback).
 
 |**Producer of a class that is not fully public** — package-private or protected
 overridable methods, no accessible constructor, or a non-static final method (CDI 4.1
@@ -97,11 +101,12 @@ to keep zero `opens`.
 
 [NOTE]
 ====
-The proxy front-ends all build the same neutral `ClientProxyShape`: the APT source renderer
+The class-typed front-ends build the same neutral `ClientProxyShape`: the APT source renderer
 (`ClientProxySourceRenderer`) and the shared bytecode emitter (`ClientProxyEmitter`, driven
 by both the runtime `RuntimeClientProxyGenerator` and the `vauban-maven-plugin` for scanned
-jars — bytecode parity for the producer case, #42 Stage 1.6). The APT-source-first rule
-keeps them aligned; residual drift is tracked in
+jars — bytecode parity for the producer case, #42 Stage 1.6). The interface case has its own
+source renderer (`InterfaceProxySourceRenderer`, `implements` rather than `extends`). The
+APT-source-first rule keeps them aligned; residual drift is tracked in
 link:{repo-vauban}/src/branch/main/BUG.md[BUG.md] (VAU-PRX-002).
 ====
 
