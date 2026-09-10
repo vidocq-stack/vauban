@@ -86,7 +86,8 @@ import java.util.stream.Collectors;
  *       {@code all} to enforce validation on test sources too.</li>
  * </ul>
  */
-@javax.annotation.processing.SupportedOptions({"vauban.validation", "vauban.validation.scope"})
+@javax.annotation.processing.SupportedOptions({"vauban.validation", "vauban.validation.scope",
+        "vauban.producerProxy"})
 public class VaubanProcessor extends AbstractProcessor {
 
     private static final Set<String> CDI_ANNOTATIONS = Set.of(
@@ -530,11 +531,20 @@ public class VaubanProcessor extends AbstractProcessor {
                         processingEnv.getElementUtils().getBinaryName(producedType).toString();
                 var verdict = ProducerProxyEligibility.of(producedType);
                 if (!verdict.eligible()) {
-                    processingEnv.getMessager().printMessage(Diagnostic.Kind.NOTE,
+                    // Stage 3: the produced class type is not build-time proxyable across a module
+                    // boundary. On the module path the runtime falls back to reflective generation,
+                    // which needs an `opens`. Severity is configurable via -Avauban.producerProxy
+                    // (error|warn|note, default note) so a project can enforce zero-fallback.
+                    processingEnv.getMessager().printMessage(
+                            producerProxyDiagnosticKind(),
                             "[Vauban] Producer of " + producedFqn + " is not build-time proxyable ("
-                                    + verdict + "); the runtime will generate its proxy, which needs "
-                                    + "`opens " + packageOfFqn(producedFqn)
-                                    + " to io.vidocq.vauban.core;` on the module path.");
+                                    + verdict + "). On the module path the runtime will reflectively "
+                                    + "generate its proxy, which needs `opens " + packageOfFqn(producedFqn)
+                                    + " to io.vidocq.vauban.core;`. To keep zero opens: produce an "
+                                    + "interface type, make the produced type fully public (public "
+                                    + "non-final class, public overridable methods, a public/protected "
+                                    + "constructor), add the (ProxyLink) constructor upstream, or open "
+                                    + "the package.");
                     continue;
                 }
                 var producerPkg = packageOfFqn(bean.beanClass().value());
@@ -1356,6 +1366,24 @@ public class VaubanProcessor extends AbstractProcessor {
             }
         }
         return null;
+    }
+
+    /**
+     * Diagnostic severity for a producer whose produced class type is not build-time proxyable,
+     * from {@code -Avauban.producerProxy} ({@code error} | {@code warn} | {@code note}). Defaults to
+     * {@code note}: the runtime fallback still works (it needs an {@code opens} on the module path),
+     * so this is not an error unless a project opts into enforcing zero fallback.
+     */
+    private Diagnostic.Kind producerProxyDiagnosticKind() {
+        var opt = processingEnv.getOptions().get("vauban.producerProxy");
+        if (opt == null) {
+            return Diagnostic.Kind.NOTE;
+        }
+        return switch (opt.trim().toLowerCase(java.util.Locale.ROOT)) {
+            case "error" -> Diagnostic.Kind.ERROR;
+            case "warn", "warning" -> Diagnostic.Kind.WARNING;
+            default -> Diagnostic.Kind.NOTE;
+        };
     }
 
     private String writeComponentProvider(String pkg,
