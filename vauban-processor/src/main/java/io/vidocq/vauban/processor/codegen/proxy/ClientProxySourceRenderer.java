@@ -64,15 +64,28 @@ public final class ClientProxySourceRenderer {
         return render(ClientProxyShapeFromElements.from(bean, elements, types));
     }
 
-    /** Render {@code shape.proxyClassName()} as Java source. */
+    /** Render {@code shape.proxyClassName()} as Java source (proxy co-located with the bean). */
     public static Generated render(ClientProxyShape shape) {
+        return renderAt(shape, shape.proxyClassName());
+    }
+
+    /**
+     * Render the proxy at an explicit {@code proxyBinaryName} while still {@code extends}-ing the
+     * shape's {@code beanBinaryName}. The co-located {@link #render(ClientProxyShape)} passes
+     * {@code shape.proxyClassName()} (same package as the bean); the producer-proxy path (issue
+     * #42) passes a name in the <em>producer's</em> package so the proxy of a fully-public class
+     * from a non-opened module lands in-module, extending the external produced type by its
+     * fully-qualified name. Cross-package correctness is guaranteed by the caller: only public
+     * overridable methods are forwarded (a cast to the external type cannot reach protected or
+     * package-private members from another package).
+     */
+    public static Generated renderAt(ClientProxyShape shape, String proxyBinaryName) {
         String beanBinary = shape.beanBinaryName();
         String beanSource = beanBinary.replace('$', '.');
-        String proxyBinary = shape.proxyClassName();
-        int lastDot = beanBinary.lastIndexOf('.');
-        String pkg = lastDot >= 0 ? beanBinary.substring(0, lastDot) : "";
-        String proxySimple = (lastDot >= 0 ? beanBinary.substring(lastDot + 1) : beanBinary)
-                + ClientProxyShape.PROXY_SUFFIX;
+        String proxyBinary = proxyBinaryName;
+        int lastDot = proxyBinaryName.lastIndexOf('.');
+        String pkg = lastDot >= 0 ? proxyBinaryName.substring(0, lastDot) : "";
+        String proxySimple = lastDot >= 0 ? proxyBinaryName.substring(lastDot + 1) : proxyBinaryName;
 
         var sb = new StringBuilder();
         if (!pkg.isEmpty()) {

@@ -74,6 +74,18 @@ public final class ComponentProviderGenerator {
 
     private ComponentProviderGenerator() {}
 
+    /**
+     * A build-time client proxy for a normal-scoped PRODUCER whose produced type is a fully-public
+     * class from another module (issue #42). Unlike a managed-bean proxy, the {@code key} the
+     * container looks up ({@code <producedType>_ClientProxy}, derived from the produced type by
+     * {@code RuntimeClientProxyGenerator.proxyClassName}) differs from {@code proxyFqn}, the actual
+     * proxy class the provider instantiates, which lives in the producer's own package.
+     *
+     * @param key      the {@code createClientProxy} lookup key = {@code <producedType FQN>_ClientProxy}
+     * @param proxyFqn the fully-qualified generated proxy class placed in the producer's package
+     */
+    public record ProducerProxy(String key, String proxyFqn) {}
+
     /** A generated source file: its fully-qualified class name and its textual content. */
     public record Generated(String className, String source) {}
 
@@ -136,6 +148,18 @@ public final class ComponentProviderGenerator {
     public static Generated generateFrom(String packageName, List<Component> components,
             List<FieldInject> fieldInjects, List<MethodInvoke> methodInvokes,
             List<String> clientProxyFqns) {
+        return generateFrom(packageName, components, fieldInjects, methodInvokes,
+                clientProxyFqns, List.of());
+    }
+
+    /**
+     * Full overload also emitting {@link ProducerProxy} cases (issue #42): build-time proxies for
+     * normal-scoped producers of fully-public external classes, keyed by the produced type but
+     * instantiated from the producer's own package.
+     */
+    public static Generated generateFrom(String packageName, List<Component> components,
+            List<FieldInject> fieldInjects, List<MethodInvoke> methodInvokes,
+            List<String> clientProxyFqns, List<ProducerProxy> producerProxies) {
         var className = packageName.isEmpty() ? SIMPLE_NAME : packageName + "." + SIMPLE_NAME;
         var noArg = components.stream().filter(Component::noArg).toList();
         var withArgs = components.stream().filter(c -> !c.noArg()).toList();
@@ -259,11 +283,12 @@ public final class ComponentProviderGenerator {
             sb.append("    }\n");
         }
 
-        if (!clientProxyFqns.isEmpty()) {
+        if (!clientProxyFqns.isEmpty() || !producerProxies.isEmpty()) {
             // In-module client-proxy instantiation for this package's normal-scoped beans:
             // `new <Bean>_ClientProxy()` + `$$setDelegate(delegate)` (both in-package, the proxy being
             // a sibling generated source), so the container creates the proxy without reflection and
-            // the bean package needs no `opens`/`exports`.
+            // the bean package needs no `opens`/`exports`. Producer proxies (issue #42) are keyed by
+            // the produced type but instantiated from this (the producer's) package.
             sb.append("    @Override\n");
             sb.append("    @SuppressWarnings({\"unchecked\", \"rawtypes\"})\n");
             sb.append("    public Object createClientProxy(String proxyClassName, java.util.function.Supplier<?> delegate) {\n");
@@ -271,6 +296,13 @@ public final class ComponentProviderGenerator {
             for (var proxyFqn : clientProxyFqns) {
                 sb.append("            case \"").append(proxyFqn).append("\" -> {\n");
                 sb.append("                var p = new ").append(proxyFqn).append("();\n");
+                sb.append("                p.$$setDelegate(delegate);\n");
+                sb.append("                return p;\n");
+                sb.append("            }\n");
+            }
+            for (var pp : producerProxies) {
+                sb.append("            case \"").append(pp.key()).append("\" -> {\n");
+                sb.append("                var p = new ").append(pp.proxyFqn()).append("();\n");
                 sb.append("                p.$$setDelegate(delegate);\n");
                 sb.append("                return p;\n");
                 sb.append("            }\n");

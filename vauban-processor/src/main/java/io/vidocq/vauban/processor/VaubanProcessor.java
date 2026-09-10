@@ -23,7 +23,9 @@ import io.vidocq.vauban.processor.apt.ElementScanner;
 import io.vidocq.vauban.processor.codegen.GeneratedClass;
 import io.vidocq.vauban.processor.codegen.factory.BeanFactoryGenerator;
 import io.vidocq.vauban.processor.codegen.proxy.ClientProxyGenerator;
+import io.vidocq.vauban.processor.codegen.proxy.ClientProxyShapeFromElements;
 import io.vidocq.vauban.processor.codegen.proxy.ClientProxySourceRenderer;
+import io.vidocq.vauban.processor.codegen.proxy.ProducerProxyEligibility;
 import io.vidocq.vauban.processor.codegen.provider.ComponentProviderGenerator;
 import io.vidocq.vauban.processor.codegen.interceptor.InterceptedShapeFromElements;
 import io.vidocq.vauban.processor.codegen.interceptor.InterceptedSourceRenderer;
@@ -406,6 +408,11 @@ public class VaubanProcessor extends AbstractProcessor {
         // no-arg ctor): the per-package provider instantiates them in-module via createClientProxy, so
         // the bean package needs no opens/exports for proxy creation.
         var clientProxyFqns = new java.util.LinkedHashSet<String>();
+        // Produced-type proxies for normal-scoped producers of fully-public external classes
+        // (issue #42), grouped by the producer's package — registered in that package's provider,
+        // keyed by the produced type, so the runtime's provider-first lookup wins with zero opens.
+        var producerProxiesByPackage =
+                new java.util.LinkedHashMap<String, java.util.List<ComponentProviderGenerator.ProducerProxy>>();
         for (var bean : beans) {
             if (bean.kind() == BeanDescriptor.BeanKind.MANAGED) {
                 var classInfo = index.getClassByName(bean.beanClass()).orElse(null);
@@ -503,6 +510,50 @@ public class VaubanProcessor extends AbstractProcessor {
                 // generated just above (instantiated in-module by the bytecode provider, no opens).
                 providedClasses.add(new ProvidedClass(
                         fqn, classInfo, isTopLevelType(fqn), interceptedGenerated));
+            } else if (bean.kind() == BeanDescriptor.BeanKind.PRODUCER_METHOD
+                    || bean.kind() == BeanDescriptor.BeanKind.PRODUCER_FIELD) {
+                // Build-time proxy for a normal-scoped producer whose produced type is a fully-public
+                // class from another module (issue #42, cdi#1015). The proxy is placed in the
+                // producer's OWN package (never the produced type's — that would be a split package)
+                // and registered under the produced-type key the container looks up before its
+                // reflective fallback, so the module path needs no `opens` and no runtime defineClass.
+                if (!bean.scope().isNormal()) {
+                    continue;
+                }
+                var producedType = resolveProducedTypeElement(bean);
+                if (producedType == null) {
+                    // Interface-typed producer (java.lang.reflect.Proxy at runtime, needs only
+                    // exports) or an unresolvable type — leave it to the runtime.
+                    continue;
+                }
+                var producedFqn =
+                        processingEnv.getElementUtils().getBinaryName(producedType).toString();
+                var verdict = ProducerProxyEligibility.of(producedType);
+                if (!verdict.eligible()) {
+                    processingEnv.getMessager().printMessage(Diagnostic.Kind.NOTE,
+                            "[Vauban] Producer of " + producedFqn + " is not build-time proxyable ("
+                                    + verdict + "); the runtime will generate its proxy, which needs "
+                                    + "`opens " + packageOfFqn(producedFqn)
+                                    + " to io.vidocq.vauban.core;` on the module path.");
+                    continue;
+                }
+                var producerPkg = packageOfFqn(bean.beanClass().value());
+                var shape = ClientProxyShapeFromElements.from(producedType,
+                        processingEnv.getElementUtils(), processingEnv.getTypeUtils());
+                var producedSimple = producedFqn.substring(producedFqn.lastIndexOf('.') + 1)
+                        .replace('$', '_');
+                var proxyBinaryName = (producerPkg.isEmpty() ? "" : producerPkg + ".")
+                        + producedSimple + "$$"
+                        + Integer.toHexString(producedFqn.hashCode()) + "_ClientProxy";
+                var gen = ClientProxySourceRenderer.renderAt(shape, proxyBinaryName);
+                writeSourceFile(gen.className(), gen.source());
+                var key = producedFqn + "_ClientProxy";
+                producerProxiesByPackage
+                        .computeIfAbsent(producerPkg, k -> new java.util.ArrayList<>())
+                        .add(new ComponentProviderGenerator.ProducerProxy(key, proxyBinaryName));
+                processingEnv.getMessager().printMessage(Diagnostic.Kind.NOTE,
+                        "[Vauban] Generated build-time producer proxy " + proxyBinaryName + " for "
+                                + producedFqn + " (key " + key + ") — zero opens, zero runtime defineClass.");
             }
         }
 
@@ -519,13 +570,25 @@ public class VaubanProcessor extends AbstractProcessor {
         // in the class-path service file. A single common-package provider could not reach
         // package-private members in other packages.
         var providerClassNames = new java.util.ArrayList<String>();
+        var emittedProviderPackages = new java.util.HashSet<String>();
         for (var pkg : packages) {
             // Proxies of this package's beans (their FQN package equals the provider's package).
             var pkgProxies = clientProxyFqns.stream()
                     .filter(p -> packageOfFqn(p).equals(pkg.packageName()))
                     .toList();
+            var pkgProducerProxies = producerProxiesByPackage.getOrDefault(pkg.packageName(), List.of());
             var className = writeComponentProvider(
-                    pkg.packageName(), pkg.components(), pkg.fields(), pkg.methods(), pkgProxies);
+                    pkg.packageName(), pkg.components(), pkg.fields(), pkg.methods(),
+                    pkgProxies, pkgProducerProxies);
+            if (className != null) providerClassNames.add(className);
+            emittedProviderPackages.add(pkg.packageName());
+        }
+        // A producer whose holder package has no other in-module component still needs a provider
+        // for its produced-type proxy (issue #42).
+        for (var entry : producerProxiesByPackage.entrySet()) {
+            if (emittedProviderPackages.contains(entry.getKey())) continue;
+            var className = writeComponentProvider(
+                    entry.getKey(), List.of(), List.of(), List.of(), List.of(), entry.getValue());
             if (className != null) providerClassNames.add(className);
         }
         if (!providerClassNames.isEmpty()) {
@@ -1270,13 +1333,39 @@ public class VaubanProcessor extends AbstractProcessor {
      * javac resolves both in a later round. (Previously the provider had to be bytecode for such
      * packages, since a generated source could not see a Filer-emitted {@code $$Intercepted}.)
      */
+    /**
+     * The produced concrete class type of a producer bean as a {@link TypeElement}, or {@code null}
+     * when the produced type is an interface (handled at runtime by {@code java.lang.reflect.Proxy},
+     * which needs only {@code exports}) or is not resolvable at APT time. Mirrors the runtime
+     * {@code InterceptorBeanWrapper.resolveProxyTargetClass}: prefer a concrete, non-{@code Object}
+     * type among the bean types.
+     */
+    private TypeElement resolveProducedTypeElement(BeanDescriptor bean) {
+        var elements = processingEnv.getElementUtils();
+        for (var t : bean.types()) {
+            if (!(t instanceof io.vidocq.vauban.indexer.model.TypeInfo.ClassType ct)) {
+                continue;
+            }
+            var fqn = ct.name().value();
+            if ("java.lang.Object".equals(fqn)) {
+                continue;
+            }
+            var te = elements.getTypeElement(fqn);
+            if (te != null && te.getKind() == ElementKind.CLASS) {
+                return te;
+            }
+        }
+        return null;
+    }
+
     private String writeComponentProvider(String pkg,
             List<io.vidocq.vauban.indexer.codegen.Component> components,
             List<io.vidocq.vauban.indexer.codegen.FieldInject> fieldInjects,
             List<io.vidocq.vauban.indexer.codegen.MethodInvoke> methodInvokes,
-            List<String> clientProxyFqns) {
+            List<String> clientProxyFqns,
+            List<ComponentProviderGenerator.ProducerProxy> producerProxies) {
         var gen = ComponentProviderGenerator.generateFrom(pkg, components, fieldInjects, methodInvokes,
-                clientProxyFqns);
+                clientProxyFqns, producerProxies);
         try {
             var file = processingEnv.getFiler().createSourceFile(gen.className());
             try (var w = file.openWriter()) {

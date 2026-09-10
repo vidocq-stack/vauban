@@ -21,7 +21,6 @@ package it.beanb;
 
 import io.vidocq.vauban.core.container.VaubanContainer;
 import it.liba.Foo;
-import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
@@ -36,9 +35,6 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
  * {@code opens} and zero runtime {@code defineClass}. Until Stage 1 lands this FAILS at runtime
  * with "Cannot reflectively access ... opens it.liba to io.vidocq.vauban.core".</p>
  */
-@Disabled("RED until Stage 1 (issue #42): today the @ApplicationScoped producer of it.liba.Foo "
-        + "falls to runtime proxy generation, which needs `opens it.liba to io.vidocq.vauban.core`. "
-        + "Stage 1 makes the proxy build-time and this becomes GREEN — remove @Disabled then.")
 @DisplayName("cdi#1015 — class-typed cross-module producer resolves with zero opens")
 class Cdi1015ReproTest {
 
