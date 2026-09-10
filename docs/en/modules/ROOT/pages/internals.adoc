@@ -23,7 +23,7 @@ The processor generates:
 | One per bean. Implements `io.vidocq.vauban.core.BeanFactory<MyBean>`. No-arg constructor. Instantiates the bean via direct constructor invocation — no reflection.
 
 | `MyBean_ClientProxy`
-| Subclass generated for normal scopes. Intercepts every public method and delegates to the active context.
+| Subclass generated for normal scopes. Forwards every public method to the active context. Where the proxy is generated depends on who owns the proxied type — see <<proxy-strategies>>.
 
 | `MyBean$$Intercepted`
 | Subclass generated for beans with interceptor bindings — routes the intercepted methods through the interceptor chain.
@@ -32,9 +32,77 @@ The processor generates:
 | One per module. Implements `io.vidocq.vauban.api.VaubanComponentProvider`: instantiates the module's components in-module (`new X(…)`), injects fields, creates client proxies and invokes producers, observers, disposers and lifecycle callbacks — no reflection, no `opens`.
 |===
 
+[#proxy-strategies]
+== Client proxies — one strategy per case
+
+A normal-scoped bean is never handed out directly: the container returns a `_ClientProxy`
+subclass that forwards every business method to the contextual instance. *Where* that
+proxy is generated, and whether it costs an `opens`, depends entirely on **who owns the
+proxied type**. Vauban resolves this in the order below; the first strategy that applies
+wins.
+
+[cols="1,2,2"]
+|===
+|Case |Strategy |Cost
+
+|**Managed bean** — a bean class you compile
+|The APT emits `<Bean>_ClientProxy` as Java **source in the bean's own package**, and the
+per-package `_VaubanComponents` provider instantiates it in-module (`new …()` +
+`$$setDelegate`). Same story for the `$$Intercepted` subclass.
+|Zero `opens`, zero `exports`, zero runtime class definition.
+
+|**Producer of a fully-public class** — `@Produces` returning a public, non-final class
+from another module, even one that knows nothing about CDI
+|The APT emits the proxy at build time in the **producer's** package (never the produced
+type's — that would be a split package), registered under the produced-type key the
+runtime looks up before any fallback. Eligibility requires the produced type to be *fully
+public*: public non-final non-sealed class, only public overridable methods, an accessible
+(public/protected) constructor.
+|Zero `opens`, zero runtime class definition (#42, Stage 1).
+
+|**Producer of an interface**
+|A plain `java.lang.reflect.Proxy` is created at runtime.
+|Needs only `exports` on the interface's package.
+
+|**Producer of a class that is not fully public** — package-private or protected
+overridable methods, no accessible constructor, or a non-static final method (CDI 4.1
+§3.10)
+|No build-time proxy can be placed across the module boundary. `RuntimeClientProxyGenerator`
+defines the proxy at runtime *into the produced type's own package*, which requires that
+module to open the package to the container. Two levers keep this `--add-opens`-free (below).
+|An `opens` (applied by the container) *or* a jar rewrite.
+|===
+
+The two levers that remove the hand-written `opens` of the last case:
+
+* **The container opens the module itself** (#42, Stage 3b). The annotation processor lists
+  the produced types that fall to runtime generation in
+  `META-INF/vauban/required-opens.list`; at boot `OpensApplier` loads each and — only when
+  it is in a *named* module and not already open — calls `Instrumentation.redefineModule`
+  to open its package to `io.vidocq.vauban.core`, reusing the load-time weaving agent
+  (<<weaving-tiers>>). No `--add-opens`, no jar rewrite, and a strict no-op when the list is
+  absent (the class path, and the common module-path deployment). It loads a JVM agent
+  dynamically — an accepted deployment-time trust choice.
+* **Rewriting a copy of the dependency jar** (#42, Stage 2, opt-in). The
+  `vauban:enhance-dependencies` goal writes an enhanced copy of a third-party jar under
+  `target/vauban-enhanced-deps/` in which `<Type>_ClientProxy` is co-located in the type's
+  **own** package — so it *can* forward package-private and protected methods — and the
+  `module-info.class` is rewritten to `provides` the generated component provider. Placed
+  ahead of the original on the module path it resolves with zero `opens` and no agent (jar
+  signatures are invalidated, hence opt-in).
+
+A producer whose class type is not build-time proxyable is surfaced at compile time by
+`-Avauban.producerProxy=error|warn|note` (default `note`), naming the reason and the ways
+to keep zero `opens`.
+
 [NOTE]
 ====
-Drift between `ClientProxyGenerator` (compile time) and `RuntimeClientProxyGenerator` (fallback) is a tracked risk in link:{repo-vauban}/src/branch/main/BUG.md[BUG.md] (entry VAU-PRX-002). Any change to one generator must be replicated in the other.
+The proxy front-ends all build the same neutral `ClientProxyShape`: the APT source renderer
+(`ClientProxySourceRenderer`) and the shared bytecode emitter (`ClientProxyEmitter`, driven
+by both the runtime `RuntimeClientProxyGenerator` and the `vauban-maven-plugin` for scanned
+jars — bytecode parity for the producer case, #42 Stage 1.6). The APT-source-first rule
+keeps them aligned; residual drift is tracked in
+link:{repo-vauban}/src/branch/main/BUG.md[BUG.md] (VAU-PRX-002).
 ====
 
 == APT pipeline — sequence diagram
@@ -110,7 +178,9 @@ Details worth knowing about the load-time tier:
   itself; `LoadTimeWeaving` spawns
   `java -cp vauban-weaver.jar io.vidocq.vauban.weaver.AttachBack <pid> <jar> <plan>`,
   which attaches back to the parent and loads the agent. The IDE debugger session is
-  unaffected. The JDK prints its standard dynamic-agent warning.
+  unaffected. The JDK prints its standard dynamic-agent warning. The same agent (hence the
+  same `Instrumentation`) is reused by `OpensApplier` to open a third-party module's package
+  when a producer's type is not fully public (<<proxy-strategies>>).
 * **Plan-driven, no heuristics** — the agent only ever touches the classes named in the
   plan computed from the container's own index: unwoven beans get the marker constructor,
   their `_ClientProxy` companions are retargeted to it.

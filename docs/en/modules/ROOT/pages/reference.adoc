@@ -28,7 +28,7 @@ This page lists every artefact published by Vauban, the Java Modules packages th
 
 | `io.vidocq.vauban:vauban-maven-plugin:{project-version}`
 | `build`
-| Maven plugin (goals: `generate`, `dist`, `encrypt`)
+| Maven plugin (goals: `generate`, `dist`, `encrypt`, `enhance-dependencies`)
 
 | `io.vidocq.vauban:vauban-classloader-spi:{project-version}`
 | `runtime`
@@ -105,11 +105,14 @@ This page lists every artefact published by Vauban, the Java Modules packages th
 
 | `vauban:encrypt`
 | Bound to `package`. Encrypts the internal classes of a modular JAR in-place with AES-256-GCM (`vauban-sjar` reads it back); classes in `exports`/`opens` packages stay in clear text.
+
+| `vauban:enhance-dependencies`
+| Bound to `package`, **opt-in** (does nothing unless `<enhancedTypes>` lists the produced types to enhance). Writes an enhanced *copy* of a third-party dependency JAR under `target/vauban-enhanced-deps/` so a produced type that is not fully public can still be proxied at build time: the co-located `<Type>_ClientProxy`, a per-package `_VaubanComponents`, and a rewritten `module-info.class` that `provides` it. Placed ahead of the original on the module path, it resolves with zero `opens` (jar signatures are invalidated, hence opt-in). See xref:internals.adoc#proxy-strategies[Internals — client-proxy strategies].
 |===
 
 == Annotation-processor options
 
-`vauban-processor` accepts two APT options (`-A` flags on `javac`, `<compilerArgs>` in Maven):
+`vauban-processor` accepts these APT options (`-A` flags on `javac`, `<compilerArgs>` in Maven):
 
 [cols="1,3"]
 |===
@@ -120,6 +123,9 @@ This page lists every artefact published by Vauban, the Java Modules packages th
 
 | `-Avauban.validation.scope=all`
 | Default `main`: validation only runs on the principal source set and is skipped automatically when the processor detects a `testCompile` invocation (default output pointing at `target/test-classes`). Set to `all` to enforce validation on test sources too.
+
+| `-Avauban.producerProxy=error\|warn\|note`
+| Default `note`. Severity of the diagnostic emitted when a normal-scoped `@Produces` returns a class type that is not build-time proxyable across a module boundary (the runtime then falls back to reflective proxy generation, which needs an `opens`). Set to `error` to enforce zero fallback, `warn` to surface it without failing the build. See xref:internals.adoc#proxy-strategies[Internals — client-proxy strategies].
 |===
 
 [#junit-extension]
