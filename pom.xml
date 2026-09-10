@@ -77,6 +77,7 @@
         <module>vauban-tck-runner</module>
         <module>vauban-atinject-tck-runner</module>
         <module>vauban-module-it</module>
+        <module>vauban-producer-module-it</module>
         <module>vauban-examples</module>
     </modules>
 

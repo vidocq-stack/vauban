@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+    cdi#1015 reproduction vehicle: a normal-scoped producer (@Produces @ApplicationScoped)
+    whose produced type is a public class from a SEPARATE module that declares no `opens`.
+    lib-a is a plain Java module (no Vauban APT); bean-b is a bean archive (APT-compiled).
+    On the module path this is the irreducible runtime-generation case discussed upstream in
+    jakartaee/cdi#1015 and closed by Stage 1 of ELIMINATE_RUNTIME.md (issue #42).
+-->
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+    <parent>
+        <groupId>io.vidocq.vauban</groupId>
+        <artifactId>vauban-parent</artifactId>
+        <version>0.4.0-SNAPSHOT</version>
+    </parent>
+    <artifactId>vauban-producer-module-it</artifactId>
+    <packaging>pom</packaging>
+    <name>Vauban :: Producer module-path IT (cdi#1015)</name>
+    <description>Reproduces the class-typed cross-module producer case on the module path.</description>
+    <properties>
+        <maven.deploy.skip>true</maven.deploy.skip>
+        <maven.javadoc.skip>true</maven.javadoc.skip>
+        <maven.source.skip>true</maven.source.skip>
+        <gpg.skip>true</gpg.skip>
+    </properties>
+    <modules>
+        <module>lib-a</module>
+        <module>bean-b</module>
+    </modules>
+</project>
