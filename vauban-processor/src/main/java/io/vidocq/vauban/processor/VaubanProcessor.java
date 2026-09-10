@@ -25,6 +25,7 @@ import io.vidocq.vauban.processor.codegen.factory.BeanFactoryGenerator;
 import io.vidocq.vauban.processor.codegen.proxy.ClientProxyGenerator;
 import io.vidocq.vauban.processor.codegen.proxy.ClientProxyShapeFromElements;
 import io.vidocq.vauban.processor.codegen.proxy.ClientProxySourceRenderer;
+import io.vidocq.vauban.processor.codegen.proxy.InterfaceProxySourceRenderer;
 import io.vidocq.vauban.processor.codegen.proxy.ProducerProxyEligibility;
 import io.vidocq.vauban.processor.codegen.provider.ComponentProviderGenerator;
 import io.vidocq.vauban.processor.codegen.interceptor.InterceptedShapeFromElements;
@@ -528,8 +529,30 @@ public class VaubanProcessor extends AbstractProcessor {
                 }
                 var producedType = resolveProducedTypeElement(bean);
                 if (producedType == null) {
-                    // Interface-typed producer (java.lang.reflect.Proxy at runtime, needs only
-                    // exports) or an unresolvable type — leave it to the runtime.
+                    // The produced type is an interface (or unresolvable). For a public interface,
+                    // emit a build-time static proxy `implements <Iface>` in the producer's package
+                    // (issue #42) — no runtime java.lang.reflect.Proxy, no reflection.
+                    var producedIface = resolveProducedInterfaceElement(bean);
+                    if (producedIface != null) {
+                        var producerPkg = packageOfFqn(bean.beanClass().value());
+                        var ifaceFqn = processingEnv.getElementUtils()
+                                .getBinaryName(producedIface).toString();
+                        var ifaceSimple = ifaceFqn.substring(ifaceFqn.lastIndexOf('.') + 1)
+                                .replace('$', '_');
+                        var proxyBinaryName = (producerPkg.isEmpty() ? "" : producerPkg + ".")
+                                + ifaceSimple + "$$"
+                                + Integer.toHexString(ifaceFqn.hashCode()) + "_ClientProxy";
+                        var gen = InterfaceProxySourceRenderer.render(producedIface, proxyBinaryName,
+                                processingEnv.getElementUtils(), processingEnv.getTypeUtils());
+                        writeSourceFile(gen.className(), gen.source());
+                        var key = ifaceFqn + "_ClientProxy";
+                        producerProxiesByPackage
+                                .computeIfAbsent(producerPkg, k -> new java.util.ArrayList<>())
+                                .add(new ComponentProviderGenerator.ProducerProxy(key, proxyBinaryName));
+                        processingEnv.getMessager().printMessage(Diagnostic.Kind.NOTE,
+                                "[Vauban] Generated build-time interface proxy " + proxyBinaryName
+                                        + " for " + ifaceFqn + " (key " + key + ") — no reflect.Proxy.");
+                    }
                     continue;
                 }
                 var producedFqn =
@@ -1396,6 +1419,31 @@ public class VaubanProcessor extends AbstractProcessor {
             }
             var te = elements.getTypeElement(fqn);
             if (te != null && te.getKind() == ElementKind.CLASS) {
+                return te;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * The produced <strong>interface</strong> type of a producer bean as a {@link TypeElement}, or
+     * {@code null} when the produced type is not a public interface. Used to emit a build-time static
+     * interface proxy (issue #42) instead of a runtime {@code java.lang.reflect.Proxy}. Mirrors the
+     * runtime selection of the produced type, but keeps only a public interface.
+     */
+    private TypeElement resolveProducedInterfaceElement(BeanDescriptor bean) {
+        var elements = processingEnv.getElementUtils();
+        for (var t : bean.types()) {
+            if (!(t instanceof io.vidocq.vauban.indexer.model.TypeInfo.ClassType ct)) {
+                continue;
+            }
+            var fqn = ct.name().value();
+            if ("java.lang.Object".equals(fqn)) {
+                continue;
+            }
+            var te = elements.getTypeElement(fqn);
+            if (te != null && te.getKind() == ElementKind.INTERFACE
+                    && te.getModifiers().contains(Modifier.PUBLIC)) {
                 return te;
             }
         }

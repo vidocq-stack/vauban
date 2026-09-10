@@ -157,7 +157,7 @@ public final class ClientProxySourceRenderer {
         };
     }
 
-    private static void renderForward(StringBuilder sb, String beanSource, ProxyMethodShape m) {
+    static void renderForward(StringBuilder sb, String beanSource, ProxyMethodShape m) {
         boolean isVoid = m.returnType().isVoid();
         List<TypeRef> params = m.params();
 

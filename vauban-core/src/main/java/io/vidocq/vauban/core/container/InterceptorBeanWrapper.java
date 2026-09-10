@@ -242,7 +242,18 @@ final class InterceptorBeanWrapper {
                     return ctx.get((Contextual<Object>) (Contextual<?>) currentBean,
                             new CreationalContextImpl<Object>());
                 };
-                // Collect all interface types from the bean to implement
+                // Issue #42: prefer the build-time static interface proxy (a generated class
+                // `implements <Iface>`, registered by the APT under the produced-type key). No
+                // runtime java.lang.reflect.Proxy, no reflection. Falls through to reflect.Proxy on
+                // the class path or when no provider owns the interface (non-APT producers).
+                String ifaceProxyKey =
+                        io.vidocq.vauban.core.proxy.RuntimeClientProxyGenerator.proxyClassName(beanClass);
+                Object providedIface = container.componentProviders().createClientProxy(ifaceProxyKey, delegate);
+                if (providedIface != null) {
+                    return providedIface;
+                }
+
+                // Fallback: collect all interface types from the bean to implement via reflect.Proxy
                 java.util.Set<Class<?>> ifaceSet = new java.util.LinkedHashSet<>();
                 for (var t : bean.getTypes()) {
                     if (t instanceof Class<?> c && c.isInterface() && c != Object.class) {
