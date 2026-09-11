@@ -54,7 +54,27 @@ public final class OpensApplier {
     private static final System.Logger LOG = System.getLogger(OpensApplier.class.getName());
     private static final String RESOURCE = "META-INF/vauban/required-opens.list";
 
+    /**
+     * System property gating the boot-time open. Opt-in, and deliberately so: opening another
+     * module's package behind the user's back is the very thing this project criticises runtime CDI
+     * implementations for needing — the only difference would be who grants it. Left off, an
+     * application that would depend on it fails loudly at boot with the remedies spelled out,
+     * instead of silently acquiring a dependency on dynamic agent attachment that only shows up on
+     * a locked-down JVM in production.
+     *
+     * <p>This lever is also on borrowed time: integrity by default is closing dynamic agent
+     * attachment. Prefer a fully-public produced type (compile-time proxy, nothing to open) or the
+     * {@code vauban:enhance-dependencies} goal (build-time, survives integrity by default).
+     */
+    public static final String AUTO_OPEN_PROPERTY = "vauban.opens.auto";
+
     private OpensApplier() {}
+
+    /** Whether the boot-time open lever is switched on — see {@link #AUTO_OPEN_PROPERTY}. */
+    public static boolean autoOpenEnabled() {
+        return Boolean.getBoolean(AUTO_OPEN_PROPERTY);
+    }
+
 
     /** Apply the required opens visible from {@code loader}. Safe to call on every boot. */
     public static void apply(ClassLoader loader) {
@@ -89,6 +109,19 @@ public final class OpensApplier {
             pending.computeIfAbsent(module, m -> new LinkedHashSet<>()).add(pkg);
         }
         if (pending.isEmpty()) {
+            return;
+        }
+
+        if (!autoOpenEnabled()) {
+            LOG.log(System.Logger.Level.WARNING, () -> "Vauban needs " + describe(pending)
+                    + " opened to " + container.getName() + " for a runtime producer proxy, and will "
+                    + "not do it on its own. Pick one: make the produced type fully public (the proxy "
+                    + "is then built at compile time and nothing needs opening); run the "
+                    + "vauban:enhance-dependencies goal (the proxy moves inside the dependency, still "
+                    + "nothing to open); add the matching `opens ... to " + container.getName() + ";`; "
+                    + "or, as a last resort, set -D" + AUTO_OPEN_PROPERTY + "=true to let the "
+                    + "container open it at boot through an agent — which integrity by default is "
+                    + "closing off.");
             return;
         }
 
