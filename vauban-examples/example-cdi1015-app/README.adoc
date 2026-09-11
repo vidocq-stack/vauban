@@ -143,7 +143,10 @@ Weld would place the `PaymentGateway` proxy into the library's package and requi
 == The residual case
 
 If a produced class is **not** fully public (package-private or protected overridable methods, no
-accessible constructor), it cannot be proxied at build time *across* the module boundary.
+accessible constructor), it cannot be proxied at build time *across* the module boundary. The check
+covers **inherited** members too, not only declared ones: a method the produced type inherits is
+neither declared by it nor overridden by the proxy, so treating it as absent would hand out a proxy
+that silently runs the superclass body against its own empty state.
 
 === Why not `MethodHandles.privateLookupIn`?
 
@@ -180,17 +183,21 @@ self-granted.
 
 Two `--add-opens`-free levers, both documented in the reference docs:
 
-* **At runtime** — the container opens the module itself at boot via
+* **At runtime** — the container can open the module itself at boot via
   `Instrumentation.redefineModule`, from an agent it self-attaches. No command-line flag, but it is
-  still an `opens`, merely granted by the deployment rather than by the launcher. Caveat:
-  integrity by default will make dynamic agent attachment opt-in.
+  still an `opens`, merely granted by the deployment rather than by the launcher. It is therefore
+  **opt-in** (`-Dvauban.opens.auto=true`): left off, the container refuses and logs every way to
+  avoid it. Treat it as a last resort — integrity by default is closing dynamic agent attachment.
 * **At build time** — the opt-in `vauban:enhance-dependencies` goal. Rather than asking the module
   to open up, it *moves the proxy inside the module*: it produces an enhanced **copy** of the
   dependency jar containing the `<Type>_ClientProxy` co-located in the type's own package, a
   `_VaubanComponents` provider per package, and a rewritten `module-info.class` declaring
   `provides VaubanComponentProvider`. Package-private and protected forwarding then become legal by
-  plain Java rules. **Zero `opens`, ever.** The original jar is untouched; the copy shadows it on
-  the module path (its signature is invalidated, hence the opt-in).
+  plain Java rules. **Zero `opens`, ever**, and it survives integrity by default since nothing is
+  opened, attached or defined at runtime. The original jar is untouched; the copy shadows it on the
+  module path, drops the inherited signature, and records its origin in the manifest
+  (`Vauban-Enhanced-From`, `Vauban-Enhanced-Digest`). It is a modified redistribution of a
+  third-party artefact — that governance cost is what makes the goal opt-in.
 
 Truly unproxyable types in the specification's sense (`final` class, `final` method, abstract, no
 non-private constructor) remain deployment errors — no trick saves those.
@@ -205,6 +212,12 @@ can call a package-private method on the bean? Only code in the same package of 
 that is, the library itself. But the library is CDI-agnostic: nothing in it receives the client
 proxy by injection, so nobody is in a position to make that call. We would be paying an
 `--add-opens` to preserve a capability no one can exercise.
+
+The argument is not airtight, and should not be presented as if it were: a library *can* get its own
+instance back — `lib.register(gateway)` where `register` internally calls a package-private hook on
+what it was handed. Rare, but possible. So the honest claim is *vacuous in the overwhelming
+majority*, not *demonstrably impossible* — which argues for the deployment-error answer rather than
+for silently restricting the proxy to public members.
 
 The proxyability rule was written for beans declared *inside* a bean archive. Applying it verbatim
 to a `@Produces` method returning a third-party type is a scope mismatch. Two defensible answers:
