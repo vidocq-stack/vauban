@@ -207,19 +207,81 @@ the full decision table.
 
 == A note for the expert group
 
-In the #1015 scenario specifically, the package-private requirement is **vacuous in practice**. Who
-can call a package-private method on the bean? Only code in the same package of the same module —
-that is, the library itself. But the library is CDI-agnostic: nothing in it receives the client
-proxy by injection, so nobody is in a position to make that call. We would be paying an
-`--add-opens` to preserve a capability no one can exercise.
+The obvious argument — "nobody can call a package-private method on that bean anyway" — is too weak
+to carry, and it is not the interesting one. Here is the stronger case.
 
-The argument is not airtight, and should not be presented as if it were: a library *can* get its own
-instance back — `lib.register(gateway)` where `register` internally calls a package-private hook on
-what it was handed. Rare, but possible. So the honest claim is *vacuous in the overwhelming
-majority*, not *demonstrably impossible* — which argues for the deployment-error answer rather than
-for silently restricting the proxy to public members.
+=== A client proxy is not re-entrant
 
-The proxyability rule was written for beans declared *inside* a bean archive. Applying it verbatim
-to a `@Produces` method returning a third-party type is a scope mismatch. Two defensible answers:
-either the specification mandates a deployment error for that case, or it allows the container to
-restrict the proxy to `public` members when the produced type comes from a module that is not open.
+The generated proxy never calls `super`. It delegates:
+
+[source,java]
+----
+public final class Foo$$…_ClientProxy extends it.liba.Foo {
+    @Override public String greet() {
+        return ((it.liba.Foo) $$delegate.get()).greet();   // on the contextual instance
+    }
+}
+----
+
+Inside `greet()`, `this` is the real instance, so `this.someInternalHelper()` runs against real
+state. Delegation happens **once, at the public boundary**. A non-public method is therefore only
+ever reached through a public entry point that has already forwarded — which is why forwarding it
+is, in this scenario, work with no observable effect.
+
+=== Why the rule is nonetheless right for the case it was written for
+
+That reasoning does *not* generalise, and Weld is not being over-zealous. Take an ordinary managed
+bean:
+
+[source,java]
+----
+package com.myapp;
+class OrderService { String internalTotal() { … } }        // package-private
+
+package com.myapp;
+class OrderController {
+    @Inject OrderService svc;              // receives a client proxy
+    void x() { svc.internalTotal(); }      // same package — a perfectly legal call on the proxy
+}
+----
+
+Here the proxy *must* override `internalTotal()`, or it runs against empty state. That is not an
+edge case, it is everyday CDI. Reflection is a second, non-exotic vector: `setAccessible(true)`
+bypasses access control, and serialisers, mappers and test harnesses do it routinely. Weld
+generates its proxy in the proxied type's package, so overriding everything is free — and correct.
+
+=== What the specification actually leaves open
+
+The specification defines proxyability as a property of **the type**. It is in fact a property of
+the pair **(type, where the proxy is placed)**. While "the proxy lives in the proxied type's
+package" was a free invariant, the conflation was harmless. Java Modules turned placement into a
+variable, and the wording has not followed.
+
+There is a telling precedent. The specification already knows how to fence off a region as
+*undefined* — it does exactly that for `java.lang.Object` methods other than `toString`. It never
+did so for accessibility. As a result it states nothing about what a proxy owes a method the caller
+cannot legally invoke, nor about reflective invocation, and implementations are free to diverge
+silently.
+
+=== Two defensible answers
+
+**A — make placement explicit.** State the obligation in terms of accessibility rather than of the
+type: a client proxy must delegate every non-private, non-static method *accessible to the invoking
+code* through the bean types; the behaviour of a non-public method invoked on a client proxy from
+the proxied type's own package, or reflectively, is undefined when the container cannot co-locate
+the proxy in that package. The unproxyable list then becomes relative to placement — a `final`
+**public** method stays fatal everywhere, a `final` package-private one only for a container that
+co-locates. Containers document their mode; portable applications do not rely on non-public
+forwarding across a module boundary.
+
+**B — mandate a deployment error.** Keep the semantics uniform and rule that a produced type which
+is not fully public, in a module that is not open, is a deployment error. Honest, but it writes the
+use case off.
+
+Vauban would implement A with B available as a strict opt-in: a zero-`opens` proxy by default, a
+build-time diagnostic naming the methods that are not forwarded, and
+`-Avauban.producerProxy=error` for anyone wanting strict parity with a co-locating container.
+
+The distinction that matters, and that the current wording cannot express: the managed bean, where
+overriding non-public members is genuinely load-bearing, versus the `@Produces` of a type from a
+CDI-agnostic module, whose package contains — by construction — no consumer of the proxy.
