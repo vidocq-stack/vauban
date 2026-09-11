@@ -1169,7 +1169,9 @@ public class VaubanProcessor extends AbstractProcessor {
      */
     private boolean writePlacedProxy(TypeElement producedType, String producedFqn) {
         try {
-            var shape = ClientProxyShapeFromElements.from(producedType,
+            // Co-located shape: the placed proxy lives in the produced type's package, so it can —
+            // and must — also override the non-public members the type inherits.
+            var shape = ClientProxyShapeFromElements.fromColocated(producedType,
                     processingEnv.getElementUtils(), processingEnv.getTypeUtils());
             var bytes = io.vidocq.vauban.core.proxy.ClientProxyEmitter.emit(shape);
             var path = PLACED_PREFIX + shape.proxyClassName().replace('.', '/') + ".class";

@@ -48,9 +48,13 @@ import java.util.List;
  *       types become {@link ClientProxyShape#superCtorParams()} (default-value call);</li>
  *   <li>thrown types are kept (erased) so the rendered overrides preserve the bean
  *       method's checked-exception contract;</li>
- *   <li>{@code needsMethodHandle} is always {@code false}: a forwarded method is either
- *       declared by the bean itself (same package as the proxy) or public, so plain forwarding
- *       always compiles — the bytecode path's MethodHandle fallback has no source equivalent.</li>
+ *   <li>{@link #from}: {@code needsMethodHandle} is always {@code false}: a forwarded method is
+ *       either declared by the bean itself (same package as the proxy) or public, so plain
+ *       forwarding always compiles — the bytecode path's MethodHandle fallback has no source
+ *       equivalent;</li>
+ *   <li>{@link #fromColocated}: the shape of a proxy placed in the bean's own package, emitted as
+ *       bytecode — inherited non-public members are forwarded too, through a MethodHandle when
+ *       they are protected members of a superclass in another package.</li>
  * </ul>
  */
 public final class ClientProxyShapeFromElements {
@@ -88,6 +92,52 @@ public final class ClientProxyShapeFromElements {
             }
         }
 
+        return new ClientProxyShape(beanBinaryName, superCtorParams(bean, elements, types), methods);
+    }
+
+    /**
+     * The shape of a proxy <em>placed</em> in {@code bean}'s own package by the Vauban class loader
+     * (issue #42, Stage 4). Placement is what makes the non-public surface reachable, so this shape
+     * mirrors {@code RuntimeClientProxyGenerator.shapeOf} — the proxy it replaces — rather than
+     * {@link #from}:
+     * <ul>
+     *   <li>declared members, as in {@link #from};</li>
+     *   <li>inherited public members, and inherited protected or package-private members of a
+     *       superclass in the <em>same</em> package: plain forwarding, the proxy shares that
+     *       runtime package;</li>
+     *   <li>inherited protected members of a superclass in <em>another</em> package: forwarded
+     *       through a MethodHandle ({@code needsMethodHandle}), since {@code delegate.m()} on an
+     *       instance other than {@code this} is forbidden there (JLS 6.6.2);</li>
+     *   <li>inherited package-private members of a superclass in another package are left out: no
+     *       class outside that runtime package can override them, so no proxy can intercept them
+     *       wherever it lives, and the MethodHandle lookup would be refused.</li>
+     * </ul>
+     * The most-derived declaration of a signature decides, as in the bytecode generator.
+     */
+    public static ClientProxyShape fromColocated(TypeElement bean, Elements elements, Types types) {
+        String beanBinaryName = elements.getBinaryName(bean).toString();
+        var beanPackage = elements.getPackageOf(bean).getQualifiedName().toString();
+        var methods = new ArrayList<ProxyMethodShape>();
+        var seen = new java.util.HashSet<String>();
+        boolean declaring = true;
+        for (TypeElement c = bean; c != null && !isObject(c); c = superclassOf(c), declaring = false) {
+            boolean samePackage = elements.getPackageOf(c).getQualifiedName().contentEquals(beanPackage);
+            for (ExecutableElement m : ElementFilter.methodsIn(c.getEnclosedElements())) {
+                if (!seen.add(signatureKey(m, types))) continue;
+                if (!shouldProxy(m)) continue;
+                var mods = m.getModifiers();
+                boolean isPublic = mods.contains(Modifier.PUBLIC);
+                if (!declaring && !isPublic && !mods.contains(Modifier.PROTECTED) && !samePackage) {
+                    continue; // package-private in another runtime package: not overridable from here
+                }
+                methods.add(new ProxyMethodShape(
+                        m.getSimpleName().toString(),
+                        typeRef(m.getReturnType(), elements, types),
+                        typeRefs(m.getParameters(), elements, types),
+                        thrownTypeRefs(m.getThrownTypes(), elements, types),
+                        !isPublic && !samePackage));
+            }
+        }
         return new ClientProxyShape(beanBinaryName, superCtorParams(bean, elements, types), methods);
     }
 

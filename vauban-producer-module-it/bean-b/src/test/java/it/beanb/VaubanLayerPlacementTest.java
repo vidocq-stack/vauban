@@ -79,6 +79,11 @@ class VaubanLayerPlacementTest {
         // Handle: no accessible constructor — the placed proxy chains the woven entry constructor.
         assertEquals("handle", r.get("handleId"));
 
+        // Hooked: the package-private member is INHERITED from BaseHooked; a sibling calls it on the proxy.
+        assertEquals("hook:real", r.get("inheritedForward"),
+                "HookCaller.call() invokes the inherited BaseHooked.hook() on the proxy; an un-forwarded "
+                        + "call would read the proxy's own null token and answer hook:null");
+
         // vauban#24 for a third-party type: exactly one construction, and none for the proxy.
         assertEquals("0", r.get("constructionsAfterSelect"),
                 "creating the client proxy must not run the third-party constructor");

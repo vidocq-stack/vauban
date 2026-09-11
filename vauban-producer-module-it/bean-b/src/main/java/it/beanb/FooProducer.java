@@ -72,4 +72,11 @@ public class FooProducer {
     public it.liba.Counted produceCounted() {
         return new it.liba.Counted();
     }
+
+    /** The package-private member is INHERITED from {@code it.liba.BaseHooked}. */
+    @Produces
+    @ApplicationScoped
+    public it.liba.Hooked produceHooked() {
+        return new it.liba.Hooked("real");
+    }
 }

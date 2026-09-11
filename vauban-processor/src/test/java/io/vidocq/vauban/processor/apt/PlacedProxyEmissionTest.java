@@ -118,6 +118,49 @@ class PlacedProxyEmissionTest {
                 "an eligible type is proxied in the producer's package, never placed");
     }
 
+    private static final String LIB_BASE_HOOKED = """
+            package lib;
+            public class BaseHooked {
+                String inheritedHook() { return "base"; }       // package-private, only INHERITED by Hooked
+            }
+            """;
+
+    private static final String LIB_HOOKED = """
+            package lib;
+            public class Hooked extends BaseHooked {
+                public String run() { return "hooked"; }
+            }
+            """;
+
+    private static final String APP_HOOKED_PRODUCER = """
+            package app;
+            import jakarta.enterprise.context.ApplicationScoped;
+            import jakarta.enterprise.inject.Produces;
+            @ApplicationScoped
+            public class HookedProducer {
+                @Produces @ApplicationScoped public lib.Hooked hooked() { return new lib.Hooked(); }
+            }
+            """;
+
+    @Test
+    @DisplayName("the placed proxy overrides an INHERITED package-private member too")
+    void placedProxyOverridesInheritedPackagePrivateMembers() throws Exception {
+        var lib = compileDependency(LIB_BASE_HOOKED, LIB_HOOKED);
+        var result = compileApp(lib, APP_HOOKED_PRODUCER);
+        assertTrue(result.success(), "the application must compile: " + result.messages());
+
+        var placed = result.classes().resolve("META-INF/vauban/placed/lib/Hooked_ClientProxy.class");
+        assertTrue(Files.exists(placed), "Hooked inherits a package-private member: it must be placed");
+        var methods = ClassFile.of().parse(Files.readAllBytes(placed)).methods().stream()
+                .map(m -> m.methodName().stringValue())
+                .toList();
+        assertTrue(methods.contains("inheritedHook"),
+                "the placed proxy lives in lib, where BaseHooked.inheritedHook() can be overridden; "
+                        + "without the override a class of lib calling it on the proxy reads the proxy's "
+                        + "own empty state. Methods: " + methods);
+        assertTrue(methods.contains("run"), "the public surface is forwarded as well. Methods: " + methods);
+    }
+
     // ---- Helpers -------------------------------------------------------------------------------
 
     record CompilationResult(boolean success, List<String> messages, Path classes) {}

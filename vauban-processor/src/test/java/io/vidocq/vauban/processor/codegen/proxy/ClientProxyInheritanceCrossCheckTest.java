@@ -154,6 +154,51 @@ class ClientProxyInheritanceCrossCheckTest {
         assertEquals(expected, fromElements, "source and bytecode shapes disagree");
     }
 
+    /** Inherits a protected member from a superclass in another package. */
+    public static class ForeignChild extends io.vidocq.vauban.processor.fixture.colocated.ForeignBase {
+        public String own() { return "own"; }
+    }
+
+    @Test
+    @DisplayName("the co-located shape forwards inherited non-public members, like the bytecode shape")
+    void colocatedShapeMatchesTheBytecodePath() throws Exception {
+        // A placed proxy (#42 Stage 4) lives in the produced type's own package. There an inherited
+        // package-private member of a same-package superclass CAN be overridden, and an inherited
+        // protected one can be forwarded through a MethodHandle. Leaving either out lets a class of
+        // that package call it on the proxy and read the proxy's own empty state.
+        Set<String> hidden = colocatedShapeFromElements(HiddenChild.class);
+        assertTrue(hidden.contains("packagePrivate()"),
+                "HiddenBase.packagePrivate() must be forwarded by a co-located proxy. Shape was: " + hidden);
+
+        for (var fixture : List.of(HiddenChild.class, ForeignChild.class, CleanChild.class)) {
+            ClientProxyShape fromClass = RuntimeClientProxyGenerator.shapeOf(fixture);
+            Set<String> expected = fromClass.methods().stream()
+                    .map(m -> m.name() + "(" + m.params().stream().map(Object::toString)
+                            .collect(Collectors.joining(",")) + ")" + (m.needsMethodHandle() ? "#mh" : ""))
+                    .filter(k -> !OBJECT_METHODS.contains(k.replace("#mh", "")))
+                    .collect(Collectors.toCollection(LinkedHashSet::new));
+            assertEquals(expected, colocatedShapeFromElements(fixture),
+                    "co-located source and bytecode shapes disagree on " + fixture.getSimpleName()
+                            + " (method set or MethodHandle dispatch)");
+        }
+    }
+
+    private Set<String> colocatedShapeFromElements(Class<?> fixture) throws Exception {
+        String joined = capture(fixture, (element, env) -> {
+            var shape = ClientProxyShapeFromElements.fromColocated(element, env.elements(), env.types());
+            return shape.methods().stream()
+                    .map(m -> m.name() + "(" + m.params().stream().map(Object::toString)
+                            .collect(Collectors.joining(",")) + ")" + (m.needsMethodHandle() ? "#mh" : ""))
+                    .filter(k -> !OBJECT_METHODS.contains(k.replace("#mh", "")))
+                    .collect(Collectors.joining(";"));
+        });
+        var set = new LinkedHashSet<String>();
+        for (var part : joined.split(";")) {
+            if (!part.isBlank()) set.add(part);
+        }
+        return set;
+    }
+
     private static final Set<String> OBJECT_METHODS =
             Set.of("toString()", "hashCode()", "equals(java.lang.Object)");
 
