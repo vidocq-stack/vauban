@@ -28,9 +28,12 @@ import java.lang.module.ModuleDescriptor;
 import java.lang.module.ModuleFinder;
 import java.lang.module.ModuleReader;
 import java.lang.module.ModuleReference;
+import java.lang.module.ResolvedModule;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -96,6 +99,91 @@ public final class VaubanLayerFactory {
         var controller = ModuleLayer.defineModules(configuration, List.of(parentLayer),
                 moduleName -> loader);
         return new AppLayer(controller.layer(), loader, roots, controller);
+    }
+
+    /** Module-name prefixes that always stay in the parent layer: the platform and Jakarta. */
+    private static final List<String> KEPT_PREFIXES = List.of("java.", "jdk.", "jakarta.");
+    /** The container itself — never application code, whatever else lives under io.vidocq.vauban. */
+    private static final Set<String> CONTAINER_MODULES = Set.of(
+            "io.vidocq.vauban.api", "io.vidocq.vauban.core", "io.vidocq.vauban.indexer",
+            "io.vidocq.vauban.weaver", "io.vidocq.vauban.classloader",
+            "io.vidocq.vauban.classloader.spi", "io.vidocq.vauban.sjar",
+            "io.vidocq.vauban.processor", "io.vidocq.vauban.junit");
+
+    /**
+     * The {@code file:} locations of the modules of {@code configuration} that an application layer
+     * should load again under a {@link VaubanClassLoader} — the one re-layer policy of the Java SE
+     * launcher ({@link Launch}) and of {@code Vidocq.run}.
+     *
+     * <p>Kept where they are, and read from there by the re-layered modules:
+     * <ul>
+     *   <li>the platform ({@code java.*}, {@code jdk.*}), Jakarta ({@code jakarta.*}) and the Vauban
+     *       container modules, and every module whose name starts with one of {@code keptPrefixes};</li>
+     *   <li>automatic modules — a re-layered automatic module would read its own twin in the parent
+     *       layer, and resolution would fail;</li>
+     *   <li>modules with a package the Vauban loader refuses to define ({@code javax.}, {@code sun.},
+     *       {@code com.sun.} …), which would otherwise be empty shells in the layer;</li>
+     *   <li>and, transitively, every module a kept explicit module reads: a kept module cannot read a
+     *       re-layered one, so what it needs must stay with it.</li>
+     * </ul>
+     * Everything else with a {@code file:} location is re-layered. A module named in {@code roots} is
+     * the application itself: the name rules (the prefixes and the container names) never keep it, so
+     * what it reads is not held back through it either. The other rules still apply to a root, and a
+     * kept module that reads a root still keeps it.
+     *
+     * @param configuration the configuration whose modules are candidates, usually the boot layer's
+     * @param keptPrefixes  extra module-name prefixes to keep, such as a runtime's own modules
+     * @param roots         the application's own modules, never kept by a name rule
+     * @return the locations to hand to {@link #createAppLayer}, in configuration order
+     */
+    public static List<Path> applicationPaths(Configuration configuration,
+            Collection<String> keptPrefixes, Set<String> roots) {
+        var kept = new LinkedHashSet<ResolvedModule>();
+        var queue = new ArrayDeque<ResolvedModule>();
+        for (var resolved : configuration.modules()) {
+            if (keptByRule(resolved, keptPrefixes, roots) && kept.add(resolved)) {
+                queue.add(resolved);
+            }
+        }
+        // A kept module cannot read a re-layered one: keep, transitively, what it reads. An
+        // automatic module reads every module, so following it would keep the whole application;
+        // it is kept for itself only.
+        while (!queue.isEmpty()) {
+            var module = queue.poll();
+            if (module.reference().descriptor().isAutomatic()) continue;
+            for (var read : module.reads()) {
+                if (read.configuration() == configuration && kept.add(read)) {
+                    queue.add(read);
+                }
+            }
+        }
+        var paths = new LinkedHashSet<Path>();
+        for (var resolved : configuration.modules()) {
+            if (kept.contains(resolved)) continue;
+            resolved.reference().location()
+                    .filter(uri -> "file".equals(uri.getScheme()))
+                    .ifPresent(uri -> paths.add(Path.of(uri)));
+        }
+        return List.copyOf(paths);
+    }
+
+    private static boolean keptByRule(ResolvedModule resolved, Collection<String> keptPrefixes,
+            Set<String> roots) {
+        var descriptor = resolved.reference().descriptor();
+        if (descriptor.isAutomatic()) return true;
+        for (var pkg : descriptor.packages()) {
+            if (VaubanClassLoader.excludesPackage(pkg)) return true;
+        }
+        var name = resolved.name();
+        if (roots.contains(name)) return false;
+        if (CONTAINER_MODULES.contains(name)) return true;
+        for (var prefix : KEPT_PREFIXES) {
+            if (name.startsWith(prefix)) return true;
+        }
+        for (var prefix : keptPrefixes) {
+            if (name.startsWith(prefix)) return true;
+        }
+        return false;
     }
 
     private static final String SERVICES_PREFIX = "META-INF/services/";

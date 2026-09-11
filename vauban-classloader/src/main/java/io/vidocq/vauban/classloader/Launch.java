@@ -22,15 +22,10 @@ package io.vidocq.vauban.classloader;
 import io.vidocq.vauban.classloader.spi.PluginContext;
 
 import java.io.IOException;
-import java.lang.module.Configuration;
-import java.lang.module.ResolvedModule;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Modifier;
-import java.nio.file.Path;
-import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
 
@@ -78,7 +73,9 @@ import java.util.Set;
  *       re-layered one, so what it needs must stay with it.</li>
  * </ul>
  * Everything else with a {@code file:} location is re-layered. The application's main module must
- * end up re-layered: the launcher refuses to run it from the boot layer.
+ * end up re-layered: the launcher refuses to run it from the boot layer. This selection is
+ * {@link VaubanLayerFactory#applicationPaths}, the policy {@code Vidocq.run} applies too; a named
+ * target module is its root, so no keep prefix holds it back, nor, through it, what it reads.
  *
  * <p>{@link #run} does nothing and returns {@code false} when the calling thread already runs in a
  * Vauban layer, so an application may call it as the first statement of its own {@code main} —
@@ -90,13 +87,6 @@ public final class Launch {
     public static final String KEEP_PROPERTY = "vauban.launch.keep";
 
     private static final System.Logger LOG = System.getLogger(Launch.class.getName());
-    private static final List<String> KEPT_PREFIXES = List.of("java.", "jdk.", "jakarta.");
-    /** The container itself — never application code, whatever else lives under io.vidocq.vauban. */
-    private static final Set<String> CONTAINER_MODULES = Set.of(
-            "io.vidocq.vauban.api", "io.vidocq.vauban.core", "io.vidocq.vauban.indexer",
-            "io.vidocq.vauban.weaver", "io.vidocq.vauban.classloader",
-            "io.vidocq.vauban.classloader.spi", "io.vidocq.vauban.sjar",
-            "io.vidocq.vauban.processor", "io.vidocq.vauban.junit");
 
     private Launch() {}
 
@@ -132,7 +122,9 @@ public final class Launch {
                     + "layer. With -m, the launcher is the only root module: add --add-modules "
                     + "ALL-MODULE-PATH (or --add-modules " + moduleName + ") to the java command line.");
         }
-        var paths = applicationPaths(boot.configuration(), extraKeptPrefixes());
+        // A named target module is the application: no keep prefix holds it back.
+        var roots = moduleName == null ? Set.<String>of() : Set.of(moduleName);
+        var paths = VaubanLayerFactory.applicationPaths(boot.configuration(), extraKeptPrefixes(), roots);
         if (paths.isEmpty()) {
             throw new IllegalStateException("No application module to re-layer. With -m, the "
                     + "launcher is the only root module: add --add-modules ALL-MODULE-PATH to the "
@@ -213,57 +205,6 @@ public final class Launch {
             }
         }
         return prefixes;
-    }
-
-    /**
-     * The {@code file:} locations of the modules of {@code config} to re-layer — every module except
-     * the kept ones described in the class javadoc.
-     */
-    static List<Path> applicationPaths(Configuration config, List<String> extraPrefixes) {
-        var kept = new LinkedHashSet<ResolvedModule>();
-        var queue = new ArrayDeque<ResolvedModule>();
-        for (var resolved : config.modules()) {
-            if (keptByRule(resolved, extraPrefixes) && kept.add(resolved)) {
-                queue.add(resolved);
-            }
-        }
-        // A kept module cannot read a re-layered one: keep, transitively, what it reads. An
-        // automatic module reads every module, so following it would keep the whole application;
-        // it is kept for itself only.
-        while (!queue.isEmpty()) {
-            var module = queue.poll();
-            if (module.reference().descriptor().isAutomatic()) continue;
-            for (var read : module.reads()) {
-                if (read.configuration() == config && kept.add(read)) {
-                    queue.add(read);
-                }
-            }
-        }
-        var paths = new LinkedHashSet<Path>();
-        for (var resolved : config.modules()) {
-            if (kept.contains(resolved)) continue;
-            resolved.reference().location()
-                    .filter(uri -> "file".equals(uri.getScheme()))
-                    .ifPresent(uri -> paths.add(Path.of(uri)));
-        }
-        return List.copyOf(paths);
-    }
-
-    private static boolean keptByRule(ResolvedModule resolved, List<String> extraPrefixes) {
-        var name = resolved.name();
-        if (CONTAINER_MODULES.contains(name)) return true;
-        for (var prefix : KEPT_PREFIXES) {
-            if (name.startsWith(prefix)) return true;
-        }
-        for (var prefix : extraPrefixes) {
-            if (name.startsWith(prefix)) return true;
-        }
-        var descriptor = resolved.reference().descriptor();
-        if (descriptor.isAutomatic()) return true;
-        for (var pkg : descriptor.packages()) {
-            if (VaubanClassLoader.excludesPackage(pkg)) return true;
-        }
-        return false;
     }
 
     private static void invokeMain(Class<?> mainClass, String[] appArgs) throws Throwable {

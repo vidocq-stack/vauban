@@ -233,3 +233,23 @@ command from the README.
 
 Deferred: `Launch` and vidocq's `VidocqAppLayer` re-layer the boot layer with different policies —
 one policy in vauban-classloader, used by both (follow-up ticket; the docs no longer claim otherwise).
+
+# vauban#53 — one re-layer policy for Launch and Vidocq.run (branch pr/ybl/53-relayer-policy)
+
+`Launch` and vidocq's `VidocqAppLayer` re-layered the boot layer with two policies: everything not
+kept, versus only the modules carrying a beans list. Under `Vidocq.run`, a CDI-agnostic library
+therefore stayed in the boot layer and its in-package proxies could not be placed.
+
+- [x] vauban-classloader: the policy moves to `VaubanLayerFactory.applicationPaths(configuration,
+      keptPrefixes, roots)`. A root is the application: the name rules (prefixes, container names)
+      never keep it, so what it reads is not held back through it; the technical rules (automatic,
+      excluded packages, read by a kept module) still apply. `Launch` delegates, with its named
+      target module as the root.
+- [x] vidocq-runtime-core (vidocq repo, same branch name): `VidocqAppLayer.applicationPaths` applies
+      the policy with the Vidocq bricks as kept prefixes and the caller as the root; the beans-list
+      detection is gone. `-Dvidocq.app.modules` still overrides.
+- [x] Tests first: `LaunchSelectionTest` (roots escape the name rules only) and vidocq's
+      `VidocqAppLayerSelectionTest` (a library without a beans list moves; a brick and what it reads
+      stay; the caller moves under a runtime prefix). Mutations on both sides.
+- [x] Docs: `se.adoc`, `internals.adoc`, `reference.adoc` (vauban); `usage.adoc`, `internals.adoc`,
+      `whats-new.adoc` (vidocq).

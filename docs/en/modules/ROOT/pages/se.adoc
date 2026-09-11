@@ -101,8 +101,12 @@ layer — the re-layered modules then read them from there:
 * modules whose name starts with a prefix listed in `-Dvauban.launch.keep=org.junit,com.acme.infra`;
 * and every module a kept module reads, transitively: a kept module cannot read a re-layered one.
 
-Your main module must end up re-layered. If one of these rules keeps it in the boot layer, the
-launcher refuses to run it rather than run it exactly as without the launcher.
+The module you name in `<module>/<main-class>` is the application: no prefix keeps it, so what it
+reads is not held back through it either. It must still end up re-layered. If it is automatic, owns a
+`javax.`, `sun.` or `com.sun.` package, or is read by a kept module, the launcher refuses to run it
+rather than run it exactly as without the launcher.
+
+The policy is public as `VaubanLayerFactory.applicationPaths(configuration, keptPrefixes, roots)`.
 
 === Why the entry point must run in the layer
 
@@ -123,10 +127,9 @@ public static void main(String[] args) throws Throwable {
 }
 ----
 
-The Vidocq runtime re-layers the same way with `Vidocq.run` / `@VidocqMain`, but it selects only the
-modules that carry beans. A CDI-agnostic library therefore stays in the boot layer there, and its
-proxies are not placed unless you re-layer it too (`-Dvidocq.app.modules`). `Launch` re-layers every
-module it does not have to keep.
+The Vidocq runtime applies the same policy through `Vidocq.run` / `@VidocqMain`, with its own bricks
+kept as well and the caller's module as the root. CDI-agnostic libraries are re-layered there too, so
+their proxies are placed.
 
 == What the build ships
 

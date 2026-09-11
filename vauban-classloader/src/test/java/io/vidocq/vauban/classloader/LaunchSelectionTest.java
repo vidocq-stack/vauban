@@ -42,13 +42,13 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 
 /**
- * Which boot-layer modules the Java SE launcher re-layers, and which it must leave where they are.
- * Each kept rule exists because re-layering that module would break the layer: an automatic module
+ * Which boot-layer modules a Vauban layer re-layers, and which it must leave where they are — the one
+ * policy shared by the Java SE launcher and {@code Vidocq.run}. Each kept rule exists because re-layering that module would break the layer: an automatic module
  * would read its own boot twin, a module with a {@code javax.}/{@code sun.}/{@code com.sun.} package
  * would be an empty shell under a loader that refuses to define those, and a module read by a kept
  * module must stay with it or the kept module and the application would see two copies.
  */
-@DisplayName("Launch — which boot-layer modules are re-layered")
+@DisplayName("Re-layer policy — which boot-layer modules move to the Vauban layer")
 class LaunchSelectionTest {
 
     @Test
@@ -65,15 +65,31 @@ class LaunchSelectionTest {
                 ModuleFinder.of(app, keepme, shared, legacy, plain, auto), ModuleFinder.of(),
                 Set.of("app", "legacy", "plain"));
 
-        var relayered = Launch.applicationPaths(config, List.of("keepme")).stream()
-                .map(LaunchSelectionTest::real)
-                .collect(Collectors.toSet());
+        var relayered = relayered(VaubanLayerFactory.applicationPaths(config, List.of("keepme"), Set.of()));
 
         assertEquals(Set.of(real(app), real(plain)), relayered,
                 "keepme matches a keep prefix; shared is read by keepme (a kept module cannot read a "
                         + "re-layered one); auto.lib is automatic; legacy owns a javax. package. Only app "
                         + "and plain may move — and following the automatic module's reads would have "
                         + "kept app too");
+    }
+
+    @Test
+    @DisplayName("a root escapes the name rules, so what it reads moves with it; an automatic root still stays")
+    void rootsEscapeTheNameRulesOnly(@TempDir Path dir) throws Exception {
+        var app = explodedModule(dir, "keepme.app", List.of("helper"), "keepme.app.Main");
+        var helper = explodedModule(dir, "helper", List.of(), "helper.H");
+        var auto = automaticJar(dir, "auto-root.jar", "autoroot.Util");
+
+        var config = ModuleLayer.boot().configuration().resolve(
+                ModuleFinder.of(app, helper, auto), ModuleFinder.of(), Set.of("keepme.app", "auto.root"));
+
+        assertEquals(Set.of(), relayered(VaubanLayerFactory.applicationPaths(config, List.of("keepme"), Set.of())),
+                "without roots, keepme.app matches a keep prefix, helper is read by it, auto.root is automatic");
+        assertEquals(Set.of(real(app), real(helper)),
+                relayered(VaubanLayerFactory.applicationPaths(config, List.of("keepme"), Set.of("keepme.app", "auto.root"))),
+                "a root is the application: no keep prefix holds it back, so what it reads moves with it. An "
+                        + "automatic module stays whatever its role: re-layered, it would read its own boot twin");
     }
 
     @Test
@@ -92,6 +108,10 @@ class LaunchSelectionTest {
     }
 
     // ---------------------------------------------------------------- fixtures
+
+    private static Set<Path> relayered(List<Path> paths) {
+        return paths.stream().map(LaunchSelectionTest::real).collect(Collectors.toSet());
+    }
 
     private static Path real(Path p) {
         try {

@@ -77,8 +77,8 @@ Vauban loader defines the library* [.tag-new]#NEW#
 |The APT ships the **co-located** proxy as bytecode in the bean archive
 (`META-INF/vauban/placed/…_ClientProxy.class`) and lists the type in the placement manifest
 (`META-INF/vauban/required-opens.list`). When the library module is defined by a
-`VaubanClassLoader` — today, under the xref:se.adoc[Java SE launcher], which re-layers every
-module it does not have to keep — that loader *defines the proxy into the library's package* on a
+`VaubanClassLoader` — under the xref:se.adoc[Java SE launcher] or `Vidocq.run`, which re-layer every
+module they do not have to keep — that loader *defines the proxy into the library's package* on a
 `findClass` miss: a loader may define classes in a package it owns, and `opens` governs reflective
 access across modules, not this. The proxy forwards non-public members too, inherited ones
 included. The cdi-proxifier weaves the `(ProxyLink)` entry constructor into the produced type at
@@ -87,8 +87,8 @@ retargets the placed proxy onto it, so the third-party constructors do not run f
 (vauban#24). When a superclass the loader does not define blocks that chain, a WARNING says so.
 |Zero `opens`, no agent, no rewritten jar; the library is used as shipped.
 
-|**Same shapes, when no Vauban loader defines the library** — a bare boot layer, a module the
-launcher keeps, or `Vidocq.run`, which re-layers only the modules that carry beans
+|**Same shapes, when no Vauban loader defines the library** — a bare boot layer, or a module the
+launcher or `Vidocq.run` keeps
 |Nothing can be placed. `RuntimeClientProxyGenerator` defines the proxy at runtime *into the
 produced type's own package*, which requires that module to open the package to the container.
 The container refuses by default and names the remedies, the launcher first. Two levers keep
