@@ -49,4 +49,17 @@ public interface ArchiveContext {
      * inspect superclasses and annotations without loading any class.
      */
     byte[] classBytes(String binaryName);
+
+    /**
+     * Binary names of the produced types whose client proxy must live in their own package and
+     * is <em>placed</em> there by the loader from a build-time resource (issue #42, Stage 4) —
+     * the union of every {@code META-INF/vauban/required-opens.list} visible to the loader, not
+     * just this archive's: the manifest sits in the bean archive while the type sits in the
+     * third-party archive. A type listed here is woven with the {@code (ProxyLink)} entry
+     * constructor at definition even though it carries no scope annotation, and its placed
+     * proxy is retargeted onto it. Empty by default.
+     */
+    default Set<String> placedProxyTypes() {
+        return Set.of();
+    }
 }

@@ -129,6 +129,11 @@ public class VaubanClassLoader extends ClassLoader implements AutoCloseable {
                 }
 
                 @Override
+                public Set<String> placedProxyTypes() {
+                    return VaubanClassLoader.this.placedProxyTypes();
+                }
+
+                @Override
                 public byte[] classBytes(String binaryName) {
                     return VaubanClassLoader.this.rawClassBytes(binaryName);
                 }
@@ -251,6 +256,105 @@ public class VaubanClassLoader extends ClassLoader implements AutoCloseable {
         return classIndex.containsKey(toEntry(binaryName));
     }
 
+    // ------------------------------------------------------------ placed proxies (#42 Stage 4)
+
+    /**
+     * Build-time placement manifest, one produced-type binary name per line: the types whose
+     * client proxy must live in their own package (a non-public overridable member, or no
+     * accessible constructor). Written by the annotation processor into the bean archive.
+     */
+    public static final String PLACEMENT_MANIFEST = "META-INF/vauban/required-opens.list";
+    /** Resource prefix under which the annotation processor ships the placed proxy bytes. */
+    public static final String PLACED_PREFIX = "META-INF/vauban/placed/";
+    private static final String CLIENT_PROXY_SUFFIX = "_ClientProxy";
+    private volatile Set<String> placedTypes;
+
+    /**
+     * Whether {@code binaryName} is a client proxy this loader can <em>place</em>: it is not a
+     * class entry of any archive, it is named {@code <produced>_ClientProxy} for a produced type
+     * that this loader defines and that a placement manifest lists, and some archive ships its
+     * bytes under {@link #PLACED_PREFIX}. A placed class is defined into the produced type's own
+     * package by the loader that owns that package — which is why it needs no {@code opens}.
+     */
+    public boolean placesClass(String binaryName) {
+        var produced = producedTypeOf(binaryName);
+        return !produced.isEmpty() && !managesClass(binaryName) && !isExcluded(binaryName)
+                && placedProxyTypes().contains(produced)
+                && classIndex.containsKey(toEntry(produced))
+                && placedBytes(binaryName) != null;
+    }
+
+    /** The union of every placement manifest visible through the archives, read once. */
+    Set<String> placedProxyTypes() {
+        var types = placedTypes;
+        if (types == null) {
+            var names = new LinkedHashSet<String>();
+            for (var archive : archives) {
+                try {
+                    archive.reader.readResource(PLACEMENT_MANIFEST).ifPresent(bytes ->
+                            new String(bytes, StandardCharsets.UTF_8).lines()
+                                    .map(String::strip)
+                                    .filter(l -> !l.isEmpty() && !l.startsWith("#"))
+                                    .forEach(names::add));
+                } catch (IOException e) {
+                    // an unreadable manifest places nothing from that archive
+                }
+            }
+            types = Collections.unmodifiableSet(names);
+            placedTypes = types;
+        }
+        return types;
+    }
+
+    private static String producedTypeOf(String proxyBinaryName) {
+        return proxyBinaryName.endsWith(CLIENT_PROXY_SUFFIX)
+                ? proxyBinaryName.substring(0, proxyBinaryName.length() - CLIENT_PROXY_SUFFIX.length())
+                : "";
+    }
+
+    /** The placed bytes of {@code proxyBinaryName} from whichever archive ships them, or null. */
+    private byte[] placedBytes(String proxyBinaryName) {
+        var entry = PLACED_PREFIX + toEntry(proxyBinaryName);
+        for (var archive : archives) {
+            try {
+                var bytes = archive.reader.readResource(entry);
+                if (bytes.isPresent()) return bytes.get();
+            } catch (IOException e) {
+                // try the next archive
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Define a placed client proxy into the produced type's own package. The bytes go through
+     * the same transformer chain as any archive class, with the <em>produced type's</em> archive
+     * as context, so the cdi-proxifier can retarget the proxy onto the entry constructor it weaves
+     * into that type at its own definition.
+     */
+    private Class<?> placeClass(String name) throws ClassNotFoundException {
+        if (isExcluded(name)) {
+            throw new ClassNotFoundException(name);
+        }
+        var produced = producedTypeOf(name);
+        if (produced.isEmpty() || !placedProxyTypes().contains(produced)) {
+            throw new ClassNotFoundException(name);
+        }
+        var bytes = placedBytes(name);
+        if (bytes == null) {
+            throw new ClassNotFoundException(name);
+        }
+        var owner = classIndex.get(toEntry(produced));
+        if (owner == null) {
+            throw new ClassNotFoundException("Cannot place " + name + ": " + produced
+                    + " is not defined by this loader");
+        }
+        bytes = applyTransformers(name, bytes, owner);
+        LOG.log(System.Logger.Level.DEBUG, () -> "Placed " + name + " into the package of "
+                + produced + " (" + owner.path.getFileName() + ")");
+        return defineClass(name, bytes, 0, bytes.length);
+    }
+
     /** Binary names of every class the managed archives contain, in archive order. */
     public List<String> managedClassNames() {
         return classIndex.keySet().stream()
@@ -300,7 +404,8 @@ public class VaubanClassLoader extends ClassLoader implements AutoCloseable {
     protected Class<?> findClass(String name) throws ClassNotFoundException {
         var archive = classIndex.get(toEntry(name));
         if (archive == null) {
-            throw new ClassNotFoundException(name);
+            // Not an archive class: perhaps a client proxy to be placed into a package we own.
+            return placeClass(name);
         }
         if (isExcluded(name)) {
             throw new ClassNotFoundException(

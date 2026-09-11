@@ -24,6 +24,8 @@ import io.vidocq.vauban.classloader.spi.ClassTransformerPlugin;
 import io.vidocq.vauban.weaver.BeanWeavingAnalysis;
 import io.vidocq.vauban.weaver.ProxyLinkWeaver;
 
+import java.util.HashMap;
+import java.util.HashSet;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
@@ -39,6 +41,15 @@ import java.util.concurrent.ConcurrentHashMap;
  * <p>Pre-filter: the archive's {@code META-INF/vauban-beans.list} when present (O(1) per
  * class); an archive without the list (not APT-processed — e.g. a third-party jar) is
  * inspected class by class at the byte level.
+ *
+ * <p>Placed produced types (issue #42, Stage 4): a type named in a placement manifest
+ * ({@link ArchiveContext#placedProxyTypes()}) is a third-party class produced by a
+ * normal-scoped {@code @Produces} whose client proxy the loader defines into the type's own
+ * package. It carries no scope annotation, so the pre-filter and the scope check would both
+ * pass it by; it is treated as weavable regardless — the marker goes in at its definition, and
+ * the placed proxy, transformed against the same archive context, is retargeted onto it. That
+ * closes the #24 double construction for third-party produced types, whose build-time proxy
+ * otherwise chains the external constructor.
  *
  * <p>Documented limit (study §8): a custom {@code @NormalScope} annotation is only
  * resolved when its bytes are reachable through the {@link ArchiveContext} — the
@@ -60,15 +71,18 @@ public final class CdiProxifierTransformer implements ClassTransformerPlugin {
 
     @Override
     public boolean interested(String className, ArchiveContext archive) {
+        var placed = archive.placedProxyTypes();
+        if (placed.contains(className)
+                || (className.endsWith(CLIENT_PROXY_SUFFIX) && placed.contains(beanOf(className)))) {
+            return true; // a placed produced type, or its placed proxy
+        }
         var beans = archive.beansList();
         if (beans.isEmpty()) {
             // Not an APT-processed archive: no cheap pre-filter, decide in transform()
             return !className.contains("$$");
         }
         if (beans.get().contains(className)) return true;
-        return className.endsWith(CLIENT_PROXY_SUFFIX)
-                && beans.get().contains(
-                        className.substring(0, className.length() - CLIENT_PROXY_SUFFIX.length()));
+        return className.endsWith(CLIENT_PROXY_SUFFIX) && beans.get().contains(beanOf(className));
     }
 
     @Override
@@ -79,14 +93,25 @@ public final class CdiProxifierTransformer implements ClassTransformerPlugin {
         var scopeCache = scopeCaches.computeIfAbsent(archive, a -> new ConcurrentHashMap<>());
         BeanWeavingAnalysis.ByteResolver resolver = archive::classBytes;
         try {
-            if (!BeanWeavingAnalysis.isNormalScopedBeanClass(bytes, resolver, scopeCache)
-                    || !BeanWeavingAnalysis.needsMarker(bytes)) {
-                return null;
+            if (ProxyLinkWeaver.hasMarkerConstructor(bytes)) {
+                return null; // already woven (build tier, or an earlier definition)
             }
+            var placed = archive.placedProxyTypes().contains(className);
+            if (!placed) {
+                // A declared bean keeps the load-time gate: only a bean without a usable
+                // no-arg constructor needs the marker here.
+                if (!BeanWeavingAnalysis.needsMarker(bytes)
+                        || !BeanWeavingAnalysis.isNormalScopedBeanClass(bytes, resolver, scopeCache)) {
+                    return null;
+                }
+            }
+            // A placed produced type gets the marker whenever it lacks one: its constructor is
+            // third-party code, and a placed proxy must never run it, no-arg or not (#24).
             // A superclass that itself needs weaving will be woven at its own definition:
-            // declare the archive's beans as weavable candidates so the chain resolves.
-            var chain = BeanWeavingAnalysis.superChain(bytes, resolver,
-                    archive.beansList().orElse(Set.of()), new java.util.HashMap<>());
+            // declare the archive's beans (and every placed type) as weavable candidates so
+            // the chain resolves.
+            var chain = BeanWeavingAnalysis.superChain(bytes, resolver, weavable(archive),
+                    new HashMap<>());
             if (chain == null) {
                 // No side-effect-free chain: leave the class alone, deployment validation
                 // will produce the regular vauban#24 diagnostic
@@ -104,22 +129,36 @@ public final class CdiProxifierTransformer implements ClassTransformerPlugin {
      * identical (idempotence).
      */
     private byte[] retargetIfBeanWoven(String proxyName, byte[] proxyBytes, ArchiveContext archive) {
-        var beanName = proxyName.substring(0, proxyName.length() - CLIENT_PROXY_SUFFIX.length());
+        var beanName = beanOf(proxyName);
         var beanBytes = archive.classBytes(beanName);
         if (beanBytes == null) return null;
         try {
+            var placed = archive.placedProxyTypes().contains(beanName);
             var beanWillHaveMarker = ProxyLinkWeaver.hasMarkerConstructor(beanBytes)
-                    || (BeanWeavingAnalysis.needsMarker(beanBytes)
+                    || ((placed || (BeanWeavingAnalysis.needsMarker(beanBytes)
                             && BeanWeavingAnalysis.isNormalScopedBeanClass(beanBytes,
                                     archive::classBytes,
-                                    scopeCaches.computeIfAbsent(archive, a -> new ConcurrentHashMap<>()))
+                                    scopeCaches.computeIfAbsent(archive, a -> new ConcurrentHashMap<>()))))
                             && BeanWeavingAnalysis.superChain(beanBytes, archive::classBytes,
-                                    archive.beansList().orElse(Set.of()),
-                                    new java.util.HashMap<>()) != null);
+                                    weavable(archive), new HashMap<>()) != null);
             if (!beanWillHaveMarker) return null;
             return ProxyLinkWeaver.retargetProxyConstructor(proxyBytes);
         } catch (IllegalArgumentException unparseable) {
             return null;
         }
+    }
+
+    /** The archive's declared beans plus every placed produced type: all may be woven. */
+    private static Set<String> weavable(ArchiveContext archive) {
+        var beans = archive.beansList().orElse(Set.of());
+        var placed = archive.placedProxyTypes();
+        if (placed.isEmpty()) return beans;
+        var all = new HashSet<>(beans);
+        all.addAll(placed);
+        return all;
+    }
+
+    private static String beanOf(String proxyName) {
+        return proxyName.substring(0, proxyName.length() - CLIENT_PROXY_SUFFIX.length());
     }
 }
