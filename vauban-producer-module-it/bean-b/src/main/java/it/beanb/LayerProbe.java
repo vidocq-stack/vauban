@@ -61,9 +61,13 @@ public final class LayerProbe {
             Handle handle = container.select(Handle.class);
             put(out, "handleId", handle.id());
 
-            // An INHERITED package-private member: the placed proxy must override it too.
+            // An INHERITED package-private member: the placed proxy must override it too. BaseHooked
+            // has only a business constructor, so the loader must weave it as well for the proxy
+            // to have a side-effect-free chain.
             it.liba.Hooked hooked = container.select(it.liba.Hooked.class);
+            put(out, "hookedConstructionsAfterSelect", String.valueOf(it.liba.BaseHooked.constructions()));
             put(out, "inheritedForward", new it.liba.HookCaller().call(hooked));
+            put(out, "hookedConstructionsAfterUse", String.valueOf(it.liba.BaseHooked.constructions()));
 
             // vauban#24 for a third-party type: the proxy must not run the business constructor.
             Counted counted = container.select(Counted.class);

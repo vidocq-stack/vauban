@@ -29,8 +29,22 @@ public class BaseHooked {
 
     private final String token;
 
+    private static final java.util.concurrent.atomic.AtomicInteger CONSTRUCTIONS =
+            new java.util.concurrent.atomic.AtomicInteger();
+
+    /**
+     * The only constructor is a business one: no usable no-arg constructor, so the Vauban loader
+     * has to weave this superclass as well for the placed proxy of {@code Hooked} to have a
+     * side-effect-free chain.
+     */
     protected BaseHooked(String token) {
+        CONSTRUCTIONS.incrementAndGet();
         this.token = token;
+    }
+
+    /** How many times the business constructor ran — a placed proxy must not add to it (#24). */
+    public static int constructions() {
+        return CONSTRUCTIONS.get();
     }
 
     String hook() {

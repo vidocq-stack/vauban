@@ -83,12 +83,41 @@ class VaubanLayerPlacementTest {
         assertEquals("hook:real", r.get("inheritedForward"),
                 "HookCaller.call() invokes the inherited BaseHooked.hook() on the proxy; an un-forwarded "
                         + "call would read the proxy's own null token and answer hook:null");
+        // ...and BaseHooked has only a business constructor: the loader must weave it too, or the
+        // placed proxy would run it (the #24 double construction, one level up).
+        assertEquals("0", r.get("hookedConstructionsAfterSelect"),
+                "creating Hooked's placed proxy must not run BaseHooked's business constructor");
+        assertEquals("1", r.get("hookedConstructionsAfterUse"), "only the contextual instance is built");
 
         // vauban#24 for a third-party type: exactly one construction, and none for the proxy.
         assertEquals("0", r.get("constructionsAfterSelect"),
                 "creating the client proxy must not run the third-party constructor");
         assertEquals("1", r.get("constructionsAfterFirstUse"));
         assertEquals("1", r.get("constructionsAfterSecondUse"), "@ApplicationScoped: exactly one instance");
+    }
+
+    @Test
+    @DisplayName("with the boot-time open switched on, a placeable library is still not opened")
+    void placementComesBeforeTheBootTimeOpen() throws Throwable {
+        // Each Launch.run builds a fresh layer, so this layer's it.liba starts unopened whatever
+        // other tests did. With vauban.opens.auto=true, OpensApplier would open it through the agent
+        // if it did not first ask the loader whether it can place the proxies: it must not need to.
+        System.setProperty(Launch.KEEP_PROPERTY, "org.junit,org.apiguardian,org.opentest4j");
+        System.setProperty("vauban.opens.auto", "true");
+        System.clearProperty(LaunchedMain.RESULT_PROPERTY);
+        try {
+            Launch.run("it.beanb/it.beanb.LaunchedMain", new String[0]);
+        } finally {
+            System.clearProperty(Launch.KEEP_PROPERTY);
+            System.clearProperty("vauban.opens.auto");
+        }
+        var report = System.getProperty(LaunchedMain.RESULT_PROPERTY);
+        assertNotNull(report, "the launched main must have run inside the layer and reported");
+        var r = parse(report);
+        assertEquals("false", r.get("libOpenedToCore"),
+                "placement comes first: a package whose proxies the loader places needs no opens, "
+                        + "even when the container is allowed to open packages at boot");
+        assertEquals("internal:real", r.get("forward"));
     }
 
     private static Map<String, String> parse(String report) {
