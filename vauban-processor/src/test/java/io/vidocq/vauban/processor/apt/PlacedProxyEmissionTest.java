@@ -161,6 +161,31 @@ class PlacedProxyEmissionTest {
         assertTrue(methods.contains("run"), "the public surface is forwarded as well. Methods: " + methods);
     }
 
+    private static final String APP_TWO_PRODUCERS = """
+            package app;
+            import jakarta.enterprise.context.ApplicationScoped;
+            import jakarta.enterprise.inject.Produces;
+            import jakarta.inject.Named;
+            @ApplicationScoped
+            public class TwoProducers {
+                @Produces @ApplicationScoped @Named("first") public lib.Gadget first() { return new lib.Gadget(); }
+                @Produces @ApplicationScoped @Named("second") public lib.Gadget second() { return new lib.Gadget(); }
+            }
+            """;
+
+    @Test
+    @DisplayName("two producers of the same placed type ship its bytes once, without a warning")
+    void twoProducersOfTheSamePlacedTypeShipOnce() throws Exception {
+        var lib = compileDependency(LIB_GADGET);
+        var result = compileApp(lib, APP_TWO_PRODUCERS);
+        assertTrue(result.success(), "the application must compile: " + result.messages());
+        assertTrue(Files.exists(result.classes().resolve("META-INF/vauban/placed/lib/Gadget_ClientProxy.class")),
+                "the placed bytes must be shipped");
+        assertFalse(result.messages().stream().anyMatch(m -> m.contains("Could not ship the placed proxy")),
+                "creating the resource again for the second producer must not surface as a warning "
+                        + "(nor fail a -Werror build): " + result.messages());
+    }
+
     // ---- Helpers -------------------------------------------------------------------------------
 
     record CompilationResult(boolean success, List<String> messages, Path classes) {}

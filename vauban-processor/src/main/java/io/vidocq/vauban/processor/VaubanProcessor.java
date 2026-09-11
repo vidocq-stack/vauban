@@ -1168,6 +1168,16 @@ public class VaubanProcessor extends AbstractProcessor {
      * @return whether the bytes were written
      */
     private boolean writePlacedProxy(TypeElement producedType, String producedFqn) {
+        // Once per produced type: several producers of the same type (qualifiers) are valid CDI,
+        // and creating the same resource twice fails with FilerException.
+        return placedProxyOutcomes.computeIfAbsent(producedFqn,
+                fqn -> emitPlacedProxy(producedType, fqn));
+    }
+
+    /** Outcome of the placed-proxy emission, per produced type. */
+    private final java.util.Map<String, Boolean> placedProxyOutcomes = new java.util.HashMap<>();
+
+    private boolean emitPlacedProxy(TypeElement producedType, String producedFqn) {
         try {
             // Co-located shape: the placed proxy lives in the produced type's package, so it can —
             // and must — also override the non-public members the type inherits.
