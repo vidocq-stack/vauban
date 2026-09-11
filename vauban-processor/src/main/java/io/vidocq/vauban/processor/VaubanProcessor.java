@@ -107,6 +107,8 @@ public class VaubanProcessor extends AbstractProcessor {
 
     private static final String BEANS_LIST_PATH = "META-INF/vauban-beans.list";
     private static final String REQUIRED_OPENS_PATH = "META-INF/vauban/required-opens.list";
+    /** Where the co-located proxy bytes of a listed produced type are shipped (#42 Stage 4). */
+    private static final String PLACED_PREFIX = "META-INF/vauban/placed/";
     private static final String BCE_RUNTIME_LIST_PATH = "META-INF/vauban-bce-runtime.list";
 
     // Beans accumulate across APT rounds: companion processors (e.g. mansart-data-processor)
@@ -559,24 +561,33 @@ public class VaubanProcessor extends AbstractProcessor {
                         processingEnv.getElementUtils().getBinaryName(producedType).toString();
                 var verdict = ProducerProxyEligibility.of(producedType);
                 if (!verdict.eligible()) {
-                    // Stage 3b: record the produced type so the boot-time OpensApplier can open its
-                    // package to the container via the agent (only if it is in a named module at
-                    // runtime), keeping zero hand-written --add-opens for the runtime fallback.
+                    // The produced type's proxy must live in the type's own package. Record it in
+                    // the placement manifest (META-INF/vauban/required-opens.list): in a Vauban
+                    // layer the class loader that owns that package places the proxy there (#42
+                    // Stage 4); elsewhere the boot-time OpensApplier may open the package for the
+                    // reflective fallback (Stage 3b, opt-in).
                     requiredOpens.add(producedFqn);
-                    // Stage 3: the produced class type is not build-time proxyable across a module
-                    // boundary. On the module path the runtime falls back to reflective generation,
-                    // which needs an `opens`. Severity is configurable via -Avauban.producerProxy
-                    // (error|warn|note, default note) so a project can enforce zero-fallback.
+                    var placed = isPlaceable(verdict) && writePlacedProxy(producedType, producedFqn);
+                    // Severity is configurable via -Avauban.producerProxy (error|warn|note,
+                    // default note) so a project can enforce zero-fallback.
                     processingEnv.getMessager().printMessage(
                             producerProxyDiagnosticKind(),
-                            "[Vauban] Producer of " + producedFqn + " is not build-time proxyable ("
-                                    + verdict + "). On the module path the runtime will reflectively "
-                                    + "generate its proxy, which needs `opens " + packageOfFqn(producedFqn)
-                                    + " to io.vidocq.vauban.core;`. To keep zero opens: produce an "
+                            "[Vauban] Producer of " + producedFqn + " needs its client proxy inside "
+                                    + packageOfFqn(producedFqn) + " (" + verdict + "). "
+                                    + (placed
+                                            ? "Its co-located proxy is shipped under "
+                                                    + PLACED_PREFIX + " and the Vauban class loader "
+                                                    + "defines it there when the application runs in a "
+                                                    + "Vauban layer — zero opens, no agent: start through "
+                                                    + "io.vidocq.vauban.classloader.Launch (or Vauban.run). "
+                                            : "")
+                                    + "On a bare module path the runtime generates it reflectively, "
+                                    + "which needs `opens " + packageOfFqn(producedFqn)
+                                    + " to io.vidocq.vauban.core;`. To keep zero opens there: produce an "
                                     + "interface type, make the produced type fully public (public "
                                     + "non-final class, public overridable methods, a public/protected "
-                                    + "constructor), add the (ProxyLink) constructor upstream, or open "
-                                    + "the package.");
+                                    + "constructor), add the (ProxyLink) constructor upstream, run "
+                                    + "vauban:enhance-dependencies, or open the package.");
                     continue;
                 }
                 var producerPkg = packageOfFqn(bean.beanClass().value());
@@ -1132,6 +1143,50 @@ public class VaubanProcessor extends AbstractProcessor {
      * if it is in a named module — opens its package to {@code io.vidocq.vauban.core} via the agent,
      * so the runtime fallback needs no hand-written {@code --add-opens}.
      */
+    /**
+     * Whether a produced type with this verdict can be proxied at all once the proxy sits in the
+     * type's own package: a non-public overridable member and an inaccessible constructor are
+     * cross-package obstacles only. A final or sealed class, a final method or an abstract class
+     * are unproxyable anywhere (CDI 4.1 §3.10), so nothing is shipped for them.
+     */
+    private static boolean isPlaceable(ProducerProxyEligibility.Reason verdict) {
+        return switch (verdict) {
+            case PROTECTED_VIRTUALS, PACKAGE_PRIVATE_VIRTUALS, NO_ACCESSIBLE_CTOR -> true;
+            default -> false;
+        };
+    }
+
+    /**
+     * Emit the co-located client proxy of {@code producedType} as bytecode and ship it as a
+     * resource of this bean archive (issue #42, Stage 4). The processor can neither write a source
+     * proxy into another module's package (split package) nor define a class there; a resource
+     * it can. The Vauban class loader, which owns that package when the application runs in a
+     * Vauban layer, defines the class into it at runtime — zero {@code opens}, no agent, no
+     * rewritten jar — and the cdi-proxifier retargets it onto the {@code (ProxyLink)} entry
+     * constructor it weaves into the produced type, so the third-party constructor never runs.
+     *
+     * @return whether the bytes were written
+     */
+    private boolean writePlacedProxy(TypeElement producedType, String producedFqn) {
+        try {
+            var shape = ClientProxyShapeFromElements.from(producedType,
+                    processingEnv.getElementUtils(), processingEnv.getTypeUtils());
+            var bytes = io.vidocq.vauban.core.proxy.ClientProxyEmitter.emit(shape);
+            var path = PLACED_PREFIX + shape.proxyClassName().replace('.', '/') + ".class";
+            var resource = processingEnv.getFiler().createResource(
+                    StandardLocation.CLASS_OUTPUT, "", path);
+            try (var out = resource.openOutputStream()) {
+                out.write(bytes);
+            }
+            return true;
+        } catch (IOException | RuntimeException e) {
+            processingEnv.getMessager().printMessage(Diagnostic.Kind.WARNING,
+                    "[Vauban] Could not ship the placed proxy for " + producedFqn + ": " + e
+                            + " — the runtime fallback (opens) remains available.");
+            return false;
+        }
+    }
+
     private void writeRequiredOpens(java.util.Set<String> producedTypeFqns) {
         if (producedTypeFqns.isEmpty()) return;
         try {
