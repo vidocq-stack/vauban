@@ -28,6 +28,57 @@ ____
 Ron Pressler's *integrity by default* (JEP draft 8305968) makes `--add-opens` a dead end long-term,
 so the expert group is looking for a portable answer.
 
+== Why the proxy must live in the target's package
+
+Everything above hangs on one line of the CDI specification. The "Unproxyable bean types" section
+(§3.10) declares unproxyable:
+
+[quote]
+____
+classes which have non-static, *final* methods with *public*, *protected* or *default* visibility
+____
+
+What is *absent* from that list is as telling as what is in it.
+
+`private` is absent::
+A private method is not overridable at all, so a client proxy — a subclass — never sees it. It is
+never forwarded and never intercepted, and that is harmless: a caller holding the proxy cannot
+invoke it, and self-invocation (`this.helper()`) runs on the *contextual instance*, not on the
+proxy. Private methods are a non-issue.
+
+`default` (package-private) is present::
+That only makes sense if the container is *expected to override* non-final package-private methods —
+otherwise a `final` package-private method could not possibly make a type unproxyable. And a
+subclass can override a package-private method only from **the same runtime package**.
+
+So the specification implicitly requires the client proxy to sit in the proxied type's package. That
+single requirement is what forces `defineClass` into someone else's package, which forces `opens`,
+which is issue #1015. The whole chain hangs on it.
+
+`protected` has a second, subtler trap: a subclass may *override* a protected method from any
+package, but forwarding it means calling `instance.method()` on an instance other than `this`, which
+https://docs.oracle.com/javase/specs/jls/se25/html/jls-6.html#jls-6.6.2[JLS §6.6.2] forbids outside
+the declaring package. A cross-package proxy can inherit such a method but cannot delegate it.
+
+Vauban's `ProducerProxyEligibility` encodes exactly these three outcomes:
+
+[cols="1,3"]
+|===
+|Verdict |Meaning
+
+|`FINAL_VIRTUALS`
+|A non-static `final` method — unproxyable *by the specification itself*, no strategy helps.
+
+|`PROTECTED_VIRTUALS`
+|An overridable `protected` method — overridable cross-package, but not *forwardable* (JLS §6.6.2).
+
+|`PACKAGE_PRIVATE_VIRTUALS`
+|An overridable package-private method — not even overridable cross-package.
+|===
+
+The last two are not specification violations: they are the cases where Vauban declines the
+cross-package build-time proxy and falls back to the levers described below.
+
 == What this example shows
 
 [cols="1,3"]
@@ -89,16 +140,73 @@ abstract *and* `default` — to the contextual instance. No `java.lang.reflect.P
 Weld would place the `PaymentGateway` proxy into the library's package and require
 `--add-opens io.vidocq.vauban.example.cdi1015.lib/…=weld.core.impl`. Vauban needs nothing.
 
-== The residual case (not covered here)
+== The residual case
 
-If a produced class is **not** fully public (package-private or protected methods, no accessible
-constructor, a final method), it cannot be proxied at build time across the module boundary. Vauban
-then offers two `--add-opens`-free levers, described in the reference docs:
+If a produced class is **not** fully public (package-private or protected overridable methods, no
+accessible constructor), it cannot be proxied at build time *across* the module boundary.
 
-* the container opens the module itself at boot via `Instrumentation.redefineModule` (an accepted
-  deployment-time trust choice), or
-* the opt-in `vauban:enhance-dependencies` goal, which rewrites a copy of the dependency jar so the
-  proxy is co-located in the type's own package.
+=== Why not `MethodHandles.privateLookupIn`?
 
-See the xref:vauban:internals.adoc#proxy-strategies[client-proxy strategies] in the Vauban docs for
+The reflex is to reach for a `Lookup`. It does not work: `privateLookupIn` is not a way *around*
+`opens`, it is the API that *consumes* it. `MethodHandles.privateLookupIn(Target.class, lookup)`
+throws `IllegalAccessException` when the target's module does not open the target's package to the
+caller's module. Every variant runs into the same wall:
+
+[cols="2,3"]
+|===
+|Attempt |Outcome
+
+|`privateLookupIn` + `Lookup.defineClass`
+|Requires `opens` upstream — circular.
+
+|`defineHiddenClass(…, NESTMATE)` (private access to the nest!)
+|Requires a full-power `Lookup` with PACKAGE access on the target package — same problem.
+
+|A `Lookup` donated by the library itself
+|Works, but requires *modifying the library* — exactly what a CDI-agnostic dependency will not do.
+
+|Defining the proxy under the same package name in another class loader
+|A runtime package is (loader, name): a different loader means a different package, so
+package-private access fails with `IllegalAccessError`. Using the *same* loader is worse — the
+package already belongs to a named module there, producing a split-package `LinkageError`.
+|===
+
+A `Lookup` with PACKAGE access on package `p` of module `M` can be obtained in exactly two ways:
+`MethodHandles.lookup()` called from *inside* `M.p`, or `privateLookupIn` — which asks for `opens`
+again. There is no third door, and that is by design: a module's encapsulation cannot be
+self-granted.
+
+=== What Vauban does instead
+
+Two `--add-opens`-free levers, both documented in the reference docs:
+
+* **At runtime** — the container opens the module itself at boot via
+  `Instrumentation.redefineModule`, from an agent it self-attaches. No command-line flag, but it is
+  still an `opens`, merely granted by the deployment rather than by the launcher. Caveat:
+  integrity by default will make dynamic agent attachment opt-in.
+* **At build time** — the opt-in `vauban:enhance-dependencies` goal. Rather than asking the module
+  to open up, it *moves the proxy inside the module*: it produces an enhanced **copy** of the
+  dependency jar containing the `<Type>_ClientProxy` co-located in the type's own package, a
+  `_VaubanComponents` provider per package, and a rewritten `module-info.class` declaring
+  `provides VaubanComponentProvider`. Package-private and protected forwarding then become legal by
+  plain Java rules. **Zero `opens`, ever.** The original jar is untouched; the copy shadows it on
+  the module path (its signature is invalidated, hence the opt-in).
+
+Truly unproxyable types in the specification's sense (`final` class, `final` method, abstract, no
+non-private constructor) remain deployment errors — no trick saves those.
+
+See the link:https://doc.vidocq.dev/vauban/dev/internals.html#proxy-strategies[client-proxy strategies] in the Vauban docs for
 the full decision table.
+
+== A note for the expert group
+
+In the #1015 scenario specifically, the package-private requirement is **vacuous in practice**. Who
+can call a package-private method on the bean? Only code in the same package of the same module —
+that is, the library itself. But the library is CDI-agnostic: nothing in it receives the client
+proxy by injection, so nobody is in a position to make that call. We would be paying an
+`--add-opens` to preserve a capability no one can exercise.
+
+The proxyability rule was written for beans declared *inside* a bean archive. Applying it verbatim
+to a `@Produces` method returning a third-party type is a scope mismatch. Two defensible answers:
+either the specification mandates a deployment error for that case, or it allows the container to
+restrict the proxy to `public` members when the produced type comes from a module that is not open.
