@@ -982,3 +982,78 @@ while `resolvedGat.equals(jdkGat)` was false (asymmetric), and the anonymous
     no `@Discovery`/validation, so it cannot compensate). Docs fixed on the Mansart side
     (getting-started now wires `mansart-data-cdi` on the processor path); this entry tracks
     the diagnostic improvement in the APT itself.
+
+---
+
+## VAU-INT-006 — `@AroundInvoke` interceptors fire on `@PostConstruct` / `@PreDestroy` lifecycle callbacks
+- **Date**: 2026-09-11 — **Status**: OPEN
+- **Severity**: medium (spec violation; concrete effect: a class-level `@Transactional` — or any
+  business-method interceptor such as `@Retry`, `@Timed`, `@Logged` — wraps the bean's lifecycle
+  callbacks, which neither Weld nor ArC do; a transaction is opened around `@PostConstruct` and
+  `@PreDestroy`, and metrics/logging see phantom "business" invocations named `init`/`dispose`)
+- **Surfaced by**: a request-scope probe on `vauban-module-it` (APT path, module path, zero opens)
+  while checking that normal scopes compose with `$$Intercepted`. Scope behaviour itself is correct
+  (one `$$Intercepted` per request, `ContextNotActiveException` outside a request, callbacks on the
+  right instance). No existing test covers the `@AroundInvoke` × lifecycle-callback boundary.
+
+### Symptom
+For a `@RequestScoped @Audited` bean with package-private `@PostConstruct void init()` and
+`@PreDestroy void dispose()`, the `@Audited` interceptor's `@AroundInvoke` records:
+```
+CALLS = [init/0, id/0, id/0, thisClass/0, outer/0, inner/0, viaCollaborator/0, dispose/0]
+```
+`init/0` and `dispose/0` must not be there. Jakarta Interceptors 2.2 §2.2/§5: `@AroundInvoke` applies
+to **business method** invocations only; lifecycle callbacks are intercepted solely by the interceptor's
+own `@PostConstruct`/`@PreDestroy` methods, and `InvocationContext.getMethod()` is `null` for them. Here
+`getMethod()` returned the callback `Method` and the chain ran as a business invocation.
+
+### Repro
+```java
+@RequestScoped @Audited
+public class RequestAuditedService {
+    @PostConstruct void init() {}
+    @PreDestroy  void dispose() {}
+    public int id() { return 1; }
+}
+// boot VaubanContainer with AuditInterceptor (@AroundInvoke records ctx.getMethod().getName())
+container.requestContext().runInScope(() -> service.id());
+// observed: CALLS contains "init" and "dispose"; expected: only "id"
+```
+Same outcome on the APT path (`vauban-module-it`, source-rendered `$$Intercepted`) and, by
+construction, on the runtime/weaver fallback — both share the same override filter.
+
+### Cause
+Both override filters exclude `@Inject` initializer methods and target-class `@AroundInvoke` methods,
+but **not lifecycle callbacks**:
+- APT: `InterceptedShapeFromElements.shouldIntercept` (vauban-processor) — checks `INJECT`, `AROUND_INVOKE`.
+- Runtime: `InterceptorSubclassGenerator.shouldIntercept` (vauban-core) — same two checks.
+
+So a non-private, non-final `@PostConstruct`/`@PreDestroy` method is overridden in `<Bean>$$Intercepted`
+like any business method (confirmed in the generated source: `@Override public void init()` /
+`dispose()` build a `VaubanInvocationContext` and call `proceed()`). `BeanLifecycle` then invokes the
+callback by **virtual dispatch on the `$$Intercepted` instance** (`vaubanLookup.invokeMethod(instance,
+pcMethod)`, with `pcMethod` resolved on the superclass) → the override runs → the `@AroundInvoke`
+chain fires. The dedicated lifecycle chain (`resolveLifecycleChain(..., PostConstruct.class, ...)`)
+is built correctly on top of that — the defect is only the extra business-chain wrap.
+
+### Proposed fix
+Exclude every Jakarta lifecycle-callback annotation from both `shouldIntercept` filters (single
+authority — `InterceptedShape`/shared IR — so APT, runtime emitter and weaver stay in lockstep):
+`jakarta.annotation.PostConstruct`, `jakarta.annotation.PreDestroy`, `jakarta.interceptor.AroundConstruct`,
+`jakarta.interceptor.AroundTimeout`, `jakarta.ejb.PostActivate` / `PrePassivate` (name-based, no symbol
+completion — cf. VAU-INT-005). Add a regression test to `vauban-module-it` (APT, module path) and to
+`vauban-core` asserting that an `@AroundInvoke` interceptor never sees a lifecycle callback and that
+`InvocationContext.getMethod()` is `null` inside lifecycle interceptor methods.
+
+### Why the CDI TCK did not catch it
+The TCK has the exact fixture (`Goat` + `AnimalInterceptor` in `LifecycleCallbackInterceptorTest`) but
+only asserts the positive path (lifecycle interceptor methods *are* called); its `@AroundInvoke` records
+nothing and no test asserts it was *not* invoked for a callback. The only `assertFalse(methodIntercepted)`
+cover `Object` methods and `@Inject` initializers — the two cases the filter already excludes. Details
+and a proposed upstream assertion: `CDI_TCK_PROPOSALS.md` → `TCK-GAP-001`.
+
+### Investigations
+- 2026-09-11 : reproduced on `vauban-module-it` (0.4.0-SNAPSHOT, APT path). Root cause traced to the two
+  `shouldIntercept` filters above; generated `RequestAuditedService$$Intercepted` confirmed to override
+  `init()`/`dispose()`. Probe fixtures removed after the run (not committed).
+- 2026-09-11 : TCK 4.1.0 coverage analysed (`cdi-tck-core-impl` sources) — gap documented as `TCK-GAP-001`.
