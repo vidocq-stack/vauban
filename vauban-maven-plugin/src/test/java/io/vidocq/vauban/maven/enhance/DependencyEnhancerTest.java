@@ -40,6 +40,7 @@ import java.util.jar.JarOutputStream;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /** Stage 2 (issue #42): enhancing a modular dependency jar adds a co-located proxy, a provider, and a rewritten module-info. */
@@ -66,8 +67,8 @@ class DependencyEnhancerTest {
         }
 
         var warnings = new ArrayList<String>();
-        var result = DependencyEnhancer.enhance(
-                srcJar, tmp.resolve("enhanced"), List.of(fqn), getClass().getClassLoader(), warnings);
+        var result = DependencyEnhancer.enhance(srcJar, "org.example:libwidget:1.0",
+                tmp.resolve("enhanced"), List.of(fqn), getClass().getClassLoader(), warnings);
 
         assertTrue(warnings.isEmpty(), "no warnings expected, got: " + warnings);
         assertNotNull(result.enhancedJar());
@@ -100,6 +101,58 @@ class DependencyEnhancerTest {
                                     && p.providers().contains(
                                             "io.vidocq.vauban.maven.enhance.fixture._VaubanComponents")),
                     "JDK ModuleDescriptor must see the provides with the generated provider");
+        }
+    }
+
+
+    @Test
+    @DisplayName("records provenance in the manifest and drops the inherited signature")
+    void recordsProvenanceAndStripsSignature(@TempDir Path tmp) throws Exception {
+        var fqn = Widget.class.getName();
+        var srcJar = tmp.resolve("signed-libwidget.jar");
+        byte[] moduleInfo = ClassFile.of().buildModule(ModuleAttribute.of(
+                ModuleDesc.of("fixture.mod"),
+                mb -> mb.requires(ModuleRequireInfo.of(
+                        ModuleDesc.of("java.base"), ClassFile.ACC_MANDATED, null))));
+        byte[] widgetBytes;
+        try (var is = getClass().getResourceAsStream("/" + PKG + "Widget.class")) {
+            widgetBytes = is.readAllBytes();
+        }
+        // A signed jar: a manifest carrying per-entry digests, plus the signature block.
+        var manifest = ("Manifest-Version: 1.0\r\nCreated-By: test\r\n\r\n"
+                + "Name: " + PKG + "Widget.class\r\nSHA-256-Digest: bogus=\r\n\r\n")
+                .getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        try (var out = new JarOutputStream(Files.newOutputStream(srcJar))) {
+            put(out, "META-INF/MANIFEST.MF", manifest);
+            put(out, "META-INF/VENDOR.SF", "Signature-Version: 1.0\r\n".getBytes());
+            put(out, "META-INF/VENDOR.RSA", new byte[] {1, 2, 3});
+            put(out, "module-info.class", moduleInfo);
+            put(out, PKG + "Widget.class", widgetBytes);
+        }
+        var expectedDigest = "sha256:" + java.util.HexFormat.of().formatHex(
+                java.security.MessageDigest.getInstance("SHA-256").digest(Files.readAllBytes(srcJar)));
+
+        var warnings = new ArrayList<String>();
+        var result = DependencyEnhancer.enhance(srcJar, "org.example:libwidget:1.0",
+                tmp.resolve("enhanced"), List.of(fqn), getClass().getClassLoader(), warnings);
+
+        try (var jar = new JarFile(result.enhancedJar().toFile())) {
+            assertNull(jar.getEntry("META-INF/VENDOR.SF"),
+                    "the inherited signature file must not be copied: the content it attests changed");
+            assertNull(jar.getEntry("META-INF/VENDOR.RSA"), "the signature block must not be copied");
+
+            var mf = jar.getManifest();
+            assertNotNull(mf, "the enhanced jar must keep a manifest");
+            assertEquals("org.example:libwidget:1.0",
+                    mf.getMainAttributes().getValue("Vauban-Enhanced-From"),
+                    "downstream tooling must be able to tell this is not the original artefact");
+            assertEquals(expectedDigest, mf.getMainAttributes().getValue("Vauban-Enhanced-Digest"),
+                    "the digest must pin the exact source artefact this copy was derived from");
+            assertNotNull(mf.getMainAttributes().getValue("Vauban-Enhanced-By"));
+            assertEquals("test", mf.getMainAttributes().getValue("Created-By"),
+                    "the original main attributes must survive");
+            assertTrue(mf.getEntries().isEmpty(),
+                    "per-entry digests belong to the discarded signature, they must not survive");
         }
     }
 

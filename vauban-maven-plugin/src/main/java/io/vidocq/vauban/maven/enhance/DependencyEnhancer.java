@@ -36,6 +36,9 @@ import java.util.Map;
 import java.util.jar.JarEntry;
 import java.util.jar.JarFile;
 import java.util.jar.JarOutputStream;
+import java.util.jar.Manifest;
+import java.security.MessageDigest;
+import java.util.HexFormat;
 
 /**
  * Produces an <em>enhanced copy</em> of a third-party dependency jar (issue #42, Stage 2 — the
@@ -53,6 +56,7 @@ import java.util.jar.JarOutputStream;
 public final class DependencyEnhancer {
 
     private static final String MODULE_INFO = "module-info.class";
+    private static final String MANIFEST = "META-INF/MANIFEST.MF";
     private static final String SERVICE_FILE = "META-INF/services/io.vidocq.vauban.api.VaubanComponentProvider";
 
     /** What an enhancement produced. */
@@ -65,8 +69,8 @@ public final class DependencyEnhancer {
      * {@code outputDir}. Types that cannot be proxied (final, abstract, interface, no accessible
      * constructor, or a non-static final method) are skipped with a warning.
      */
-    public static Result enhance(Path sourceJar, Path outputDir, List<String> typeFqns,
-            ClassLoader loader, List<String> warnings) throws IOException {
+    public static Result enhance(Path sourceJar, String coordinates, Path outputDir,
+            List<String> typeFqns, ClassLoader loader, List<String> warnings) throws IOException {
         // Generate proxies, grouped by package.
         var proxyBytesByName = new LinkedHashMap<String, byte[]>();
         var proxyFqnsByPackage = new LinkedHashMap<String, List<String>>();
@@ -110,10 +114,22 @@ public final class DependencyEnhancer {
 
         try (var in = new JarFile(sourceJar.toFile());
              var out = new JarOutputStream(Files.newOutputStream(enhancedJar))) {
+            // The manifest goes first so JarInputStream readers find it, and it is the one place
+            // where this copy declares that it is not the artefact the coordinates name.
+            writeEntry(out, MANIFEST, provenanceManifest(in, sourceJar, coordinates));
             var entries = in.entries();
             while (entries.hasMoreElements()) {
                 var entry = entries.nextElement();
                 var name = entry.getName();
+                if (name.equals(MANIFEST)) {
+                    continue; // rewritten above
+                }
+                if (isSignatureFile(name)) {
+                    // The content this signature attests no longer matches; carrying it over would
+                    // be misleading at best and a SecurityException at worst. Provenance is recorded
+                    // in the manifest instead.
+                    continue;
+                }
                 byte[] bytes;
                 try (InputStream is = in.getInputStream(entry)) {
                     bytes = is.readAllBytes();
@@ -191,5 +207,47 @@ public final class DependencyEnhancer {
     private static String packageOf(String fqn) {
         int dot = fqn.lastIndexOf('.');
         return dot < 0 ? "" : fqn.substring(0, dot);
+    }
+
+    /**
+     * The enhanced copy's manifest: the original main attributes, plus the provenance the copy owes
+     * to whoever reads it downstream (SBOM tooling, an attestation check, a puzzled human). The
+     * per-entry sections are dropped — they hold the digests of the discarded signature.
+     */
+    private static byte[] provenanceManifest(JarFile in, Path sourceJar, String coordinates)
+            throws IOException {
+        var manifest = in.getManifest();
+        var copy = new Manifest();
+        if (manifest != null) {
+            copy.getMainAttributes().putAll(manifest.getMainAttributes());
+        }
+        var main = copy.getMainAttributes();
+        main.putValue("Manifest-Version", "1.0");
+        main.putValue("Vauban-Enhanced-From", coordinates == null ? "unknown" : coordinates);
+        main.putValue("Vauban-Enhanced-Digest", digestOf(sourceJar));
+        main.putValue("Vauban-Enhanced-By", "vauban-maven-plugin/" + io.vidocq.vauban.api.Vauban.VERSION);
+        var bytes = new java.io.ByteArrayOutputStream();
+        copy.write(bytes);
+        return bytes.toByteArray();
+    }
+
+    /** {@code sha256:<hex>} over the source artefact, pinning exactly what this copy derives from. */
+    private static String digestOf(Path jar) throws IOException {
+        try {
+            var md = MessageDigest.getInstance("SHA-256");
+            return "sha256:" + HexFormat.of().formatHex(md.digest(Files.readAllBytes(jar)));
+        } catch (java.security.NoSuchAlgorithmException impossible) {
+            throw new IllegalStateException("SHA-256 is mandated by the platform", impossible);
+        }
+    }
+
+    /** A jar signature file: {@code META-INF/<name>.SF|.DSA|.RSA|.EC}, not in a subdirectory. */
+    private static boolean isSignatureFile(String name) {
+        if (!name.startsWith("META-INF/") || name.indexOf('/', "META-INF/".length()) >= 0) {
+            return false;
+        }
+        var upper = name.toUpperCase(java.util.Locale.ROOT);
+        return upper.endsWith(".SF") || upper.endsWith(".DSA")
+                || upper.endsWith(".RSA") || upper.endsWith(".EC");
     }
 }

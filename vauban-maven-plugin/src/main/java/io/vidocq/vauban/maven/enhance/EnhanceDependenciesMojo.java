@@ -102,7 +102,8 @@ public class EnhanceDependenciesMojo extends AbstractMojo {
             var outDir = outputDirectory.toPath();
             var warnings = new ArrayList<String>();
             for (var e : byJar.entrySet()) {
-                var result = DependencyEnhancer.enhance(e.getKey(), outDir, e.getValue(), classLoader, warnings);
+                var result = DependencyEnhancer.enhance(e.getKey(), coordinatesOf(e.getKey()),
+                        outDir, e.getValue(), classLoader, warnings);
                 if (result.enhancedJar() != null) {
                     log.info("Vauban: enhanced " + e.getKey().getFileName() + " -> "
                             + result.enhancedJar().getFileName() + " (" + result.enhancedTypes().size()
@@ -113,11 +114,28 @@ public class EnhanceDependenciesMojo extends AbstractMojo {
                 log.warn(w);
             }
             log.info("Vauban enhance-dependencies: enhanced copies in " + outDir + ". Put them on the "
-                    + "module path ahead of the originals — they shadow the originals and their jar "
-                    + "signatures are invalidated.");
+                    + "module path ahead of the originals — they shadow the originals. Each copy "
+                    + "drops the original jar signature and records its origin in the manifest "
+                    + "(Vauban-Enhanced-From / -Digest); declare them as such to any SBOM or "
+                    + "provenance tooling in your pipeline.");
         } catch (Exception e) {
             throw new MojoExecutionException("Vauban dependency enhancement failed", e);
         }
+    }
+
+    /**
+     * The Maven coordinates of the dependency that {@code jar} is the artefact of, so the enhanced
+     * copy can name its origin. Falls back to the file name when the jar is not a project artefact.
+     */
+    private String coordinatesOf(Path jar) {
+        for (var artifact : project.getArtifacts()) {
+            var file = artifact.getFile();
+            if (file != null && file.toPath().equals(jar)) {
+                return artifact.getGroupId() + ":" + artifact.getArtifactId() + ":"
+                        + artifact.getVersion();
+            }
+        }
+        return jar.getFileName().toString();
     }
 
     private static boolean containsEntry(Path jar, String entry) {
