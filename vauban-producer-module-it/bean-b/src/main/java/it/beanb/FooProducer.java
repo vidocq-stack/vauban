@@ -49,4 +49,27 @@ public class FooProducer {
     public Gadget produceGadget() {
         return new Gadget();
     }
+
+    /**
+     * #42 Stage 4 fixtures — three shapes whose proxy must live inside {@code it.liba}. On a bare
+     * module path they need an {@code opens}; in a Vauban layer the loader places the shipped
+     * proxy into the package, and the third-party constructor never runs.
+     */
+    @Produces
+    @ApplicationScoped
+    public it.liba.Pooled producePooled() {
+        return new it.liba.Pooled("real");
+    }
+
+    @Produces
+    @ApplicationScoped
+    public it.liba.Handle produceHandle() {
+        return it.liba.Handle.create();
+    }
+
+    @Produces
+    @ApplicationScoped
+    public it.liba.Counted produceCounted() {
+        return new it.liba.Counted();
+    }
 }

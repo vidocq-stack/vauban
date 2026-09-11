@@ -17,23 +17,22 @@
  *
  * SPDX-License-Identifier: EPL-2.0 OR EUPL-1.2 OR GPL-2.0-or-later
  */
+package it.liba;
+
 /**
- * Bean archive B: declares {@code @Produces @ApplicationScoped it.liba.Foo}. Compiled with the
- * Vauban APT, which generates {@code it.beanb._VaubanComponents} (declared via {@code provides}
- * below) for its own managed beans. The produced type {@code Foo} lives in {@code it.liba},
- * a module that opens nothing: today its client proxy falls to runtime generation and demands
- * {@code opens it.liba to io.vidocq.vauban.core}. Stage 1 (#42) makes that proxy build-time.
+ * A produced type with no accessible constructor: only a package-private one, reached through a
+ * static factory. A proxy outside {@code it.liba} has no reachable {@code super()} to chain to,
+ * so this shape genuinely needs an in-package proxy — placed there by the Vauban loader.
  */
-module it.beanb {
-    requires io.vidocq.vauban.core;
-    requires io.vidocq.vauban.classloader;   // the launcher, exercised by the layer IT
-    requires it.liba;
+public class Handle {
 
-    requires jakarta.cdi;
-    requires jakarta.inject;
+    Handle() {}
 
-    exports it.beanb;
+    public static Handle create() {
+        return new Handle();
+    }
 
-    provides io.vidocq.vauban.api.VaubanComponentProvider
-            with it.beanb._VaubanComponents;
+    public String id() {
+        return "handle";
+    }
 }

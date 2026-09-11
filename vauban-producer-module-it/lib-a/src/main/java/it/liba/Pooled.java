@@ -17,23 +17,30 @@
  *
  * SPDX-License-Identifier: EPL-2.0 OR EUPL-1.2 OR GPL-2.0-or-later
  */
+package it.liba;
+
 /**
- * Bean archive B: declares {@code @Produces @ApplicationScoped it.liba.Foo}. Compiled with the
- * Vauban APT, which generates {@code it.beanb._VaubanComponents} (declared via {@code provides}
- * below) for its own managed beans. The produced type {@code Foo} lives in {@code it.liba},
- * a module that opens nothing: today its client proxy falls to runtime generation and demands
- * {@code opens it.liba to io.vidocq.vauban.core}. Stage 1 (#42) makes that proxy build-time.
+ * A produced type with a package-private member that a sibling of its own package
+ * ({@link PooledPool}) invokes on instances handed to it. Its proxy must therefore live in
+ * {@code it.liba} and forward that member; in a Vauban layer the loader places it there.
+ *
+ * <p>State, on purpose: both methods derive their answer from it. A proxy that inherits a member
+ * instead of forwarding it runs against its own default-initialised field and answers
+ * {@code null}, so a test asserting the value actually discriminates.
  */
-module it.beanb {
-    requires io.vidocq.vauban.core;
-    requires io.vidocq.vauban.classloader;   // the launcher, exercised by the layer IT
-    requires it.liba;
+public class Pooled {
 
-    requires jakarta.cdi;
-    requires jakarta.inject;
+    private final String token;
 
-    exports it.beanb;
+    public Pooled(String token) {
+        this.token = token;
+    }
 
-    provides io.vidocq.vauban.api.VaubanComponentProvider
-            with it.beanb._VaubanComponents;
+    public String run() {
+        return "pooled:" + token;
+    }
+
+    String internalOnly() {
+        return "internal:" + token;
+    }
 }

@@ -17,23 +17,20 @@
  *
  * SPDX-License-Identifier: EPL-2.0 OR EUPL-1.2 OR GPL-2.0-or-later
  */
+package it.beanb;
+
 /**
- * Bean archive B: declares {@code @Produces @ApplicationScoped it.liba.Foo}. Compiled with the
- * Vauban APT, which generates {@code it.beanb._VaubanComponents} (declared via {@code provides}
- * below) for its own managed beans. The produced type {@code Foo} lives in {@code it.liba},
- * a module that opens nothing: today its client proxy falls to runtime generation and demands
- * {@code opens it.liba to io.vidocq.vauban.core}. Stage 1 (#42) makes that proxy build-time.
+ * The application entry point the launcher re-enters from inside the Vauban layer. It hands the
+ * probe's report back through a system property — the one channel that crosses the layer
+ * boundary without sharing a class.
  */
-module it.beanb {
-    requires io.vidocq.vauban.core;
-    requires io.vidocq.vauban.classloader;   // the launcher, exercised by the layer IT
-    requires it.liba;
+public final class LaunchedMain {
 
-    requires jakarta.cdi;
-    requires jakarta.inject;
+    public static final String RESULT_PROPERTY = "it.beanb.launched.result";
 
-    exports it.beanb;
+    private LaunchedMain() {}
 
-    provides io.vidocq.vauban.api.VaubanComponentProvider
-            with it.beanb._VaubanComponents;
+    public static void main(String[] args) {
+        System.setProperty(RESULT_PROPERTY, LayerProbe.probe());
+    }
 }
