@@ -129,6 +129,19 @@ sdk env
 java --module-path target/modules --module io.example/io.example.Main
 ----
 
+[TIP]
+====
+To run the application inside a Vauban layer instead of the boot layer — which is what lets a normal-scoped `@Produces` of a third-party class resolve with zero `opens`, and keeps the load-time agent out of IDE runs — start it through the launcher [.tag-new]#NEW#:
+
+[source,bash]
+----
+java --module-path target/modules \
+     --module io.vidocq.vauban.classloader/io.vidocq.vauban.classloader.Launch io.example/io.example.Main
+----
+
+Your `Main` is unchanged. See xref:se.adoc[Vauban in Java SE].
+====
+
 The annotation processor has emitted the `_Factory` classes for each bean, and the Maven plugin's `generate` goal has written the `META-INF/vauban-beans.list` bean index — both land in `${project.build.outputDirectory}` (`target/classes`). No reflection runs at startup: Vauban merely instantiates those factories then invokes the generated methods.
 
 == Three bean discovery modes

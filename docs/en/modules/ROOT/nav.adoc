@@ -1,6 +1,7 @@
 * xref:index.adoc[Vauban]
 ** xref:getting-started.adoc[Getting started]
 ** xref:usage.adoc[Usage]
+** xref:se.adoc[Vauban in Java SE]
 ** xref:concepts.adoc[Concepts]
 ** xref:internals.adoc[Internals]
 ** xref:tck.adoc[TCK]

@@ -178,17 +178,17 @@ The existing `CdiProxifierTransformer` is extended so a type listed in the place
 (`META-INF/vauban/required-opens.list`) gets the `(ProxyLink)` marker at definition and its placed
 proxy is retargeted onto it — closing the #24 residual for third-party produced types.
 
-- [ ] 1. vauban-classloader: `ArchiveContext.placedProxyTypes()` (SPI default), manifest aggregation,
+- [x] 1. vauban-classloader: `ArchiveContext.placedProxyTypes()` (SPI default), manifest aggregation,
       `VaubanClassLoader.placesClass()`, placement in `findClass`, transformer extension — unit test
       proves: placed class defined by the loader, superclass woven, business ctor never runs (#24).
-- [ ] 2. vauban-processor: emit the placed proxy bytes as a resource for every produced type written
+- [x] 2. vauban-processor: emit the placed proxy bytes as a resource for every produced type written
       to required-opens.list — compile-time test asserts the resource exists.
-- [ ] 3. vauban-core: `OpensApplier` placement-first (skip types the loader can place); the refusal
+- [x] 3. vauban-core: `OpensApplier` placement-first (skip types the loader can place); the refusal
       warning names the launcher first.
-- [ ] 4. vauban-classloader: `Launch` main (re-layer the boot layer's application modules, invoke the
+- [x] 4. vauban-classloader: `Launch` main (re-layer the boot layer's application modules, invoke the
       application main inside) + `VaubanApp` callback form.
-- [ ] 5. vauban-producer-module-it: layer probe (Pooled forwards `internal:real` with zero opens,
+- [x] 5. vauban-producer-module-it: layer probe (Pooled forwards `internal:real` with zero opens,
       Handle resolves, proxy module is it.liba, counting external ctor runs once) + launched-main test.
-- [ ] 6. Docs: new `se.adoc` (Vauban in Java SE), nav/index/getting-started links, internals strategy
+- [x] 6. Docs: new `se.adoc` (Vauban in Java SE), nav/index/getting-started links, internals strategy
       table + weaving tiers, reference (Launch, VaubanApp), whats-new (vidocq repo).
 - [ ] 7. Gate: full reactor, CDI Lite TCK 774, mutation (no placement → red), adversarial review.

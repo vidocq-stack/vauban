@@ -71,16 +71,37 @@ contextual instance. No dynamic proxy, no reflection. On the class path (non-APT
 |Zero `opens`; zero reflection on the build-time path (a `reflect.Proxy` only as the class-path
 fallback).
 
-|**Producer of a class that is not fully public** — package-private or protected
-overridable methods, no accessible constructor, or a non-static final method (CDI 4.1
-§3.10)
-|No build-time proxy can be placed across the module boundary. `RuntimeClientProxyGenerator`
-defines the proxy at runtime *into the produced type's own package*, which requires that
-module to open the package to the container. Two levers keep this `--add-opens`-free (below).
-|An `opens` (applied by the container) *or* a jar rewrite.
+|**Producer of a class whose proxy must live in its own package** — a package-private or
+protected overridable member, or no accessible constructor — *in a Vauban layer*
+[.tag-new]#NEW#
+|The APT ships the **co-located** proxy as bytecode in the bean archive
+(`META-INF/vauban/placed/…_ClientProxy.class`) and lists the type in the placement manifest
+(`META-INF/vauban/required-opens.list`). When the application runs in a Vauban layer — the
+xref:se.adoc[launcher], `Vidocq.run`, a dist — the `VaubanClassLoader` that defined the
+library module *defines the proxy into that package* on a `findClass` miss: a loader may
+define classes in a package it owns, and `opens` governs reflective access across modules,
+not this. The cdi-proxifier weaves the `(ProxyLink)` entry constructor into the produced type
+at definition and retargets the placed proxy onto it, so the third-party constructor never
+runs (vauban#24).
+|Zero `opens`, no agent, no rewritten jar; the library is used as shipped.
+
+|**Same shapes, on a bare boot layer** — no launcher
+|A loader Vauban does not own defines the library, so nothing can be placed.
+`RuntimeClientProxyGenerator` defines the proxy at runtime *into the produced type's own
+package*, which requires that module to open the package to the container. The container
+refuses by default and names the remedies, the launcher first. Two levers keep this
+`--add-opens`-free (below).
+|An `opens` (applied by the container, opt-in) *or* a jar rewrite.
+
+|**Producer of a class that is unproxyable outright** — `final` or `sealed` class, a
+non-static `final` public method, abstract class (CDI 4.1 §3.10)
+|No proxy can be built anywhere, co-located or not. A deployment error, as the
+specification requires; nothing is shipped.
+|Nothing helps — the type cannot be normal-scoped.
 |===
 
-The two levers that remove the hand-written `opens` of the last case:
+The two levers that remove the hand-written `opens` on a bare boot layer (in a Vauban layer,
+placement makes both unnecessary):
 
 * **The container opens the module itself** (#42, Stage 3b) — *opt-in, and on borrowed time*
   [.tag-new]#NEW#. The annotation processor lists the produced types that fall to runtime
@@ -231,6 +252,12 @@ Details worth knowing about the load-time tier:
   class loaded before the attach can no longer be woven. The hook therefore runs inside
   `VaubanContainerBuilder.build()` right after the index is final and before bean
   discovery, and the detection itself never loads classes.
+* **In a Vauban layer, no agent** [.tag-new]#NEW# — when the application runs under a
+  `VaubanClassLoader` (the xref:se.adoc[launcher], `Vidocq.run`, a dist), the loader's
+  cdi-proxifier transformer applies the same weaving *at class definition*; `LoadTimeWeaving`
+  detects the loader in the context class-loader chain and stands down. The transformer also
+  weaves the produced types listed in the placement manifest, which carry no scope annotation,
+  so a placed client proxy never chains a third-party constructor.
 * **Opt-out** — `-Dvauban.weaving.loadtime=disabled`; unwoven beans then fail deployment
   validation with the regular vauban#24 diagnostic. Explicit
   `-javaagent:vauban-weaver.jar=<plan>` is also supported (`Premain-Class`).

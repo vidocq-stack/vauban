@@ -1,0 +1,142 @@
+= Vauban in Java SE [.tag-new]#NEW#
+:description: Running a CDI SE application with Vauban — SeContainerInitializer, the launcher, and what running inside a Vauban layer changes.
+
+[.lead]
+Vauban is a CDI SE container: `SeContainerInitializer` works exactly as the specification
+describes, on the module path, with no configuration. This page covers what is specific to
+Vauban — the **launcher**, and why it matters the moment your beans produce types from modules
+that know nothing about CDI.
+
+== The standard way
+
+[source,java]
+----
+try (SeContainer container = SeContainerInitializer.newInstance()
+        .addBeanClasses(CheckoutService.class, Integrations.class)
+        .initialize()) {
+    container.select(CheckoutService.class).get().checkout("order-7");
+}
+----
+
+[source,shell]
+----
+java -p mods -m app/app.Main
+----
+
+Everything sits on the module path, in the *boot layer*, loaded by the platform's application
+class loader. For beans you compile, and for producers of fully-public third-party types, nothing
+more is needed: proxies are generated at build time and resolve with zero `opens`
+(xref:internals.adoc#proxy-strategies[client-proxy strategies]).
+
+== When the boot layer is not enough
+
+A normal-scoped `@Produces` returning a third-party class that has a **package-private or
+protected overridable member**, or **no accessible constructor**, needs a client proxy that lives
+*inside the type's own package* — a proxy anywhere else can neither override nor forward that
+member, and cannot chain that constructor. On the boot layer, defining a class into another
+module's package requires that module to `opens` it, so the container refuses by default and
+tells you exactly what is missing:
+
+[source,text]
+----
+Vauban needs [it.liba] of it.liba opened to io.vidocq.vauban.core for a runtime producer
+proxy, and will not do it on its own. Pick one: start the application through
+io.vidocq.vauban.classloader.Launch (in a Vauban layer the loader defines the shipped proxy
+inside the package itself — zero opens, no agent); …
+----
+
+The first remedy is the launcher.
+
+== The launcher
+
+[source,shell]
+----
+java -p mods -m io.vidocq.vauban.classloader/io.vidocq.vauban.classloader.Launch app/app.Main [args]
+----
+
+`Launch` loads the application modules of the boot layer again in a child layer under a single
+self-first `VaubanClassLoader`, then invokes your `main` **from inside that layer**. Your code
+does not change; `SeContainerInitializer` works as before. What changes is *who defines your
+classes* — and once that is Vauban's own loader:
+
+Placed proxies::
+A client proxy that must live in a third-party produced type's package is shipped by the build
+as a resource of your bean archive (`META-INF/vauban/placed/…_ClientProxy.class`, next to the
+placement manifest `META-INF/vauban/required-opens.list`) and the loader *defines it into that
+package*. A loader may define classes in a package it owns; `opens` governs reflective access
+across modules and has nothing to say here. **Zero `opens`, no agent, no rewritten jar** — the
+library is used exactly as its author shipped it, signature intact.
+
+No double construction::
+The loader weaves the side-effect-free `(ProxyLink)` entry constructor into the produced type as
+it is defined and retargets the placed proxy onto it, so **the third-party constructor never runs
+for the proxy** — the vauban#24 guarantee, extended to types you do not compile.
+
+No load-time agent::
+An unwoven normal-scoped bean (classes written after javac by an IDE) is woven at definition by
+the loader's cdi-proxifier. The dynamic agent of the
+xref:internals.adoc#weaving-tiers[load-time tier] is not used in a Vauban layer.
+
+=== Which modules are re-layered
+
+Every module of the boot layer with a `file:` location, except the platform (`java.*`, `jdk.*`),
+Jakarta (`jakarta.*`) and Vauban itself (`io.vidocq.vauban.*`), which stay in the boot layer and
+are read from there. Add prefixes with `-Dvauban.launch.keep=org.junit,com.acme.infra` when a
+module must not move (a test framework, an agent-attached library).
+
+=== Why the entry point must run in the layer
+
+It is tempting to want `initialize()` to do this transparently. It cannot: your `Main` left in
+the boot layer holds the boot layer's `Gadget.class`, while a placed proxy extends the *layer's*
+`Gadget` — `container.select(Gadget.class)` would end in `ClassCastException`. The caller's
+classes are its identity, so the launcher re-enters the application through `main`, once, from
+the layer. Calling `Launch.run(...)` from code that already runs in a layer is a no-op that simply
+invokes the target.
+
+The Vidocq runtime does the same thing with `Vidocq.run` / `@VidocqMain`; `Launch` is that
+mechanism for a plain Vauban SE application.
+
+== What the build ships
+
+The annotation processor writes, into your bean archive:
+
+[cols="1,2"]
+|===
+|Resource |Role
+
+|`META-INF/vauban/required-opens.list`
+|The placement manifest: one produced type per line whose proxy must live in its own package.
+The loader places their proxies; the boot-time `OpensApplier` (opt-in) reads the same list on a
+bare boot layer.
+
+|`META-INF/vauban/placed/<pkg>/<Type>_ClientProxy.class`
+|The co-located proxy bytes for each listed type, emitted with the Class-File API. Static
+generation, nothing generated at runtime — the loader only *places* the class.
+|===
+
+Only shapes a co-located proxy can overcome are shipped. A `final` or `sealed` class, a `final`
+method or an abstract class are unproxyable anywhere (CDI 4.1 §3.10) and remain deployment errors.
+
+== Limits
+
+Bare boot layer::
+Without the launcher, the in-package cases fall back to the documented levers: make the type
+fully public, `vauban:enhance-dependencies`, a hand-written `opens`, or the opt-in
+`-Dvauban.opens.auto=true`. The container says so at boot; it never degrades silently.
+
+GraalVM `native-image`::
+A placed class is defined at runtime, which `native-image` does not support.
+`vauban:enhance-dependencies` — the proxy rewritten *into* a copy of the dependency at build
+time — remains the AOT path. CDS and Leyden are unaffected: the bytes are produced at build time.
+
+Reflection::
+A placed proxy is co-located, so every member is forwarded; there is nothing left for
+`setAccessible` to bypass.
+
+== See also
+
+* xref:internals.adoc#proxy-strategies[Internals — client-proxy strategies] — the full decision
+  table, placement included.
+* xref:reference.adoc[Reference] — `Launch`, `vauban.launch.keep`, `vauban.opens.auto`.
+* link:{repo-vauban}/src/branch/main/vauban-examples/example-cdi1015-app/README.adoc[The cdi#1015
+  example] — the expert-group case, end to end.

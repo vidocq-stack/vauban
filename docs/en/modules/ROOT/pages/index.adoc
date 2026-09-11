@@ -62,6 +62,7 @@ graph TB
 
 * xref:getting-started.adoc[Getting started]
 * xref:usage.adoc[Usage patterns]
+* xref:se.adoc[Vauban in Java SE] [.tag-new]#NEW#
 * xref:concepts.adoc[Concepts]
 * xref:internals.adoc[Internals]
 * xref:tck.adoc[TCK status]

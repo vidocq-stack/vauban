@@ -36,7 +36,7 @@ This page lists every artefact published by Vauban, the Java Modules packages th
 
 | `io.vidocq.vauban:vauban-classloader:{project-version}`
 | `runtime`
-| Universal class-loader engine (`VaubanClassLoader`, `VaubanLayerFactory`)
+| Universal class-loader engine (`VaubanClassLoader`, `VaubanLayerFactory`) and the Java SE launcher (`Launch`) [.tag-new]#NEW#
 
 | `io.vidocq.vauban:vauban-weaver:{project-version}`
 | `runtime`
@@ -139,7 +139,18 @@ This page lists every artefact published by Vauban, the Java Modules packages th
 
 | `-Dvauban.opens.auto=true` [.tag-new]#NEW#
 | Lets the container open a third-party module's package to itself at boot (`Instrumentation.redefineModule`) when a producer's type is not build-time proxyable. **Off by default, deliberately**: opening another module behind the user's back is what this project faults runtime CDI implementations for needing, and it makes the application silently depend on dynamic agent attachment — a defect that surfaces late, on a locked-down JVM. Left off, the container refuses and logs every way to avoid it. A last resort: integrity by default is closing dynamic agent attachment, so prefer a fully-public produced type or `vauban:enhance-dependencies`. See xref:internals.adoc#proxy-strategies[Internals — client-proxy strategies].
+| `-Dvauban.launch.keep=<prefixes>` [.tag-new]#NEW#
+| Comma-separated module-name prefixes that the Java SE launcher (`io.vidocq.vauban.classloader.Launch`) keeps in the boot layer instead of re-layering them, on top of the built-in `java.`, `jdk.`, `jakarta.` and `io.vidocq.vauban.`. Use it for a test framework or an agent-attached library that must not move. See xref:se.adoc[Vauban in Java SE].
 |===
+
+== Java SE launcher [.tag-new]#NEW#
+
+[source,shell]
+----
+java -p mods -m io.vidocq.vauban.classloader/io.vidocq.vauban.classloader.Launch <module>/<main-class> [args]
+----
+
+`Launch` re-layers the application modules of the boot layer under a Vauban class loader and invokes the application's `public static void main(String[])` from inside the layer; `Launch.run(target, args)` is the programmatic form, a no-op re-entry when already in a layer. In a Vauban layer, in-package client proxies are *placed* (zero `opens`, no agent, no rewritten jar), third-party produced types never have their constructor run for a proxy, and unwoven beans are woven at definition without the load-time agent. Full story: xref:se.adoc[Vauban in Java SE].
 
 [#junit-extension]
 == JUnit extension (`vauban-junit`)

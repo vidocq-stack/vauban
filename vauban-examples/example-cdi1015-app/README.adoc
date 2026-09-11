@@ -183,7 +183,16 @@ self-granted.
 
 Two `--add-opens`-free levers, both documented in the reference docs:
 
-* **At runtime** — the container can open the module itself at boot via
+* **In a Vauban layer — the answer that costs nothing.** Start the application through the
+  launcher, `java -p mods -m io.vidocq.vauban.classloader/io.vidocq.vauban.classloader.Launch
+  app/app.Main`. The build ships the co-located proxy as a resource of the bean archive and the
+  Vauban class loader, which then owns the library module, defines it into the library's package:
+  a loader may define classes in a package it owns, and `opens` has nothing to say about that.
+  Zero `opens`, no agent, no rewritten jar, and the third-party constructor never runs for the
+  proxy (the vauban#24 guarantee, extended to types you do not compile). The bare `java -p` form
+  cannot do this because the entry point's classes would belong to the boot layer while the
+  placed proxy belongs to the layer — hence a launcher, not a switch inside `initialize()`.
+* **At runtime, on a bare boot layer** — the container can open the module itself at boot via
   `Instrumentation.redefineModule`, from an agent it self-attaches. No command-line flag, but it is
   still an `opens`, merely granted by the deployment rather than by the launcher. It is therefore
   **opt-in** (`-Dvauban.opens.auto=true`): left off, the container refuses and logs every way to
