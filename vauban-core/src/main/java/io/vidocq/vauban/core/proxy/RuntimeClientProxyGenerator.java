@@ -77,8 +77,12 @@ public final class RuntimeClientProxyGenerator {
         return new GeneratedProxy(proxyBinaryName, ClientProxyEmitter.emitAt(shape, proxyBinaryName));
     }
 
-    /** Builds the neutral shape: hierarchy walk + simplest-ctor defaults + MH decisions. */
-    private static ClientProxyShape shapeOf(Class<?> beanClass) {
+    /**
+     * Builds the neutral shape: hierarchy walk + simplest-ctor defaults + MH decisions. This is the
+     * canonical client-proxy shape; the APT/source path ({@code ClientProxyShapeFromElements}) must
+     * agree with it on the forwarded method set, which a cross-check test pins.
+     */
+    public static ClientProxyShape shapeOf(Class<?> beanClass) {
         // The proxy is generated in the bean's package (the suffix carries no dot).
         String proxyPackage = packageOf(beanClass.getName());
         var proxiedSeen = new java.util.HashSet<String>();

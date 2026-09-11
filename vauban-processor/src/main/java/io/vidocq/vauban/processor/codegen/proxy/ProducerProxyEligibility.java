@@ -110,26 +110,58 @@ public final class ProducerProxyEligibility {
 
         // Every client-visible overridable method must be forwardable across the package boundary,
         // i.e. public. Non-static final methods make the type unproxyable per CDI 4.1 §3.10.
-        for (ExecutableElement m : ElementFilter.methodsIn(type.getEnclosedElements())) {
-            var mm = m.getModifiers();
-            if (mm.contains(Modifier.STATIC) || mm.contains(Modifier.PRIVATE)) {
-                continue;
-            }
-            if (m.getSimpleName().toString().startsWith("$$")) {
-                continue;
-            }
-            if (mm.contains(Modifier.FINAL)) {
-                return Reason.FINAL_VIRTUALS;
-            }
-            if (mm.contains(Modifier.ABSTRACT)) {
-                continue; // the class is concrete; defensively ignore
-            }
-            if (!mm.contains(Modifier.PUBLIC)) {
-                return mm.contains(Modifier.PROTECTED)
-                        ? Reason.PROTECTED_VIRTUALS
-                        : Reason.PACKAGE_PRIVATE_VIRTUALS;
+        //
+        // The walk covers INHERITED methods too (up to, but excluding, java.lang.Object), mirroring
+        // the bytecode path: a method inherited from a superclass is neither declared here nor
+        // overridden by the proxy, so judging only declared methods would hand out a proxy that
+        // silently runs the superclass body against the proxy's own empty state.
+        var seen = new java.util.HashSet<String>();
+        for (TypeElement c = type; c != null && !isObject(c); c = superclassOf(c)) {
+            for (ExecutableElement m : ElementFilter.methodsIn(c.getEnclosedElements())) {
+                var mm = m.getModifiers();
+                if (mm.contains(Modifier.STATIC) || mm.contains(Modifier.PRIVATE)) {
+                    continue;
+                }
+                if (m.getSimpleName().toString().startsWith("$$")) {
+                    continue;
+                }
+                // A subclass override already judged wins: it is the one the proxy overrides.
+                if (!seen.add(signatureKey(m))) {
+                    continue;
+                }
+                if (mm.contains(Modifier.FINAL)) {
+                    return Reason.FINAL_VIRTUALS;
+                }
+                if (mm.contains(Modifier.ABSTRACT)) {
+                    continue; // the class is concrete; defensively ignore
+                }
+                if (!mm.contains(Modifier.PUBLIC)) {
+                    return mm.contains(Modifier.PROTECTED)
+                            ? Reason.PROTECTED_VIRTUALS
+                            : Reason.PACKAGE_PRIVATE_VIRTUALS;
+                }
             }
         }
         return Reason.ELIGIBLE;
+    }
+
+    /** {@code true} when {@code t} is {@code java.lang.Object} — the walk stops there. */
+    private static boolean isObject(TypeElement t) {
+        return t.getQualifiedName().contentEquals("java.lang.Object");
+    }
+
+    /** The superclass element, or {@code null} at the top of the hierarchy. */
+    private static TypeElement superclassOf(TypeElement t) {
+        return t.getSuperclass() instanceof javax.lang.model.type.DeclaredType dt
+                && dt.asElement() instanceof TypeElement se ? se : null;
+    }
+
+    /** Name plus parameter types — enough to spot an override while walking upwards. */
+    private static String signatureKey(ExecutableElement m) {
+        var sb = new StringBuilder(m.getSimpleName().toString()).append('(');
+        for (var p : m.getParameters()) {
+            sb.append(p.asType().toString()).append(',');
+        }
+        return sb.append(')').toString();
     }
 }
