@@ -31,10 +31,10 @@ more is needed: proxies are generated at build time and resolve with zero `opens
 == When the boot layer is not enough
 
 A normal-scoped `@Produces` returning a third-party class that has a **package-private or
-protected overridable member**, or **no accessible constructor**, needs a client proxy that lives
-*inside the type's own package* — a proxy anywhere else can neither override nor forward that
-member, and cannot chain that constructor. On the boot layer, defining a class into another
-module's package requires that module to `opens` it, so the container refuses by default and
+protected overridable member** — declared or inherited — or **no accessible constructor** needs a
+client proxy that lives *inside the type's own package*: a proxy anywhere else can neither override
+nor forward that member, and cannot chain that constructor. On the boot layer, defining a class into
+another module's package requires that module to `opens` it, so the container refuses by default and
 tells you exactly what is missing:
 
 [source,text]
@@ -51,26 +51,34 @@ The first remedy is the launcher.
 
 [source,shell]
 ----
-java -p mods -m io.vidocq.vauban.classloader/io.vidocq.vauban.classloader.Launch app/app.Main [args]
+java -p mods --add-modules ALL-MODULE-PATH \
+     -m io.vidocq.vauban.classloader/io.vidocq.vauban.classloader.Launch app/app.Main [args]
 ----
 
+`--add-modules ALL-MODULE-PATH` is required. With `-m`, the launcher's module is the only root
+module, so without it neither your application nor the container would be resolved in the boot
+layer; the launcher stops and says so.
+
 `Launch` loads the application modules of the boot layer again in a child layer under a single
-self-first `VaubanClassLoader`, then invokes your `main` **from inside that layer**. Your code
-does not change; `SeContainerInitializer` works as before. What changes is *who defines your
-classes* — and once that is Vauban's own loader:
+self-first `VaubanClassLoader`, then invokes your `public static void main(String[])` **from inside
+that layer**. Your code does not change; `SeContainerInitializer` works as before. What changes is
+*who defines your classes* — and once that is Vauban's own loader:
 
 Placed proxies::
 A client proxy that must live in a third-party produced type's package is shipped by the build
 as a resource of your bean archive (`META-INF/vauban/placed/…_ClientProxy.class`, next to the
-placement manifest `META-INF/vauban/required-opens.list`) and the loader *defines it into that
+placement manifest `META-INF/vauban/required-opens.list`), and the loader *defines it into that
 package*. A loader may define classes in a package it owns; `opens` governs reflective access
 across modules and has nothing to say here. **Zero `opens`, no agent, no rewritten jar** — the
 library is used exactly as its author shipped it, signature intact.
 
 No double construction::
 The loader weaves the side-effect-free `(ProxyLink)` entry constructor into the produced type as
-it is defined and retargets the placed proxy onto it, so **the third-party constructor never runs
-for the proxy** — the vauban#24 guarantee, extended to types you do not compile.
+it is defined, and into the superclasses it defines that have no usable no-arg constructor, then
+retargets the placed proxy onto it: **the third-party constructors do not run for the proxy** — the
+vauban#24 guarantee, extended to types you do not compile. If a superclass the loader does not
+define blocks that chain, a WARNING names the type, and its proxy runs the business constructor on
+a throwaway instance.
 
 No load-time agent::
 An unwoven normal-scoped bean (classes written after javac by an IDE) is woven at definition by
@@ -79,10 +87,22 @@ xref:internals.adoc#weaving-tiers[load-time tier] is not used in a Vauban layer.
 
 === Which modules are re-layered
 
-Every module of the boot layer with a `file:` location, except the platform (`java.*`, `jdk.*`),
-Jakarta (`jakarta.*`) and Vauban itself (`io.vidocq.vauban.*`), which stay in the boot layer and
-are read from there. Add prefixes with `-Dvauban.launch.keep=org.junit,com.acme.infra` when a
-module must not move (a test framework, an agent-attached library).
+Every module of the boot layer with a `file:` location, except those that must stay in the boot
+layer — the re-layered modules then read them from there:
+
+* the platform (`java.*`, `jdk.*`), Jakarta (`jakarta.*`) and the Vauban container modules
+  (`io.vidocq.vauban.api`, `.core`, `.indexer`, `.weaver`, `.classloader`, `.classloader.spi`,
+  `.sjar`, `.processor`, `.junit`) — application code of your own under `io.vidocq.vauban.*` is
+  re-layered like any other;
+* automatic modules: re-layered, an automatic module would read its own boot-layer twin, and
+  resolution would fail;
+* modules with a `javax.`, `sun.` or `com.sun.` package, which the Vauban loader refuses to define
+  — they would be empty shells in the layer;
+* modules whose name starts with a prefix listed in `-Dvauban.launch.keep=org.junit,com.acme.infra`;
+* and every module a kept module reads, transitively: a kept module cannot read a re-layered one.
+
+Your main module must end up re-layered. If one of these rules keeps it in the boot layer, the
+launcher refuses to run it rather than run it exactly as without the launcher.
 
 === Why the entry point must run in the layer
 
@@ -90,11 +110,23 @@ It is tempting to want `initialize()` to do this transparently. It cannot: your 
 the boot layer holds the boot layer's `Gadget.class`, while a placed proxy extends the *layer's*
 `Gadget` — `container.select(Gadget.class)` would end in `ClassCastException`. The caller's
 classes are its identity, so the launcher re-enters the application through `main`, once, from
-the layer. Calling `Launch.run(...)` from code that already runs in a layer is a no-op that simply
-invokes the target.
+inside the layer.
 
-The Vidocq runtime does the same thing with `Vidocq.run` / `@VidocqMain`; `Launch` is that
-mechanism for a plain Vauban SE application.
+`Launch.run(target, args)` returns `false`, without doing anything, when the calling thread already
+runs in a Vauban layer. An application can therefore make it the first statement of its own `main`:
+
+[source,java]
+----
+public static void main(String[] args) throws Throwable {
+    if (Launch.run("app/app.Main", args)) return;   // re-launched inside the layer: done here
+    // … the application, now running inside the layer
+}
+----
+
+The Vidocq runtime re-layers the same way with `Vidocq.run` / `@VidocqMain`, but it selects only the
+modules that carry beans. A CDI-agnostic library therefore stays in the boot layer there, and its
+proxies are not placed unless you re-layer it too (`-Dvidocq.app.modules`). `Launch` re-layers every
+module it does not have to keep.
 
 == What the build ships
 
@@ -105,17 +137,17 @@ The annotation processor writes, into your bean archive:
 |Resource |Role
 
 |`META-INF/vauban/required-opens.list`
-|The placement manifest: one produced type per line whose proxy must live in its own package.
-The loader places their proxies; the boot-time `OpensApplier` (opt-in) reads the same list on a
-bare boot layer.
+|The placement manifest: one produced type per line that cannot be proxied from the producer's
+package. The loader places the proxies it has bytes for; on a bare boot layer, the opt-in
+`OpensApplier` reads the same list.
 
 |`META-INF/vauban/placed/<pkg>/<Type>_ClientProxy.class`
-|The co-located proxy bytes for each listed type, emitted with the Class-File API. Static
-generation, nothing generated at runtime — the loader only *places* the class.
+|The co-located proxy bytes, emitted with the Class-File API for the shapes a co-located proxy can
+overcome. Static generation, nothing generated at runtime — the loader only *places* the class.
 |===
 
-Only shapes a co-located proxy can overcome are shipped. A `final` or `sealed` class, a `final`
-method or an abstract class are unproxyable anywhere (CDI 4.1 §3.10) and remain deployment errors.
+A `final` or `sealed` class, a `final` method or an abstract class are unproxyable anywhere (CDI
+4.1 §3.10): nothing is shipped for them, and they remain deployment errors.
 
 == Limits
 
@@ -124,14 +156,27 @@ Without the launcher, the in-package cases fall back to the documented levers: m
 fully public, `vauban:enhance-dependencies`, a hand-written `opens`, or the opt-in
 `-Dvauban.opens.auto=true`. The container says so at boot; it never degrades silently.
 
+Kept modules::
+Placement needs the library to be defined by the Vauban loader. A produced type in a module kept
+in the boot layer (see above) falls back to the bare-boot-layer levers. A kept module also keeps
+reading the boot-layer copies of what it requires, so do not keep a module that hands application
+types to or from re-layered code.
+
+What the placed proxy forwards::
+The produced type's own non-private members, every inherited public member, the members inherited
+from superclasses in the same package, and the protected members inherited from superclasses in
+other packages (through a `MethodHandle`). A package-private member inherited from a superclass in
+*another* package is not forwarded: no class outside that package can override it, wherever the
+proxy lives.
+
+Entry point::
+`Launch` invokes `public static void main(String[])`; the instance and non-public `main` forms of
+JDK 25 are not supported.
+
 GraalVM `native-image`::
 A placed class is defined at runtime, which `native-image` does not support.
 `vauban:enhance-dependencies` — the proxy rewritten *into* a copy of the dependency at build
 time — remains the AOT path. CDS and Leyden are unaffected: the bytes are produced at build time.
-
-Reflection::
-A placed proxy is co-located, so every member is forwarded; there is nothing left for
-`setAccessible` to bypass.
 
 == See also
 

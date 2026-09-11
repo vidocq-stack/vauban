@@ -72,25 +72,27 @@ contextual instance. No dynamic proxy, no reflection. On the class path (non-APT
 fallback).
 
 |**Producer of a class whose proxy must live in its own package** — a package-private or
-protected overridable member, or no accessible constructor — *in a Vauban layer*
-[.tag-new]#NEW#
+protected overridable member (declared or inherited), or no accessible constructor — *when a
+Vauban loader defines the library* [.tag-new]#NEW#
 |The APT ships the **co-located** proxy as bytecode in the bean archive
 (`META-INF/vauban/placed/…_ClientProxy.class`) and lists the type in the placement manifest
-(`META-INF/vauban/required-opens.list`). When the application runs in a Vauban layer — the
-xref:se.adoc[launcher], `Vidocq.run`, a dist — the `VaubanClassLoader` that defined the
-library module *defines the proxy into that package* on a `findClass` miss: a loader may
-define classes in a package it owns, and `opens` governs reflective access across modules,
-not this. The cdi-proxifier weaves the `(ProxyLink)` entry constructor into the produced type
-at definition and retargets the placed proxy onto it, so the third-party constructor never
-runs (vauban#24).
+(`META-INF/vauban/required-opens.list`). When the library module is defined by a
+`VaubanClassLoader` — today, under the xref:se.adoc[Java SE launcher], which re-layers every
+module it does not have to keep — that loader *defines the proxy into the library's package* on a
+`findClass` miss: a loader may define classes in a package it owns, and `opens` governs reflective
+access across modules, not this. The proxy forwards non-public members too, inherited ones
+included. The cdi-proxifier weaves the `(ProxyLink)` entry constructor into the produced type at
+definition — and into the superclasses it defines that lack a usable no-arg constructor — then
+retargets the placed proxy onto it, so the third-party constructors do not run for the proxy
+(vauban#24). When a superclass the loader does not define blocks that chain, a WARNING says so.
 |Zero `opens`, no agent, no rewritten jar; the library is used as shipped.
 
-|**Same shapes, on a bare boot layer** — no launcher
-|A loader Vauban does not own defines the library, so nothing can be placed.
-`RuntimeClientProxyGenerator` defines the proxy at runtime *into the produced type's own
-package*, which requires that module to open the package to the container. The container
-refuses by default and names the remedies, the launcher first. Two levers keep this
-`--add-opens`-free (below).
+|**Same shapes, when no Vauban loader defines the library** — a bare boot layer, a module the
+launcher keeps, or `Vidocq.run`, which re-layers only the modules that carry beans
+|Nothing can be placed. `RuntimeClientProxyGenerator` defines the proxy at runtime *into the
+produced type's own package*, which requires that module to open the package to the container.
+The container refuses by default and names the remedies, the launcher first. Two levers keep
+this `--add-opens`-free (below).
 |An `opens` (applied by the container, opt-in) *or* a jar rewrite.
 
 |**Producer of a class that is unproxyable outright** — `final` or `sealed` class, a
@@ -100,8 +102,8 @@ specification requires; nothing is shipped.
 |Nothing helps — the type cannot be normal-scoped.
 |===
 
-The two levers that remove the hand-written `opens` on a bare boot layer (in a Vauban layer,
-placement makes both unnecessary):
+The two levers that remove the hand-written `opens` when no Vauban loader defines the library
+(when one does, placement makes both unnecessary):
 
 * **The container opens the module itself** (#42, Stage 3b) — *opt-in, and on borrowed time*
   [.tag-new]#NEW#. The annotation processor lists the produced types that fall to runtime
@@ -148,14 +150,17 @@ to keep zero `opens`.
 
 [TIP]
 ====
-The reflex for the last case is `MethodHandles.privateLookupIn`. It does not help: it is not a way
-*around* `opens`, it is the API that *consumes* it — it throws `IllegalAccessException` unless the
-target's module already opens the package to the caller. `defineHiddenClass(…, NESTMATE)` needs the
-same full-power `Lookup`; a `Lookup` donated by the library means modifying the library; and
-defining the proxy under the same package name in another class loader yields a different runtime
-package — (loader, name) — so package-private access fails with `IllegalAccessError`, while the same
-loader gives a split-package `LinkageError`. A `Lookup` with PACKAGE access is obtainable only from
-*inside* the target module, or through `opens`. There is no third door, by design.
+When no Vauban loader defines the library, the reflex is `MethodHandles.privateLookupIn`. It does
+not help: it is not a way *around* `opens`, it is the API that *consumes* it — it throws
+`IllegalAccessException` unless the target's module already opens the package to the caller.
+`defineHiddenClass(…, NESTMATE)` needs the same full-power `Lookup`; a `Lookup` donated by the
+library means modifying the library; and defining the proxy under the same package name in
+*another* class loader yields a different runtime package — (loader, name) — so package-private
+access fails with `IllegalAccessError`. A `Lookup` with PACKAGE access is obtainable only from
+*inside* the target module, or through `opens`. The one other door is not a `Lookup` at all: the
+class loader that defines a module can define further classes into its packages. That is what
+placement does, and why it needs the library to be defined by a Vauban loader — the JDK's
+application class loader offers no such hook.
 ====
 
 [NOTE]
@@ -252,12 +257,13 @@ Details worth knowing about the load-time tier:
   class loaded before the attach can no longer be woven. The hook therefore runs inside
   `VaubanContainerBuilder.build()` right after the index is final and before bean
   discovery, and the detection itself never loads classes.
-* **In a Vauban layer, no agent** [.tag-new]#NEW# — when the application runs under a
-  `VaubanClassLoader` (the xref:se.adoc[launcher], `Vidocq.run`, a dist), the loader's
-  cdi-proxifier transformer applies the same weaving *at class definition*; `LoadTimeWeaving`
-  detects the loader in the context class-loader chain and stands down. The transformer also
-  weaves the produced types listed in the placement manifest, which carry no scope annotation,
-  so a placed client proxy never chains a third-party constructor.
+* **In a Vauban layer, no agent** [.tag-new]#NEW# — when the application's classes are defined
+  by a `VaubanClassLoader` (the xref:se.adoc[Java SE launcher], `Vidocq.run`, a dist), the
+  loader's cdi-proxifier transformer applies the same weaving *at class definition*;
+  `LoadTimeWeaving` detects the loader in the context class-loader chain and stands down. When
+  the loader also defines a library whose proxies it places, the transformer weaves the listed
+  produced types — which carry no scope annotation — and the superclasses they need, so a placed
+  client proxy does not chain a third-party constructor.
 * **Opt-out** — `-Dvauban.weaving.loadtime=disabled`; unwoven beans then fail deployment
   validation with the regular vauban#24 diagnostic. Explicit
   `-javaagent:vauban-weaver.jar=<plan>` is also supported (`Premain-Class`).
@@ -395,7 +401,7 @@ Consequence: Vauban compiles to a GraalVM native image without a `reflect-config
 | `io.vidocq.vauban.classloader.spi` — `ByteSourcePlugin` SPI
 
 | `io.vidocq.vauban.classloader`
-| `io.vidocq.vauban.classloader` — universal loader engine (`VaubanClassLoader`, `VaubanLayerFactory`)
+| `io.vidocq.vauban.classloader` — universal loader engine (`VaubanClassLoader`, `VaubanLayerFactory`) and the Java SE launcher (`Launch`)
 
 | `io.vidocq.vauban.weaver`
 | `io.vidocq.vauban.weaver` — canonical vauban#24 weaving transforms, packaged as a load-time agent
