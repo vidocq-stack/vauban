@@ -224,9 +224,32 @@ public final class Foo$$…_ClientProxy extends it.liba.Foo {
 ----
 
 Inside `greet()`, `this` is the real instance, so `this.someInternalHelper()` runs against real
-state. Delegation happens **once, at the public boundary**. A non-public method is therefore only
-ever reached through a public entry point that has already forwarded — which is why forwarding it
-is, in this scenario, work with no observable effect.
+state. Delegation happens **once, at the public boundary**: a call that enters through the public
+surface is already on the contextual instance by the time any internal method runs.
+
+That is necessary but *not sufficient*, and the gap matters. The delegation boundary only covers
+calls arriving from outside the proxied type's package. A sibling class **inside** that package can
+receive the proxy and invoke a non-public member on it directly:
+
+[source,java]
+----
+package com.acme.http;
+public class HttpClient { String internalSend(String p) { … } }     // package-private
+public class HttpPool   { public String forward(HttpClient c) { return c.internalSend("/x"); } }
+
+// application code
+@Inject HttpClient client;      // a client proxy
+pool.forward(client);           // the proxy is handed to a class of the library's own package
+----
+
+`forward` calls a package-private member on the proxy. If the proxy did not override it, it runs
+against the proxy's empty state — silently. Package-private exists precisely to allow this kind of
+intra-package collaboration, so the vector is not exotic.
+
+The honest statement is therefore conditional: **restricting a client proxy to the public surface is
+correct exactly when no code in the proxied type's own package invokes a non-public member on an
+instance it received from outside.** That is not a guess — it is a property a container can
+establish statically, by scanning the sibling classes of that package for such references.
 
 === Why the rule is nonetheless right for the case it was written for
 
@@ -265,11 +288,13 @@ silently.
 
 === Two defensible answers
 
-**A — make placement explicit.** State the obligation in terms of accessibility rather than of the
-type: a client proxy must delegate every non-private, non-static method *accessible to the invoking
-code* through the bean types; the behaviour of a non-public method invoked on a client proxy from
-the proxied type's own package, or reflectively, is undefined when the container cannot co-locate
-the proxy in that package. The unproxyable list then becomes relative to placement — a `final`
+**A — make placement explicit, and let the container discharge the condition.** State the obligation
+in terms of accessibility rather than of the type: a client proxy must delegate every non-private,
+non-static method *accessible to the invoking code* through the bean types. A container that cannot
+co-locate the proxy in the proxied type's package may restrict it to the public surface **when it
+can establish that no code in that package invokes a non-public member on an instance it received
+from outside**; the behaviour of such an invocation, and of a reflective one, is otherwise
+undefined. The unproxyable list then becomes relative to placement — a `final`
 **public** method stays fatal everywhere, a `final` package-private one only for a container that
 co-locates. Containers document their mode; portable applications do not rely on non-public
 forwarding across a module boundary.
@@ -278,10 +303,20 @@ forwarding across a module boundary.
 is not fully public, in a module that is not open, is a deployment error. Honest, but it writes the
 use case off.
 
-Vauban would implement A with B available as a strict opt-in: a zero-`opens` proxy by default, a
-build-time diagnostic naming the methods that are not forwarded, and
-`-Avauban.producerProxy=error` for anyone wanting strict parity with a co-locating container.
+Vauban would implement A by discharging the condition at build time rather than assuming it: the
+annotation processor has the produced type's package on the module path and can scan its sibling
+classes for references to non-public members of that type. Proven clear, the proxy is generated with
+zero `opens`; otherwise the container keeps today's behaviour and the diagnostic names the call site
+that forced it. Reflection remains outside what any such analysis can cover, and is reported rather
+than guaranteed.
+
+Note that a fully correct zero-`opens` answer already exists for this case and needs no
+specification change: place the proxy *inside* the dependency at build time (Vauban's
+`vauban:enhance-dependencies`). It overrides every member, package-private included, so it is
+correct even in the `HttpPool` case above. Its cost is one of governance — it redistributes a
+modified copy of a third-party artefact — not of semantics.
 
 The distinction that matters, and that the current wording cannot express: the managed bean, where
 overriding non-public members is genuinely load-bearing, versus the `@Produces` of a type from a
-CDI-agnostic module, whose package contains — by construction — no consumer of the proxy.
+CDI-agnostic module — where whether the package contains a consumer of the proxy is a *verifiable
+fact about that dependency*, not something the specification should have to assume either way.
