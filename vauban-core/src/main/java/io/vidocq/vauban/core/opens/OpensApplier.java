@@ -102,6 +102,14 @@ public final class OpensApplier {
             if (module == null || !module.isNamed()) {
                 continue; // class path (unnamed module): already open to everyone
             }
+            if (c.getClassLoader() instanceof io.vidocq.vauban.classloader.VaubanClassLoader vcl
+                    && vcl.placesClass(fqn + "_ClientProxy")) {
+                // #42 Stage 4: the loader that owns the package defines the shipped proxy into
+                // it — nothing to open, and nothing the runtime needs to generate.
+                LOG.log(System.Logger.Level.DEBUG, () -> fqn + ": proxy placed by the Vauban "
+                        + "class loader, no opens needed");
+                continue;
+            }
             var pkg = c.getPackageName();
             if (module.isOpen(pkg, container)) {
                 continue; // already opened (by module-info or a previous apply)
@@ -115,7 +123,10 @@ public final class OpensApplier {
         if (!autoOpenEnabled()) {
             LOG.log(System.Logger.Level.WARNING, () -> "Vauban needs " + describe(pending)
                     + " opened to " + container.getName() + " for a runtime producer proxy, and will "
-                    + "not do it on its own. Pick one: make the produced type fully public (the proxy "
+                    + "not do it on its own. Pick one: start the application through "
+                    + "io.vidocq.vauban.classloader.Launch (in a Vauban layer the loader defines the "
+                    + "shipped proxy inside the package itself — zero opens, no agent); "
+                    + "make the produced type fully public (the proxy "
                     + "is then built at compile time and nothing needs opening); run the "
                     + "vauban:enhance-dependencies goal (the proxy moves inside the dependency, still "
                     + "nothing to open); add the matching `opens ... to " + container.getName() + ";`; "
