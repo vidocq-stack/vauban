@@ -32,6 +32,13 @@ The processor generates:
 | One per module. Implements `io.vidocq.vauban.api.VaubanComponentProvider`: instantiates the module's components in-module (`new X(…)`), injects fields, creates client proxies and invokes producers, observers, disposers and lifecycle callbacks — no reflection, no `opens`.
 |===
 
+Every generated class file carries the *project's* Java release, never the release of the JDK that
+happens to run the build: the shared `GeneratedClassFile.build` pins them to Java 25, class file 69.
+A build on a newer JDK would otherwise write classes next to javac's own output that the baseline
+runtime refuses to load, with `UnsupportedClassVersionError` at deployment and `jlink` refusing the
+image. Weaving is the mirror rule: it patches a class someone else compiled, so it hands back that
+class's own version untouched.
+
 [#proxy-strategies]
 == Client proxies — one strategy per case [.tag-new]#NEW#
 
@@ -96,7 +103,7 @@ this `--add-opens`-free (below).
 |An `opens` (applied by the container, opt-in) *or* a jar rewrite.
 
 |**Producer of a class that is unproxyable outright** — `final` or `sealed` class, a
-non-static `final` public method, abstract class (CDI 4.1 §3.10)
+non-static `final` method that is not `private`, abstract class (CDI 4.1 §3.10)
 |No proxy can be built anywhere, co-located or not. A deployment error, as the
 specification requires; nothing is shipped.
 |Nothing helps — the type cannot be normal-scoped.

@@ -261,6 +261,9 @@ For dynamic application configuration, use MicroProfile Config through xref:vido
 == Compatibility
 
 * Java 25 (LTS), Maven 3.9.16.
+* Generated class files target Java 25 (class file 69) whatever JDK runs the build, so a brick built
+  on a newer JDK still loads on the baseline runtime and passes `jlink`. Weaving keeps the version of
+  the class it patches.
 * Strict Java Modules, named modules only.
 * CDI 4.1 — Lite profile.
 * Compatible with GraalVM `native-image` and Project Leyden CDS.

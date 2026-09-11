@@ -1057,3 +1057,20 @@ and a proposed upstream assertion: `CDI_TCK_PROPOSALS.md` → `TCK-GAP-001`.
   `shouldIntercept` filters above; generated `RequestAuditedService$$Intercepted` confirmed to override
   `init()`/`dispose()`. Probe fixtures removed after the run (not committed).
 - 2026-09-11 : TCK 4.1.0 coverage analysed (`cdi-tck-core-impl` sources) — gap documented as `TCK-GAP-001`.
+
+## BUG-20260911-01 — Build-time Class-File bytecode takes the build JDK's class-file version, not the release
+
+- **Date**: 2026-09-11
+- **Status**: OPEN
+- **Module**: `vauban-processor` (`BeanFactoryGenerator`, and `ClientProxyEmitter` when the processor calls it: build-time `_ClientProxy` classes and the placed-proxy resources of #42 Stage 4); `vauban-maven-plugin` (`ComponentProviderClassGenerator` from `VaubanGenerator` and `DependencyEnhancer`).
+- **Symptom**: a module compiled with `--release 25` on a JDK 26 ships its Class-File-generated classes at class file 70 while javac's own output is 69. A Java 25 runtime then rejects them: `UnsupportedClassVersionError: …JsonWebTokenContext_Factory has been compiled by a more recent version of the Java Runtime (class file version 70.0)` from `cassini-maven-plugin:generate`, and `jlink` fails with `Unsupported class file version: 70`.
+- **Minimal reproduction** (observed, not yet rebuilt deliberately): eleven `io.vidocq` 0.4.0-SNAPSHOT jars in the local Maven repository, built on 2026-09-10, mix class files 69 and 70; only the `*_Factory` classes are 70.
+  ```
+  # with JDK 26 running Maven, a brick whose pom sets release 25:
+  ./mvnw -o install -DskipTests -pl knock-cdi-vauban
+  # class major of a generated factory: 70 (javac's classes: 69)
+  # then, on Java 25, jlink over that jar: "Unsupported class file version: 70"
+  ```
+- **Suspected cause**: every build-time site calls `ClassFile.of().build(desc, …)` without `withVersion(...)`, so the class takes `ClassFile.latestMajorVersion()` of the JVM running javac or Maven. The version should follow the compilation target: `processingEnv.getSourceVersion()` in the processor, the project's release (or the major version of the classes being processed) in the plugin. Runtime-only sites (`InterceptedEmitter`, runtime proxies) are unaffected, since the same JVM loads what it defines.
+- **Investigations**:
+  - 2026-09-11: found while gating vidocq#77 offline. The JWT and Knock examples fail on those local jars; CI, which builds on Java 25, does not see it. Site list from `grep "ClassFile.of().build"`: `BeanFactoryGenerator:69`, `ClientProxyEmitter:83`, `ComponentProviderClassGenerator:152` (build time), `InterceptedEmitter:106` (runtime). No site sets a version.

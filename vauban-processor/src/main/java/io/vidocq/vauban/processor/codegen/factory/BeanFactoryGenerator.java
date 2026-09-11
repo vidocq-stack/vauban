@@ -22,6 +22,8 @@ package io.vidocq.vauban.processor.codegen.factory;
 import io.vidocq.vauban.processor.codegen.GeneratedClass;
 import io.vidocq.vauban.indexer.model.ClassInfo;
 
+import io.vidocq.vauban.core.codegen.GeneratedClassFile;
+
 import java.lang.classfile.ClassFile;
 import java.lang.classfile.ClassSignature;
 import java.lang.classfile.Signature.ClassTypeSig;
@@ -66,7 +68,7 @@ public final class BeanFactoryGenerator {
         ClassDesc beanFactoryCD = ClassDesc.of("io.vidocq.vauban.core.BeanFactory");
         ClassDesc objectCD = ClassDesc.of("java.lang.Object");
 
-        byte[] bytecode = ClassFile.of().build(factoryCD, clb -> {
+        byte[] bytecode = GeneratedClassFile.build(factoryCD, clb -> {
             // Class: public final class MyBean_Factory implements BeanFactory
             clb.withFlags(ClassFile.ACC_PUBLIC | ClassFile.ACC_FINAL | ClassFile.ACC_SUPER);
             clb.withSuperclass(objectCD);

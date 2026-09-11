@@ -23,6 +23,8 @@ import io.vidocq.vauban.core.interceptor.TypeRef;
 import io.vidocq.vauban.core.proxy.ClientProxyShape.ProxyMethodShape;
 
 import java.lang.classfile.ClassBuilder;
+import io.vidocq.vauban.core.codegen.GeneratedClassFile;
+
 import java.lang.classfile.ClassFile;
 import java.lang.classfile.CodeBuilder;
 import java.lang.constant.ClassDesc;
@@ -80,7 +82,7 @@ public final class ClientProxyEmitter {
         List<ProxyMethodShape> methods = shape.methods();
         List<String> mhFields = shape.methodHandleFieldNames();
 
-        return ClassFile.of().build(proxyCD, clb -> {
+        return GeneratedClassFile.build(proxyCD, clb -> {
             clb.withFlags(ClassFile.ACC_PUBLIC | ClassFile.ACC_SUPER);
             clb.withSuperclass(beanCD);
 

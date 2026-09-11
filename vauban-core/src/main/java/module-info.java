@@ -66,6 +66,10 @@ module io.vidocq.vauban.core {
     // Maven plugin read the jar from the classpath and are unaffected).
     exports io.vidocq.vauban.core.proxy to io.vidocq.vauban.processor;
 
+    // Every generated class file is written at the project's Java release, never at the release of
+    // the JDK running the build (BUG-20260911-01) — the APT front-end generates through it too.
+    exports io.vidocq.vauban.core.codegen to io.vidocq.vauban.processor;
+
     provides jakarta.enterprise.inject.spi.CDIProvider
             with io.vidocq.vauban.core.container.VaubanCDIProvider;
 

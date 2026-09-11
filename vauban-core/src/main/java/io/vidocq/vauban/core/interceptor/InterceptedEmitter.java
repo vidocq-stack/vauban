@@ -20,6 +20,8 @@
 package io.vidocq.vauban.core.interceptor;
 
 import java.lang.classfile.ClassBuilder;
+import io.vidocq.vauban.core.codegen.GeneratedClassFile;
+
 import java.lang.classfile.ClassFile;
 import java.lang.classfile.CodeBuilder;
 import java.lang.constant.ClassDesc;
@@ -103,7 +105,7 @@ public final class InterceptedEmitter {
         ClassDesc subclassCD = classDescOf(subclassName);
         ClassDesc beanCD = classDescOf(shape.beanBinaryName());
 
-        return ClassFile.of().build(subclassCD, clb -> {
+        return GeneratedClassFile.build(subclassCD, clb -> {
             clb.withFlags(ClassFile.ACC_PUBLIC | ClassFile.ACC_SUPER);
             clb.withSuperclass(beanCD);
 

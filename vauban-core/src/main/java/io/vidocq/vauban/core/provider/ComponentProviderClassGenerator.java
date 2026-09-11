@@ -24,6 +24,8 @@ import io.vidocq.vauban.indexer.codegen.FieldInject;
 import io.vidocq.vauban.indexer.codegen.MethodInvoke;
 
 import java.lang.classfile.Annotation;
+import io.vidocq.vauban.core.codegen.GeneratedClassFile;
+
 import java.lang.classfile.ClassFile;
 import java.lang.classfile.Label;
 import java.lang.classfile.attribute.RuntimeVisibleAnnotationsAttribute;
@@ -149,7 +151,7 @@ public final class ComponentProviderClassGenerator {
         var providerCD = ClassDesc.of(providerClassName);
         var noArg = components.stream().filter(Component::noArg).toList();
         var withArgs = components.stream().filter(c -> !c.noArg()).toList();
-        byte[] bytecode = ClassFile.of().build(providerCD, clb -> {
+        byte[] bytecode = GeneratedClassFile.build(providerCD, clb -> {
             clb.withFlags(ClassFile.ACC_PUBLIC | ClassFile.ACC_FINAL | ClassFile.ACC_SUPER);
             clb.withSuperclass(CD_Object);
             clb.withInterfaceSymbols(CD_Provider);
