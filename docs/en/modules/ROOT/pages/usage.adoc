@@ -66,6 +66,10 @@ enabling _Delegate IDE build/run actions to Maven_. See
 xref:internals.adoc#weaving-tiers[Internals — client-proxy weaving tiers] for the full
 mechanics.
 
+**In a Vauban layer, no agent at all** — under the xref:se.adoc[Java SE launcher] or `Vidocq.run`,
+the layer's class loader applies the same transformation as it defines each class, and the load-time
+tier detects it and stands down.
+
 **Without any weaving tier**, declare the entry constructor yourself
 (`io.vidocq.vauban.api.ProxyLink`, a Vauban extension comparable to Weld's relaxed
 construction):

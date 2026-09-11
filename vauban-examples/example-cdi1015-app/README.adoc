@@ -60,7 +60,7 @@ package, but forwarding it means calling `instance.method()` on an instance othe
 https://docs.oracle.com/javase/specs/jls/se25/html/jls-6.html#jls-6.6.2[JLS §6.6.2] forbids outside
 the declaring package. A cross-package proxy can inherit such a method but cannot delegate it.
 
-Vauban's `ProducerProxyEligibility` encodes exactly these three outcomes:
+Vauban's `ProducerProxyEligibility` encodes these outcomes:
 
 [cols="1,3"]
 |===
@@ -74,10 +74,14 @@ Vauban's `ProducerProxyEligibility` encodes exactly these three outcomes:
 
 |`PACKAGE_PRIVATE_VIRTUALS`
 |An overridable package-private method — not even overridable cross-package.
+
+|`NO_ACCESSIBLE_CTOR`
+|No `public` or `protected` constructor to chain `super()` to — `ReceiptPrinter` in this example.
 |===
 
-The last two are not specification violations: they are the cases where Vauban declines the
-cross-package build-time proxy and falls back to the levers described below.
+The last three are not specification violations: they are the cases where Vauban declines the
+cross-package build-time proxy and puts the proxy inside the library's package instead, as described
+below.
 
 == What this example shows
 
@@ -104,7 +108,7 @@ Run it — no `--add-opens`, no agent, no reflection:
 
 [source,shell]
 ----
-../../mvnw -o -pl :example-cdi1015-lib,:example-cdi1015-app -am install   # from the vauban repo root
+./mvnw -o -pl :example-cdi1015-lib,:example-cdi1015-app -am install   # from the vauban repo root
 # then, on the module path:
 java -p <module-path> \
   -m io.vidocq.vauban.example.cdi1015.app/io.vidocq.vauban.example.cdi1015.app.Main
@@ -201,7 +205,7 @@ self-granted.
 
 === What Vauban does instead
 
-Two `--add-opens`-free levers, both documented in the reference docs:
+Three `--add-opens`-free levers, all documented in the reference docs:
 
 * **In a Vauban layer — the answer that costs nothing.** Start the application through the
   launcher, `java -p mods --add-modules ALL-MODULE-PATH -m
@@ -230,8 +234,8 @@ Two `--add-opens`-free levers, both documented in the reference docs:
   (`Vauban-Enhanced-From`, `Vauban-Enhanced-Digest`). It is a modified redistribution of a
   third-party artefact — that governance cost is what makes the goal opt-in.
 
-Truly unproxyable types in the specification's sense (`final` class, `final` method, abstract, no
-non-private constructor) remain deployment errors — no trick saves those.
+Truly unproxyable types in the specification's sense (`final` or `sealed` class, `final` method,
+abstract class) remain deployment errors — no trick saves those.
 
 See the link:https://doc.vidocq.dev/vauban/dev/internals.html#proxy-strategies[client-proxy strategies] in the Vauban docs for
 the full decision table.

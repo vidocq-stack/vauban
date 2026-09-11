@@ -70,7 +70,8 @@ as a resource of your bean archive (`META-INF/vauban/placed/…_ClientProxy.clas
 placement manifest `META-INF/vauban/required-opens.list`), and the loader *defines it into that
 package*. A loader may define classes in a package it owns; `opens` governs reflective access
 across modules and has nothing to say here. **Zero `opens`, no agent, no rewritten jar** — the
-library is used exactly as its author shipped it, signature intact.
+library is used exactly as its author shipped it, signature intact. The library must still
+`export` that package: the container instantiates the placed proxy from `io.vidocq.vauban.core`.
 
 No double construction::
 The loader weaves the side-effect-free `(ProxyLink)` entry constructor into the produced type as
@@ -105,6 +106,9 @@ The module you name in `<module>/<main-class>` is the application: no prefix kee
 reads is not held back through it either. It must still end up re-layered. If it is automatic, owns a
 `javax.`, `sun.` or `com.sun.` package, or is read by a kept module, the launcher refuses to run it
 rather than run it exactly as without the launcher.
+
+With the bare `<main-class>` form there is no module name to treat as a root, so a keep prefix can
+hold the application back; name the module.
 
 The policy is public as `VaubanLayerFactory.applicationPaths(configuration, keptPrefixes, roots)`.
 
@@ -150,7 +154,9 @@ overcome. Static generation, nothing generated at runtime — the loader only *p
 |===
 
 A `final` or `sealed` class, a `final` method or an abstract class are unproxyable anywhere (CDI
-4.1 §3.10): nothing is shipped for them, and they remain deployment errors.
+4.1 §3.10): nothing is shipped for them, and they remain deployment errors. Nothing is shipped
+either for a produced type that is not `public`, or for a non-static nested one — a co-located proxy
+could serve those two, and does not today.
 
 == Limits
 
@@ -164,6 +170,12 @@ Placement needs the library to be defined by the Vauban loader. A produced type 
 in the boot layer (see above) falls back to the bare-boot-layer levers. A kept module also keeps
 reading the boot-layer copies of what it requires, so do not keep a module that hands application
 types to or from re-layered code.
+
+An exported package::
+Placement replaces the `opens`, never the `exports`. The container instantiates the placed proxy
+from `io.vidocq.vauban.core`, so the produced type's package must be exported to it. A library that
+exports nothing falls back to the bare-boot-layer levers, and the boot-time warning says so rather
+than failing later at the injection point.
 
 What the placed proxy forwards::
 The produced type's own non-private members, every inherited public member, the members inherited
