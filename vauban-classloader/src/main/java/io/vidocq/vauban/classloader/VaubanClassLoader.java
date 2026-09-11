@@ -380,11 +380,14 @@ public class VaubanClassLoader extends ClassLoader implements AutoCloseable {
         }
         synchronized (getClassLoadingLock(name)) {
             Class<?> loaded = findLoadedClass(name);
-            // A placed proxy is self-first too, and for a stronger reason than an archive class:
-            // it must extend THIS layer's produced type, so a same-named class in the parent (the
-            // boot layer's reflective fallback, say) is always the wrong one.
-            if (loaded == null && !isExcluded(name)
-                    && (classIndex.containsKey(toEntry(name)) || placesClass(name))) {
+            // Self-first for every name in a package this loader owns, not only for archive
+            // entries. A class defined at runtime in such a package (a placed proxy, the reflective
+            // fallback's <Type>_ClientProxy, a <Bean>$$Intercepted subclass) must extend THIS
+            // layer's types, so a same-named class in the parent is always the wrong one: in a
+            // layer, a package belongs to one module and so to one loader. A miss throws
+            // ClassNotFoundException, which is what sends the runtime fallback to define the class
+            // inside this loader's package rather than pick up the parent's.
+            if (loaded == null && !isExcluded(name) && ownsPackage(name)) {
                 loaded = findClass(name);
             }
             if (loaded == null) {
@@ -402,6 +405,33 @@ public class VaubanClassLoader extends ClassLoader implements AutoCloseable {
             if (name.startsWith(prefix)) return true;
         }
         return false;
+    }
+
+    /**
+     * Whether this loader refuses to define the classes of package {@code pkg} (platform and
+     * container prefixes). The launcher keeps a module owning such a package in the boot layer:
+     * re-layered, it would be an empty shell whose classes come back from its boot twin.
+     */
+    static boolean excludesPackage(String pkg) {
+        return isExcluded(pkg + ".");
+    }
+
+    private volatile Set<String> ownedPackages;
+
+    /** Whether the package of {@code binaryName} is one of the packages of this loader's archives. */
+    private boolean ownsPackage(String binaryName) {
+        var packages = ownedPackages;
+        if (packages == null) {
+            var set = new java.util.HashSet<String>();
+            for (var entry : classIndex.keySet()) {
+                var slash = entry.lastIndexOf('/');
+                set.add(slash < 0 ? "" : entry.substring(0, slash).replace('/', '.'));
+            }
+            packages = Set.copyOf(set);
+            ownedPackages = packages;
+        }
+        var dot = binaryName.lastIndexOf('.');
+        return packages.contains(dot < 0 ? "" : binaryName.substring(0, dot));
     }
 
     @Override

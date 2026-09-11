@@ -24,8 +24,9 @@ import io.vidocq.vauban.classloader.spi.ClassTransformerPlugin;
 import io.vidocq.vauban.weaver.BeanWeavingAnalysis;
 import io.vidocq.vauban.weaver.ProxyLinkWeaver;
 
+import java.lang.classfile.ClassFile;
 import java.util.HashMap;
-import java.util.HashSet;
+import java.util.LinkedHashSet;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
@@ -45,11 +46,15 @@ import java.util.concurrent.ConcurrentHashMap;
  * <p>Placed produced types (issue #42, Stage 4): a type named in a placement manifest
  * ({@link ArchiveContext#placedProxyTypes()}) is a third-party class produced by a
  * normal-scoped {@code @Produces} whose client proxy the loader defines into the type's own
- * package. It carries no scope annotation, so the pre-filter and the scope check would both
- * pass it by; it is treated as weavable regardless — the marker goes in at its definition, and
- * the placed proxy, transformed against the same archive context, is retargeted onto it. That
- * closes the #24 double construction for third-party produced types, whose build-time proxy
- * otherwise chains the external constructor.
+ * package. It carries no scope annotation, so it is treated as weavable regardless — the marker
+ * goes in at its definition, and the placed proxy, transformed against the same archive context,
+ * is retargeted onto it, so the third-party constructor never runs for the proxy. When the type's
+ * superclass has only a business constructor, that superclass is woven as well, as long as this
+ * loader defines it; otherwise no side-effect-free chain exists and a WARNING says so.
+ *
+ * <p>One gate, used everywhere: {@code superChain} treats a candidate superclass as "will be
+ * woven", so the candidate set is exactly what {@link #transform} weaves — a candidate left
+ * unwoven would leave its subclass chaining a constructor that does not exist.
  *
  * <p>Documented limit (study §8): a custom {@code @NormalScope} annotation is only
  * resolved when its bytes are reachable through the {@link ArchiveContext} — the
@@ -60,9 +65,16 @@ public final class CdiProxifierTransformer implements ClassTransformerPlugin {
 
     public static final String NAME = "cdi-proxifier";
     private static final String CLIENT_PROXY_SUFFIX = "_ClientProxy";
+    private static final System.Logger LOG = System.getLogger(CdiProxifierTransformer.class.getName());
+    /** Guard against a malformed hierarchy when walking superclasses. */
+    private static final int MAX_DEPTH = 64;
 
     /** Per-archive memo for custom-scope annotation lookups. */
     private final Map<ArchiveContext, Map<String, Boolean>> scopeCaches = new ConcurrentHashMap<>();
+    /** Per-archive memo of the placed types plus the superclasses they need woven. */
+    private final Map<ArchiveContext, Set<String>> placedChains = new ConcurrentHashMap<>();
+    /** Per-archive memo of every class {@link #transform} will weave. */
+    private final Map<ArchiveContext, Set<String>> candidateSets = new ConcurrentHashMap<>();
 
     @Override
     public String name() {
@@ -71,10 +83,10 @@ public final class CdiProxifierTransformer implements ClassTransformerPlugin {
 
     @Override
     public boolean interested(String className, ArchiveContext archive) {
-        var placed = archive.placedProxyTypes();
+        var placed = placedChain(archive);
         if (placed.contains(className)
                 || (className.endsWith(CLIENT_PROXY_SUFFIX) && placed.contains(beanOf(className)))) {
-            return true; // a placed produced type, or its placed proxy
+            return true; // a placed produced type (or a superclass it needs woven), or its placed proxy
         }
         var beans = archive.beansList();
         if (beans.isEmpty()) {
@@ -90,31 +102,28 @@ public final class CdiProxifierTransformer implements ClassTransformerPlugin {
         if (className.endsWith(CLIENT_PROXY_SUFFIX)) {
             return retargetIfBeanWoven(className, bytes, archive);
         }
-        var scopeCache = scopeCaches.computeIfAbsent(archive, a -> new ConcurrentHashMap<>());
-        BeanWeavingAnalysis.ByteResolver resolver = archive::classBytes;
         try {
             if (ProxyLinkWeaver.hasMarkerConstructor(bytes)) {
                 return null; // already woven (build tier, or an earlier definition)
             }
-            var placed = archive.placedProxyTypes().contains(className);
-            if (!placed) {
-                // A declared bean keeps the load-time gate: only a bean without a usable
-                // no-arg constructor needs the marker here.
-                if (!BeanWeavingAnalysis.needsMarker(bytes)
-                        || !BeanWeavingAnalysis.isNormalScopedBeanClass(bytes, resolver, scopeCache)) {
-                    return null;
-                }
+            boolean placed = placedChain(archive).contains(className);
+            if (!placed && !isWovenBean(bytes, archive)) {
+                return null;
             }
-            // A placed produced type gets the marker whenever it lacks one: its constructor is
-            // third-party code, and a placed proxy must never run it, no-arg or not (#24).
-            // A superclass that itself needs weaving will be woven at its own definition:
-            // declare the archive's beans (and every placed type) as weavable candidates so
-            // the chain resolves.
-            var chain = BeanWeavingAnalysis.superChain(bytes, resolver, weavable(archive),
-                    new HashMap<>());
+            // A placed type gets the marker whenever it lacks one: its constructor is third-party
+            // code that a placed proxy must never run, no-arg or not (#24).
+            var chain = BeanWeavingAnalysis.superChain(bytes, archive::classBytes,
+                    candidates(archive), new HashMap<>());
             if (chain == null) {
-                // No side-effect-free chain: leave the class alone, deployment validation
-                // will produce the regular vauban#24 diagnostic
+                if (placed) {
+                    LOG.log(System.Logger.Level.WARNING, () -> className + ": no side-effect-free "
+                            + "constructor chain — a superclass offers neither the (ProxyLink) marker "
+                            + "nor a non-private no-arg constructor, and is not defined by the Vauban "
+                            + "class loader. Its placed client proxy will run the business constructor "
+                            + "on a throwaway instance (vauban#24).");
+                }
+                // For a declared bean, deployment validation produces the regular vauban#24
+                // diagnostic.
                 return null;
             }
             return ProxyLinkWeaver.addMarkerConstructor(bytes, chain);
@@ -124,38 +133,102 @@ public final class CdiProxifierTransformer implements ClassTransformerPlugin {
     }
 
     /**
-     * A proxy is only retargeted when its bean superclass carries (or will carry once
-     * woven by this transformer) the marker — an already-retargeted proxy comes out
-     * identical (idempotence).
+     * A proxy is only retargeted when its bean superclass carries, or will carry once woven by
+     * this transformer, the marker — decided by the same gate as {@link #transform}, so a proxy is
+     * never retargeted onto a constructor that will not exist. An already-retargeted proxy comes
+     * out identical (idempotence).
      */
     private byte[] retargetIfBeanWoven(String proxyName, byte[] proxyBytes, ArchiveContext archive) {
         var beanName = beanOf(proxyName);
         var beanBytes = archive.classBytes(beanName);
         if (beanBytes == null) return null;
         try {
-            var placed = archive.placedProxyTypes().contains(beanName);
-            var beanWillHaveMarker = ProxyLinkWeaver.hasMarkerConstructor(beanBytes)
-                    || ((placed || (BeanWeavingAnalysis.needsMarker(beanBytes)
-                            && BeanWeavingAnalysis.isNormalScopedBeanClass(beanBytes,
-                                    archive::classBytes,
-                                    scopeCaches.computeIfAbsent(archive, a -> new ConcurrentHashMap<>()))))
-                            && BeanWeavingAnalysis.superChain(beanBytes, archive::classBytes,
-                                    weavable(archive), new HashMap<>()) != null);
-            if (!beanWillHaveMarker) return null;
+            if (!willHaveMarker(beanName, beanBytes, archive)) return null;
             return ProxyLinkWeaver.retargetProxyConstructor(proxyBytes);
         } catch (IllegalArgumentException unparseable) {
             return null;
         }
     }
 
-    /** The archive's declared beans plus every placed produced type: all may be woven. */
-    private static Set<String> weavable(ArchiveContext archive) {
-        var beans = archive.beansList().orElse(Set.of());
+    /** Whether {@code name} carries the marker, or will once {@link #transform} has seen it. */
+    private boolean willHaveMarker(String name, byte[] bytes, ArchiveContext archive) {
+        if (ProxyLinkWeaver.hasMarkerConstructor(bytes)) return true;
+        if (!placedChain(archive).contains(name) && !isWovenBean(bytes, archive)) return false;
+        return BeanWeavingAnalysis.superChain(bytes, archive::classBytes, candidates(archive),
+                new HashMap<>()) != null;
+    }
+
+    /** The load-time gate for a declared bean: normal-scoped, without a usable no-arg constructor. */
+    private boolean isWovenBean(byte[] bytes, ArchiveContext archive) {
+        return BeanWeavingAnalysis.needsMarker(bytes)
+                && BeanWeavingAnalysis.isNormalScopedBeanClass(bytes, archive::classBytes, scopeCache(archive));
+    }
+
+    /**
+     * Every class {@link #transform} weaves, as seen from {@code archive}: the placed chain, plus the
+     * listed beans that pass {@link #isWovenBean}. This is what {@code superChain} may assume will
+     * carry the marker — nothing more, or a subclass would chain a constructor that never appears.
+     */
+    private Set<String> candidates(ArchiveContext archive) {
+        return candidateSets.computeIfAbsent(archive, a -> {
+            var set = new LinkedHashSet<>(placedChain(a));
+            for (var bean : a.beansList().orElse(Set.of())) {
+                var beanBytes = a.classBytes(bean);
+                if (beanBytes == null) continue;
+                try {
+                    if (!ProxyLinkWeaver.hasMarkerConstructor(beanBytes) && isWovenBean(beanBytes, a)) {
+                        set.add(bean);
+                    }
+                } catch (IllegalArgumentException unparseable) {
+                    // not a candidate
+                }
+            }
+            return Set.copyOf(set);
+        });
+    }
+
+    /**
+     * The placed types plus the superclasses of their chain that must be woven for a
+     * side-effect-free chain to exist: classes this loader defines (their bytes resolve through
+     * the archive context) that carry neither the marker nor a non-private no-arg constructor. The
+     * walk stops at the first superclass that ends the chain on its own, or that this loader does
+     * not define.
+     */
+    private Set<String> placedChain(ArchiveContext archive) {
         var placed = archive.placedProxyTypes();
-        if (placed.isEmpty()) return beans;
-        var all = new HashSet<>(beans);
-        all.addAll(placed);
-        return all;
+        if (placed.isEmpty()) return placed;
+        return placedChains.computeIfAbsent(archive, a -> {
+            var set = new LinkedHashSet<>(placed);
+            for (var type : placed) {
+                var current = type;
+                for (int depth = 0; depth < MAX_DEPTH; depth++) {
+                    var currentBytes = a.classBytes(current);
+                    if (currentBytes == null) break;
+                    String superName;
+                    try {
+                        superName = ClassFile.of().parse(currentBytes).superclass()
+                                .map(s -> s.asInternalName().replace('/', '.'))
+                                .orElse(null);
+                    } catch (IllegalArgumentException unparseable) {
+                        break;
+                    }
+                    if (superName == null || "java.lang.Object".equals(superName)) break;
+                    var superBytes = a.classBytes(superName);
+                    if (superBytes == null) break; // not defined by this loader
+                    if (ProxyLinkWeaver.hasMarkerConstructor(superBytes)
+                            || ProxyLinkWeaver.hasNonPrivateNoArgConstructor(superBytes)) {
+                        break; // the chain ends here without weaving anything more
+                    }
+                    set.add(superName);
+                    current = superName;
+                }
+            }
+            return Set.copyOf(set);
+        });
+    }
+
+    private Map<String, Boolean> scopeCache(ArchiveContext archive) {
+        return scopeCaches.computeIfAbsent(archive, a -> new ConcurrentHashMap<>());
     }
 
     private static String beanOf(String proxyName) {

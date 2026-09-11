@@ -158,6 +158,96 @@ class PlacedProxyTest {
         }
     }
 
+    @Test
+    @DisplayName("a layer loader never delegates any name of a package it owns, placed or not")
+    void ownedPackageNamesAreNeverDelegated(@TempDir Path dir) throws Exception {
+        // The reflective fallback (or an $$Intercepted subclass) asks for a name that is neither
+        // an archive entry nor placed. If the parent knows that name, handing it back would give
+        // this layer a class extending the PARENT's types. Owned package ⇒ self-first ⇒ a clean
+        // miss, which is what sends the fallback to define the class here instead.
+        var name = "com.example.lib.Widget$$Intercepted";
+        var parentRoot = dir.resolve("parent");
+        var parentClass = parentRoot.resolve("com/example/lib/Widget$$Intercepted.class");
+        Files.createDirectories(parentClass.getParent());
+        Files.write(parentClass, VaubanClassLoaderTest.simpleClass(name));
+        var lib = libArchive(dir);
+        try (var parent = VaubanClassLoader.of(List.of(parentRoot), getClass().getClassLoader(),
+                PluginContext.empty());
+             var layer = VaubanClassLoader.forLayer(List.of(lib), parent, PluginContext.empty())) {
+            assertNotNull(Class.forName(name, false, parent), "the parent does know the name");
+            assertThrows(ClassNotFoundException.class, () -> Class.forName(name, false, layer),
+                    "com.example.lib belongs to the layer: its names must never come from the parent");
+        }
+    }
+
+    @Test
+    @DisplayName("a placed type's superclass with only a business constructor is woven too")
+    void placedTypesSuperclassIsWovenWhenItHasOnlyABusinessConstructor(@TempDir Path dir)
+            throws Exception {
+        // Base has no usable no-arg constructor: unless the loader weaves it as well, the placed
+        // type has no side-effect-free chain and its placed proxy runs the business constructors
+        // after all (the #24 double construction). Both constructors throw, so instantiating the
+        // placed proxy discriminates.
+        var lib = dir.resolve("lib");
+        var base = lib.resolve("com/example/lib/Base.class");
+        Files.createDirectories(base.getParent());
+        Files.write(base, classWithThrowingStringCtor("com.example.lib.Base", "java.lang.Object"));
+        Files.write(lib.resolve("com/example/lib/Widget.class"),
+                classWithThrowingStringCtor(WIDGET, "com.example.lib.Base"));
+        var app = dir.resolve("app");
+        Files.createDirectories(app.resolve("META-INF/vauban"));
+        Files.writeString(app.resolve(MANIFEST), WIDGET + "\n");
+        var placed = app.resolve(PLACED);
+        Files.createDirectories(placed.getParent());
+        Files.write(placed, VaubanClassLoaderTest.proxyChainingBusinessCtor(PROXY, WIDGET));
+        try (var layer = VaubanClassLoader.forLayer(List.of(lib, app), getClass().getClassLoader(),
+                PluginContext.empty())) {
+            var proxy = Class.forName(PROXY, true, layer);
+            var proxyLink = Class.forName("io.vidocq.vauban.api.ProxyLink");
+            assertNotNull(proxy.getSuperclass().getSuperclass().getDeclaredConstructor(proxyLink),
+                    "Base must have gained the entry constructor for Widget's to chain to it");
+            assertNotNull(proxy.getDeclaredConstructor().newInstance(),
+                    "neither business constructor may run for the placed proxy");
+        }
+    }
+
+    /**
+     * {@code public class <name> extends <superName> { public <name>(String s) { super(…); throw …; } }}
+     * — no no-arg constructor, and a business constructor that always throws.
+     */
+    static byte[] classWithThrowingStringCtor(String binaryName, String superName) {
+        var desc = ClassDesc.of(binaryName);
+        var superDesc = ClassDesc.of(superName);
+        var ise = ClassDesc.of("java.lang.IllegalStateException");
+        return ClassFile.of().build(desc, clb -> {
+            clb.withFlags(ClassFile.ACC_PUBLIC);
+            clb.withSuperclass(superDesc);
+            clb.withMethodBody(ConstantDescs.INIT_NAME,
+                    MethodTypeDesc.of(ConstantDescs.CD_void, ConstantDescs.CD_String),
+                    ClassFile.ACC_PUBLIC, cob -> {
+                        cob.aload(0);
+                        if ("java.lang.Object".equals(superName)) {
+                            cob.invokespecial(ConstantDescs.CD_Object, ConstantDescs.INIT_NAME,
+                                    MethodTypeDesc.of(ConstantDescs.CD_void));
+                        } else {
+                            cob.aconst_null();
+                            cob.invokespecial(superDesc, ConstantDescs.INIT_NAME,
+                                    MethodTypeDesc.of(ConstantDescs.CD_void, ConstantDescs.CD_String));
+                        }
+                        cob.new_(ise);
+                        cob.dup();
+                        cob.invokespecial(ise, ConstantDescs.INIT_NAME,
+                                MethodTypeDesc.of(ConstantDescs.CD_void));
+                        cob.athrow();
+                    });
+            clb.withMethodBody("internalOnly", MethodTypeDesc.of(ConstantDescs.CD_String),
+                    0, cob -> {
+                        cob.ldc("internal");
+                        cob.areturn();
+                    });
+        });
+    }
+
     // ---------------------------------------------------------------- fixtures
 
     /** Exploded library archive: {@code Widget} only — no beans list, it knows nothing about CDI. */
