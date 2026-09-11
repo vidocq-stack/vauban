@@ -88,12 +88,16 @@ cross-package build-time proxy and falls back to the levers described below.
 |`example-cdi1015-lib`
 |The **CDI-agnostic** library (the "library A"): a strict Java module that `exports` its types,
 declares **no `opens`**, and has **no dependency on any CDI implementation**. It ships a
-fully-public class `PaymentGateway` and an interface `AuditLog`.
+fully-public class `PaymentGateway`, an interface `AuditLog`, and the two hard cases of #1015: a
+class `FraudScreen` whose risk score is **package-private**, called by `FraudPolicy`, a class of the
+same package, on the instance it is handed; and a class `ReceiptPrinter` with **no accessible
+constructor**, only a package-private one behind a static factory.
 
 |`example-cdi1015-app`
-|The **CDI SE** application (the "bean archive B"): it `@Produces` both library types as
-`@ApplicationScoped`, injects them into a `CheckoutService`, and boots the container with the
-standard `SeContainerInitializer`. Its `module-info.java` has **zero `opens`**.
+|The **CDI SE** application (the "bean archive B"): it `@Produces` the four library types as
+`@ApplicationScoped`, injects two of them into a `CheckoutService`, and boots the container with the
+standard `SeContainerInitializer`. Its `module-info.java` has **zero `opens`**. The first statement
+of `Main` re-launches it inside a Vauban layer, which is what lets the proxies of `FraudScreen` and `ReceiptPrinter` be placed.
 |===
 
 Run it — no `--add-opens`, no agent, no reflection:
@@ -106,19 +110,35 @@ java -p <module-path> \
   -m io.vidocq.vauban.example.cdi1015.app/io.vidocq.vauban.example.cdi1015.app.Main
 ----
 
-Expected output:
+The plain command is enough. `Main` starts with
+`if (Launch.run("io.vidocq.vauban.example.cdi1015.app/io.vidocq.vauban.example.cdi1015.app.Main", args)) return;`,
+which re-launches it once inside a Vauban layer. Here the application module is the root, so
+everything it needs is already resolved in the boot layer; `--add-modules ALL-MODULE-PATH` is only
+needed when the launcher itself is the root module.
+
+Expected output on standard output. The launcher also logs `Vauban layer ready: [...]` on standard
+error, naming the modules it re-layered.
 
 [source,text]
 ----
 PaymentGateway proxy : io.vidocq.vauban.example.cdi1015.app.PaymentGateway$$<hash>_ClientProxy  (reflect.Proxy? false)
 AuditLog proxy       : io.vidocq.vauban.example.cdi1015.app.AuditLog$$<hash>_ClientProxy         (reflect.Proxy? false)
+FraudScreen proxy    : io.vidocq.vauban.example.cdi1015.lib.FraudScreen_ClientProxy  (module io.vidocq.vauban.example.cdi1015.lib, VaubanClassLoader)
+ReceiptPrinter proxy : io.vidocq.vauban.example.cdi1015.lib.ReceiptPrinter_ClientProxy  (module io.vidocq.vauban.example.cdi1015.lib, VaubanClassLoader)
 
 [audit] checkout:order-7
 Checkout: charged 1999 cents to acct-42
+Fraud review: score 1/9 for 1999 cents
+Receipt: order-7, 1999 cents, thank you
 ----
 
-Both proxies live in the **application's** package, not the library's — and neither is a
-`java.lang.reflect.Proxy`.
+`PaymentGateway` and `AuditLog` get build-time proxies in the **application's** package.
+`FraudScreen` and `ReceiptPrinter` get co-located proxies, defined **in the library's package** by
+the Vauban class loader that owns it, while the library still opens nothing. None of them is a
+`java.lang.reflect.Proxy`. The fraud score shows the package-private call was forwarded: left on the
+proxy's own empty state, it would read a zero limit and answer 9/9. The receipt footer shows the
+same for `ReceiptPrinter`: its proxy is built without running `ReceiptPrinter`'s constructor, so
+the proxy's own footer is null, and the printed one comes from the real instance.
 
 == How Vauban answers each case
 

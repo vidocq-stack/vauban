@@ -24,9 +24,15 @@
  * has generated the client proxies in <em>this</em> module's package at compile time, so the
  * container resolves everything without any {@code --add-opens} and without runtime reflection. The
  * {@code provides} line hands the container the generated in-module component provider.
+ *
+ * <p>{@code FraudScreen} (a package-private member) and {@code ReceiptPrinter} (no accessible
+ * constructor) need their proxies inside the library's package: {@code Main} re-launches itself in
+ * a Vauban layer ({@code io.vidocq.vauban.classloader}), whose loader places them there — still
+ * with zero {@code opens}.
  */
 module io.vidocq.vauban.example.cdi1015.app {
     requires io.vidocq.vauban.core;
+    requires io.vidocq.vauban.classloader;
     requires io.vidocq.vauban.example.cdi1015.lib;
 
     requires jakarta.cdi;

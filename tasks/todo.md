@@ -223,5 +223,13 @@ Found before the review, by running the module IT in both surefire orders: a lay
 placed name to its parent (d9a6361). An IT that shares a JVM with irreversible state (opened modules,
 classes defined into a loader) can pass by test-class order alone.
 
+Follow-up (branch pr/ybl/42-example-launcher): the CDI SE example (cdi#1015) runs through the
+launcher. `Main` starts with the trampoline, and the library gains both in-package shapes:
+`FraudScreen` (a package-private member called by `FraudPolicy` on the instance it is handed) and
+`ReceiptPrinter` (no accessible constructor). `LauncherExampleTest` calls the real `Main.main` and
+checks the printed output; removing the trampoline makes it fail (the container cannot build
+`FraudScreen`'s proxy without opens). Verified in both surefire orders and with the plain `java -m`
+command from the README.
+
 Deferred: `Launch` and vidocq's `VidocqAppLayer` re-layer the boot layer with different policies —
 one policy in vauban-classloader, used by both (follow-up ticket; the docs no longer claim otherwise).

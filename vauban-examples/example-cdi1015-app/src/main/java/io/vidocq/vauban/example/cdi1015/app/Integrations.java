@@ -20,7 +20,9 @@
 package io.vidocq.vauban.example.cdi1015.app;
 
 import io.vidocq.vauban.example.cdi1015.lib.AuditLog;
+import io.vidocq.vauban.example.cdi1015.lib.FraudScreen;
 import io.vidocq.vauban.example.cdi1015.lib.PaymentGateway;
+import io.vidocq.vauban.example.cdi1015.lib.ReceiptPrinter;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.enterprise.inject.Produces;
 
@@ -50,5 +52,27 @@ public class Integrations {
             events.add(event);
             System.out.println("[audit] " + event);
         };
+    }
+
+    /**
+     * The hard case: a class with a package-private member, from another module. Its proxy must
+     * live in the library's package, so the build ships it as bytes and, in a Vauban layer (see
+     * {@link Main}), the loader that owns the library places it there. Still zero {@code opens}.
+     */
+    @Produces
+    @ApplicationScoped
+    public FraudScreen fraudScreen() {
+        return new FraudScreen(10_000);
+    }
+
+    /**
+     * The other hard case: no accessible constructor, only a package-private one behind a static
+     * factory. A proxy outside the library's package has no {@code super()} to chain to, so this
+     * one is placed in the library's package as well.
+     */
+    @Produces
+    @ApplicationScoped
+    public ReceiptPrinter receiptPrinter() {
+        return ReceiptPrinter.withFooter("thank you");
     }
 }

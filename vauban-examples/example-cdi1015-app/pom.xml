@@ -30,7 +30,9 @@
         <dependency>
             <groupId>io.vidocq.vauban</groupId>
             <artifactId>vauban-classloader-spi</artifactId>
-            <scope>runtime</scope>
+            <!-- compile scope: module-info requires io.vidocq.vauban.classloader (the launcher),
+                 which requires this module transitively, so javac needs it on the module path -->
+            <scope>compile</scope>
         </dependency>
         <dependency>
             <groupId>jakarta.enterprise</groupId>
