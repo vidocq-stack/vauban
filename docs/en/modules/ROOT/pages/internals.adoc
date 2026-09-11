@@ -57,7 +57,10 @@ from another module, even one that knows nothing about CDI
 type's — that would be a split package), registered under the produced-type key the
 runtime looks up before any fallback. Eligibility requires the produced type to be *fully
 public*: public non-final non-sealed class, only public overridable methods, an accessible
-(public/protected) constructor.
+(public/protected) constructor. The check walks the **whole superclass hierarchy** (up to, but
+excluding, `java.lang.Object`), because a method inherited from a superclass is neither declared
+by the produced type nor overridden by the proxy: judging only declared methods would hand out a
+proxy that silently runs the superclass body against its own empty state. [.tag-new]#NEW#
 |Zero `opens`, zero runtime class definition (#42, Stage 1).
 
 |**Producer of an interface**
@@ -79,25 +82,60 @@ module to open the package to the container. Two levers keep this `--add-opens`-
 
 The two levers that remove the hand-written `opens` of the last case:
 
-* **The container opens the module itself** (#42, Stage 3b). The annotation processor lists
-  the produced types that fall to runtime generation in
-  `META-INF/vauban/required-opens.list`; at boot `OpensApplier` loads each and — only when
-  it is in a *named* module and not already open — calls `Instrumentation.redefineModule`
-  to open its package to `io.vidocq.vauban.core`, reusing the load-time weaving agent
-  (<<weaving-tiers>>). No `--add-opens`, no jar rewrite, and a strict no-op when the list is
-  absent (the class path, and the common module-path deployment). It loads a JVM agent
-  dynamically — an accepted deployment-time trust choice.
+* **The container opens the module itself** (#42, Stage 3b) — *opt-in, and on borrowed time*
+  [.tag-new]#NEW#. The annotation processor lists the produced types that fall to runtime
+  generation in `META-INF/vauban/required-opens.list`; at boot `OpensApplier` loads each and —
+  only when it is in a *named* module and not already open — calls
+  `Instrumentation.redefineModule` to open its package to `io.vidocq.vauban.core`, reusing the
+  load-time weaving agent (<<weaving-tiers>>). No `--add-opens`, no jar rewrite, and a strict
+  no-op when the list is absent (the class path, and the common module-path deployment).
++
+This lever is **off unless you set `-Dvauban.opens.auto=true`**. Opening another module's package
+behind the user's back is precisely what this project faults runtime CDI implementations for
+needing — the only difference would be *who* grants it; and silently acquiring a dependency on
+dynamic agent attachment is a defect that surfaces late, on a locked-down JVM in production. Left
+off, the container refuses and logs what is missing together with every way to avoid it. Treat it
+as a last resort: integrity by default is closing dynamic agent attachment, so prefer a
+fully-public produced type (nothing to open) or the build-time lever below.
 * **Rewriting a copy of the dependency jar** (#42, Stage 2, opt-in). The
   `vauban:enhance-dependencies` goal writes an enhanced copy of a third-party jar under
   `target/vauban-enhanced-deps/` in which `<Type>_ClientProxy` is co-located in the type's
   **own** package — so it *can* forward package-private and protected methods — and the
   `module-info.class` is rewritten to `provides` the generated component provider. Placed
-  ahead of the original on the module path it resolves with zero `opens` and no agent (jar
-  signatures are invalidated, hence opt-in).
+  ahead of the original on the module path it resolves with zero `opens` and no agent — and it
+  survives integrity by default, since nothing is opened, attached or defined at runtime.
++
+Because the copy is a *modified redistribution of someone else's artefact*, it declares itself
+[.tag-new]#NEW#: the enhanced jar drops the inherited signature files (`META-INF/++*++.SF`,
+`.DSA`, `.RSA`, `.EC`) rather than carrying a signature over content that no longer matches, drops
+the manifest's per-entry digests, and records its origin in the manifest main attributes:
++
+[source,properties]
+----
+Vauban-Enhanced-From: org.example:libwidget:1.0
+Vauban-Enhanced-Digest: sha256:<digest of the exact source jar>
+Vauban-Enhanced-By: vauban-maven-plugin/<version>
+----
++
+Declare these copies to whatever SBOM, attestation or reproducible-build tooling your pipeline
+runs — they are not the artefact their coordinates name. That governance cost, not a technical
+limitation, is why the goal is opt-in.
 
 A producer whose class type is not build-time proxyable is surfaced at compile time by
 `-Avauban.producerProxy=error|warn|note` (default `note`), naming the reason and the ways
 to keep zero `opens`.
+
+[TIP]
+====
+The reflex for the last case is `MethodHandles.privateLookupIn`. It does not help: it is not a way
+*around* `opens`, it is the API that *consumes* it — it throws `IllegalAccessException` unless the
+target's module already opens the package to the caller. `defineHiddenClass(…, NESTMATE)` needs the
+same full-power `Lookup`; a `Lookup` donated by the library means modifying the library; and
+defining the proxy under the same package name in another class loader yields a different runtime
+package — (loader, name) — so package-private access fails with `IllegalAccessError`, while the same
+loader gives a split-package `LinkageError`. A `Lookup` with PACKAGE access is obtainable only from
+*inside* the target module, or through `opens`. There is no third door, by design.
+====
 
 [NOTE]
 ====

@@ -107,7 +107,7 @@ This page lists every artefact published by Vauban, the Java Modules packages th
 | Bound to `package`. Encrypts the internal classes of a modular JAR in-place with AES-256-GCM (`vauban-sjar` reads it back); classes in `exports`/`opens` packages stay in clear text.
 
 | `vauban:enhance-dependencies` [.tag-new]#NEW#
-| Bound to `package`, **opt-in** (does nothing unless `<enhancedTypes>` lists the produced types to enhance). Writes an enhanced *copy* of a third-party dependency JAR under `target/vauban-enhanced-deps/` so a produced type that is not fully public can still be proxied at build time: the co-located `<Type>_ClientProxy`, a per-package `_VaubanComponents`, and a rewritten `module-info.class` that `provides` it. Placed ahead of the original on the module path, it resolves with zero `opens` (jar signatures are invalidated, hence opt-in). See xref:internals.adoc#proxy-strategies[Internals — client-proxy strategies].
+| Bound to `package`, **opt-in** (does nothing unless `<enhancedTypes>` lists the produced types to enhance). Writes an enhanced *copy* of a third-party dependency JAR under `target/vauban-enhanced-deps/` so a produced type that is not fully public can still be proxied at build time: the co-located `<Type>_ClientProxy`, a per-package `_VaubanComponents`, and a rewritten `module-info.class` that `provides` it. Placed ahead of the original on the module path, it resolves with zero `opens` and no agent. The copy declares itself: it drops the inherited signature files and the manifest's per-entry digests, and records `Vauban-Enhanced-From` (the source coordinates), `Vauban-Enhanced-Digest` (`sha256:` of the exact source JAR) and `Vauban-Enhanced-By` in the manifest. It is a modified redistribution of a third-party artefact, so declare it to your SBOM/attestation tooling — that governance cost is why the goal is opt-in. See xref:internals.adoc#proxy-strategies[Internals — client-proxy strategies].
 |===
 
 == Annotation-processor options
@@ -126,6 +126,19 @@ This page lists every artefact published by Vauban, the Java Modules packages th
 
 | `-Avauban.producerProxy=error\|warn\|note` [.tag-new]#NEW#
 | Default `note`. Severity of the diagnostic emitted when a normal-scoped `@Produces` returns a class type that is not build-time proxyable across a module boundary (the runtime then falls back to reflective proxy generation, which needs an `opens`). Set to `error` to enforce zero fallback, `warn` to surface it without failing the build. See xref:internals.adoc#proxy-strategies[Internals — client-proxy strategies].
+|===
+
+== System properties
+
+[cols="1,3"]
+|===
+| Property | Effect
+
+| `-Dvauban.weaving.loadtime=disabled`
+| Turns off the load-time weaving tier. Beans missing the `ProxyLink` entry constructor then fail deployment validation with the regular diagnostic instead of being woven at class definition. See xref:internals.adoc#weaving-tiers[Internals — weaving tiers].
+
+| `-Dvauban.opens.auto=true` [.tag-new]#NEW#
+| Lets the container open a third-party module's package to itself at boot (`Instrumentation.redefineModule`) when a producer's type is not build-time proxyable. **Off by default, deliberately**: opening another module behind the user's back is what this project faults runtime CDI implementations for needing, and it makes the application silently depend on dynamic agent attachment — a defect that surfaces late, on a locked-down JVM. Left off, the container refuses and logs every way to avoid it. A last resort: integrity by default is closing dynamic agent attachment, so prefer a fully-public produced type or `vauban:enhance-dependencies`. See xref:internals.adoc#proxy-strategies[Internals — client-proxy strategies].
 |===
 
 [#junit-extension]
