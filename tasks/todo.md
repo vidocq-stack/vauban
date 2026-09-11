@@ -186,9 +186,42 @@ proxy is retargeted onto it — closing the #24 residual for third-party produce
 - [x] 3. vauban-core: `OpensApplier` placement-first (skip types the loader can place); the refusal
       warning names the launcher first.
 - [x] 4. vauban-classloader: `Launch` main (re-layer the boot layer's application modules, invoke the
-      application main inside) + `VaubanApp` callback form.
+      application main inside). `Launch.run` returns a boolean and does nothing inside a layer, which
+      gives the trampoline form; a separate `VaubanApp` callback interface was NOT added.
 - [x] 5. vauban-producer-module-it: layer probe (Pooled forwards `internal:real` with zero opens,
       Handle resolves, proxy module is it.liba, counting external ctor runs once) + launched-main test.
 - [x] 6. Docs: new `se.adoc` (Vauban in Java SE), nav/index/getting-started links, internals strategy
-      table + weaving tiers, reference (Launch, VaubanApp), whats-new (vidocq repo).
-- [ ] 7. Gate: full reactor, CDI Lite TCK 774, mutation (no placement → red), adversarial review.
+      table + weaving tiers, reference (Launch), whats-new (vidocq repo, PR #76).
+- [x] 7. Gate: full reactor, CDI Lite TCK 774, mutations, adversarial review.
+
+## Review — 2026-09-11
+
+Adversarial review of PR #52 (6 lenses, 3 refuters per high/medium finding): 21 confirmed, 0 refuted.
+All addressed on the branch, each fix written test-first and, where the behaviour is subtle, proven
+by mutation:
+
+- Placed proxy dropped inherited non-public members → `ClientProxyShapeFromElements.fromColocated`
+  mirrors the bytecode shape (module IT: `hook:null` → `hook:real`).
+- Self-first covered placed names only → a layer loader is self-first for every name of a package it
+  owns (mutation: two `PlacedProxyTest` failures).
+- A placed type whose superclass has only a business constructor ran it for the proxy → the
+  transformer weaves the superclasses it defines, and warns when a foreign one blocks the chain
+  (mutation: the IT counter reads 1).
+- `superChain` candidates were wider than what `transform` weaves (NoSuchMethodError) → candidates are
+  exactly the woven set.
+- Launcher: the documented command could not work (`-m` makes the launcher the only root) →
+  `--add-modules ALL-MODULE-PATH`; automatic modules, modules with `javax.`/`sun.`/`com.sun.`
+  packages and what kept modules read stay in the boot layer; container modules by exact name; the
+  main module must be re-layered; `run` no longer recurses.
+- `OpensApplier` skips a placeable type only when its package is exported to the container; the skip
+  is now covered by an IT.
+- Two producers of one placed type → the emission is memoised per type (no FilerException).
+- Docs: launcher command, kept rules, the `Vidocq.run` caveat, the TIP scoped, accurate forwarding
+  limits.
+
+Found before the review, by running the module IT in both surefire orders: a layer loader delegated a
+placed name to its parent (d9a6361). An IT that shares a JVM with irreversible state (opened modules,
+classes defined into a loader) can pass by test-class order alone.
+
+Deferred: `Launch` and vidocq's `VidocqAppLayer` re-layer the boot layer with different policies —
+one policy in vauban-classloader, used by both (follow-up ticket; the docs no longer claim otherwise).
