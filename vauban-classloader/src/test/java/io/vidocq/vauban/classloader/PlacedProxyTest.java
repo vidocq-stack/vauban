@@ -132,6 +132,32 @@ class PlacedProxyTest {
         }
     }
 
+    @Test
+    @DisplayName("a layer loader never delegates a placed proxy to its parent")
+    void placedProxyIsNeverDelegatedToTheParent(@TempDir Path dir) throws Exception {
+        // The parent already knows a class of the same name — as the boot layer does once a
+        // container started there has defined the reflective fallback proxy into its own copy of
+        // the library. Delegating would return the PARENT's proxy, which extends the parent's
+        // produced type: a different class from the one this layer defines, hence a
+        // ClassCastException at the injection point.
+        var parentRoot = dir.resolve("parent");
+        var parentProxy = parentRoot.resolve("com/example/lib/Widget_ClientProxy.class");
+        Files.createDirectories(parentProxy.getParent());
+        Files.write(parentProxy, VaubanClassLoaderTest.simpleClass(PROXY)); // extends Object
+        var lib = libArchive(dir);
+        var app = appArchive(dir, true, true);
+        try (var parent = VaubanClassLoader.of(List.of(parentRoot), getClass().getClassLoader(),
+                PluginContext.empty());
+             var layer = VaubanClassLoader.forLayer(List.of(lib, app), parent, PluginContext.empty())) {
+            var proxy = Class.forName(PROXY, true, layer);
+            assertSame(layer, proxy.getClassLoader(),
+                    "the placed proxy must be defined by the layer loader, not found in the parent");
+            assertEquals(WIDGET, proxy.getSuperclass().getName(),
+                    "it must extend THIS layer's produced type");
+            assertSame(layer, proxy.getSuperclass().getClassLoader());
+        }
+    }
+
     // ---------------------------------------------------------------- fixtures
 
     /** Exploded library archive: {@code Widget} only — no beans list, it knows nothing about CDI. */

@@ -380,7 +380,11 @@ public class VaubanClassLoader extends ClassLoader implements AutoCloseable {
         }
         synchronized (getClassLoadingLock(name)) {
             Class<?> loaded = findLoadedClass(name);
-            if (loaded == null && !isExcluded(name) && classIndex.containsKey(toEntry(name))) {
+            // A placed proxy is self-first too, and for a stronger reason than an archive class:
+            // it must extend THIS layer's produced type, so a same-named class in the parent (the
+            // boot layer's reflective fallback, say) is always the wrong one.
+            if (loaded == null && !isExcluded(name)
+                    && (classIndex.containsKey(toEntry(name)) || placesClass(name))) {
                 loaded = findClass(name);
             }
             if (loaded == null) {
