@@ -102,15 +102,19 @@ public final class OpensApplier {
             if (module == null || !module.isNamed()) {
                 continue; // class path (unnamed module): already open to everyone
             }
+            var pkg = c.getPackageName();
             if (c.getClassLoader() instanceof io.vidocq.vauban.classloader.VaubanClassLoader vcl
-                    && vcl.placesClass(fqn + "_ClientProxy")) {
+                    && vcl.placesClass(fqn + "_ClientProxy")
+                    && module.isExported(pkg, container)) {
                 // #42 Stage 4: the loader that owns the package defines the shipped proxy into
-                // it — nothing to open, and nothing the runtime needs to generate.
+                // it — nothing to open, and nothing the runtime needs to generate. The container
+                // still instantiates that proxy from io.vidocq.vauban.core, which needs the package
+                // exported to it: when it is not, the package stays pending so the warning (or the
+                // opt-in open) applies instead of a silent failure at the injection point.
                 LOG.log(System.Logger.Level.DEBUG, () -> fqn + ": proxy placed by the Vauban "
                         + "class loader, no opens needed");
                 continue;
             }
-            var pkg = c.getPackageName();
             if (module.isOpen(pkg, container)) {
                 continue; // already opened (by module-info or a previous apply)
             }
