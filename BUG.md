@@ -1075,3 +1075,24 @@ and a proposed upstream assertion: `CDI_TCK_PROPOSALS.md` → `TCK-GAP-001`.
 - **Investigations**:
   - 2026-09-12: fixed in f9a2f4d. Every generator builds through `GeneratedClassFile.build`, which pins the class file version to Java 25. Proven by running the new tests on a JDK 26: red (70 vs 69) before, green after, green on Java 25 in both cases. The other bricks' Class-File sites (cassini, cyrano, mansart) generate at runtime only, where the running JVM defines what it writes, so they are unaffected.
   - 2026-09-11: found while gating vidocq#77 offline. The JWT and Knock examples fail on those local jars; CI, which builds on Java 25, does not see it. Site list from `grep "ClassFile.of().build"`: `BeanFactoryGenerator:69`, `ClientProxyEmitter:83`, `ComponentProviderClassGenerator:152` (build time), `InterceptedEmitter:106` (runtime). No site sets a version.
+
+## BUG-20260912-01 — A nested bean's generated classes take its canonical name, so nothing can load them
+
+- **Date**: 2026-09-12
+- **Status**: FIXED (this branch)
+- **Module**: `vauban-processor` (`apt/ElementScanner#scan`, hence `BeanFactoryGenerator` and `ClientProxyGenerator`)
+- **Symptom**: for a nested normal-scoped bean `app.Holder.Counter`, the annotation processor emits `app/Holder/Counter_ClientProxy.class` and `app/Holder/Counter_Factory.class` — a class-as-package directory. The bytes name the class `app.Holder.Counter_ClientProxy` and give it the superclass `app/Holder/Counter`, which does not exist (the bean is `app/Holder$Counter`). The runtime looks up `app.Holder$Counter_ClientProxy`, finds nothing, and the two emitted classes are unloadable anyway: defining either one raises `NoClassDefFoundError: app/Holder/Counter`. A normal-scoped nested bean therefore has no usable client proxy at all.
+- **Minimal reproduction**:
+  ```java
+  // app/Holder.java, compiled with the Vauban processor
+  package app;
+  public class Holder {
+      @jakarta.enterprise.context.ApplicationScoped
+      public static class Counter { public String hit() { return "hit"; } }
+  }
+  // javac -proc:full … → target/classes/app/Holder/Counter_ClientProxy.class
+  //   javap: public class app.Holder.Counter_ClientProxy extends app.Holder.Counter
+  ```
+- **Suspected cause**: `ElementScanner#scan` built the `ClassInfo` name from `typeElement.getQualifiedName()` (canonical: `app.Holder.Counter`) instead of `Elements#getBinaryName` (`app.Holder$Counter`). The same trap had already been fixed for method return/parameter types in `typeMirrorToTypeInfo` (the `$`-vs-`.` comment there), but not for the scanned class's own name, and every artifact derived from it inherited the wrong name.
+- **Investigations**:
+  - 2026-09-12: found by writing the missing coverage for the APT's bytecode-proxy fallback (`NestedBeanProxyEmissionTest`) — the branch at `VaubanProcessor:480` had no end-to-end test, so the defect was invisible. Fixed by scanning the binary name. The fix is a no-op for top-level types (binary name == qualified name); it only changes nested ones, which were broken. `ComponentProviderCompileTimeTest#nestedBeanIsSkipped` still holds: the generated provider skips nested beans, so the proxy is resolved by name at runtime — which is exactly what the wrong name prevented.

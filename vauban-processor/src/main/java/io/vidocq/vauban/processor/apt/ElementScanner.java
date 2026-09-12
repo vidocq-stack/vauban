@@ -63,7 +63,12 @@ public final class ElementScanner {
      * Converts a TypeElement to a ClassInfo.
      */
     public ClassInfo scan(TypeElement typeElement) {
-        var name = DotName.of(typeElement.getQualifiedName().toString());
+        // Binary name, for the same reason as in typeMirrorToTypeInfo below: a nested bean's
+        // qualified name (app.Holder.Counter) names nothing at runtime — the class is
+        // app.Holder$Counter. Every artifact derived from this name (the client proxy, the
+        // factory, the bean list) would otherwise be emitted into a class-as-package directory,
+        // extending a superclass that does not exist.
+        var name = DotName.of(elements.getBinaryName(typeElement).toString());
 
         // Superclass
         DotName superName = null;
