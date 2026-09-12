@@ -40,7 +40,9 @@ import java.util.jar.JarOutputStream;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNotSame;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /** Stage 2 (issue #42): enhancing a modular dependency jar adds a co-located proxy, a provider, and a rewritten module-info. */
@@ -188,6 +190,100 @@ class DependencyEnhancerTest {
             assertTrue(mf.getEntries().isEmpty(),
                     "per-entry digests belong to the discarded signature, they must not survive");
         }
+    }
+
+    @Test
+    @DisplayName("the enhanced jar resolves on a module path, and its layer serves the proxy and the provider")
+    @SuppressWarnings({"rawtypes", "unchecked"})
+    void enhancedJarResolvesOnAModulePath(@TempDir Path tmp) throws Exception {
+        var fqn = Widget.class.getName();
+        var srcJar = tmp.resolve("libwidget.jar");
+        // An ordinary third-party module: it exports and opens its package, as a library whose
+        // types are meant to be injected must. The point here is the rewritten descriptor, not
+        // the non-exported case (which the class loader places instead of rewriting).
+        var pkg = java.lang.constant.PackageDesc.of(Widget.class.getPackageName());
+        byte[] moduleInfo = ClassFile.of().buildModule(ModuleAttribute.of(
+                ModuleDesc.of("fixture.mod"),
+                mb -> mb.requires(ModuleRequireInfo.of(
+                                ModuleDesc.of("java.base"), ClassFile.ACC_MANDATED, null))
+                        .exports(pkg, 0)
+                        .opens(pkg, 0)));
+        byte[] widgetBytes;
+        try (var is = getClass().getResourceAsStream("/" + PKG + "Widget.class")) {
+            widgetBytes = is.readAllBytes();
+        }
+        try (var out = new JarOutputStream(Files.newOutputStream(srcJar))) {
+            put(out, "module-info.class", moduleInfo);
+            put(out, PKG + "Widget.class", widgetBytes);
+        }
+
+        var result = DependencyEnhancer.enhance(srcJar, "org.example:libwidget:1.0",
+                tmp.resolve("enhanced"), List.of(fqn), getClass().getClassLoader(), new ArrayList<>());
+
+        // Resolve it for real. Reading the descriptor proves it parses; only resolution proves the
+        // module system accepts it — `requires io.vidocq.vauban.api` has to be satisfiable, and the
+        // `provides` has to name a class the jar actually contains.
+        var finder = java.lang.module.ModuleFinder.compose(
+                java.lang.module.ModuleFinder.of(result.enhancedJar()),
+                explicitModulesOnTestClassPath());
+        var configuration = ModuleLayer.boot().configuration()
+                .resolve(finder, java.lang.module.ModuleFinder.of(), List.of("fixture.mod"));
+        // Parent loader: the platform loader, so nothing can be answered by the test's own
+        // class path — what loads here came out of the enhanced jar.
+        var layer = ModuleLayer.boot()
+                .defineModulesWithOneLoader(configuration, ClassLoader.getPlatformClassLoader());
+
+        var loader = layer.findLoader("fixture.mod");
+        Class<?> widget = loader.loadClass(fqn);
+        Class<?> proxy = loader.loadClass(fqn + "_ClientProxy");
+        assertNotSame(Widget.class, widget, "the module must serve its own Widget, not the test's");
+        assertSame(widget, proxy.getSuperclass(), "the proxy must link against the module's own type");
+        assertEquals("fixture.mod", proxy.getModule().getName(),
+                "the proxy belongs to the enhanced module, not to an unnamed module");
+        assertNotNull(proxy.getDeclaredMethod("internalTag"),
+                "the co-located proxy overrides the package-private member — the whole reason this "
+                        + "jar was rewritten rather than proxied from the producer's package");
+
+        // Delegation works through the module boundary: the proxy answers from the contextual
+        // instance, and holds nothing itself.
+        Object contextual = widget.getDeclaredConstructor().newInstance();
+        Object instance = proxy.getDeclaredConstructor().newInstance();
+        proxy.getMethod("$$setDelegate", java.util.function.Supplier.class)
+                .invoke(instance, (java.util.function.Supplier<Object>) () -> contextual);
+        assertEquals("widget", proxy.getMethod("describe").invoke(instance));
+
+        // The rewritten `provides` is what the container reads: the generated provider must be
+        // discoverable as a service of this layer.
+        Class svc = loader.loadClass("io.vidocq.vauban.api.VaubanComponentProvider");
+        java.util.ServiceLoader<?> services = java.util.ServiceLoader.load(layer, svc);
+        var providers = services.stream().map(p -> p.type().getName()).toList();
+        assertTrue(providers.contains(Widget.class.getPackageName() + "._VaubanComponents"),
+                "the enhanced module must provide its generated component provider. Found: " + providers);
+    }
+
+    /**
+     * The modular jars of the test class path, as a module path. This test runs on the class path
+     * (the plugin has no module descriptor), so {@code io.vidocq.vauban.api} and everything it
+     * requires must be handed to the resolver explicitly. Only jars that carry their own
+     * {@code module-info} are taken: an automatic module derived from a build directory would
+     * depend on a file name.
+     */
+    private static java.lang.module.ModuleFinder explicitModulesOnTestClassPath() {
+        var modular = new ArrayList<Path>();
+        for (var entry : System.getProperty("java.class.path").split(java.io.File.pathSeparator)) {
+            var path = Path.of(entry);
+            if (!entry.endsWith(".jar") || !Files.isRegularFile(path)) {
+                continue;
+            }
+            try (var jar = new JarFile(path.toFile())) {
+                if (jar.getEntry("module-info.class") != null) {
+                    modular.add(path);
+                }
+            } catch (IOException ignored) {
+                // not a readable jar: it cannot contribute a module either
+            }
+        }
+        return java.lang.module.ModuleFinder.of(modular.toArray(Path[]::new));
     }
 
     private static void put(JarOutputStream out, String name, byte[] bytes) throws IOException {
