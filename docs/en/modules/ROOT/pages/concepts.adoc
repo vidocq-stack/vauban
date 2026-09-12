@@ -12,7 +12,7 @@ Three conditions are enough for a class to become a Vauban bean:
 
 . The class is annotated with a scope (`@ApplicationScoped`, `@Singleton`, `@Dependent`, `@RequestScoped`) or a stereotype.
 . The class is visible from the `module-info.java` (`exports` or same module).
-. The class shows up in the index produced by `vauban-indexer` at compile time.
+. The class shows up in the bean index written at compile time by the annotation processor, or by the Maven plugin for archives it did not compile.
 
 At compile time, every bean receives two generated artefacts:
 

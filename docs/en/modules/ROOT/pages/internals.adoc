@@ -8,10 +8,12 @@ Vauban rests on a simple principle: anything that can be computed at compile tim
 
 CDI 4.1 describes a richly reflective object model: `Bean<T>`, `BeanManager`, `InjectionPoint`, `AnnotatedType`. Vauban refuses to evaluate that model at runtime. It compiles it.
 
-Two tools run at `process-classes`:
+Two tools generate, at two different moments:
 
-. **`vauban-indexer`** — walks the module path at compile time and builds the bean index, persisted as `META-INF/vauban-beans.list`. The static equivalent of Weld's runtime `BeanArchive`. Zero dependency.
-. **`vauban-processor`** — a `javax.annotation.processing.Processor` that consumes the index and emits bytecode through the **Class-File API** (https://openjdk.org/jeps/484[JEP 484]). No ASM, no Byte Buddy, no Gizmo.
+. **`vauban-processor`** — a `javax.annotation.processing.Processor`, running inside javac. It generates in the last annotation-processing round, mostly as **Java source** so the generated provider can instantiate its siblings in-module, and through the **Class-File API** (https://openjdk.org/jeps/484[JEP 484]) where source is not possible. It writes the bean index `META-INF/vauban-beans.list` for the module it compiles. No ASM, no Byte Buddy, no Gizmo.
+. **`vauban-maven-plugin`** — the `generate` goal, bound to `process-classes`. It covers what never went through this compilation: dependency archives and modules built without the processor. It merges the bean index and emits the missing classes as bytecode, since it has no javac.
+
+`vauban-indexer` underneath both is a library, not a tool: the class-file scanner, the bean model and the shared component collector. It walks nothing on its own and writes no file.
 
 The processor generates:
 
