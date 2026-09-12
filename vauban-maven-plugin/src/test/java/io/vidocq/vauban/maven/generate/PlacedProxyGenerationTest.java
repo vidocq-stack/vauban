@@ -36,7 +36,9 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -78,6 +80,42 @@ class PlacedProxyGenerationTest {
         var lines = Files.readAllLines(list, StandardCharsets.UTF_8);
         assertTrue(lines.contains(Widget.class.getName()),
                 "the produced type must be listed so the class loader may define its proxy: " + lines);
+    }
+
+    @Test
+    @DisplayName("the shipped bytes really load, and carry the contract the class loader expects")
+    void shippedBytesCarryTheProxyContract(@TempDir Path tmp) throws Exception {
+        var classes = tmp.resolve("classes");
+        var output = tmp.resolve("output");
+        Files.createDirectories(output);
+        writeProducerHolder(classes, "acme.Integrations", Widget.class);
+
+        var loader = new URLClassLoader(new java.net.URL[]{classes.toUri().toURL()});
+        VaubanGenerator.generate(new VaubanGenerator.Config(List.of(), classes, output, loader));
+
+        var proxyFqn = Widget.class.getName() + "_ClientProxy";
+        var bytes = Files.readAllBytes(output.resolve(
+                "META-INF/vauban/placed/" + proxyFqn.replace('.', '/') + ".class"));
+
+        // Define them for real: a file that exists but does not verify, or that no longer matches
+        // what VaubanClassLoader looks for, would otherwise ship green.
+        var defining = new ClassLoader(Widget.class.getClassLoader()) {
+            Class<?> define(String name, byte[] b) {
+                return defineClass(name, b, 0, b.length);
+            }
+        };
+        var proxy = defining.define(proxyFqn, bytes);
+
+        assertEquals(proxyFqn, proxy.getName(),
+                "the class loader finds the proxy by the produced type's name plus the suffix");
+        assertEquals(Widget.class, proxy.getSuperclass(),
+                "a client proxy is a subclass of the produced type, or it forwards nothing");
+        assertNotNull(proxy.getDeclaredField("$$delegate"),
+                "the container sets the contextual instance through this field");
+        assertNotNull(proxy.getDeclaredMethod("$$setDelegate", java.util.function.Supplier.class),
+                "the container hands the delegate over through this method");
+        assertNotNull(proxy.getDeclaredMethod("internalTag"),
+                "the package-private member is the whole reason this proxy is co-located");
     }
 
     @Test
