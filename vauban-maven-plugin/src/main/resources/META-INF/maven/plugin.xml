@@ -228,5 +228,49 @@
                 </requirement>
             </requirements>
         </mojo>
+        <!-- vauban:modularize -->
+        <mojo>
+            <goal>modularize</goal>
+            <description>Patch the non-modular dependency jars of the runtime closure with a synthesized module-info (requires derived from the types each jar uses, exports of every package, META-INF/services promoted to provides, open module) into target/vauban-modularized/. The Vidocq runtime plugin (dev, jlink, package) prefers those copies. Fails on split packages. Nothing is redistributed.</description>
+            <requiresDependencyResolution>runtime</requiresDependencyResolution>
+            <requiresDirectInvocation>false</requiresDirectInvocation>
+            <requiresProject>true</requiresProject>
+            <requiresOnline>false</requiresOnline>
+            <aggregator>false</aggregator>
+            <phase>prepare-package</phase>
+            <implementation>io.vidocq.vauban.maven.modularize.ModularizeMojo</implementation>
+            <language>java</language>
+            <instantiationStrategy>per-lookup</instantiationStrategy>
+            <threadSafe>true</threadSafe>
+            <parameters>
+                <parameter><name>project</name><type>org.apache.maven.project.MavenProject</type><required>true</required><editable>false</editable><description>The Maven project</description></parameter>
+                <parameter><name>session</name><type>org.apache.maven.execution.MavenSession</type><required>true</required><editable>false</editable><description>The Maven session</description></parameter>
+                <parameter><name>buildDir</name><type>java.io.File</type><required>true</required><editable>false</editable><description>target/</description></parameter>
+                <parameter><name>skip</name><type>boolean</type><required>false</required><editable>true</editable><description>Skip the goal</description></parameter>
+                <parameter><name>mode</name><type>java.lang.String</type><required>false</required><editable>true</editable><description>derived (only file-name-derived automatic modules, default) or all-automatic (also jars with an Automatic-Module-Name; required for jlink)</description></parameter>
+                <parameter><name>includes</name><type>java.util.List</type><required>false</required><editable>true</editable><description>Restrict patching to these artifactIds</description></parameter>
+                <parameter><name>excludes</name><type>java.util.List</type><required>false</required><editable>true</editable><description>Never patch these artifactIds</description></parameter>
+                <parameter><name>moduleNames</name><type>java.util.Map</type><required>false</required><editable>true</editable><description>artifactId → module name overrides (default: the JDK-derived automatic name)</description></parameter>
+                <parameter><name>openModules</name><type>boolean</type><required>false</required><editable>true</editable><description>Generate `open module` descriptors (default true)</description></parameter>
+                <parameter><name>forceExplicit</name><type>boolean</type><required>false</required><editable>true</editable><description>Patch a jar even when its own ServiceLoader lookups cannot be declared legally (default false: such a jar is left automatic, no legal explicit descriptor exists for it)</description></parameter>
+                <parameter><name>allowedLicenses</name><type>java.util.List</type><required>false</required><editable>true</editable><description>Optional licence allow-list; when set, every patched artifact must declare one of them</description></parameter>
+            </parameters>
+            <configuration>
+                <project implementation="org.apache.maven.project.MavenProject" default-value="${project}"/>
+                <session implementation="org.apache.maven.execution.MavenSession" default-value="${session}"/>
+                <buildDir implementation="java.io.File" default-value="${project.build.directory}"/>
+                <skip implementation="boolean" default-value="false">${vauban.modularize.skip}</skip>
+                <mode implementation="java.lang.String" default-value="derived">${vauban.modularize.mode}</mode>
+                <openModules implementation="boolean" default-value="true">${vauban.modularize.open}</openModules>
+                <forceExplicit implementation="boolean" default-value="false">${vauban.modularize.forceExplicit}</forceExplicit>
+            </configuration>
+            <requirements>
+                <requirement>
+                    <role>org.apache.maven.project.ProjectBuilder</role>
+                    <field-name>projectBuilder</field-name>
+                </requirement>
+            </requirements>
+        </mojo>
+
     </mojos>
 </plugin>
