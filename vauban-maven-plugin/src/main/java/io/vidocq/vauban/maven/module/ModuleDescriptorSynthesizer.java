@@ -80,6 +80,8 @@ public final class ModuleDescriptorSynthesizer {
 
     private static final String SERVICES = "META-INF/services/";
     private static final String MODULE_INFO = "module-info.class";
+    /** {@code META-INF/versions/<n>/} — the prefix a multi-release jar files its variants under. */
+    private static final Pattern VERSIONED = Pattern.compile("META-INF/versions/\\d+/");
 
     private ModuleDescriptorSynthesizer() {}
 
@@ -238,23 +240,42 @@ public final class ModuleDescriptorSynthesizer {
 
     private static Set<String> packagesOf(JarFile jar) {
         var packages = new TreeSet<String>();
-        jar.stream().map(JarEntry::getName)
-                .filter(name -> name.endsWith(".class") && !name.equals(MODULE_INFO))
-                .filter(name -> !name.startsWith("META-INF/"))
-                .forEach(name -> {
-                    int slash = name.lastIndexOf('/');
-                    if (slash > 0) {
-                        packages.add(name.substring(0, slash).replace('/', '.'));
-                    }
-                });
+        for (String name : jar.stream().map(JarEntry::getName).toList()) {
+            String classFile = classEntry(name);
+            if (classFile == null) {
+                continue;
+            }
+            int slash = classFile.lastIndexOf('/');
+            if (slash > 0) {
+                packages.add(classFile.substring(0, slash).replace('/', '.'));
+            }
+        }
         return packages;
+    }
+
+    /**
+     * The class this entry holds, as a base-jar path, or {@code null} when the entry is not a class.
+     * A multi-release jar files variants under {@code META-INF/versions/<n>/}; a package that only
+     * ever appears there is still a package of the module, and the types it uses are still
+     * dependencies. Every variant is taken, whatever its release: the union is what makes the
+     * descriptor right whichever JDK ends up reading the jar.
+     */
+    private static String classEntry(String name) {
+        String path = name;
+        var versioned = VERSIONED.matcher(name);
+        if (versioned.lookingAt()) {
+            path = name.substring(versioned.end());
+        } else if (name.startsWith("META-INF/")) {
+            return null;
+        }
+        return path.endsWith(".class") && !path.equals(MODULE_INFO) ? path : null;
     }
 
     /** Every package named anywhere in the jar's bytecode. */
     private static Set<String> referencedPackages(JarFile jar) throws IOException {
         var packages = new TreeSet<String>();
         for (String name : jar.stream().map(JarEntry::getName).toList()) {
-            if (!name.endsWith(".class") || name.equals(MODULE_INFO)) {
+            if (classEntry(name) == null) {
                 continue;
             }
             byte[] bytes;

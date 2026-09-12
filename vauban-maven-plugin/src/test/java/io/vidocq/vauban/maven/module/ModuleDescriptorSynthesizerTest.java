@@ -237,6 +237,56 @@ class ModuleDescriptorSynthesizerTest {
     }
 
     @Test
+    @DisplayName("a multi-release jar's versioned classes count as packages and as dependencies")
+    void multiReleaseVariantsAreSeen() throws Exception {
+        var support = TestJars.modularJar(tmp, "support", List.of(), SUPPORT_MODULE_INFO, HELPER);
+        // Compile the variant separately, then file it where a multi-release jar keeps it.
+        var variantJar = TestJars.plainJar(tmp, "variant", List.of(support), """
+                package com.acme.widget.jdk25;
+                public class Fast {
+                    public String go() { return org.tool.support.Helper.tag(); }
+                }
+                """);
+        String variantEntry;
+        byte[] variantBytes;
+        try (var jar = new java.util.jar.JarFile(variantJar.toFile())) {
+            var entry = jar.stream().filter(e -> e.getName().endsWith(".class")).findFirst().orElseThrow();
+            variantEntry = "META-INF/versions/25/" + entry.getName();
+            try (var in = jar.getInputStream(entry)) {
+                variantBytes = in.readAllBytes();
+            }
+        }
+        var widget = TestJars.jar(tmp, "widget", List.of(support),
+                Map.of("META-INF/MANIFEST.MF", "Manifest-Version: 1.0\nMulti-Release: true\n"),
+                null, INTERNALS);
+        // Append the versioned entry to the jar just built.
+        var withVariant = tmp.resolve("widget-mr.jar");
+        try (var source = new java.util.jar.JarFile(widget.toFile());
+             var out = new java.util.jar.JarOutputStream(java.nio.file.Files.newOutputStream(withVariant))) {
+            for (var name : source.stream().map(java.util.jar.JarEntry::getName).toList()) {
+                out.putNextEntry(new java.util.jar.JarEntry(name));
+                try (var in = source.getInputStream(source.getEntry(name))) {
+                    in.transferTo(out);
+                }
+                out.closeEntry();
+            }
+            out.putNextEntry(new java.util.jar.JarEntry(variantEntry));
+            out.write(variantBytes);
+            out.closeEntry();
+        }
+
+        var result = ModuleDescriptorSynthesizer.synthesize(new ModuleDescriptorSynthesizer.Request(
+                withVariant, "com.acme.widget", true, List.of(support, withVariant), Set.of()));
+
+        assertTrue(result.descriptor().packages().contains("com.acme.widget.jdk25"),
+                "a package that only exists under META-INF/versions is still a package of the "
+                        + "module: " + result.descriptor().packages());
+        assertTrue(result.descriptor().requires().stream()
+                        .map(ModuleDescriptor.Requires::name).toList().contains("org.tool.support"),
+                "and what its code uses is still a dependency: " + result.descriptor().requires());
+    }
+
+    @Test
     @DisplayName("the module version is stamped when the caller knows one")
     void moduleVersionIsStamped() throws Exception {
         var support = TestJars.modularJar(tmp, "support", List.of(), SUPPORT_MODULE_INFO, HELPER);
