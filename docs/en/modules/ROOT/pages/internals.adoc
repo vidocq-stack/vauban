@@ -484,6 +484,56 @@ Details worth knowing about the load-time tier:
   validation with the regular vauban#24 diagnostic. Explicit
   `-javaagent:vauban-weaver.jar=<plan>` is also supported (`Premain-Class`).
 
+== Giving a dependency a module descriptor
+
+A jar with no `module-info` is an *automatic* module: its name is guessed from its file
+name, it reads everything, and nothing can depend on it reliably. `jlink` refuses it
+outright. The fix is to give it a real descriptor — which used to mean delegating to
+ModiTect, a build-time dependency that generates `module-info.java` and runs a compiler
+over it.
+
+`ModuleDescriptorSynthesizer` (in `vauban-maven-plugin`) does the same work with the JDK
+alone. There is no generated source and no compiler invocation: the Class-File API writes
+the descriptor bytes directly, and `ModuleFinder` answers the only question that matters —
+which module owns a given package.
+
+[cols="1,3",options="header"]
+|===
+| Directive | How it is derived
+
+| `requires`
+| Every class of the jar is read and every type name in its constant pool collected —
+  descriptors, internal names, annotation types and generic signatures alike. Each
+  referenced package is attributed to the module that exports it (a JDK module, or a
+  module of the dependency closure; an automatic module owns everything it holds).
+  Packages nobody owns are reported, never guessed at.
+
+| `exports`
+| Every package the jar contains. A library that used to sit on the class path had
+  everything visible; narrowing that would break its users for no benefit.
+
+| `opens`
+| Nothing, for an `open module` — it opens everything already, and the JVM rejects a
+  descriptor that adds an `opens` on top of that. A closed module spells each package out.
+
+| `provides`
+| Promoted from `META-INF/services/*`, minus providers the jar does not itself contain:
+  a descriptor may only provide a class of its own module, and one that does not is
+  unreadable.
+
+| `uses`
+| Supplied by the caller. Which services a jar looks up cannot be derived from its bytes
+  without a call-graph analysis, and guessing wrong makes the module fail to resolve.
+|===
+
+The collection errs towards completeness: a spurious `requires` costs nothing, a missing
+one breaks the application at run time. What no static analysis can see — `Class.forName`
+on a computed name — is invisible to `jdeps` too.
+
+The patched jar is a copy, written under the original file name so downstream tooling can
+substitute it. Signature files are left behind on purpose: adding an entry invalidates
+them, and a jar whose signature no longer verifies fails to load at all.
+
 == Class loading
 
 Vauban owns application class loading, as a single engine with two plugin natures
