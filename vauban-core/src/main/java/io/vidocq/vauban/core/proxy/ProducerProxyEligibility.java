@@ -53,6 +53,20 @@ public final class ProducerProxyEligibility {
         public boolean eligible() {
             return this == ELIGIBLE;
         }
+
+        /**
+         * Whether a proxy for this verdict becomes possible once it sits <em>inside the produced
+         * type's own package</em>. A non-public overridable member and an inaccessible constructor
+         * are cross-package obstacles only: co-located, the proxy overrides and forwards them. A
+         * final or sealed class, a final method and an abstract class are unproxyable anywhere
+         * (CDI 4.1 §3.10), and nothing is shipped for a non-public or a non-static nested type.
+         */
+        public boolean placeable() {
+            return switch (this) {
+                case PROTECTED_VIRTUALS, PACKAGE_PRIVATE_VIRTUALS, NO_ACCESSIBLE_CTOR -> true;
+                default -> false;
+            };
+        }
     }
 
     /** The verdict for {@code type}. */

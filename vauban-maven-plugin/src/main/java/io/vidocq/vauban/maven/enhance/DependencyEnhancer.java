@@ -20,6 +20,7 @@
 package io.vidocq.vauban.maven.enhance;
 
 import io.vidocq.vauban.core.provider.ComponentProviderClassGenerator;
+import io.vidocq.vauban.core.proxy.ProducerProxyEligibility;
 import io.vidocq.vauban.core.proxy.RuntimeClientProxyGenerator;
 
 import java.io.IOException;
@@ -85,6 +86,18 @@ public final class DependencyEnhancer {
             }
             if (!canProxy(type, warnings)) {
                 continue;
+            }
+            // Rewriting someone else's artefact is the heavy answer. When the only obstacle is the
+            // package boundary, the build ships the very same proxy as a resource and the Vauban
+            // class loader defines it inside the type's own package, jar untouched.
+            var verdict = ProducerProxyEligibility.of(type);
+            if (verdict.placeable()) {
+                warnings.add("enhance: " + type.getName() + " only needs its client proxy inside"
+                        + " its own package (" + verdict + "). The Vauban class loader ships and"
+                        + " defines that proxy without touching the jar, while rewriting a copy"
+                        + " here drops the jar's signature. Keep this goal for what placement"
+                        + " cannot do: no Vauban layer at launch, a package the library does not"
+                        + " export, or a GraalVM native image.");
             }
             var proxy = RuntimeClientProxyGenerator.generate(type);
             proxyBytesByName.put(proxy.className(), proxy.bytecode());

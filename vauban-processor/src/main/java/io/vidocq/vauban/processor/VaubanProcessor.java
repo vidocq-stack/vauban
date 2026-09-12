@@ -1150,10 +1150,7 @@ public class VaubanProcessor extends AbstractProcessor {
      * are unproxyable anywhere (CDI 4.1 §3.10), so nothing is shipped for them.
      */
     private static boolean isPlaceable(ProducerProxyEligibility.Reason verdict) {
-        return switch (verdict) {
-            case PROTECTED_VIRTUALS, PACKAGE_PRIVATE_VIRTUALS, NO_ACCESSIBLE_CTOR -> true;
-            default -> false;
-        };
+        return verdict.placeable();
     }
 
     /**

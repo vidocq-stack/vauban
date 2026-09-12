@@ -162,8 +162,10 @@ could serve those two, and does not today.
 
 Bare boot layer::
 Without the launcher, the in-package cases fall back to the documented levers: make the type
-fully public, `vauban:enhance-dependencies`, a hand-written `opens`, or the opt-in
-`-Dvauban.opens.auto=true`. The container says so at boot; it never degrades silently.
+fully public, `vauban:enhance-dependencies` as a last resort, a hand-written `opens`, or the opt-in
+`-Dvauban.opens.auto=true`. The container says so at boot; it never degrades silently. The build
+says so too: the proxy and the list of types needing one are shipped either way, so the Maven plugin
+reports which types will need a Vauban layer to be placed.
 
 Kept modules::
 Placement needs the library to be defined by the Vauban loader. A produced type in a module kept

@@ -49,6 +49,37 @@ class DependencyEnhancerTest {
     private static final String PKG = "io/vidocq/vauban/maven/enhance/fixture/";
 
     @Test
+    @DisplayName("warns that copying the jar is a last resort when an in-package proxy would do")
+    void warnsWhenPlacementWouldHaveBeenEnough(@TempDir Path tmp) throws Exception {
+        var fqn = Widget.class.getName();
+        var sourceJar = tmp.resolve("widget.jar");
+        writePlainJar(sourceJar, fqn);
+        var warnings = new ArrayList<String>();
+
+        DependencyEnhancer.enhance(sourceJar, "com.acme:widget:1.0", tmp.resolve("out"),
+                List.of(fqn), Widget.class.getClassLoader(), warnings);
+
+        var hint = warnings.stream().filter(w -> w.contains(fqn) && w.contains("class loader")).toList();
+        assertEquals(1, hint.size(),
+                "rewriting a copy of someone else's jar drops its signature, so the goal must say "
+                        + "when the class loader could have shipped the same proxy instead: " + warnings);
+        assertTrue(hint.get(0).contains("signature"),
+                "the warning must name the cost that makes this goal a last resort: " + hint);
+    }
+
+    /** A jar holding just the fixture class, with no module-info and no signature. */
+    private static void writePlainJar(Path jar, String fqn) throws Exception {
+        var resource = fqn.replace('.', '/') + ".class";
+        try (var out = new JarOutputStream(Files.newOutputStream(jar))) {
+            out.putNextEntry(new JarEntry(resource));
+            try (var in = Widget.class.getClassLoader().getResourceAsStream(resource)) {
+                out.write(in.readAllBytes());
+            }
+            out.closeEntry();
+        }
+    }
+
+    @Test
     @DisplayName("enhances a modular jar: co-located proxy + provider + module-info provides")
     void enhancesModularJar(@TempDir Path tmp) throws Exception {
         var fqn = Widget.class.getName();
@@ -70,7 +101,10 @@ class DependencyEnhancerTest {
         var result = DependencyEnhancer.enhance(srcJar, "org.example:libwidget:1.0",
                 tmp.resolve("enhanced"), List.of(fqn), getClass().getClassLoader(), warnings);
 
-        assertTrue(warnings.isEmpty(), "no warnings expected, got: " + warnings);
+        // Widget is exactly the case the class loader can place, so the goal now says so.
+        // Nothing else may be reported: this path must stay clean.
+        var unexpected = warnings.stream().filter(w -> !w.contains("only needs its client proxy")).toList();
+        assertTrue(unexpected.isEmpty(), "no warning expected beyond the placement hint, got: " + unexpected);
         assertNotNull(result.enhancedJar());
         assertEquals(List.of(fqn), result.enhancedTypes());
 

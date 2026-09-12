@@ -13,6 +13,22 @@ Two tools generate, at two different moments:
 . **`vauban-processor`** — a `javax.annotation.processing.Processor`, running inside javac. It generates in the last annotation-processing round, mostly as **Java source** so the generated provider can instantiate its siblings in-module, and through the **Class-File API** (https://openjdk.org/jeps/484[JEP 484]) where source is not possible. It writes the bean index `META-INF/vauban-beans.list` for the module it compiles. No ASM, no Byte Buddy, no Gizmo.
 . **`vauban-maven-plugin`** — the `generate` goal, bound to `process-classes`. It covers what never went through this compilation: dependency archives and modules built without the processor. It merges the bean index and emits the missing classes as bytecode, since it has no javac.
 
+Both also ship what an in-package proxy needs, and it is worth naming the two files plainly:
+
+* **the pre-generated proxy classes**, written as *resources* under `META-INF/vauban/placed/`. A
+  resource, not a class, so the build never writes into someone else's package. At runtime a Vauban
+  class loader defines them inside the produced type's own package.
+* **the list of produced types whose proxy must sit inside their own package**,
+  `META-INF/vauban/required-opens.list`, one binary name per line. The file is named after the
+  problem it records: with a Vauban class loader the list is the loader's authorisation to define
+  the shipped proxy in that package; without one, the container reads the same list to know which
+  packages it would otherwise have to open. The class loader unions the lists of every archive it
+  manages.
+
+The processor writes both for the module it compiles. Since it never sees an archive compiled
+elsewhere, `vauban:generate` writes them too, for the produced types only it can see, and merges
+into whatever the processor already wrote in the same output directory.
+
 `vauban-indexer` underneath both is a library, not a tool: the class-file scanner, the bean model and the shared component collector. It walks nothing on its own and writes no file.
 
 The processor generates:
@@ -129,7 +145,12 @@ dynamic agent attachment is a defect that surfaces late, on a locked-down JVM in
 off, the container refuses and logs what is missing together with every way to avoid it. Treat it
 as a last resort: integrity by default is closing dynamic agent attachment, so prefer a
 fully-public produced type (nothing to open) or the build-time lever below.
-* **Rewriting a copy of the dependency jar** (#42, Stage 2, opt-in). The
+* **Rewriting a copy of the dependency jar** (#42, Stage 2, opt-in, *last resort*). Prefer the
+  shipped in-package proxy above: it needs no copy and leaves the artefact alone. Keep this goal for
+  the three cases placement cannot reach — the application never starts inside a Vauban layer, the
+  library exports nothing so the container cannot instantiate the placed proxy, or the target is a
+  GraalVM native image, where a class defined at runtime is not supported. The goal now says so
+  itself: it warns, per type, when the class loader could have shipped the same proxy. The
   `vauban:enhance-dependencies` goal writes an enhanced copy of a third-party jar under
   `target/vauban-enhanced-deps/` in which `<Type>_ClientProxy` is co-located in the type's
   **own** package — so it *can* forward package-private and protected methods — and the
