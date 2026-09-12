@@ -1096,3 +1096,25 @@ and a proposed upstream assertion: `CDI_TCK_PROPOSALS.md` → `TCK-GAP-001`.
 - **Suspected cause**: `ElementScanner#scan` built the `ClassInfo` name from `typeElement.getQualifiedName()` (canonical: `app.Holder.Counter`) instead of `Elements#getBinaryName` (`app.Holder$Counter`). The same trap had already been fixed for method return/parameter types in `typeMirrorToTypeInfo` (the `$`-vs-`.` comment there), but not for the scanned class's own name, and every artifact derived from it inherited the wrong name.
 - **Investigations**:
   - 2026-09-12: found by writing the missing coverage for the APT's bytecode-proxy fallback (`NestedBeanProxyEmissionTest`) — the branch at `VaubanProcessor:480` had no end-to-end test, so the defect was invisible. Fixed by scanning the binary name. The fix is a no-op for top-level types (binary name == qualified name); it only changes nested ones, which were broken. `ComponentProviderCompileTimeTest#nestedBeanIsSkipped` still holds: the generated provider skips nested beans, so the proxy is resolved by name at runtime — which is exactly what the wrong name prevented.
+
+## BUG-20260912-02 — The Vauban layer cannot be created inside a jlink image
+
+- **Date**: 2026-09-12
+- **Status**: OPEN
+- **Module**: `vauban-classloader` (`VaubanLayerFactory#applicationPaths`, `Launch#run`)
+- **Symptom**: an application whose `main` starts with `Launch.run(...)` does not start at all from a `jlink` image. It fails with a message that names the wrong cause:
+  ```
+  Exception in thread "main" java.lang.IllegalStateException: No application module to re-layer.
+  With -m, the launcher is the only root module: add --add-modules ALL-MODULE-PATH to the java
+  command line. …
+  ```
+  Adding `--add-modules` changes nothing: there is no module path to add anything from. Consequently **every proxying case that depends on the layer is unavailable under `jlink`** — the in-package proxies the build ships under `META-INF/vauban/placed/` are never placed, and so is anything else the layer's loader does (sjar decryption, load-time weaving).
+- **Minimal reproduction** (verified 2026-09-12 on the cdi#1015 example, which runs correctly on a plain module path):
+  ```
+  jlink --module-path <deps> --add-modules io.vidocq.vauban.example.cdi1015.app --output /tmp/img
+  /tmp/img/bin/java -m io.vidocq.vauban.example.cdi1015.app/…Main
+  # → IllegalStateException: No application module to re-layer
+  ```
+- **Suspected cause**: `applicationPaths` collects the archives to re-layer from each resolved module's `reference().location()`, keeping only URIs whose scheme is `file:` (`VaubanLayerFactory.java:94` and `:164`). In a runtime image every module's location is `jrt:/<module>`, so the filter drops all of them and the resulting path list is empty. The same filter is what makes the loader index the archives it owns, so simply lifting it is not enough: a `jrt:` module has no archive to read bytes from, and the layer's loader would have to read its classes through the `jrt` file system (`FileSystems.getFileSystem(URI.create("jrt:/"))`) instead.
+- **Investigations**:
+  - 2026-09-12: found while answering whether the loader-based placement survives `jlink`. It does not. `jpackage` is affected whenever it wraps a jlink runtime image; `jpackage` over a plain module path is not (same shape as the working `java -p` run). Until this is fixed, the build-time route — `vauban:enhance-dependencies`, which rewrites the dependency jar — is the only one that works under `jlink`, as it already is for GraalVM native images.

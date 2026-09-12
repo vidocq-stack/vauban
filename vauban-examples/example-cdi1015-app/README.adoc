@@ -183,11 +183,12 @@ and a `$$Intercepted` sibling — both extending the bean — that runs the chai
 own method. Both are emitted at build time, in this package, so this costs no `opens` either.
 
 |`Ledgers.Ledger`, a nested bean
-|The one shape this example cannot serve with zero `opens`. Its proxy exists — emitted as
-**bytecode**, since `Ledgers$Ledger_ClientProxy` is not a name javac can compile as a source file —
-but the in-module provider only carries top-level beans, so the container falls back to reflection
-and a module that opens nothing refuses. `Cdi1015ExampleTest` pins the diagnostic, which names the
-bean and both ways out: make it top-level, or open the package. **Prefer top-level.**
+|A nested bean is proxied like any other, with no `opens`. The only subtlety is that a nested type
+has two names: `Ledgers$Ledger` is the binary one, which the container looks components up by, and
+`Ledgers.Ledger` is the canonical one, the only form that can be written in a `new` expression. The
+generated provider carries both — it keys on the first and instantiates with the second. The proxy
+itself is named `Ledgers$Ledger_ClientProxy`: a top-level class whose simple name contains a `$`,
+never a member of `Ledgers`, since nothing can add one to a class that already exists.
 |===
 
 == The residual case

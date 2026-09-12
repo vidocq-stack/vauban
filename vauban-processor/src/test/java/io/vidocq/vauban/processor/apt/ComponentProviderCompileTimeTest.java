@@ -132,8 +132,8 @@ class ComponentProviderCompileTimeTest {
     }
 
     @Test
-    @DisplayName("a nested bean is skipped (no bogus package, build still compiles)")
-    void nestedBeanIsSkipped() throws Exception {
+    @DisplayName("a nested bean is carried by the provider, keyed binary and built canonical")
+    void nestedBeanIsCarriedByTheProvider() throws Exception {
         var result = compile("Outer", """
                 package app;
 
@@ -153,14 +153,13 @@ class ComponentProviderCompileTimeTest {
         assertTrue(result.success(), "compilation should succeed. Messages: " + result.messages());
 
         var genSource = result.genDir().resolve("app/_VaubanComponents.java");
-        if (Files.exists(genSource)) {
-            var src = Files.readString(genSource);
-            assertTrue(src.contains("case \"app.TopLevelBean\" -> new app.TopLevelBean();"), src);
-            assertFalse(src.contains("Outer.Inner"),
-                    "nested bean must not be referenced by the generated provider: " + src);
-        }
-        // The key assertion is that no bogus `app.Outer` package provider was emitted and the
-        // round-2 compilation of the generated provider succeeded.
+        assertTrue(Files.exists(genSource), "the package provider must be generated");
+        var src = Files.readString(genSource);
+        assertTrue(src.contains("case \"app.TopLevelBean\" -> new app.TopLevelBean();"), src);
+        // The two names of a nested type are not interchangeable: the container looks a component
+        // up by Class#getName (binary), and only the canonical name can be written in source.
+        assertTrue(src.contains("case \"app.Outer$Inner\" -> new app.Outer.Inner();"),
+                "a nested bean must be instantiated in-module, keyed by its binary name: " + src);
         assertFalse(Files.exists(result.genDir().resolve("app/Outer/_VaubanComponents.java")),
                 "no provider must be generated into a class-as-package directory");
     }

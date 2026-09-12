@@ -181,7 +181,7 @@ public final class ComponentProviderGenerator {
         sb.append("        return switch (className) {\n");
         for (var c : noArg) {
             sb.append("            case \"").append(c.fqn()).append("\" -> new ")
-                    .append(c.fqn()).append("();\n");
+                    .append(c.sourceFqn()).append("();\n");
         }
         sb.append("            default -> null;\n");
         sb.append("        };\n");
@@ -195,7 +195,7 @@ public final class ComponentProviderGenerator {
             sb.append("        return switch (className) {\n");
             for (var c : withArgs) {
                 sb.append("            case \"").append(c.fqn()).append("\" -> new ")
-                        .append(c.fqn()).append("(");
+                        .append(c.sourceFqn()).append("(");
                 var params = c.ctorParamTypes();
                 for (int i = 0; i < params.size(); i++) {
                     if (i > 0) sb.append(", ");

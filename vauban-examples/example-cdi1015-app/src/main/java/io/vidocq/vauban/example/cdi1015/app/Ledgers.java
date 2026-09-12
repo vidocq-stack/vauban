@@ -30,11 +30,14 @@ public final class Ledgers {
     private Ledgers() {}
 
     /**
-     * The nested-bean case. A static member class is a perfectly valid managed bean, but its
-     * <em>binary</em> name carries a {@code $} ({@code Ledgers$Ledger}), which is not a name javac
-     * can compile as a source file. So this is the one bean shape whose client proxy cannot be
-     * emitted as Java source: the APT falls back to the Class-File API and ships
-     * {@code Ledgers$Ledger_ClientProxy} as bytecode instead.
+     * The nested-bean case. A static member class is a perfectly valid managed bean; what it costs
+     * is that it has <em>two</em> names. {@code Ledgers$Ledger} is the binary one, which the
+     * container looks components up by, and {@code Ledgers.Ledger} is the canonical one, the only
+     * form that can appear in a {@code new} expression. The generated provider carries both.
+     *
+     * <p>Its proxy is ordinary source, named {@code Ledgers$Ledger_ClientProxy} — a top-level class
+     * whose simple name contains a {@code $}, never a member of {@code Ledgers}: nothing can add a
+     * member to a class that already exists.
      */
     @ApplicationScoped
     public static class Ledger {

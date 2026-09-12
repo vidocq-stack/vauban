@@ -298,7 +298,7 @@ public final class ComponentCollector {
             if (provided.instantiable()) {
                 instantiableCtorParams(provided.classInfo())
                         .ifPresent(params -> {
-                            bundle.components().add(new Component(fqn, params));
+                            bundle.components().add(new Component(fqn, provided.sourceFqn(), params));
                             // The pre-generated <fqn>$$Intercepted subclass mirrors the bean's
                             // selected constructor (InterceptedEmitter emits super(args…)). Listing
                             // it as a co-located component lets the container instantiate it

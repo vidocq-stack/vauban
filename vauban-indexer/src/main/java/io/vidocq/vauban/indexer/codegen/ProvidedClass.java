@@ -41,10 +41,16 @@ import io.vidocq.vauban.indexer.model.ClassInfo;
  *                      Only honoured by the bytecode provider path — a generated source provider
  *                      cannot reference a Filer-emitted {@code $$Intercepted} symbol
  */
-public record ProvidedClass(String fqn, ClassInfo classInfo, boolean instantiable, boolean intercepted) {
+public record ProvidedClass(String fqn, String sourceFqn, ClassInfo classInfo,
+                           boolean instantiable, boolean intercepted) {
 
     /** Back-compatible constructor for callers that pre-generate no interceptor subclass. */
     public ProvidedClass(String fqn, ClassInfo classInfo, boolean instantiable) {
-        this(fqn, classInfo, instantiable, false);
+        this(fqn, fqn, classInfo, instantiable, false);
+    }
+
+    /** For callers that have no separate source name — every top-level type. */
+    public ProvidedClass(String fqn, ClassInfo classInfo, boolean instantiable, boolean intercepted) {
+        this(fqn, fqn, classInfo, instantiable, intercepted);
     }
 }

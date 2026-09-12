@@ -81,38 +81,32 @@ class Cdi1015ExampleTest {
     }
 
     /**
-     * The one bean shape this example cannot serve with zero {@code opens}, kept here so the limit
-     * is visible rather than folklore.
-     *
-     * <p>A nested bean's client proxy exists — the APT emits {@code Ledgers$Ledger_ClientProxy} as
-     * bytecode, since that name cannot be written as Java source. What is missing is the other half:
-     * the in-module {@code _VaubanComponents} provider only carries top-level beans, so nobody can
-     * instantiate this one from inside the module and the container falls back to reflection, which
-     * a module that opens nothing refuses. The diagnostic below is the whole point: it names the
-     * type and both ways out.
+     * The nested-bean case. Its proxy keeps the binary name — {@code Ledgers$Ledger_ClientProxy} —
+     * which is a legal top-level class name in source, {@code $} being an identifier character. So
+     * it is emitted as source like every other proxy, the in-module provider can name it, and this
+     * bean needs no {@code opens} either.
      */
     @Test
-    @DisplayName("a nested bean on the module path fails, and the message says exactly what to do")
-    void nestedBeanNeedsOpensOrATopLevelBean() {
+    @DisplayName("a nested bean is proxied in-module too, with no opens")
+    void nestedBeanIsProxiedInModule() {
         try (SeContainer container = SeContainerInitializer.newInstance()
                 .addBeanClasses(Ledgers.Ledger.class)
                 .initialize()) {
 
-            var failure = org.junit.jupiter.api.Assertions.assertThrows(RuntimeException.class,
-                    () -> container.select(Ledgers.Ledger.class).get().record("first"));
+            Ledgers.Ledger ledger = container.select(Ledgers.Ledger.class).get();
 
-            // The actionable half is in the cause: the outer frame only says which bean failed.
-            var text = new StringBuilder();
-            for (Throwable t = failure; t != null; t = t.getCause()) {
-                text.append(t.getMessage()).append('\n');
-            }
-            String message = text.toString();
-            assertTrue(message.contains("Ledgers$Ledger"),
-                    "the diagnostic must name the bean by its binary name: " + message);
-            assertTrue(message.contains("VaubanComponentProvider"),
-                    "and offer the in-module route first: " + message);
-            assertTrue(message.contains("opens io.vidocq.vauban.example.cdi1015.app"),
-                    "and spell out the directive that unblocks it: " + message);
+            String name = ledger.getClass().getName();
+            assertEquals("Ledgers$Ledger_ClientProxy", name.substring(name.lastIndexOf('.') + 1),
+                    "the proxy keeps the bean's binary name: calling it Ledgers.Ledger_ClientProxy "
+                            + "would claim a member of Ledgers, which nothing can add");
+            assertFalse(java.lang.reflect.Proxy.isProxyClass(ledger.getClass()),
+                    "a build-time proxy, like every other bean here");
+
+            assertEquals("first#1", ledger.record("first"));
+            assertEquals("second#2", ledger.record("second"),
+                    "both calls must land on the same contextual instance");
+            assertEquals(2, container.select(Ledgers.Ledger.class).get().size(),
+                    "a second lookup sees the same state: the proxy forwards, it keeps nothing");
         }
     }
 }

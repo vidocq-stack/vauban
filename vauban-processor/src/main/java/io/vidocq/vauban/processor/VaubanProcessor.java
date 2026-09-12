@@ -463,8 +463,10 @@ public class VaubanProcessor extends AbstractProcessor {
 
                 if (bean.scope().isNormal()) {
                     var proxyBeanFqn = bean.beanClass().value();
-                    var proxyTypeElement = isTopLevelType(proxyBeanFqn)
-                            ? processingEnv.getElementUtils().getTypeElement(proxyBeanFqn) : null;
+                    // getTypeElement wants the canonical name; the index carries the binary one,
+                    // so a nested bean is app.Outer$Inner here and app.Outer.Inner there.
+                    var proxyTypeElement = processingEnv.getElementUtils()
+                            .getTypeElement(proxyBeanFqn.replace('$', '.'));
                     if (proxyTypeElement != null && hasNonPrivateCtor(proxyTypeElement)) {
                         // SOURCE proxy: the sibling _VaubanComponents provider does
                         // `new <Bean>_ClientProxy()` in-module (createClientProxy), so the bean package
@@ -472,13 +474,20 @@ public class VaubanProcessor extends AbstractProcessor {
                         // provider source can reference it by name (resolved in a later APT round).
                         // The proxy ctor calls the simplest non-private super ctor with default values,
                         // so beans with only an injected (arg-bearing) constructor are covered too.
+                        //
+                        // A nested bean takes this route too. Its proxy keeps the binary name —
+                        // Outer$Inner_ClientProxy — which is a perfectly legal top-level class name
+                        // in source ('$' is an identifier character), so the file compiles and the
+                        // provider can name it. What it must NOT be is a member of Outer: nothing
+                        // can add one to a class that already exists.
                         var gen = ClientProxySourceRenderer.render(proxyTypeElement,
                                 processingEnv.getElementUtils(), processingEnv.getTypeUtils());
                         writeSourceFile(gen.className(), gen.source());
                         clientProxyFqns.add(proxyBeanFqn + "_ClientProxy");
                     } else {
-                        // No accessible no-arg ctor (or a nested type): keep the bytecode proxy; the
-                        // runtime instantiates it (its package must stay opened/exported as before).
+                        // No accessible constructor, or a type the compiler cannot resolve here:
+                        // keep the bytecode proxy; the runtime instantiates it reflectively (its
+                        // package must stay opened/exported as before).
                         generateClass(ClientProxyGenerator.generate(classInfo));
                     }
                 }
@@ -517,8 +526,14 @@ public class VaubanProcessor extends AbstractProcessor {
                 // instantiable flag lets ComponentCollector attempt constructor-param extraction;
                 // the intercepted flag makes it also emit a component for the $$Intercepted subclass
                 // generated just above (instantiated in-module by the bytecode provider, no opens).
+                // The key stays the binary name — that is what the container looks a component
+                // up by — while the provider instantiates it by its canonical name, the only one
+                // that can be written in source for a nested type.
+                var beanElement = processingEnv.getElementUtils().getTypeElement(fqn.replace('$', '.'));
+                var sourceFqn = beanElement != null
+                        ? beanElement.getQualifiedName().toString() : fqn;
                 providedClasses.add(new ProvidedClass(
-                        fqn, classInfo, isTopLevelType(fqn), interceptedGenerated));
+                        fqn, sourceFqn, classInfo, true, interceptedGenerated));
             } else if (bean.kind() == BeanDescriptor.BeanKind.PRODUCER_METHOD
                     || bean.kind() == BeanDescriptor.BeanKind.PRODUCER_FIELD) {
                 // Build-time proxy for a normal-scoped producer whose produced type is a fully-public

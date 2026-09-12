@@ -262,16 +262,25 @@ class DependencyEnhancerTest {
     }
 
     /**
-     * The modular jars of the test class path, as a module path. This test runs on the class path
-     * (the plugin has no module descriptor), so {@code io.vidocq.vauban.api} and everything it
-     * requires must be handed to the resolver explicitly. Only jars that carry their own
-     * {@code module-info} are taken: an automatic module derived from a build directory would
-     * depend on a file name.
+     * The explicit modules of the test class path, as a module path. This test runs on the class
+     * path (the plugin has no module descriptor), so {@code io.vidocq.vauban.api} and everything it
+     * requires must be handed to the resolver explicitly.
+     *
+     * <p>Both shapes count, and both occur: a reactor dependency is an exploded
+     * {@code target/classes} directory under {@code mvn test}, and a packaged jar once the module
+     * has been installed. Only entries carrying their own {@code module-info} are taken — an
+     * automatic module derived from a file name would make this test depend on that name.
      */
     private static java.lang.module.ModuleFinder explicitModulesOnTestClassPath() {
         var modular = new ArrayList<Path>();
         for (var entry : System.getProperty("java.class.path").split(java.io.File.pathSeparator)) {
             var path = Path.of(entry);
+            if (Files.isDirectory(path)) {
+                if (Files.isRegularFile(path.resolve("module-info.class"))) {
+                    modular.add(path);
+                }
+                continue;
+            }
             if (!entry.endsWith(".jar") || !Files.isRegularFile(path)) {
                 continue;
             }

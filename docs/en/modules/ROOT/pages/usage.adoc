@@ -111,11 +111,11 @@ xref:internals.adoc#_client_proxies_one_strategy_per_case[Internals — one stra
 |Nothing.
 
 |The same bean, but **nested** (a `static` member class)
-|Its proxy is emitted as bytecode (`Outer$Inner_ClientProxy` is not a name javac can compile
- as a source file), but the in-module provider only carries top-level beans — so on the module
- path the container falls back to reflection and stops.
-|**Make it top-level** (preferred), or add
- `opens <your.package> to io.vidocq.vauban.core;`.
+|The same, with one wrinkle handled for you: the proxy is named `Outer$Inner_ClientProxy` — a
+ top-level class whose simple name contains a `$`, not a member of `Outer`, since nothing can add
+ one to a class that already exists. The provider keys it by the binary name and instantiates the
+ bean by its canonical one.
+|Nothing.
 
 |`@Produces` returning a **fully public** class of another module — even one that knows nothing
  about CDI

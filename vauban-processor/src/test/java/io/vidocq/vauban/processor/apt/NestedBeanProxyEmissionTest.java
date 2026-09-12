@@ -49,18 +49,17 @@ import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * The annotation processor emits client proxies as Java <em>source</em> whenever it can — the
- * artifact is readable and the sibling {@code _VaubanComponents} provider can then instantiate it
- * in-module. A nested bean cannot take that route: {@code app.Holder$Counter_ClientProxy} is not a
- * name javac can compile as a source file, and the provider deliberately skips nested beans
- * (see {@code ComponentProviderCompileTimeTest#nestedBeanIsSkipped}). The processor falls back to
- * emitting the proxy as bytecode through the Class-File API, which the runtime loads by name.
+ * The annotation processor emits client proxies as Java <em>source</em>, so that the sibling
+ * {@code _VaubanComponents} provider can instantiate them in-module — no reflection, hence no
+ * {@code opens}. A nested bean takes that same route: {@code Holder$Counter_ClientProxy} is a
+ * legal top-level class name in source ({@code $} is an identifier character), it simply must not
+ * be a <em>member</em> of {@code Holder}, since nothing can add one to a class that already exists.
  *
- * <p>That fallback had no end-to-end coverage: the branch could have stopped emitting altogether
- * and every other test would still have passed. These tests pin it — the bytes exist, they carry
- * the client-proxy contract, and a loaded instance really forwards to the contextual instance.
+ * <p>What the two names of a nested type cost is bookkeeping, and that is what these tests pin: the
+ * binary name {@code app.Holder$Counter} is the key the container looks a component up by, while
+ * only the canonical {@code app.Holder.Counter} can be written in a {@code new} expression.
  */
-@DisplayName("Nested bean proxying — the APT falls back to a bytecode client proxy")
+@DisplayName("Nested bean proxying — source proxy, binary key, canonical instantiation")
 class NestedBeanProxyEmissionTest {
 
     @TempDir
@@ -88,23 +87,22 @@ class NestedBeanProxyEmissionTest {
     private static final String NESTED_PROXY = "app/Holder$Counter_ClientProxy";
 
     @Test
-    @DisplayName("the nested bean's proxy is emitted as bytecode, while a top-level bean keeps source")
-    void nestedBeanTakesTheBytecodeRoute() throws Exception {
+    @DisplayName("the nested bean's proxy is emitted as source, like every other proxy")
+    void nestedBeanTakesTheSourceRoute() throws Exception {
         var result = compile("Holder", HOLDER);
         assertTrue(result.success(), "compilation should succeed. Messages: " + result.messages());
 
+        assertTrue(Files.exists(result.genDir().resolve(NESTED_PROXY + ".java")),
+                "a nested bean's proxy is readable source like any other. Generated: "
+                        + emitted(result.genDir()));
         assertTrue(Files.exists(result.outputDir().resolve(NESTED_PROXY + ".class")),
-                "a normal-scoped nested bean must still get a client proxy, emitted as bytecode. "
-                        + "Emitted: " + emitted(result.outputDir()));
-        assertFalse(Files.exists(result.genDir().resolve(NESTED_PROXY + ".java")),
-                "no source proxy can exist for a nested bean: `Holder$Counter_ClientProxy` is not a "
-                        + "compilable source name");
+                "and javac compiles it in a later round. Emitted: " + emitted(result.outputDir()));
         assertFalse(Files.exists(result.genDir().resolve("app/Holder/Counter_ClientProxy.java")),
-                "and the binary name must never be split into a class-as-package directory");
+                "the binary name must never be split into a class-as-package directory");
 
-        // The contrast is the point: the same compilation routes the top-level bean to source.
+        // The contrast that shows the routing is uniform, not a special case.
         assertTrue(Files.exists(result.genDir().resolve("app/Plain_ClientProxy.java")),
-                "a top-level bean keeps the source-first route. Generated: " + emitted(result.genDir()));
+                "a top-level bean takes the same route. Generated: " + emitted(result.genDir()));
     }
 
     @Test

@@ -30,7 +30,19 @@ import java.util.List;
  * @param ctorParamTypes erased, nameable types of the selected constructor's parameters, in
  *                       declared order (empty for a no-arg constructor)
  */
-public record Component(String fqn, List<String> ctorParamTypes) {
+public record Component(String fqn, String sourceFqn, List<String> ctorParamTypes) {
+
+    /**
+     * The name to write in a {@code new …()} expression. It differs from {@link #fqn()} only for a
+     * nested type, whose binary name ({@code app.Outer$Inner}) is the key the container looks a
+     * component up by, while only its canonical name ({@code app.Outer.Inner}) can be written in
+     * source. Deriving one from the other by replacing {@code $} would be wrong: a generated
+     * {@code Vault$$Intercepted} is a top-level class whose simple name contains one.
+     */
+    public Component(String fqn, List<String> ctorParamTypes) {
+        this(fqn, fqn, ctorParamTypes);
+    }
+
 
     public Component {
         ctorParamTypes = List.copyOf(ctorParamTypes);
