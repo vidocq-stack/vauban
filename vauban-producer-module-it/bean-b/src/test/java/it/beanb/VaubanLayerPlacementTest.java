@@ -76,6 +76,14 @@ class VaubanLayerPlacementTest {
                         + "call would read the proxy's own null token and answer internal:null");
         assertEquals("false", r.get("libOpenedToCore"), "it.liba was never opened to the container");
 
+        // A protected member, forwarded the same way: PROTECTED_VIRTUALS is declared placeable, so
+        // the placed proxy must override it. Inherited instead of forwarded, this reads the proxy's
+        // own empty state and answers clearance:null.
+        assertEquals("guarded:real", r.get("guardedRun"));
+        assertEquals("clearance:real", r.get("guardedForward"),
+                "a sibling of it.liba calling the protected member on the proxy must reach the "
+                        + "contextual instance");
+
         // Handle: no accessible constructor — the placed proxy chains the woven entry constructor.
         assertEquals("handle", r.get("handleId"));
 

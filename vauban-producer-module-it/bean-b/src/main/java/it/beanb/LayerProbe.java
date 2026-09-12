@@ -57,6 +57,11 @@ public final class LayerProbe {
             put(out, "libOpenedToCore",
                     String.valueOf(pooled.getClass().getModule().isOpen("it.liba", core)));
 
+            // A protected overridable member: a sibling calls it on the proxy, from inside it.liba.
+            it.liba.Guarded guarded = container.select(it.liba.Guarded.class);
+            put(out, "guardedRun", guarded.run());
+            put(out, "guardedForward", new it.liba.GuardDesk().forward(guarded));
+
             // No accessible constructor: the placed proxy chains the woven entry constructor.
             Handle handle = container.select(Handle.class);
             put(out, "handleId", handle.id());

@@ -104,6 +104,48 @@ class PlacedProxyGenerationTest {
         }
     }
 
+    /** Abstract: no instance can exist, so no proxy can stand in for one. */
+    public abstract static class AbstractThing {
+        public abstract String describe();
+    }
+
+    /** Sealed: the permitted subclasses are fixed, and a proxy is not among them. */
+    public sealed static class SealedThing permits SealedThing.Only {
+        public String describe() {
+            return "sealed";
+        }
+
+        public static final class Only extends SealedThing {
+        }
+    }
+
+    /** Not public: a proxy outside the package could not even name it. */
+    static class HiddenThing {
+        public String describe() {
+            return "hidden";
+        }
+    }
+
+    @Test
+    @DisplayName("abstract, sealed and non-public produced types ship nothing either")
+    void shipsNothingForTheOtherHopelessShapes(@TempDir Path tmp) throws Exception {
+        for (var produced : java.util.List.of(AbstractThing.class, SealedThing.class, HiddenThing.class)) {
+            var classes = tmp.resolve("classes-" + produced.getSimpleName());
+            var output = tmp.resolve("output-" + produced.getSimpleName());
+            Files.createDirectories(output);
+            writeProducerHolder(classes, "acme.Holder" + produced.getSimpleName(), produced);
+
+            var loader = new URLClassLoader(new java.net.URL[]{classes.toUri().toURL()});
+            VaubanGenerator.generate(new VaubanGenerator.Config(List.of(), classes, output, loader));
+
+            var placed = output.resolve("META-INF/vauban/placed/"
+                    + produced.getName().replace('.', '/') + "_ClientProxy.class");
+            assertFalse(Files.exists(placed),
+                    produced.getSimpleName() + " cannot be proxied wherever the proxy sits, so the "
+                            + "build must ship nothing for it: " + placed);
+        }
+    }
+
     /** Writes a bean class declaring one {@code @Produces @ApplicationScoped} method. */
     private static void writeProducerHolder(Path classesDir, String holderFqn, Class<?> produced)
             throws Exception {

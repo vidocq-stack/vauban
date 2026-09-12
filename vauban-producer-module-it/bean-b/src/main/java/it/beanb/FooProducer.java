@@ -61,6 +61,16 @@ public class FooProducer {
         return new it.liba.Pooled("real");
     }
 
+    /**
+     * A {@code protected} overridable member: the same in-package rule as Pooled, and the shape the
+     * test suite had no fixture for until now.
+     */
+    @Produces
+    @ApplicationScoped
+    public it.liba.Guarded produceGuarded() {
+        return new it.liba.Guarded("real");
+    }
+
     @Produces
     @ApplicationScoped
     public it.liba.Handle produceHandle() {
