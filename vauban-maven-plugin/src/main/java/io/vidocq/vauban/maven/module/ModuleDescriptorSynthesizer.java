@@ -92,14 +92,22 @@ public final class ModuleDescriptorSynthesizer {
      *        "which module owns this package"
      * @param uses service types this jar looks up through {@code ServiceLoader}; they cannot be
      *        derived from bytes alone, so the caller supplies them
+     * @param version the module version to stamp, or {@code null} — a jar's version lives in its
+     *        file name or its manifest, so only the caller knows it
      */
-    public record Request(Path jar, String moduleName, boolean open, List<Path> closure, Set<String> uses) {
+    public record Request(Path jar, String moduleName, boolean open, List<Path> closure,
+                          Set<String> uses, String version) {
 
         public Request {
             Objects.requireNonNull(jar, "jar");
             Objects.requireNonNull(moduleName, "moduleName");
             closure = List.copyOf(closure);
             uses = Set.copyOf(uses);
+        }
+
+        /** Without a version — the common case when nothing knows one. */
+        public Request(Path jar, String moduleName, boolean open, List<Path> closure, Set<String> uses) {
+            this(jar, moduleName, open, closure, uses, null);
         }
     }
 
@@ -191,6 +199,9 @@ public final class ModuleDescriptorSynthesizer {
         var packageDescs = packages.stream().map(PackageDesc::of).toList();
         var moduleAttribute = ModuleAttribute.of(ModuleDesc.of(request.moduleName()), mb -> {
             mb.moduleFlags(request.open() ? ClassFile.ACC_OPEN : 0);
+            if (request.version() != null && !request.version().isBlank()) {
+                mb.moduleVersion(request.version());
+            }
             mb.requires(ModuleDesc.of("java.base"), ClassFile.ACC_MANDATED, null);
             for (String required : requires) {
                 mb.requires(ModuleDesc.of(required), 0, null);

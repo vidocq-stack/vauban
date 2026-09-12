@@ -237,6 +237,23 @@ class ModuleDescriptorSynthesizerTest {
     }
 
     @Test
+    @DisplayName("the module version is stamped when the caller knows one")
+    void moduleVersionIsStamped() throws Exception {
+        var support = TestJars.modularJar(tmp, "support", List.of(), SUPPORT_MODULE_INFO, HELPER);
+        var widget = TestJars.plainJar(tmp, "widget", List.of(support), WIDGET, INTERNALS);
+
+        var stamped = ModuleDescriptorSynthesizer.synthesize(new ModuleDescriptorSynthesizer.Request(
+                widget, "com.acme.widget", true, List.of(support, widget), Set.of(), "1.2.3"));
+        assertEquals("1.2.3", stamped.descriptor().rawVersion().orElseThrow(),
+                "a jar's version is knowable — from its file name — and worth keeping in the descriptor");
+
+        var plain = ModuleDescriptorSynthesizer.synthesize(new ModuleDescriptorSynthesizer.Request(
+                widget, "com.acme.widget", true, List.of(support, widget), Set.of(), null));
+        assertTrue(plain.descriptor().rawVersion().isEmpty(),
+                "and absent rather than invented when the caller has none");
+    }
+
+    @Test
     @DisplayName("a signed jar loses its signature, because a descriptor invalidates it anyway")
     void signatureFilesAreLeftBehind() throws Exception {
         var support = TestJars.modularJar(tmp, "support", List.of(), SUPPORT_MODULE_INFO, HELPER);
