@@ -204,6 +204,192 @@ APT-source-first rule keeps them aligned; residual drift is tracked in
 link:{repo-vauban}/src/branch/main/BUG.md[BUG.md] (VAU-PRX-002).
 ====
 
+== Case by case: from your source to a running proxy
+
+The strategy table above says *what* is generated. This section walks the four situations you can
+actually be in, and shows what each one prints.
+
+=== 1. Your own code, compiled here
+
+The processor renders the factory, the client proxy, the intercepted subclass and the per-package
+provider as Java source in the same compilation, and the auto-started javac plugin weaves the
+side-effect-free entry constructor into the compiled beans once javac has written them.
+
+Nothing is logged. Silence is the success case: no reflection, no `opens`, no agent. What you can
+check is on disk, under `target/classes` and `target/generated-sources/annotations`.
+
+=== 2. A dependency the processor never saw
+
+Ecosystem jars and modules built without the Vauban processor carry no generated code. At
+`process-classes` the `vauban:generate` goal scans them, merges their beans into
+`META-INF/vauban-beans.list`, weaves the entry constructor into what javac wrote, and — for a
+produced type whose proxy cannot live in the producer's package — ships that proxy pre-generated and
+lists the type.
+
+The build says so, and deliberately stops short of promising it will work:
+
+[source,text]
+----
+[WARNING] Shipped an in-package client proxy for 1 produced type(s) that cannot be proxied from
+the producer's package: [com.acme.lib.FraudScreen]. The Vauban class loader defines them inside the
+produced type's own package, which requires the application to start through
+io.vidocq.vauban.classloader.Launch or Vidocq.run, and that package to be exported. Started without
+a Vauban layer, the container falls back to opening the package at runtime and says so at boot.
+----
+
+The annotation processor prints the same verdict for the module it compiles, naming the obstacle:
+
+[source,text]
+----
+[Vauban] Producer of io.vidocq.vauban.example.cdi1015.lib.FraudScreen needs its client proxy inside
+io.vidocq.vauban.example.cdi1015.lib (PACKAGE_PRIVATE_VIRTUALS). Its co-located proxy is shipped
+under META-INF/vauban/placed/ and the Vauban class loader defines it there when the application runs
+in a Vauban layer — zero opens, no agent: start through io.vidocq.vauban.classloader.Launch (or
+Vauban.run). On a bare module path the runtime generates it reflectively, which needs `opens
+io.vidocq.vauban.example.cdi1015.lib to io.vidocq.vauban.core;`. […]
+----
+
+=== 3. A third-party module, running inside a Vauban layer
+
+Start through the launcher or `Vidocq.run` and the loader owns the library's module, so it defines
+the shipped proxy into the library's own package on the first lookup miss. One line tells you the
+layer exists, and which modules moved into it:
+
+[source,text]
+----
+INFO io.vidocq.vauban.classloader.Launch run
+Vauban layer ready: [io.vidocq.vauban.example.cdi1015.app, io.vidocq.vauban.example.cdi1015.lib]
+----
+
+The xref:se.adoc[runnable example] then prints where each proxy ended up. Two live in the
+application's own package, because their produced types are fully public; two live inside the
+library, placed by the loader:
+
+[source,text]
+----
+PaymentGateway proxy : …app.PaymentGateway$$8dad1edd_ClientProxy  (reflect.Proxy? false)
+AuditLog proxy       : …app.AuditLog$$386ae28_ClientProxy          (reflect.Proxy? false)
+FraudScreen proxy    : …lib.FraudScreen_ClientProxy     (module …cdi1015.lib, VaubanClassLoader)
+ReceiptPrinter proxy : …lib.ReceiptPrinter_ClientProxy  (module …cdi1015.lib, VaubanClassLoader)
+----
+
+=== 4. The same application, started without a layer
+
+The bytes are still in the jar, but no loader owns the library's package, so nothing can define them
+there. The container refuses to open the package behind your back and lists every way out:
+
+[source,text]
+----
+WARNING Vauban needs package io.vidocq.vauban.example.cdi1015.lib of module
+io.vidocq.vauban.example.cdi1015.lib opened to io.vidocq.vauban.core for a runtime producer proxy,
+and will not do it on its own. Pick one: start the application through
+io.vidocq.vauban.classloader.Launch (in a Vauban layer the loader defines the shipped proxy inside
+the package itself — zero opens, no agent); make the produced type fully public (the proxy is then
+built at compile time and nothing needs opening); run the vauban:enhance-dependencies goal (the
+proxy moves inside the dependency, still nothing to open); add the matching `opens … to
+io.vidocq.vauban.core;`; or, as a last resort, set -Dvauban.opens.auto=true to let the container
+open it at boot through an agent — which integrity by default is closing off.
+----
+
+Ignore the warning and the boot fails at the injection point, with the whole chain named:
+
+[source,text]
+----
+jakarta.enterprise.inject.spi.DeploymentException: Failed to create client proxy for normal-scoped
+bean io.vidocq.vauban.example.cdi1015.app.Integrations
+  Caused by: java.lang.RuntimeException: Failed to define proxy class for class …lib.FraudScreen
+  Caused by: java.lang.RuntimeException: Cannot reflectively access …lib.FraudScreen on the module
+      path. Either (preferred) provide a generated VaubanComponentProvider for its module […] or
+      open the package: `opens io.vidocq.vauban.example.cdi1015.lib to io.vidocq.vauban.core;`
+  Caused by: java.lang.IllegalAccessException: module …cdi1015.lib does not open …cdi1015.lib to
+      module io.vidocq.vauban.core
+----
+
+=== 5. Last resort: rewriting a copy of the dependency
+
+When no layer is possible — a native image, a library that exports nothing, a launch you do not
+control — `vauban:enhance-dependencies` writes an enhanced copy of the jar with the proxy inside the
+type's own package. It costs the jar's signature, so the goal tells you when it was not needed:
+
+[source,text]
+----
+[WARNING] enhance: com.acme.lib.FraudScreen only needs its client proxy inside its own package
+(PACKAGE_PRIVATE_VIRTUALS). The Vauban class loader ships and defines that proxy without touching
+the jar, while rewriting a copy here drops the jar's signature. Keep this goal for what placement
+cannot do: no Vauban layer at launch, a package the library does not export, or a GraalVM native
+image.
+----
+
+=== 6. When no proxy is possible at all
+
+Three shapes are unproxyable wherever the proxy sits, so nothing is shipped for them and the
+container refuses to start. The validation runs at build time through the annotation processor and
+again at boot, and both speak the same language.
+
+[source,text]
+----
+CDI deployment validation failed:
+  - Normal-scoped bean com.acme.Ledger cannot be a final class
+  - Normal-scoped bean com.acme.Report has final method render
+  - Normal-scoped bean com.acme.Session must have a non-private no-arg constructor, or declare a
+    non-private constructor taking io.vidocq.vauban.api.ProxyLink as its client-proxy entry point
+    (Vauban extension, Vidocq/vauban#24)
+----
+
+That block is a `jakarta.enterprise.inject.spi.DeploymentException`, thrown out of
+`SeContainerInitializer.initialize()` with no wrapping of its own: one line per problem, each
+prefixed with a dash. A `DefinitionException` carries the same shape under the header
+`CDI definition validation failed:`.
+
+Wiring problems are reported the same way, and are worth recognising because they look alike but
+have nothing to do with proxies:
+
+[source,text]
+----
+  - Unsatisfied dependency: field com.acme.Checkout#gateway of type com.acme.PaymentGateway with
+    qualifiers [@Default]
+  - Ambiguous dependency: field com.acme.Checkout#store of type com.acme.Store. Matching beans:
+    [com.acme.SqlStore, com.acme.MemoryStore]
+----
+
+If a bean slips past the build — a class you did not compile, a scope decided by an extension — the
+runtime refuses at the moment the proxy is requested, with
+`jakarta.enterprise.inject.UnproxyableResolutionException`:
+
+[source,text]
+----
+Normal scoped bean com.acme.Ledger is final
+Normal scoped bean com.acme.Report has final method render
+Normal scoped bean com.acme.Session has only a private no-arg constructor
+----
+
+Interception adds its own pair, because an intercepted bean is also a subclass:
+
+[source,text]
+----
+  - Intercepted bean com.acme.Audit cannot be final (interception requires subclassing)
+  - Intercepted bean com.acme.Audit has final method write (interception requires subclassing)
+----
+
+None of these has a workaround in Vauban, and that is deliberate: CDI 4.1 §3.10 rules them out, so
+the answer is to change the type — drop `final`, add a non-private constructor — or to produce an
+interface instead, which is proxied without any of these constraints.
+
+=== 7. An IDE run, where the build output was never woven
+
+IntelliJ writes class files after javac has finished, which defeats the javac plugin. The container
+notices before loading a bean and tells you which tier took over. Inside a Vauban layer it simply
+weaves at definition. Outside one, it attaches the agent and says so:
+
+[source,text]
+----
+WARNING Build output is not woven for 3 normal-scoped bean(s) [com.acme.Checkout, com.acme.Ledger,
+com.acme.Audit] — attaching the Vauban load-time weaving agent (typical of IDE builds;
+Maven/Gradle/javac builds weave at compile time). Disable with -Dvauban.weaving.loadtime=disabled.
+Hint: a trampoline main that re-layers the application (Vidocq: @VidocqMain + Vidocq.run) avoids the
+agent entirely
+----
+
 == APT pipeline — sequence diagram
 
 [plantuml]
