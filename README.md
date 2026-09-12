@@ -37,7 +37,9 @@ Vauban is an implementation of [Jakarta CDI 4.1](https://jakarta.ee/specificatio
 - **Java Modules-first**: every component is an explicit Java module (`module-info.java`)
 - **Zero reflection**: static code generation via the JDK 25 Class-File API
 - **Virtual threads ready**: `ScopedValue` (JEP 487) instead of `ThreadLocal` everywhere
-- **Minimal dependencies**: the indexer has no external dependency
+- **Zero runtime dependency**: every published library depends on the Jakarta APIs it implements and
+  on nothing else; the indexer has none at all. Build-time tooling is separate — a Maven plugin runs
+  on the build machine, not in your application, and may take a documented dependency
 - **Build Compatible Extensions**: CDI 4.1 Lite extension model
 
 ## Quick Start

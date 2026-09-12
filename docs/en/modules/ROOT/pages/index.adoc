@@ -28,7 +28,11 @@ Vauban turned defence into a mathematical art: trajectories, sapping, counter-mi
 
 == Three identifying traits
 
-. **Zero runtime dependency** — Jakarta CDI spec only. No Weld, no ArC, no Guice.
+. **Zero runtime dependency** — Jakarta CDI spec only. No Weld, no ArC, no Guice. The rule covers
+what Vauban *ships*: every published library depends on the Jakarta APIs it implements and on
+nothing else. Build-time tooling is held to a different standard — a Maven plugin runs on the
+build machine, never in your application, so it may take a dependency when that saves writing
+something better done elsewhere. Each one is named in the xref:reference.adoc[reference].
 . **Static code generation** — Class-File API (JEP 484) at `process-classes`. No reflection at startup. No dynamic proxy. No external bytecode library (ASM, Byte Buddy).
 . **Strict Java Modules** — every Vauban artefact has its own `module-info.java`. No classpath, no unjustified `opens`, no `add-opens` at launch.
 
