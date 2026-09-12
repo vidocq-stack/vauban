@@ -55,7 +55,8 @@ public final class Main {
             return; // the application ran inside the Vauban layer
         }
         try (SeContainer container = SeContainerInitializer.newInstance()
-                .addBeanClasses(Integrations.class, CheckoutService.class)
+                .addBeanClasses(Integrations.class, CheckoutService.class, Vault.class)
+                .addBeanClasses(AuditTrail.class)
                 .initialize()) {
 
             PaymentGateway gateway = container.select(PaymentGateway.class).get();
@@ -63,6 +64,7 @@ public final class Main {
             FraudScreen screen = container.select(FraudScreen.class).get();
             ReceiptPrinter printer = container.select(ReceiptPrinter.class).get();
             CheckoutService checkout = container.select(CheckoutService.class).get();
+            Vault vault = container.select(Vault.class).get();
 
             System.out.println("PaymentGateway proxy : " + gateway.getClass().getName()
                     + "  (reflect.Proxy? " + java.lang.reflect.Proxy.isProxyClass(gateway.getClass()) + ")");
@@ -70,8 +72,11 @@ public final class Main {
                     + "  (reflect.Proxy? " + java.lang.reflect.Proxy.isProxyClass(audit.getClass()) + ")");
             System.out.println("FraudScreen proxy    : " + screen.getClass().getName() + where(screen.getClass()));
             System.out.println("ReceiptPrinter proxy : " + printer.getClass().getName() + where(printer.getClass()));
+            System.out.println("Vault proxy          : " + vault.getClass().getName()
+                    + "  (intercepted: a $$Intercepted sibling sits behind this proxy)");
             System.out.println();
             System.out.println("Checkout: " + checkout.checkout("acct-42", "order-7", 1999));
+            System.out.println("Sealed: " + vault.seal("card-1234"));
             // FraudPolicy, a class of the library's own package, calls FraudScreen's package-private
             // score on the proxy it is handed: the placed proxy forwards it to the real instance.
             System.out.println("Fraud review: " + new FraudPolicy().review(screen, 1999));

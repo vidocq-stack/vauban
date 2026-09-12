@@ -164,6 +164,32 @@ abstract *and* `default` — to the contextual instance. No `java.lang.reflect.P
 Weld would place the `PaymentGateway` proxy into the library's package and require
 `--add-opens io.vidocq.vauban.example.cdi1015.lib/…=weld.core.impl`. Vauban needs nothing.
 
+== The application's own beans
+
+The library types above are the point of cdi#1015, but the application also carries the bean
+shapes you meet in ordinary code, so that every proxying case is in one runnable place:
+
+[cols="1,2"]
+|===
+|Bean |What it demonstrates
+
+|`CheckoutService`
+|An ordinary top-level managed bean: its proxy is generated as Java **source** in this package,
+and the in-module provider instantiates it. Nothing to configure.
+
+|`Vault`, bound to the `AuditTrail` interceptor
+|An intercepted bean carries **two** generated classes: the client proxy the container hands out,
+and a `$$Intercepted` sibling — both extending the bean — that runs the chain before the bean's
+own method. Both are emitted at build time, in this package, so this costs no `opens` either.
+
+|`Ledgers.Ledger`, a nested bean
+|The one shape this example cannot serve with zero `opens`. Its proxy exists — emitted as
+**bytecode**, since `Ledgers$Ledger_ClientProxy` is not a name javac can compile as a source file —
+but the in-module provider only carries top-level beans, so the container falls back to reflection
+and a module that opens nothing refuses. `Cdi1015ExampleTest` pins the diagnostic, which names the
+bean and both ways out: make it top-level, or open the package. **Prefer top-level.**
+|===
+
 == The residual case
 
 If a produced class is **not** fully public (package-private or protected overridable methods, no

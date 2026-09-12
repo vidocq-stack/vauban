@@ -95,6 +95,92 @@ Either way the proxy chains to that constructor (always passing `null`), and the
 never selects it for injection or bean instantiation. Field initializers still run in every
 constructor — keep them side-effect free.
 
+=== Which proxy do I get, and what do I have to do? [.tag-new]#NEW#
+
+Find your situation in the left column. Most of them ask nothing of you; the few that do,
+say so in one line. The mechanics behind each row are in
+xref:internals.adoc#_client_proxies_one_strategy_per_case[Internals — one strategy per case].
+
+[cols="2,2,1"]
+|===
+|Your situation |What happens |What you have to do
+
+|A normal-scoped bean you compile — an ordinary top-level class
+|The annotation processor writes `<Bean>_ClientProxy` as Java source next to your class, and
+ the in-module provider instantiates it.
+|Nothing.
+
+|The same bean, but **nested** (a `static` member class)
+|Its proxy is emitted as bytecode (`Outer$Inner_ClientProxy` is not a name javac can compile
+ as a source file), but the in-module provider only carries top-level beans — so on the module
+ path the container falls back to reflection and stops.
+|**Make it top-level** (preferred), or add
+ `opens <your.package> to io.vidocq.vauban.core;`.
+
+|`@Produces` returning a **fully public** class of another module — even one that knows nothing
+ about CDI
+|The proxy is generated at build time in *your* producer's package.
+|Nothing.
+
+|`@Produces` returning an **interface**
+|A forwarding implementation is generated in your producer's package. It forwards to whatever
+ your producer method returns — it is not a substitute for one.
+|Return a real implementation.
+
+|`@Produces` returning a class with a **package-private or protected** overridable member, or
+ with **no accessible constructor**
+|The proxy must live in the produced type's own package. The build ships its bytes as a resource
+ and the Vauban class loader places them there at run time.
+|**Start through the Vauban launcher**
+ (xref:se.adoc[Java SE] or `Vidocq.run`). Without it the container cannot start.
+
+|A dependency jar with **no `module-info`**
+|On the module path it is an automatic module: it reads everything, exports everything, and
+ `jlink` refuses it.
+|Run `vidocq:modularize` — it patches a copy with a
+ synthesized descriptor.
+
+|A `final` class, or a non-private `final` method, under a normal scope
+|CDI 4.1 §3.10 forbids it: a client proxy is a subclass, and neither can be overridden.
+|Drop `final`, or move the bean to `@Dependent`.
+|===
+
+==== What failure looks like
+
+None of these fail silently. A produced type that needs an in-package proxy, started without the
+launcher, refuses deployment and names the way out:
+
+[source,text]
+----
+Cannot reflectively access com.acme.lib.FraudScreen on the module path. Either (preferred)
+provide a generated VaubanComponentProvider for its module — the APT or packaging plugin emits
+a `_VaubanComponents` and the module declares
+`provides io.vidocq.vauban.api.VaubanComponentProvider with …;` — so the container instantiates
+it in-module without reflection; or open the package:
+`opens com.acme.lib to io.vidocq.vauban.core;`
+----
+
+An unproxyable shape is a deployment error, reported with the bean and the reason:
+
+[source,text]
+----
+Normal-scoped bean com.acme.Ledger cannot be a final class
+Normal-scoped bean com.acme.Ledger has final method charge
+----
+
+And a build that ships an in-package proxy says so, so the launcher requirement is never a
+surprise at run time:
+
+[source,text]
+----
+[WARNING] Shipped an in-package client proxy for 1 produced type(s) that cannot be proxied
+from the producer's package: [com.acme.lib.FraudScreen]. The Vauban class loader defines them
+inside the produced type's own package, which requires the application to start through
+io.vidocq.vauban.classloader.Launch or Vidocq.run, and that package to be exported. Started
+without a Vauban layer, the container falls back to opening the package at runtime and says
+so at boot.
+----
+
 == Qualifiers
 
 Discriminate multiple implementations of the same type.

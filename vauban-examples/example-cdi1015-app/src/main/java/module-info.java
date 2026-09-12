@@ -37,6 +37,8 @@ module io.vidocq.vauban.example.cdi1015.app {
 
     requires jakarta.cdi;
     requires jakarta.inject;
+    requires jakarta.interceptor;
+    requires jakarta.annotation;
 
     exports io.vidocq.vauban.example.cdi1015.app;
 

@@ -60,4 +60,59 @@ class Cdi1015ExampleTest {
             assertEquals("charged 1999 cents to acct-42", checkout.checkout("acct-42", "order-7", 1999));
         }
     }
+
+    @Test
+    @DisplayName("an intercepted bean runs its chain through a build-time $$Intercepted subclass")
+    void interceptedBeanIsProxiedAndIntercepted() {
+        try (SeContainer container = SeContainerInitializer.newInstance()
+                .addBeanClasses(Integrations.class, CheckoutService.class, Vault.class)
+                .addBeanClasses(AuditTrail.class)
+                .initialize()) {
+
+            Vault vault = container.select(Vault.class).get();
+
+            assertEquals("[audited] sealed:secret", vault.seal("secret"),
+                    "the interceptor chain must run around the bean's own method");
+            assertTrue(vault.getClass().getName().endsWith("_ClientProxy"),
+                    "the container still hands out a client proxy: " + vault.getClass().getName());
+            assertFalse(java.lang.reflect.Proxy.isProxyClass(vault.getClass()),
+                    "neither of the two generated classes is a runtime reflect.Proxy");
+        }
+    }
+
+    /**
+     * The one bean shape this example cannot serve with zero {@code opens}, kept here so the limit
+     * is visible rather than folklore.
+     *
+     * <p>A nested bean's client proxy exists — the APT emits {@code Ledgers$Ledger_ClientProxy} as
+     * bytecode, since that name cannot be written as Java source. What is missing is the other half:
+     * the in-module {@code _VaubanComponents} provider only carries top-level beans, so nobody can
+     * instantiate this one from inside the module and the container falls back to reflection, which
+     * a module that opens nothing refuses. The diagnostic below is the whole point: it names the
+     * type and both ways out.
+     */
+    @Test
+    @DisplayName("a nested bean on the module path fails, and the message says exactly what to do")
+    void nestedBeanNeedsOpensOrATopLevelBean() {
+        try (SeContainer container = SeContainerInitializer.newInstance()
+                .addBeanClasses(Ledgers.Ledger.class)
+                .initialize()) {
+
+            var failure = org.junit.jupiter.api.Assertions.assertThrows(RuntimeException.class,
+                    () -> container.select(Ledgers.Ledger.class).get().record("first"));
+
+            // The actionable half is in the cause: the outer frame only says which bean failed.
+            var text = new StringBuilder();
+            for (Throwable t = failure; t != null; t = t.getCause()) {
+                text.append(t.getMessage()).append('\n');
+            }
+            String message = text.toString();
+            assertTrue(message.contains("Ledgers$Ledger"),
+                    "the diagnostic must name the bean by its binary name: " + message);
+            assertTrue(message.contains("VaubanComponentProvider"),
+                    "and offer the in-module route first: " + message);
+            assertTrue(message.contains("opens io.vidocq.vauban.example.cdi1015.app"),
+                    "and spell out the directive that unblocks it: " + message);
+        }
+    }
 }
