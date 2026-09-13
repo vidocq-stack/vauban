@@ -91,6 +91,16 @@ public class EnhanceDependenciesMojo extends AbstractMojo {
                     log.warn("Vauban enhance-dependencies: no dependency jar contains " + fqn);
                     continue;
                 }
+                if (Files.isDirectory(owner)) {
+                    // A reactor dependency that has not been packaged yet: the type is right there,
+                    // but this goal rewrites a jar, and there is no jar. Saying which is which beats
+                    // failing the build with "Is a directory" from three frames down.
+                    log.warn("Vauban enhance-dependencies: " + fqn + " was found in " + owner
+                            + ", a classes directory rather than a jar, so it cannot be enhanced. "
+                            + "This happens in a multi-module build when the dependency has not been "
+                            + "packaged yet — run a phase that packages it (install, or package).");
+                    continue;
+                }
                 byJar.computeIfAbsent(owner, k -> new ArrayList<>()).add(fqn);
             }
             if (byJar.isEmpty()) {

@@ -594,7 +594,7 @@ public class VaubanProcessor extends AbstractProcessor {
                                                     + PLACED_PREFIX + " and the Vauban class loader "
                                                     + "defines it there when the application runs in a "
                                                     + "Vauban layer — zero opens, no agent: start through "
-                                                    + "io.vidocq.vauban.classloader.Launch (or Vauban.run). "
+                                                    + "io.vidocq.vauban.classloader.Launch (or Vidocq.run). "
                                             : "")
                                     + "On a bare module path the runtime generates it reflectively, "
                                     + "which needs `opens " + packageOfFqn(producedFqn)

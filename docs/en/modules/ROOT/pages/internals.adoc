@@ -245,7 +245,7 @@ The annotation processor prints the same verdict for the module it compiles, nam
 io.vidocq.vauban.example.cdi1015.lib (PACKAGE_PRIVATE_VIRTUALS). Its co-located proxy is shipped
 under META-INF/vauban/placed/ and the Vauban class loader defines it there when the application runs
 in a Vauban layer — zero opens, no agent: start through io.vidocq.vauban.classloader.Launch (or
-Vauban.run). On a bare module path the runtime generates it reflectively, which needs `opens
+Vidocq.run). On a bare module path the runtime generates it reflectively, which needs `opens
 io.vidocq.vauban.example.cdi1015.lib to io.vidocq.vauban.core;`. […]
 ----
 

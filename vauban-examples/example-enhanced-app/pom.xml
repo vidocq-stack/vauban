@@ -1,0 +1,75 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+    <parent>
+        <groupId>io.vidocq.vauban</groupId>
+        <artifactId>vauban-examples</artifactId>
+        <version>0.4.0-SNAPSHOT</version>
+    </parent>
+    <artifactId>example-enhanced-app</artifactId>
+    <name>Vauban :: Examples :: enhanced :: Rewriting a dependency jar</name>
+    <description>Runs vauban:enhance-dependencies over a modular dependency, for the case where no class loader will be there to place a proxy — a GraalVM native image, typically.</description>
+    <properties>
+        <maven.deploy.skip>true</maven.deploy.skip>
+        <maven.javadoc.skip>true</maven.javadoc.skip>
+        <maven.source.skip>true</maven.source.skip>
+        <gpg.skip>true</gpg.skip>
+    </properties>
+
+    <dependencies>
+        <!--
+            The cdi#1015 library. FraudScreen has a package-private member, so its client proxy
+            can only live inside the library's own package: the case this goal exists for.
+        -->
+        <dependency>
+            <groupId>io.vidocq.vauban</groupId>
+            <artifactId>example-cdi1015-lib</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>io.vidocq.vauban</groupId>
+            <artifactId>vauban-core</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter</artifactId>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+
+    <build><plugins>
+        <plugin>
+            <groupId>io.vidocq.vauban</groupId>
+            <artifactId>vauban-maven-plugin</artifactId>
+            <version>${project.version}</version>
+            <executions>
+                <execution>
+                    <id>enhance-dependencies</id>
+                    <!--
+                        The goal's own default is `package`. It is bound earlier here so the test
+                        below can read the enhanced copy: surefire runs before packaging.
+                    -->
+                    <phase>process-classes</phase>
+                    <goals><goal>enhance-dependencies</goal></goals>
+                    <configuration>
+                        <!--
+                            Opt-in, and deliberately so: rewriting someone else's artefact drops
+                            its signature. Nothing happens unless a type is named here.
+                        -->
+                        <enhancedTypes>
+                            <enhancedType>io.vidocq.vauban.example.cdi1015.lib.FraudScreen</enhancedType>
+                        </enhancedTypes>
+                    </configuration>
+                </execution>
+            </executions>
+        </plugin>
+        <plugin>
+            <groupId>org.sonatype.central</groupId>
+            <artifactId>central-publishing-maven-plugin</artifactId>
+            <configuration><skipPublishing>true</skipPublishing></configuration>
+        </plugin>
+    </plugins></build>
+</project>

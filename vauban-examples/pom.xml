@@ -24,6 +24,7 @@
         <module>example-cdi1015-app</module>
         <module>example-legacy-lib</module>
         <module>example-legacy-app</module>
+        <module>example-enhanced-app</module>
     </modules>
 
     <properties>

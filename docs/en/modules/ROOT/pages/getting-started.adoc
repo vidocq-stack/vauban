@@ -206,6 +206,14 @@ the project runs them all.
   application wires `vauban:modularize` in its POM — read it to see how the goal is configured —
   and its test reads back the descriptor the build synthesized, including the
   `requires jakarta.inject` that nothing declared and that was derived from the jar's bytecode.
+
+| `example-enhanced-app`
+| The last resort, for when no class loader will be there to place a proxy — a GraalVM native
+  image defines its classes at build time. `vauban:enhance-dependencies` writes a *copy* of the
+  dependency with the proxy already inside the library's own package, a provider beside it, and a
+  descriptor rewritten to offer that provider as a service. The test reads all three back, plus the
+  manifest entries by which the copy declares it is not the original artefact — it drops the
+  signature it can no longer honour, which is why the goal is opt-in.
 |===
 
 == Next step
