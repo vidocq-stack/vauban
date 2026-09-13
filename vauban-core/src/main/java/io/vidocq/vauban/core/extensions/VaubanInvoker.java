@@ -41,6 +41,8 @@ public final class VaubanInvoker implements Invoker<Object, Object>, InvokerInfo
     private final boolean isStatic;
     private final boolean instanceLookup;
     private final Set<Integer> argumentLookups;
+    /** Resolved once, here rather than per call; {@code null} when the method is not reachable. */
+    private final java.lang.invoke.MethodHandle handle;
 
     public VaubanInvoker(Method method, Class<?> beanClass,
                          boolean instanceLookup, Set<Integer> argumentLookups) {
@@ -49,11 +51,29 @@ public final class VaubanInvoker implements Invoker<Object, Object>, InvokerInfo
         this.isStatic = Modifier.isStatic(method.getModifiers());
         this.instanceLookup = instanceLookup;
         this.argumentLookups = Set.copyOf(argumentLookups);
-        makeAccessibleSafe(method);
+        this.handle = unreflect(method);
+        if (this.handle == null) {
+            // Only when no handle could be obtained: the reflective path still needs the member to
+            // be accessible. trySetAccessible, never setAccessible — the latter throws
+            // InaccessibleObjectException on a module that opens nothing.
+            method.trySetAccessible();
+        }
     }
 
-    private static void makeAccessibleSafe(java.lang.reflect.AccessibleObject member) {
-        member.trySetAccessible();
+    /**
+     * A method handle for {@code method}, or {@code null} when this module may not have one.
+     *
+     * <p>Preferred over {@link Method#invoke}: the access check happens once, here, instead of on
+     * every call. It is not a way around the module system — {@code unreflect} needs the same
+     * consent {@code setAccessible} would — so a method this module cannot reach yields
+     * {@code null} and the reflective path takes over, exactly as before.
+     */
+    private static java.lang.invoke.MethodHandle unreflect(Method method) {
+        try {
+            return java.lang.invoke.MethodHandles.lookup().unreflect(method);
+        } catch (IllegalAccessException e) {
+            return null;
+        }
     }
 
     @Override
@@ -108,13 +128,30 @@ public final class VaubanInvoker implements Invoker<Object, Object>, InvokerInfo
                 arguments = trimmed;
             }
 
+            if (!isStatic && instance == null) {
+                throw new RuntimeException("Cannot invoke instance method " + method.getName()
+                        + " with null instance");
+            }
+            if (handle != null) {
+                var callArgs = new ArrayList<Object>();
+                if (!isStatic) {
+                    callArgs.add(instance);
+                }
+                if (arguments != null) {
+                    java.util.Collections.addAll(callArgs, arguments);
+                }
+                try {
+                    return handle.invokeWithArguments(callArgs);
+                } catch (Exception | Error direct) {
+                    // A handle throws the target's exception as-is, with no wrapper to unpack.
+                    throw direct;
+                } catch (Throwable t) {
+                    throw new RuntimeException(t);
+                }
+            }
             try {
                 if (isStatic) {
                     return method.invoke(null, arguments);
-                }
-                if (instance == null) {
-                    throw new RuntimeException("Cannot invoke instance method " + method.getName()
-                            + " with null instance");
                 }
                 return method.invoke(instance, arguments);
             } catch (InvocationTargetException e) {
