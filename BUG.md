@@ -1100,7 +1100,7 @@ and a proposed upstream assertion: `CDI_TCK_PROPOSALS.md` → `TCK-GAP-001`.
 ## BUG-20260912-02 — The Vauban layer cannot be created inside a jlink image
 
 - **Date**: 2026-09-12
-- **Status**: OPEN
+- **Status**: FIXED (this branch)
 - **Module**: `vauban-classloader` (`VaubanLayerFactory#applicationPaths`, `Launch#run`)
 - **Symptom**: an application whose `main` starts with `Launch.run(...)` does not start at all from a `jlink` image. It fails with a message that names the wrong cause:
   ```
@@ -1118,3 +1118,4 @@ and a proposed upstream assertion: `CDI_TCK_PROPOSALS.md` → `TCK-GAP-001`.
 - **Suspected cause**: `applicationPaths` collects the archives to re-layer from each resolved module's `reference().location()`, keeping only URIs whose scheme is `file:` (`VaubanLayerFactory.java:94` and `:164`). In a runtime image every module's location is `jrt:/<module>`, so the filter drops all of them and the resulting path list is empty. The same filter is what makes the loader index the archives it owns, so simply lifting it is not enough: a `jrt:` module has no archive to read bytes from, and the layer's loader would have to read its classes through the `jrt` file system (`FileSystems.getFileSystem(URI.create("jrt:/"))`) instead.
 - **Investigations**:
   - 2026-09-12: found while answering whether the loader-based placement survives `jlink`. It does not. `jpackage` is affected whenever it wraps a jlink runtime image; `jpackage` over a plain module path is not (same shape as the working `java -p` run). Until this is fixed, the build-time route — `vauban:enhance-dependencies`, which rewrites the dependency jar — is the only one that works under `jlink`, as it already is for GraalVM native images.
+  - 2026-09-13: **fixed**. `applicationPaths` and `createAppLayer` no longer keep only `file:` locations; both go through `archiveOf`, which also maps a `jrt:` module to `/modules/<name>` of the `jrt` file system. Nothing else had to change: a module in a runtime image is an exploded directory, and `BuiltInReaders` already walks directories, so the layer's loader reads it exactly as it reads a `target/classes`. Verified end to end — the cdi#1015 example now runs from a jlink image with its layer, its placed proxies (`FraudScreen_ClientProxy`, `ReceiptPrinter_ClientProxy` defined inside the library's package) and its interceptor. A probe written first confirmed the JDK allows it: `ModuleFinder.of(jrtPath)` finds the module and a child layer resolves from it, with its own loader and its own class identity. The unit test needs no jlink run: every JVM has `jrt:/java.base`.

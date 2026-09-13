@@ -91,8 +91,8 @@ public final class VaubanLayerFactory {
                 .resolveAndBind(finder, ModuleFinder.of(), roots);
         for (var resolved : configuration.modules()) {
             resolved.reference().location()
-                    .filter(uri -> "file".equals(uri.getScheme()))
-                    .ifPresent(uri -> archives.add(Path.of(uri)));
+                    .flatMap(VaubanLayerFactory::archiveOf)
+                    .ifPresent(archives::add);
         }
 
         var loader = VaubanClassLoader.forLayer(List.copyOf(archives), parentLoader, pluginContext);
@@ -161,8 +161,8 @@ public final class VaubanLayerFactory {
         for (var resolved : configuration.modules()) {
             if (kept.contains(resolved)) continue;
             resolved.reference().location()
-                    .filter(uri -> "file".equals(uri.getScheme()))
-                    .ifPresent(uri -> paths.add(Path.of(uri)));
+                    .flatMap(VaubanLayerFactory::archiveOf)
+                    .ifPresent(paths::add);
         }
         return List.copyOf(paths);
     }
@@ -323,5 +323,45 @@ public final class VaubanLayerFactory {
         provides.forEach((service, providers) ->
                 builder.provides(service, List.copyOf(providers)));
         return builder.build();
+    }
+
+    /**
+     * The archive a resolved module's bytes can be read from, when there is one.
+     *
+     * <p>Two shapes occur, and both work the same way once opened, because a module is either a jar
+     * or a directory of classes:
+     *
+     * <ul>
+     *   <li>{@code file:} — a jar or an exploded directory on a module path;</li>
+     *   <li>{@code jrt:} — a module linked into a runtime image by {@code jlink}, readable as
+     *       {@code /modules/<name>} of the {@code jrt} file system. Dropping these is what used to
+     *       leave a jlink image with nothing to re-layer, and therefore without the placed proxies,
+     *       sjar decryption and load-time weaving the layer's loader provides.</li>
+     * </ul>
+     *
+     * <p>Anything else (a module with no location, or a scheme with no file system behind it) is
+     * skipped: the layer can only own archives it can actually read.
+     */
+    static java.util.Optional<Path> archiveOf(java.net.URI location) {
+        String scheme = location.getScheme();
+        if ("file".equals(scheme)) {
+            return java.util.Optional.of(Path.of(location));
+        }
+        if ("jrt".equals(scheme)) {
+            // jrt:/<module> names the module; its content lives under /modules/<module>.
+            String module = location.getPath().replaceFirst("^/", "");
+            if (module.isEmpty()) {
+                return java.util.Optional.empty();
+            }
+            try {
+                var image = java.nio.file.FileSystems.getFileSystem(java.net.URI.create("jrt:/"));
+                Path path = image.getPath("/modules/" + module);
+                return java.nio.file.Files.isDirectory(path)
+                        ? java.util.Optional.of(path) : java.util.Optional.empty();
+            } catch (RuntimeException e) {
+                return java.util.Optional.empty();
+            }
+        }
+        return java.util.Optional.empty();
     }
 }

@@ -169,4 +169,27 @@ class VaubanLayerFactoryTest {
                             cob.return_();
                         }));
     }
+
+    @Test
+    @DisplayName("a module linked into a runtime image is re-layerable, like one on a module path")
+    void jlinkModulesResolveToAReadableArchive() {
+        // Every JVM has its platform modules in an image, so this needs no jlink run to exercise:
+        // java.base's location is jrt:/java.base whether or not the application was linked.
+        var linked = VaubanLayerFactory.archiveOf(java.net.URI.create("jrt:/java.base"));
+        assertTrue(linked.isPresent(), "a jrt: module must resolve to an archive the loader can read");
+        assertTrue(java.nio.file.Files.isDirectory(linked.orElseThrow()),
+                "and that archive is a directory, which the built-in reader already walks");
+        assertTrue(java.nio.file.Files.isRegularFile(linked.orElseThrow().resolve("java/lang/Object.class")),
+                "its classes must be reachable through it: " + linked.orElseThrow());
+
+        // Dropping these is what left a jlink image with nothing to re-layer — and therefore
+        // without placed proxies, sjar decryption or load-time weaving.
+        var onDisk = VaubanLayerFactory.archiveOf(java.nio.file.Path.of("lib.jar").toUri());
+        assertTrue(onDisk.isPresent(), "a file: module keeps resolving as before");
+
+        assertTrue(VaubanLayerFactory.archiveOf(java.net.URI.create("http://example.invalid/x.jar")).isEmpty(),
+                "a location with no file system behind it cannot be owned by the layer");
+        assertTrue(VaubanLayerFactory.archiveOf(java.net.URI.create("jrt:/")).isEmpty(),
+                "and jrt:/ names no module");
+    }
 }
