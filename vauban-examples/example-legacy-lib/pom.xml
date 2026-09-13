@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+    <parent>
+        <groupId>io.vidocq.vauban</groupId>
+        <artifactId>vauban-examples</artifactId>
+        <version>0.4.0-SNAPSHOT</version>
+    </parent>
+    <artifactId>example-legacy-lib</artifactId>
+    <name>Vauban :: Examples :: legacy :: Non-modular library</name>
+    <description>A dependency with NO module-info: on the module path it is an automatic module, which jlink refuses. The case vauban:modularize exists for.</description>
+    <properties>
+        <maven.deploy.skip>true</maven.deploy.skip>
+        <maven.javadoc.skip>true</maven.javadoc.skip>
+        <maven.source.skip>true</maven.source.skip>
+        <gpg.skip>true</gpg.skip>
+    </properties>
+
+    <dependencies>
+        <!--
+            A real dependency, so the synthesized descriptor has a `requires` to derive rather
+            than only java.base: the scanner has to find jakarta.inject in this jar's bytecode.
+        -->
+        <dependency>
+            <groupId>jakarta.inject</groupId>
+            <artifactId>jakarta.inject-api</artifactId>
+            <!-- Pinned here: the examples parent manages no version for it. -->
+            <version>2.0.1</version>
+        </dependency>
+    </dependencies>
+
+    <build><plugins>
+        <plugin>
+            <groupId>org.sonatype.central</groupId>
+            <artifactId>central-publishing-maven-plugin</artifactId>
+            <configuration><skipPublishing>true</skipPublishing></configuration>
+        </plugin>
+    </plugins></build>
+</project>

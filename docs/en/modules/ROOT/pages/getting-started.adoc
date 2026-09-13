@@ -192,13 +192,20 @@ the project runs them all.
 
 | `example-cdi1015-lib` + `example-cdi1015-app`
 | **The one to read first if you care about proxies.** A CDI-agnostic third-party library and an
-  application that produces four of its types, covering every proxying case in one runnable place:
+  application that produces four of its types, covering every *proxying* case in one runnable place:
   a fully-public class and an interface (proxied from the producer's package), a type with a
   package-private member and one with no accessible constructor (proxy placed inside the library's
   own package by the class loader), an intercepted bean, and a nested bean. Zero `opens`
   throughout. This is https://github.com/jakartaee/cdi/issues/1015[jakartaee/cdi#1015^], solved.
   It has its own
   link:{repo-vauban}/src/branch/main/vauban-examples/example-cdi1015-app/README.adoc[README^].
+
+| `example-legacy-lib` + `example-legacy-app`
+| The *packaging* case the pair above does not cover: a dependency shipped with *no*
+  `module-info`, which is an automatic module on the module path and which `jlink` refuses. The
+  application wires `vauban:modularize` in its POM — read it to see how the goal is configured —
+  and its test reads back the descriptor the build synthesized, including the
+  `requires jakarta.inject` that nothing declared and that was derived from the jar's bytecode.
 |===
 
 == Next step

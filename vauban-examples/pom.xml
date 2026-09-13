@@ -22,6 +22,8 @@
         <module>example-test</module>
         <module>example-cdi1015-lib</module>
         <module>example-cdi1015-app</module>
+        <module>example-legacy-lib</module>
+        <module>example-legacy-app</module>
     </modules>
 
     <properties>

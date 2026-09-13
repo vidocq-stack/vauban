@@ -1,0 +1,75 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+    <parent>
+        <groupId>io.vidocq.vauban</groupId>
+        <artifactId>vauban-examples</artifactId>
+        <version>0.4.0-SNAPSHOT</version>
+    </parent>
+    <artifactId>example-legacy-app</artifactId>
+    <name>Vauban :: Examples :: legacy :: Modularizing a dependency</name>
+    <description>Runs vauban:modularize over a dependency that has no module-info, and checks the descriptor it synthesizes.</description>
+    <properties>
+        <maven.deploy.skip>true</maven.deploy.skip>
+        <maven.javadoc.skip>true</maven.javadoc.skip>
+        <maven.source.skip>true</maven.source.skip>
+        <gpg.skip>true</gpg.skip>
+    </properties>
+
+    <dependencies>
+        <dependency>
+            <groupId>io.vidocq.vauban</groupId>
+            <artifactId>example-legacy-lib</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter</artifactId>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+
+    <build><plugins>
+        <plugin>
+            <groupId>io.vidocq.vauban</groupId>
+            <artifactId>vauban-maven-plugin</artifactId>
+            <version>${project.version}</version>
+            <executions>
+                <execution>
+                    <id>modularize</id>
+                    <!--
+                        The goal's own default is prepare-package, which is the right place in a
+                        normal build. Here it is bound earlier, at process-classes, so that the
+                        test below can read the patched jar: surefire runs before packaging.
+                    -->
+                    <phase>process-classes</phase>
+                    <goals><goal>modularize</goal></goals>
+                    <configuration>
+                        <!--
+                            Only the example's own legacy jar is patched. Without this, every
+                            non-modular jar of the closure would be, junit included.
+                        -->
+                        <includes>
+                            <include>example-legacy-lib</include>
+                        </includes>
+                        <moduleNames>
+                            <!--
+                                Left to the JDK-derived automatic name by default. Naming it
+                                explicitly is what you do when the file name yields something you
+                                do not want to depend on.
+                            -->
+                            <example-legacy-lib>com.acme.legacy</example-legacy-lib>
+                        </moduleNames>
+                    </configuration>
+                </execution>
+            </executions>
+        </plugin>
+        <plugin>
+            <groupId>org.sonatype.central</groupId>
+            <artifactId>central-publishing-maven-plugin</artifactId>
+            <configuration><skipPublishing>true</skipPublishing></configuration>
+        </plugin>
+    </plugins></build>
+</project>
