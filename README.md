@@ -6,7 +6,7 @@
 
 <p align="center">
   <strong>Java Modules-native CDI 4.1 container :)</strong><br>
-  <a href="https://jakarta.ee/specifications/cdi/4.1/">CDI 4.1</a> | JDK 25 | Java Modules | Virtual Threads | Zero reflection
+  <a href="https://jakarta.ee/specifications/cdi/4.1/">CDI 4.1</a> | JDK 25 | Java Modules | Virtual Threads | Build-time code generation
 </p>
 
 <p align="center">
@@ -35,7 +35,7 @@ Vauban is an implementation of [Jakarta CDI 4.1](https://jakarta.ee/specificatio
 ### Philosophy
 
 - **Java Modules-first**: every component is an explicit Java module (`module-info.java`)
-- **Zero reflection**: static code generation via the JDK 25 Class-File API
+- **Generated, not reflected**: beans are built, injected and proxied by code generated at build time with the JDK 25 Class-File API, living in your own packages — no `opens` into them. The reflection that remains (class loading by name, annotation matching) is listed in the documentation
 - **Virtual threads ready**: `ScopedValue` (JEP 487) instead of `ThreadLocal` everywhere
 - **Zero runtime dependency**: every published library depends on the Jakarta APIs it implements and
   on nothing else; the indexer has none at all. Build-time tooling is separate — a Maven plugin runs

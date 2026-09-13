@@ -463,4 +463,4 @@ For dynamic application configuration, use MicroProfile Config through xref:vido
   the class it patches.
 * Strict Java Modules, named modules only.
 * CDI 4.1 — Lite profile.
-* Compatible with GraalVM `native-image` and Project Leyden CDS.
+* Project Leyden CDS and `jlink` images. GraalVM `native-image` needs reflection metadata today: see xref:internals.adoc#aot[AOT compatibility].

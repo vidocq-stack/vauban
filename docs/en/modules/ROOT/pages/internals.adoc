@@ -215,7 +215,7 @@ The processor renders the factory, the client proxy, the intercepted subclass an
 provider as Java source in the same compilation, and the auto-started javac plugin weaves the
 side-effect-free entry constructor into the compiled beans once javac has written them.
 
-Nothing is logged. Silence is the success case: no reflection, no `opens`, no agent. What you can
+Nothing is logged. Silence is the success case: nothing reflects into your classes, no `opens`, no agent. What you can
 check is on disk, under `target/classes` and `target/generated-sources/annotations`.
 
 === 2. A dependency the processor never saw
@@ -621,7 +621,7 @@ sequenceDiagram
   CTX-->>App: instance (proxy if normal-scoped)
 ....
 
-The `ApplicationContext` is built in memory, with no reflection, no package opening.
+The `ApplicationContext` is built in memory, without opening any package.
 
 [#virtual-threads]
 == Threading model
@@ -636,15 +636,36 @@ Vauban uses **virtual threads** (https://openjdk.org/jeps/444[JEP 444]) in two p
 The `ThreadLocal` → `ScopedValue` move is documented in the Vauban repo's `CLAUDE.md` as a guiding principle.
 ====
 
+[#aot]
 == AOT compatibility
 
-No `Class.forName`, no `Method.invoke`, no `Class.getDeclaredFields()` runs hot. The runtime relies on:
+What the container relies on at run time:
 
-* **direct invocations** on the generated `_Factory` classes;
-* **`MethodHandles`** for `@PostConstruct`, `@PreDestroy`, observer and interceptor invocations;
-* no dynamic class loading beyond standard `ServiceLoader`.
+* **Generated code** for everything that builds a bean — `_Factory` classes, the per-package
+  `_VaubanComponents` provider, `_ClientProxy` and `$$Intercepted` subclasses — called directly. No
+  bytecode is generated at run time on this path.
+* **`MethodHandles`**, through `VaubanLookup`, for `@PostConstruct`, `@PreDestroy`, observer and
+  interceptor methods.
+* **`LambdaMetafactory`** to lift the generated interceptor glue into the invocation chain.
 
-Consequence: Vauban compiles to a GraalVM native image without a `reflect-config.json`. It works with Project Leyden CDS and with a minimal JLink image.
+What still reflects:
+
+* **Class loading by name.** The bean index is a list of names, and discovery turns each into a
+  `Class` with `Class.forName`. That needs no `opens` — a public class of an exported package loads
+  without one — but an ahead-of-time compiler cannot see a computed name.
+* **Annotations.** Qualifier and interceptor-binding matching reads annotation members with
+  `Method.invoke`, and annotation instances are built with `java.lang.reflect.Proxy`. Moving this to
+  build-time metadata is tracked in https://codefloe.com/Vidocq/vauban/issues/70[vauban#70^].
+* **Fallbacks.** A type no generated provider covers — the class path, a producer only known at run
+  time — is instantiated reflectively, and the container says so at boot.
+
+A GraalVM native image therefore needs reflection metadata for the above today, and Vauban does not
+generate it. Placed in-package proxies are defined at run time and are not available in a native
+image at all: `vauban:enhance-dependencies` is the ahead-of-time path for those (see
+xref:se.adoc[Vauban in Java SE], _Limits_).
+
+Project Leyden CDS and `jlink` images are unaffected: every byte is produced at build time, and the
+Vauban layer reads modules straight from a runtime image.
 
 == Exported Java modules
 

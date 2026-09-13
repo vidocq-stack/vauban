@@ -142,7 +142,7 @@ java --module-path target/modules --add-modules ALL-MODULE-PATH \
 Your `Main` is unchanged. `--add-modules ALL-MODULE-PATH` is needed because, with `--module`, the launcher is the only root module. See xref:se.adoc[Vauban in Java SE].
 ====
 
-The annotation processor has emitted the `_Factory` classes for each bean, and the Maven plugin's `generate` goal has written the `META-INF/vauban-beans.list` bean index — both land in `${project.build.outputDirectory}` (`target/classes`). No reflection runs at startup: Vauban merely instantiates those factories then invokes the generated methods.
+The annotation processor has emitted the `_Factory` classes for each bean, and the Maven plugin's `generate` goal has written the `META-INF/vauban-beans.list` bean index — both land in `${project.build.outputDirectory}` (`target/classes`). At startup Vauban instantiates those factories and calls the generated methods: nothing reflects into your classes to build or inject a bean.
 
 == Three bean discovery modes
 

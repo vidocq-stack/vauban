@@ -33,7 +33,7 @@ what Vauban *ships*: every published library depends on the Jakarta APIs it impl
 nothing else. Build-time tooling is held to a different standard — a Maven plugin runs on the
 build machine, never in your application, so it may take a dependency when that saves writing
 something better done elsewhere. Each one is named in the xref:reference.adoc[reference].
-. **Static code generation** — Class-File API (JEP 484) at `process-classes`. No reflection at startup. No dynamic proxy. No external bytecode library (ASM, Byte Buddy).
+. **Static code generation** — the annotation processor and the Class-File API (JEP 484), at build time. Beans are instantiated, injected and proxied by generated code living in your own packages: no bytecode generated at run time, no reflective access that needs an `opens`, no external bytecode library (ASM, Byte Buddy). What still reflects is listed under xref:internals.adoc#aot[AOT compatibility].
 . **Strict Java Modules** — every Vauban artefact has its own `module-info.java`. No classpath, no unjustified `opens`, no `add-opens` at launch.
 
 == Position in the ecosystem
@@ -48,7 +48,7 @@ graph TB
     IDX --> PROC
     PROC --> PLUGIN
   end
-  subgraph Runtime["Runtime (zero reflection)"]
+  subgraph Runtime["Runtime (generated code, no opens)"]
     API[vauban-api<br/>version marker + generated-code SPI]
     CORE[vauban-core<br/>VaubanContainer.builder<br/>BeanManager, contexts, events]
     API --> CORE
