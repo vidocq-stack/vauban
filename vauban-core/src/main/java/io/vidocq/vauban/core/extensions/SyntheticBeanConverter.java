@@ -158,7 +158,14 @@ final class SyntheticBeanConverter {
         for (var m : annType.getDeclaredMethods()) {
             if (m.getParameterCount() != 0) continue;
             try {
-                m.setAccessible(true);
+                // trySetAccessible, not setAccessible: the latter throws
+                // InaccessibleObjectException — a RuntimeException, which the catch below does NOT
+                // cover — as soon as the annotation lives in a module that opens nothing. That is
+                // the ordinary case on the module path. trySetAccessible returns false instead, and
+                // the invoke then fails with IllegalAccessException, which is caught and skipped as
+                // intended. Annotation members are implicitly public (JLS 9.6), so this only ever
+                // matters for a non-public annotation type on the class path.
+                m.trySetAccessible();
                 var value = m.invoke(annotation);
                 var converted = toAnnotationValue(value);
                 if (converted != null) out.put(m.getName(), converted);
