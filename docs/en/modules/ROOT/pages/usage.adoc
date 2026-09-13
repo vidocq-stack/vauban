@@ -95,6 +95,7 @@ Either way the proxy chains to that constructor (always passing `null`), and the
 never selects it for injection or bean instantiation. Field initializers still run in every
 constructor — keep them side-effect free.
 
+[#which-proxy]
 === Which proxy do I get, and what do I have to do? [.tag-new]#NEW#
 
 Find your situation in the left column. Most of them ask nothing of you; the few that do,

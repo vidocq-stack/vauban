@@ -165,7 +165,44 @@ Vauban ships three strategies, depending on context:
 | `VaubanContainer.builder().addBeanClass(MyBean.class).build()`
 |===
 
+== Runnable examples
+
+Everything above is a fragment. `vauban-examples/` in the repository holds the working versions,
+each module carrying one thing worth seeing. They are built by the reactor, so `./mvnw install` on
+the project runs them all.
+
+[cols="1,2"]
+|===
+| Module | What it shows
+
+| `example-lib`
+| An ordinary library module: beans, producers, a `module-info` that exports what it must and opens
+  nothing.
+
+| `example-app`
+| The application that consumes it — the smallest complete setup, on the module path.
+
+| `example-lib-securized`
+| The same library shipped as an *sjar*: exported packages stay in clear text, everything else is
+  encrypted, and the Vauban class loader decrypts at definition. A service can expose a clear
+  interface over an encrypted implementation.
+
+| `example-test`
+| The integration tests that run the above as real applications rather than unit tests.
+
+| `example-cdi1015-lib` + `example-cdi1015-app`
+| **The one to read first if you care about proxies.** A CDI-agnostic third-party library and an
+  application that produces four of its types, covering every proxying case in one runnable place:
+  a fully-public class and an interface (proxied from the producer's package), a type with a
+  package-private member and one with no accessible constructor (proxy placed inside the library's
+  own package by the class loader), an intercepted bean, and a nested bean. Zero `opens`
+  throughout. This is https://github.com/jakartaee/cdi/issues/1015[jakartaee/cdi#1015^], solved.
+  It has its own
+  link:{repo-vauban}/src/branch/main/vauban-examples/example-cdi1015-app/README.adoc[README^].
+|===
+
 == Next step
 
-* xref:usage.adoc[Usage patterns] — qualifiers, producers, events, interceptors.
+* xref:usage.adoc[Usage patterns] — qualifiers, producers, events, interceptors, and
+  xref:usage.adoc#which-proxy[which proxy you get in each case].
 * xref:concepts.adoc[Concepts] — bean, scope, qualifier, BeanManager.
