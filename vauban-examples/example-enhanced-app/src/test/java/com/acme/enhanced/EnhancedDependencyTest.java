@@ -134,4 +134,75 @@ class EnhancedDependencyTest {
         assertTrue(enhanced.toAbsolutePath().toString().contains("vauban-enhanced-deps"),
                 "and it stays under target/: nothing is installed, deployed or redistributed");
     }
+
+    @Test
+    @DisplayName("the enhanced jar resolves as a module, and the proxy inside it really forwards")
+    void theEnhancedJarLoadsAndTheProxyForwards() throws Exception {
+        Path enhanced = enhancedJar();
+
+        // The enhanced copy first: it shadows the original, which is exactly how it is meant to be
+        // put on a module path.
+        var finder = java.lang.module.ModuleFinder.compose(
+                java.lang.module.ModuleFinder.of(enhanced), explicitModulesOnTestClassPath());
+        var configuration = ModuleLayer.boot().configuration()
+                .resolve(finder, java.lang.module.ModuleFinder.of(),
+                        java.util.List.of("io.vidocq.vauban.example.cdi1015.lib"));
+        // Platform loader as parent, so nothing here can be answered by the test's own class path.
+        var layer = ModuleLayer.boot()
+                .defineModulesWithOneLoader(configuration, ClassLoader.getPlatformClassLoader());
+        var loader = layer.findLoader("io.vidocq.vauban.example.cdi1015.lib");
+
+        Class<?> screen = loader.loadClass("io.vidocq.vauban.example.cdi1015.lib.FraudScreen");
+        Class<?> proxy = loader.loadClass("io.vidocq.vauban.example.cdi1015.lib.FraudScreen_ClientProxy");
+        assertEquals(screen, proxy.getSuperclass(), "the proxy extends the type it stands for");
+        assertEquals("io.vidocq.vauban.example.cdi1015.lib", proxy.getModule().getName(),
+                "and belongs to the library's module, not to an unnamed one");
+
+        // Wire it as the container would: a proxy instance, told where its contextual instance is.
+        Object real = screen.getDeclaredConstructor(long.class).newInstance(10_000L);
+        Object instance = proxy.getDeclaredConstructor().newInstance();
+        proxy.getMethod("$$setDelegate", java.util.function.Supplier.class)
+                .invoke(instance, (java.util.function.Supplier<Object>) () -> real);
+
+        // The public surface forwards.
+        assertEquals(true, proxy.getMethod("accepts", long.class).invoke(instance, 1_999L));
+
+        // And the package-private one does too — which is the entire reason this jar was rewritten.
+        // FraudPolicy lives in that package, so it can call score() where this test cannot: if the
+        // proxy did not override it, the call would read the proxy's own empty state and answer 0.
+        Class<?> policy = loader.loadClass("io.vidocq.vauban.example.cdi1015.lib.FraudPolicy");
+        Object review = policy.getMethod("review", screen, long.class)
+                .invoke(policy.getDeclaredConstructor().newInstance(), instance, 1_999L);
+        assertEquals("score 1/9 for 1999 cents", review,
+                "a neighbour in the package must see the contextual instance's answer, not zero");
+    }
+
+    /**
+     * The explicit modules of the test class path, as a module path: the enhanced jar requires
+     * {@code io.vidocq.vauban.api}, and this test runs on the class path. Both shapes count — a
+     * reactor dependency is an exploded directory under {@code mvn test}, a jar once installed.
+     */
+    private static java.lang.module.ModuleFinder explicitModulesOnTestClassPath() {
+        var modular = new java.util.ArrayList<Path>();
+        for (var entry : System.getProperty("java.class.path").split(java.io.File.pathSeparator)) {
+            Path path = Path.of(entry);
+            if (Files.isDirectory(path)) {
+                if (Files.isRegularFile(path.resolve("module-info.class"))) {
+                    modular.add(path);
+                }
+                continue;
+            }
+            if (!entry.endsWith(".jar") || !Files.isRegularFile(path)) {
+                continue;
+            }
+            try (var jar = new JarFile(path.toFile())) {
+                if (jar.getEntry("module-info.class") != null) {
+                    modular.add(path);
+                }
+            } catch (java.io.IOException ignored) {
+                // not a readable jar: it cannot contribute a module either
+            }
+        }
+        return java.lang.module.ModuleFinder.of(modular.toArray(Path[]::new));
+    }
 }
