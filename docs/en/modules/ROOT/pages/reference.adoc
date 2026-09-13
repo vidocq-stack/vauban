@@ -28,7 +28,7 @@ This page lists every artefact published by Vauban, the Java Modules packages th
 
 | `io.vidocq.vauban:vauban-maven-plugin:{project-version}`
 | `build`
-| Maven plugin (goals: `generate`, `dist`, `encrypt`, `enhance-dependencies`)
+| Maven plugin (goals: `generate`, `dist`, `encrypt`, `enhance-dependencies`, `modularize`)
 
 | `io.vidocq.vauban:vauban-classloader-spi:{project-version}`
 | `runtime`
@@ -101,7 +101,7 @@ This page lists every artefact published by Vauban, the Java Modules packages th
 | Bound to `process-classes`. Scans the dependency JARs and the project classes for CDI beans, writes the `META-INF/vauban-beans.list` bean index into `${project.build.outputDirectory}`, and weaves the client-proxy marker constructor into the compiled normal-scoped beans. For a produced type whose proxy cannot live in the producer's package — a package-private or `protected` overridable member, or no accessible constructor — it also ships the proxy pre-generated under `META-INF/vauban/placed/` and adds the type to `META-INF/vauban/required-opens.list`, merging with what the annotation processor already wrote. It then reports those types at build time, and says plainly that they need the application to start through `Launch` or `Vidocq.run`, since whether a Vauban layer exists is decided at launch, not at build.
 
 | `vauban:modularize` [.tag-new]#NEW#
-| Bound to `prepare-package`, **opt-in** (declare an execution). Gives the non-modular dependency jars of the closure a `module-info` of their own, in `target/vauban-modularized/` under the original file name, so tooling can substitute them. `requires` is derived from the types each jar actually uses, every package is exported, `META-INF/services` becomes `provides`, and the `ServiceLoader` lookups found in the bytecode become `uses` — an automatic module may consume any service, an explicit one only what it declares. Fails on a split package between two automatic jars, since the module system could not host them side by side. A jar whose own lookup cannot be declared legally (a module cycle, typically) is left automatic and the reason is written to `report.txt`. Nothing is installed, deployed or redistributed: the copies never leave `target/`. Moved here from the Vidocq runtime plugin, which is where it used to live as `vidocq:modularize`.
+| Bound to `prepare-package`, **opt-in** (declare an execution). Gives the non-modular dependency jars of the closure a `module-info` of their own, in `target/vauban-modularized/` under the original file name, so tooling can substitute them. `requires` is derived from the types each jar actually uses, every package is exported, `META-INF/services` becomes `provides`, and the `ServiceLoader` lookups found in the bytecode become `uses` — an automatic module may consume any service, an explicit one only what it declares. Fails on a split package between two automatic jars, since the module system could not host them side by side. A jar whose own lookup cannot be declared legally (a module cycle, typically) is left automatic and the reason is written to `report.txt`. Nothing is installed, deployed or redistributed: the copies never leave `target/`. Moved here from the Vidocq runtime plugin, which is where it used to live as `vidocq:modularize`. Full reference: <<modularize>>.
 
 | `vauban:dist`
 | Bound to `package`. Packages the application as a distribution ZIP (launch scripts, application JAR and all dependencies), attached with classifier `dist`.
@@ -112,6 +112,200 @@ This page lists every artefact published by Vauban, the Java Modules packages th
 | `vauban:enhance-dependencies` [.tag-new]#NEW#
 | Bound to `package`, **opt-in** and a *last resort* (does nothing unless `<enhancedTypes>` lists the produced types to enhance). Reach for it only when the shipped in-package proxy cannot work: no Vauban layer at launch, a library that exports nothing, or a GraalVM native image. It warns, per type, when the class loader could have shipped the same proxy without touching the jar. Writes an enhanced *copy* of a third-party dependency JAR under `target/vauban-enhanced-deps/` so a produced type that is not fully public can still be proxied at build time: the co-located `<Type>_ClientProxy`, a per-package `_VaubanComponents`, and a rewritten `module-info.class` that `provides` it. Placed ahead of the original on the module path, it resolves with zero `opens` and no agent. The copy declares itself: it drops the inherited signature files and the manifest's per-entry digests, and records `Vauban-Enhanced-From` (the source coordinates), `Vauban-Enhanced-Digest` (`sha256:` of the exact source JAR) and `Vauban-Enhanced-By` in the manifest. It is a modified redistribution of a third-party artefact, so declare it to your SBOM/attestation tooling — that governance cost is why the goal is opt-in. See xref:internals.adoc#proxy-strategies[Internals — client-proxy strategies].
 |===
+
+[#modularize]
+=== `vauban:modularize` in detail
+
+A jar with no `module-info.class` is an _automatic module_ on the module path: it works, but it
+reads every module, exports every package, and `jlink` refuses to link it. This goal writes a copy
+of it into `target/vauban-modularized/`, under the *original file name*, with a synthesized
+descriptor: `requires` derived from the types the jar uses, every package exported,
+`META-INF/services` promoted to `provides`, and an `open module` by default. How the descriptor is
+derived is described in xref:internals.adoc#module-descriptor[Internals]; the runnable example is
+`vauban-examples/example-legacy-app`.
+
+The goal has no binding of its own — declare an execution. Its default phase is `prepare-package`:
+
+[source,xml]
+----
+<plugin>
+    <groupId>io.vidocq.vauban</groupId>
+    <artifactId>vauban-maven-plugin</artifactId>
+    <executions>
+        <execution>
+            <id>modularize</id>
+            <goals><goal>modularize</goal></goals>
+            <configuration>
+                <mode>all-automatic</mode>
+            </configuration>
+        </execution>
+    </executions>
+</plugin>
+----
+
+Nothing is installed, deployed or redistributed: the copies live in `target/` and only this build
+sees them. The Vidocq runtime plugin's `dev`, `jlink` and `package` goals resolve every dependency
+through that directory first, so a patched copy replaces the original jar on the module path, in
+the staged image and in the distribution's `lib/`.
+
+==== `uses` directives, and only legal ones
+
+The descriptor also carries `uses` directives, scanned off the bytecode of the whole dependency
+closure. They are not optional: an automatic module may consume any service, an explicit one only
+what it declares, so a jar promoted without them fails its own `ServiceLoader.load` with
+_module … does not declare `uses`_. Lookups written through a helper that takes the service type
+as a `Class` parameter are followed across jars, since it is the module reaching `ServiceLoader` —
+not the one naming the service — that must declare the directive. A service type passed as a
+variable rather than a class literal cannot be seen by any bytecode scan; declare that one by hand.
+
+Only the directives the module system will accept are emitted. A `uses` is not a hint: the JVM
+rejects the whole graph at resolution time with _Module M uses S but does not read a module that
+exports P to M_, so a directive that cannot be satisfied trades one broken lookup for a runtime
+that does not start at all. A scanned service is kept only when its type resolves to a package of
+the closure or of the JDK, *and* the declaring module can read the module exporting it (following
+`requires`, and the transitive closure of `requires transitive`). Everything else is dropped,
+listed in `report.txt` and logged as a warning naming the jar, the service and the reason:
+`not in closure`, `<module> cannot read <exporter>`, or `not a class literal`.
+
+==== Why some jars stay automatic
+
+A jar whose own code reaches `ServiceLoader` for a type defined in a jar that depends on it has no
+legal explicit form at all. LangChain4j is the textbook case: `langchain4j-core` ships a generic
+`ServiceHelper.loadFactories(Class)`, and `langchain4j` calls it with types from its own packages.
+`ServiceLoader` checks the *calling* class's module, so the JVM demands the `uses` on
+`langchain4j.core` — but the service type belongs to `langchain4j`, which already
+`requires langchain4j.core`. Declaring it would need a `requires` back, and Java modules allow no
+cycle. No descriptor satisfies both constraints.
+
+Such a jar is left automatic rather than patched into a graph that cannot resolve. The build logs a
+`kept automatic:` line naming the jar and the lookup that cannot be declared, and `report.txt`
+records it. Automatic modules work on the module path, so a development loop or a plain
+`--module-path` run is unaffected; only `jlink` refuses them, and an application depending on such
+a library cannot be linked into an image until it changes upstream — each caller doing its own
+`ServiceLoader.load`, or the library shipping a hand-written `module-info`.
+
+Set `vauban.modularize.forceExplicit` to patch the jar anyway, the illegal directives still dropped,
+when you know the failing lookup is one your application never reaches.
+
+==== `derived` or `all-automatic`
+
+[cols="1,2,2",options="header"]
+|===
+| `<mode>` | Patches | Use it when
+
+| `derived` (default)
+| only jars whose automatic name is derived from the file name — no `Automatic-Module-Name` in the
+  manifest
+| you want to stabilise the modules nobody has named yet, and leave untouched every jar whose author
+  already committed to a name
+
+| `all-automatic`
+| every automatic jar, including those declaring `Automatic-Module-Name`
+| you link an image with `jlink` or `jpackage`: they reject *any* automatic module, so all of them
+  must become named modules
+|===
+
+==== Module naming
+
+By default a patched jar keeps the very name it already had as an automatic module — the
+`Automatic-Module-Name` entry, or the name the JDK derives from the file name. That is deliberate:
+it is the name `javac` saw when it compiled your `module-info.java` against the original jar, so
+the `requires` you wrote keeps resolving after patching.
+
+`<moduleNames>` overrides that name per `artifactId`:
+
+[source,xml]
+----
+<moduleNames>
+    <langchain4j-open-ai>dev.langchain4j.openai</langchain4j-open-ai>
+</moduleNames>
+----
+
+An override is a *run-time-only* rename. Compilation still resolves against the original jar,
+which announces its automatic name, so a module renamed out from under a `requires <old.name>;`
+compiles and then fails resolution at run time. Only override the name of a jar your code does not
+`requires` by name — one reached transitively or through services — or whose derived name is not a
+legal module name at all.
+
+==== Split packages fail the build
+
+Two automatic jars sharing a package cannot both become named modules, and the module system would
+reject them side by side anyway. The goal checks the whole automatic closure up front and fails
+with the package and the jars holding it:
+
+[source,text]
+----
+vauban:modularize — split package(s) between dependency jars, the module system cannot host them together:
+  com.acme.util in acme-core-1.2.jar, acme-legacy-1.2.jar
+----
+
+`<excludes>` does not silence this: leaving one side unpatched does not make the packages any less
+split. Remove one side from the dependency graph with a Maven `<exclusion>`.
+
+==== `report.txt`
+
+Every run writes `target/vauban-modularized/report.txt` with, per patched jar, the module name, why
+it was selected and the descriptor it received, plus one line per jar left as is. The output
+directory is emptied at the start of each run, so the report always describes the jars next to it.
+
+==== Licence gate (opt-in)
+
+Patching rewrites someone else's jar. When `<allowedLicenses>` is set, every artifact that ends up
+patched must declare one of the listed licences, or the build fails:
+
+[source,xml]
+----
+<allowedLicenses>
+    <license>Apache-2.0</license>
+    <license>EPL-2.0</license>
+    <license>MIT</license>
+</allowedLicenses>
+----
+
+Names are normalised before comparison (`The Apache Software License, Version 2.0` matches
+`Apache-2.0`). An artifact declaring no licence at all is a violation. Left empty — the default —
+the gate is off.
+
+==== Other parameters
+
+[cols="2,1,4",options="header"]
+|===
+| Parameter / property | Default | Effect
+
+| `vauban.modularize.skip`
+| `false`
+| Skip the goal.
+
+| `<includes>` / `<excludes>`
+| empty
+| Restrict patching to, or away from, these `artifactId`s. Both only ever restrict: an explicit
+  module named in `<includes>` stays untouched.
+
+| `vauban.modularize.open` (`<openModules>`)
+| `true`
+| Generate `open module` descriptors, so a reflective library keeps working. `false` generates a
+  closed module that `exports` and `opens` every package.
+
+| `vauban.modularize.forceExplicit` (`<forceExplicit>`)
+| `false`
+| Patch a jar even when one of its own `ServiceLoader` lookups cannot be declared legally — see
+  _Why some jars stay automatic_.
+|===
+
+==== A development loop needs an earlier binding
+
+Vidocq's `dev` goal does not fork a lifecycle: its rebuild loop runs `mvn process-classes`. Bound at
+its default `prepare-package`, `modularize` never runs in such a session, and dev mode sees the
+original jars. Bind it to `process-classes` when dev mode must run against the patched copies:
+
+[source,xml]
+----
+<execution>
+    <id>modularize</id>
+    <phase>process-classes</phase>
+    <goals><goal>modularize</goal></goals>
+</execution>
+----
 
 == Annotation-processor options
 

@@ -245,11 +245,13 @@ vauban/
 ├── vauban-processor          Annotation processor (compile-time)
 ├── vauban-maven-plugin       Maven plugin: scan, generation, encryption, distribution
 ├── vauban-classloader-spi    SPI for class-loading plugins (extensible)
+├── vauban-classloader        Vauban class loader, application layer and Java SE launcher
+├── vauban-weaver             ProxyLink constructor weaving (javac plugin, load-time agent)
 ├── vauban-sjar               In-JAR AES-256-GCM encryption (SPI implementation)
 ├── vauban-junit              JUnit 6 extension for CDI tests
 ├── vauban-tck-runner         CDI TCK 4.1 runner (774/774)
-├── vauban-test-suite         Integration test suite
-└── vauban-examples           Multi-module examples (plain + encrypted + distribution)
+├── vauban-test-suite         Placeholder module, currently empty
+└── vauban-examples           Runnable examples: plain, encrypted, every proxying case, modularize, enhance-dependencies
 ```
 
 ---
@@ -426,6 +428,14 @@ This module is **always required at runtime** by `vauban-core`, `vauban-indexer`
 
 **Java module**: `io.vidocq.vauban.classloader.spi` — no external dependency.
 
+### vauban-classloader
+
+**Role**: The Vauban class loader and the application layer it builds. `Launch.run(...)` re-launches `main` inside that layer, where the class loader places the in-package client proxies the build shipped, applies class-loading plugins such as `vauban-sjar` decryption, and weaves at class definition — no `opens`, no agent. It reads modules from a module path or straight from a `jlink` runtime image. See *Vauban in Java SE* in the documentation.
+
+### vauban-weaver
+
+**Role**: Weaves the synthetic `(ProxyLink)` entry constructor into compiled normal-scoped beans, so a client proxy never runs a bean's own constructor. Its primitives serve the auto-started javac plugin and `vauban:generate`, and it doubles as a load-time agent when a build was not woven (an IDE build, typically).
+
 ### vauban-sjar
 
 **Role**: Paid, optional SPI implementation for in-JAR AES-256-GCM encryption. Absent from the module path by default (open-source edition); present only in the commercial edition intended to become pure EE.
@@ -449,7 +459,7 @@ Full documentation: [vauban-sjar/README.md](vauban-sjar/README.md)
 
 ### vauban-maven-plugin
 
-**Role**: Build-time CDI bean discovery, proxy pre-generation, class encryption, and distribution packaging.
+**Role**: Build-time CDI bean discovery, proxy pre-generation, class encryption, distribution packaging, and dependency modularization.
 
 | Class | Role |
 |--------|------|
@@ -457,6 +467,8 @@ Full documentation: [vauban-sjar/README.md](vauban-sjar/README.md)
 | `GenerateMojo` | `vauban:generate` goal, `process-classes` phase |
 | `EncryptMojo` | `vauban:encrypt` goal, `package` phase — encrypts the internal classes |
 | `DistMojo` | `vauban:dist` goal, `package` phase — distribution ZIP with scripts |
+| `EnhanceDependenciesMojo` | `vauban:enhance-dependencies` goal, `package` phase — opt-in rewrite of a dependency jar |
+| `ModularizeMojo` | `vauban:modularize` goal, `prepare-package` phase — module descriptors for non-modular jars |
 | `ModuleAnalyzer` | Java Modules analysis (explicit/automatic modules, split packages) |
 
 | Goal | Phase | Description |
@@ -464,6 +476,8 @@ Full documentation: [vauban-sjar/README.md](vauban-sjar/README.md)
 | `vauban:generate` | process-classes | Scan deps + project, CDI discovery, proxy pre-generation, write `vauban-beans.list` |
 | `vauban:encrypt` | package | AES-256-GCM encryption of the internal classes (based on `module-info`) |
 | `vauban:dist` | package | Distribution ZIP with `bin/run.sh`, `bin/run.cmd`, and `lib/*.jar` |
+| `vauban:enhance-dependencies` | package | Opt-in, last resort: a copy of a dependency jar with in-package proxies, for runs with no Vauban class loader (native image) |
+| `vauban:modularize` | prepare-package | Opt-in: a synthesized `module-info` for dependency jars that have none, in `target/vauban-modularized/` |
 
 ```xml
 <plugin>
@@ -500,10 +514,6 @@ Full documentation: [vauban-sjar/README.md](vauban-sjar/README.md)
 ```
 
 **Current result**: **774/774 CDI Lite tests (100%)**
-
-### vauban-test-suite
-
-**Role**: Integration tests covering end-to-end CDI scenarios (injection, scopes, events, interceptors, producers).
 
 ---
 

@@ -92,8 +92,10 @@ public class Oidc {
 ----
 
 Either way the proxy chains to that constructor (always passing `null`), and the container
-never selects it for injection or bean instantiation. Field initializers still run in every
-constructor — keep them side-effect free.
+never selects it for injection or bean instantiation. The two differ on one point. The woven
+constructor runs no field initializer at all: javac inlines initializers into the constructors it
+compiles, and this one is added once javac has finished. A hand-written one is compiled like any
+other and does run them — if you declare it yourself, keep field initializers side-effect free.
 
 [#which-proxy]
 === Which proxy do I get, and what do I have to do? [.tag-new]#NEW#
@@ -138,7 +140,7 @@ xref:internals.adoc#_client_proxies_one_strategy_per_case[Internals — one stra
 |A dependency jar with **no `module-info`**
 |On the module path it is an automatic module: it reads everything, exports everything, and
  `jlink` refuses it.
-|Run `vidocq:modularize` — it patches a copy with a
+|Run `vauban:modularize` — it patches a copy with a
  synthesized descriptor.
 
 |A `final` class, or a non-private `final` method, under a normal scope

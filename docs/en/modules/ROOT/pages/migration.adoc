@@ -79,7 +79,7 @@ Lite-profile specifics worth knowing before migrating:
 
 . Run the existing code on Vauban in a dedicated branch.
 . Build with the Vauban toolchain (`vauban-processor` plus the `vauban-maven-plugin` `generate` goal): the compile-time deployment validation surfaces unsatisfied or ambiguous dependencies, unproxyable beans and circular dependencies at `process-classes`.
-. Execute a `vauban-test-suite` adapted to your domain.
+. Cover your injection graph with integration tests using `vauban-junit` (`@VaubanTest`).
 . Activate the CDI 4.1 Lite TCK on the application itself via `vauban-junit`.
 . Iterate on BCEs to replace portable extensions.
 . Run on GraalVM `native-image` to confirm no residual reflection.

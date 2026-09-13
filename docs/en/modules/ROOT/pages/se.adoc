@@ -190,6 +190,11 @@ Entry point::
 `Launch` invokes `public static void main(String[])`; the instance and non-public `main` forms of
 JDK 25 are not supported.
 
+`jlink` and `jpackage`::
+Supported. Inside a runtime image every module is served from `jrt:` rather than from a jar on a
+module path; the launcher re-layers it from there, and placed proxies are defined exactly as they
+are on a module path. `jpackage` packages such an image, so the same holds.
+
 GraalVM `native-image`::
 A placed class is defined at runtime, which `native-image` does not support.
 `vauban:enhance-dependencies` — the proxy rewritten *into* a copy of the dependency at build
