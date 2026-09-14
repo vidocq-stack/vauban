@@ -85,35 +85,20 @@ public final class VaubanSyntheticBeanBuilder<T> implements SyntheticBeanBuilder
     }
 
     @Override
-    @SuppressWarnings("unchecked")
     public SyntheticBeanBuilder<T> qualifier(Class<? extends Annotation> qualifierAnnotation) {
-        // Create a proxy instance of the qualifier annotation with default values
-        qualifiers.add((Annotation) java.lang.reflect.Proxy.newProxyInstance(
-                qualifierAnnotation.getClassLoader(),
-                new Class<?>[]{qualifierAnnotation},
-                (proxy, method, args) -> {
-                    if ("annotationType".equals(method.getName())) return qualifierAnnotation;
-                    if ("hashCode".equals(method.getName())) return 0;
-                    if ("equals".equals(method.getName())) return proxy == args[0];
-                    if ("toString".equals(method.getName())) return "@" + qualifierAnnotation.getName();
-                    return method.getDefaultValue();
-                }));
+        qualifiers.add(SyntheticQualifiers.marker(qualifierAnnotation));
         return this;
     }
 
     @Override
     public SyntheticBeanBuilder<T> qualifier(AnnotationInfo qualifierAnnotation) {
-        // Convert AnnotationInfo name to a Class and create proxy
-        try {
-            var cl = Thread.currentThread().getContextClassLoader();
-            @SuppressWarnings("unchecked")
-            var annClass = (Class<? extends Annotation>) (cl != null
-                    ? Class.forName(qualifierAnnotation.name(), false, cl)
-                    : Class.forName(qualifierAnnotation.name()));
-            return qualifier(annClass);
-        } catch (ClassNotFoundException e) {
-            return this;
+        // With its member values: a synthetic bean qualified @Channel("alpha") answers that lookup and
+        // no other (BUG-20260914-15).
+        var instance = SyntheticQualifiers.instanceOf(qualifierAnnotation);
+        if (instance != null) {
+            qualifiers.add(instance);
         }
+        return this;
     }
 
     @Override

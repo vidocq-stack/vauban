@@ -63,6 +63,14 @@ public final class AnnotationValues {
         return new AnnotationInfo(DotName.of(type.getName()), members);
     }
 
+    /**
+     * The members of an annotation, whoever built it: the index data a container-built instance
+     * carries, or a read of a live one.
+     */
+    public static AnnotationInfo infoOf(Annotation annotation) {
+        return AnnotationInstances.infoOf(annotation).orElseGet(() -> toAnnotationInfo(annotation));
+    }
+
     /** One member value, as the bytecode scan records it. */
     public static AnnotationValue of(Object value) {
         return switch (value) {

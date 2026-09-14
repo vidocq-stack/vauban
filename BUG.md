@@ -1161,7 +1161,7 @@ and a proposed upstream assertion: `CDI_TCK_PROPOSALS.md` → `TCK-GAP-001`.
 ## BUG-20260914-03 — Container-built qualifier instances misreport array and nested members and leave `@Nonbinding` out of `equals` and `hashCode`
 
 - **Date**: 2026-09-14
-- **Status**: OPEN
+- **Status**: FIXED (vauban#70 PR 3a)
 - **Module**: `vauban-core` (`QualifierUtils#createAnnotationInstance`, `#convertAnnotationValue`, `#membersEqual`, `#computeAnnotationHashCode`)
 - **Symptom**: one proxy, two visible effects.
   - Resolution: a qualifier with an `int[]` or a nested-annotation member never matches at run time; constructor injection and programmatic lookups throw `UnsatisfiedResolutionException`. A `String[]` member happens to match (see the cause).
@@ -1178,6 +1178,7 @@ and a proposed upstream assertion: `CDI_TCK_PROPOSALS.md` → `TCK-GAP-001`.
 - **Suspected cause**: `convertAnnotationValue` turns every array into a fresh `Object[]` and every nested annotation into `null`, so an `int[]` member can never equal an `int[]`, while a `String[]` passes `Objects.deepEquals` by luck. The handler's `equals` and `hashCode` apply CDI's `@Nonbinding` rule, which belongs to resolution, not to `Annotation#equals`. `getQualifiers()` also rebuilds these proxies on every call.
 - **Investigations**:
   - 2026-09-14: found by the vauban#70 safety net, with the JDK's own annotation instance as the expected value; the tests are disabled with this id. The CDI TCK tests of this contract (`QualifierEquivalenceTest`, `InterceptorBindingEquivalenceTest`) belong to `cdi-full` and are excluded from the Lite run.
+  - 2026-09-14: **fixed** by vauban#70 PR 3a. `AnnotationInstances` replaces the five proxy handlers with one instance built from index data: each member returns its declared type — an `int[]` as an `int[]`, a nested annotation as that annotation — and `equals`, `hashCode` and `toString` follow the `Annotation` specification, `@Nonbinding` members included, since non-binding is a rule of CDI resolution and not of this contract. `Bean#getQualifiers()` builds the set once per bean instead of rebuilding proxies on every call. Proven by mutation: leaving `@Nonbinding` members out of `equals` and `hashCode` fails the two contract tests again, and retyping array members to `Object[]` fails the `int[]` and nested-annotation ones with the original `ClassCastException`.
 
 ## BUG-20260914-04 — Boot validation loses `@Nonbinding` on a qualifier type vauban-core's own class loader cannot see
 
@@ -1283,7 +1284,7 @@ and a proposed upstream assertion: `CDI_TCK_PROPOSALS.md` → `TCK-GAP-001`.
 ## BUG-20260914-10 — A qualifier added by an `@Enhancement` turns enum, Class, array and nested members into strings
 
 - **Date**: 2026-09-14
-- **Status**: OPEN
+- **Status**: FIXED (vauban#70 PR 3a)
 - **Module**: `vauban-core` (`EnhancementApplier#annotationMemberToValue`)
 - **Symptom**: an extension adding `@Colored(Hue.BLUE)` to a bean class leaves a `@Colored(Hue.BLUE)` injection point unsatisfied at boot validation. Adding a `String`-valued qualifier the same way works.
 - **Minimal reproduction** (`QualifierMemberResolutionTest$EnhancementAddedQualifier#enumMember`):
@@ -1297,6 +1298,7 @@ and a proposed upstream assertion: `CDI_TCK_PROPOSALS.md` → `TCK-GAP-001`.
 - **Suspected cause**: the member conversion handles strings and primitives, and maps every other kind to `StringVal(member.toString())`, which cannot equal the injection point's `EnumVal`.
 - **Investigations**:
   - 2026-09-14: found by the vauban#70 safety net; the test is disabled with this id.
+  - 2026-09-14: **fixed** by vauban#70 PR 3a. `LangModelAnnotations` converts an annotation an extension writes into the index model without losing anything: an enum constant keeps its enum type, a class literal stays a class, nested annotations and arrays are converted element by element. Proven by mutation: stringifying the enum member again fails `$EnhancementAddedQualifier#enumMember` and the lang-model comparison.
 
 ## BUG-20260914-11 — The default name of a nested bean class keeps its enclosing class
 
@@ -1360,3 +1362,43 @@ and a proposed upstream assertion: `CDI_TCK_PROPOSALS.md` → `TCK-GAP-001`.
 - **Investigations**:
   - 2026-09-14: found by the CDI TCK run of the vauban#70 safety-net PR. It went unnoticed because the pull-request workflow runs no TCK and the main workflow does not read the TCK reports (`testFailureIgnore=true`).
   - 2026-09-14: fixed. `unreflect` returns the handle with `asFixedArity()`, so `invokeWithArguments` passes the caller's array through, as `Method#invoke` did. `VaubanInvokerTest#varargsMethod` was written first and failed with the TCK's exact `ClassCastException`; it passes with the fix. vauban-core 356 tests green, CDI TCK 774/774 and AtInject green, counted from the surefire reports.
+
+## BUG-20260914-15 — A synthetic bean or observer loses the member values of its qualifiers
+
+- **Date**: 2026-09-14
+- **Status**: FIXED (vauban#70 PR 3a)
+- **Module**: `vauban-core` (`VaubanSyntheticBeanBuilder#qualifier(AnnotationInfo)`, `VaubanSyntheticObserverBuilder#qualifier(AnnotationInfo)`, `SyntheticComponentRegistrar#toObserverDescriptor`)
+- **Symptom**: a synthetic bean qualified `@Channel("alpha")` answers no lookup at all — neither `@Channel("alpha")` nor any other value — and a synthetic observer qualified the same way receives no event. `AnnotationBuilder` is the only way an extension can write an annotation, so this is every qualified synthetic component whose qualifier has a member.
+- **Minimal reproduction** (`SyntheticQualifierMemberTest`):
+  ```java
+  @Synthesis
+  public void synthesise(SyntheticComponents components) {
+      components.addBean(String.class).type(String.class)
+              .qualifier(AnnotationBuilder.of(Channel.class).member("value", "alpha").build())
+              .createWith(AlphaCreator.class);
+  }
+  // CDI.current().select(String.class, channelAlpha).get() → UnsatisfiedResolutionException
+  ```
+- **Suspected cause**: `qualifier(AnnotationInfo)` keeps the annotation's name and drops its members: it loads the type and delegates to `qualifier(Class)`, which builds a proxy answering every member with its default — `null` for a member that has none. The observer path loses them a second time, in the registrar: `new QualifierInstance(qName, Map.of())`.
+- **Investigations**:
+  - 2026-09-14: found while writing the vauban#70 PR 3a tests, which cover the lossless path from an extension-written annotation to resolution.
+  - 2026-09-14: **fixed** by vauban#70 PR 3a. Both builders keep the annotation an extension wrote, member values included, as an `AnnotationInstances` instance; the registrar converts an observer's qualifiers through `AnnotationValues#infoOf`, which reads the index data such an instance carries. Proven by mutation: keeping only the qualifier's type on either path fails the matching test again.
+
+## BUG-20260914-16 — `AnnotationBuilder.member(name, Foo.class)` records the class name as a string
+
+- **Date**: 2026-09-14
+- **Status**: FIXED (vauban#70 PR 3a)
+- **Module**: `vauban-core` (`VaubanAnnotationBuilder#member(String, Class)`, `#member(String, Class[])`, `#member(String, ClassInfo)`, `#member(String, ClassInfo[])`)
+- **Symptom**: a qualifier an extension adds with a `Class` member never matches an injection point that declares the same qualifier in source, so the deployment fails with `Unsatisfied dependency`. Reading the member back through the lang model fails too: `asType()` throws `IllegalStateException: Not a CLASS value, but STRING`, where CDI 4.1 §BCE says `member(String, Class)` writes a class-typed member.
+- **Minimal reproduction** (`QualifierMemberResolutionTest$EnhancementAddedQualifier#classMember`):
+  ```java
+  @Enhancement(types = PaintedKind.class)
+  public void paint(ClassConfig config) {
+      config.addAnnotation(AnnotationBuilder.of(OfKind.class).member("value", Integer.class).build());
+  }
+  // @Inject @OfKind(Integer.class) Service service; → DeploymentException: Unsatisfied dependency
+  ```
+- **Suspected cause**: the four overloads store `BuiltAnnotationMember.ofString(value.getName())`, so the member reads as a `String` where the class file records a class. The `Type` overloads do record a class (`ofClass`), which is why only the `Class`/`ClassInfo` ones are affected.
+- **Investigations**:
+  - 2026-09-14: found while writing the vauban#70 PR 3a tests. `VaubanParameters#convertMemberValue` carries a workaround for the same shape — it reads a `Class`-typed member back from a string.
+  - 2026-09-14: **fixed** by vauban#70 PR 3a. The four overloads record a class member, whose lang-model type names a primitive by its keyword and an array by its descriptor, as the class file does. The workaround is gone with `convertMemberValue`, but a string written for a `Class` member is still read as one, so an annotation built before this fix keeps working. Proven by mutation: recording the class name again fails the end-to-end `@Enhancement` test and both lang-model conversions.

@@ -222,10 +222,11 @@ final class SyntheticComponentRegistrar {
             eventTypeInfo = new TypeInfo.ClassType(DotName.of("java.lang.Object"));
         }
 
+        // With their member values: a synthetic observer qualified @Channel("alpha") observes that
+        // event and no other (BUG-20260914-15).
         var qualifiers = new java.util.ArrayList<QualifierInstance>();
         for (var q : synObs.getQualifiers()) {
-            var qName = DotName.of(q.annotationType().getName());
-            qualifiers.add(new QualifierInstance(qName, java.util.Map.of()));
+            qualifiers.add(QualifierInstance.from(io.vidocq.vauban.core.annotation.AnnotationValues.infoOf(q)));
         }
 
         var observerClass = synObs.getObserverClass();

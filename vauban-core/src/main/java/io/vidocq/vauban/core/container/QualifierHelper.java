@@ -29,7 +29,6 @@ import java.lang.reflect.Parameter;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.Map;
-import java.util.Objects;
 import java.util.Set;
 
 final class QualifierHelper {
@@ -143,47 +142,12 @@ final class QualifierHelper {
         return annotations.toArray(new Annotation[0]);
     }
 
-    @SuppressWarnings("unchecked")
     static <A extends Annotation> A createQualifierAnnotation(
             Class<A> annType, Map<String, AnnotationValue> members) {
-        return (A) java.lang.reflect.Proxy.newProxyInstance(
-                annType.getClassLoader(),
-                new Class<?>[]{annType},
-                (proxy, method, args) -> {
-                    if ("annotationType".equals(method.getName())) return annType;
-                    if ("toString".equals(method.getName())) return "@" + annType.getName();
-                    if ("hashCode".equals(method.getName())) return 0;
-                    if ("equals".equals(method.getName())) {
-                        if (args[0] == null) return false;
-                        if (!annType.isInstance(args[0])) return false;
-                        for (var m : annType.getDeclaredMethods()) {
-                            var expected = members.get(m.getName());
-                            var actual = m.invoke(args[0]);
-                            if (expected != null) {
-                                var expectedVal = annotationValueToObject(expected);
-                                if (!Objects.deepEquals(expectedVal, actual)) return false;
-                            }
-                        }
-                        return true;
-                    }
-                    var memberVal = members.get(method.getName());
-                    if (memberVal != null) {
-                        return annotationValueToObject(memberVal);
-                    }
-                    return method.getDefaultValue();
-                });
-    }
-
-    static Object annotationValueToObject(AnnotationValue value) {
-        return switch (value) {
-            case AnnotationValue.StringVal sv -> sv.value();
-            case AnnotationValue.BooleanVal bv -> bv.value();
-            case AnnotationValue.IntVal iv -> iv.value();
-            case AnnotationValue.LongVal lv -> lv.value();
-            case AnnotationValue.DoubleVal dv -> dv.value();
-            case AnnotationValue.FloatVal fv -> fv.value();
-            default -> null;
-        };
+        return io.vidocq.vauban.core.annotation.AnnotationInstances.create(annType,
+                new io.vidocq.vauban.indexer.model.AnnotationInfo(
+                        io.vidocq.vauban.indexer.model.DotName.of(annType.getName()), members),
+                annType.getClassLoader());
     }
 
     static Annotation[] extractFieldQualifiers(Field field) {

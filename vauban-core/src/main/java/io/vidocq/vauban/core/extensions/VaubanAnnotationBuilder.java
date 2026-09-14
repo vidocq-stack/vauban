@@ -21,6 +21,7 @@ package io.vidocq.vauban.core.extensions;
 
 import io.vidocq.vauban.core.langmodel.BuiltAnnotationInfo;
 import io.vidocq.vauban.core.langmodel.BuiltAnnotationMember;
+import io.vidocq.vauban.core.langmodel.LangModelAnnotations;
 import jakarta.enterprise.inject.build.compatible.spi.AnnotationBuilder;
 import jakarta.enterprise.lang.model.AnnotationInfo;
 import jakarta.enterprise.lang.model.AnnotationMember;
@@ -221,28 +222,30 @@ public final class VaubanAnnotationBuilder implements AnnotationBuilder {
 
     @Override
     public AnnotationBuilder member(String name, Class<?> value) {
-        members.put(name, BuiltAnnotationMember.ofString(value.getName()));
+        // A class member records the class, as the class file does, never its name: the annotation has
+        // to compare equal to the same annotation written in source (BUG-20260914-16).
+        members.put(name, BuiltAnnotationMember.ofClass(LangModelAnnotations.typeOf(value)));
         return this;
     }
 
     @Override
     public AnnotationBuilder member(String name, Class<?>[] values) {
         List<AnnotationMember> list = new ArrayList<>(values.length);
-        for (Class<?> v : values) list.add(BuiltAnnotationMember.ofString(v.getName()));
+        for (Class<?> v : values) list.add(BuiltAnnotationMember.ofClass(LangModelAnnotations.typeOf(v)));
         members.put(name, BuiltAnnotationMember.ofArray(list));
         return this;
     }
 
     @Override
     public AnnotationBuilder member(String name, ClassInfo value) {
-        members.put(name, BuiltAnnotationMember.ofString(value.name()));
+        members.put(name, BuiltAnnotationMember.ofClass(LangModelAnnotations.typeOf(value.name())));
         return this;
     }
 
     @Override
     public AnnotationBuilder member(String name, ClassInfo[] values) {
         List<AnnotationMember> list = new ArrayList<>(values.length);
-        for (ClassInfo v : values) list.add(BuiltAnnotationMember.ofString(v.name()));
+        for (ClassInfo v : values) list.add(BuiltAnnotationMember.ofClass(LangModelAnnotations.typeOf(v.name())));
         members.put(name, BuiltAnnotationMember.ofArray(list));
         return this;
     }

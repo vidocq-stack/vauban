@@ -27,7 +27,6 @@ import jakarta.enterprise.util.Nonbinding;
 import jakarta.inject.Qualifier;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
@@ -159,7 +158,6 @@ class BeanQualifiersContractTest {
 
     @Test
     @DisplayName("a @Nonbinding member still takes part in equals")
-    @Disabled("BUG-20260914-03: container-built qualifiers leave @Nonbinding members out of equals")
     void nonbindingMemberInEquals() {
         var built = containerBuilt(Noted.class);
         assertEquals(jdkBuilt(Noted.class), built);
@@ -169,21 +167,18 @@ class BeanQualifiersContractTest {
 
     @Test
     @DisplayName("a @Nonbinding member still takes part in hashCode")
-    @Disabled("BUG-20260914-03: container-built qualifiers leave @Nonbinding members out of hashCode")
     void nonbindingMemberInHashCode() {
         assertEquals(jdkBuilt(Noted.class).hashCode(), containerBuilt(Noted.class).hashCode());
     }
 
     @Test
     @DisplayName("int[] member: returned with its declared type")
-    @Disabled("BUG-20260914-03: container-built qualifiers turn int[] members into Object[]")
     void primitiveArrayMemberValue() {
         assertArrayEquals(new int[] {1, 2}, ((Codes) containerBuilt(Codes.class)).value());
     }
 
     @Test
     @DisplayName("int[] member: equal to the JDK instance both ways, same hash code")
-    @Disabled("BUG-20260914-03: container-built qualifiers turn int[] members into Object[]")
     void primitiveArrayMemberContract() {
         var built = containerBuilt(Codes.class);
         assertEquals(jdkBuilt(Codes.class), built);
@@ -193,14 +188,12 @@ class BeanQualifiersContractTest {
 
     @Test
     @DisplayName("nested annotation member: returns the nested annotation")
-    @Disabled("BUG-20260914-03: container-built qualifiers turn nested annotation members into null")
     void nestedAnnotationMemberValue() {
         assertEquals(jdkBuilt(Wrapped.class).value(), ((Wrapped) containerBuilt(Wrapped.class)).value());
     }
 
     @Test
     @DisplayName("nested annotation member: equal to the JDK instance both ways")
-    @Disabled("BUG-20260914-03: container-built qualifiers turn nested annotation members into null")
     void nestedAnnotationMemberContract() {
         var built = containerBuilt(Wrapped.class);
         assertEquals(jdkBuilt(Wrapped.class), built);

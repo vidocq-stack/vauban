@@ -52,6 +52,8 @@ public final class ManagedBean<T> implements Bean<T> {
     // Lazily computed immutable set, safe under volatile: computed once, read-only after
     @SuppressWarnings("java:S3077")
     private volatile Set<Type> cachedTypes;
+    @SuppressWarnings("java:S3077")
+    private volatile Set<Annotation> qualifierInstances;
 
     public ManagedBean(BeanDescriptor descriptor, BeanFactory<T> factory, ClassLoader classLoader, VaubanLookup vaubanLookup) {
         this.descriptor = Objects.requireNonNull(descriptor);
@@ -867,7 +869,14 @@ public final class ManagedBean<T> implements Bean<T> {
 
     @Override
     public Set<Annotation> getQualifiers() {
-        return QualifierUtils.toAnnotations(descriptor.qualifiers(), descriptor.name(), classLoader);
+        // Built once: a descriptor never changes, and a lookup used to rebuild every bean's qualifiers
+        // on every call.
+        var instances = qualifierInstances;
+        if (instances == null) {
+            instances = Set.copyOf(QualifierUtils.toAnnotations(descriptor.qualifiers(), descriptor.name(), classLoader));
+            qualifierInstances = instances;
+        }
+        return instances;
     }
 
     @Override

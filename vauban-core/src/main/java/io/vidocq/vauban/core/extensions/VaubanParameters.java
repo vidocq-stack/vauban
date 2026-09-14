@@ -77,69 +77,10 @@ public final class VaubanParameters implements Parameters {
 
     @SuppressWarnings("unchecked")
     private static <A extends java.lang.annotation.Annotation> A createAnnotationProxy(Class<?> type, jakarta.enterprise.lang.model.AnnotationInfo annInfo) {
-        return (A) java.lang.reflect.Proxy.newProxyInstance(
-                type.getClassLoader(),
-                new Class<?>[]{type},
-                (proxy, method, args) -> {
-                    if ("annotationType".equals(method.getName())) return type;
-                    if ("hashCode".equals(method.getName())) return 0;
-                    if ("equals".equals(method.getName())) return false;
-                    if ("toString".equals(method.getName())) return annInfo.toString();
-
-                    // Look up member value by method name
-                    var member = annInfo.hasMember(method.getName()) ? annInfo.member(method.getName()) : null;
-                    if (member != null) {
-                        return convertMemberValue(member, method.getReturnType());
-                    }
-                    // Try default value
-                    var defaultValue = method.getDefaultValue();
-                    if (defaultValue != null) return defaultValue;
-                    return null;
-                });
+        return (A) io.vidocq.vauban.core.annotation.AnnotationInstances.create(
+                (Class<? extends java.lang.annotation.Annotation>) type,
+                io.vidocq.vauban.core.langmodel.LangModelAnnotations.toIndex(annInfo),
+                type.getClassLoader());
     }
 
-    private static Object convertMemberValue(jakarta.enterprise.lang.model.AnnotationMember member, Class<?> returnType) {
-        if (member.isBoolean()) return member.asBoolean();
-        if (member.isByte()) return member.asByte();
-        if (member.isShort()) return member.asShort();
-        if (member.isInt()) return member.asInt();
-        if (member.isLong()) return member.asLong();
-        if (member.isFloat()) return member.asFloat();
-        if (member.isDouble()) return member.asDouble();
-        if (member.isChar()) return member.asChar();
-        if (returnType.isEnum()) {
-            @SuppressWarnings({"unchecked", "rawtypes"})
-            var enumValue = member.asEnum((Class) returnType);
-            return enumValue;
-        }
-        if (returnType == Class.class) {
-            try {
-                if (member.isClass()) {
-                    var type = member.asType();
-                    if (type instanceof jakarta.enterprise.lang.model.types.ClassType ct) {
-                        return Class.forName(ct.declaration().name());
-                    }
-                } else if (member.isString()) {
-                    return Class.forName(member.asString());
-                }
-                return Object.class;
-            } catch (Exception e) {
-                return Object.class;
-            }
-        }
-        if (member.isString()) return member.asString();
-        if (returnType.isAnnotation()) {
-            return createAnnotationProxy(returnType, member.asNestedAnnotation());
-        }
-        if (member.isArray() && returnType.isArray()) {
-            var elements = member.asArray();
-            var componentType = returnType.getComponentType();
-            var array = java.lang.reflect.Array.newInstance(componentType, elements.size());
-            for (int i = 0; i < elements.size(); i++) {
-                java.lang.reflect.Array.set(array, i, convertMemberValue(elements.get(i), componentType));
-            }
-            return array;
-        }
-        return null;
-    }
 }

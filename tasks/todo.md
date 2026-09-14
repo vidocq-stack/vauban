@@ -109,13 +109,40 @@ in example-test): 748 tests, 0 failures. vauban-indexer, vauban-processor and va
 surefire orders. CDI TCK 774/774 and AtInject green, read from the reports.
 
 ### PR 3 — Run-time hot path on keys
-- [ ] Beans, observers and injection points hold keys; `getQualifiers()` and friends cached
-- [ ] Parameter qualifiers taken from the index instead of `Parameter.getAnnotations()`
-- [ ] `getBeans`, `InstanceImpl`, `EventImpl`, `BeanInjector` and `EventDispatcher` match keys;
-      programmatic literals converted once, at `select`
-- [ ] One fallback proxy honouring the `Annotation` contract replaces the five handlers;
-      `EnhancementApplier` keeps member values
-- [ ] `vauban.annotations.reflection` switch, with a test per fallback
+Mapped on `main` @ 1ae44b7. Run-time matching today: `VaubanBeanManager#getBeans` rebuilds every
+bean's qualifiers as proxies on each call and compares members with `Method.invoke`; field injection
+rebuilds its qualifiers through `QualifierHelper` proxies that load types through the context class
+loader and drop most member kinds; `EventDispatcher` compares observer proxies member by member,
+and only names on the asynchronous path. Five proxy handlers build annotation instances, none of
+them honouring `Annotation#equals`. Two PRs, because the instances come first: the run-time engine
+compares what they return, and every later stage returns them from `getQualifiers()`.
+
+#### PR 3a — Annotation instances and lossless member values
+- [x] `AnnotationInstances`: one instance honouring `Annotation#equals`, `hashCode` and the declared
+      member types (primitive arrays, enums, `Class`, nested annotations, defaults). It replaces the
+      handlers of `QualifierUtils`, `QualifierHelper`, `EnhancementApplier`,
+      `VaubanSyntheticBeanBuilder`, `VaubanSyntheticObserverBuilder` and `VaubanParameters`
+- [x] Lossless lang-model conversion (`LangModelAnnotations`): `EnhancementApplier`, the synthetic
+      builders and the registrar keep member values; `AnnotationBuilder.member(name, Class)` records a
+      class, not its name; `SyntheticBeanConverter` reads members through `AnnotationValues`, the one
+      reader left
+- [x] `getQualifiers()` cached; CDI literals for `@Default`, `@Any` and `@Named`
+- Fixes -03 and -10, and the two defects its tests turned up: -15 (synthetic components lose their
+  qualifier's members) and -16 (`AnnotationBuilder.member(name, Class)` records a string)
+
+#### PR 3b — Matching on keys
+- [ ] `AnnotationTypes#key(Annotation)`: `@Default`, `@Any`, `@Named` and container-built instances
+      without reflection; any other annotation read once
+- [ ] Beans and observers hold keys, computed once
+- [ ] `getBeans`, `InstanceImpl`, `EventImpl`, `BeanInjector`, `EventDispatcher` (both paths) and
+      `resolveObserverMethods` match keys; `Instance` and `Event` convert their qualifiers once
+- [ ] Field injection resolves the keys of the descriptor's injection point: no instance, no class
+      loading
+- [ ] Static non-binding state removed from `QualifierMatcher`
+- [ ] `vauban.annotations.reflection=allow|warn|forbid`, a test per fallback
+- Fixes -02, -05, -06 and -07
+- Moved to PR 4: parameter qualifiers from the index instead of `Parameter.getAnnotations()`. It is
+  performance only, touches nine call sites in six classes, and pairs with the generated metadata.
 
 ### PR 4 — Generated metadata, readers and literals (processor path)
 - [ ] `VaubanComponentProvider`: default methods for metadata, member reader and literal factory

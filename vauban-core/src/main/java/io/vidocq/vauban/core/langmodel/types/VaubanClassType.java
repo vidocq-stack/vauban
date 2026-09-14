@@ -37,9 +37,14 @@ public final class VaubanClassType implements ClassType {
     private final DotName name;
     private final IndexLookup lookup;
 
+    /**
+     * @param lookup the index to describe the class with, or {@code null} for a class an extension
+     *               named — a class literal it passed to {@code AnnotationBuilder}, say, which names a
+     *               class without the index having to describe it
+     */
     public VaubanClassType(DotName name, IndexLookup lookup) {
         this.name = Objects.requireNonNull(name);
-        this.lookup = Objects.requireNonNull(lookup);
+        this.lookup = lookup;
     }
 
     @Override
@@ -51,7 +56,8 @@ public final class VaubanClassType implements ClassType {
         // index. Falling back to a synthetic stub keeps the spec contract
         // ({@code ClassType.declaration().name()} returns the FQN) without
         // forcing every referenced type to be eagerly indexed. Cf. VAU-BCE-001.
-        var indexClass = lookup.getClass(name).orElseGet(() -> syntheticClassInfo(name));
+        var indexClass = lookup == null ? syntheticClassInfo(name)
+                : lookup.getClass(name).orElseGet(() -> syntheticClassInfo(name));
         return new VaubanClassInfo(indexClass, lookup);
     }
 

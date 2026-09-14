@@ -38,6 +38,11 @@ public final class VaubanAnnotationMember implements AnnotationMember {
         this.lookup = lookup;
     }
 
+    /** The index value this member wraps — the conversions of {@link LangModelAnnotations} unwrap it. */
+    public io.vidocq.vauban.indexer.model.AnnotationValue indexValue() {
+        return indexValue;
+    }
+
     @Override
     public Kind kind() {
         return switch (indexValue) {

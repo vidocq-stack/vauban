@@ -708,6 +708,18 @@ class QualifierMemberResolutionTest {
         @Override public String id() { return "painted-blue"; }
     }
 
+    public static class PaintKindBce implements BuildCompatibleExtension {
+        @Enhancement(types = PaintedKind.class)
+        public void paint(ClassConfig config) {
+            config.addAnnotation(AnnotationBuilder.of(OfKind.class).member("value", Integer.class).build());
+        }
+    }
+
+    @Dependent
+    public static class PaintedKind implements Service {
+        @Override public String id() { return "painted-kind"; }
+    }
+
     // ---- a @Default bean next to qualified ones ----
 
     @Dependent
@@ -882,14 +894,12 @@ class QualifierMemberResolutionTest {
         }
 
         @Test @DisplayName("constructor injection")
-        @Disabled("BUG-20260914-03: container-built qualifiers turn int[] members into Object[]")
         void constructor() {
             assertEquals("numbered-one",
                     injected(NumberedConstructor.class, NumberedOne.class, NumberedTwo.class));
         }
 
         @Test @DisplayName("programmatic lookup")
-        @Disabled("BUG-20260914-03: container-built qualifiers turn int[] members into Object[]")
         void programmatic() {
             assertEquals("numbered-two", selected(qualifiers("numbered"), NumberedOne.class, NumberedTwo.class));
         }
@@ -905,13 +915,11 @@ class QualifierMemberResolutionTest {
         }
 
         @Test @DisplayName("constructor injection")
-        @Disabled("BUG-20260914-03: container-built qualifiers turn nested annotation members into null")
         void constructor() {
             assertEquals("wrapped-one", injected(WrappedConstructor.class, WrappedOne.class, WrappedTwo.class));
         }
 
         @Test @DisplayName("programmatic lookup")
-        @Disabled("BUG-20260914-03: container-built qualifiers turn nested annotation members into null")
         void programmatic() {
             assertEquals("wrapped-two", selected(qualifiers("wrapped"), WrappedOne.class, WrappedTwo.class));
         }
@@ -1049,10 +1057,15 @@ class QualifierMemberResolutionTest {
         }
 
         @Test @DisplayName("enum member: field injection")
-        @Disabled("BUG-20260914-10: an @Enhancement-added qualifier stringifies its enum member")
         void enumMember() {
             assertEquals("painted-blue",
                     injected(ColoredField.class, PaintBlueBce.class, PaintedBlue.class, ColoredOne.class));
+        }
+
+        @Test @DisplayName("Class member: field injection")
+        void classMember() {
+            assertEquals("painted-kind",
+                    injected(OfKindField.class, PaintKindBce.class, PaintedKind.class, OfKindOne.class));
         }
     }
 

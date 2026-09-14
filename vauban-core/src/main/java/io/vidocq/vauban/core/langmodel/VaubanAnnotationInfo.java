@@ -36,6 +36,11 @@ public final class VaubanAnnotationInfo implements jakarta.enterprise.lang.model
         this.lookup = lookup;
     }
 
+    /** The index annotation this one wraps — the conversions of {@link LangModelAnnotations} unwrap it. */
+    public io.vidocq.vauban.indexer.model.AnnotationInfo indexAnnotation() {
+        return indexAnnotation;
+    }
+
     @Override
     public jakarta.enterprise.lang.model.declarations.ClassInfo declaration() {
         var classInfo = lookup.requireClass(indexAnnotation.name());

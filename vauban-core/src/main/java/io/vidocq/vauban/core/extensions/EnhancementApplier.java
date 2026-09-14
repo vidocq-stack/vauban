@@ -25,7 +25,7 @@ import io.vidocq.vauban.core.bean.model.InterceptorDescriptor;
 import io.vidocq.vauban.core.bean.model.ObserverDescriptor;
 import io.vidocq.vauban.core.bean.model.QualifierInstance;
 import io.vidocq.vauban.core.langmodel.BuiltAnnotationInfo;
-import io.vidocq.vauban.indexer.model.AnnotationValue;
+import io.vidocq.vauban.core.langmodel.LangModelAnnotations;
 import io.vidocq.vauban.indexer.model.DotName;
 import jakarta.enterprise.lang.model.AnnotationInfo;
 import jakarta.enterprise.lang.model.AnnotationMember;
@@ -438,30 +438,12 @@ final class EnhancementApplier {
         }
     }
 
+    /**
+     * Every member kind kept: an enum, a class, a nested annotation or an array added by an extension
+     * has to compare equal to the same annotation written in source (BUG-20260914-10).
+     */
     private static QualifierInstance annotationInfoToQualifier(AnnotationInfo annInfo) {
-        var members = new LinkedHashMap<String, AnnotationValue>();
-        if (annInfo.members() != null) {
-            for (var entry : annInfo.members().entrySet()) {
-                var member = entry.getValue();
-                members.put(entry.getKey(), annotationMemberToValue(member));
-            }
-        }
-        return new QualifierInstance(DotName.of(annInfo.name()), members);
-    }
-
-    private static AnnotationValue annotationMemberToValue(AnnotationMember member) {
-        return switch (member.kind()) {
-            case STRING -> new AnnotationValue.StringVal(member.asString());
-            case BOOLEAN -> new AnnotationValue.BooleanVal(member.asBoolean());
-            case INT -> new AnnotationValue.IntVal(member.asInt());
-            case LONG -> new AnnotationValue.LongVal(member.asLong());
-            case DOUBLE -> new AnnotationValue.DoubleVal(member.asDouble());
-            case FLOAT -> new AnnotationValue.FloatVal(member.asFloat());
-            case BYTE -> new AnnotationValue.ByteVal(member.asByte());
-            case SHORT -> new AnnotationValue.ShortVal(member.asShort());
-            case CHAR -> new AnnotationValue.CharVal(member.asChar());
-            default -> new AnnotationValue.StringVal(member.toString());
-        };
+        return QualifierInstance.from(LangModelAnnotations.toIndex(annInfo));
     }
 
     private static AnnotationInfo qualifierToAnnotationInfo(QualifierInstance q) {
@@ -469,34 +451,9 @@ final class EnhancementApplier {
         return new SimpleAnnotationInfo(q.annotationName().value(), members);
     }
 
-    @SuppressWarnings("unchecked")
+    /** The instance of a binding an extension added, for the member-value comparison of interceptor resolution. */
     private static Annotation createAnnotationProxy(BuiltAnnotationInfo built) {
-        var annotationType = built.annotationType();
-        return (Annotation) java.lang.reflect.Proxy.newProxyInstance(
-                annotationType.getClassLoader(),
-                new Class<?>[]{annotationType},
-                (proxy, method, args) -> {
-                    if ("annotationType".equals(method.getName())) return annotationType;
-                    if ("toString".equals(method.getName())) return "@" + annotationType.getName();
-                    if ("hashCode".equals(method.getName())) return 0;
-                    if ("equals".equals(method.getName())) return false;
-                    var member = built.member(method.getName());
-                    if (member != null) {
-                        return switch (member.kind()) {
-                            case STRING -> member.asString();
-                            case BOOLEAN -> member.asBoolean();
-                            case INT -> member.asInt();
-                            case LONG -> member.asLong();
-                            case DOUBLE -> member.asDouble();
-                            case FLOAT -> member.asFloat();
-                            case BYTE -> member.asByte();
-                            case SHORT -> member.asShort();
-                            case CHAR -> member.asChar();
-                            default -> method.getDefaultValue();
-                        };
-                    }
-                    return method.getDefaultValue();
-                }
-        );
+        return io.vidocq.vauban.core.annotation.AnnotationInstances.create(built.annotationType(),
+                LangModelAnnotations.toIndex(built), built.annotationType().getClassLoader());
     }
 }

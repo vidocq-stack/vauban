@@ -54,6 +54,12 @@ public final class BuiltAnnotationMember implements AnnotationMember {
 
     record EnumValue(String enumTypeName, String constantName) {}
 
+    /** The binary name of the enum type — {@link #asEnumClass()} would need an index to answer. */
+    String enumTypeName() {
+        checkKind(Kind.ENUM);
+        return ((EnumValue) value).enumTypeName();
+    }
+
     @Override
     public Kind kind() {
         return kind;
