@@ -1120,10 +1120,230 @@ and a proposed upstream assertion: `CDI_TCK_PROPOSALS.md` → `TCK-GAP-001`.
   - 2026-09-12: found while answering whether the loader-based placement survives `jlink`. It does not. `jpackage` is affected whenever it wraps a jlink runtime image; `jpackage` over a plain module path is not (same shape as the working `java -p` run). Until this is fixed, the build-time route — `vauban:enhance-dependencies`, which rewrites the dependency jar — is the only one that works under `jlink`, as it already is for GraalVM native images.
   - 2026-09-13: **fixed**. `applicationPaths` and `createAppLayer` no longer keep only `file:` locations; both go through `archiveOf`, which also maps a `jrt:` module to `/modules/<name>` of the `jrt` file system. Nothing else had to change: a module in a runtime image is an exploded directory, and `BuiltInReaders` already walks directories, so the layer's loader reads it exactly as it reads a `target/classes`. Verified end to end — the cdi#1015 example now runs from a jlink image with its layer, its placed proxies (`FraudScreen_ClientProxy`, `ReceiptPrinter_ClientProxy` defined inside the library's package) and its interceptor. A probe written first confirmed the JDK allows it: `ModuleFinder.of(jrtPath)` finds the module and a child layer resolves from it, with its own loader and its own class identity. The unit test needs no jlink run: every JVM has `jrt:/java.base`.
 
+## BUG-20260914-01 — Boot validation ignores member defaults, so `@Q` and `@Q("default")` never match
+
+- **Date**: 2026-09-14
+- **Status**: OPEN
+- **Module**: `vauban-core` (`QualifierMatcher#qualifierEquals`); neither `ClassFileScanner` nor `ElementScanner` records member defaults.
+- **Symptom**: a valid deployment fails with `DeploymentException: Unsatisfied dependency` when an injection point and a bean spell the same qualifier differently, one relying on a member's default and the other writing it out. The same lookup done programmatically resolves, because the run-time path reads members through the annotation, defaults included.
+- **Minimal reproduction** (`QualifierMemberResolutionTest$DefaultedMember`):
+  ```java
+  @Qualifier @Retention(RUNTIME) @interface Graded { String value() default "standard"; }
+  @Graded @Dependent class GradedImplicit implements Service {}
+  @Dependent class GradedField { @Inject @Graded("standard") Service service; }
+  // VaubanContainer.builder().addBeanClass(GradedImplicit.class).addBeanClass(GradedField.class).build()
+  // → DeploymentException: Unsatisfied dependency: field GradedField.service
+  ```
+- **Suspected cause**: the index keeps explicit member values only, and `qualifierEquals` compares the two member maps as they are, so a member written on one side and defaulted on the other counts as a mismatch. `java.lang.annotation.Annotation#equals` treats both spellings as the same annotation.
+- **Investigations**:
+  - 2026-09-14: found by the vauban#70 safety net; the tests are disabled with this id.
+
+## BUG-20260914-02 — A field injection point drops enum, Class, char, byte, short, array and nested-annotation member values
+
+- **Date**: 2026-09-14
+- **Status**: OPEN
+- **Module**: `vauban-core` (`QualifierHelper#annotationValueToObject`, reached from `BeanInjector#injectSingleField`)
+- **Symptom**: boot validation accepts the injection point, then the field is injected wrongly at creation, without any error: it stays `null`, or receives the `@Default` bean when there is one. A constructor parameter or a programmatic lookup with the same qualifier resolves correctly.
+- **Minimal reproduction** (`QualifierMemberResolutionTest$EnumMember#field`, `$NoDefaultFallback#enumField`):
+  ```java
+  @Qualifier @Retention(RUNTIME) @interface Colored { Hue value(); }
+  @Colored(Hue.RED) @Dependent class ColoredOne implements Service {}
+  @Colored(Hue.BLUE) @Dependent class ColoredTwo implements Service {}
+  @Dependent class PlainService implements Service {}
+  @Dependent class ColoredField { @Inject @Colored(Hue.BLUE) Service service; }
+  // container.select(ColoredField.class).service → PlainService; null without PlainService
+  ```
+- **Suspected cause**: the field's qualifiers are rebuilt from the index as `QualifierHelper` proxies, and `annotationValueToObject` converts only String, boolean, int, long, float and double members; any other member reads as `null`. `getBeans` then compares `null` with the bean's value, finds no match, and the injection falls back on a `@Default` lookup. The same proxy also returns `hashCode` 0 and compares only the members it was given.
+- **Investigations**:
+  - 2026-09-14: found by the vauban#70 safety net for every listed kind (`$ClassMember#field`, `$NarrowPrimitiveMembers#field`, `$ObjectArrayMember#field`, `$PrimitiveArrayMember#field`, `$NestedAnnotationMember#field`); the tests are disabled with this id.
+
+## BUG-20260914-03 — Container-built qualifier instances misreport array and nested members and leave `@Nonbinding` out of `equals` and `hashCode`
+
+- **Date**: 2026-09-14
+- **Status**: OPEN
+- **Module**: `vauban-core` (`QualifierUtils#createAnnotationInstance`, `#convertAnnotationValue`, `#membersEqual`, `#computeAnnotationHashCode`)
+- **Symptom**: one proxy, two visible effects.
+  - Resolution: a qualifier with an `int[]` or a nested-annotation member never matches at run time; constructor injection and programmatic lookups throw `UnsatisfiedResolutionException`. A `String[]` member happens to match (see the cause).
+  - `Bean#getQualifiers()` breaks the `java.lang.annotation.Annotation` contract: reading an `int[]` member throws `ClassCastException: [Ljava.lang.Object; cannot be cast to [I`, a nested member returns `null`, and `equals`/`hashCode` skip `@Nonbinding` members, so `@Noted(value = "v", note = "n")` equals `@Noted(value = "v", note = "other")` and its hash code differs from the JDK's.
+- **Minimal reproduction** (`BeanQualifiersContractTest`, `QualifierMemberResolutionTest$PrimitiveArrayMember`, `$NestedAnnotationMember`):
+  ```java
+  @Qualifier @Retention(RUNTIME) @interface Codes { int[] value(); }
+  @Codes({1, 2}) @Dependent class Specimen implements Shape {}
+  Annotation built = beanManager.resolve(beanManager.getBeans(Shape.class, Any.Literal.INSTANCE))
+          .getQualifiers().stream().filter(q -> q.annotationType() == Codes.class).findFirst().orElseThrow();
+  ((Codes) built).value();                                  // ClassCastException
+  Specimen.class.getAnnotation(Codes.class).equals(built);  // false
+  ```
+- **Suspected cause**: `convertAnnotationValue` turns every array into a fresh `Object[]` and every nested annotation into `null`, so an `int[]` member can never equal an `int[]`, while a `String[]` passes `Objects.deepEquals` by luck. The handler's `equals` and `hashCode` apply CDI's `@Nonbinding` rule, which belongs to resolution, not to `Annotation#equals`. `getQualifiers()` also rebuilds these proxies on every call.
+- **Investigations**:
+  - 2026-09-14: found by the vauban#70 safety net, with the JDK's own annotation instance as the expected value; the tests are disabled with this id. The CDI TCK tests of this contract (`QualifierEquivalenceTest`, `InterceptorBindingEquivalenceTest`) belong to `cdi-full` and are excluded from the Lite run.
+
+## BUG-20260914-04 — Boot validation loses `@Nonbinding` on a qualifier type vauban-core's own class loader cannot see
+
+- **Date**: 2026-09-14
+- **Status**: OPEN
+- **Module**: `vauban-core` (`QualifierMatcher#qualifierEquals`)
+- **Symptom**: when the application's classes live in their own class loader, as with the TCK runner or a layer created by `Launch`/`Vidocq.run`, an injection point whose `@Nonbinding` member differs from the bean's fails the deployment with `Unsatisfied dependency`. The same fixture deploys when every member value is equal.
+- **Minimal reproduction** (`QualifierMemberResolutionTest$IsolatedClassLoader#nonbindingMember`; the fixtures are generated with the Class-File API into a `URLClassLoader`, set as context class loader):
+  ```java
+  // iso.Marked:      @Qualifier @interface Marked { String value(); @Nonbinding String note(); }
+  // iso.MarkedOne:   @Marked(value = "a", note = "one") @Dependent class MarkedOne implements Supplier
+  // iso.MarkedLoose: @Inject @Marked(value = "a", note = "two") public Supplier supplier;
+  VaubanContainer.builder().classLoader(loader).addBeanClass(…).build();
+  // → DeploymentException: Unsatisfied dependency: field MarkedLoose.supplier
+  ```
+- **Suspected cause**: `qualifierEquals` looks the `@Nonbinding` members up with the one-argument `Class.forName`, which uses vauban-core's defining loader. The `ClassNotFoundException` is swallowed as "no non-binding member", so the differing note is compared.
+- **Investigations**:
+  - 2026-09-14: found by the vauban#70 safety net; the test is disabled with this id.
+
+## BUG-20260914-05 — Field injection loads qualifier types through the thread context class loader and silently drops those it cannot load
+
+- **Date**: 2026-09-14
+- **Status**: OPEN
+- **Module**: `vauban-core` (`QualifierHelper#qualifierInstancesToAnnotations`)
+- **Symptom**: with the application's classes in their own class loader and the thread context class loader left as it is, a qualified field stays `null` after injection, without any error, although boot validation accepted it.
+- **Minimal reproduction** (`QualifierMemberResolutionTest$IsolatedClassLoader#withoutContextClassLoader`): the fixtures of BUG-20260914-04 with equal member values, built without setting the context class loader; `supplier` is `null`.
+- **Suspected cause**: the qualifier type is loaded with `Thread.currentThread().getContextClassLoader().loadClass(name)`. A `ClassNotFoundException` skips the qualifier, the injection point is then resolved with `@Default` alone, and nothing matches.
+- **Investigations**:
+  - 2026-09-14: found by the vauban#70 safety net; the test is disabled with this id.
+
+## BUG-20260914-06 — Asynchronous observers ignore qualifier member values
+
+- **Date**: 2026-09-14
+- **Status**: OPEN
+- **Module**: `vauban-core` (`EventDispatcher#fireAsync`)
+- **Symptom**: an event fired asynchronously with `@Channel("alpha")` reaches both `@ObservesAsync @Channel("alpha")` and `@ObservesAsync @Channel("beta")`. A synchronous `fire` delivers it to the first observer only.
+- **Minimal reproduction** (`QualifierMemberEventTest#asynchronousMemberValue`):
+  ```java
+  public void alpha(@ObservesAsync @Channel("alpha") Ping ping) { … }
+  public void beta(@ObservesAsync @Channel("beta") Ping ping) { … }
+  event.select(channelAlpha).fireAsync(new Ping("3")).toCompletableFuture().get();
+  // received: [async-alpha:3, async-beta:3]
+  ```
+- **Suspected cause**: `fireAsync` calls the three-argument `findMatchingObservers`, which compares qualifier names only, whereas `fire` passes the annotations on to `observerQualifiersMatchFull`.
+- **Investigations**:
+  - 2026-09-14: found by the vauban#70 safety net; the test is disabled with this id.
+
+## BUG-20260914-07 — Observers ignore members an extension made non-binding
+
+- **Date**: 2026-09-14
+- **Status**: OPEN
+- **Module**: `vauban-core` (`EventDispatcher#qualifierMembersMatch`)
+- **Symptom**: for a qualifier registered with `MetaAnnotations.addQualifier` whose `value` member the extension marks `@Nonbinding`, observer resolution still compares `value`, so an event with another `value` never reaches the observer. Injection and programmatic lookups honour the rule, and the observer does receive the event when every member is equal.
+- **Minimal reproduction** (`QualifierMemberEventTest#extensionNonbindingMember`):
+  ```java
+  meta.addQualifier(Stream.class).methods().stream()
+          .filter(m -> m.info().name().equals("value")).forEach(m -> m.addAnnotation(Nonbinding.class));
+  public void grouped(@Observes @Stream(value = "observer", group = "g") Ping ping) { … }
+  event.select(streamEvent).fire(new Ping("4"));   // @Stream(value = "event", group = "g")
+  // received: []
+  ```
+- **Suspected cause**: `qualifierMembersMatch` skips only members annotated `@Nonbinding` in source; unlike `QualifierMatcher` and `VaubanBeanManager#qualifierEquals`, it never consults the extension-declared set.
+- **Investigations**:
+  - 2026-09-14: found by the vauban#70 safety net; the test is disabled with this id.
+
+## BUG-20260914-08 — Interceptor bindings declared by an extension ignore their member values
+
+- **Date**: 2026-09-14
+- **Status**: OPEN
+- **Module**: `vauban-core` (interceptor resolution: `InterceptorDiscovery`, `InterceptorManager#bindingMembersMatchWherePresent`)
+- **Symptom**: a binding registered with `MetaAnnotations.addInterceptorBinding` binds its interceptor whatever the member values: a method annotated `@Metered(value = "method", group = "other")` is intercepted by an interceptor declared `@Metered(value = "interceptor", group = "g")`, although `group` is binding.
+- **Minimal reproduction** (`InterceptorBindingMemberTest#extensionBindingMemberValue`):
+  ```java
+  meta.addInterceptorBinding(Metered.class).methods()…   // value made @Nonbinding, group stays binding
+  @Metered(value = "interceptor", group = "g") @Interceptor @Priority(APPLICATION) class MeteredInterceptor { … }
+  @Metered(value = "method", group = "other") public String metered() { … }
+  // intercepted; expected not
+  ```
+- **Suspected cause**: interceptor discovery keeps only annotation types meta-annotated `@InterceptorBinding`, while the bean side also accepts bindings registered by extensions; the interceptor's binding list is then empty and `bindingMembersMatchWherePresent` has nothing to compare.
+- **Investigations**:
+  - 2026-09-14: found by the vauban#70 safety net. `#extensionNonbindingMember` passed first; its control showed that it passes only because no member is compared at all. `#extensionBindingMemberValue` is disabled with this id.
+
+## BUG-20260914-09 — An `@Inherited` qualifier loses its long, float, double, byte, short, char, array and nested members
+
+- **Date**: 2026-09-14
+- **Status**: OPEN
+- **Module**: `vauban-core` (`QualifierResolver#toAnnotationInfo`)
+- **Symptom**: a bean inheriting `@Leveled(1L)` from its superclass can neither be injected nor looked up with `@Leveled(1L)`: unsatisfied at boot validation and on lookup. The same scenario with a `String` member resolves on both paths.
+- **Minimal reproduction** (`QualifierMemberResolutionTest$InheritedQualifier#longField`, `#longProgrammatic`):
+  ```java
+  @Inherited @Qualifier @Retention(RUNTIME) @interface Leveled { long value(); }
+  @Leveled(1L) abstract class LeveledBase {}
+  @Dependent class LeveledChild extends LeveledBase implements Service {}
+  @Dependent class LeveledField { @Inject @Leveled(1L) Service service; }
+  // → DeploymentException: Unsatisfied dependency: field LeveledField.service
+  ```
+- **Suspected cause**: inherited annotations are read reflectively and converted by a switch that keeps only `String`, `Boolean`, `Integer`, `Class` and enum values; any other member is dropped from the qualifier, which then cannot equal the required one.
+- **Investigations**:
+  - 2026-09-14: found by the vauban#70 safety net; the tests are disabled with this id.
+
+## BUG-20260914-10 — A qualifier added by an `@Enhancement` turns enum, Class, array and nested members into strings
+
+- **Date**: 2026-09-14
+- **Status**: OPEN
+- **Module**: `vauban-core` (`EnhancementApplier#annotationMemberToValue`)
+- **Symptom**: an extension adding `@Colored(Hue.BLUE)` to a bean class leaves a `@Colored(Hue.BLUE)` injection point unsatisfied at boot validation. Adding a `String`-valued qualifier the same way works.
+- **Minimal reproduction** (`QualifierMemberResolutionTest$EnhancementAddedQualifier#enumMember`):
+  ```java
+  @Enhancement(types = PaintedBlue.class)
+  public void paint(ClassConfig config) {
+      config.addAnnotation(AnnotationBuilder.of(Colored.class).member("value", Hue.BLUE).build());
+  }
+  // @Inject @Colored(Hue.BLUE) Service service; → DeploymentException: Unsatisfied dependency
+  ```
+- **Suspected cause**: the member conversion handles strings and primitives, and maps every other kind to `StringVal(member.toString())`, which cannot equal the injection point's `EnumVal`.
+- **Investigations**:
+  - 2026-09-14: found by the vauban#70 safety net; the test is disabled with this id.
+
+## BUG-20260914-11 — The default name of a nested bean class keeps its enclosing class
+
+- **Date**: 2026-09-14
+- **Status**: OPEN
+- **Module**: `vauban-core` (`StereotypeResolver` and `BeanDiscovery#decapitalize`), through `DotName#simpleName`
+- **Symptom**: `@Named` on the static nested class `Outer.ReportService` names the bean `outer$ReportService` instead of `reportService`, so `@Named("reportService")` is unsatisfied at boot validation and on lookup.
+- **Minimal reproduction** (`QualifierMemberResolutionTest$NamedQualifier#field`, `#programmatic`):
+  ```java
+  class Outer { @Named @Dependent public static class ReportService implements Service {} }
+  CDI.current().select(Service.class, NamedLiteral.of("reportService")).get();   // UnsatisfiedResolutionException
+  ```
+- **Suspected cause**: `DotName#simpleName` cuts the binary name at its last `.`, which leaves `Outer$ReportService` for a nested class; CDI 4.1 §3.1.5 takes the unqualified class name, `ReportService`.
+- **Investigations**:
+  - 2026-09-14: found by the vauban#70 safety net, whose fixtures are nested classes; the tests are disabled with this id. Top-level classes are not affected. Not part of the vauban#70 rework.
+
+## BUG-20260914-12 — The processor names nested types canonically in member values, and loses primitive and array class literals
+
+- **Date**: 2026-09-14
+- **Status**: OPEN
+- **Module**: `vauban-processor` (`ElementScanner#scanAnnotations`, `#convertAnnotationValue`, `#typeMirrorToDotName`)
+- **Symptom**: the processor's index disagrees with the run-time bytecode scan of the same class. For `@Probe` declared in `app.Holder`, the processor records the annotation `app.Holder.Probe`, an enum value of type `app.Holder.Hue`, a nested `@app.Holder.Inner` and the class literal `app.Holder.Hue`, where the class file says `app.Holder$Probe`, `app.Holder$Hue` and `app.Holder$Inner`. `int.class` and `String[].class` both become `java.lang.Object`.
+- **Minimal reproduction** (`ElementScannerMemberValueTest`): compile the fixture with a processor that runs `ElementScanner#scan` on `app.Holder.Target`, then compare with `ClassFileScanner#scan` of `app/Holder$Target.class`.
+- **Suspected cause**: annotation, enum and class-literal names come from `getQualifiedName()`, which BUG-20260912-01 replaced by `Elements#getBinaryName` for the scanned class and its method types but not for member values; `typeMirrorToDotName` falls back to `java.lang.Object` for anything that is not a declared type.
+- **Investigations**:
+  - 2026-09-14: found by the vauban#70 safety net; the tests are disabled with this id. vauban#70 keys qualifier matching on these values, so fixing it comes before the build-time metadata.
+
+## BUG-20260914-13 — Compile-time validation does not know qualifiers declared in the module being compiled
+
+- **Date**: 2026-09-14
+- **Status**: OPEN
+- **Module**: `vauban-processor` (`VaubanProcessor#getSupportedAnnotationTypes`, `#resolveDependencyBeans`), through `vauban-core`'s `QualifierResolver#isQualifierAnnotation`
+- **Symptom**: a module that declares its own qualifier and two beans of one type does not compile with the Vauban processor: `[Vauban] Ambiguous dependency: field Checkout.card of type … Matching beans: [CardPayment, WirePayment]`, although `@Channel("card")` selects a single bean. The container resolves the same deployment at run time.
+- **Minimal reproduction** (`SameModuleQualifierValidationTest#sameModuleQualifier`):
+  ```java
+  @Qualifier @Retention(RUNTIME) @interface Channel { String value(); }
+  interface Payment {}
+  @Channel("card") @Dependent class CardPayment implements Payment {}
+  @Channel("wire") @Dependent class WirePayment implements Payment {}
+  @Dependent public class Checkout { @Inject @Channel("card") Payment card; }
+  // javac -proc:full with VaubanProcessor → error: Ambiguous dependency: field Checkout.card
+  ```
+- **Suspected cause**: the processor indexes the types carrying its supported annotations (the bean-defining ones and the extension triggers) and the injection points' required types; a qualifier annotation type is neither. `isQualifierAnnotation` misses it in the index and falls back on `Class.forName` through the thread context class loader, which cannot load a type still being compiled. The qualifier is then ignored on both sides and every bean of the type matches. A qualifier from a dependency jar is probably affected the same way, since the context class loader of javac does not see the compile classpath.
+- **Investigations**:
+  - 2026-09-14: found while compiling the vauban#70 benchmarks, which work around it with `-Avauban.validation=false` (the container validates again at boot); the test is disabled with this id.
+
 ## BUG-20260914-14 — The CDI invoker wraps the trailing array of a varargs method in another array
 
 - **Date**: 2026-09-14
-- **Status**: FIXED (this branch)
+- **Status**: FIXED 3e05bdf
 - **Module**: `vauban-core` (`VaubanInvoker#unreflect`, `#invoke`)
 - **Symptom**: calling a varargs method through a CDI `Invoker` throws `ClassCastException: Cannot cast [Ljava.lang.String; to java.lang.String` at `VaubanInvoker.java:144`. The CDI TCK's `VarargsMethodInvokerTest` fails: 773/774 on 2026-09-14.
 - **Minimal reproduction** (`VaubanInvokerTest#varargsMethod`):

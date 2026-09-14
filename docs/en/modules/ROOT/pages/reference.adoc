@@ -53,6 +53,10 @@ This page lists every artefact published by Vauban, the Java Modules packages th
 | `io.vidocq.vauban:vauban-test-suite:{project-version}`
 | `test`
 | Official integration test suite
+
+| `io.vidocq.vauban:vauban-bench`
+| not published
+| JMH benchmarks of qualifier resolution on injection, lookups, events and interceptors, run from `vauban-bench/target/benchmarks.jar`; results in `BENCH.md`. JMH is build tooling: no published artefact depends on it.
 |===
 
 == Exported Java modules

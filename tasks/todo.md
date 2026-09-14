@@ -1,3 +1,130 @@
+# vauban#70 — Annotation metadata at build time, no reflection on the matching hot path — PLAN, awaiting confirmation
+
+Issue: https://codefloe.com/Vidocq/vauban/issues/70 · Mapped on `main` @ ceac964, 2026-09-14.
+
+## Findings that shape the plan
+
+- **Two qualifier engines, two rule sets.**
+  - Boot validation (`QualifierMatcher`, data from the boot bytecode scan) calls `Class.forName`
+    (vauban-core's own loader), `getDeclaredMethods` and `isAnnotationPresent(@Nonbinding)` on every
+    comparison, and never applies member defaults (`@Q` against `@Q("default")`).
+  - Run-time injection (`VaubanBeanManager.getBeans`) scans every bean, rebuilds bean qualifiers as
+    `java.lang.reflect.Proxy` on every `getQualifiers()` call, and reads members with `Method.invoke`
+    on both sides.
+- **Qualifiers re-read on every bean creation**: constructor, initializer, producer and disposer
+  parameters go through `Parameter.getAnnotations()`; field injection points build
+  `QualifierHelper` proxies.
+- **Observers and interceptors**: one proxy per observer qualifier per fire; the generated
+  intercepted subclasses call `getDeclaredMethod` and `resolveChainForMethod` on every business call.
+- **Five annotation proxy handlers**, none honouring `java.lang.annotation.Annotation#equals/hashCode`
+  (hashCode 0, equals always false or identity, arrays as `Object[]`, nested members as `null`).
+- **Nothing crosses from build time to run time.** The processor index never leaves javac, neither
+  scanner records member defaults, and the processor names nested annotation, enum and class values
+  by their canonical name (`Outer.Q`) where the bytecode scan uses the binary name (`Outer$Q`).
+- **`AnnotationLiteral` (CDI API 4.1.0) reflects** in its own `equals`, `hashCode` and `toString`
+  (`getDeclaredMethods`, `setAccessible`, `invoke`): the container must never depend on them.
+- **Verification gaps.** The CDI TCK runner deploys through the boot path (no processor), so a green
+  TCK proves the fallback, never the generated path. The only TCK tests of literal/container
+  equivalence (`QualifierEquivalenceTest`, `InterceptorBindingEquivalenceTest`) belong to `cdi-full`
+  and are excluded. PR CI runs no TCK, and the main CI never reads the TCK reports
+  (`testFailureIgnore=true`).
+- **Suspected latent bugs**, each confirmed by a failing test before it is fixed, then logged in
+  BUG.md: defaults ignored by boot validation; `@Nonbinding` silently lost when `Class.forName` uses
+  the wrong loader; extension-declared non-binding members ignored by events and interceptors; async
+  observers never comparing members; `QualifierResolver.toAnnotationInfo` and `EnhancementApplier`
+  dropping or stringifying array, nested, enum and Class members; the proxy contract bugs above.
+
+## Target design
+
+1. **Annotation type metadata as data**: `AnnotationTypeInfo(name, members)` holding, per member, its
+   type, default value and whether it is non-binding. It lives in vauban-indexer and both scanners
+   produce it (`ExecutableElement.getDefaultValue()`, the `AnnotationDefault` attribute).
+2. **One normalized key**, `AnnotationKey`: type plus binding members, defaults applied, `@Nonbinding`
+   and extension non-binding members removed, nested annotations normalized. Record equality is the
+   CDI matching rule, so matching becomes set membership on keys computed once.
+3. **`AnnotationTypes` registry** (vauban-core): generated metadata first, then a reflective read of
+   the type's declaration (never `invoke`), once per type, cached, with the right class loader.
+4. **Annotations in and out.** Programmatic qualifiers (`Instance.select`, `Event.select`,
+   `BeanManager`) are converted once, when selected: generated reader, then built-in readers for the
+   CDI and `jakarta.inject` types, then the reflective fallback. `Bean#getQualifiers` and the other
+   API getters return cached instances: generated literal, then built-in literal, then one fallback
+   proxy that honours the `Annotation` contract.
+5. **Generated on the processor path**, for each annotation type used as a qualifier or an
+   interceptor binding: metadata (always, it is data), a member reader and a literal class when the
+   type is accessible from the generated package, exposed through new default methods on
+   `VaubanComponentProvider`.
+6. **`-Dvauban.annotations.reflection=allow|warn|forbid`**: `forbid` makes every reflective fallback
+   throw. It proves the acceptance criterion in tests and shows a native-image user what still
+   reflects.
+
+Out of scope, filed as follow-ups: the Maven-plugin bytecode providers (they keep the fallback), the
+per-call `getDeclaredMethod` in generated intercepted subclasses, class loading by name in discovery.
+
+## Stages, one PR each
+
+Every PR: TDD; `./mvnw -T1C clean install`; changed modules run under
+`-Dsurefire.runOrder=alphabetical` and `reversealphabetical`; CDI TCK 774/774 read from
+`vauban-tck-runner/target/surefire-reports`; AtInject TCK green; fixtures that could hide a
+regression proven by mutation (lesson 16).
+
+### PR 1 — Safety net and baseline (no behaviour change)
+- [x] `vauban-bench` module: JMH 1.37, processor wired as in vauban-module-it, never installed or
+      deployed, excluded from release, named in `reference.adoc`
+  - [x] `Instance.select(literal).get()` on member qualifiers, `@Nonbinding` included
+  - [x] creation of a `@Dependent` bean with qualified fields and constructor parameters
+  - [x] event fired with member qualifiers; intercepted call with a member binding
+- [x] `BENCH.md` created with the "before" entry (log-bench format, in English): BENCH-20260914-01
+- [x] Characterization tests of today's correct behaviour on both engines: String, primitive, enum,
+      Class, array and nested members; defaults; `@Nonbinding`; extension non-binding; `@Named`
+      default name; repeatable qualifiers (`QualifierMemberResolutionTest`, `QualifierMemberEventTest`,
+      `InterceptorBindingMemberTest`, `BeanQualifiersContractTest`, `ElementScannerMemberValueTest`,
+      `SameModuleQualifierValidationTest`)
+- [x] A failing test for each suspected bug, disabled with its BUG id, logged OPEN in BUG.md
+
+PR 1 outcome: 13 bugs confirmed, BUG-20260914-01 to -13. Two readings had to be corrected on the way:
+the extension non-binding interceptor test passed only because extension-declared bindings compare no
+member at all (-08), and the first `@Inherited` String failure came from a fixture whose bean type sat
+on an unindexed superclass. Where each bug gets fixed:
+- PR 2: -01 member defaults, -04 class loader, -09 inherited members, -12 processor names
+- PR 3: -02 field members, -03 container-built instances, -05 context class loader, -06 async
+  observers, -07 extension non-binding on observers, -10 enhancement-added members
+- PR 4: -13 compile-time validation of the module's own qualifiers
+- PR 5: -08 extension-declared interceptor bindings
+- Outside #70: -11 default name of a nested bean class
+
+### PR 2 — Type metadata and normalized keys (boot validation)
+- [ ] `AnnotationTypeInfo`, member defaults in `ClassFileScanner` and `ElementScanner`
+- [ ] Processor names member value types by binary name, keeps primitive and array class literals
+- [ ] `AnnotationTypes` registry: reflective read fallback, cache, class loader
+- [ ] `AnnotationKey` normalization: defaults, `@Nonbinding`, extension non-binding, nested
+- [ ] `QualifierMatcher` on keys; `QualifierResolver.toAnnotationInfo` lossless
+
+### PR 3 — Run-time hot path on keys
+- [ ] Beans, observers and injection points hold keys; `getQualifiers()` and friends cached
+- [ ] Parameter qualifiers taken from the index instead of `Parameter.getAnnotations()`
+- [ ] `getBeans`, `InstanceImpl`, `EventImpl`, `BeanInjector` and `EventDispatcher` match keys;
+      programmatic literals converted once, at `select`
+- [ ] One fallback proxy honouring the `Annotation` contract replaces the five handlers;
+      `EnhancementApplier` keeps member values
+- [ ] `vauban.annotations.reflection` switch, with a test per fallback
+
+### PR 4 — Generated metadata, readers and literals (processor path)
+- [ ] `VaubanComponentProvider`: default methods for metadata, member reader and literal factory
+- [ ] Processor renders them as source: the literal goes in the annotation type's own package when
+      that type is compiled in this module, else in the consuming package when accessible
+- [ ] Registry and converters consult the providers first
+- [ ] vauban-module-it equivalence IT over every edge shape under `forbid`, plus a run-time-only
+      annotation proving the fallback still works
+- [ ] BENCH "after" entry
+
+### PR 5 — Interceptor bindings
+- [ ] `InterceptorManager` on keys; chain cached per (class, method); `getInterceptorBindings` cached
+- [ ] Docs: internals (what still reflects), reference (bench module), native-image notes, README
+- [ ] Final BENCH entry; follow-up tickets filed
+
+## Review
+_(to fill in when #70 closes)_
+
 # Universal Vauban class loader — M1…M3 + trampoline — DONE 2026-08-11
 
 ## Trampoline (@VidocqMain / Vidocq.run) — study `vidocq-run-trampoline.md`, all boxes done

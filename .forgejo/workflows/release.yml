@@ -57,6 +57,7 @@ jobs:
             vauban-tck-runner
             vauban-atinject-tck-runner
             vauban-module-it
+            vauban-bench
             vauban-examples
           central-username: ${{ secrets.CENTRAL_USERNAME }}
           central-password: ${{ secrets.CENTRAL_PASSWORD }}
