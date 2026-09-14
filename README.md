@@ -356,7 +356,8 @@ The `BeanResolver` resolves injection points by type + qualifiers:
 
 #### Interceptors
 
-Generated via the Class-File API — zero reflection at runtime:
+Generated via the Class-File API — no reflective access that needs an `opens` (a non-public
+`@AroundInvoke` is still invoked reflectively; see `INTERCEPTORS.md` §5, site 4):
 - `BeanClass$$Intercepted` subclass with overridden methods
 - `$$super$methodName` bridge to call the original method
 - `@AroundInvoke` and `@AroundConstruct`

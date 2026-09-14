@@ -653,9 +653,16 @@ What still reflects:
 * **Class loading by name.** The bean index is a list of names, and discovery turns each into a
   `Class` with `Class.forName`. That needs no `opens` — a public class of an exported package loads
   without one — but an ahead-of-time compiler cannot see a computed name.
-* **Annotations.** Qualifier and interceptor-binding matching reads annotation members with
-  `Method.invoke`, and annotation instances are built with `java.lang.reflect.Proxy`. Moving this to
-  build-time metadata is tracked in https://codefloe.com/Vidocq/vauban/issues/70[vauban#70^].
+* **Annotations.** Matching no longer reflects: qualifiers and interceptor bindings are compared as
+  `AnnotationKey`s built from the index (member defaults applied, `@Nonbinding` left out) — the
+  outcome of https://codefloe.com/Vidocq/vauban/issues/70[vauban#70^]. Two things still do. The
+  annotation *instances* handed to application code (`Bean#getQualifiers()`,
+  `ObserverMethod#getObservedQualifiers()`, `Parameters#get`) are `java.lang.reflect.Proxy`
+  instances over index data. And a *live* annotation the index does not describe — an `@Inherited`
+  one found on a superclass, a literal passed by a build compatible extension or a synthetic bean,
+  the default of a member read from its declaration — has its members read with `Method.invoke`.
+  Neither sits on the resolution path; `-Dvauban.annotations.reflection=allow|warn|forbid` (default
+  `allow`) logs or refuses the latter, so a deployment can prove it never needs it.
 * **Fallbacks.** A type no generated provider covers — the class path, a producer only known at run
   time — is instantiated reflectively, and the container says so at boot.
 

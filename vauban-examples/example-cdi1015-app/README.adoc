@@ -3,8 +3,8 @@
 
 A runnable **CDI SE** application, on the **module path**, that reproduces the problem the CDI
 expert group discussed in https://github.com/jakartaee/cdi/issues/1015[jakartaee/cdi#1015] — and
-resolves it with **zero `--add-opens`** and **zero runtime reflection**, thanks to Vauban's
-build-time proxy generation.
+resolves it with **zero `--add-opens`** and **no reflective access that would need one**, thanks to
+Vauban's build-time proxy generation.
 
 toc::[]
 
@@ -104,7 +104,7 @@ standard `SeContainerInitializer`. Its `module-info.java` has **zero `opens`**. 
 of `Main` re-launches it inside a Vauban layer, which is what lets the proxies of `FraudScreen` and `ReceiptPrinter` be placed.
 |===
 
-Run it — no `--add-opens`, no agent, no reflection:
+Run it — no `--add-opens`, no agent, nothing reflected into the library:
 
 [source,shell]
 ----
