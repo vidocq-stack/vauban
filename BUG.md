@@ -1161,7 +1161,7 @@ and a proposed upstream assertion: `CDI_TCK_PROPOSALS.md` → `TCK-GAP-001`.
 ## BUG-20260914-03 — Container-built qualifier instances misreport array and nested members and leave `@Nonbinding` out of `equals` and `hashCode`
 
 - **Date**: 2026-09-14
-- **Status**: FIXED (vauban#70 PR 3a)
+- **Status**: FIXED b71b31a
 - **Module**: `vauban-core` (`QualifierUtils#createAnnotationInstance`, `#convertAnnotationValue`, `#membersEqual`, `#computeAnnotationHashCode`)
 - **Symptom**: one proxy, two visible effects.
   - Resolution: a qualifier with an `int[]` or a nested-annotation member never matches at run time; constructor injection and programmatic lookups throw `UnsatisfiedResolutionException`. A `String[]` member happens to match (see the cause).
@@ -1284,7 +1284,7 @@ and a proposed upstream assertion: `CDI_TCK_PROPOSALS.md` → `TCK-GAP-001`.
 ## BUG-20260914-10 — A qualifier added by an `@Enhancement` turns enum, Class, array and nested members into strings
 
 - **Date**: 2026-09-14
-- **Status**: FIXED (vauban#70 PR 3a)
+- **Status**: FIXED b71b31a
 - **Module**: `vauban-core` (`EnhancementApplier#annotationMemberToValue`)
 - **Symptom**: an extension adding `@Colored(Hue.BLUE)` to a bean class leaves a `@Colored(Hue.BLUE)` injection point unsatisfied at boot validation. Adding a `String`-valued qualifier the same way works.
 - **Minimal reproduction** (`QualifierMemberResolutionTest$EnhancementAddedQualifier#enumMember`):
@@ -1366,7 +1366,7 @@ and a proposed upstream assertion: `CDI_TCK_PROPOSALS.md` → `TCK-GAP-001`.
 ## BUG-20260914-15 — A synthetic bean or observer loses the member values of its qualifiers
 
 - **Date**: 2026-09-14
-- **Status**: FIXED (vauban#70 PR 3a)
+- **Status**: FIXED b71b31a
 - **Module**: `vauban-core` (`VaubanSyntheticBeanBuilder#qualifier(AnnotationInfo)`, `VaubanSyntheticObserverBuilder#qualifier(AnnotationInfo)`, `SyntheticComponentRegistrar#toObserverDescriptor`)
 - **Symptom**: a synthetic bean qualified `@Channel("alpha")` answers no lookup at all — neither `@Channel("alpha")` nor any other value — and a synthetic observer qualified the same way receives no event. `AnnotationBuilder` is the only way an extension can write an annotation, so this is every qualified synthetic component whose qualifier has a member.
 - **Minimal reproduction** (`SyntheticQualifierMemberTest`):
@@ -1387,7 +1387,7 @@ and a proposed upstream assertion: `CDI_TCK_PROPOSALS.md` → `TCK-GAP-001`.
 ## BUG-20260914-16 — `AnnotationBuilder.member(name, Foo.class)` records the class name as a string
 
 - **Date**: 2026-09-14
-- **Status**: FIXED (vauban#70 PR 3a)
+- **Status**: FIXED b71b31a
 - **Module**: `vauban-core` (`VaubanAnnotationBuilder#member(String, Class)`, `#member(String, Class[])`, `#member(String, ClassInfo)`, `#member(String, ClassInfo[])`)
 - **Symptom**: a qualifier an extension adds with a `Class` member never matches an injection point that declares the same qualifier in source, so the deployment fails with `Unsatisfied dependency`. Reading the member back through the lang model fails too: `asType()` throws `IllegalStateException: Not a CLASS value, but STRING`, where CDI 4.1 §BCE says `member(String, Class)` writes a class-typed member.
 - **Minimal reproduction** (`QualifierMemberResolutionTest$EnhancementAddedQualifier#classMember`):
