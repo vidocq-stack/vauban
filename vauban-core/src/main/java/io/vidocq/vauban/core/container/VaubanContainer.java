@@ -190,7 +190,8 @@ public final class VaubanContainer implements AutoCloseable {
                 continue;
             }
             if (factory != null) {
-                beans.put(descriptor.id(), new ManagedBean<>(descriptor, factory, classLoader, vaubanLookup));
+                beans.put(descriptor.id(), new ManagedBean<>(descriptor, factory, classLoader, vaubanLookup,
+                        qualifierMatcher.types()));
             }
         }
 

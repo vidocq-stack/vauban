@@ -177,15 +177,30 @@ Where each piece plugs in, from the map of `main` @ 981889e:
 - the three fallbacks to put behind generated data: `AnnotationTypes#load` (index, class bytes,
   declaration), `AnnotationValues#infoOf` (container-built instance, else a reflective read),
   `AnnotationInstances#create` (the instance itself)
-- [ ] `VaubanComponentProvider`: default methods for annotation metadata, member reader and literal
-      factory
+`vauban-api` requires nothing but `jakarta.cdi`, so the SPI speaks plain Java — member values as
+`Object`, type names as `String` — and vauban-core converts them with `AnnotationValues.of`, the
+lossless conversion of PR 2. Three generated artefacts per annotation type used as a qualifier or an
+interceptor binding:
+- [x] `VaubanComponentProvider` default methods, each returning `null` when the provider does not own
+      the type: the metadata a type declares (its members, their declared types, their defaults, which
+      are `@Nonbinding`), a reader that turns an instance into its member values with direct calls, and
+      a literal factory
+- [x] `AnnotationTypes` consults them before anything else — for the metadata, for the key of an
+      instance and for the instance a bean or an observer exposes — and converts a nested annotation
+      through the providers too; the builder passes the deployment's providers to it
 - [ ] Processor renders them: the literal goes in the annotation type's own package when that type is
-      compiled in this module, else in the consuming package when accessible
-- [ ] `AnnotationTypes`, `AnnotationValues` and `AnnotationInstances` consult the providers first
-- [ ] Parameter qualifiers from the index instead of `Parameter.getAnnotations()` (moved out of PR 3b)
+      compiled in this module, else in the consuming package when accessible (PR 4c)
+#### PR 4c — The processor generates them
+- [ ] The processor collects the annotation types its beans and observers use as qualifiers, and
+      renders the three artefacts into the package provider: the literal goes in the annotation type's
+      own package when that type is compiled in this module, else in the consuming package when
+      accessible
+- [ ] Parameter qualifiers from the index instead of `Parameter.getAnnotations()` (moved out of PR 3b);
+      seven of the ten sites have a descriptor to read from, three have none and stay reflective
 - [ ] `vauban-module-it` runs under `-Dvauban.annotations.reflection=forbid` (a surefire
       `systemPropertyVariables` block, which that module does not have yet) over every edge shape,
-      plus a run-time-only annotation proving the fallback still works
+      plus a run-time-only annotation proving the fallback still works. Interceptor binding comparison
+      is not guarded by the switch — it is PR 5's — so the claim the IT makes is about qualifiers
 - [ ] BENCH "after" entry
 
 ### PR 5 — Interceptor bindings

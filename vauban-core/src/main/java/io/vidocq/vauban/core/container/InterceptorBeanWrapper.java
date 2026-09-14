@@ -813,7 +813,8 @@ final class InterceptorBeanWrapper {
             };
 
                     var originalBean = (ManagedBean<?>) container.beans.get(descriptor.id());
-                    var interceptedBean = new ManagedBean<>(descriptor, interceptedFactory, classLoader, vaubanLookup);
+                    var interceptedBean = new ManagedBean<>(descriptor, interceptedFactory, classLoader, vaubanLookup,
+                            container.qualifierMatcher().types());
                     if (originalBean != null) {
                         interceptedBean.setInjector((java.util.function.BiConsumer) originalBean.getInjector());
                         interceptedBean.setDestroyer((java.util.function.BiConsumer) originalBean.getDestroyer());
@@ -909,7 +910,8 @@ final class InterceptorBeanWrapper {
                             }
                         }
                     };
-                        var ib2 = new ManagedBean<>(descriptor, f2, classLoader, vaubanLookup);
+                        var ib2 = new ManagedBean<>(descriptor, f2, classLoader, vaubanLookup,
+                                container.qualifierMatcher().types());
                         var originalBean2 = (ManagedBean<?>) container.beans.get(descriptor.id());
                         if (originalBean2 != null) {
                             ib2.setInjector((java.util.function.BiConsumer) originalBean2.getInjector());

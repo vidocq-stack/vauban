@@ -50,9 +50,18 @@ public final class QualifierUtils {
 
     public static Set<Annotation> toAnnotations(Set<QualifierInstance> qualifiers, String beanName,
             ClassLoader cl) {
+        return toAnnotations(qualifiers, beanName, cl, null);
+    }
+
+    /**
+     * The instances of a bean's or an observer's qualifiers. With {@code types}, a module that
+     * generated a literal for its own qualifier hands that literal out instead of a proxy.
+     */
+    public static Set<Annotation> toAnnotations(Set<QualifierInstance> qualifiers, String beanName,
+            ClassLoader cl, io.vidocq.vauban.core.annotation.AnnotationTypes types) {
         var result = new LinkedHashSet<Annotation>();
         for (var qi : qualifiers) {
-            var ann = toAnnotation(qi, beanName, cl);
+            var ann = toAnnotation(qi, beanName, cl, types);
             if (ann != null) result.add(ann);
         }
         return result;
@@ -67,6 +76,12 @@ public final class QualifierUtils {
      * when none of the container's class loaders can load its annotation type.
      */
     public static Annotation toAnnotation(QualifierInstance qi, String beanName, ClassLoader cl) {
+        return toAnnotation(qi, beanName, cl, null);
+    }
+
+    /** As above, letting {@code types} hand out a generated literal when the module shipped one. */
+    public static Annotation toAnnotation(QualifierInstance qi, String beanName, ClassLoader cl,
+            io.vidocq.vauban.core.annotation.AnnotationTypes types) {
         var qualifier = withBeanName(qi, beanName);
         return switch (qualifier.annotationName().value()) {
             case "jakarta.enterprise.inject.Default" -> jakarta.enterprise.inject.Default.Literal.INSTANCE;
@@ -74,6 +89,9 @@ public final class QualifierUtils {
             case "jakarta.inject.Named" ->
                     jakarta.enterprise.inject.literal.NamedLiteral.of(stringMember(qualifier, "value"));
             default -> {
+                if (types != null) {
+                    yield types.instanceOf(qualifier.annotationName(), qualifier.members());
+                }
                 var annType = annotationType(qualifier.annotationName().value(), cl);
                 yield annType == null ? null : AnnotationInstances.create(annType,
                         new AnnotationInfo(qualifier.annotationName(), qualifier.members()), cl);

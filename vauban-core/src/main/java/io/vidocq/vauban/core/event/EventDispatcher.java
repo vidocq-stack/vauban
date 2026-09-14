@@ -24,7 +24,6 @@ import io.vidocq.vauban.core.annotation.AnnotationKey;
 import io.vidocq.vauban.core.container.VaubanContainer;
 import io.vidocq.vauban.indexer.model.TypeInfo;
 
-import io.vidocq.vauban.core.container.VaubanLookup;
 
 import java.lang.annotation.Annotation;
 import java.lang.reflect.Method;
@@ -175,7 +174,12 @@ public final class EventDispatcher {
 
     /** The keys of the qualifiers an event was fired with. */
     Set<AnnotationKey> keysOf(Annotation... qualifiers) {
-        return container.qualifierMatcher().types().keys(qualifiers);
+        return annotationTypes().keys(qualifiers);
+    }
+
+    /** The container's annotation metadata: what its modules generated, then what it can read. */
+    public io.vidocq.vauban.core.annotation.AnnotationTypes annotationTypes() {
+        return container.qualifierMatcher().types();
     }
 
     /** CDI 4.1 §10.2.1: every qualifier the observer declares, {@code @Any} aside, must be on the event. */
@@ -578,11 +582,6 @@ public final class EventDispatcher {
 
     private void invokeObserver(ObserverDescriptor observer, Object event, Annotation... eventQualifiers) {
         invokeObserver(observer, event, null, null, eventQualifiers);
-    }
-
-    private void invokeObserver(ObserverDescriptor observer, Object event,
-            jakarta.enterprise.inject.spi.InjectionPoint eventInjectionPoint, Annotation... eventQualifiers) {
-        invokeObserver(observer, event, null, eventInjectionPoint, eventQualifiers);
     }
 
     private void invokeObserver(ObserverDescriptor observer, Object event,

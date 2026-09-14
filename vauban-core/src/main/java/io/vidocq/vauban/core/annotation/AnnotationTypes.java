@@ -55,7 +55,10 @@ public final class AnnotationTypes {
     private final VaubanIndex index;
     private final List<ClassLoader> loaders;
     private final Map<String, Set<String>> extensionNonbinding;
+    private final List<io.vidocq.vauban.api.VaubanComponentProvider> providers;
     private final Map<DotName, Optional<AnnotationTypeInfo>> types = new ConcurrentHashMap<>();
+    private final Map<DotName, Optional<io.vidocq.vauban.api.AnnotationTypeMetadata>> generated =
+            new ConcurrentHashMap<>();
 
     /**
      * @param index               the container's index, or {@code null} when there is none
@@ -65,9 +68,20 @@ public final class AnnotationTypes {
      *                            {@code null} when no extension made any
      */
     public AnnotationTypes(VaubanIndex index, List<ClassLoader> loaders, Map<String, Set<String>> extensionNonbinding) {
+        this(index, loaders, extensionNonbinding, List.of());
+    }
+
+    /**
+     * @param providers the deployment's generated providers, asked before anything else: a module
+     *                  compiled with the Vauban processor ships what its annotation types declare, so
+     *                  neither their class files nor their declarations have to be read back
+     */
+    public AnnotationTypes(VaubanIndex index, List<ClassLoader> loaders, Map<String, Set<String>> extensionNonbinding,
+            List<io.vidocq.vauban.api.VaubanComponentProvider> providers) {
         this.index = index;
         this.loaders = loaders.stream().filter(Objects::nonNull).distinct().toList();
         this.extensionNonbinding = extensionNonbinding == null ? Map.of() : Map.copyOf(extensionNonbinding);
+        this.providers = providers == null ? List.of() : List.copyOf(providers);
     }
 
     /** The metadata of the annotation type {@code name}, or empty when no source can describe it. */
@@ -122,8 +136,69 @@ public final class AnnotationTypes {
         if (annotation instanceof jakarta.inject.Named named) {
             return key(DotName.of(name), Map.of("value", new AnnotationValue.StringVal(named.value())));
         }
+        var read = readByProvider(annotation);
+        if (read != null) {
+            return key(DotName.of(name), read);
+        }
         var info = AnnotationValues.infoOf(annotation);
         return key(info.name(), info.members());
+    }
+
+    /**
+     * An instance of {@code type} carrying {@code members}: the literal the module that declares the
+     * type generated, or the fallback instance built from the same data. {@code null} when no class
+     * loader can see the type.
+     */
+    public java.lang.annotation.Annotation instanceOf(DotName type, Map<String, AnnotationValue> members) {
+        var metadata = metadata(type);
+        if (metadata.isPresent()) {
+            var values = new HashMap<String, Object>();
+            members.forEach((name, value) -> {
+                var memberType = metadata.get().types().get(name);
+                if (memberType != null) {
+                    values.put(name, AnnotationInstances.javaValue(value, memberType, loader()));
+                }
+            });
+            for (var provider : providers) {
+                var instance = provider.annotationLiteral(type.value(), values);
+                if (instance != null) {
+                    return instance;
+                }
+            }
+        }
+        return AnnotationInstances.typeNamed(type.value(), loader())
+                .map(annotationType -> (java.lang.annotation.Annotation) AnnotationInstances.create(
+                        annotationType, new AnnotationInfo(type, members), loader()))
+                .orElse(null);
+    }
+
+    /** What a generated provider says the type declares, or empty when no provider owns it. */
+    private Optional<io.vidocq.vauban.api.AnnotationTypeMetadata> metadata(DotName name) {
+        return generated.computeIfAbsent(name, type -> providers.stream()
+                .map(provider -> provider.annotationMetadata(type.value()))
+                .filter(Objects::nonNull)
+                .findFirst());
+    }
+
+    /** The members of an instance, read by the module that generated its type's reader. */
+    private Map<String, AnnotationValue> readByProvider(java.lang.annotation.Annotation annotation) {
+        for (var provider : providers) {
+            var values = provider.readAnnotation(annotation);
+            if (values != null) {
+                var members = new HashMap<String, AnnotationValue>();
+                values.forEach((name, value) -> {
+                    if (value != null) {
+                        members.put(name, indexValue(value));
+                    }
+                });
+                return members;
+            }
+        }
+        return null;
+    }
+
+    private ClassLoader loader() {
+        return loaders.isEmpty() ? null : loaders.getFirst();
     }
 
     /** The keys of the qualifiers of a lookup or an injection point, converted once. */
@@ -170,6 +245,10 @@ public final class AnnotationTypes {
     }
 
     private Optional<AnnotationTypeInfo> load(DotName name) {
+        var metadata = metadata(name);
+        if (metadata.isPresent()) {
+            return metadata.map(generatedMetadata -> toTypeInfo(name, generatedMetadata));
+        }
         if (index != null) {
             var indexed = index.getClassByName(name).filter(ClassInfo::isAnnotation);
             if (indexed.isPresent()) {
@@ -203,6 +282,36 @@ public final class AnnotationTypes {
             }
         }
         return Optional.empty();
+    }
+
+    /** What a module generated about its own annotation type, in the form matching compares. */
+    private AnnotationTypeInfo toTypeInfo(DotName name, io.vidocq.vauban.api.AnnotationTypeMetadata metadata) {
+        var members = metadata.members().stream()
+                .map(member -> new AnnotationTypeInfo.Member(member,
+                        metadata.defaults().containsKey(member)
+                                ? indexValue(metadata.defaults().get(member)) : null,
+                        metadata.nonbinding().contains(member)))
+                .toList();
+        return new AnnotationTypeInfo(name, members);
+    }
+
+    /**
+     * A Java value as the index records it. A member that is itself an annotation, or an array of them,
+     * goes back through the providers: the module that declares the nested type generated its reader
+     * too, so nothing has to be read from the instance.
+     */
+    private AnnotationValue indexValue(Object value) {
+        if (value instanceof java.lang.annotation.Annotation annotation) {
+            var read = readByProvider(annotation);
+            return read != null
+                    ? new AnnotationValue.AnnotationVal(
+                            new AnnotationInfo(DotName.of(annotation.annotationType().getName()), read))
+                    : AnnotationValues.of(annotation);
+        }
+        if (value instanceof Object[] items) {
+            return new AnnotationValue.ArrayVal(Arrays.stream(items).map(this::indexValue).toList());
+        }
+        return AnnotationValues.of(value);
     }
 
     /** Reads a declaration: member names, their defaults, their annotations. */

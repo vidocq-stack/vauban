@@ -836,7 +836,10 @@ public final class VaubanContainerBuilder {
                     new io.vidocq.vauban.core.annotation.AnnotationTypes(index,
                             java.util.Arrays.asList(discoveryClassLoader, Thread.currentThread().getContextClassLoader(),
                                     VaubanContainerBuilder.class.getClassLoader()),
-                            discovery.getCustomNonbindingMembers()));
+                            discovery.getCustomNonbindingMembers(),
+                            // A module compiled with the Vauban processor ships what its annotation
+                            // types declare, and reads and builds their instances itself.
+                            componentProviders.providers()));
 
             // Validate observer/disposer method parameters (CDI spec)
             VaubanContainer.validateObserverParameters(observers, descriptors, index, qualifierMatcher);

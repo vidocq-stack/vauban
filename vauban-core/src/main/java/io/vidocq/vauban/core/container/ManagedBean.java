@@ -56,12 +56,24 @@ public final class ManagedBean<T> implements Bean<T> {
     private volatile Set<Annotation> qualifierInstances;
     @SuppressWarnings("java:S3077")
     private volatile Set<io.vidocq.vauban.core.annotation.AnnotationKey> qualifierKeys;
+    private final io.vidocq.vauban.core.annotation.AnnotationTypes annotationTypes;
 
     public ManagedBean(BeanDescriptor descriptor, BeanFactory<T> factory, ClassLoader classLoader, VaubanLookup vaubanLookup) {
+        this(descriptor, factory, classLoader, vaubanLookup, null);
+    }
+
+    /**
+     * @param annotationTypes the container's annotation metadata, so {@link #getQualifiers()} hands out
+     *                        the literal the qualifier's own module generated; {@code null} outside a
+     *                        container, where the fallback instance is built instead
+     */
+    public ManagedBean(BeanDescriptor descriptor, BeanFactory<T> factory, ClassLoader classLoader,
+            VaubanLookup vaubanLookup, io.vidocq.vauban.core.annotation.AnnotationTypes annotationTypes) {
         this.descriptor = Objects.requireNonNull(descriptor);
         this.factory = Objects.requireNonNull(factory);
         this.classLoader = Objects.requireNonNull(classLoader);
         this.vaubanLookup = vaubanLookup;
+        this.annotationTypes = annotationTypes;
         try {
             this.beanClass = (Class<T>) Class.forName(descriptor.beanClass().value(), true, classLoader);
         } catch (ClassNotFoundException e) {
@@ -875,7 +887,8 @@ public final class ManagedBean<T> implements Bean<T> {
         // on every call.
         var instances = qualifierInstances;
         if (instances == null) {
-            instances = Set.copyOf(QualifierUtils.toAnnotations(descriptor.qualifiers(), descriptor.name(), classLoader));
+            instances = Set.copyOf(QualifierUtils.toAnnotations(
+                    descriptor.qualifiers(), descriptor.name(), classLoader, annotationTypes));
             qualifierInstances = instances;
         }
         return instances;

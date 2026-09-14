@@ -58,6 +58,54 @@ public interface VaubanComponentProvider {
     Object create(String className);
 
     /**
+     * What the annotation type {@code annotationClassName} declares — its members, their defaults and
+     * the ones annotated {@code @Nonbinding} — or {@code null} if this provider does not own that
+     * type, so the container reads the declaration itself.
+     *
+     * <p>CDI compares qualifiers and interceptor bindings by these rules; reading them here is what
+     * lets the container match without touching the annotation type at run time.
+     *
+     * @param annotationClassName fully-qualified name of the annotation type
+     * @return what it declares, or {@code null} if not owned by this provider
+     */
+    default AnnotationTypeMetadata annotationMetadata(String annotationClassName) {
+        return null;
+    }
+
+    /**
+     * The member values of {@code annotation}, by member name, read by calling its members directly —
+     * or {@code null} if this provider does not own its type, so the container reads them reflectively.
+     *
+     * <p>Every member is present, including those the annotation leaves at their default. Array values
+     * are copies: a caller may keep or change them.
+     *
+     * @param annotation the instance to read
+     * @return its member values, or {@code null} if not owned by this provider
+     */
+    default java.util.Map<String, Object> readAnnotation(java.lang.annotation.Annotation annotation) {
+        return null;
+    }
+
+    /**
+     * An instance of {@code annotationClassName} carrying {@code members}, every other member taking
+     * its default — or {@code null} if this provider does not own that type, so the container builds a
+     * {@link java.lang.reflect.Proxy} instead.
+     *
+     * <p>The instance honours {@link java.lang.annotation.Annotation#equals},
+     * {@link java.lang.annotation.Annotation#hashCode} and
+     * {@link java.lang.annotation.Annotation#toString}, so application code can compare it with a
+     * literal of its own.
+     *
+     * @param annotationClassName fully-qualified name of the annotation type
+     * @param members             the member values to carry, by member name
+     * @return an instance, or {@code null} if not owned by this provider
+     */
+    default java.lang.annotation.Annotation annotationLiteral(String annotationClassName,
+            java.util.Map<String, Object> members) {
+        return null;
+    }
+
+    /**
      * Instantiates the component with the given fully-qualified name using its injected
      * constructor, passing the dependency values {@code vauban-core} has already resolved (in
      * declared parameter order). The provider performs the {@code new X(args…)} call in-module

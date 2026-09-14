@@ -31,7 +31,6 @@ import jakarta.enterprise.util.Nonbinding;
 import jakarta.inject.Inject;
 import jakarta.inject.Qualifier;
 import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 

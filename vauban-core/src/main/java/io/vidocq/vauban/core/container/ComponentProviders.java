@@ -39,6 +39,11 @@ final class ComponentProviders {
 
     private final List<VaubanComponentProvider> providers;
 
+    /** The providers this deployment loaded, for the parts of the container that consult them directly. */
+    List<VaubanComponentProvider> providers() {
+        return providers;
+    }
+
     ComponentProviders(List<VaubanComponentProvider> providers) {
         this.providers = List.copyOf(providers);
     }

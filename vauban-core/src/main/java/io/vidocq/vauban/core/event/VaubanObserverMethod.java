@@ -189,7 +189,8 @@ public final class VaubanObserverMethod<T> implements ObserverMethod<T> {
 
     @Override
     public Set<Annotation> getObservedQualifiers() {
-        return QualifierUtils.toAnnotations(new java.util.LinkedHashSet<>(descriptor.qualifiers()), null, classLoader);
+        return QualifierUtils.toAnnotations(new java.util.LinkedHashSet<>(descriptor.qualifiers()), null, classLoader,
+                dispatcher.annotationTypes());
     }
 
     @Override

@@ -230,6 +230,14 @@ public final class AnnotationInstances {
 
     // ---- member values ----
 
+    /**
+     * The Java value an index member takes for a member of type {@code target} — what an annotation's
+     * own member returns, and what a generated literal is handed.
+     */
+    static Object javaValue(AnnotationValue value, Class<?> target, ClassLoader loader) {
+        return convert(value, target, loader);
+    }
+
     /** The value an index member takes as the Java value of a member declared {@code target}. */
     private static Object convert(AnnotationValue value, Class<?> target, ClassLoader loader) {
         if (target.isArray()) {

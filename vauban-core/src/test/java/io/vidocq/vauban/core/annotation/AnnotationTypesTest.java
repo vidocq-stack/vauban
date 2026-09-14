@@ -322,6 +322,140 @@ class AnnotationTypesTest {
     }
 
     /**
+     * What the annotation processor generates for {@code @Rich}, written by hand: the members the type
+     * declares, a reader that calls them directly, and a literal. A provider answers {@code null} for
+     * any type it does not own.
+     */
+    static final io.vidocq.vauban.api.VaubanComponentProvider GENERATED = new io.vidocq.vauban.api.VaubanComponentProvider() {
+        @Override
+        public Object create(String className) {
+            return null;
+        }
+
+        @Override
+        public io.vidocq.vauban.api.AnnotationTypeMetadata annotationMetadata(String annotationClassName) {
+            if (Inner.class.getName().equals(annotationClassName)) {
+                // The nested type of a member: the module that declares it generates its metadata too.
+                return new io.vidocq.vauban.api.AnnotationTypeMetadata(
+                        List.of("value", "note"),
+                        Map.of("value", String.class, "note", String.class),
+                        Map.of("value", "inner", "note", ""),
+                        Set.of("note"));
+            }
+            if (!Rich.class.getName().equals(annotationClassName)) return null;
+            var defaults = new java.util.LinkedHashMap<String, Object>();
+            defaults.put("value", "standard");
+            defaults.put("comment", "");
+            defaults.put("channel", "web");
+            defaults.put("inner", jdkRich().inner());
+            defaults.put("codes", new int[0]);
+            var types = new java.util.LinkedHashMap<String, Class<?>>();
+            types.put("value", String.class);
+            types.put("comment", String.class);
+            types.put("channel", String.class);
+            types.put("inner", Inner.class);
+            types.put("codes", int[].class);
+            return new io.vidocq.vauban.api.AnnotationTypeMetadata(
+                    List.of("value", "comment", "channel", "inner", "codes"), types, defaults, Set.of("comment"));
+        }
+
+        @Override
+        public Map<String, Object> readAnnotation(java.lang.annotation.Annotation annotation) {
+            if (annotation instanceof Inner inner) {
+                var members = new java.util.LinkedHashMap<String, Object>();
+                members.put("value", inner.value());
+                members.put("note", inner.note());
+                return members;
+            }
+            if (!(annotation instanceof Rich rich)) return null;
+            var members = new java.util.LinkedHashMap<String, Object>();
+            members.put("value", rich.value());
+            members.put("comment", rich.comment());
+            members.put("channel", rich.channel());
+            members.put("inner", rich.inner());
+            members.put("codes", rich.codes());
+            return members;
+        }
+
+        @Override
+        public java.lang.annotation.Annotation annotationLiteral(String annotationClassName, Map<String, Object> members) {
+            return Rich.class.getName().equals(annotationClassName) ? new RichLiteral() : null;
+        }
+    };
+
+    /**
+     * A module compiled with the Vauban processor ships what its annotation types declare, so the
+     * container reads neither their class files nor their declarations — which is what
+     * {@code forbid} pins here.
+     */
+    @Nested
+    @DisplayName("generated metadata")
+    class GeneratedMetadata {
+
+        /** Nothing but the generated provider: no index, and a loader that hides every class file. */
+        private AnnotationTypes generated() {
+            return new AnnotationTypes(null, List.of(NO_CLASS_BYTES), Map.of(), List.of(GENERATED));
+        }
+
+        @Test
+        @DisplayName("a type the provider owns needs no class file and no declaration")
+        void metadataComesFromTheProvider() {
+            var generated = withReflection("forbid", () -> generated().type(RICH).orElseThrow());
+
+            assertEquals(RICH, generated.name());
+            assertEquals(List.of("value", "comment", "channel", "inner", "codes"),
+                    generated.members().stream().map(AnnotationTypeInfo.Member::name).toList());
+            assertEquals(string("standard"), generated.member("value").orElseThrow().defaultValue());
+            assertTrue(generated.member("comment").orElseThrow().nonbinding(), "comment is @Nonbinding");
+            assertFalse(generated.member("channel").orElseThrow().nonbinding(), "channel is binding");
+        }
+
+        @Test
+        @DisplayName("the keys it builds are the ones the index builds, defaulted members included")
+        void keysAreTheOnesTheIndexBuilds() throws IOException {
+            var written = Map.<String, AnnotationValue>of("channel", string("mobile"));
+
+            assertEquals(fromIndex().key(RICH, written),
+                    withReflection("forbid", () -> generated().key(RICH, written)));
+        }
+
+        @Test
+        @DisplayName("the key of an instance is read through the provider, not through the instance")
+        void keysComeFromTheProviderReader() throws IOException {
+            var expected = fromIndex().key(jdkRich());
+
+            assertEquals(expected, withReflection("forbid", () -> generated().key(jdkRich())));
+        }
+
+        @Test
+        @DisplayName("the instance a bean exposes is the generated literal")
+        void instancesComeFromTheProvider() {
+            var instance = withReflection("forbid",
+                    () -> generated().instanceOf(RICH, Map.of("value", string("premium"))));
+
+            assertEquals(RichLiteral.class, instance.getClass());
+        }
+
+        @Test
+        @DisplayName("a type no provider owns still comes from the index")
+        void unownedTypeFallsBackOnTheIndex() throws IOException {
+            var index = new IndexBuilder()
+                    .add(ClassFileScanner.scan(bytesOf(Rich.class)))
+                    .add(ClassFileScanner.scan(bytesOf(Inner.class)))
+                    .build();
+            var types = new AnnotationTypes(index, List.of(NO_CLASS_BYTES), Map.of(),
+                    List.of(new io.vidocq.vauban.api.VaubanComponentProvider() {
+                        @Override
+                        public Object create(String className) {
+                            return null;
+                        }
+                    }));
+
+            assertEquals(fromIndex().type(RICH), withReflection("forbid", () -> types.type(RICH)));
+        }
+    }
+
+    /**
      * {@code -Dvauban.annotations.reflection=forbid} makes every reflective fallback throw, which is how
      * a test — and a native-image user — sees what still needs reflection.
      */
