@@ -6,6 +6,48 @@ Every published number (README, commit, post) must point to an entry here.
 
 ---
 
+## BENCH-20260914-02 — Qualifier resolution on normalized keys (vauban#70, PR 3a and PR 3b)
+
+- **Date**: 2026-09-14
+- **Commit**: a0110d4 (branch `pr/ybl/70-runtime-keys`, on top of PR 3a — vauban#77)
+- **JVM**: Temurin 25+36-LTS, default flags
+- **Hardware**: Apple M5 Max / 18 cores (6 performance, 12 efficiency) / 128 GB RAM
+- **OS**: macOS 26.6.2 (arm64)
+- **Exact command**: the same as BENCH-20260914-01
+  ```bash
+  mvn -ntp clean install        # Maven 3.9.16
+  java -jar vauban-bench/target/benchmarks.jar -f 3 -wi 5 -i 5 -w 2s -r 3s -prof gc
+  ```
+- **Results**:
+  ```
+  Benchmark                                                           Mode  Cnt      Score     Error   Units
+  QualifierResolutionBenchmark.dependentCreation                      avgt   15  17795,844 ± 512,285   ns/op
+  QualifierResolutionBenchmark.dependentCreation:gc.alloc.rate.norm   avgt   15  38504,230 ± 162,649    B/op
+  QualifierResolutionBenchmark.interceptedCall                        avgt   15    707,985 ±  50,964   ns/op
+  QualifierResolutionBenchmark.interceptedCall:gc.alloc.rate.norm     avgt   15   3360,006 ±  57,825    B/op
+  QualifierResolutionBenchmark.programmaticLookup                     avgt   15   2075,685 ±  52,292   ns/op
+  QualifierResolutionBenchmark.programmaticLookup:gc.alloc.rate.norm  avgt   15   7960,019 ± 100,157    B/op
+  QualifierResolutionBenchmark.qualifiedEvent                         avgt   15   4686,259 ±  92,252   ns/op
+  QualifierResolutionBenchmark.qualifiedEvent:gc.alloc.rate.norm      avgt   15   8381,377 ±  20,865    B/op
+  ```
+- **Comparison with the previous run** (BENCH-20260914-01, the reflective matching):
+
+  | Benchmark | before | after | time | allocation |
+  |---|---|---|---|---|
+  | `dependentCreation` | 41561 ns, 65245 B | 17796 ns, 38504 B | **2.3× faster** | **−41 %** |
+  | `programmaticLookup` | 6590 ns, 11691 B | 2076 ns, 7960 B | **3.2× faster** | **−32 %** |
+  | `qualifiedEvent` | 4673 ns, 6941 B | 4686 ns, 8381 B | flat (+0.3 %) | +21 % |
+  | `interceptedCall` | 651 ns, 3251 B | 708 ns, 3360 B | +8.8 % | +3.4 % |
+
+- **Notes**:
+  - The machine was not idle: its load average was about 5 when the run started, so a few percent either way is noise. The two large gains are far outside it; the two small changes are not distinguishable from it on time.
+  - `dependentCreation` and `programmaticLookup` are where matching dominated: resolution used to rebuild every candidate bean's qualifiers as proxies and compare them member by member with `Method.invoke`, on every lookup. A bean's key is now computed once, and the injection point's comes from the index.
+  - `qualifiedEvent` is `orders.select(literal).fire(event)`: a new `Event` per iteration, so its qualifiers are converted on every measurement — one reflective read of the literal, one key, one set — where the old path passed the annotations straight through and reflected per observer instead. An `Event` injected once and fired many times converts once. Flat in time, 1.4 KB more per operation; PR 4's generated readers remove that read.
+  - `interceptedCall` measures interceptor resolution, which neither PR touches — PR 5 moves it to keys. The 57 ns are within this run's noise; the 110 B/op are not explained and belong to that stage.
+  - Same benchmark as the baseline, unchanged, so the two runs compare like with like — including the enum member on a field it leaves out, although PR 3a fixed that path (BUG-20260914-02).
+
+---
+
 ## BENCH-20260914-01 — Qualifier resolution before vauban#70 (reflective matching)
 
 - **Date**: 2026-09-14

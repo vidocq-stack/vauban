@@ -1203,7 +1203,7 @@ and a proposed upstream assertion: `CDI_TCK_PROPOSALS.md` → `TCK-GAP-001`.
 ## BUG-20260914-05 — Field injection loads qualifier types through the thread context class loader and silently drops those it cannot load
 
 - **Date**: 2026-09-14
-- **Status**: FIXED (vauban#70 PR 3b)
+- **Status**: FIXED a0110d4
 - **Module**: `vauban-core` (`QualifierHelper#qualifierInstancesToAnnotations`)
 - **Symptom**: with the application's classes in their own class loader and the thread context class loader left as it is, a qualified field stays `null` after injection, without any error, although boot validation accepted it.
 - **Minimal reproduction** (`QualifierMemberResolutionTest$IsolatedClassLoader#withoutContextClassLoader`): the fixtures of BUG-20260914-04 with equal member values, built without setting the context class loader; `supplier` is `null`.
@@ -1215,7 +1215,7 @@ and a proposed upstream assertion: `CDI_TCK_PROPOSALS.md` → `TCK-GAP-001`.
 ## BUG-20260914-06 — Asynchronous observers ignore qualifier member values
 
 - **Date**: 2026-09-14
-- **Status**: FIXED (vauban#70 PR 3b)
+- **Status**: FIXED a0110d4
 - **Module**: `vauban-core` (`EventDispatcher#fireAsync`)
 - **Symptom**: an event fired asynchronously with `@Channel("alpha")` reaches both `@ObservesAsync @Channel("alpha")` and `@ObservesAsync @Channel("beta")`. A synchronous `fire` delivers it to the first observer only.
 - **Minimal reproduction** (`QualifierMemberEventTest#asynchronousMemberValue`):
@@ -1233,7 +1233,7 @@ and a proposed upstream assertion: `CDI_TCK_PROPOSALS.md` → `TCK-GAP-001`.
 ## BUG-20260914-07 — Observers ignore members an extension made non-binding
 
 - **Date**: 2026-09-14
-- **Status**: FIXED (vauban#70 PR 3b)
+- **Status**: FIXED a0110d4
 - **Module**: `vauban-core` (`EventDispatcher#qualifierMembersMatch`)
 - **Symptom**: for a qualifier registered with `MetaAnnotations.addQualifier` whose `value` member the extension marks `@Nonbinding`, observer resolution still compares `value`, so an event with another `value` never reaches the observer. Injection and programmatic lookups honour the rule, and the observer does receive the event when every member is equal.
 - **Minimal reproduction** (`QualifierMemberEventTest#extensionNonbindingMember`):
