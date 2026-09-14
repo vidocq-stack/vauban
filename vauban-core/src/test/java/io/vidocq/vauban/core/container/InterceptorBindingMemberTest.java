@@ -187,7 +187,6 @@ class InterceptorBindingMemberTest {
 
     @Test
     @DisplayName("control: the binding members an extension leaves binding still select the interceptor")
-    @Disabled("BUG-20260914-08: interceptor bindings declared by an extension ignore their member values")
     void extensionBindingMemberValue() {
         try (var container = boot(MeteredBce.class, MeteredInterceptor.class, MeteredOtherGroupWorker.class)) {
             assertEquals("metered", container.select(MeteredOtherGroupWorker.class).metered());

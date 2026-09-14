@@ -102,15 +102,27 @@ public final class VaubanMetaAnnotations implements MetaAnnotations {
         return customStereotypes.get(annotationType);
     }
 
-    public Map<String, Set<String>> getNonbindingMembersPerQualifier() {
+    /**
+     * The members an extension made {@code @Nonbinding}, by annotation type name — for the
+     * qualifiers it declared <em>and</em> for the interceptor bindings. Both take part in matching,
+     * and both are compared as normalized keys; leaving the bindings out meant a member an extension
+     * had made non-binding still bound its interceptor (BUG-20260914-08).
+     */
+    public Map<String, Set<String>> getNonbindingMembers() {
         var result = new HashMap<String, Set<String>>();
-        for (var entry : customQualifiers.entrySet()) {
+        collectNonbinding(customQualifiers, result);
+        collectNonbinding(customInterceptorBindings, result);
+        return result;
+    }
+
+    private static void collectNonbinding(Map<Class<? extends Annotation>, VaubanClassConfig> configs,
+            Map<String, Set<String>> into) {
+        for (var entry : configs.entrySet()) {
             var nonbinding = entry.getValue().getNonbindingMembers();
             if (!nonbinding.isEmpty()) {
-                result.put(entry.getKey().getName(), nonbinding);
+                into.put(entry.getKey().getName(), nonbinding);
             }
         }
-        return result;
     }
 
     public Map<Class<? extends Annotation>, Set<Class<? extends Annotation>>> getStereotypeAnnotations() {

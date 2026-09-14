@@ -205,6 +205,7 @@ public final class VaubanContainer implements AutoCloseable {
         this.eventDispatcher = new EventDispatcher(observers, this);
         this.interceptorManager = new InterceptorManager(interceptorDescriptors);
         this.interceptorManager.setVaubanLookup(vaubanLookup);
+        this.interceptorManager.setAnnotationTypes(qualifierMatcher.types());
         this.beanLifecycle = new BeanLifecycle(interceptorManager, vaubanLookup);
         this.interceptorWrapper = new InterceptorBeanWrapper(this, vaubanLookup, interceptorManager, classLoader, classDefiner);
         this.interceptorManager.setInstanceFactory((descriptor, ctx) -> interceptorWrapper.getOrCreateInterceptorInstance(descriptor, ctx));

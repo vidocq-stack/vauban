@@ -135,7 +135,11 @@ final class InterceptorDiscovery {
             var clazz2 = cl != null ? Class.forName(classInfo.name().value(), false, cl)
                     : Class.forName(classInfo.name().value());
             for (var ann : clazz2.getAnnotations()) {
-                if (ann.annotationType().isAnnotationPresent(jakarta.interceptor.InterceptorBinding.class)) {
+                // `bindings` above already says which types bind, extension-registered ones included.
+                // Asking the annotation type for a physical @InterceptorBinding instead dropped every
+                // binding an extension declared, leaving nothing to compare members with, so the
+                // interceptor bound whatever the values were (BUG-20260914-08).
+                if (bindings.contains(DotName.of(ann.annotationType().getName()))) {
                     bindingAnnotations.add(ann);
                 }
             }

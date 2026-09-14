@@ -46,6 +46,18 @@ public final class InterceptorManager {
     private final Map<DotName, Object> interceptorInstances = new LinkedHashMap<>();
     private BiFunction<InterceptorDescriptor, CreationalContext<?>, Object> instanceFactory;
     private io.vidocq.vauban.core.container.VaubanLookup vaubanLookup;
+    private io.vidocq.vauban.core.annotation.AnnotationTypes annotationTypes;
+
+    /**
+     * Which interceptors apply to a method, worked out once. It depends on declarations alone — the
+     * bean's and the method's bindings against each interceptor's — so it does not change between
+     * invocations, while the generated subclass asks for it on every call. Only the instances the
+     * chain holds are per-{@code CreationalContext}, and those are still built each time.
+     */
+    private final Map<MethodChain, List<InterceptorDescriptor>> chainCache = new java.util.concurrent.ConcurrentHashMap<>();
+
+    /** The bean class carries its own class-level bindings, so it and the method determine the rest. */
+    private record MethodChain(Class<?> beanClass, java.lang.reflect.Method method) {}
 
     public record InterceptionState(List<VaubanInvocationContext.InterceptorInvocation> chain, Set<DotName> bindings, CreationalContext<?> ctx) {}
 
@@ -57,6 +69,9 @@ public final class InterceptorManager {
     public void registerEnhancedBindings(String beanClassName, List<java.lang.annotation.Annotation> annotations) {
         if (annotations != null && !annotations.isEmpty()) {
             enhancedBindings.computeIfAbsent(beanClassName, k -> new ArrayList<>()).addAll(annotations);
+            // Boot-time, before any invocation — but a binding added after a chain was worked out
+            // would make it stale, and nothing else would say so.
+            chainCache.clear();
         }
     }
 
@@ -108,6 +123,16 @@ public final class InterceptorManager {
     public InterceptorManager(List<InterceptorDescriptor> interceptors) {
         this.interceptors = List.copyOf(interceptors);
         currentInstance = this;
+    }
+
+    /**
+     * What this deployment's annotation types declare. Binding members are compared as normalized
+     * {@link io.vidocq.vauban.core.annotation.AnnotationKey}s through it, so a member an extension
+     * made {@code @Nonbinding} counts for as little as one the declaration marks — and no member is
+     * read with {@code Method.invoke} (vauban#70).
+     */
+    public void setAnnotationTypes(io.vidocq.vauban.core.annotation.AnnotationTypes types) {
+        this.annotationTypes = types;
     }
 
     public void setVaubanLookup(io.vidocq.vauban.core.container.VaubanLookup lookup) {
@@ -390,49 +415,57 @@ public final class InterceptorManager {
      */
     public List<VaubanInvocationContext.InterceptorInvocation> resolveChainForMethod(
             Set<DotName> classBindings, java.lang.reflect.Method method, Object target, CreationalContext<?> ctx) {
-        Class<?> beanClass = null;
-        if (method != null) {
-            // Use the target class if available, as class-level bindings on the bean
-            // apply to all its methods, including those inherited from superclasses.
-            beanClass = target != null ? target.getClass() : method.getDeclaringClass();
-            if (beanClass.getName().contains(INTERCEPTED_SUFFIX)) {
-                beanClass = beanClass.getSuperclass();
-            }
-
-            var bindingsMap = collectAllBindings(beanClass);
-
-            var methodName = method.getName();
-            if (methodName.startsWith(SUPER_PREFIX)) {
-                methodName = methodName.substring(SUPER_PREFIX.length());
-            }
-            var current = beanClass;
-            while (current != null && current != Object.class) {
-                try {
-                    var originalMethod = current.getDeclaredMethod(methodName, method.getParameterTypes());
-                    collectBindingsRecursively(originalMethod.getAnnotations(), bindingsMap, new java.util.HashSet<>());
-                    break;
-                } catch (NoSuchMethodException e) {
-                    current = current.getSuperclass();
-                }
-            }
-            
-            var allBindingNames = new java.util.LinkedHashSet<DotName>();
-            for (var type : bindingsMap.keySet()) {
-                allBindingNames.add(DotName.of(type.getName()));
-            }
-            allBindingNames.addAll(classBindings);
-            
-            var beanAnnotations = new java.util.ArrayList<>(bindingsMap.values());
-            var chain = resolveChain(allBindingNames, beanAnnotations, ctx);
-
-            // CDI spec: target class @AroundInvoke methods are invoked last, after external interceptors
-            if (target != null) {
-                addLifecycleInvocations(beanClass, target, jakarta.interceptor.AroundInvoke.class, chain);
-            }
-
-            return chain;
+        if (method == null) {
+            return resolveChain(classBindings, List.of(), ctx);
         }
-        return resolveChain(classBindings, List.of(), ctx);
+        // Use the target class if available, as class-level bindings on the bean
+        // apply to all its methods, including those inherited from superclasses.
+        var beanClass = target != null ? target.getClass() : method.getDeclaringClass();
+        if (beanClass.getName().contains(INTERCEPTED_SUFFIX)) {
+            beanClass = beanClass.getSuperclass();
+        }
+
+        // Which interceptors apply is settled by the declarations; the generated subclass asks on
+        // every call, so it is worked out once per (bean class, method).
+        final var declaring = beanClass;
+        var matches = chainCache.computeIfAbsent(new MethodChain(beanClass, method),
+                key -> matchingForMethod(declaring, key.method(), classBindings));
+
+        var chain = buildChain(matches, ctx, jakarta.interceptor.AroundInvoke.class);
+
+        // CDI spec: target class @AroundInvoke methods are invoked last, after external interceptors
+        if (target != null) {
+            addLifecycleInvocations(beanClass, target, jakarta.interceptor.AroundInvoke.class, chain);
+        }
+        return chain;
+    }
+
+    /** The bindings of {@code beanClass} and of {@code method}, and the interceptors they select. */
+    private List<InterceptorDescriptor> matchingForMethod(Class<?> beanClass,
+            java.lang.reflect.Method method, Set<DotName> classBindings) {
+        var bindingsMap = collectAllBindings(beanClass);
+
+        var methodName = method.getName();
+        if (methodName.startsWith(SUPER_PREFIX)) {
+            methodName = methodName.substring(SUPER_PREFIX.length());
+        }
+        var current = beanClass;
+        while (current != null && current != Object.class) {
+            try {
+                var originalMethod = current.getDeclaredMethod(methodName, method.getParameterTypes());
+                collectBindingsRecursively(originalMethod.getAnnotations(), bindingsMap, new java.util.HashSet<>());
+                break;
+            } catch (NoSuchMethodException e) {
+                current = current.getSuperclass();
+            }
+        }
+
+        var allBindingNames = new java.util.LinkedHashSet<DotName>();
+        for (var type : bindingsMap.keySet()) {
+            allBindingNames.add(DotName.of(type.getName()));
+        }
+        allBindingNames.addAll(classBindings);
+        return matching(allBindingNames, new java.util.ArrayList<>(bindingsMap.values()));
     }
 
     /**
@@ -505,31 +538,40 @@ public final class InterceptorManager {
     @SuppressWarnings("java:S135")
     public List<VaubanInvocationContext.InterceptorInvocation> resolveChain(
             Set<DotName> methodBindings, List<java.lang.annotation.Annotation> beanAnnotations, CreationalContext<?> ctx) {
-        var effectiveCtx = ctx != null ? ctx : $$getAroundConstructContext();
-        var matches = new ArrayList<InterceptorDescriptor>();
+        return buildChain(matching(methodBindings, beanAnnotations), ctx,
+                jakarta.interceptor.AroundInvoke.class);
+    }
 
+    /**
+     * The interceptors whose bindings the target carries, in the order CDI 4.1 §9.5.2 gives them.
+     * It reads declarations only, so the answer holds for the life of the deployment.
+     */
+    private List<InterceptorDescriptor> matching(Set<DotName> methodBindings,
+            List<java.lang.annotation.Annotation> beanAnnotations) {
+        var matches = new ArrayList<InterceptorDescriptor>();
         for (var descriptor : interceptors) {
             if (!descriptor.enabled()) continue;
             // An interceptor matches if all its bindings are present on the target
-            if (methodBindings.containsAll(descriptor.bindings()) && !descriptor.bindings().isEmpty()) {
-                // Check binding member values if both sides have annotation instances
-                if (!bindingMembersMatchWherePresent(descriptor.bindingAnnotations(), beanAnnotations)) {
-                    continue;
-                }
+            if (methodBindings.containsAll(descriptor.bindings()) && !descriptor.bindings().isEmpty()
+                    && bindingMembersMatchWherePresent(descriptor.bindingAnnotations(), beanAnnotations)) {
                 matches.add(descriptor);
             }
         }
-
-
-        // Sort by priority (CDI spec 9.5.2)
         matches.sort(java.util.Comparator.comparingInt(InterceptorDescriptor::priority)
                 .thenComparing(d -> d.interceptorClass().toString()));
+        return matches;
+    }
 
+    /** The invocations for {@code matches}: one instance per interceptor, from {@code ctx}. */
+    private List<VaubanInvocationContext.InterceptorInvocation> buildChain(
+            List<InterceptorDescriptor> matches, CreationalContext<?> ctx,
+            Class<? extends java.lang.annotation.Annotation> callback) {
+        var effectiveCtx = ctx != null ? ctx : $$getAroundConstructContext();
         var chain = new ArrayList<VaubanInvocationContext.InterceptorInvocation>();
         for (var descriptor : matches) {
             if (effectiveCtx != null) {
                 var instance = getOrCreateInstance(descriptor, effectiveCtx);
-                addLifecycleInvocations(instance.getClass(), instance, jakarta.interceptor.AroundInvoke.class, chain);
+                addLifecycleInvocations(instance.getClass(), instance, callback, chain);
             } else {
                 chain.add(new VaubanInvocationContext.InterceptorInvocation(null, null));
             }
@@ -583,7 +625,24 @@ public final class InterceptorManager {
         return bindingMembersMatch(comparable, beanBindings);
     }
 
+    /**
+     * Whether two bindings of the same type agree on the members that bind. They are compared as
+     * normalized keys: member defaults applied, {@code @Nonbinding} members left out — the ones the
+     * declaration marks and the ones an extension made non-binding alike, which reading the members
+     * back could not tell apart (BUG-20260914-08).
+     */
     private boolean annotationMembersEqual(java.lang.annotation.Annotation a, java.lang.annotation.Annotation b) {
+        var types = annotationTypes;
+        if (types == null) {
+            // No deployment metadata (a standalone manager): compare what the instances return.
+            return membersEqualReflectively(a, b);
+        }
+        return types.key(a).equals(types.key(b));
+    }
+
+    /** The pre-#70 comparison, kept for a manager built without a deployment's metadata. */
+    private static boolean membersEqualReflectively(java.lang.annotation.Annotation a,
+            java.lang.annotation.Annotation b) {
         for (var method : a.annotationType().getDeclaredMethods()) {
             if (method.isAnnotationPresent(jakarta.enterprise.util.Nonbinding.class)) continue;
             try {

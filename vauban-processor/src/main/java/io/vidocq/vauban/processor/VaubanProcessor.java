@@ -1001,7 +1001,7 @@ public class VaubanProcessor extends AbstractProcessor {
     /** The members extensions made non-binding during {@code @Discovery}, by qualifier type name. */
     private static Map<String, Set<String>> nonbindingMembers(BceProcessor.DiscoveryResult discoveryResult) {
         return discoveryResult == null ? Map.of()
-                : discoveryResult.metaAnnotations().getNonbindingMembersPerQualifier();
+                : discoveryResult.metaAnnotations().getNonbindingMembers();
     }
 
     /** The annotation type {@code name}, from this compilation or the compile classpath, or {@code null}. */
@@ -1194,7 +1194,7 @@ public class VaubanProcessor extends AbstractProcessor {
             stereotypeAnns.put(DotName.of(entry.getKey().getName()), entry.getValue());
         }
         discovery.setCustomStereotypeAnnotations(stereotypeAnns);
-        discovery.setCustomNonbindingMembers(meta.getNonbindingMembersPerQualifier());
+        discovery.setCustomNonbindingMembers(meta.getNonbindingMembers());
 
         if (!discoveryResult.scannedClasses().getAddedClasses().isEmpty()) {
             var scannedDotNames = discoveryResult.scannedClasses().getAddedClasses().stream()

@@ -699,7 +699,7 @@ public final class VaubanContainerBuilder {
                 }
                 discovery.setCustomStereotypeAnnotations(stereotypeAnns);
                 // The container's own AnnotationTypes reads them back below, so no static state.
-                discovery.setCustomNonbindingMembers(meta.getNonbindingMembersPerQualifier());
+                discovery.setCustomNonbindingMembers(meta.getNonbindingMembers());
                 VaubanBeanManager.setCustomQualifierTypes(meta.getCustomQualifiers());
                 VaubanBeanManager.setCustomInterceptorBindingTypes(meta.getCustomInterceptorBindings());
                 VaubanBeanManager.setCustomStereotypeTypes(meta.getCustomStereotypes());
