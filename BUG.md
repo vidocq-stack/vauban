@@ -1334,7 +1334,7 @@ and a proposed upstream assertion: `CDI_TCK_PROPOSALS.md` → `TCK-GAP-001`.
 ## BUG-20260914-13 — Compile-time validation does not know qualifiers declared in the module being compiled
 
 - **Date**: 2026-09-14
-- **Status**: FIXED (vauban#70 PR 4a)
+- **Status**: FIXED be435eb
 - **Module**: `vauban-processor` (`VaubanProcessor#getSupportedAnnotationTypes`, `#resolveDependencyBeans`), through `vauban-core`'s `QualifierResolver#isQualifierAnnotation`
 - **Symptom**: a module that declares its own qualifier and two beans of one type does not compile with the Vauban processor: `[Vauban] Ambiguous dependency: field Checkout.card of type … Matching beans: [CardPayment, WirePayment]`, although `@Channel("card")` selects a single bean. The container resolves the same deployment at run time.
 - **Minimal reproduction** (`SameModuleQualifierValidationTest#sameModuleQualifier`):
