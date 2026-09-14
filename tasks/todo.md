@@ -264,7 +264,11 @@ interceptor binding:
 - [x] **BENCH-20260914-04**: `interceptedCall` 1.92× faster for 77 % less allocation than after 4d —
       what BENCH-20260914-03 predicted this stage would move. Against the pre-#70 baseline:
       dependent creation 3.05×, programmatic lookup 3.53×, intercepted call 1.81×
-- [ ] Follow-up tickets filed
+- [x] Follow-up tickets filed: #85 (the CI does not gate the TCK, and `run-tck.sh` reports success
+      over failures — it hid 7 red TCK tests during PR 4d), #88 (what `forbid` should do about a
+      qualifier from a dependency built without the processor), #89 (a disposer's non-`@Disposes`
+      parameters are not modelled). BUG-20260914-17 stays in `BUG.md`: an injection failure is
+      swallowed and the field left null
 
 ## Review
 _(to fill in when #70 closes)_
