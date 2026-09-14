@@ -57,6 +57,10 @@ class VaubanInvokerTest {
         public void boom() {
             throw new IllegalStateException("boom");
         }
+
+        public String join(String head, String... tail) {
+            return head + ":" + String.join(",", tail);
+        }
     }
 
     private static VaubanInvoker invokerFor(String name, Class<?>... paramTypes) throws Exception {
@@ -83,6 +87,18 @@ class VaubanInvokerTest {
                 .build()) {
             assertEquals("hello world", invokerFor("greet", String.class)
                     .invoke(null, new Object[] {"world"}));
+        }
+    }
+
+    @Test
+    @DisplayName("a varargs method receives the caller's array as its trailing argument, not wrapped in another")
+    void varargsMethod() throws Exception {
+        try (VaubanContainer container = VaubanContainer.builder()
+                .addBeanClass(Calculator.class)
+                .build()) {
+            var invoker = invokerFor("join", String.class, String[].class);
+            assertEquals("a:b,c", invoker.invoke(new Calculator(), new Object[] {"a", new String[] {"b", "c"}}));
+            assertEquals("a:", invoker.invoke(new Calculator(), new Object[] {"a", new String[0]}));
         }
     }
 

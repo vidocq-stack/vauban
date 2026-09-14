@@ -67,10 +67,14 @@ public final class VaubanInvoker implements Invoker<Object, Object>, InvokerInfo
      * every call. It is not a way around the module system — {@code unreflect} needs the same
      * consent {@code setAccessible} would — so a method this module cannot reach yields
      * {@code null} and the reflective path takes over, exactly as before.
+     *
+     * <p>The handle has a fixed arity. The {@code Invoker} contract passes a variadic parameter as the
+     * array itself, and {@code invokeWithArguments} on a variable-arity handle would collect that array
+     * into a new one, as {@code Method#invoke} never does.
      */
     private static java.lang.invoke.MethodHandle unreflect(Method method) {
         try {
-            return java.lang.invoke.MethodHandles.lookup().unreflect(method);
+            return java.lang.invoke.MethodHandles.lookup().unreflect(method).asFixedArity();
         } catch (IllegalAccessException e) {
             return null;
         }

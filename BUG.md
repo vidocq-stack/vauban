@@ -1119,3 +1119,20 @@ and a proposed upstream assertion: `CDI_TCK_PROPOSALS.md` → `TCK-GAP-001`.
 - **Investigations**:
   - 2026-09-12: found while answering whether the loader-based placement survives `jlink`. It does not. `jpackage` is affected whenever it wraps a jlink runtime image; `jpackage` over a plain module path is not (same shape as the working `java -p` run). Until this is fixed, the build-time route — `vauban:enhance-dependencies`, which rewrites the dependency jar — is the only one that works under `jlink`, as it already is for GraalVM native images.
   - 2026-09-13: **fixed**. `applicationPaths` and `createAppLayer` no longer keep only `file:` locations; both go through `archiveOf`, which also maps a `jrt:` module to `/modules/<name>` of the `jrt` file system. Nothing else had to change: a module in a runtime image is an exploded directory, and `BuiltInReaders` already walks directories, so the layer's loader reads it exactly as it reads a `target/classes`. Verified end to end — the cdi#1015 example now runs from a jlink image with its layer, its placed proxies (`FraudScreen_ClientProxy`, `ReceiptPrinter_ClientProxy` defined inside the library's package) and its interceptor. A probe written first confirmed the JDK allows it: `ModuleFinder.of(jrtPath)` finds the module and a child layer resolves from it, with its own loader and its own class identity. The unit test needs no jlink run: every JVM has `jrt:/java.base`.
+
+## BUG-20260914-14 — The CDI invoker wraps the trailing array of a varargs method in another array
+
+- **Date**: 2026-09-14
+- **Status**: FIXED (this branch)
+- **Module**: `vauban-core` (`VaubanInvoker#unreflect`, `#invoke`)
+- **Symptom**: calling a varargs method through a CDI `Invoker` throws `ClassCastException: Cannot cast [Ljava.lang.String; to java.lang.String` at `VaubanInvoker.java:144`. The CDI TCK's `VarargsMethodInvokerTest` fails: 773/774 on 2026-09-14.
+- **Minimal reproduction** (`VaubanInvokerTest#varargsMethod`):
+  ```java
+  public String join(String head, String... tail) { … }
+  new VaubanInvoker(Calculator.class.getMethod("join", String.class, String[].class), Calculator.class, false, Set.of())
+          .invoke(new Calculator(), new Object[] {"a", new String[] {"b", "c"}});   // ClassCastException
+  ```
+- **Suspected cause**: a regression from b9b7ab1 (vauban#71). `MethodHandles.Lookup#unreflect` returns a variable-arity handle for a varargs method, and `invokeWithArguments` then collects the trailing arguments into a fresh array, so the `String[]` the caller passes ends up inside a new one. The reflective call it replaced passed the array through.
+- **Investigations**:
+  - 2026-09-14: found by the CDI TCK run of the vauban#70 safety-net PR. It went unnoticed because the pull-request workflow runs no TCK and the main workflow does not read the TCK reports (`testFailureIgnore=true`).
+  - 2026-09-14: fixed. `unreflect` returns the handle with `asFixedArity()`, so `invokeWithArguments` passes the caller's array through, as `Method#invoke` did. `VaubanInvokerTest#varargsMethod` was written first and failed with the TCK's exact `ClassCastException`; it passes with the fix. vauban-core 356 tests green, CDI TCK 774/774 and AtInject green, counted from the surefire reports.
