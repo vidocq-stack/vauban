@@ -808,7 +808,6 @@ class QualifierMemberResolutionTest {
     @DisplayName("char, byte and short members")
     class NarrowPrimitiveMembers {
         @Test @DisplayName("field injection")
-        @Disabled("BUG-20260914-02: field injection drops char, byte and short member values")
         void field() {
             assertEquals("coded-two", injected(CodedField.class, CodedOne.class, CodedTwo.class));
         }
@@ -828,7 +827,6 @@ class QualifierMemberResolutionTest {
     @DisplayName("enum member")
     class EnumMember {
         @Test @DisplayName("field injection")
-        @Disabled("BUG-20260914-02: field injection drops enum member values")
         void field() {
             assertEquals("colored-two", injected(ColoredField.class, ColoredOne.class, ColoredTwo.class));
         }
@@ -848,7 +846,6 @@ class QualifierMemberResolutionTest {
     @DisplayName("Class member")
     class ClassMember {
         @Test @DisplayName("field injection")
-        @Disabled("BUG-20260914-02: field injection drops Class member values")
         void field() {
             assertEquals("of-kind-two", injected(OfKindField.class, OfKindOne.class, OfKindTwo.class));
         }
@@ -868,7 +865,6 @@ class QualifierMemberResolutionTest {
     @DisplayName("String[] member")
     class ObjectArrayMember {
         @Test @DisplayName("field injection")
-        @Disabled("BUG-20260914-02: field injection drops array member values")
         void field() {
             assertEquals("tagged-two", injected(TaggedField.class, TaggedOne.class, TaggedTwo.class));
         }
@@ -888,7 +884,6 @@ class QualifierMemberResolutionTest {
     @DisplayName("int[] member")
     class PrimitiveArrayMember {
         @Test @DisplayName("field injection")
-        @Disabled("BUG-20260914-02: field injection drops array member values")
         void field() {
             assertEquals("numbered-two", injected(NumberedField.class, NumberedOne.class, NumberedTwo.class));
         }
@@ -909,7 +904,6 @@ class QualifierMemberResolutionTest {
     @DisplayName("nested annotation member")
     class NestedAnnotationMember {
         @Test @DisplayName("field injection")
-        @Disabled("BUG-20260914-02: field injection drops nested annotation member values")
         void field() {
             assertEquals("wrapped-two", injected(WrappedField.class, WrappedOne.class, WrappedTwo.class));
         }
@@ -1081,7 +1075,6 @@ class QualifierMemberResolutionTest {
         }
 
         @Test @DisplayName("field injection with an enum member")
-        @Disabled("BUG-20260914-02: field injection drops enum member values, then falls back on @Default")
         void enumField() {
             assertEquals("colored-two",
                     injected(ColoredField.class, ColoredOne.class, ColoredTwo.class, PlainService.class));

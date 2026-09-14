@@ -1142,7 +1142,7 @@ and a proposed upstream assertion: `CDI_TCK_PROPOSALS.md` → `TCK-GAP-001`.
 ## BUG-20260914-02 — A field injection point drops enum, Class, char, byte, short, array and nested-annotation member values
 
 - **Date**: 2026-09-14
-- **Status**: OPEN
+- **Status**: FIXED b71b31a
 - **Module**: `vauban-core` (`QualifierHelper#annotationValueToObject`, reached from `BeanInjector#injectSingleField`)
 - **Symptom**: boot validation accepts the injection point, then the field is injected wrongly at creation, without any error: it stays `null`, or receives the `@Default` bean when there is one. A constructor parameter or a programmatic lookup with the same qualifier resolves correctly.
 - **Minimal reproduction** (`QualifierMemberResolutionTest$EnumMember#field`, `$NoDefaultFallback#enumField`):
@@ -1157,6 +1157,7 @@ and a proposed upstream assertion: `CDI_TCK_PROPOSALS.md` → `TCK-GAP-001`.
 - **Suspected cause**: the field's qualifiers are rebuilt from the index as `QualifierHelper` proxies, and `annotationValueToObject` converts only String, boolean, int, long, float and double members; any other member reads as `null`. `getBeans` then compares `null` with the bean's value, finds no match, and the injection falls back on a `@Default` lookup. The same proxy also returns `hashCode` 0 and compares only the members it was given.
 - **Investigations**:
   - 2026-09-14: found by the vauban#70 safety net for every listed kind (`$ClassMember#field`, `$NarrowPrimitiveMembers#field`, `$ObjectArrayMember#field`, `$PrimitiveArrayMember#field`, `$NestedAnnotationMember#field`); the tests are disabled with this id.
+  - 2026-09-14: **fixed** by vauban#70 PR 3a, which was aimed at BUG-20260914-03: field injection rebuilds its qualifiers through the same conversion as `Bean#getQualifiers()`, and `AnnotationInstances` keeps every member kind, so `getBeans` compares the values it was given. The seven tests are enabled here, once the change proved it. The field path still loads the qualifier type through the thread context class loader (BUG-20260914-05) and still rebuilds an instance per injection; PR 3b resolves it on keys instead.
 
 ## BUG-20260914-03 — Container-built qualifier instances misreport array and nested members and leave `@Nonbinding` out of `equals` and `hashCode`
 
