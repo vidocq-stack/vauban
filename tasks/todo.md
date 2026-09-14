@@ -232,7 +232,10 @@ interceptor binding:
       over a **package-private** qualifier with a binding member, a `@Nonbinding` one and one left at
       its default. Verified: 431 tests, both run orders, CDI TCK 774/774, AtInject; three mutations,
       each red on the test that claims it
-- [ ] BENCH "after" entry
+- [x] BENCH-20260914-03: dependent creation 2.97× faster than the pre-#70 baseline (−47 %
+      allocation), programmatic lookup 3.47× (−40 %). The prediction BENCH-20260914-02 made
+      about `qualifiedEvent` did not hold — allocation fell 7 %, time did not move; what is
+      left there is the dispatch, not the annotations
 
 #### Left for later
 - [ ] A qualifier from a dependency **not** built with the Vauban processor: its metadata comes from

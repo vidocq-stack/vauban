@@ -6,6 +6,69 @@ Every published number (README, commit, post) must point to an entry here.
 
 ---
 
+## BENCH-20260914-03 — Qualifier resolution on generated metadata (vauban#70, PR 4b to 4d)
+
+- **Date**: 2026-09-14
+- **Commit**: 77c5ef3 (branch `pr/ybl/70-index-injection-points`, on top of PR 4c — vauban#83)
+- **JVM**: Temurin 25+36-LTS, default flags
+- **Hardware**: Apple M5 Max / 18 cores (6 performance, 12 efficiency) / 128 GB RAM
+- **OS**: macOS 26.6.2 (arm64)
+- **Exact command**: the same as BENCH-20260914-01
+  ```bash
+  mvn -ntp clean install        # Maven 3.9.16
+  java -jar vauban-bench/target/benchmarks.jar -f 3 -wi 5 -i 5 -w 2s -r 3s -prof gc
+  ```
+- **Results**:
+  ```
+  Benchmark                                                           Mode  Cnt      Score     Error   Units
+  QualifierResolutionBenchmark.dependentCreation                      avgt   15  14014,765 ± 124,690   ns/op
+  QualifierResolutionBenchmark.dependentCreation:gc.alloc.rate.norm   avgt   15  34538,841 ±  58,460    B/op
+  QualifierResolutionBenchmark.interceptedCall                        avgt   15    690,906 ±  19,595   ns/op
+  QualifierResolutionBenchmark.interceptedCall:gc.alloc.rate.norm     avgt   15   3309,340 ±  98,137    B/op
+  QualifierResolutionBenchmark.programmaticLookup                     avgt   15   1897,103 ±  44,220   ns/op
+  QualifierResolutionBenchmark.programmaticLookup:gc.alloc.rate.norm  avgt   15   7016,018 ±  62,598    B/op
+  QualifierResolutionBenchmark.qualifiedEvent                         avgt   15   4699,739 ±  50,200   ns/op
+  QualifierResolutionBenchmark.qualifiedEvent:gc.alloc.rate.norm      avgt   15   7776,043 ±  40,245    B/op
+  ```
+- **Comparison with the previous run** (BENCH-20260914-02, matching on keys):
+
+  | Benchmark | after 3b | after 4d | time | allocation |
+  |---|---|---|---|---|
+  | `dependentCreation` | 17796 ns, 38504 B | 14015 ns, 34539 B | **1.27× faster** | **−10 %** |
+  | `programmaticLookup` | 2076 ns, 7960 B | 1897 ns, 7016 B | **−8.6 %** | **−12 %** |
+  | `qualifiedEvent` | 4686 ns, 8381 B | 4700 ns, 7776 B | flat (+0.3 %) | −7.2 % |
+  | `interceptedCall` | 708 ns, 3360 B | 691 ns, 3309 B | −2.4 % | −1.5 % |
+
+- **Comparison with the baseline** (BENCH-20260914-01, reflective matching — the whole of #70 so far):
+
+  | Benchmark | before #70 | after 4d | time | allocation |
+  |---|---|---|---|---|
+  | `dependentCreation` | 41561 ns, 65245 B | 14015 ns, 34539 B | **2.97× faster** | **−47 %** |
+  | `programmaticLookup` | 6590 ns, 11691 B | 1897 ns, 7016 B | **3.47× faster** | **−40 %** |
+  | `qualifiedEvent` | 4673 ns, 6941 B | 4700 ns, 7776 B | flat (+0.6 %) | **+12 %** |
+  | `interceptedCall` | 651 ns, 3251 B | 691 ns, 3309 B | +6.1 % | +1.8 % |
+
+- **Notes**:
+  - The machine was not idle again: load average about 5 when the run started and 3.5 when it ended,
+    the same conditions as BENCH-20260914-02, so the two compare like with like. The error bars are
+    0.9 % to 2.8 % of each score; `interceptedCall` and `qualifiedEvent` move less than that and are
+    not distinguishable from noise on time.
+  - `dependentCreation` and `programmaticLookup` gain again, and this time on both axes: what PR 3b
+    left was the qualifiers of an injection point being read off the field or the parameter on every
+    creation. PR 4d takes them from the descriptor instead, and PR 4b/4c let the module hand out its
+    own literal rather than a `reflect.Proxy` — one fewer object, and no proxy handler, per qualifier.
+  - **BENCH-20260914-02 predicted that PR 4's generated readers would remove the conversion cost of
+    `qualifiedEvent`. They did not.** Allocation fell 7.2 %, from 8381 to 7776 B/op, but the time did
+    not move and allocation is still 12 % above the pre-#70 baseline. Firing on a fresh `Event` per
+    iteration converts its qualifiers every time; the generated reader makes that conversion cheaper,
+    not free. An `Event` injected once and fired many times pays it once. Whatever is left is in the
+    dispatch itself, not in the annotations, and no stage of #70 addresses it.
+  - `interceptedCall` is within noise of both earlier runs. Interceptor binding comparison is
+    untouched so far — PR 5 moves it to keys, and that is where its number should change.
+  - Same benchmark as the two earlier runs, unchanged.
+
+---
+
 ## BENCH-20260914-02 — Qualifier resolution on normalized keys (vauban#70, PR 3a and PR 3b)
 
 - **Date**: 2026-09-14
