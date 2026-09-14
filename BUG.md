@@ -1407,3 +1407,21 @@ and a proposed upstream assertion: `CDI_TCK_PROPOSALS.md` → `TCK-GAP-001`.
 - **Investigations**:
   - 2026-09-14: found while writing the vauban#70 PR 3a tests. `VaubanParameters#convertMemberValue` carries a workaround for the same shape — it reads a `Class`-typed member back from a string.
   - 2026-09-14: **fixed** by vauban#70 PR 3a. The four overloads record a class member, whose lang-model type names a primitive by its keyword and an array by its descriptor, as the class file does. The workaround is gone with `convertMemberValue`, but a string written for a `Class` member is still read as one, so an annotation built before this fix keeps working. Proven by mutation: recording the class name again fails the end-to-end `@Enhancement` test and both lang-model conversions.
+
+---
+
+## BUG-20260914-17 — An injection failure is swallowed, and the field is left null
+
+- **Date**: 2026-09-14
+- **Status**: OPEN
+- **Module**: `vauban-core` (`BeanInjector#injectSingleField`, `ManagedBean#getInjectionPoints`)
+- **Symptom**: when injecting a field throws anything other than `IllegalProductException` or `UnproxyableResolutionException`, the exception is logged and swallowed; the field keeps its default value and the bean is handed out looking fine. The failure surfaces later as a `NullPointerException` in application code, with a stack trace that names neither the field nor the cause. `ManagedBean#getInjectionPoints` does the same with an empty `catch` and returns an empty set, so `Bean#getInjectionPoints()` silently reports that a bean has no injection points at all.
+- **Minimal reproduction**: make any field injection throw — for instance run a module under `-Dvauban.annotations.reflection=forbid` before vauban#70 PR 4d, which turns a reflective read into an exception:
+  ```
+  java.lang.NullPointerException: Cannot invoke "…Payment.id()" because "this.viaField" is null
+      at …Checkout.fromField(Checkout.java:55)
+  ```
+  The real cause — `reading the qualifiers off field …Checkout.viaField needs reflection` — appears only in a log line.
+- **Suspected cause**: `catch (Exception e) { LOG.log(ERROR, …); }` in `injectSingleField`, and `catch (Exception e) { // Fallback to empty set }` in `getInjectionPoints`. CDI 4.1 §5.1.2 makes an unsatisfiable injection point a deployment problem, not a null field.
+- **Investigations**:
+  - 2026-09-14: found while writing the `forbid` integration test of vauban#70 PR 4d, where it hid three genuine failures behind NPEs. That PR only makes `AnnotationReflection.ForbiddenException` pass through both catches — a diagnostic mode that a `catch` can silence is worthless — and leaves the rest of the behaviour alone: turning the swallow into a propagation changes what happens to every failing injection in the container, which wants its own change and its own TCK run.

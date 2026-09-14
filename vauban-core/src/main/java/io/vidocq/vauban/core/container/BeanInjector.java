@@ -84,7 +84,7 @@ final class BeanInjector {
                 if (!method.isAnnotationPresent(jakarta.inject.Inject.class)) continue;
                 if (Modifier.isStatic(method.getModifiers())) continue;
                 if (isOverriddenInSubclasses(method, subclasses)) continue;
-                injectSingleMethod(instance, method, ctx, ownerBean, typeMapping);
+                injectSingleMethod(instance, method, descriptor, ctx, ownerBean, typeMapping);
             }
         }
     }
@@ -115,6 +115,14 @@ final class BeanInjector {
                 return;
             }
 
+            // What the bean's descriptor records for this field, or null for a field it does not
+            // describe — an interceptor's, injected without one (vauban#70).
+            var describedQualifiers = QualifierHelper.fieldQualifiers(
+                    descriptor == null ? null : descriptor.injectionPoints(), field,
+                    container.qualifierMatcher().types());
+            var describedSet = describedQualifiers == null ? null
+                    : new java.util.LinkedHashSet<>(java.util.List.of(describedQualifiers));
+
             if (field.getType() == Instance.class
                     || field.getType() == jakarta.inject.Provider.class) {
                 Class<?> instanceType = Object.class;
@@ -132,9 +140,10 @@ final class BeanInjector {
                         instanceLookupType = nestedPt;
                     }
                 }
-                var fieldQualifiers = QualifierHelper.extractFieldQualifiers(field);
+                var fieldQualifiers = describedQualifiers != null
+                        ? describedQualifiers : QualifierHelper.extractFieldQualifiers(field);
                 var ownerBean = container.findBeanForInstance(instance);
-                var ip = new VaubanInjectionPoint(field, ownerBean);
+                var ip = new VaubanInjectionPoint(field, ownerBean, describedSet);
                 writeField(instance, field, new InstanceImpl<>(container, instanceType, instanceLookupType, fieldQualifiers, ip, null));
                 return;
             }
@@ -146,15 +155,17 @@ final class BeanInjector {
             }
 
             if (field.getType() == Event.class) {
-                var eventQualifiers = QualifierHelper.collectEventQualifiers(field.getAnnotations());
+                var eventQualifiers = describedQualifiers != null
+                        ? QualifierHelper.eventQualifiers(describedQualifiers)
+                        : QualifierHelper.collectEventQualifiers(field.getAnnotations());
                 var ownerBean = container.findBeanForInstance(instance);
-                var eventIp = new VaubanInjectionPoint(field, ownerBean);
+                var eventIp = new VaubanInjectionPoint(field, ownerBean, describedSet);
                 writeField(instance, field, new EventImpl<>(container.eventDispatcher(), eventQualifiers, eventIp));
                 return;
             }
 
             var ownerBean = container.findBeanForInstance(instance);
-            VaubanContainer.withInjectionPoint(new VaubanInjectionPoint(field, ownerBean), () -> {
+            VaubanContainer.withInjectionPoint(new VaubanInjectionPoint(field, ownerBean, describedSet), () -> {
                 var fieldKeys = fieldQualifierKeys(field, descriptor);
                 Object value;
                 var bm = container.getBeanManager();
@@ -185,7 +196,8 @@ final class BeanInjector {
                     writeField(instance, field, value);
                 }
             });
-        } catch (jakarta.enterprise.inject.IllegalProductException | jakarta.enterprise.inject.UnproxyableResolutionException e) {
+        } catch (jakarta.enterprise.inject.IllegalProductException | jakarta.enterprise.inject.UnproxyableResolutionException
+                | io.vidocq.vauban.core.annotation.AnnotationReflection.ForbiddenException e) {
             throw e;
         } catch (Exception e) {
             if (e.getCause() instanceof jakarta.enterprise.inject.IllegalProductException ipe) throw ipe;
@@ -204,16 +216,20 @@ final class BeanInjector {
     private java.util.Set<io.vidocq.vauban.core.annotation.AnnotationKey> fieldQualifierKeys(
             Field field, BeanDescriptor descriptor) {
         if (descriptor != null) {
-            for (var ip : descriptor.injectionPoints()) {
-                if (ip.kind() != io.vidocq.vauban.core.bean.model.InjectionPointInfo.InjectionKind.FIELD) continue;
-                if (!ip.description().endsWith("." + field.getName())) continue;
-                return container.qualifierMatcher().keys(ip.qualifiers());
+            var point = QualifierHelper.fieldPoint(descriptor.injectionPoints(), field);
+            if (point != null) {
+                return container.qualifierMatcher().keys(point.qualifiers());
             }
         }
         return container.qualifierMatcher().types().keys(QualifierHelper.extractFieldQualifiers(field));
     }
 
-    private void injectSingleMethod(Object instance, Method method, CreationalContext<?> ctx,
+    /**
+     * An initializer method's parameters, resolved from the descriptor that describes them — reading
+     * a parameter back is only for a method the descriptor does not describe (vauban#70).
+     */
+    private void injectSingleMethod(Object instance, Method method, BeanDescriptor descriptor,
+                                    CreationalContext<?> ctx,
                                     jakarta.enterprise.inject.spi.Bean<?> ownerBean,
                                     Map<java.lang.reflect.TypeVariable<?>, java.lang.reflect.Type> typeMapping) {
         try {
@@ -227,7 +243,10 @@ final class BeanInjector {
             var args = new Object[paramTypes.length];
             var transientContexts = new ArrayList<CreationalContextImpl<?>>();
             for (int i = 0; i < paramTypes.length; i++) {
-                var paramQuals = QualifierHelper.extractParamQualifiers(params[i]);
+                var described = descriptor == null ? null : QualifierHelper.parameterQualifiers(
+                        descriptor.injectionPoints(), method, i, container.qualifierMatcher().types());
+                var paramQuals = described != null
+                        ? described : QualifierHelper.extractParamQualifiers(params[i]);
                 if (params[i].isAnnotationPresent(jakarta.enterprise.inject.TransientReference.class)) {
                     var transientCtx = new CreationalContextImpl<>();
                     args[i] = container.resolveParameter(paramTypes[i], genericParamTypes[i], transientCtx, paramQuals, method, ownerBean, params[i], i);

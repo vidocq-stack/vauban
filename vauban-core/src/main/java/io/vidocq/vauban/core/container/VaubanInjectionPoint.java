@@ -47,9 +47,18 @@ public final class VaubanInjectionPoint implements InjectionPoint {
     private final Annotated annotated;
 
     /**
-     * Creates an InjectionPoint for a field injection.
+     * Creates an InjectionPoint for a field injection, reading the field's qualifiers.
      */
     public VaubanInjectionPoint(Field field, Bean<?> bean) {
+        this(field, bean, null);
+    }
+
+    /**
+     * Creates an InjectionPoint for a field injection with the qualifiers the bean's descriptor
+     * records for it (vauban#70) — {@code null} to read them off the field, for a field no
+     * descriptor describes.
+     */
+    public VaubanInjectionPoint(Field field, Bean<?> bean, Set<Annotation> described) {
         Type t = field.getGenericType();
         if ((field.getType() == jakarta.enterprise.inject.Instance.class
                 || field.getType() == jakarta.inject.Provider.class)
@@ -57,7 +66,7 @@ public final class VaubanInjectionPoint implements InjectionPoint {
             t = pt.getActualTypeArguments()[0];
         }
         this.type = t;
-        this.qualifiers = extractQualifiers(field);
+        this.qualifiers = described != null ? Set.copyOf(described) : extractQualifiers(field);
         this.bean = bean;
         this.member = field;
         this.annotated = new SimpleAnnotatedField(field, this.type);
@@ -136,6 +145,7 @@ public final class VaubanInjectionPoint implements InjectionPoint {
     }
 
     private static Set<Annotation> extractQualifiers(Field field) {
+        io.vidocq.vauban.core.annotation.AnnotationReflection.checkField(field);
         var result = new LinkedHashSet<Annotation>();
         boolean hasAnyAnnotation = false;
         for (var ann : field.getAnnotations()) {

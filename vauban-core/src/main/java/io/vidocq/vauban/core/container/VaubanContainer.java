@@ -118,6 +118,7 @@ public final class VaubanContainer implements AutoCloseable {
     private final VaubanBeanManager beanManager;
     private final ClassLoader classLoader;
     private final io.vidocq.vauban.core.bean.resolution.QualifierMatcher qualifierMatcher;
+    private final Map<DotName, BeanDescriptor> managedDescriptors;
     private final java.util.function.BiFunction<String, byte[], Class<?>> classDefiner;
     private final VaubanLookup vaubanLookup;
     private final ComponentProviders componentProviders;
@@ -157,6 +158,10 @@ public final class VaubanContainer implements AutoCloseable {
         this.index = index;
         this.classLoader = classLoader;
         this.qualifierMatcher = qualifierMatcher;
+        this.managedDescriptors = descriptors.stream()
+                .filter(d -> d.kind() == BeanDescriptor.BeanKind.MANAGED)
+                .collect(java.util.stream.Collectors.toMap(BeanDescriptor::beanClass, d -> d,
+                        (first, second) -> first));
         this.classDefiner = classDefiner;
         this.vaubanLookup = vaubanLookup;
         this.componentProviders = componentProviders == null
@@ -313,6 +318,22 @@ public final class VaubanContainer implements AutoCloseable {
      * deployment — the index, the class loaders its classes come from, and the members its extensions
      * made non-binding — and caches the key of every qualifier it has seen.
      */
+    /**
+     * The qualifiers the bean's descriptor records for parameter {@code index} of {@code member},
+     * or {@code null} when nothing describes it. Internal: it lets a caller outside this package
+     * resolve a parameter without reading its annotations back (vauban#70).
+     */
+    public java.lang.annotation.Annotation[] describedParameterQualifiers(
+            BeanDescriptor descriptor, java.lang.reflect.Executable member, int index) {
+        return descriptor == null ? null : QualifierHelper.parameterQualifiers(
+                descriptor.injectionPoints(), member, index, qualifierMatcher().types());
+    }
+
+    /** The managed-bean descriptor declared by {@code beanClass}, or {@code null}. Internal. */
+    public BeanDescriptor managedDescriptor(DotName beanClass) {
+        return managedDescriptors.get(beanClass);
+    }
+
     public io.vidocq.vauban.core.bean.resolution.QualifierMatcher qualifierMatcher() {
         return qualifierMatcher;
     }
@@ -567,12 +588,6 @@ public final class VaubanContainer implements AutoCloseable {
         beanLifecycle.callPostConstruct(instance, descriptor, ctx);
     }
 
-    private static String extractFieldName(String description) {
-        // "field ClassName.fieldName" -> "fieldName"
-        int dot = description.lastIndexOf('.');
-        return dot >= 0 ? description.substring(dot + 1) : null;
-    }
-
     private BeanFactory<?> createManagedBeanFactory(BeanDescriptor descriptor,
                                                      Map<DotName, BeanFactory<?>> factories) {
         // Check if bean has @Inject constructor parameters
@@ -633,7 +648,12 @@ public final class VaubanContainer implements AutoCloseable {
                     var args = new Object[paramTypes.length];
                     var transientCtxs = new java.util.ArrayList<io.vidocq.vauban.core.context.CreationalContextImpl<?>>();
                     for (int i = 0; i < paramTypes.length; i++) {
-                        var pQuals = QualifierHelper.extractParamQualifiers(ctorParamsRefl[i]);
+                        // The descriptor describes every constructor parameter; reading the
+                        // parameter back is only for one it does not (vauban#70).
+                        var described = QualifierHelper.parameterQualifiers(
+                                descriptor.injectionPoints(), injectCtor, i, qualifierMatcher().types());
+                        var pQuals = described != null
+                                ? described : QualifierHelper.extractParamQualifiers(ctorParamsRefl[i]);
                         if (ctorParamsRefl[i].isAnnotationPresent(jakarta.enterprise.inject.TransientReference.class)) {
                             var transientCtx = new io.vidocq.vauban.core.context.CreationalContextImpl<>();
                             args[i] = resolveParameter(paramTypes[i], genericParamTypes[i], transientCtx, pQuals, injectCtor, ctorOwnerBean, ctorParamsRefl[i], i);
@@ -705,7 +725,10 @@ public final class VaubanContainer implements AutoCloseable {
                                 var params = method.getParameters();
                                 var args = new Object[paramTypes.length];
                                 for (int i = 0; i < paramTypes.length; i++) {
-                                    var qualifiers = QualifierHelper.extractParamQualifiers(params[i]);
+                                    var described = QualifierHelper.parameterQualifiers(
+                                            descriptor.injectionPoints(), method, i, qualifierMatcher().types());
+                                    var qualifiers = described != null
+                                            ? described : QualifierHelper.extractParamQualifiers(params[i]);
                                     if (params[i].isAnnotationPresent(jakarta.enterprise.inject.TransientReference.class)) {
                                         args[i] = resolveParameter(paramTypes[i], genericParamTypes[i], transientCtx, qualifiers, method);
                                     } else {

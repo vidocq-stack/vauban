@@ -74,6 +74,27 @@ final class QualifierResolver {
         return qualifiers;
     }
 
+    /**
+     * Exactly what the annotations of an injection point say, with no completion — what injection
+     * would otherwise have to read off the field or the parameter (vauban#70).
+     */
+    Set<QualifierInstance> declaredInjectionPointQualifiers(List<AnnotationInfo> annotations) {
+        var qualifiers = new LinkedHashSet<QualifierInstance>();
+        for (var ann : annotations) {
+            if (isQualifierAnnotation(ann.name())) {
+                qualifiers.add(QualifierInstance.from(ann));
+            } else {
+                qualifiers.addAll(unwrapRepeatableQualifiers(ann));
+            }
+        }
+        if (qualifiers.isEmpty()) {
+            // CDI 4.1 §5.2.2: a point that declares nothing requires @Default — which IS what it
+            // declares, then; the completion below adds only @Any on top.
+            qualifiers.add(QualifierInstance.DEFAULT);
+        }
+        return qualifiers;
+    }
+
     Set<QualifierInstance> computeInjectionPointQualifiers(List<AnnotationInfo> annotations) {
         var qualifiers = new LinkedHashSet<QualifierInstance>();
         boolean hasExplicitQualifier = false;

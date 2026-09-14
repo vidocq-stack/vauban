@@ -675,11 +675,11 @@ public final class EventDispatcher {
                                     var typeArg = pt.getActualTypeArguments()[0];
                                     if (typeArg instanceof Class<?> c) instanceType = c;
                                 }
-                                var paramQualifiers = extractQualifierAnnotations(params[i]);
+                                var paramQualifiers = observerParamQualifiers(observer, method, i, params[i]);
                                 args[i] = new io.vidocq.vauban.core.container.InstanceImpl<>(
                                         container, instanceType, paramQualifiers, null, ctx);
                             } else {
-                                var paramQualifiers = extractQualifierAnnotations(params[i]);
+                                var paramQualifiers = observerParamQualifiers(observer, method, i, params[i]);
                                 // Resolve generic type variables for inherited observer methods
                                 var resolvedParamType = resolveObserverParamType(beanClass, method, i);
                                 var beans = paramQualifiers.length > 0
@@ -819,7 +819,24 @@ public final class EventDispatcher {
         return null;
     }
 
+    /**
+     * The qualifiers of an observer's non-event parameter. The declaring bean's descriptor records
+     * them (CDI 4.1 §10.4.3 makes them injection points), so nothing is read off the method; a
+     * parameter no descriptor describes — a synthetic observer's — still falls back on the method.
+     */
+    private java.lang.annotation.Annotation[] observerParamQualifiers(
+            io.vidocq.vauban.core.bean.model.ObserverDescriptor observer,
+            java.lang.reflect.Method method, int index, java.lang.reflect.Parameter param) {
+        var described = container.describedParameterQualifiers(
+                container.managedDescriptor(observer.declaringClass()), method, index);
+        if (described == null) {
+            return extractQualifierAnnotations(param);
+        }
+        return described;
+    }
+
     private static java.lang.annotation.Annotation[] extractQualifierAnnotations(java.lang.reflect.Parameter param) {
+        io.vidocq.vauban.core.annotation.AnnotationReflection.checkParameter(param);
         var quals = new java.util.ArrayList<java.lang.annotation.Annotation>();
         for (var ann : param.getAnnotations()) {
             if (ann.annotationType() == jakarta.enterprise.event.Observes.class) continue;

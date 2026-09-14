@@ -85,6 +85,22 @@
                     </execution>
                 </executions>
             </plugin>
+            <!--
+                Every test of this module runs with reflection on annotations FORBIDDEN: a module
+                compiled with the Vauban APT ships what its own annotation types declare, so the
+                container must never read one of them back (vauban#70). Any fallback — reading an
+                instance's members, reading a declaration, building an instance — throws here
+                instead of passing unnoticed.
+            -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <configuration>
+                    <systemPropertyVariables>
+                        <vauban.annotations.reflection>forbid</vauban.annotations.reflection>
+                    </systemPropertyVariables>
+                </configuration>
+            </plugin>
             <plugin>
                 <groupId>org.sonatype.central</groupId>
                 <artifactId>central-publishing-maven-plugin</artifactId>

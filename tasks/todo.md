@@ -206,21 +206,44 @@ interceptor binding:
       not reported, declared defaults ignored, and the precedence bug put back in PR 4b's hand-written
       fixture — which that fixture's new `hashCode` assertion catches (it was wrong, and unnoticed)
 
-#### PR 4d — The last reflective reads on the qualifier path
-- [ ] Parameter qualifiers from the index instead of `Parameter.getAnnotations()` (moved out of PR 3b);
-      seven of the ten sites have a descriptor to read from, three have none and stay reflective.
-      `QualifierHelper` also reads a *declaration* (`isAnnotationPresent(Qualifier.class)`) on that
-      path — the index answers that too
+#### PR 4d — The last reflective reads on the qualifier path — DONE (bench pending)
+- [x] **The switch guards the fallback it was missing.** `forbid` covered the three vauban fallbacks
+      but not the raw `param.getAnnotations()` / `field.getAnnotations()` scattered in the container,
+      so it proved nothing about the injection path. `AnnotationReflection.checkParameter/checkField`
+      now declare that read wherever it happens — four near-duplicate copies of it, in
+      `QualifierHelper`, `ManagedBean`, `EventDispatcher` and `VaubanInjectionPoint`
+- [x] It throws `AnnotationReflection.ForbiddenException`, a type of its own, and both catches that
+      swallowed it let it through: a diagnostic mode a `catch (Exception)` can silence is worthless.
+      The swallowing itself is BUG-20260914-17, deliberately left alone
+- [x] Every injection shape now resolves from the descriptor: field, constructor parameter,
+      initializer parameter, producer method parameter, observer non-event parameter, `Instance` and
+      `Event` fields, `Bean#getInjectionPoints()`. A member no descriptor describes still falls back
+- [x] **`InjectionPointInfo` records both sets.** What discovery stored was the *completed* set —
+      `@Default` when nothing is written, and always `@Any` — where injection needs what the
+      annotations actually say; using the first for the second made an unqualified event reach
+      qualified observers. `declaredQualifiers()` is the declaration, `qualifiers()` what resolution
+      compares. **The CDI TCK caught this and the CI does not run it**, so
+      `whatAPointDeclaresIsNotWhatResolutionCompares` now catches it in the reactor
+- [x] Descriptions are built by `InjectionPointInfo.parameterDescription`/`fieldDescription` on both
+      sides instead of being spelled twice, matched whole (the old `endsWith("." + name)` would pick a
+      superclass field of the same name), and an overloaded initializer — two parameters described
+      identically — falls back rather than guessing
+- [x] `vauban-module-it` runs under `-Dvauban.annotations.reflection=forbid` for the whole module,
+      over a **package-private** qualifier with a binding member, a `@Nonbinding` one and one left at
+      its default. Verified: 431 tests, both run orders, CDI TCK 774/774, AtInject; three mutations,
+      each red on the test that claims it
+- [ ] BENCH "after" entry
+
+#### Left for later
 - [ ] A qualifier from a dependency **not** built with the Vauban processor: its metadata comes from
       the class bytes (no reflection), but the instance a bean exposes still falls to
       `AnnotationInstances.create`, which `forbid` refuses. Either render a literal in the consuming
       package when the type is public and accessible, or say plainly that `forbid` requires every
-      qualifier's module to be compiled with the processor. The IT below settles which
-- [ ] `vauban-module-it` runs under `-Dvauban.annotations.reflection=forbid` (a surefire
-      `systemPropertyVariables` block, which that module does not have yet) over every edge shape,
-      plus a run-time-only annotation proving the fallback still works. Interceptor binding comparison
-      is not guarded by the switch — it is PR 5's — so the claim the IT makes is about qualifiers
-- [ ] BENCH "after" entry
+      qualifier's module to be compiled with the processor
+- [ ] Three sites keep reading the member, having nothing to read instead: a disposer's non-`@Disposes`
+      parameters (`DisposerDescriptor` does not model them), `getInjectionTargetFactory`'s
+      `AnnotatedType` (supplied by the caller, by construction), and the `Annotated` SPI facades
+      (the specification requires those to hand out the annotations themselves)
 
 ### PR 5 — Interceptor bindings
 - [ ] `InterceptorManager` on keys; chain cached per (class, method); `getInterceptorBindings` cached

@@ -20,18 +20,113 @@
 package io.vidocq.vauban.core.container;
 
 
+import io.vidocq.vauban.core.bean.model.InjectionPointInfo;
+
 import java.lang.annotation.Annotation;
 import java.lang.reflect.Field;
 import java.lang.reflect.Parameter;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
+import java.util.List;
 import java.util.Set;
 
 final class QualifierHelper {
 
     private QualifierHelper() {}
 
+    /**
+     * The qualifiers the descriptor records for parameter {@code index} of {@code member}, as the
+     * annotation instances the injection point exposes — the module's own literal when it generated
+     * one (vauban#70), never a reflective read of the parameter. {@code null} when nothing describes
+     * that parameter, which is the caller's signal to fall back.
+     */
+    static Annotation[] parameterQualifiers(List<InjectionPointInfo> points,
+            java.lang.reflect.Executable member, int index,
+            io.vidocq.vauban.core.annotation.AnnotationTypes types) {
+        if (points == null || points.isEmpty()) {
+            return null;
+        }
+        var wanted = InjectionPointInfo.parameterDescription(simpleName(member.getDeclaringClass()),
+                member instanceof java.lang.reflect.Constructor<?> ? null : member.getName(), index);
+        InjectionPointInfo found = null;
+        for (var point : points) {
+            if (point.kind() == InjectionPointInfo.InjectionKind.FIELD) continue;
+            if (!point.description().equals(wanted)) continue;
+            // Overloaded initializer methods describe their parameters identically, so two matches
+            // mean the description cannot tell them apart: read the parameter instead of guessing.
+            if (found != null) return null;
+            found = point;
+        }
+        if (found == null) {
+            return null;
+        }
+        var qualifiers = QualifierUtils.toAnnotations(found.declaredQualifiers(), null, null, types);
+        return qualifiers.isEmpty()
+                ? new Annotation[] {jakarta.enterprise.inject.Default.Literal.INSTANCE}
+                : qualifiers.toArray(new Annotation[0]);
+    }
+
+    /**
+     * The qualifiers the descriptor records for {@code field}, as annotation instances.
+     * {@code null} when nothing describes it — an interceptor's field, injected without a descriptor.
+     */
+    static Annotation[] fieldQualifiers(List<InjectionPointInfo> points, Field field,
+            io.vidocq.vauban.core.annotation.AnnotationTypes types) {
+        var point = fieldPoint(points, field);
+        if (point == null) {
+            return null;
+        }
+        var qualifiers = QualifierUtils.toAnnotations(point.declaredQualifiers(), null, null, types);
+        return qualifiers.isEmpty()
+                ? new Annotation[] {jakarta.enterprise.inject.Default.Literal.INSTANCE}
+                : qualifiers.toArray(new Annotation[0]);
+    }
+
+    /** The injection point describing {@code field}, matched on the whole description. */
+    static InjectionPointInfo fieldPoint(List<InjectionPointInfo> points, Field field) {
+        if (points == null) {
+            return null;
+        }
+        // The declaring class is part of it: a subclass field may shadow a superclass field's name.
+        var wanted = InjectionPointInfo.fieldDescription(
+                simpleName(field.getDeclaringClass()), field.getName());
+        for (var point : points) {
+            if (point.kind() == InjectionPointInfo.InjectionKind.FIELD
+                    && point.description().equals(wanted)) {
+                return point;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * An {@code Event} field's qualifiers: what the injection point declares, completed as CDI
+     * requires — {@code @Default} when nothing else is written, and always {@code @Any}. The
+     * qualifiers come from the descriptor, so unlike {@link #collectEventQualifiers} nothing has to
+     * ask an annotation type whether it is one.
+     */
+    static Annotation[] eventQualifiers(Annotation[] described) {
+        var quals = new LinkedHashSet<Annotation>(List.of(described));
+        if (quals.stream().allMatch(q -> q.annotationType() == jakarta.enterprise.inject.Default.class)) {
+            quals.add(jakarta.enterprise.inject.Default.Literal.INSTANCE);
+        }
+        quals.add(jakarta.enterprise.inject.Any.Literal.INSTANCE);
+        return quals.toArray(new Annotation[0]);
+    }
+
+    /**
+     * The simple name as the index spells it — {@code Outer$Inner} for a nested class, where
+     * {@link Class#getSimpleName()} says only {@code Inner}. The descriptions the two sides compare
+     * are built from {@code DotName#simpleName()}, so this has to agree with it.
+     */
+    private static String simpleName(Class<?> type) {
+        var name = type.getName();
+        int dot = name.lastIndexOf('.');
+        return dot < 0 ? name : name.substring(dot + 1);
+    }
+
     static Annotation[] extractParamQualifiers(Parameter param) {
+        io.vidocq.vauban.core.annotation.AnnotationReflection.checkParameter(param);
         var quals = new ArrayList<Annotation>();
         boolean hasAnyAnnotation = false;
         for (var ann : param.getAnnotations()) {
@@ -98,6 +193,7 @@ final class QualifierHelper {
     }
 
     static Annotation[] extractFieldQualifiers(Field field) {
+        io.vidocq.vauban.core.annotation.AnnotationReflection.checkField(field);
         var qualifiers = new ArrayList<Annotation>();
         boolean hasAnyAnnotation = false;
         for (var ann : field.getAnnotations()) {

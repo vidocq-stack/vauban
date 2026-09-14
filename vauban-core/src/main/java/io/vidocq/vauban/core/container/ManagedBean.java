@@ -41,6 +41,8 @@ import java.util.function.Consumer;
  */
 public final class ManagedBean<T> implements Bean<T> {
 
+    private static final System.Logger LOG = System.getLogger(ManagedBean.class.getName());
+
     private final BeanDescriptor descriptor;
     private final BeanFactory<T> factory;
     private final Class<T> beanClass;
@@ -939,8 +941,14 @@ public final class ManagedBean<T> implements Bean<T> {
         return descriptor.isAlternative();
     }
 
+    /**
+     * The bean's injection points, with the qualifiers its descriptor records for each (vauban#70):
+     * a field, a constructor parameter or an initializer parameter the descriptor does not describe
+     * falls back on reading the member.
+     */
     @Override
     public Set<InjectionPoint> getInjectionPoints() {
+        var points = descriptor == null ? null : descriptor.injectionPoints();
         var result = new LinkedHashSet<InjectionPoint>();
         try {
             var typeMapping = buildTypeVariableMapping(beanClass);
@@ -950,9 +958,11 @@ public final class ManagedBean<T> implements Bean<T> {
             while (cls != null && cls != Object.class) {
                 for (var field : cls.getDeclaredFields()) {
                     if (field.isAnnotationPresent(jakarta.inject.Inject.class)) {
+                        var described = QualifierHelper.fieldQualifiers(points, field, annotationTypes);
                         result.add(new VaubanInjectionPoint(
                                 resolveType(field.getGenericType(), typeMapping),
-                                VaubanInjectionPoint.extractQualifiersStatic(field),
+                                described != null ? Set.of(described)
+                                        : VaubanInjectionPoint.extractQualifiersStatic(field),
                                 this, field));
                     }
                 }
@@ -964,7 +974,9 @@ public final class ManagedBean<T> implements Bean<T> {
                     var paramTypes = ctor.getGenericParameterTypes();
                     var params = ctor.getParameters();
                     for (int i = 0; i < params.length; i++) {
-                        var qualifiers = extractParamQualifiers(params[i]);
+                        var described = QualifierHelper.parameterQualifiers(points, ctor, i, annotationTypes);
+                        var qualifiers = described != null
+                                ? Set.of(described) : extractParamQualifiers(params[i]);
                         result.add(new VaubanInjectionPoint(params[i], i, ctor,
                                 resolveType(paramTypes[i], typeMapping), qualifiers, this));
                     }
@@ -978,7 +990,9 @@ public final class ManagedBean<T> implements Bean<T> {
                         var paramTypes = method.getGenericParameterTypes();
                         var params = method.getParameters();
                         for (int i = 0; i < params.length; i++) {
-                            var qualifiers = extractParamQualifiers(params[i]);
+                            var described = QualifierHelper.parameterQualifiers(points, method, i, annotationTypes);
+                            var qualifiers = described != null
+                                    ? Set.of(described) : extractParamQualifiers(params[i]);
                             result.add(new VaubanInjectionPoint(params[i], i, method,
                                     resolveType(paramTypes[i], typeMapping), qualifiers, this));
                         }
@@ -986,8 +1000,11 @@ public final class ManagedBean<T> implements Bean<T> {
                 }
                 cls = cls.getSuperclass();
             }
+        } catch (io.vidocq.vauban.core.annotation.AnnotationReflection.ForbiddenException e) {
+            throw e;
         } catch (Exception e) {
-            // Fallback to empty set
+            LOG.log(System.Logger.Level.DEBUG,
+                    () -> "Could not describe the injection points of " + beanClass.getName(), e);
         }
         return result;
     }
@@ -1104,6 +1121,7 @@ public final class ManagedBean<T> implements Bean<T> {
     }
 
     private static Set<java.lang.annotation.Annotation> extractParamQualifiers(java.lang.reflect.Parameter param) {
+        io.vidocq.vauban.core.annotation.AnnotationReflection.checkParameter(param);
         var qualifiers = new java.util.LinkedHashSet<java.lang.annotation.Annotation>();
         boolean hasAnyAnnotation = false;
         for (var ann : param.getAnnotations()) {

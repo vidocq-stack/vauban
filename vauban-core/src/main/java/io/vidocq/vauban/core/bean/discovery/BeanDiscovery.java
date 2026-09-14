@@ -72,7 +72,6 @@ public final class BeanDiscovery {
     static final String PREFIX_JAKARTA_INTERCEPTOR = "jakarta.interceptor.";
     static final String PREFIX_JAKARTA_INJECT = "jakarta.enterprise.inject.";
     static final String JAVA_LANG_OBJECT = "java.lang.Object";
-    private static final String PARAM_PREFIX = "parameter ";
     static final String MEMBER_VALUE = "value";
 
     final VaubanIndex index;
@@ -606,8 +605,10 @@ public final class BeanDiscovery {
             var param = method.parameters().get(i);
             var paramQualifiers = computeInjectionPointQualifiers(param.annotations());
             injectionPoints.add(new InjectionPointInfo(
-                    param.type(), paramQualifiers, InjectionPointInfo.InjectionKind.METHOD_PARAMETER,
-                    PARAM_PREFIX + i + " of " + declaringClass.name().simpleName() + "." + method.name() + "()"
+                    param.type(), paramQualifiers,
+                    declaredInjectionPointQualifiers(param.annotations()),
+                    InjectionPointInfo.InjectionKind.METHOD_PARAMETER,
+                    InjectionPointInfo.parameterDescription(declaringClass.name().simpleName(), method.name(), i)
             ));
         }
 
@@ -922,6 +923,11 @@ public final class BeanDiscovery {
         return qualifierResolver.computeInjectionPointQualifiers(annotations);
     }
 
+    /** What the point's annotations say, before CDI's completion — see {@code InjectionPointInfo}. */
+    Set<QualifierInstance> declaredInjectionPointQualifiers(List<AnnotationInfo> annotations) {
+        return qualifierResolver.declaredInjectionPointQualifiers(annotations);
+    }
+
     Set<QualifierInstance> computeObserverQualifiers(List<AnnotationInfo> annotations) {
         return qualifierResolver.computeObserverQualifiers(annotations);
     }
@@ -1128,8 +1134,9 @@ public final class BeanDiscovery {
                 var resolvedType = resolveGenericTypeForMethodParameter(classInfo, ctor, i);
                 points.add(new InjectionPointInfo(
                         resolvedType, computeInjectionPointQualifiers(param.annotations()),
+                        declaredInjectionPointQualifiers(param.annotations()),
                         InjectionPointInfo.InjectionKind.CONSTRUCTOR_PARAMETER,
-                        PARAM_PREFIX + i + " of " + classInfo.name().simpleName() + "()"
+                        InjectionPointInfo.parameterDescription(classInfo.name().simpleName(), null, i)
                 ));
             }
         }
@@ -1140,11 +1147,13 @@ public final class BeanDiscovery {
                 var qualifiers = computeInjectionPointQualifiers(field.annotations());
                 // CDI spec: @Named without value on injection point defaults to the field name
                 qualifiers = qualifierResolver.resolveNamedDefault(qualifiers, field.name());
+                var declared = qualifierResolver.resolveNamedDefault(
+                        declaredInjectionPointQualifiers(field.annotations()), field.name());
                 var resolvedType = resolveGenericTypeForField(classInfo, field);
                 points.add(new InjectionPointInfo(
-                        resolvedType, qualifiers,
+                        resolvedType, qualifiers, declared,
                         InjectionPointInfo.InjectionKind.FIELD,
-                        "field " + classInfo.name().simpleName() + "." + field.name()
+                        InjectionPointInfo.fieldDescription(classInfo.name().simpleName(), field.name())
                 ));
             }
         }
@@ -1168,8 +1177,9 @@ public final class BeanDiscovery {
                     var resolvedType = resolveGenericTypeForMethodParameter(classInfo, method, i);
                     points.add(new InjectionPointInfo(
                             resolvedType, computeInjectionPointQualifiers(param.annotations()),
+                            declaredInjectionPointQualifiers(param.annotations()),
                             InjectionPointInfo.InjectionKind.METHOD_PARAMETER,
-                            PARAM_PREFIX + i + " of " + classInfo.name().simpleName() + "." + method.name() + "()"
+                            InjectionPointInfo.parameterDescription(classInfo.name().simpleName(), method.name(), i)
                     ));
                 }
             }
@@ -1196,8 +1206,9 @@ public final class BeanDiscovery {
                 }
                 points.add(new InjectionPointInfo(
                         resolvedType, computeInjectionPointQualifiers(param.annotations()),
+                        declaredInjectionPointQualifiers(param.annotations()),
                         InjectionPointInfo.InjectionKind.METHOD_PARAMETER,
-                        PARAM_PREFIX + i + " of " + classInfo.name().simpleName() + "." + method.name() + "()"
+                        InjectionPointInfo.parameterDescription(classInfo.name().simpleName(), method.name(), i)
                 ));
             }
         }
