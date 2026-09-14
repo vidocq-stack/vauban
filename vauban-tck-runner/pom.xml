@@ -161,7 +161,6 @@
                                 <org.jboss.cdi.tck.libraryDirectory>${project.build.directory}/dependency/lib</org.jboss.cdi.tck.libraryDirectory>
                             </systemPropertyVariables>
                             <excludedGroups>integration,javaee-full,se,cdi-full</excludedGroups>
-                            <testFailureIgnore>true</testFailureIgnore>
                             <!-- Override the default includes to pick up TCK test classes -->
                             <includes combine.self="override">
                                 <include>**/*Test.java</include>
