@@ -86,8 +86,11 @@ the extension non-binding interceptor test passed only because extension-declare
 member at all (-08), and the first `@Inherited` String failure came from a fixture whose bean type sat
 on an unindexed superclass. Where each bug gets fixed:
 - PR 2: -01 member defaults, -04 class loader, -09 inherited members, -12 processor names
-- PR 3: -02 field members, -03 container-built instances, -05 context class loader, -06 async
-  observers, -07 extension non-binding on observers, -10 enhancement-added members
+- PR 3a: -02 field members, -03 container-built instances, -10 enhancement-added members, and the two
+  its own tests turned up: -15 synthetic components, -16 `AnnotationBuilder.member(name, Class)`
+  (-02 was mapped to the run-time stage; field injection rebuilds its qualifiers through the very
+  conversion 3a fixes, so it is fixed there)
+- PR 3b: -05 context class loader, -06 async observers, -07 extension non-binding on observers
 - PR 4: -13 compile-time validation of the module's own qualifiers
 - PR 5: -08 extension-declared interceptor bindings
 - Outside #70: -11 default name of a nested bean class
@@ -141,6 +144,13 @@ compares what they return, and every later stage returns them from `getQualifier
 - [x] Static non-binding state removed from `QualifierMatcher`
 - [x] `vauban.annotations.reflection=allow|warn|forbid`, a test per fallback
 - Fixes -05, -06 and -07 (-02 went with PR 3a, which fixed it)
+
+PR 3 outcome: one matching rule left at run time, on `AnnotationKey`s, and one annotation instance
+behind every CDI getter. Sequential `mvn clean install`: 788 tests, 0 failures; both surefire orders
+green; CDI TCK 774/774 and AtInject green; one mutation proof per fix. BENCH-20260914-02 against the
+PR 1 baseline: dependent creation 2.3× faster and 41 % less allocated, programmatic lookup 3.2× faster
+and 32 % less, the qualified event and the intercepted call unchanged within the noise of a machine
+that was not idle. Four tests stay disabled: -08 (PR 5), -11 (outside #70, twice), -13 (PR 4).
 - Moved to PR 4: parameter qualifiers from the index instead of `Parameter.getAnnotations()`. It is
   performance only, touches nine call sites in six classes, and pairs with the generated metadata.
 
