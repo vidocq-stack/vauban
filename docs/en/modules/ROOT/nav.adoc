@@ -5,5 +5,6 @@
 ** xref:concepts.adoc[Concepts]
 ** xref:internals.adoc[Internals]
 ** xref:tck.adoc[TCK]
+** xref:performance.adoc[Performance]
 ** xref:reference.adoc[Reference]
 ** xref:migration.adoc[Migration]

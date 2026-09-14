@@ -70,6 +70,7 @@ graph TB
 * xref:concepts.adoc[Concepts]
 * xref:internals.adoc[Internals]
 * xref:tck.adoc[TCK status]
+* xref:performance.adoc[Performance]
 * xref:reference.adoc[Reference]
 * xref:migration.adoc[Migration]
 

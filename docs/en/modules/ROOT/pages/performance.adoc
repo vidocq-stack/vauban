@@ -1,0 +1,118 @@
+= Performance
+:description: What Vauban costs at run time — qualifier resolution, injection, events and interception — and how it is measured.
+
+[.lead]
+Vauban does at build time what a runtime container does on every lookup, so the numbers that matter
+are the ones on the hot path: resolving a qualified injection point, a programmatic lookup, firing a
+qualified event, and an intercepted call. *Every run, with its raw output and its caveats*, is kept
+in link:{repo-vauban}/src/branch/main/BENCH.md[BENCH.md] — this page is the reading of it.
+
+== TL;DR
+
+Between 2026-09-14 and the close of
+https://codefloe.com/Vidocq/vauban/issues/70[vauban#70^], qualifier matching, injection and
+interceptor binding comparison stopped reading annotations at run time. Same benchmark, same machine,
+before and after:
+
+[cols="2,2,2,1,1",options="header"]
+|===
+| Benchmark | before | after | time | allocation
+
+| `dependentCreation`
+| 41561 ns, 65245 B
+| 13627 ns, 34565 B
+| *3.05× faster*
+| *−47 %*
+
+| `programmaticLookup`
+| 6590 ns, 11691 B
+| 1869 ns, 6965 B
+| *3.53× faster*
+| *−40 %*
+
+| `interceptedCall`
+| 651 ns, 3251 B
+| 360 ns, 768 B
+| *1.81× faster*
+| *−76 %*
+
+| `qualifiedEvent`
+| 4673 ns, 6941 B
+| 4512 ns, 7792 B
+| flat
+| +12 %
+|===
+
+*Pragmatic read*: creating a bean with qualified injection points and looking one up programmatically
+— the two operations an application performs constantly — cost about a third of what they did, for
+roughly half the garbage. An intercepted call allocates a quarter of what it did.
+
+`qualifiedEvent` did not move, and the table says so. See <<what-did-not-move>>.
+
+== Where the time went
+
+Three things were removed, in this order.
+
+Matching on keys::
+Resolution used to rebuild every candidate bean's qualifiers as `java.lang.reflect.Proxy` instances
+and compare them member by member with `Method.invoke`, on every lookup. A bean's qualifiers are now
+normalized once into an `AnnotationKey` — member defaults applied, `@Nonbinding` members left out —
+and matching compares those. This is most of the gain on `dependentCreation` and
+`programmaticLookup`.
+
+Injection reading the index::
+What remained after that was the *injection point* side: the qualifiers of a field or a parameter
+were read off the member on every creation. They come from the descriptor the index built instead.
+
+The interceptor chain worked out once::
+The generated subclass asks for its interceptor chain on every call, and the container answered by
+walking the class hierarchy, resolving the method reflectively and re-reading every binding
+annotation. Which interceptors apply depends on declarations alone, so it is computed once per
+(bean class, method). That is the whole of `interceptedCall`: 768 B/op is what building the chain's
+invocations costs, and the 2.5 KB above it was the answer being recomputed.
+
+[#what-did-not-move]
+== What did not move
+
+`qualifiedEvent` is `orders.select(literal).fire(event)` with a fresh `Event` per iteration, so its
+qualifiers are converted on every measurement. BENCH-20260914-02 predicted that the generated
+readers of PR 4 would remove that conversion cost. *They did not*: allocation fell 7 %, the time did
+not move, and allocation is still 12 % above the pre-#70 baseline. The generated reader makes the
+conversion cheaper, not free, and what is left is in the dispatch rather than in the annotations.
+An `Event` injected once and fired many times pays the conversion once.
+
+That prediction is recorded in BENCH.md as having failed, on purpose: a benchmark history is only
+useful if it keeps the guesses that did not hold.
+
+== Methodology
+
+* *Harness*: JMH, in `vauban-bench` — a module of the reactor, not a published artefact.
+* *Hardware*: Apple M5 Max, 18 cores (6 performance, 12 efficiency), 128 GB RAM, macOS 26.6.2
+  (arm64).
+* *JVM*: Temurin 25+36-LTS, default flags.
+* *Mode*: average time per operation, with `-prof gc` for allocation per operation.
+* *Machine state*: the runs were made on a machine that was **not idle** — load average between 2.6
+  and 5. Each entry records its own, and only runs made under comparable load are compared. Changes
+  of the same order as that difference, or as the error bars (0.8 % to 2.8 % of each score), are read
+  as flat rather than as gains.
+
+[WARNING]
+====
+These are microbenchmarks of the container's own hot path, not of an application. They say how much
+cheaper resolution became; they do not predict what a given application will gain, which depends
+entirely on how much of its time it spends in the container.
+====
+
+== Reproducibility
+
+[source,bash]
+----
+# The numbers above come from this exact command
+mvn -ntp clean install
+java -jar vauban-bench/target/benchmarks.jar -f 3 -wi 5 -i 5 -w 2s -r 3s -prof gc
+----
+
+Compare against the entries in link:{repo-vauban}/src/branch/main/BENCH.md[BENCH.md], which carry
+the raw JMH output, the commit each was measured at, and the machine's load at the time. The
+convention for this repository is that *no performance number is published anywhere without a
+corresponding entry there*.

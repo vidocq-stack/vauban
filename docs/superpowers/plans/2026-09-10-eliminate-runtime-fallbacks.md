@@ -1,6 +1,21 @@
 # Eliminate the runtime-generation fallbacks Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **SUPERSEDED — kept for the record, do not execute.** Every task below was implemented (27 commits,
+> `git log --grep='#42'`), and the checkboxes were never ticked: reading them as work to do is wrong.
+> Where things actually stand:
+>
+> - **What was built**, task by task, with outcomes: `tasks/todo.md`, sections *#42 Stage 4* and *#53*.
+> - **What is left of the four residual runtime paths**, with the status of each on `main`:
+>   `INTERCEPTORS.md` §10.3. Three are closed. The fourth — a non-public `@AroundInvoke`, which keeps
+>   `privateLookupIn` and so keeps the interceptor module's `opens` — is an **explicit scope cut** of
+>   vauban#42, not an oversight.
+> - Two deliberate deviations from the plan below: `required-opens.list` became the *placement*
+>   manifest rather than an opens list (`internals.adoc` explains why the name stayed), and the
+>   boot-time opens of Stage 3b ship **opt-in** (`-Dvauban.opens.auto=true`) rather than as the
+>   default.
+>
+> An unplanned Stage 4 — proxy placement through the Vauban class loader and the Java SE launcher —
+> was added on top and is not described here at all.
 
 **Goal:** Make Vauban's default path fully build-time (no runtime `defineClass`/`privateLookupIn`) for every producer whose type is fully public, turn the non-eligible cases into actionable build errors, and make the last irreducible `opens` computed at build and applied at boot — never hand-written.
 
