@@ -73,7 +73,6 @@
         <module>vauban-sjar</module>
         <module>vauban-junit</module>
         <module>vauban-maven-plugin</module>
-        <module>vauban-test-suite</module>
         <module>vauban-tck-runner</module>
         <module>vauban-atinject-tck-runner</module>
         <module>vauban-module-it</module>
