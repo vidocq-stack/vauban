@@ -1427,3 +1427,24 @@ and a proposed upstream assertion: `CDI_TCK_PROPOSALS.md` → `TCK-GAP-001`.
 - **Investigations**:
   - 2026-09-14: found while writing the `forbid` integration test of vauban#70 PR 4d, where it hid three genuine failures behind NPEs. That PR only makes `AnnotationReflection.ForbiddenException` pass through both catches — a diagnostic mode that a `catch` can silence is worthless — and leaves the rest of the behaviour alone: turning the swallow into a propagation changes what happens to every failing injection in the container, which wants its own change and its own TCK run.
   - 2026-09-14 (fix): both catches propagate. `injectSingleField` rethrows a `RuntimeException` with its type intact — a caller catching `UnsatisfiedResolutionException` or `IllegalProductException` must still see it — and wraps a checked exception in `CreationException`, naming the field. `getInjectionPoints` throws rather than reporting that a bean has half its injection points, or none: the caller cannot tell a wrong answer from the truth. **The swallow turned out to protect nothing**: 434 unit tests, both surefire run orders, the CDI Lite TCK 774/774 and AtInject are green without it, and no test relied on a failed injection leaving a field null. Covered by `InjectionFailurePropagatesTest`; the `getInjectionPoints` half has no test of its own — nothing in the reactor makes that method fail — and rests on those suites staying green.
+
+---
+
+## BUG-20260914-18 — `Bean#destroy` runs a producer's disposer twice
+
+- **Date**: 2026-09-14
+- **Status**: OPEN
+- **Module**: `vauban-core` (`ManagedBean#destroy`, the dependent-context release)
+- **Symptom**: destroying a produced `@Dependent` instance calls its `@Disposes` method **twice**. `ManagedBean#destroy` invokes the destroyer, then releases the `CreationalContext`, and the instance is destroyed a second time along the way — the `removeIf(dep -> dep.instance() == instance)` guard just above does not cover it, so the instance must also be registered as a dependent of another context.
+- **Minimal reproduction** (`DisposerParameterTest#anUnqualifiedParameterIsUnaffected`, which pins the count at 2 on purpose so a fix fails there and gets noticed):
+  ```java
+  var bean = beanManager.resolve(beanManager.getBeans(Ledger.class));
+  var context = beanManager.createCreationalContext(bean);
+  var ledger = beanManager.getReference(bean, Ledger.class, context);
+  bean.destroy(ledger, context);
+  // the disposer ran twice
+  ```
+- **Suspected cause**: two paths destroy the same instance — the explicit `destroyer.accept(...)` and the dependent released by `cc.release()`. Whichever registration the guard misses is the one to find.
+- **Investigations**:
+  - 2026-09-14: found while fixing vauban#89. It is older than that change and independent of it: the count is 2 whether the disposer's other parameter is qualified or not, which is why the test pins both cases. It was invisible until #89 made the disposer's body actually run — before, its parameters resolved to nothing and the call failed inside a `catch (Exception) { /* Best effort */ }`.
+  - CDI 4.1 §5.5.3: a disposer runs once per destroyed instance. Note `ManagedBean#destroy` suppresses any exception a disposer throws, which the specification does require — that swallow is not this bug.

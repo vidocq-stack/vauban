@@ -36,6 +36,8 @@ import jakarta.enterprise.event.Event;
 import jakarta.enterprise.inject.Instance;
 import jakarta.enterprise.inject.spi.BeanManager;
 
+import java.lang.annotation.Annotation;
+
 import java.lang.reflect.ParameterizedType;
 import java.util.List;
 
@@ -86,7 +88,11 @@ final class DisposerInvoker {
                                 || paramTypeName.equals("jakarta.enterprise.inject.Instance")
                                 || paramTypeName.equals("jakarta.inject.Provider")
                                 || paramTypeName.equals("jakarta.enterprise.event.Event")) continue;
-                        var ip = new InjectionPointInfo(
+                        // What the parameter declares, not @Default assumed for it: a qualified
+                        // parameter used to read as unsatisfied against beans that carry its
+                        // qualifier (vauban#89).
+                        var described = describedParameter(disposer, pi);
+                        var ip = described != null ? described : new InjectionPointInfo(
                                 new TypeInfo.ClassType(DotName.of(paramType.getName())),
                                 java.util.Set.of(new QualifierInstance(
                                         DotName.of("jakarta.enterprise.inject.Default"),
@@ -321,6 +327,16 @@ final class DisposerInvoker {
         }
     }
 
+    /** The injection point the descriptor records for parameter {@code index}, or {@code null}. */
+    private static InjectionPointInfo describedParameter(DisposerDescriptor disposer, int index) {
+        var wanted = InjectionPointInfo.parameterDescription(
+                disposer.declaringClass().simpleName(), disposer.methodName(), index);
+        for (var point : disposer.injectionPoints()) {
+            if (point.description().equals(wanted)) return point;
+        }
+        return null;
+    }
+
     void callDisposer(Object producedInstance, DisposerDescriptor disposer, CreationalContext<?> creationalContext) {
         try {
             var declaringClass = container.loadClass(disposer.declaringClass().value());
@@ -343,29 +359,34 @@ final class DisposerInvoker {
                         args[disposer.parameterIndex()] = producedInstance;
                         for (int i = 0; i < paramTypes.length; i++) {
                             if (i == disposer.parameterIndex()) continue;
-                            try {
-                                if (paramTypes[i] == BeanManager.class) {
-                                    args[i] = container.getBeanManager();
-                                } else if (paramTypes[i] == Event.class) {
-                                    var eventIp = new VaubanInjectionPoint(method.getGenericParameterTypes()[i],
-                                            QualifierHelper.collectQualifierSet(method.getParameters()[i].getAnnotations()), null, method);
-                                    args[i] = new EventImpl<>(container.eventDispatcher(), QualifierHelper.collectEventQualifiers(method.getParameters()[i].getAnnotations()), eventIp);
-                                } else if (paramTypes[i] == Instance.class) {
-                                    Class<?> instanceType = Object.class;
-                                    var genericType = method.getGenericParameterTypes()[i];
-                                    if (genericType instanceof ParameterizedType pt) {
-                                        var typeArg = pt.getActualTypeArguments()[0];
-                                        if (typeArg instanceof Class<?> c) instanceType = c;
-                                    }
-                                    var ip = new VaubanInjectionPoint(genericType, java.util.Set.of(jakarta.enterprise.inject.Default.Literal.INSTANCE), null, method);
-                                    args[i] = new InstanceImpl<>(container, instanceType, ip);
-                                } else {
-                                    var beans = bm.getBeans(paramTypes[i]);
-                                    var bean = beans.isEmpty() ? null : bm.resolve(beans);
-                                    args[i] = bean != null ? bm.getReference(bean, paramTypes[i], ctx) : container.select(paramTypes[i]);
+                            // What the parameter declares. Resolving on its type alone handed a
+                            // qualified parameter the @Default bean (vauban#89); a parameter the
+                            // descriptor does not describe still falls back on reading the method.
+                            var described = describedParameter(disposer, i);
+                            var qualifiers = described != null
+                                    ? QualifierUtils.toAnnotations(described.declaredQualifiers(), null, null,
+                                            container.qualifierMatcher().types()).toArray(new Annotation[0])
+                                    : QualifierHelper.extractParamQualifiers(method.getParameters()[i]);
+                            if (paramTypes[i] == BeanManager.class) {
+                                args[i] = container.getBeanManager();
+                            } else if (paramTypes[i] == Event.class) {
+                                var eventIp = new VaubanInjectionPoint(method.getGenericParameterTypes()[i],
+                                        java.util.Set.of(qualifiers), null, method);
+                                args[i] = new EventImpl<>(container.eventDispatcher(),
+                                        QualifierHelper.eventQualifiers(qualifiers), eventIp);
+                            } else if (paramTypes[i] == Instance.class) {
+                                Class<?> instanceType = Object.class;
+                                var genericType = method.getGenericParameterTypes()[i];
+                                if (genericType instanceof ParameterizedType pt) {
+                                    var typeArg = pt.getActualTypeArguments()[0];
+                                    if (typeArg instanceof Class<?> c) instanceType = c;
                                 }
-                            } catch (Exception e) {
-                                // Best effort for other params
+                                var ip = new VaubanInjectionPoint(genericType, java.util.Set.of(qualifiers), null, method);
+                                args[i] = new InstanceImpl<>(container, instanceType, ip);
+                            } else {
+                                var beans = bm.getBeans(paramTypes[i], qualifiers);
+                                var bean = beans.isEmpty() ? null : bm.resolve(beans);
+                                args[i] = bean != null ? bm.getReference(bean, paramTypes[i], ctx) : container.select(paramTypes[i]);
                             }
                         }
                         if (isStatic) {

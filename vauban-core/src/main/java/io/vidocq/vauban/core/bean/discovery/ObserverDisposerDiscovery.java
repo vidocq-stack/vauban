@@ -20,6 +20,7 @@
 package io.vidocq.vauban.core.bean.discovery;
 
 import io.vidocq.vauban.core.bean.model.DisposerDescriptor;
+import io.vidocq.vauban.core.bean.model.InjectionPointInfo;
 import io.vidocq.vauban.core.bean.model.ObserverDescriptor;
 import io.vidocq.vauban.core.bean.model.QualifierInstance;
 import io.vidocq.vauban.indexer.model.AnnotationInfo;
@@ -239,6 +240,27 @@ final class ObserverDisposerDiscovery {
     }
 
     /**
+     * Every parameter of a disposer other than the {@code @Disposes} one, as an injection point.
+     * CDI 4.1 §10.4.3 makes them injection points like any other, so they are described the same way
+     * — and found again by the same description — as a producer's or an initializer's (vauban#89).
+     */
+    private List<InjectionPointInfo> otherParameters(ClassInfo classInfo, MethodInfo method,
+            int disposedIndex) {
+        var points = new ArrayList<InjectionPointInfo>();
+        for (int i = 0; i < method.parameters().size(); i++) {
+            if (i == disposedIndex) continue;
+            var param = method.parameters().get(i);
+            points.add(new InjectionPointInfo(
+                    param.type(),
+                    host.computeInjectionPointQualifiers(param.annotations()),
+                    host.declaredInjectionPointQualifiers(param.annotations()),
+                    InjectionPointInfo.InjectionKind.METHOD_PARAMETER,
+                    InjectionPointInfo.parameterDescription(classInfo.name().simpleName(), method.name(), i)));
+        }
+        return points;
+    }
+
+    /**
      * Discovers all disposer methods in the index.
      * A disposer method has exactly one parameter annotated with {@code @Disposes}.
      */
@@ -263,7 +285,7 @@ final class ObserverDisposerDiscovery {
                                 .toList());
                         disposers.add(new DisposerDescriptor(
                                 classInfo.name(), method.name(), param.type(),
-                                qualifiers, i));
+                                qualifiers, i, otherParameters(classInfo, method, i)));
                         break; // only one @Disposes per method
                     }
                 }
