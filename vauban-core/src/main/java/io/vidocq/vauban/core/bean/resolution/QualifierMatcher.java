@@ -19,36 +19,61 @@
  */
 package io.vidocq.vauban.core.bean.resolution;
 
+import io.vidocq.vauban.core.annotation.AnnotationKey;
+import io.vidocq.vauban.core.annotation.AnnotationTypes;
 import io.vidocq.vauban.core.bean.model.QualifierInstance;
 
+import java.util.Arrays;
+import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * Matches qualifier instances following CDI rules.
+ * Matches qualifier instances following CDI rules, by comparing their {@link AnnotationKey}s: a member
+ * default counts as written, and {@code @Nonbinding} members, like those an extension made non-binding,
+ * take no part. Matching compares index data and never invokes the members of the qualifiers it compares:
+ * the container's {@link AnnotationTypes} supplies what each qualifier type declares, from the index or
+ * through the container's class loaders.
  */
-@SuppressWarnings("java:S3776") // CDI container logic has inherent complexity
 public final class QualifierMatcher {
 
-    // Volatile immutable map: assigned once at startup, read-only after — thread-safe by design
+    // Volatile immutable map: assigned once at startup, read-only after — thread-safe by design.
+    // Only the run-time matching of VaubanBeanManager still reads it; vauban#70 moves that path to keys.
     @SuppressWarnings("java:S3077")
-    private static volatile java.util.Map<String, Set<String>> customNonbindingMembers = java.util.Map.of();
+    private static volatile Map<String, Set<String>> customNonbindingMembers = Map.of();
 
-    public static void setCustomNonbindingMembers(java.util.Map<String, Set<String>> nonbindingMembers) {
-        customNonbindingMembers = nonbindingMembers != null ? nonbindingMembers : java.util.Map.of();
+    public static void setCustomNonbindingMembers(Map<String, Set<String>> nonbindingMembers) {
+        customNonbindingMembers = nonbindingMembers != null ? nonbindingMembers : Map.of();
     }
 
     public static Set<String> getCustomNonbindingMembers(String qualifierName) {
         return customNonbindingMembers.get(qualifierName);
     }
 
-    private QualifierMatcher() {}
+    private final AnnotationTypes types;
+    private final Map<QualifierInstance, AnnotationKey> keys = new ConcurrentHashMap<>();
+
+    public QualifierMatcher(AnnotationTypes types) {
+        this.types = Objects.requireNonNull(types);
+    }
+
+    /**
+     * A matcher for a resolver built outside a container: no index, no extension, qualifier types read
+     * through the thread context class loader and vauban-core's own loader.
+     */
+    public static QualifierMatcher standalone() {
+        return new QualifierMatcher(new AnnotationTypes(null,
+                Arrays.asList(Thread.currentThread().getContextClassLoader(), QualifierMatcher.class.getClassLoader()),
+                Map.of()));
+    }
 
     /**
      * Checks if a bean's qualifiers match the required qualifiers at an injection point.
      * CDI rule: every required qualifier must be present on the bean.
      * {@code @Any} matches everything. {@code @Default} matches when the bean has {@code @Default}.
      */
-    public static boolean matches(Set<QualifierInstance> beanQualifiers, Set<QualifierInstance> requiredQualifiers) {
+    public boolean matches(Set<QualifierInstance> beanQualifiers, Set<QualifierInstance> requiredQualifiers) {
         for (var required : requiredQualifiers) {
             if (required.isAny()) continue; // @Any matches everything
             if (!containsQualifier(beanQualifiers, required)) return false;
@@ -56,47 +81,15 @@ public final class QualifierMatcher {
         return true;
     }
 
-    /**
-     * Checks if the bean qualifier set contains a qualifier matching the required one.
-     * Two qualifiers match if they have the same annotation type AND all member values are equal.
-     */
-    static boolean containsQualifier(Set<QualifierInstance> beanQualifiers, QualifierInstance required) {
-        return beanQualifiers.stream().anyMatch(bq -> qualifierEquals(bq, required));
+    private boolean containsQualifier(Set<QualifierInstance> beanQualifiers, QualifierInstance required) {
+        var requiredKey = key(required);
+        for (var candidate : beanQualifiers) {
+            if (key(candidate).equals(requiredKey)) return true;
+        }
+        return false;
     }
 
-    static boolean qualifierEquals(QualifierInstance a, QualifierInstance b) {
-        if (!a.annotationName().equals(b.annotationName())) return false;
-        // Compare only non-@Nonbinding members
-        // First, determine which members are @Nonbinding via reflection
-        java.util.Set<String> nonBindingMembers;
-        try {
-            var annClass = Class.forName(a.annotationName().value());
-            nonBindingMembers = new java.util.HashSet<>();
-            for (var method : annClass.getDeclaredMethods()) {
-                if (method.isAnnotationPresent(jakarta.enterprise.util.Nonbinding.class)) {
-                    nonBindingMembers.add(method.getName());
-                }
-            }
-        } catch (ClassNotFoundException e) {
-            nonBindingMembers = java.util.Set.of();
-        }
-        // Add custom nonbinding members from @Discovery phase
-        var customNb = customNonbindingMembers.get(a.annotationName().value());
-        if (customNb != null) {
-            nonBindingMembers = new java.util.HashSet<>(nonBindingMembers);
-            nonBindingMembers.addAll(customNb);
-        }
-
-        // Compare binding members only
-        for (var entry : a.members().entrySet()) {
-            if (nonBindingMembers.contains(entry.getKey())) continue;
-            var otherVal = b.members().get(entry.getKey());
-            if (otherVal == null || !entry.getValue().equals(otherVal)) return false;
-        }
-        for (var entry : b.members().entrySet()) {
-            if (nonBindingMembers.contains(entry.getKey())) continue;
-            if (!a.members().containsKey(entry.getKey())) return false;
-        }
-        return true;
+    private AnnotationKey key(QualifierInstance qualifier) {
+        return keys.computeIfAbsent(qualifier, q -> types.key(q.annotationName(), q.members()));
     }
 }

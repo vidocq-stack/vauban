@@ -200,28 +200,11 @@ final class QualifierResolver {
     }
 
     /**
-     * Converts a java.lang.annotation.Annotation to an AnnotationInfo for indexer compatibility.
+     * Converts an inherited annotation to an AnnotationInfo for indexer compatibility, every member
+     * kind kept (BUG-20260914-09 dropped all but String, boolean, int, Class and enum values).
      */
     private AnnotationInfo toAnnotationInfo(java.lang.annotation.Annotation ann) {
-        var members = new java.util.LinkedHashMap<String, io.vidocq.vauban.indexer.model.AnnotationValue>();
-        for (var method : ann.annotationType().getDeclaredMethods()) {
-            if (method.getParameterCount() == 0 && method.getDeclaringClass() == ann.annotationType()) {
-                try {
-                    var value = method.invoke(ann);
-                    var converted = switch (value) {
-                        case String s -> new io.vidocq.vauban.indexer.model.AnnotationValue.StringVal(s);
-                        case Boolean b -> new io.vidocq.vauban.indexer.model.AnnotationValue.BooleanVal(b);
-                        case Integer i -> new io.vidocq.vauban.indexer.model.AnnotationValue.IntVal(i);
-                        case Class<?> c -> new io.vidocq.vauban.indexer.model.AnnotationValue.ClassVal(DotName.of(c.getName()));
-                        case Enum<?> e -> new io.vidocq.vauban.indexer.model.AnnotationValue.EnumVal(
-                                DotName.of(e.getClass().getName()), e.name());
-                        case null, default -> null;
-                    };
-                    if (converted != null) members.put(method.getName(), converted);
-                } catch (Exception e) { /* skip */ }
-            }
-        }
-        return new AnnotationInfo(DotName.of(ann.annotationType().getName()), members);
+        return io.vidocq.vauban.core.annotation.AnnotationValues.toAnnotationInfo(ann);
     }
 
     private List<QualifierInstance> unwrapRepeatableQualifiers(AnnotationInfo ann) {

@@ -25,7 +25,6 @@ import io.vidocq.vauban.indexer.model.ClassInfo;
 import io.vidocq.vauban.indexer.model.DotName;
 import io.vidocq.vauban.indexer.scanner.ClassFileScanner;
 import org.junit.jupiter.api.BeforeAll;
-import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -51,13 +50,11 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * The annotation processor and the run-time bytecode scan build the same index model, so they must
- * agree on it. Member values that name a type are where they can drift: a nested type has a binary
- * name ({@code app.Holder$Hue}) and a canonical one ({@code app.Holder.Hue}), and a class literal can
- * name a primitive or an array type. vauban#70 keys qualifier matching on these values, so the
- * processor must produce what the class file carries. The bytecode scan of the very class the
- * processor scanned is the reference.
- *
- * <p>A test disabled with a BUG id reproduces a defect logged in {@code BUG.md}.
+ * agree on it. Type names are where they can drift, in member values as in supertypes: a nested type
+ * has a binary name ({@code app.Holder$Hue}) and a canonical one ({@code app.Holder.Hue}), and a class
+ * literal can name a primitive or an array type. vauban#70 keys qualifier matching on these values and
+ * on the defaults an annotation type declares, so the processor must produce what the class file
+ * carries. The bytecode scan of the very classes the processor scanned is the reference.
  */
 @DisplayName("vauban#70 safety net: the processor and the bytecode scan agree on annotation member values")
 class ElementScannerMemberValueTest {
@@ -70,6 +67,12 @@ class ElementScannerMemberValueTest {
 
             public class Holder {
                 public enum Hue { RED, BLUE }
+
+                public static class Base {
+                }
+
+                public interface Marker {
+                }
 
                 @Retention(RetentionPolicy.RUNTIME)
                 public @interface Inner {
@@ -84,22 +87,32 @@ class ElementScannerMemberValueTest {
                     Class<?> nested();
                     Class<?> primitive();
                     Class<?> array();
+                    String note() default "n";
+                    Hue fallback() default Hue.BLUE;
+                    Inner wrapped() default @Inner("d");
+                    Class<?> kind() default int[].class;
+                    Hue[] hues() default {Hue.RED, Hue.BLUE};
                 }
 
                 @Probe(text = "t", hue = Hue.RED, inner = @Inner("x"), nested = Hue.class,
                         primitive = int.class, array = String[].class)
-                public static class Target {
+                public static class Target extends Base implements Marker {
                 }
             }
             """;
 
     private static AnnotationInfo processorProbe;
     private static AnnotationInfo bytecodeProbe;
+    private static ClassInfo processorProbeType;
+    private static ClassInfo bytecodeProbeType;
+    private static ClassInfo processorTarget;
+    private static ClassInfo bytecodeTarget;
 
-    /** Scans {@code app.Holder.Target} with the processor's own scanner, as {@code VaubanProcessor} does. */
+    /** Scans the annotated class and the annotation type with the processor's own scanner. */
     @SupportedAnnotationTypes("*")
     static final class Capture extends AbstractProcessor {
-        ClassInfo scanned;
+        ClassInfo target;
+        ClassInfo probeType;
 
         @Override
         public SourceVersion getSupportedSourceVersion() {
@@ -108,12 +121,11 @@ class ElementScannerMemberValueTest {
 
         @Override
         public boolean process(Set<? extends TypeElement> annotations, RoundEnvironment round) {
-            if (scanned == null) {
-                var target = processingEnv.getElementUtils().getTypeElement("app.Holder.Target");
-                if (target != null) {
-                    scanned = new ElementScanner(processingEnv.getElementUtils(), processingEnv.getTypeUtils())
-                            .scan(target);
-                }
+            var elements = processingEnv.getElementUtils();
+            var scanner = new ElementScanner(elements, processingEnv.getTypeUtils());
+            if (target == null && elements.getTypeElement("app.Holder.Target") != null) {
+                target = scanner.scan(elements.getTypeElement("app.Holder.Target"));
+                probeType = scanner.scan(elements.getTypeElement("app.Holder.Probe"));
             }
             return false;
         }
@@ -141,9 +153,13 @@ class ElementScannerMemberValueTest {
             assertTrue(task.call(), "the fixture must compile: " + diagnostics.getDiagnostics());
         }
 
-        assertNotNull(capture.scanned, "the capturing processor must have scanned app.Holder.Target");
-        processorProbe = probe(capture.scanned);
-        bytecodeProbe = probe(ClassFileScanner.scan(Files.readAllBytes(classes.resolve("app/Holder$Target.class"))));
+        assertNotNull(capture.target, "the capturing processor must have scanned app.Holder.Target");
+        processorTarget = capture.target;
+        bytecodeTarget = ClassFileScanner.scan(Files.readAllBytes(classes.resolve("app/Holder$Target.class")));
+        processorProbe = probe(processorTarget);
+        bytecodeProbe = probe(bytecodeTarget);
+        processorProbeType = capture.probeType;
+        bytecodeProbeType = ClassFileScanner.scan(Files.readAllBytes(classes.resolve("app/Holder$Probe.class")));
     }
 
     private static AnnotationInfo probe(ClassInfo scanned) {
@@ -151,6 +167,14 @@ class ElementScannerMemberValueTest {
                 .filter(annotation -> annotation.name().value().endsWith("Probe"))
                 .findFirst()
                 .orElseThrow(() -> new AssertionError("no @Probe among " + scanned.annotations()));
+    }
+
+    private static AnnotationValue defaultOf(ClassInfo type, String member) {
+        return type.methods().stream()
+                .filter(method -> method.name().equals(member))
+                .findFirst()
+                .orElseThrow(() -> new AssertionError("no member " + member + " on " + type.name()))
+                .defaultValue();
     }
 
     @Test
@@ -168,43 +192,54 @@ class ElementScannerMemberValueTest {
 
     @Test
     @DisplayName("annotation type name")
-    @Disabled("BUG-20260914-12: the processor names nested annotation types canonically")
     void annotationTypeName() {
         assertEquals(bytecodeProbe.name(), processorProbe.name());
     }
 
     @Test
     @DisplayName("enum member of a nested enum type")
-    @Disabled("BUG-20260914-12: the processor names nested enum types canonically")
     void nestedEnumMember() {
         assertEquals(bytecodeProbe.members().get("hue"), processorProbe.members().get("hue"));
     }
 
     @Test
     @DisplayName("annotation member of a nested annotation type")
-    @Disabled("BUG-20260914-12: the processor names nested annotation types canonically")
     void nestedAnnotationMember() {
         assertEquals(bytecodeProbe.members().get("inner"), processorProbe.members().get("inner"));
     }
 
     @Test
     @DisplayName("class literal of a nested type")
-    @Disabled("BUG-20260914-12: the processor names nested class literals canonically")
     void nestedClassLiteral() {
         assertEquals(bytecodeProbe.members().get("nested"), processorProbe.members().get("nested"));
     }
 
     @Test
     @DisplayName("class literal of a primitive type")
-    @Disabled("BUG-20260914-12: the processor turns primitive class literals into java.lang.Object")
     void primitiveClassLiteral() {
         assertEquals(bytecodeProbe.members().get("primitive"), processorProbe.members().get("primitive"));
     }
 
     @Test
     @DisplayName("class literal of an array type")
-    @Disabled("BUG-20260914-12: the processor turns array class literals into java.lang.Object")
     void arrayClassLiteral() {
         assertEquals(bytecodeProbe.members().get("array"), processorProbe.members().get("array"));
+    }
+
+    @Test
+    @DisplayName("member defaults declared by the annotation type")
+    void memberDefaults() {
+        assertNotNull(defaultOf(bytecodeProbeType, "note"), "guard: the bytecode scan records defaults");
+        for (var member : List.of("text", "note", "fallback", "wrapped", "kind", "hues")) {
+            assertEquals(defaultOf(bytecodeProbeType, member), defaultOf(processorProbeType, member), member);
+        }
+    }
+
+    @Test
+    @DisplayName("nested superclass and interface, named like the index keys every class")
+    void nestedSupertypes() {
+        assertEquals(DotName.of("app.Holder$Base"), bytecodeTarget.superName(), "guard: binary name in the class file");
+        assertEquals(bytecodeTarget.superName(), processorTarget.superName());
+        assertEquals(bytecodeTarget.interfaces(), processorTarget.interfaces());
     }
 }

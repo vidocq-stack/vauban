@@ -93,11 +93,20 @@ on an unindexed superclass. Where each bug gets fixed:
 - Outside #70: -11 default name of a nested bean class
 
 ### PR 2 — Type metadata and normalized keys (boot validation)
-- [ ] `AnnotationTypeInfo`, member defaults in `ClassFileScanner` and `ElementScanner`
-- [ ] Processor names member value types by binary name, keeps primitive and array class literals
-- [ ] `AnnotationTypes` registry: reflective read fallback, cache, class loader
-- [ ] `AnnotationKey` normalization: defaults, `@Nonbinding`, extension non-binding, nested
-- [ ] `QualifierMatcher` on keys; `QualifierResolver.toAnnotationInfo` lossless
+- [x] `AnnotationTypeInfo`, member defaults in `ClassFileScanner` and `ElementScanner`
+- [x] Processor names member value types by binary name, keeps primitive and array class literals
+  - [x] superclass and interface names too, which were still canonical
+- [x] `AnnotationTypes` registry: reflective read fallback, cache, class loader
+- [x] `AnnotationKey` normalization: defaults, `@Nonbinding`, extension non-binding, nested
+- [x] `QualifierMatcher` on keys; `QualifierResolver.toAnnotationInfo` lossless
+
+PR 2 outcome: BUG-20260914-01, -04, -09 and -12 fixed, their 11 disabled tests enabled. Boot validation
+compares `AnnotationKey`s built by one `AnnotationTypes` per container; `getBeans`, `InstanceImpl`,
+`EventImpl`, `BeanInjector` and `EventDispatcher` still match reflectively until PR 3. Every fix proven by
+mutation: defaults out of the key, `@Nonbinding` kept in it, vauban-core's loader alone, the former lossy
+conversion of inherited members, canonical processor names. Sequential `mvn clean install` (`-T1C` races
+in example-test): 748 tests, 0 failures. vauban-indexer, vauban-processor and vauban-core green in both
+surefire orders. CDI TCK 774/774 and AtInject green, read from the reports.
 
 ### PR 3 — Run-time hot path on keys
 - [ ] Beans, observers and injection points hold keys; `getQualifiers()` and friends cached

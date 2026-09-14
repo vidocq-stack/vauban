@@ -142,14 +142,15 @@ public final class ElementScanner {
 
         var accessFlags = modifiersToFlags(method.getModifiers());
         var annotations = scanAnnotations(method);
+        var defaultValue = method.getDefaultValue() == null ? null : convertAnnotationValue(method.getDefaultValue());
 
-        return new MethodInfo(name, returnType, parameters, exceptionTypes, accessFlags, annotations);
+        return new MethodInfo(name, returnType, parameters, exceptionTypes, accessFlags, annotations, defaultValue);
     }
 
     private List<AnnotationInfo> scanAnnotations(Element element) {
         var result = new ArrayList<AnnotationInfo>();
         for (var mirror : element.getAnnotationMirrors()) {
-            var annName = DotName.of(((TypeElement) mirror.getAnnotationType().asElement()).getQualifiedName().toString());
+            var annName = binaryName((TypeElement) mirror.getAnnotationType().asElement());
             var members = new LinkedHashMap<String, io.vidocq.vauban.indexer.model.AnnotationValue>();
 
             for (var entry : mirror.getElementValues().entrySet()) {
@@ -180,10 +181,10 @@ public final class ElementScanner {
             case Double d -> new io.vidocq.vauban.indexer.model.AnnotationValue.DoubleVal(d);
             case TypeMirror tm -> new io.vidocq.vauban.indexer.model.AnnotationValue.ClassVal(typeMirrorToDotName(tm));
             case VariableElement ve -> new io.vidocq.vauban.indexer.model.AnnotationValue.EnumVal(
-                    DotName.of(((TypeElement) ve.getEnclosingElement()).getQualifiedName().toString()),
+                    binaryName((TypeElement) ve.getEnclosingElement()),
                     ve.getSimpleName().toString());
             case AnnotationMirror am -> {
-                var annName = DotName.of(((TypeElement) am.getAnnotationType().asElement()).getQualifiedName().toString());
+                var annName = binaryName((TypeElement) am.getAnnotationType().asElement());
                 var members = new LinkedHashMap<String, io.vidocq.vauban.indexer.model.AnnotationValue>();
                 for (var entry : am.getElementValues().entrySet()) {
                     members.put(entry.getKey().getSimpleName().toString(), convertAnnotationValue(entry.getValue()));
@@ -261,12 +262,39 @@ public final class ElementScanner {
         };
     }
 
+    /**
+     * The name the class file gives a class literal: the binary name of a declared type, the keyword of
+     * a primitive, the descriptor of an array ({@code [Ljava.lang.String;}), as
+     * {@code DotName#fromDescriptor} reads them back.
+     */
     private DotName typeMirrorToDotName(TypeMirror mirror) {
-        if (mirror.getKind() == TypeKind.DECLARED) {
-            var element = (TypeElement) ((DeclaredType) mirror).asElement();
-            return DotName.of(element.getQualifiedName().toString());
-        }
-        return DotName.of("java.lang.Object");
+        return switch (mirror.getKind()) {
+            case DECLARED -> binaryName((TypeElement) ((DeclaredType) mirror).asElement());
+            case BOOLEAN, BYTE, CHAR, SHORT, INT, LONG, FLOAT, DOUBLE, VOID, ARRAY -> DotName.fromDescriptor(descriptor(mirror));
+            default -> DotName.of("java.lang.Object");
+        };
+    }
+
+    private String descriptor(TypeMirror mirror) {
+        return switch (mirror.getKind()) {
+            case BOOLEAN -> "Z";
+            case BYTE -> "B";
+            case CHAR -> "C";
+            case SHORT -> "S";
+            case INT -> "I";
+            case LONG -> "J";
+            case FLOAT -> "F";
+            case DOUBLE -> "D";
+            case VOID -> "V";
+            case ARRAY -> "[" + descriptor(((javax.lang.model.type.ArrayType) mirror).getComponentType());
+            case DECLARED -> "L" + binaryName((TypeElement) ((DeclaredType) mirror).asElement()).toInternal() + ";";
+            default -> "Ljava/lang/Object;";
+        };
+    }
+
+    /** Nested types are joined with {@code $}, as in the class file: {@code getQualifiedName()} would use {@code .}. */
+    private DotName binaryName(TypeElement element) {
+        return DotName.of(elements.getBinaryName(element).toString());
     }
 
     private static int modifiersToFlags(Set<Modifier> modifiers) {

@@ -829,16 +829,26 @@ public final class VaubanContainerBuilder {
                         syntheticDisposers, observers, seenSyntheticSignatures);
             }
 
+            // One view of the annotation types for the whole container (vauban#70): the index first,
+            // then the class files and declarations the discovery loader sees. The qualifier types of
+            // an application or a TCK archive are invisible to vauban-core's own loader
+            // (BUG-20260914-04), and the members extensions made non-binding belong to this container.
+            var qualifierMatcher = new io.vidocq.vauban.core.bean.resolution.QualifierMatcher(
+                    new io.vidocq.vauban.core.annotation.AnnotationTypes(index,
+                            java.util.Arrays.asList(discoveryClassLoader, Thread.currentThread().getContextClassLoader(),
+                                    VaubanContainerBuilder.class.getClassLoader()),
+                            discovery.getCustomNonbindingMembers()));
+
             // Validate observer/disposer method parameters (CDI spec)
-            VaubanContainer.validateObserverParameters(observers, descriptors, index);
-            DisposerInvoker.validateDisposerParameters(disposers, descriptors, index);
+            VaubanContainer.validateObserverParameters(observers, descriptors, index, qualifierMatcher);
+            DisposerInvoker.validateDisposerParameters(disposers, descriptors, index, qualifierMatcher);
             // Validate disposer method definitions (CDI 4.1 Section 3.5)
             DisposerInvoker.validateDisposerDefinitions(disposers, descriptors);
 
 
             // Validate deployment — throw if there are errors
             var assignability = new AssignabilityRules(index);
-            var tempResolver = new BeanResolver(descriptors, interceptors, assignability);
+            var tempResolver = new BeanResolver(descriptors, interceptors, assignability, qualifierMatcher);
             var validator = new io.vidocq.vauban.core.bean.validation.DeploymentValidator(
                     descriptors, tempResolver, index)
                     .loadTimeWoven(loadTimeWeaving.planned());
@@ -883,7 +893,7 @@ public final class VaubanContainerBuilder {
 
             var beanClassLoader = discoveryClassLoader;
             var vaubanLookup = getBuilderLookup();
-            var container = new VaubanContainer(index, descriptors, observers, interceptors, disposers, factories, syntheticDisposers, beanClassLoader, classDefiner, vaubanLookup, componentProviders);
+            var container = new VaubanContainer(index, descriptors, observers, interceptors, disposers, factories, syntheticDisposers, beanClassLoader, classDefiner, vaubanLookup, componentProviders, qualifierMatcher);
 
             // Register custom contexts from Build Compatible Extensions (MetaAnnotations.addContext).
             // Instantiation order: module's VaubanComponentProvider (zero reflection), then the

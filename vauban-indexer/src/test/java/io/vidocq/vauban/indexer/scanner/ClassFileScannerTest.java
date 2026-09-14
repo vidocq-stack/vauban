@@ -30,6 +30,7 @@ import java.io.IOException;
 import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
 import java.util.List;
+import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -74,6 +75,25 @@ class ClassFileScannerTest {
     @CustomAnnotation(value = "test", count = 42)
     static class CustomAnnotatedClass {}
 
+    enum DefaultedLevel { LOW, HIGH }
+
+    @Retention(RetentionPolicy.RUNTIME)
+    @interface DefaultedInner {
+        String value() default "inner";
+    }
+
+    /** One defaulted member per value kind, and one member without a default. */
+    @Retention(RetentionPolicy.RUNTIME)
+    @interface WithDefaults {
+        String text() default "t";
+        int number() default 7;
+        DefaultedLevel level() default DefaultedLevel.HIGH;
+        Class<?> type() default String.class;
+        String[] tags() default {"a", "b"};
+        DefaultedInner inner() default @DefaultedInner("n");
+        String required();
+    }
+
     static abstract class AbstractClass {
         public abstract void abstractMethod();
         public final void finalMethod() {}
@@ -94,6 +114,46 @@ class ClassFileScannerTest {
     }
 
     // --- Tests ---
+
+    @Nested
+    @DisplayName("annotation member defaults (vauban#70)")
+    class AnnotationMemberDefaults {
+
+        private MethodInfo member(String name) throws IOException {
+            return scan(WithDefaults.class).methods().stream()
+                    .filter(method -> method.name().equals(name))
+                    .findFirst()
+                    .orElseThrow();
+        }
+
+        @Test
+        @DisplayName("records the default of each member kind")
+        void recordsTheDefaults() throws IOException {
+            assertEquals(new AnnotationValue.StringVal("t"), member("text").defaultValue());
+            assertEquals(new AnnotationValue.IntVal(7), member("number").defaultValue());
+            assertEquals(new AnnotationValue.EnumVal(DotName.of(DefaultedLevel.class.getName()), "HIGH"),
+                    member("level").defaultValue());
+            assertEquals(new AnnotationValue.ClassVal(DotName.of("java.lang.String")), member("type").defaultValue());
+            assertEquals(new AnnotationValue.ArrayVal(List.of(
+                            new AnnotationValue.StringVal("a"), new AnnotationValue.StringVal("b"))),
+                    member("tags").defaultValue());
+            assertEquals(new AnnotationValue.AnnotationVal(new AnnotationInfo(DotName.of(DefaultedInner.class.getName()),
+                            Map.of("value", new AnnotationValue.StringVal("n")))),
+                    member("inner").defaultValue());
+        }
+
+        @Test
+        @DisplayName("leaves a member without a default at null")
+        void memberWithoutDefault() throws IOException {
+            assertNull(member("required").defaultValue());
+        }
+
+        @Test
+        @DisplayName("gives no default to the methods of an ordinary class")
+        void ordinaryMethods() throws IOException {
+            assertTrue(scan(SimpleClass.class).methods().stream().allMatch(method -> method.defaultValue() == null));
+        }
+    }
 
     @Nested
     @DisplayName("scan of a simple class")

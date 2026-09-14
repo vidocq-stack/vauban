@@ -106,7 +106,18 @@ public final class ClassFileScanner {
         var exceptionTypes = extractExceptionTypes(mm);
         var accessFlags = mm.flags().flagsMask();
         var annotations = extractAnnotations(mm);
-        return new MethodInfo(name, returnType, parameters, exceptionTypes, accessFlags, annotations);
+        var defaultValue = extractDefaultValue(mm);
+        return new MethodInfo(name, returnType, parameters, exceptionTypes, accessFlags, annotations, defaultValue);
+    }
+
+    /** The default an annotation type member declares in its {@code AnnotationDefault} attribute, or {@code null}. */
+    private static io.vidocq.vauban.indexer.model.AnnotationValue extractDefaultValue(MethodModel mm) {
+        for (var attr : mm.attributes()) {
+            if (attr instanceof AnnotationDefaultAttribute ada) {
+                return buildAnnotationValue(ada.defaultValue());
+            }
+        }
+        return null;
     }
 
     private static List<ParameterInfo> buildParameters(MethodModel mm, MethodTypeDesc methodType) {

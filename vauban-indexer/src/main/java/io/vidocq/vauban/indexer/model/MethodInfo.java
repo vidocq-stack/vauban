@@ -21,19 +21,32 @@ package io.vidocq.vauban.indexer.model;
 
 import java.util.List;
 
+/**
+ * A method of an indexed class.
+ *
+ * @param defaultValue the default value an annotation type member declares, or {@code null} for a
+ *                     member without one and for every method that is not an annotation member
+ */
 public record MethodInfo(
         String name,
         TypeInfo returnType,
         List<ParameterInfo> parameters,
         List<TypeInfo> exceptionTypes,
         int accessFlags,
-        List<AnnotationInfo> annotations
+        List<AnnotationInfo> annotations,
+        AnnotationValue defaultValue
 ) {
 
     public MethodInfo {
         parameters = List.copyOf(parameters);
         exceptionTypes = List.copyOf(exceptionTypes);
         annotations = List.copyOf(annotations);
+    }
+
+    /** A method with no annotation member default. */
+    public MethodInfo(String name, TypeInfo returnType, List<ParameterInfo> parameters,
+                      List<TypeInfo> exceptionTypes, int accessFlags, List<AnnotationInfo> annotations) {
+        this(name, returnType, parameters, exceptionTypes, accessFlags, annotations, null);
     }
 
     public boolean isConstructor() {

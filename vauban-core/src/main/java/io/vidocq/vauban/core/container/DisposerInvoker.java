@@ -24,6 +24,7 @@ import io.vidocq.vauban.core.bean.model.DisposerDescriptor;
 import io.vidocq.vauban.core.bean.model.InjectionPointInfo;
 import io.vidocq.vauban.core.bean.model.QualifierInstance;
 import io.vidocq.vauban.core.bean.resolution.BeanResolver;
+import io.vidocq.vauban.core.bean.resolution.QualifierMatcher;
 import io.vidocq.vauban.core.context.CreationalContextImpl;
 import io.vidocq.vauban.core.event.EventImpl;
 import io.vidocq.vauban.core.types.AssignabilityRules;
@@ -51,10 +52,11 @@ final class DisposerInvoker {
     static void validateDisposerParameters(
             List<DisposerDescriptor> disposers,
             List<BeanDescriptor> descriptors,
-            VaubanIndex index) {
+            VaubanIndex index,
+            QualifierMatcher qualifierMatcher) {
         var assignability = new AssignabilityRules(index);
         var tempResolver = new BeanResolver(
-                descriptors, List.of(), assignability);
+                descriptors, List.of(), assignability, qualifierMatcher);
 
         for (var disposer : disposers) {
             try {

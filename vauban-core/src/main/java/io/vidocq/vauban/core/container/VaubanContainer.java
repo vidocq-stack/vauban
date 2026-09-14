@@ -151,7 +151,8 @@ public final class VaubanContainer implements AutoCloseable {
                             ClassLoader classLoader,
                             java.util.function.BiFunction<String, byte[], Class<?>> classDefiner,
                             VaubanLookup vaubanLookup,
-                            ComponentProviders componentProviders) {
+                            ComponentProviders componentProviders,
+                            io.vidocq.vauban.core.bean.resolution.QualifierMatcher qualifierMatcher) {
         this.index = index;
         this.classLoader = classLoader;
         this.classDefiner = classDefiner;
@@ -192,7 +193,7 @@ public final class VaubanContainer implements AutoCloseable {
         }
 
         var assignability = new AssignabilityRules(index);
-        this.resolver = new BeanResolver(descriptors, interceptorDescriptors, assignability);
+        this.resolver = new BeanResolver(descriptors, interceptorDescriptors, assignability, qualifierMatcher);
         this.eventDispatcher = new EventDispatcher(observers, this);
         this.interceptorManager = new InterceptorManager(interceptorDescriptors);
         this.interceptorManager.setVaubanLookup(vaubanLookup);
@@ -323,10 +324,11 @@ public final class VaubanContainer implements AutoCloseable {
     static void validateObserverParameters(
             java.util.List<io.vidocq.vauban.core.bean.model.ObserverDescriptor> observers,
             java.util.List<io.vidocq.vauban.core.bean.model.BeanDescriptor> descriptors,
-            io.vidocq.vauban.indexer.VaubanIndex index) {
+            io.vidocq.vauban.indexer.VaubanIndex index,
+            io.vidocq.vauban.core.bean.resolution.QualifierMatcher qualifierMatcher) {
         var assignability = new io.vidocq.vauban.core.types.AssignabilityRules(index);
         var tempResolver = new io.vidocq.vauban.core.bean.resolution.BeanResolver(
-                descriptors, java.util.List.of(), assignability);
+                descriptors, java.util.List.of(), assignability, qualifierMatcher);
 
         for (var observer : observers) {
             if (observer.isSynthetic()) continue;

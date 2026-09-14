@@ -49,6 +49,8 @@ module io.vidocq.vauban.core {
     exports io.vidocq.vauban.core.langmodel.declarations;
     exports io.vidocq.vauban.core.langmodel.types;
     exports io.vidocq.vauban.core.types;
+    // Annotation type metadata and matching keys (vauban#70), taken by QualifierMatcher's public constructor.
+    exports io.vidocq.vauban.core.annotation;
     exports io.vidocq.vauban.core.bean.model;
     exports io.vidocq.vauban.core.bean.discovery;
     exports io.vidocq.vauban.core.bean.resolution;

@@ -1123,7 +1123,7 @@ and a proposed upstream assertion: `CDI_TCK_PROPOSALS.md` → `TCK-GAP-001`.
 ## BUG-20260914-01 — Boot validation ignores member defaults, so `@Q` and `@Q("default")` never match
 
 - **Date**: 2026-09-14
-- **Status**: OPEN
+- **Status**: FIXED (vauban#70 PR 2)
 - **Module**: `vauban-core` (`QualifierMatcher#qualifierEquals`); neither `ClassFileScanner` nor `ElementScanner` records member defaults.
 - **Symptom**: a valid deployment fails with `DeploymentException: Unsatisfied dependency` when an injection point and a bean spell the same qualifier differently, one relying on a member's default and the other writing it out. The same lookup done programmatically resolves, because the run-time path reads members through the annotation, defaults included.
 - **Minimal reproduction** (`QualifierMemberResolutionTest$DefaultedMember`):
@@ -1137,6 +1137,7 @@ and a proposed upstream assertion: `CDI_TCK_PROPOSALS.md` → `TCK-GAP-001`.
 - **Suspected cause**: the index keeps explicit member values only, and `qualifierEquals` compares the two member maps as they are, so a member written on one side and defaulted on the other counts as a mismatch. `java.lang.annotation.Annotation#equals` treats both spellings as the same annotation.
 - **Investigations**:
   - 2026-09-14: found by the vauban#70 safety net; the tests are disabled with this id.
+  - 2026-09-14: **fixed** by vauban#70 PR 2. Both scanners now record the default of each annotation member (`MethodInfo#defaultValue`), and `QualifierMatcher` compares `AnnotationKey`s, in which every member the type declares takes its written value or its default. Proven by mutation: with defaults left out of the key, both `$DefaultedMember` tests fail again with the same `DeploymentException`, and so do the default tests of `AnnotationTypesTest` and `QualifierMatcherTest`.
 
 ## BUG-20260914-02 — A field injection point drops enum, Class, char, byte, short, array and nested-annotation member values
 
@@ -1181,7 +1182,7 @@ and a proposed upstream assertion: `CDI_TCK_PROPOSALS.md` → `TCK-GAP-001`.
 ## BUG-20260914-04 — Boot validation loses `@Nonbinding` on a qualifier type vauban-core's own class loader cannot see
 
 - **Date**: 2026-09-14
-- **Status**: OPEN
+- **Status**: FIXED (vauban#70 PR 2)
 - **Module**: `vauban-core` (`QualifierMatcher#qualifierEquals`)
 - **Symptom**: when the application's classes live in their own class loader, as with the TCK runner or a layer created by `Launch`/`Vidocq.run`, an injection point whose `@Nonbinding` member differs from the bean's fails the deployment with `Unsatisfied dependency`. The same fixture deploys when every member value is equal.
 - **Minimal reproduction** (`QualifierMemberResolutionTest$IsolatedClassLoader#nonbindingMember`; the fixtures are generated with the Class-File API into a `URLClassLoader`, set as context class loader):
@@ -1195,6 +1196,7 @@ and a proposed upstream assertion: `CDI_TCK_PROPOSALS.md` → `TCK-GAP-001`.
 - **Suspected cause**: `qualifierEquals` looks the `@Nonbinding` members up with the one-argument `Class.forName`, which uses vauban-core's defining loader. The `ClassNotFoundException` is swallowed as "no non-binding member", so the differing note is compared.
 - **Investigations**:
   - 2026-09-14: found by the vauban#70 safety net; the test is disabled with this id.
+  - 2026-09-14: **fixed** by vauban#70 PR 2. The container builds one `AnnotationTypes` for its lifetime. It describes a qualifier type from the index first, then from the type's class file or its declaration, read through the discovery class loader, the context class loader and vauban-core's own loader, in that order, so a `@Nonbinding` member is known whichever loader defines the type. Proven by mutation: with vauban-core's loader alone, and the index kept, `#nonbindingMember` fails again with the same `Unsatisfied dependency`, since `iso.Marked` is not indexed; it fails too when `@Nonbinding` members are kept in the key.
 
 ## BUG-20260914-05 — Field injection loads qualifier types through the thread context class loader and silently drops those it cannot load
 
@@ -1262,7 +1264,7 @@ and a proposed upstream assertion: `CDI_TCK_PROPOSALS.md` → `TCK-GAP-001`.
 ## BUG-20260914-09 — An `@Inherited` qualifier loses its long, float, double, byte, short, char, array and nested members
 
 - **Date**: 2026-09-14
-- **Status**: OPEN
+- **Status**: FIXED (vauban#70 PR 2)
 - **Module**: `vauban-core` (`QualifierResolver#toAnnotationInfo`)
 - **Symptom**: a bean inheriting `@Leveled(1L)` from its superclass can neither be injected nor looked up with `@Leveled(1L)`: unsatisfied at boot validation and on lookup. The same scenario with a `String` member resolves on both paths.
 - **Minimal reproduction** (`QualifierMemberResolutionTest$InheritedQualifier#longField`, `#longProgrammatic`):
@@ -1276,6 +1278,7 @@ and a proposed upstream assertion: `CDI_TCK_PROPOSALS.md` → `TCK-GAP-001`.
 - **Suspected cause**: inherited annotations are read reflectively and converted by a switch that keeps only `String`, `Boolean`, `Integer`, `Class` and enum values; any other member is dropped from the qualifier, which then cannot equal the required one.
 - **Investigations**:
   - 2026-09-14: found by the vauban#70 safety net; the tests are disabled with this id.
+  - 2026-09-14: **fixed** by vauban#70 PR 2. `QualifierResolver#toAnnotationInfo` delegates to `AnnotationValues#toAnnotationInfo`, which converts every member kind the way the bytecode scan records it; `AnnotationValuesTest` checks each kind against `ClassFileScanner`. A member that cannot be read is still left out, as before, since the inherited annotation need not be a qualifier. Proven by mutation: keeping only the five former kinds makes `#longField` and `#longProgrammatic` fail again.
 
 ## BUG-20260914-10 — A qualifier added by an `@Enhancement` turns enum, Class, array and nested members into strings
 
@@ -1313,13 +1316,14 @@ and a proposed upstream assertion: `CDI_TCK_PROPOSALS.md` → `TCK-GAP-001`.
 ## BUG-20260914-12 — The processor names nested types canonically in member values, and loses primitive and array class literals
 
 - **Date**: 2026-09-14
-- **Status**: OPEN
+- **Status**: FIXED (vauban#70 PR 2)
 - **Module**: `vauban-processor` (`ElementScanner#scanAnnotations`, `#convertAnnotationValue`, `#typeMirrorToDotName`)
 - **Symptom**: the processor's index disagrees with the run-time bytecode scan of the same class. For `@Probe` declared in `app.Holder`, the processor records the annotation `app.Holder.Probe`, an enum value of type `app.Holder.Hue`, a nested `@app.Holder.Inner` and the class literal `app.Holder.Hue`, where the class file says `app.Holder$Probe`, `app.Holder$Hue` and `app.Holder$Inner`. `int.class` and `String[].class` both become `java.lang.Object`.
 - **Minimal reproduction** (`ElementScannerMemberValueTest`): compile the fixture with a processor that runs `ElementScanner#scan` on `app.Holder.Target`, then compare with `ClassFileScanner#scan` of `app/Holder$Target.class`.
 - **Suspected cause**: annotation, enum and class-literal names come from `getQualifiedName()`, which BUG-20260912-01 replaced by `Elements#getBinaryName` for the scanned class and its method types but not for member values; `typeMirrorToDotName` falls back to `java.lang.Object` for anything that is not a declared type.
 - **Investigations**:
   - 2026-09-14: found by the vauban#70 safety net; the tests are disabled with this id. vauban#70 keys qualifier matching on these values, so fixing it comes before the build-time metadata.
+  - 2026-09-14: **fixed** by vauban#70 PR 2. Annotation, enum and nested-annotation names go through `Elements#getBinaryName`. A class literal is named the way `DotName#fromDescriptor` reads the class file: the keyword for a primitive, the descriptor for an array. The superclass and interface names, which were still canonical, follow the same rule (`#nestedSupertypes`), and the processor now records member defaults too, compared with the bytecode scan by `#memberDefaults`. Proven by mutation: with canonical names and the `java.lang.Object` fallback put back, the eight comparisons fail again, while the bytecode-side guard and the String member stay green.
 
 ## BUG-20260914-13 — Compile-time validation does not know qualifiers declared in the module being compiled
 

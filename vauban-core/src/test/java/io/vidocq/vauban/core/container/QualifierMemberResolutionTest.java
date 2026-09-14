@@ -921,14 +921,12 @@ class QualifierMemberResolutionTest {
     @DisplayName("defaulted member")
     class DefaultedMember {
         @Test @DisplayName("field injection: @Graded(\"standard\") resolves the bean declared @Graded")
-        @Disabled("BUG-20260914-01: boot validation ignores member defaults")
         void explicitPointImplicitBean() {
             assertEquals("graded-implicit",
                     injected(GradedField.class, GradedImplicit.class, GradedPremium.class));
         }
 
         @Test @DisplayName("constructor injection: @Graded resolves the bean declared @Graded(\"standard\")")
-        @Disabled("BUG-20260914-01: boot validation ignores member defaults")
         void implicitPointExplicitBean() {
             assertEquals("graded-explicit",
                     injected(GradedConstructor.class, GradedExplicit.class, GradedPremium.class));
@@ -1015,13 +1013,11 @@ class QualifierMemberResolutionTest {
         }
 
         @Test @DisplayName("long member: field injection")
-        @Disabled("BUG-20260914-09: an @Inherited qualifier loses its long member")
         void longField() {
             assertEquals("leveled-child", injected(LeveledField.class, LeveledChild.class, LeveledOther.class));
         }
 
         @Test @DisplayName("long member: programmatic lookup")
-        @Disabled("BUG-20260914-09: an @Inherited qualifier loses its long member")
         void longProgrammatic() {
             assertEquals("leveled-child", selected(qualifiers("leveled"), LeveledChild.class, LeveledOther.class));
         }
@@ -1097,7 +1093,6 @@ class QualifierMemberResolutionTest {
         }
 
         @Test @DisplayName("a @Nonbinding member whose values differ is ignored")
-        @Disabled("BUG-20260914-04: boot validation loads the qualifier type with vauban-core's own class loader")
         void nonbindingMember() throws Exception {
             assertEquals("iso-one", isolatedLookup("iso.MarkedLoose", true));
         }

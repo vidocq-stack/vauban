@@ -42,6 +42,7 @@ public final class BeanResolver {
     private final List<io.vidocq.vauban.core.bean.model.InterceptorDescriptor> interceptors;
     private final AssignabilityRules assignability;
     private final io.vidocq.vauban.core.interceptor.InterceptorManager interceptorManager;
+    private final QualifierMatcher qualifierMatcher;
 
     public BeanResolver(List<BeanDescriptor> beans, AssignabilityRules assignability) {
         this(beans, List.of(), assignability);
@@ -50,6 +51,19 @@ public final class BeanResolver {
     public BeanResolver(List<BeanDescriptor> beans,
                         List<io.vidocq.vauban.core.bean.model.InterceptorDescriptor> interceptors,
                         AssignabilityRules assignability) {
+        this(beans, interceptors, assignability, QualifierMatcher.standalone());
+    }
+
+    /**
+     * A resolver matching qualifiers with {@code qualifierMatcher}: a container passes its own, which
+     * knows its index, the class loaders its classes come from and the members its extensions made
+     * non-binding.
+     */
+    public BeanResolver(List<BeanDescriptor> beans,
+                        List<io.vidocq.vauban.core.bean.model.InterceptorDescriptor> interceptors,
+                        AssignabilityRules assignability,
+                        QualifierMatcher qualifierMatcher) {
+        this.qualifierMatcher = Objects.requireNonNull(qualifierMatcher);
         this.interceptors = List.copyOf(interceptors);
         this.assignability = Objects.requireNonNull(assignability);
         this.interceptorManager = new io.vidocq.vauban.core.interceptor.InterceptorManager(interceptors);
@@ -83,7 +97,7 @@ public final class BeanResolver {
         var matching = new ArrayList<BeanDescriptor>();
 
         for (var bean : beans) {
-            if (matchesType(bean, requiredType) && QualifierMatcher.matches(bean.qualifiers(), qualifiers)) {
+            if (matchesType(bean, requiredType) && qualifierMatcher.matches(bean.qualifiers(), qualifiers)) {
                 matching.add(bean);
             }
         }
