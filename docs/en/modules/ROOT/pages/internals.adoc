@@ -654,15 +654,30 @@ What still reflects:
   `Class` with `Class.forName`. That needs no `opens` — a public class of an exported package loads
   without one — but an ahead-of-time compiler cannot see a computed name.
 * **Annotations.** Matching no longer reflects: qualifiers and interceptor bindings are compared as
-  `AnnotationKey`s built from the index (member defaults applied, `@Nonbinding` left out) — the
-  outcome of https://codefloe.com/Vidocq/vauban/issues/70[vauban#70^]. Two things still do. The
-  annotation *instances* handed to application code (`Bean#getQualifiers()`,
-  `ObserverMethod#getObservedQualifiers()`, `Parameters#get`) are `java.lang.reflect.Proxy`
-  instances over index data. And a *live* annotation the index does not describe — an `@Inherited`
-  one found on a superclass, a literal passed by a build compatible extension or a synthetic bean,
-  the default of a member read from its declaration — has its members read with `Method.invoke`.
-  Neither sits on the resolution path; `-Dvauban.annotations.reflection=allow|warn|forbid` (default
-  `allow`) logs or refuses the latter, so a deployment can prove it never needs it.
+  `AnnotationKey`s built from the index (member defaults applied, `@Nonbinding` left out — the
+  members a declaration marks and the ones an extension makes non-binding alike) — the outcome of
+  https://codefloe.com/Vidocq/vauban/issues/70[vauban#70^]. Injection does not read them either: the
+  qualifiers of a field or a parameter come from the descriptor the index built, not from the member
+  the container holds.
++
+A module compiled with the Vauban APT also *ships* what its own annotation types declare — their
+members, their declared types, their defaults, which are `@Nonbinding` — together with a reader and
+a **literal class** per type, in that type's own package. `Bean#getQualifiers()` then hands out the
+module's own literal, so even a package-private qualifier costs no reflection and needs no `opens`.
+A `java.lang.reflect.Proxy` over index data remains the fallback for a type no module describes.
++
+What is left reflects only where nothing describes the site: a disposer's non-`@Disposes`
+parameters, which the descriptor does not model; the `AnnotatedType` a portable extension passes to
+`getInjectionTargetFactory`, which by construction comes from the caller; and a *live* annotation
+the index does not describe — an `@Inherited` one found on a superclass, a literal passed by a build
+compatible extension or a synthetic bean, the default of a member read from its declaration.
+The `Annotated` SPI facades are not in that list: the specification requires them to hand out the
+annotations themselves.
++
+`-Dvauban.annotations.reflection=allow|warn|forbid` (default `allow`) logs or refuses every one of
+those, so a deployment can prove it never needs them. `forbid` throws a type of its own that no
+`catch (Exception)` on the way out swallows. See xref:reference.adoc#system-properties[Reference —
+system properties].
 * **Fallbacks.** A type no generated provider covers — the class path, a producer only known at run
   time — is instantiated reflectively, and the container says so at boot.
 

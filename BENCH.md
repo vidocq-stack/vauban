@@ -6,6 +6,68 @@ Every published number (README, commit, post) must point to an entry here.
 
 ---
 
+## BENCH-20260914-04 — Interceptor bindings on keys, chain worked out once (vauban#70, PR 5)
+
+- **Date**: 2026-09-14
+- **Commit**: bbb3c0b (branch `pr/ybl/70-interceptor-binding-keys`)
+- **JVM**: Temurin 25+36-LTS, default flags
+- **Hardware**: Apple M5 Max / 18 cores (6 performance, 12 efficiency) / 128 GB RAM
+- **OS**: macOS 26.6.2 (arm64)
+- **Exact command**: the same as BENCH-20260914-01
+  ```bash
+  mvn -ntp clean install        # Maven 3.9.16
+  java -jar vauban-bench/target/benchmarks.jar -f 3 -wi 5 -i 5 -w 2s -r 3s -prof gc
+  ```
+- **Results**:
+  ```
+  Benchmark                                                           Mode  Cnt      Score     Error   Units
+  QualifierResolutionBenchmark.dependentCreation                      avgt   15  13626,882 ± 264,948   ns/op
+  QualifierResolutionBenchmark.dependentCreation:gc.alloc.rate.norm   avgt   15  34565,499 ±  87,081    B/op
+  QualifierResolutionBenchmark.interceptedCall                        avgt   15    360,237 ±  15,027   ns/op
+  QualifierResolutionBenchmark.interceptedCall:gc.alloc.rate.norm     avgt   15    768,003 ±   0,005    B/op
+  QualifierResolutionBenchmark.programmaticLookup                     avgt   15   1868,549 ±  30,491   ns/op
+  QualifierResolutionBenchmark.programmaticLookup:gc.alloc.rate.norm  avgt   15   6965,351 ±  16,693    B/op
+  QualifierResolutionBenchmark.qualifiedEvent                         avgt   15   4512,423 ± 115,323   ns/op
+  QualifierResolutionBenchmark.qualifiedEvent:gc.alloc.rate.norm      avgt   15   7792,042 ±  80,489    B/op
+  ```
+- **Comparison with the previous run** (BENCH-20260914-03, after PR 4d):
+
+  | Benchmark | after 4d | after 5 | time | allocation |
+  |---|---|---|---|---|
+  | `interceptedCall` | 691 ns, 3309 B | 360 ns, 768 B | **1.92× faster** | **−77 %** |
+  | `qualifiedEvent` | 4700 ns, 7776 B | 4512 ns, 7792 B | −4.0 % | flat |
+  | `dependentCreation` | 14015 ns, 34539 B | 13627 ns, 34565 B | −2.8 % | flat |
+  | `programmaticLookup` | 1897 ns, 7016 B | 1869 ns, 6965 B | −1.5 % | −0.7 % |
+
+- **Comparison with the baseline** (BENCH-20260914-01, before #70 — the whole campaign):
+
+  | Benchmark | before #70 | after 5 | time | allocation |
+  |---|---|---|---|---|
+  | `dependentCreation` | 41561 ns, 65245 B | 13627 ns, 34565 B | **3.05× faster** | **−47 %** |
+  | `programmaticLookup` | 6590 ns, 11691 B | 1869 ns, 6965 B | **3.53× faster** | **−40 %** |
+  | `interceptedCall` | 651 ns, 3251 B | 360 ns, 768 B | **1.81× faster** | **−76 %** |
+  | `qualifiedEvent` | 4673 ns, 6941 B | 4512 ns, 7792 B | −3.4 % | +12 % |
+
+- **Notes**:
+  - Load average about 2.6 at the end of the run, against about 3.5 for BENCH-20260914-03 and about
+    5 for -02, so this machine was the quietest of the three. The three small changes outside
+    `interceptedCall` are of the same order as that difference and as the error bars (0.8 % to
+    2.6 % of each score): read them as flat, not as gains.
+  - **`interceptedCall` is where this stage acts, and BENCH-20260914-03 predicted it would be.** The
+    generated subclass asks for its interceptor chain on every call, and the manager answered by
+    walking the class hierarchy, resolving the method reflectively and re-reading every binding
+    annotation each time. Which interceptors apply depends on declarations alone, so it is now worked
+    out once per (bean class, method). 768 B/op is what building the chain's invocations costs; the
+    2.5 KB above it was the answer being recomputed.
+  - Comparing binding members as `AnnotationKey`s rather than with `Method.invoke` is part of the
+    same commit and cannot be separated from the cache by this benchmark. The correctness it buys is
+    the point of it (BUG-20260914-08); the time it saves is inside the number above.
+  - `qualifiedEvent` remains what BENCH-20260914-03 described: allocation 12 % above the pre-#70
+    baseline, time flat. Nothing in #70 addresses it — what is left is the dispatch itself.
+  - Same benchmark as the three earlier runs, unchanged, so all four compare like with like.
+
+---
+
 ## BENCH-20260914-03 — Qualifier resolution on generated metadata (vauban#70, PR 4b to 4d)
 
 - **Date**: 2026-09-14

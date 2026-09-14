@@ -1252,7 +1252,7 @@ and a proposed upstream assertion: `CDI_TCK_PROPOSALS.md` → `TCK-GAP-001`.
 ## BUG-20260914-08 — Interceptor bindings declared by an extension ignore their member values
 
 - **Date**: 2026-09-14
-- **Status**: OPEN
+- **Status**: FIXED bbb3c0b
 - **Module**: `vauban-core` (interceptor resolution: `InterceptorDiscovery`, `InterceptorManager#bindingMembersMatchWherePresent`)
 - **Symptom**: a binding registered with `MetaAnnotations.addInterceptorBinding` binds its interceptor whatever the member values: a method annotated `@Metered(value = "method", group = "other")` is intercepted by an interceptor declared `@Metered(value = "interceptor", group = "g")`, although `group` is binding.
 - **Minimal reproduction** (`InterceptorBindingMemberTest#extensionBindingMemberValue`):
@@ -1265,6 +1265,7 @@ and a proposed upstream assertion: `CDI_TCK_PROPOSALS.md` → `TCK-GAP-001`.
 - **Suspected cause**: interceptor discovery keeps only annotation types meta-annotated `@InterceptorBinding`, while the bean side also accepts bindings registered by extensions; the interceptor's binding list is then empty and `bindingMembersMatchWherePresent` has nothing to compare.
 - **Investigations**:
   - 2026-09-14: found by the vauban#70 safety net. `#extensionNonbindingMember` passed first; its control showed that it passes only because no member is compared at all. `#extensionBindingMemberValue` is disabled with this id.
+  - 2026-09-14 (fix, bbb3c0b): two causes, both about values that never reached the comparison. `InterceptorDiscovery` collected an interceptor's binding *annotations* by asking each annotation type for a physical `@InterceptorBinding`, which a type registered by an extension does not carry, so the descriptor's list stayed empty — and `bindingMembersMatchWherePresent` returns `true` on an empty list; it now uses the set of binding names beside it, which already went through the predicate that knows about extensions. And `VaubanMetaAnnotations` reported the members an extension had made `@Nonbinding` for its qualifiers but not for its interceptor bindings, so `value` would have started binding as soon as the first cause was fixed. The comparison itself moved onto `AnnotationKey`, which applies member defaults and drops non-binding members from both sources at once. `#extensionBindingMemberValue` is enabled.
 
 ## BUG-20260914-09 — An `@Inherited` qualifier loses its long, float, double, byte, short, char, array and nested members
 

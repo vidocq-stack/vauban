@@ -82,7 +82,7 @@ Lite-profile specifics worth knowing before migrating:
 . Cover your injection graph with integration tests using `vauban-junit` (`@VaubanTest`).
 . Activate the CDI 4.1 Lite TCK on the application itself via `vauban-junit`.
 . Iterate on BCEs to replace portable extensions.
-. If you target GraalVM `native-image`, plan for reflection metadata: class loading by name and annotation matching still reflect (see xref:internals.adoc#aot[AOT compatibility]).
+. If you target GraalVM `native-image`, plan for reflection metadata: class loading by name still reflects, and so do the few annotation sites nothing describes. Annotation *matching* does not — run your tests with `-Dvauban.annotations.reflection=warn` to see exactly what is left (see xref:internals.adoc#aot[AOT compatibility]).
 
 == Going further
 

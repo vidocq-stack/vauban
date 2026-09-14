@@ -35,7 +35,7 @@ Vauban is an implementation of [Jakarta CDI 4.1](https://jakarta.ee/specificatio
 ### Philosophy
 
 - **Java Modules-first**: every component is an explicit Java module (`module-info.java`)
-- **Generated, not reflected**: beans are built, injected and proxied by code generated at build time with the JDK 25 Class-File API, living in your own packages — no `opens` into them. The reflection that remains (class loading by name, annotation matching) is listed in the documentation
+- **Generated, not reflected**: beans are built, injected and proxied by code generated at build time with the JDK 25 Class-File API, living in your own packages — no `opens` into them. Matching does not reflect either: qualifiers and interceptor bindings are compared as normalized keys built from the index, and a module compiled with the processor ships what its own annotation types declare, down to a literal class per type. Set `-Dvauban.annotations.reflection=forbid` to prove a deployment needs none; what remains (class loading by name, and the few sites nothing describes) is listed in the documentation
 - **Virtual threads ready**: `ScopedValue` (JEP 487) instead of `ThreadLocal` everywhere
 - **Zero runtime dependency**: every published library depends on the Jakarta APIs it implements and
   on nothing else; the indexer has none at all. Build-time tooling is separate — a Maven plugin runs

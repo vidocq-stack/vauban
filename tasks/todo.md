@@ -248,11 +248,23 @@ interceptor binding:
       `AnnotatedType` (supplied by the caller, by construction), and the `Annotated` SPI facades
       (the specification requires those to hand out the annotations themselves)
 
-### PR 5 — Interceptor bindings
-- [ ] `InterceptorManager` on keys; chain cached per (class, method); `getInterceptorBindings` cached
-- [ ] Docs: internals (what still reflects), reference (bench module and the
-      `vauban.annotations.reflection` switch), native-image notes, README
-- [ ] Final BENCH entry; follow-up tickets filed
+### PR 5 — Interceptor bindings — DONE
+- [x] `InterceptorManager` compares binding members as `AnnotationKey`s; **BUG-20260914-08 fixed**,
+      and it had two causes, both about values that never reached the comparison: discovery dropped
+      every binding an extension registered (it asked the type for a physical `@InterceptorBinding`),
+      and `VaubanMetaAnnotations` reported extension-declared `@Nonbinding` members for qualifiers
+      only. The last test this repository disabled for #70 is enabled
+- [x] Which interceptors apply is worked out once per (bean class, method) instead of on every call
+- [x] Docs: internals §AOT rewritten (Antoine's text said exposed instances are always
+      `reflect.Proxy` — no longer true since 4b/4c; and it credited key-compared interceptor bindings
+      before they were, which this stage makes true), reference gains the
+      `vauban.annotations.reflection` row and a `[#system-properties]` anchor, migration's
+      native-image note corrected, README's reflection claim corrected. Rendered with asciidoctor to
+      check the tables and the list continuations, not grepped
+- [x] **BENCH-20260914-04**: `interceptedCall` 1.92× faster for 77 % less allocation than after 4d —
+      what BENCH-20260914-03 predicted this stage would move. Against the pre-#70 baseline:
+      dependent creation 3.05×, programmatic lookup 3.53×, intercepted call 1.81×
+- [ ] Follow-up tickets filed
 
 ## Review
 _(to fill in when #70 closes)_
