@@ -1000,11 +1000,13 @@ public final class ManagedBean<T> implements Bean<T> {
                 }
                 cls = cls.getSuperclass();
             }
-        } catch (io.vidocq.vauban.core.annotation.AnnotationReflection.ForbiddenException e) {
+        } catch (RuntimeException e) {
+            // Reporting that a bean has no injection points, or half of them, is a wrong answer —
+            // and the caller has no way to tell it from the truth (BUG-20260914-17).
             throw e;
         } catch (Exception e) {
-            LOG.log(System.Logger.Level.DEBUG,
-                    () -> "Could not describe the injection points of " + beanClass.getName(), e);
+            throw new jakarta.enterprise.inject.spi.DefinitionException(
+                    "Could not describe the injection points of " + beanClass.getName(), e);
         }
         return result;
     }

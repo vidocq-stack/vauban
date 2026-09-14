@@ -196,13 +196,18 @@ final class BeanInjector {
                     writeField(instance, field, value);
                 }
             });
-        } catch (jakarta.enterprise.inject.IllegalProductException | jakarta.enterprise.inject.UnproxyableResolutionException
-                | io.vidocq.vauban.core.annotation.AnnotationReflection.ForbiddenException e) {
+        } catch (RuntimeException e) {
+            // An injection that fails must say so. Logging it and leaving the field null hands out a
+            // bean that looks built, and the failure comes back later as a NullPointerException in
+            // application code naming neither the field nor the cause (BUG-20260914-17).
+            // The exception keeps its type: a caller catching UnsatisfiedResolutionException or
+            // IllegalProductException must still see it.
+            if (e.getCause() instanceof jakarta.enterprise.inject.IllegalProductException ipe) throw ipe;
             throw e;
         } catch (Exception e) {
-            if (e.getCause() instanceof jakarta.enterprise.inject.IllegalProductException ipe) throw ipe;
-            LOG.log(System.Logger.Level.ERROR,
-                    "Injection failed for " + field.getName() + " on " + instance.getClass(), e);
+            throw new jakarta.enterprise.inject.CreationException("Failed to inject "
+                    + field.getDeclaringClass().getName() + "." + field.getName()
+                    + " on " + instance.getClass().getName(), e);
         }
     }
 

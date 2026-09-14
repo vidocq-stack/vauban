@@ -30,7 +30,6 @@ import jakarta.interceptor.Interceptor;
 import jakarta.interceptor.InterceptorBinding;
 import jakarta.interceptor.InvocationContext;
 import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
