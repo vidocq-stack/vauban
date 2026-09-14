@@ -63,6 +63,22 @@ public enum AnnotationReflection {
         }
     }
 
+    /**
+     * What to do about it, when there is something to do. A message that only says a fallback was
+     * taken leaves the reader to work out whether it is their fault and what would remove it.
+     */
+    private static String remedy(String subject) {
+        if (subject.startsWith("field ") || subject.startsWith("parameter ")) {
+            return " No descriptor describes that injection point: it belongs to a class the index"
+                    + " does not cover — an interceptor injected without one, or a type added at run"
+                    + " time.";
+        }
+        return " Compile the module that declares " + subject + " with the Vauban annotation"
+                + " processor and it ships what the container needs. If it is a third party's, the"
+                + " module that uses it carries a literal instead — unless the type is not public,"
+                + " which no other package can implement.";
+    }
+
     private static final System.Logger LOG = System.getLogger(AnnotationReflection.class.getName());
     private static final Set<String> WARNED = ConcurrentHashMap.newKeySet();
 
@@ -112,7 +128,7 @@ public enum AnnotationReflection {
             return;
         }
         var message = PROPERTY + "=" + mode.name().toLowerCase(Locale.ROOT)
-                + ": " + what + " " + subject + " needs reflection";
+                + ": " + what + " " + subject + " needs reflection." + remedy(subject);
         if (mode == FORBID) {
             throw new ForbiddenException(message);
         }

@@ -1024,15 +1024,62 @@ public class VaubanProcessor extends AbstractProcessor {
      */
     private Map<String, List<ClassInfo>> declaredAnnotationTypes(io.vidocq.vauban.indexer.VaubanIndex index) {
         var elements = processingEnv.getElementUtils();
-        var byPackage = new java.util.LinkedHashMap<String, List<ClassInfo>>();
+        // Per package, the annotation types its provider carries — keyed by name so a type used many
+        // times in one package is rendered once.
+        var byPackage = new java.util.LinkedHashMap<String, java.util.LinkedHashMap<DotName, ClassInfo>>();
+        var fromDependencies = new java.util.LinkedHashMap<DotName, ClassInfo>();
+
         for (var classInfo : index.getKnownClasses()) {
             if (!classInfo.isAnnotation()) continue;
             var element = annotationTypeElement(elements, classInfo.name());
-            if (element == null || !compiledHere(elements, element)) continue;
-            byPackage.computeIfAbsent(classInfo.name().packageName(), pkg -> new java.util.ArrayList<>())
-                    .add(classInfo);
+            if (element == null) continue;
+            if (compiledHere(elements, element)) {
+                byPackage.computeIfAbsent(classInfo.name().packageName(),
+                        pkg -> new java.util.LinkedHashMap<>()).put(classInfo.name(), classInfo);
+            } else if (coverableFromAConsumer(classInfo, element)) {
+                fromDependencies.put(classInfo.name(), classInfo);
+            }
         }
-        return byPackage;
+
+        if (!fromDependencies.isEmpty()) {
+            for (var classInfo : index.getKnownClasses()) {
+                if (classInfo.isAnnotation()) continue;
+                var element = elements.getTypeElement(classInfo.name().value().replace('$', '.'));
+                if (element == null || !compiledHere(elements, element)) continue;
+                var used = new java.util.ArrayList<DotName>();
+                collectAnnotationNames(classInfo, used);
+                for (var name : used) {
+                    var type = fromDependencies.get(name);
+                    if (type == null) continue;
+                    byPackage.computeIfAbsent(classInfo.name().packageName(),
+                            pkg -> new java.util.LinkedHashMap<>()).put(name, type);
+                }
+            }
+        }
+
+        var result = new java.util.LinkedHashMap<String, List<ClassInfo>>();
+        byPackage.forEach((pkg, types) -> result.put(pkg, List.copyOf(types.values())));
+        return result;
+    }
+
+    /**
+     * Whether a qualifier or interceptor binding that comes from a dependency can be covered by the
+     * module that <em>uses</em> it (vauban#88). Its own module ships nothing for it — it was not
+     * built with this processor — so without this the container builds a {@code reflect.Proxy} for
+     * it, which {@code -Dvauban.annotations.reflection=forbid} refuses.
+     *
+     * <p>Only a <strong>public</strong> type qualifies: a literal has to implement the annotation
+     * interface, which no other package can do for a package-private one. And only a type the
+     * container needs instances of — the built-ins it has literals for are left alone.
+     */
+    private static boolean coverableFromAConsumer(ClassInfo classInfo, TypeElement element) {
+        if (!element.getModifiers().contains(Modifier.PUBLIC)) return false;
+        return switch (classInfo.name().value()) {
+            case "jakarta.enterprise.inject.Default", "jakarta.enterprise.inject.Any",
+                 "jakarta.inject.Named" -> false;
+            default -> classInfo.hasAnnotation(DotName.of("jakarta.inject.Qualifier"))
+                    || classInfo.hasAnnotation(DotName.of("jakarta.interceptor.InterceptorBinding"));
+        };
     }
 
     /** Whether {@code element} comes from a source file of this compilation rather than the path. */

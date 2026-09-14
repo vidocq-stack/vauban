@@ -664,7 +664,12 @@ A module compiled with the Vauban APT also *ships* what its own annotation types
 members, their declared types, their defaults, which are `@Nonbinding` — together with a reader and
 a **literal class** per type, in that type's own package. `Bean#getQualifiers()` then hands out the
 module's own literal, so even a package-private qualifier costs no reflection and needs no `opens`.
-A `java.lang.reflect.Proxy` over index data remains the fallback for a type no module describes.
++
+A qualifier from a dependency built *without* the processor is covered by the module that uses it,
+which carries a literal for it in its own package — provided the type is **public**, since no other
+package can implement a package-private interface. That last case, a non-public qualifier in a module
+compiled without the processor, is the one where a `java.lang.reflect.Proxy` over index data remains
+the fallback.
 +
 What is left reflects only where nothing describes the site: a disposer's non-`@Disposes`
 parameters, which the descriptor does not model; the `AnnotatedType` a portable extension passes to

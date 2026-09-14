@@ -109,6 +109,11 @@ class GeneratedAnnotationArtefactsTest {
             @Channel(value = "wire", note = "written", hue = Hue.LOW) @Dependent class WirePayment {
             }
 
+            /** Qualified by a PUBLIC qualifier of a dependency, compiled without this processor. */
+            @jakarta.enterprise.context.Initialized(jakarta.enterprise.context.ApplicationScoped.class)
+            @Dependent class Boot {
+            }
+
             @Dependent
             public class Checkout {
                 // The same binding values as the bean; the @Nonbinding note may differ.
@@ -220,11 +225,46 @@ class GeneratedAnnotationArtefactsTest {
     }
 
     @Test
-    @DisplayName("a type the module does not declare is not its provider's to answer for")
+    @DisplayName("a type the module neither declares nor uses is not its provider's to answer for")
     void unknownType() {
         assertNull(provider.annotationMetadata("jakarta.inject.Named"));
         assertNull(provider.annotationLiteral("jakarta.inject.Named", Map.of()));
         assertNull(provider.readAnnotation(jakarta.enterprise.inject.Any.Literal.INSTANCE));
+    }
+
+    /**
+     * A qualifier from a dependency built without this processor: nothing ships its artefacts, so
+     * without this the container would have to build a {@code reflect.Proxy} for it — which
+     * {@code forbid} refuses. The type is public, so the module that <em>uses</em> it can carry a
+     * literal for it (vauban#88).
+     */
+    @Test
+    @DisplayName("a public qualifier of a dependency gets a reader and a literal in the module that uses it")
+    void aDependencyQualifierIsCoveredByItsConsumer() throws Exception {
+        var declared = jdkInitialized();
+
+        var literal = provider.annotationLiteral("jakarta.enterprise.context.Initialized",
+                Map.of("value", jakarta.enterprise.context.ApplicationScoped.class));
+
+        assertNotNull(literal, "the module uses it and its own module ships nothing for it");
+        assertEquals(declared, literal, "equal to the instance the JDK builds from that declaration");
+        assertEquals(literal, declared, "and accepted by it");
+        assertEquals(declared.hashCode(), literal.hashCode());
+
+        var values = provider.readAnnotation(declared);
+        assertNotNull(values, "reading it must not need reflection either");
+        assertEquals(jakarta.enterprise.context.ApplicationScoped.class, values.get("value"));
+
+        // Only what the container needs instances of. @Dependent is on every bean of the fixture and
+        // is not a qualifier, so carrying a literal for it would be pure weight.
+        assertNull(provider.annotationLiteral("jakarta.enterprise.context.Dependent", Map.of()),
+                "a dependency's annotation that is not a qualifier must not be rendered");
+    }
+
+    /** The {@code @Initialized} the fixture's bean carries, read through the compiled module. */
+    private static java.lang.annotation.Annotation jdkInitialized() throws ClassNotFoundException {
+        return module.loadClass("app.Boot")
+                .getAnnotation(jakarta.enterprise.context.Initialized.class);
     }
 
     // ---- compilation harness ----
