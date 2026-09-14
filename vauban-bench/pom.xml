@@ -66,12 +66,6 @@
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-compiler-plugin</artifactId>
                 <configuration>
-                    <compilerArgs combine.children="append">
-                        <!-- BUG-20260914-13: compile-time validation ignores the qualifiers declared in
-                             this module and reports every qualified injection point as ambiguous. The
-                             container validates the deployment again when it boots. -->
-                        <arg>-Avauban.validation=false</arg>
-                    </compilerArgs>
                     <annotationProcessorPaths>
                         <path>
                             <groupId>org.openjdk.jmh</groupId>

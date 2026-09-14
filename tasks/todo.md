@@ -155,12 +155,37 @@ that was not idle. Four tests stay disabled: -08 (PR 5), -11 (outside #70, twice
   performance only, touches nine call sites in six classes, and pairs with the generated metadata.
 
 ### PR 4 — Generated metadata, readers and literals (processor path)
-- [ ] `VaubanComponentProvider`: default methods for metadata, member reader and literal factory
-- [ ] Processor renders them as source: the literal goes in the annotation type's own package when
-      that type is compiled in this module, else in the consuming package when accessible
-- [ ] Registry and converters consult the providers first
-- [ ] vauban-module-it equivalence IT over every edge shape under `forbid`, plus a run-time-only
-      annotation proving the fallback still works
+Mapped on `main` @ 981889e. Two PRs again: the compile-time bug is self-contained and blocks users
+today, the generated path is the large one.
+
+#### PR 4a — Compile-time validation knows the module's own qualifiers
+- [x] The processor indexes the annotation types its classes name, resolved through `Elements`, which
+      sees both this compilation and the compile classpath
+- [x] Compile-time matching on an `AnnotationTypes` built on that index: defaults and `@Nonbinding`
+      decide as they do at run time (a second test, written for it)
+- [x] `SameModuleQualifierValidationTest#sameModuleQualifier` runs (BUG-20260914-13)
+- [x] `vauban-bench` compiles with validation on: its `-Avauban.validation=false` goes away, which is
+      the end-to-end proof
+
+#### PR 4b — Generated metadata, readers and literals
+Where each piece plugs in, from the map of `main` @ 981889e:
+- the SPI is `VaubanComponentProvider` (vauban-api), five methods, the optional ones `default`;
+  a module's provider is `<pkg>._VaubanComponents`, one per package that has beans
+- it is rendered as Java source by `ComponentProviderGenerator#generateFrom`, which emits each
+  optional method only when its input list is non-empty — the seam a new one follows
+- the run time consults providers through `ComponentProviders`, loaded once by the container builder
+- the three fallbacks to put behind generated data: `AnnotationTypes#load` (index, class bytes,
+  declaration), `AnnotationValues#infoOf` (container-built instance, else a reflective read),
+  `AnnotationInstances#create` (the instance itself)
+- [ ] `VaubanComponentProvider`: default methods for annotation metadata, member reader and literal
+      factory
+- [ ] Processor renders them: the literal goes in the annotation type's own package when that type is
+      compiled in this module, else in the consuming package when accessible
+- [ ] `AnnotationTypes`, `AnnotationValues` and `AnnotationInstances` consult the providers first
+- [ ] Parameter qualifiers from the index instead of `Parameter.getAnnotations()` (moved out of PR 3b)
+- [ ] `vauban-module-it` runs under `-Dvauban.annotations.reflection=forbid` (a surefire
+      `systemPropertyVariables` block, which that module does not have yet) over every edge shape,
+      plus a run-time-only annotation proving the fallback still works
 - [ ] BENCH "after" entry
 
 ### PR 5 — Interceptor bindings

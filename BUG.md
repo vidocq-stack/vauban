@@ -1334,7 +1334,7 @@ and a proposed upstream assertion: `CDI_TCK_PROPOSALS.md` → `TCK-GAP-001`.
 ## BUG-20260914-13 — Compile-time validation does not know qualifiers declared in the module being compiled
 
 - **Date**: 2026-09-14
-- **Status**: OPEN
+- **Status**: FIXED (vauban#70 PR 4a)
 - **Module**: `vauban-processor` (`VaubanProcessor#getSupportedAnnotationTypes`, `#resolveDependencyBeans`), through `vauban-core`'s `QualifierResolver#isQualifierAnnotation`
 - **Symptom**: a module that declares its own qualifier and two beans of one type does not compile with the Vauban processor: `[Vauban] Ambiguous dependency: field Checkout.card of type … Matching beans: [CardPayment, WirePayment]`, although `@Channel("card")` selects a single bean. The container resolves the same deployment at run time.
 - **Minimal reproduction** (`SameModuleQualifierValidationTest#sameModuleQualifier`):
@@ -1349,6 +1349,7 @@ and a proposed upstream assertion: `CDI_TCK_PROPOSALS.md` → `TCK-GAP-001`.
 - **Suspected cause**: the processor indexes the types carrying its supported annotations (the bean-defining ones and the extension triggers) and the injection points' required types; a qualifier annotation type is neither. `isQualifierAnnotation` misses it in the index and falls back on `Class.forName` through the thread context class loader, which cannot load a type still being compiled. The qualifier is then ignored on both sides and every bean of the type matches. A qualifier from a dependency jar is probably affected the same way, since the context class loader of javac does not see the compile classpath.
 - **Investigations**:
   - 2026-09-14: found while compiling the vauban#70 benchmarks, which work around it with `-Avauban.validation=false` (the container validates again at boot); the test is disabled with this id.
+  - 2026-09-14: **fixed** by vauban#70 PR 4a. Before discovery runs, the processor adds to its index every annotation type the indexed classes name, and then the types those name in turn, resolving each one through `Elements` — which sees the module being compiled and the compile classpath, where a class loader sees neither. Discovery therefore reads `@Qualifier`, `@Stereotype` and `@InterceptorBinding` from the index and never falls back on `Class.forName`. Compile-time matching goes through an `AnnotationTypes` built on that index, so a member default counts as a written value and a `@Nonbinding` member takes no part, as at run time. `vauban-bench` compiles with validation on again: its `-Avauban.validation=false` is gone. Proven by mutation: without the indexing step the two-bean fixture is ambiguous again, and with the previous matcher the defaulted injection point is unsatisfied.
 
 ## BUG-20260914-14 — The CDI invoker wraps the trailing array of a varargs method in another array
 

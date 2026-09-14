@@ -43,6 +43,9 @@ import io.vidocq.vauban.core.types.AssignabilityRules;
 import io.vidocq.vauban.indexer.IndexBuilder;
 import io.vidocq.vauban.indexer.codegen.ComponentCollector;
 import io.vidocq.vauban.indexer.codegen.ProvidedClass;
+import io.vidocq.vauban.indexer.model.AnnotationInfo;
+import io.vidocq.vauban.indexer.model.AnnotationValue;
+import io.vidocq.vauban.indexer.model.ClassInfo;
 import io.vidocq.vauban.indexer.model.DotName;
 import io.vidocq.vauban.indexer.model.TypeInfo;
 import io.vidocq.vauban.indexer.scanner.ClassFileScanner;
@@ -51,6 +54,7 @@ import jakarta.enterprise.inject.build.compatible.spi.BuildCompatibleExtension;
 import javax.annotation.processing.*;
 import javax.lang.model.SourceVersion;
 import javax.lang.model.element.*;
+import javax.lang.model.util.Elements;
 import javax.tools.Diagnostic;
 import javax.tools.StandardLocation;
 import java.io.*;
@@ -234,6 +238,10 @@ public class VaubanProcessor extends AbstractProcessor {
         finalized = true;
 
         var indexBuilder = accumulatedIndex;
+        // The annotation types the indexed classes name — a qualifier, a stereotype or an interceptor
+        // binding this compilation declares is on no class path yet, so discovery cannot fall back on
+        // Class.forName for it, and would ignore it on both sides (BUG-20260914-13).
+        indexAnnotationTypes(indexBuilder, scanner);
         var index = indexBuilder.build();
         if (index.size() == 0) return false;
 
@@ -357,7 +365,13 @@ public class VaubanProcessor extends AbstractProcessor {
         var errors = java.util.Collections.<DeploymentValidator.ValidationError>emptyList();
         if (validationEnabled()) {
             var assignability = new AssignabilityRules(index);
-            var resolver = new BeanResolver(beans, assignability);
+            // Matching reads what each qualifier type declares from the index, the only source at
+            // compile time: a member default counts as a written value and a @Nonbinding member takes
+            // no part, exactly as when the container validates the same deployment again at boot.
+            var annotationTypes = new io.vidocq.vauban.core.annotation.AnnotationTypes(
+                    index, List.of(), nonbindingMembers(discoveryResult));
+            var resolver = new BeanResolver(beans, List.of(), assignability,
+                    new io.vidocq.vauban.core.bean.resolution.QualifierMatcher(annotationTypes));
             var validator = new DeploymentValidator(beans, resolver, index);
             errors = validator.validate();
         } else {
@@ -944,6 +958,82 @@ public class VaubanProcessor extends AbstractProcessor {
      * @param discoveryResult BCE discovery result to replay on the second discovery pass, or null
      * @return what was resolved, and what has to be deferred to the runtime container
      */
+    /**
+     * Adds to the index every annotation type the indexed classes name, and then the types those name
+     * in turn — the meta-annotations that say what a type is ({@code @Qualifier}, {@code @Stereotype},
+     * {@code @InterceptorBinding}) and what its members mean ({@code @Nonbinding}, their defaults).
+     *
+     * <p>Discovery and validation read all of that from the index. Their fallback, loading the type by
+     * name, cannot work here: the qualifier of the module being compiled exists nowhere yet, and a
+     * qualifier from a dependency sits on the compile classpath, which the processor's own class loader
+     * does not see. {@code Elements} sees both.
+     */
+    private void indexAnnotationTypes(IndexBuilder indexBuilder, ElementScanner scanner) {
+        var elements = processingEnv.getElementUtils();
+        var pending = new ArrayDeque<DotName>();
+        var seen = new HashSet<DotName>();
+        for (var classInfo : indexBuilder.build().getKnownClasses()) {
+            collectAnnotationNames(classInfo, pending);
+        }
+        while (!pending.isEmpty()) {
+            var name = pending.poll();
+            if (!seen.add(name) || indexBuilder.contains(name)) {
+                continue;
+            }
+            var element = annotationTypeElement(elements, name);
+            if (element == null) {
+                continue;
+            }
+            var scanned = scanner.scan(element);
+            indexBuilder.add(scanned);
+            collectAnnotationNames(scanned, pending);
+        }
+    }
+
+    /** The members extensions made non-binding during {@code @Discovery}, by qualifier type name. */
+    private static Map<String, Set<String>> nonbindingMembers(BceProcessor.DiscoveryResult discoveryResult) {
+        return discoveryResult == null ? Map.of()
+                : discoveryResult.metaAnnotations().getNonbindingMembersPerQualifier();
+    }
+
+    /** The annotation type {@code name}, from this compilation or the compile classpath, or {@code null}. */
+    private static TypeElement annotationTypeElement(Elements elements, DotName name) {
+        var element = elements.getTypeElement(name.value());
+        if (element == null) {
+            // The index names a nested type the way the class file does, Outer$Inner; javac wants Outer.Inner.
+            element = elements.getTypeElement(name.value().replace('$', '.'));
+        }
+        return element != null && element.getKind() == ElementKind.ANNOTATION_TYPE ? element : null;
+    }
+
+    /** Every annotation named on a class, on its fields, on its methods and on their parameters. */
+    private static void collectAnnotationNames(ClassInfo classInfo, Collection<DotName> into) {
+        classInfo.annotations().forEach(annotation -> collectAnnotationNames(annotation, into));
+        classInfo.fields().forEach(field ->
+                field.annotations().forEach(annotation -> collectAnnotationNames(annotation, into)));
+        for (var method : classInfo.methods()) {
+            method.annotations().forEach(annotation -> collectAnnotationNames(annotation, into));
+            method.parameters().forEach(parameter ->
+                    parameter.annotations().forEach(annotation -> collectAnnotationNames(annotation, into)));
+        }
+    }
+
+    /** The annotation's own type, and the types of the annotations its members hold. */
+    private static void collectAnnotationNames(AnnotationInfo annotation, Collection<DotName> into) {
+        into.add(annotation.name());
+        annotation.members().values().forEach(value -> collectAnnotationNames(value, into));
+    }
+
+    private static void collectAnnotationNames(AnnotationValue value, Collection<DotName> into) {
+        switch (value) {
+            case AnnotationValue.AnnotationVal nested -> collectAnnotationNames(nested.annotation(), into);
+            case AnnotationValue.ArrayVal array -> array.values().forEach(item -> collectAnnotationNames(item, into));
+            default -> {
+                // No annotation type to reach through any other member kind.
+            }
+        }
+    }
+
     private DependencyTypes resolveDependencyBeans(List<BeanDescriptor> beans,
                                                    IndexBuilder indexBuilder,
                                                    ElementScanner scanner,

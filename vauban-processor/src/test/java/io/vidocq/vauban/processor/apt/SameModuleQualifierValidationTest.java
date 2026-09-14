@@ -21,7 +21,6 @@ package io.vidocq.vauban.processor.apt;
 
 import io.vidocq.vauban.processor.VaubanProcessor;
 import jakarta.enterprise.context.Dependent;
-import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -79,32 +78,81 @@ class SameModuleQualifierValidationTest {
             }
             """;
 
+    /**
+     * The two rules a qualifier type carries: a member default, which counts as a written value, and a
+     * {@code @Nonbinding} member, which takes no part. The container applies both; compile-time
+     * validation reads them from the same annotation type.
+     *
+     * <p>The injected type is the bean class itself, so an injection point these rules do not satisfy
+     * is a compile error rather than a resolution deferred to the container — which is what an
+     * unsatisfied point of a type this compilation does not declare would be.
+     */
+    private static final String TYPE_RULES_SOURCE = """
+            package app;
+
+            import jakarta.enterprise.context.Dependent;
+            import jakarta.enterprise.util.Nonbinding;
+            import jakarta.inject.Inject;
+            import jakarta.inject.Qualifier;
+            import java.lang.annotation.Retention;
+            import java.lang.annotation.RetentionPolicy;
+
+            @Qualifier
+            @Retention(RetentionPolicy.RUNTIME)
+            @interface Graded {
+                String value() default "standard";
+
+                @Nonbinding String note() default "";
+            }
+
+            @Graded @Dependent class StandardService {
+            }
+
+            @Dependent
+            public class Desk {
+                // The default written out, and a @Nonbinding member the bean does not carry.
+                @Inject @Graded(value = "standard", note = "desk") StandardService service;
+            }
+            """;
+
     @TempDir
     Path tempDir;
 
     @Test
     @DisplayName("control: the fixture compiles once compile-time validation is off")
     void fixtureCompilesWithoutValidation() throws IOException {
-        var result = compile("-Avauban.validation=false");
+        var result = compile(SOURCE, "-Avauban.validation=false");
         assertTrue(result.success(), "the fixture itself must compile: " + result.messages());
     }
 
     @Test
     @DisplayName("a qualifier declared in the compiled module disambiguates an injection point")
-    @Disabled("BUG-20260914-13: compile-time validation does not know qualifiers declared in the compiled module")
     void sameModuleQualifier() throws IOException {
-        var result = compile();
+        var result = compile(SOURCE);
         assertTrue(result.success(), "@Channel(\"card\") selects CardPayment alone: " + result.messages());
+    }
+
+    @Test
+    @DisplayName("its member default and its @Nonbinding member decide as they do at run time")
+    void qualifierTypeRulesApplyAtCompileTime() throws IOException {
+        var result = compile(TYPE_RULES_SOURCE);
+        assertTrue(result.success(),
+                "@Graded(value = \"standard\", note = \"desk\") selects the bean written @Graded: " + result.messages());
     }
 
     // ---- minimal in-process compilation harness ----
 
-    private CompilationResult compile(String... extraOptions) throws IOException {
+    private CompilationResult compile(String source, String... extraOptions) throws IOException {
         var compiler = ToolProvider.getSystemJavaCompiler();
         var diagnostics = new DiagnosticCollector<JavaFileObject>();
 
-        var file = Files.createDirectories(tempDir.resolve("src/app")).resolve("Checkout.java");
-        Files.writeString(file, SOURCE);
+        // javac wants the file named after the public type the source declares.
+        var publicType = java.util.regex.Pattern.compile("public class (\\w+)").matcher(source);
+        if (!publicType.find()) {
+            throw new IllegalArgumentException("the fixture must declare a public class");
+        }
+        var file = Files.createDirectories(tempDir.resolve("src/app")).resolve(publicType.group(1) + ".java");
+        Files.writeString(file, source);
         var sourceFile = new SimpleJavaFileObject(file.toUri(), JavaFileObject.Kind.SOURCE) {
             @Override
             public CharSequence getCharContent(boolean ignoreEncodingErrors) throws IOException {
