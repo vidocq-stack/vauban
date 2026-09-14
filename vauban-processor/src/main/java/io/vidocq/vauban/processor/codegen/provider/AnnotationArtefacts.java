@@ -87,12 +87,16 @@ public final class AnnotationArtefacts {
 
     private static String methods(List<ClassInfo> types) {
         var sb = new StringBuilder();
+        // Nothing here names an annotation type: a type is mentioned only inside its own nested
+        // class, which the JVM loads when an arm below runs. A type that is on the compile path and
+        // absent at run time — an optional integration — therefore costs nothing, where a chain of
+        // `instanceof` resolved every one of them on the first call (vauban#88, heisenberg).
         sb.append("\n    @Override\n");
         sb.append("    public io.vidocq.vauban.api.AnnotationTypeMetadata annotationMetadata(String annotationClassName) {\n");
         sb.append("        return switch (annotationClassName) {\n");
         for (var type : types) {
             sb.append("            case \"").append(type.name().value()).append("\" -> ")
-                    .append(metadataFactory(type)).append("();\n");
+                    .append(literalName(type.name())).append(".metadata();\n");
         }
         sb.append("            default -> null;\n");
         sb.append("        };\n");
@@ -100,25 +104,13 @@ public final class AnnotationArtefacts {
 
         sb.append("\n    @Override\n");
         sb.append("    public java.util.Map<String, Object> readAnnotation(java.lang.annotation.Annotation annotation) {\n");
+        sb.append("        return switch (annotation.annotationType().getName()) {\n");
         for (var type : types) {
-            var source = sourceName(type.name());
-            var members = members(type);
-            if (members.isEmpty()) {
-                // A marker declares nothing to read, so there is nothing to bind either.
-                sb.append("        if (annotation instanceof ").append(source)
-                        .append(") return java.util.Map.of();\n");
-                continue;
-            }
-            sb.append("        if (annotation instanceof ").append(source).append(" value) {\n");
-            sb.append("            var members = new java.util.LinkedHashMap<String, Object>();\n");
-            for (var member : members) {
-                sb.append("            members.put(\"").append(member.name()).append("\", value.")
-                        .append(member.name()).append("());\n");
-            }
-            sb.append("            return members;\n");
-            sb.append("        }\n");
+            sb.append("            case \"").append(type.name().value()).append("\" -> ")
+                    .append(literalName(type.name())).append(".read(annotation);\n");
         }
-        sb.append("        return null;\n");
+        sb.append("            default -> null;\n");
+        sb.append("        };\n");
         sb.append("    }\n");
 
         sb.append("\n    @Override\n");
@@ -132,35 +124,52 @@ public final class AnnotationArtefacts {
         sb.append("            default -> null;\n");
         sb.append("        };\n");
         sb.append("    }\n");
-
-        for (var type : types) {
-            sb.append(metadataMethod(type, types));
-        }
         return sb.toString();
     }
 
     private static String metadataMethod(ClassInfo type, List<ClassInfo> rendered) {
         var members = members(type);
         var sb = new StringBuilder();
-        sb.append("\n    private static io.vidocq.vauban.api.AnnotationTypeMetadata ")
-                .append(metadataFactory(type)).append("() {\n");
-        sb.append("        var types = new java.util.LinkedHashMap<String, Class<?>>();\n");
+        sb.append("\n        /** What the declaration says, for the container to normalize keys with. */\n");
+        sb.append("        static io.vidocq.vauban.api.AnnotationTypeMetadata metadata() {\n");
+        sb.append("            var types = new java.util.LinkedHashMap<String, Class<?>>();\n");
         for (var member : members) {
-            sb.append("        types.put(\"").append(member.name()).append("\", ")
+            sb.append("            types.put(\"").append(member.name()).append("\", ")
                     .append(classLiteral(member.returnType())).append(");\n");
         }
-        sb.append("        var defaults = new java.util.LinkedHashMap<String, Object>();\n");
+        sb.append("            var defaults = new java.util.LinkedHashMap<String, Object>();\n");
         for (var member : members) {
             if (member.defaultValue() != null) {
-                sb.append("        defaults.put(\"").append(member.name()).append("\", ")
+                sb.append("            defaults.put(\"").append(member.name()).append("\", ")
                         .append(expression(member.defaultValue(), member.returnType(), rendered)).append(");\n");
             }
         }
-        sb.append("        return new io.vidocq.vauban.api.AnnotationTypeMetadata(\n");
-        sb.append("                java.util.List.of(").append(members.stream()
+        sb.append("            return new io.vidocq.vauban.api.AnnotationTypeMetadata(\n");
+        sb.append("                    java.util.List.of(").append(members.stream()
                 .map(member -> "\"" + member.name() + "\"").collect(Collectors.joining(", "))).append("),\n");
-        sb.append("                types, defaults, ").append(nonbindingSet(members)).append(");\n");
-        sb.append("    }\n");
+        sb.append("                    types, defaults, ").append(nonbindingSet(members)).append(");\n");
+        sb.append("        }\n");
+        return sb.toString();
+    }
+
+    /** The reader, as a static method of the type's own nested class. */
+    private static String readMethod(ClassInfo type) {
+        var members = members(type);
+        var source = sourceName(type.name());
+        var sb = new StringBuilder();
+        sb.append("\n        /** The member values of an instance, read by calling them. */\n");
+        sb.append("        static java.util.Map<String, Object> read(java.lang.annotation.Annotation annotation) {\n");
+        if (members.isEmpty()) {
+            sb.append("            return java.util.Map.of();\n        }\n");
+            return sb.toString();
+        }
+        sb.append("            var value = (").append(source).append(") annotation;\n");
+        sb.append("            var members = new java.util.LinkedHashMap<String, Object>();\n");
+        for (var member : members) {
+            sb.append("            members.put(\"").append(member.name()).append("\", value.")
+                    .append(member.name()).append("());\n");
+        }
+        sb.append("            return members;\n        }\n");
         return sb.toString();
     }
 
@@ -219,6 +228,8 @@ public final class AnnotationArtefacts {
         sb.append("\n        @Override\n");
         sb.append("        public Class<? extends java.lang.annotation.Annotation> annotationType() {\n");
         sb.append("            return ").append(source).append(".class;\n        }\n");
+        sb.append(metadataMethod(type, rendered));
+        sb.append(readMethod(type));
         sb.append(equalsMethod(source, members));
         sb.append(hashCodeMethod(members));
         sb.append(toStringMethod(type, members));
@@ -529,10 +540,6 @@ public final class AnnotationArtefacts {
 
     private static String literalName(DotName annotationType) {
         return annotationType.simpleName().replace('$', '_') + "_Literal";
-    }
-
-    private static String metadataFactory(ClassInfo type) {
-        return "metadataOf$" + type.name().simpleName().replace('$', '_');
     }
 
     private static String quote(String value) {

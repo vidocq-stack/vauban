@@ -48,6 +48,7 @@ import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -60,6 +61,21 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  */
 @DisplayName("vauban#70: the processor generates the metadata, the reader and the literal of a qualifier")
 class GeneratedAnnotationArtefactsTest {
+
+    /** A qualifier in a jar of its own: on the compile path, and NOT on the run-time path below. */
+    private static final String DEPENDENCY_SOURCE = """
+            package dep;
+
+            import jakarta.inject.Qualifier;
+            import java.lang.annotation.Retention;
+            import java.lang.annotation.RetentionPolicy;
+
+            @Qualifier
+            @Retention(RetentionPolicy.RUNTIME)
+            public @interface Absent {
+                String value() default "";
+            }
+            """;
 
     private static final String SOURCE = """
             package app;
@@ -112,6 +128,10 @@ class GeneratedAnnotationArtefactsTest {
             /** Qualified by a PUBLIC qualifier of a dependency, compiled without this processor. */
             @jakarta.enterprise.context.Initialized(jakarta.enterprise.context.ApplicationScoped.class)
             @Dependent class Boot {
+            }
+
+            /** Qualified by a type that will NOT be on the run-time path. */
+            @dep.Absent("optional") @Dependent class OptionalIntegration {
             }
 
             @Dependent
@@ -261,6 +281,33 @@ class GeneratedAnnotationArtefactsTest {
                 "a dependency's annotation that is not a qualifier must not be rendered");
     }
 
+    /**
+     * The heisenberg failure of vauban#88: a type the module compiled against and the deployment
+     * does not ship. Reading <em>any</em> annotation went through a chain of {@code instanceof},
+     * which resolved every type in it on the first call, so a provider that merely <em>mentioned</em>
+     * an absent type threw {@code NoClassDefFoundError} at the first event fired.
+     */
+    @Test
+    @DisplayName("a type present at compile time and absent at run time costs nothing until it is used")
+    void anAbsentTypeDoesNotBreakTheOthers() throws Exception {
+        assertThrows(ClassNotFoundException.class, () -> module.loadClass("dep.Absent"),
+                "the fixture is only honest if that type really is missing at run time");
+
+        // The very call that used to fail: reading an annotation of a type that IS present.
+        var values = provider.readAnnotation(jdk("app.WirePayment"));
+
+        assertNotNull(values, "reading a present type must not depend on an absent one");
+        assertEquals("wire", values.get("value"));
+
+        // And everything else the provider answers for still works afterwards.
+        assertNotNull(provider.annotationMetadata("app.Channel"));
+        assertNotNull(provider.annotationLiteral("app.Channel", Map.of()));
+
+        // Asking for the absent type itself is another matter, and is allowed to fail: the guarantee
+        // is that it costs nothing until something asks, and nothing can ask for a type that is not
+        // there — no instance of it can exist.
+    }
+
     /** The {@code @Initialized} the fixture's bean carries, read through the compiled module. */
     private static java.lang.annotation.Annotation jdkInitialized() throws ClassNotFoundException {
         return module.loadClass("app.Boot")
@@ -270,33 +317,47 @@ class GeneratedAnnotationArtefactsTest {
     // ---- compilation harness ----
 
     private static Path compile() throws IOException {
+        // The "dependency" is compiled on its own, with no processor, into a directory of its own.
+        var dependency = compileTo("dep", "Absent", DEPENDENCY_SOURCE, "depclasses", null, "");
+        // The module sees it while compiling, and will NOT see it at run time — an optional
+        // integration, compiled against an API the deployment does not ship.
+        return compileTo("app", "Checkout", SOURCE, "classes", new VaubanProcessor(),
+                dependency.toString());
+    }
+
+    private static Path compileTo(String pkg, String unit, String text, String outDir,
+            VaubanProcessor processor, String extraClasspath) throws IOException {
         var compiler = ToolProvider.getSystemJavaCompiler();
         var diagnostics = new DiagnosticCollector<JavaFileObject>();
-        var file = Files.createDirectories(tempDir.resolve("src/app")).resolve("Checkout.java");
-        Files.writeString(file, SOURCE);
+        var file = Files.createDirectories(tempDir.resolve("src/" + pkg)).resolve(unit + ".java");
+        Files.writeString(file, text);
         var source = new SimpleJavaFileObject(file.toUri(), JavaFileObject.Kind.SOURCE) {
             @Override
             public CharSequence getCharContent(boolean ignoreEncodingErrors) throws IOException {
                 return Files.readString(file);
             }
         };
-        var classes = Files.createDirectories(tempDir.resolve("classes"));
+        var classes = Files.createDirectories(tempDir.resolve(outDir));
+        var classpath = extraClasspath.isEmpty() ? compilationClasspath()
+                : compilationClasspath() + File.pathSeparator + extraClasspath;
         var options = List.of(
                 "-d", classes.toString(),
-                "-s", Files.createDirectories(tempDir.resolve("gen")).toString(),
+                "-s", Files.createDirectories(tempDir.resolve("gen-" + outDir)).toString(),
                 "--release", "25",
-                "-classpath", compilationClasspath(),
-                "-proc:full");
+                "-classpath", classpath,
+                processor == null ? "-proc:none" : "-proc:full");
 
         try (var fileManager = compiler.getStandardFileManager(diagnostics, null, null)) {
             var task = compiler.getTask(null, fileManager, diagnostics, options, null, List.of(source));
-            task.setProcessors(List.of(new VaubanProcessor()));
+            if (processor != null) {
+                task.setProcessors(List.of(processor));
+            }
             var messages = new ArrayList<String>();
             var success = task.call();
             for (var diagnostic : diagnostics.getDiagnostics()) {
                 messages.add(diagnostic.getKind() + ": " + diagnostic.getMessage(null));
             }
-            assertTrue(success, "the fixture must compile: " + messages);
+            assertTrue(success, pkg + " must compile: " + messages);
         }
         return classes;
     }
