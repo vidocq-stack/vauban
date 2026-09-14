@@ -50,6 +50,20 @@ public final class InstanceImpl<T> implements Instance<T> {
     private final jakarta.enterprise.inject.spi.InjectionPoint injectionPoint;
     private final CreationalContextImpl<?> parentCreationalContext;
     private final Map<Object, jakarta.enterprise.context.spi.CreationalContext<?>> dependentInstances = new IdentityHashMap<>();
+    // The qualifiers of this Instance, reduced to their keys once: select converts, get and its
+    // friends match. Lazily computed, read-only after.
+    @SuppressWarnings("java:S3077")
+    private volatile Set<io.vidocq.vauban.core.annotation.AnnotationKey> keys;
+
+    /** This lookup's qualifiers as matching keys, converted on first use and kept. */
+    private Set<io.vidocq.vauban.core.annotation.AnnotationKey> keys() {
+        var converted = keys;
+        if (converted == null) {
+            converted = container.qualifierMatcher().types().keys(qualifiers);
+            keys = converted;
+        }
+        return converted;
+    }
 
     public void releaseAllDependents() {
         for (var entry : new IdentityHashMap<>(dependentInstances).entrySet()) {
@@ -110,7 +124,7 @@ public final class InstanceImpl<T> implements Instance<T> {
     @Override
     public T get() {
         var bm = container.getBeanManager();
-        var beans = bm.getBeans(resolveType, qualifiers);
+        var beans = bm.getBeans(resolveType, keys());
         if (beans.isEmpty()) {
             throw new jakarta.enterprise.inject.UnsatisfiedResolutionException(
                     "No bean found for type: " + resolveType.getTypeName() + " with qualifiers: " + Arrays.toString(qualifiers));
@@ -263,7 +277,7 @@ public final class InstanceImpl<T> implements Instance<T> {
 
     @Override
     public boolean isResolvable() {
-        var beans = container.getBeanManager().getBeans(resolveType, qualifiers);
+        var beans = container.getBeanManager().getBeans(resolveType, keys());
         if (beans.isEmpty()) return false;
         if (beans.size() == 1) return true;
         try {
@@ -287,7 +301,7 @@ public final class InstanceImpl<T> implements Instance<T> {
         }
         // Use the runtime type for resolution if our type is too broad (e.g. Object)
         var lookupType = (type == Object.class) ? instance.getClass() : type;
-        var beans = bm.getBeans(lookupType, qualifiers);
+        var beans = bm.getBeans(lookupType, keys());
         if (beans.isEmpty()) return;
         var bean = (Bean<T>) bm.resolve(beans);
         var scope = bean.getScope();
@@ -308,7 +322,7 @@ public final class InstanceImpl<T> implements Instance<T> {
     @Override
     public Handle<T> getHandle() {
         var bm = container.getBeanManager();
-        var beans = bm.getBeans(resolveType, qualifiers);
+        var beans = bm.getBeans(resolveType, keys());
         if (beans.isEmpty()) {
             throw new jakarta.enterprise.inject.UnsatisfiedResolutionException(
                     "No bean found for type: " + resolveType.getTypeName());
@@ -383,7 +397,7 @@ public final class InstanceImpl<T> implements Instance<T> {
      * Only the highest-priority alternative(s) are returned.
      */
     private Set<Bean<?>> getEffectiveBeans() {
-        var beans = container.getBeanManager().getBeans(resolveType, qualifiers);
+        var beans = container.getBeanManager().getBeans(resolveType, keys());
         if (beans.size() <= 1) return beans;
         // Check if any enabled alternatives are present
         var alternatives = beans.stream()

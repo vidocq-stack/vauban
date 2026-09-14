@@ -155,11 +155,11 @@ final class BeanInjector {
 
             var ownerBean = container.findBeanForInstance(instance);
             VaubanContainer.withInjectionPoint(new VaubanInjectionPoint(field, ownerBean), () -> {
-                var fieldQuals = QualifierHelper.extractFieldQualifiersWithEnhancement(field, descriptor);
+                var fieldKeys = fieldQualifierKeys(field, descriptor);
                 Object value;
                 var bm = container.getBeanManager();
                 var fieldType = ManagedBean.resolveType(field.getGenericType(), typeMapping);
-                var resolvedBeans = bm.getBeans(fieldType, fieldQuals);
+                var resolvedBeans = bm.getBeans(fieldType, fieldKeys);
                 if (resolvedBeans.isEmpty()) {
                     value = container.select(field.getType());
                 } else {
@@ -192,6 +192,25 @@ final class BeanInjector {
             LOG.log(System.Logger.Level.ERROR,
                     "Injection failed for " + field.getName() + " on " + instance.getClass(), e);
         }
+    }
+
+    /**
+     * The keys of a field's qualifiers, taken from the injection point the index built — which an
+     * {@code @Enhancement} may have changed. Nothing is read from the field and no qualifier type is
+     * loaded, so a member value cannot be lost (BUG-20260914-02) and a type only the application's
+     * class loader can see resolves all the same (BUG-20260914-05). A field the descriptor does not
+     * describe — an interceptor's, injected without one — falls back on what the field carries.
+     */
+    private java.util.Set<io.vidocq.vauban.core.annotation.AnnotationKey> fieldQualifierKeys(
+            Field field, BeanDescriptor descriptor) {
+        if (descriptor != null) {
+            for (var ip : descriptor.injectionPoints()) {
+                if (ip.kind() != io.vidocq.vauban.core.bean.model.InjectionPointInfo.InjectionKind.FIELD) continue;
+                if (!ip.description().endsWith("." + field.getName())) continue;
+                return container.qualifierMatcher().keys(ip.qualifiers());
+            }
+        }
+        return container.qualifierMatcher().types().keys(QualifierHelper.extractFieldQualifiers(field));
     }
 
     private void injectSingleMethod(Object instance, Method method, CreationalContext<?> ctx,

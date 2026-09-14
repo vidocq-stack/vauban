@@ -698,9 +698,8 @@ public final class VaubanContainerBuilder {
                     stereotypeAnns.put(DotName.of(entry.getKey().getName()), entry.getValue());
                 }
                 discovery.setCustomStereotypeAnnotations(stereotypeAnns);
+                // The container's own AnnotationTypes reads them back below, so no static state.
                 discovery.setCustomNonbindingMembers(meta.getNonbindingMembersPerQualifier());
-                io.vidocq.vauban.core.bean.resolution.QualifierMatcher.setCustomNonbindingMembers(
-                        meta.getNonbindingMembersPerQualifier());
                 VaubanBeanManager.setCustomQualifierTypes(meta.getCustomQualifiers());
                 VaubanBeanManager.setCustomInterceptorBindingTypes(meta.getCustomInterceptorBindings());
                 VaubanBeanManager.setCustomStereotypeTypes(meta.getCustomStereotypes());

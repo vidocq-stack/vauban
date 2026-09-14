@@ -117,6 +117,7 @@ public final class VaubanContainer implements AutoCloseable {
     private final InterceptorManager interceptorManager;
     private final VaubanBeanManager beanManager;
     private final ClassLoader classLoader;
+    private final io.vidocq.vauban.core.bean.resolution.QualifierMatcher qualifierMatcher;
     private final java.util.function.BiFunction<String, byte[], Class<?>> classDefiner;
     private final VaubanLookup vaubanLookup;
     private final ComponentProviders componentProviders;
@@ -155,6 +156,7 @@ public final class VaubanContainer implements AutoCloseable {
                             io.vidocq.vauban.core.bean.resolution.QualifierMatcher qualifierMatcher) {
         this.index = index;
         this.classLoader = classLoader;
+        this.qualifierMatcher = qualifierMatcher;
         this.classDefiner = classDefiner;
         this.vaubanLookup = vaubanLookup;
         this.componentProviders = componentProviders == null
@@ -305,6 +307,15 @@ public final class VaubanContainer implements AutoCloseable {
     /**
      * Returns the ClassLoader used for loading bean classes.
      */
+    /**
+     * The matcher this container resolves with: it holds the annotation type metadata of this
+     * deployment — the index, the class loaders its classes come from, and the members its extensions
+     * made non-binding — and caches the key of every qualifier it has seen.
+     */
+    public io.vidocq.vauban.core.bean.resolution.QualifierMatcher qualifierMatcher() {
+        return qualifierMatcher;
+    }
+
     public ClassLoader classLoader() {
         return classLoader;
     }

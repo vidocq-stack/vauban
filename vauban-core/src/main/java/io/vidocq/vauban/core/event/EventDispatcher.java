@@ -20,10 +20,8 @@
 package io.vidocq.vauban.core.event;
 
 import io.vidocq.vauban.core.bean.model.ObserverDescriptor;
-import io.vidocq.vauban.core.bean.model.QualifierInstance;
-import io.vidocq.vauban.core.container.QualifierUtils;
+import io.vidocq.vauban.core.annotation.AnnotationKey;
 import io.vidocq.vauban.core.container.VaubanContainer;
-import io.vidocq.vauban.indexer.model.DotName;
 import io.vidocq.vauban.indexer.model.TypeInfo;
 
 import io.vidocq.vauban.core.container.VaubanLookup;
@@ -48,6 +46,9 @@ public final class EventDispatcher {
     private final List<ObserverDescriptor> observers;
     private final VaubanContainer container;
     private final java.util.concurrent.Executor defaultAsyncExecutor;
+    // Lazily computed immutable list, parallel to observers: computed once, read-only after.
+    @SuppressWarnings("java:S3077")
+    private volatile List<Set<AnnotationKey>> observerKeys;
 
     public EventDispatcher(List<ObserverDescriptor> observers, VaubanContainer container) {
         this.observers = List.copyOf(observers);
@@ -66,21 +67,19 @@ public final class EventDispatcher {
 
     public <T> void fire(T event, jakarta.enterprise.inject.spi.InjectionPoint eventInjectionPoint,
             Annotation... qualifiers) {
-        var eventType = event.getClass();
-        var qualifierInstances = toQualifierInstances(qualifiers);
-        var matching = findMatchingObservers(eventType, false, qualifierInstances, qualifiers);
-
-        matching.sort(Comparator.comparingInt(ObserverDescriptor::priority));
-
-        for (var observer : matching) {
-            invokeObserver(observer, event, eventInjectionPoint, qualifiers);
-        }
+        fire(event, null, eventInjectionPoint, keysOf(qualifiers), qualifiers);
     }
 
     public <T> void fire(T event, java.lang.reflect.Type selectedType,
             jakarta.enterprise.inject.spi.InjectionPoint eventInjectionPoint,
             Annotation... qualifiers) {
-        var qualifierInstances = toQualifierInstances(qualifiers);
+        fire(event, selectedType, eventInjectionPoint, keysOf(qualifiers), qualifiers);
+    }
+
+    /** With the event's qualifiers already reduced to their keys: an injected {@code Event} converts once. */
+    <T> void fire(T event, java.lang.reflect.Type selectedType,
+            jakarta.enterprise.inject.spi.InjectionPoint eventInjectionPoint,
+            Set<AnnotationKey> eventKeys, Annotation[] qualifiers) {
         java.lang.reflect.Type eventTypeToMatch = event.getClass();
         if (selectedType != null) {
             eventTypeToMatch = resolveEventType(event.getClass(), selectedType);
@@ -90,7 +89,7 @@ public final class EventDispatcher {
                 throw new IllegalArgumentException("Event type contains unresolvable type variable: " + eventTypeToMatch);
             }
         }
-        var matching = findMatchingObservers(eventTypeToMatch, false, qualifierInstances, qualifiers);
+        var matching = findMatchingObservers(eventTypeToMatch, false, eventKeys);
         matching.sort(Comparator.comparingInt(ObserverDescriptor::priority));
         for (var observer : matching) {
             invokeObserver(observer, event, selectedType, eventInjectionPoint, qualifiers);
@@ -103,9 +102,18 @@ public final class EventDispatcher {
 
     public <T> CompletionStage<T> fireAsync(T event, java.util.concurrent.Executor executor,
             Annotation... qualifiers) {
+        return fireAsync(event, executor, keysOf(qualifiers), qualifiers);
+    }
+
+    /**
+     * With the event's qualifiers already reduced to their keys. They are converted on the calling
+     * thread, before the task: an asynchronous event resolves its observers by the same rule as a
+     * synchronous one, member values included (BUG-20260914-06).
+     */
+    <T> CompletionStage<T> fireAsync(T event, java.util.concurrent.Executor executor,
+            Set<AnnotationKey> eventKeys, Annotation[] qualifiers) {
         java.util.function.Supplier<T> task = () -> {
-            var qualifierInstances = toQualifierInstances(qualifiers);
-            var matching = findMatchingObservers(event.getClass(), true, qualifierInstances);
+            var matching = findMatchingObservers(event.getClass(), true, eventKeys);
             matching.sort(Comparator.comparingInt(ObserverDescriptor::priority));
             var exceptions = new java.util.ArrayList<Throwable>();
             for (var observer : matching) {
@@ -130,15 +138,16 @@ public final class EventDispatcher {
                 : CompletableFuture.supplyAsync(task);
     }
 
+    /**
+     * The observers of {@code eventType} whose qualifiers the event carries. Both sides compare keys,
+     * so a member value decides on the asynchronous path as it does on the synchronous one, and a
+     * member an extension made non-binding decides on neither (BUG-20260914-06, BUG-20260914-07).
+     */
     public List<ObserverDescriptor> findMatchingObservers(java.lang.reflect.Type eventType, boolean asyncOnly,
-            Set<DotName> eventQualifiers) {
-        return findMatchingObservers(eventType, asyncOnly, eventQualifiers, null);
-    }
-
-    public List<ObserverDescriptor> findMatchingObservers(java.lang.reflect.Type eventType, boolean asyncOnly,
-            Set<DotName> eventQualifiers, Annotation[] eventQualifierAnnotations) {
+            Set<AnnotationKey> eventKeys) {
         var result = new ArrayList<ObserverDescriptor>();
-        for (var observer : observers) {
+        for (int i = 0; i < observers.size(); i++) {
+            var observer = observers.get(i);
             if (asyncOnly && !observer.async()) continue;
             if (!asyncOnly && observer.async()) continue;
 
@@ -146,17 +155,36 @@ public final class EventDispatcher {
                 continue;
             }
 
-            boolean qualMatch;
-            if (eventQualifierAnnotations != null && eventQualifierAnnotations.length > 0) {
-                qualMatch = observerQualifiersMatchFull(observer.qualifiers(), eventQualifierAnnotations);
-            } else {
-                qualMatch = observerQualifiersMatch(observer.qualifiers(), eventQualifiers);
-            }
-            if (qualMatch) {
+            if (observerMatches(observerKeys(i), eventKeys)) {
                 result.add(observer);
             }
         }
         return result;
+    }
+
+    /** The keys of the qualifiers of every observer, computed once for the container's lifetime. */
+    private Set<AnnotationKey> observerKeys(int index) {
+        var keys = observerKeys;
+        if (keys == null) {
+            var matcher = container.qualifierMatcher();
+            keys = observers.stream().map(observer -> matcher.keys(observer.qualifiers())).toList();
+            observerKeys = keys;
+        }
+        return keys.get(index);
+    }
+
+    /** The keys of the qualifiers an event was fired with. */
+    Set<AnnotationKey> keysOf(Annotation... qualifiers) {
+        return container.qualifierMatcher().types().keys(qualifiers);
+    }
+
+    /** CDI 4.1 §10.2.1: every qualifier the observer declares, {@code @Any} aside, must be on the event. */
+    private static boolean observerMatches(Set<AnnotationKey> observerKeys, Set<AnnotationKey> eventKeys) {
+        for (var key : observerKeys) {
+            if (key.isAny()) continue;
+            if (!eventKeys.contains(key)) return false;
+        }
+        return true;
     }
 
     private boolean eventTypeMatches(ObserverDescriptor observer, java.lang.reflect.Type eventType) {
@@ -540,66 +568,8 @@ public final class EventDispatcher {
         }
     }
 
-    private boolean observerQualifiersMatch(List<QualifierInstance> observerQualifiers,
-            Set<DotName> eventQualifiers) {
-        if (observerQualifiers.isEmpty()) return true;
-        for (var oq : observerQualifiers) {
-            if (oq.isAny()) continue;
-            if (!eventQualifiers.contains(oq.annotationName())) {
-                return false;
-            }
-        }
-        return true;
-    }
-
-    private boolean observerQualifiersMatchFull(List<QualifierInstance> observerQualifiers,
-            Annotation[] eventQualifiers) {
-        if (observerQualifiers.isEmpty()) return true;
-        var cl = container.classLoader();
-        for (var oq : observerQualifiers) {
-            if (oq.isAny()) continue;
-            var observerAnn = QualifierUtils.toAnnotation(oq, null, cl);
-            if (observerAnn == null) continue;
-            boolean found = false;
-            for (var eq : eventQualifiers) {
-                if (eq.annotationType().getName().equals(oq.annotationName().value())) {
-                    if (qualifierMembersMatch(observerAnn, eq)) {
-                        found = true;
-                        break;
-                    }
-                }
-            }
-            if (!found) return false;
-        }
-        return true;
-    }
-
-    private static boolean qualifierMembersMatch(Annotation observer, Annotation event) {
-        if (!observer.annotationType().getName().equals(event.annotationType().getName())) return false;
-        try {
-            for (var method : observer.annotationType().getDeclaredMethods()) {
-                if (method.isAnnotationPresent(jakarta.enterprise.util.Nonbinding.class)) continue;
-                var obsVal = method.invoke(observer);
-                var evtVal = method.invoke(event);
-                if (!Objects.deepEquals(obsVal, evtVal)) return false;
-            }
-            return true;
-        } catch (Exception e) {
-            return observer.equals(event);
-        }
-    }
-
     public List<ObserverDescriptor> observers() {
         return observers;
-    }
-
-    private static Set<DotName> toQualifierInstances(Annotation... qualifiers) {
-        if (qualifiers == null || qualifiers.length == 0) return Set.of();
-        var result = new LinkedHashSet<DotName>();
-        for (var q : qualifiers) {
-            result.add(DotName.of(q.annotationType().getName()));
-        }
-        return result;
     }
 
     public void invokeObserverDirect(ObserverDescriptor observer, Object event) {

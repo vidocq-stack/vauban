@@ -35,7 +35,19 @@ import java.util.Map;
  */
 public record AnnotationKey(DotName type, Map<String, AnnotationValue> members) {
 
+    /** {@code @Default}, which has no member. */
+    public static final AnnotationKey DEFAULT =
+            new AnnotationKey(DotName.of("jakarta.enterprise.inject.Default"), Map.of());
+
+    /** {@code @Any}, which has no member and which every bean carries. */
+    public static final AnnotationKey ANY =
+            new AnnotationKey(DotName.of("jakarta.enterprise.inject.Any"), Map.of());
+
     public AnnotationKey {
         members = Map.copyOf(members);
+    }
+
+    public boolean isAny() {
+        return type.equals(ANY.type());
     }
 }

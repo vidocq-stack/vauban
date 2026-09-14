@@ -131,16 +131,16 @@ compares what they return, and every later stage returns them from `getQualifier
   qualifier's members) and -16 (`AnnotationBuilder.member(name, Class)` records a string)
 
 #### PR 3b — Matching on keys
-- [ ] `AnnotationTypes#key(Annotation)`: `@Default`, `@Any`, `@Named` and container-built instances
+- [x] `AnnotationTypes#key(Annotation)`: `@Default`, `@Any`, `@Named` and container-built instances
       without reflection; any other annotation read once
-- [ ] Beans and observers hold keys, computed once
-- [ ] `getBeans`, `InstanceImpl`, `EventImpl`, `BeanInjector`, `EventDispatcher` (both paths) and
+- [x] Beans and observers hold keys, computed once
+- [x] `getBeans`, `InstanceImpl`, `EventImpl`, `BeanInjector`, `EventDispatcher` (both paths) and
       `resolveObserverMethods` match keys; `Instance` and `Event` convert their qualifiers once
-- [ ] Field injection resolves the keys of the descriptor's injection point: no instance, no class
+- [x] Field injection resolves the keys of the descriptor's injection point: no instance, no class
       loading
-- [ ] Static non-binding state removed from `QualifierMatcher`
-- [ ] `vauban.annotations.reflection=allow|warn|forbid`, a test per fallback
-- Fixes -02, -05, -06 and -07
+- [x] Static non-binding state removed from `QualifierMatcher`
+- [x] `vauban.annotations.reflection=allow|warn|forbid`, a test per fallback
+- Fixes -05, -06 and -07 (-02 went with PR 3a, which fixed it)
 - Moved to PR 4: parameter qualifiers from the index instead of `Parameter.getAnnotations()`. It is
   performance only, touches nine call sites in six classes, and pairs with the generated metadata.
 
@@ -155,7 +155,8 @@ compares what they return, and every later stage returns them from `getQualifier
 
 ### PR 5 — Interceptor bindings
 - [ ] `InterceptorManager` on keys; chain cached per (class, method); `getInterceptorBindings` cached
-- [ ] Docs: internals (what still reflects), reference (bench module), native-image notes, README
+- [ ] Docs: internals (what still reflects), reference (bench module and the
+      `vauban.annotations.reflection` switch), native-image notes, README
 - [ ] Final BENCH entry; follow-up tickets filed
 
 ## Review

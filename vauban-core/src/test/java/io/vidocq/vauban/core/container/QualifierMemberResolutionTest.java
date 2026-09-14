@@ -1104,7 +1104,6 @@ class QualifierMemberResolutionTest {
         }
 
         @Test @DisplayName("field injection does not depend on the thread context class loader")
-        @Disabled("BUG-20260914-05: field injection loads qualifier types through the thread context class loader")
         void withoutContextClassLoader() throws Exception {
             assertEquals("iso-one", isolatedLookup("iso.MarkedExact", false));
         }

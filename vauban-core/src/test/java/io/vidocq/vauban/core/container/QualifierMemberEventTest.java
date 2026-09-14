@@ -189,7 +189,6 @@ class QualifierMemberEventTest {
 
     @Test
     @DisplayName("an asynchronous event reaches only the observer whose member value matches")
-    @Disabled("BUG-20260914-06: asynchronous observers ignore qualifier member values")
     void asynchronousMemberValue() throws Exception {
         try (var container = boot(AsyncChannelListener.class)) {
             container.select(Emitter.class).event.select(qualifier("alpha")).fireAsync(new Ping("3"))
@@ -209,7 +208,6 @@ class QualifierMemberEventTest {
 
     @Test
     @DisplayName("a member made non-binding by an extension does not take part in observer resolution")
-    @Disabled("BUG-20260914-07: observers ignore members an extension made non-binding")
     void extensionNonbindingMember() {
         try (var container = boot(StreamBce.class, StreamListener.class)) {
             container.select(Emitter.class).event.select(qualifier("stream")).fire(new Ping("4"));

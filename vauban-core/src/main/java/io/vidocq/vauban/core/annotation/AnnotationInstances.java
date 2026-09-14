@@ -68,6 +68,7 @@ public final class AnnotationInstances {
      *               own loader and the context class loader are tried too
      */
     public static <A extends Annotation> A create(Class<A> type, AnnotationInfo annotation, ClassLoader loader) {
+        AnnotationReflection.check("building an instance of", type.getName());
         var handler = new Handler(type, annotation, loader);
         return type.cast(Proxy.newProxyInstance(type.getClassLoader(), new Class<?>[] {type}, handler));
     }

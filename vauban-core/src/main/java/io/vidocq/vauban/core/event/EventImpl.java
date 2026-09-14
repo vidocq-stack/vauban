@@ -41,6 +41,9 @@ public final class EventImpl<T> implements Event<T> {
     private final Annotation[] qualifiers;
     private final jakarta.enterprise.inject.spi.InjectionPoint injectionPoint;
     private final java.lang.reflect.Type selectedType;
+    // The qualifiers of this Event, reduced to their keys once: an injected Event fires many times.
+    @SuppressWarnings("java:S3077")
+    private volatile java.util.Set<io.vidocq.vauban.core.annotation.AnnotationKey> keys;
 
     public EventImpl(EventDispatcher dispatcher) {
         this(dispatcher, new Annotation[0], null, null);
@@ -81,6 +84,16 @@ public final class EventImpl<T> implements Event<T> {
         return injectionPoint;
     }
 
+    /** This Event's qualifiers as matching keys, converted on first use and kept. */
+    private java.util.Set<io.vidocq.vauban.core.annotation.AnnotationKey> keys() {
+        var converted = keys;
+        if (converted == null) {
+            converted = dispatcher.keysOf(qualifiers);
+            keys = converted;
+        }
+        return converted;
+    }
+
     @Override
     public void fire(T event) {
         if (event == null) {
@@ -97,11 +110,7 @@ public final class EventImpl<T> implements Event<T> {
             throw new IllegalArgumentException(
                     "Event type contains unresolvable type variable: " + event.getClass());
         }
-        if (selectedType != null) {
-            dispatcher.fire(event, selectedType, injectionPoint, qualifiers);
-        } else {
-            dispatcher.fire(event, injectionPoint, qualifiers);
-        }
+        dispatcher.fire(event, selectedType, injectionPoint, keys(), qualifiers);
     }
 
     @Override
@@ -109,7 +118,7 @@ public final class EventImpl<T> implements Event<T> {
         if (event == null) {
             throw new IllegalArgumentException(MSG_EVENT_NULL);
         }
-        return dispatcher.fireAsync(event, qualifiers);
+        return dispatcher.fireAsync(event, null, keys(), qualifiers);
     }
 
     @Override
@@ -118,9 +127,7 @@ public final class EventImpl<T> implements Event<T> {
             throw new IllegalArgumentException(MSG_EVENT_NULL);
         }
         var executor = options != null ? options.getExecutor() : null;
-        @SuppressWarnings("unchecked")
-        var stage = (CompletionStage<U>) dispatcher.fireAsync(event, executor, qualifiers);
-        return stage;
+        return dispatcher.fireAsync(event, executor, keys(), qualifiers);
     }
 
     @Override

@@ -56,6 +56,7 @@ public final class AnnotationValues {
      */
     public static AnnotationInfo toAnnotationInfo(Annotation annotation) {
         var type = annotation.annotationType();
+        AnnotationReflection.check("reading the members of", type.getName());
         var members = new LinkedHashMap<String, AnnotationValue>();
         for (var member : members(type)) {
             read(member, annotation).ifPresent(value -> members.put(member.getName(), of(value)));

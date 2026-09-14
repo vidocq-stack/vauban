@@ -45,6 +45,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -125,6 +126,50 @@ class AnnotationTypesTest {
 
     private static AnnotationValue.AnnotationVal inner(Map<String, AnnotationValue> members) {
         return new AnnotationValue.AnnotationVal(new AnnotationInfo(INNER, members));
+    }
+
+    /** Carries the annotation the JDK builds, the reference every other instance is compared with. */
+    @Rich(value = "premium", comment = "ignored", codes = {1, 2})
+    static final class Carrier {
+    }
+
+    private static Rich jdkRich() {
+        return Carrier.class.getAnnotation(Rich.class);
+    }
+
+    private static final Map<String, AnnotationValue> RICH_WRITTEN = Map.of(
+            "value", string("premium"), "comment", string("ignored"),
+            "codes", new AnnotationValue.ArrayVal(
+                    List.of(new AnnotationValue.IntVal(1), new AnnotationValue.IntVal(2))));
+
+    /** The same annotation as {@link Carrier}'s, written by an application as a literal. */
+    static final class RichLiteral implements Rich {
+        @Override public Class<? extends java.lang.annotation.Annotation> annotationType() { return Rich.class; }
+
+        @Override public String value() { return "premium"; }
+
+        @Override public String comment() { return "ignored"; }
+
+        @Override public String channel() { return "web"; }
+
+        @Override public Inner inner() { return jdkRich().inner(); }
+
+        @Override public int[] codes() { return new int[] {1, 2}; }
+    }
+
+    /** Runs {@code action} with the reflection switch set to {@code mode}, and puts it back. */
+    private static <T> T withReflection(String mode, java.util.function.Supplier<T> action) {
+        var previous = System.getProperty(AnnotationReflection.PROPERTY);
+        System.setProperty(AnnotationReflection.PROPERTY, mode);
+        try {
+            return action.get();
+        } finally {
+            if (previous == null) {
+                System.clearProperty(AnnotationReflection.PROPERTY);
+            } else {
+                System.setProperty(AnnotationReflection.PROPERTY, previous);
+            }
+        }
     }
 
     @Nested
@@ -220,6 +265,116 @@ class AnnotationTypesTest {
             var fromIndex = fromIndex().key(RICH, written);
             assertEquals(fromIndex, fromLoader(LOADER).key(RICH, written), "class bytes");
             assertEquals(fromIndex, fromLoader(NO_CLASS_BYTES).key(RICH, written), "reflection");
+        }
+    }
+
+    /**
+     * Run-time matching is handed annotation instances — the literal of a programmatic lookup, the
+     * annotations of an injection point — and reduces each one to the key its written members give.
+     */
+    @Nested
+    @DisplayName("keys of an annotation instance")
+    class InstanceKeys {
+
+        @Test
+        @DisplayName("an instance the JDK built gives the key of its written members")
+        void jdkInstance() {
+            var types = fromLoader(LOADER);
+            assertEquals(types.key(RICH, RICH_WRITTEN), types.key(jdkRich()));
+        }
+
+        @Test
+        @DisplayName("an instance the container built gives the same key")
+        void containerBuiltInstance() {
+            var types = fromLoader(LOADER);
+            var built = AnnotationInstances.create(Rich.class, new AnnotationInfo(RICH, RICH_WRITTEN), LOADER);
+            assertEquals(types.key(jdkRich()), types.key(built));
+        }
+
+        @Test
+        @DisplayName("a literal an application wrote gives the same key")
+        void applicationLiteral() {
+            var types = fromLoader(LOADER);
+            assertEquals(types.key(jdkRich()), types.key(new RichLiteral()));
+        }
+
+        @Test
+        @DisplayName("the built-in qualifiers give their own key")
+        void builtInQualifiers() {
+            var types = fromLoader(LOADER);
+            assertEquals(new AnnotationKey(DotName.of("jakarta.enterprise.inject.Default"), Map.of()),
+                    types.key(jakarta.enterprise.inject.Default.Literal.INSTANCE));
+            assertEquals(new AnnotationKey(DotName.of("jakarta.enterprise.inject.Any"), Map.of()),
+                    types.key(jakarta.enterprise.inject.Any.Literal.INSTANCE));
+            assertEquals(new AnnotationKey(DotName.of("jakarta.inject.Named"), Map.of("value", string("report"))),
+                    types.key(jakarta.enterprise.inject.literal.NamedLiteral.of("report")));
+        }
+
+        @Test
+        @DisplayName("every instance of a set converts at once")
+        void keysOfSeveralInstances() {
+            var types = fromLoader(LOADER);
+            assertEquals(Set.of(types.key(jdkRich()),
+                            new AnnotationKey(DotName.of("jakarta.enterprise.inject.Any"), Map.of())),
+                    types.keys(new java.lang.annotation.Annotation[] {
+                            jdkRich(), jakarta.enterprise.inject.Any.Literal.INSTANCE}));
+        }
+    }
+
+    /**
+     * {@code -Dvauban.annotations.reflection=forbid} makes every reflective fallback throw, which is how
+     * a test — and a native-image user — sees what still needs reflection.
+     */
+    @Nested
+    @DisplayName("the vauban.annotations.reflection switch")
+    class ReflectionSwitch {
+
+        @Test
+        @DisplayName("forbid stops the read of a live annotation, naming the type and the switch")
+        void forbidStopsReadingAnInstance() {
+            var types = fromLoader(LOADER);
+            var error = assertThrows(IllegalStateException.class,
+                    () -> withReflection("forbid", () -> types.key(jdkRich())));
+            assertTrue(error.getMessage().contains(Rich.class.getName()), error.getMessage());
+            assertTrue(error.getMessage().contains(AnnotationReflection.PROPERTY), error.getMessage());
+        }
+
+        @Test
+        @DisplayName("forbid stops the read of a declaration no index and no class file describes")
+        void forbidStopsReadingADeclaration() {
+            var error = assertThrows(IllegalStateException.class,
+                    () -> withReflection("forbid", () -> fromLoader(NO_CLASS_BYTES).type(RICH)));
+            assertTrue(error.getMessage().contains(Rich.class.getName()), error.getMessage());
+        }
+
+        @Test
+        @DisplayName("forbid leaves the paths that read no annotation alone")
+        void forbidLeavesTheOtherPathsAlone() throws IOException {
+            var types = fromIndex();
+            var built = AnnotationInstances.create(Rich.class, new AnnotationInfo(RICH, RICH_WRITTEN), LOADER);
+            var expected = types.key(RICH, RICH_WRITTEN);
+
+            withReflection("forbid", () -> {
+                assertEquals(expected, types.key(RICH, RICH_WRITTEN), "the index describes the type");
+                assertEquals(expected, types.key(built), "a container-built instance carries its members");
+                assertEquals(new AnnotationKey(DotName.of("jakarta.enterprise.inject.Default"), Map.of()),
+                        types.key(jakarta.enterprise.inject.Default.Literal.INSTANCE), "a built-in qualifier");
+                return null;
+            });
+        }
+
+        @Test
+        @DisplayName("warn reads on")
+        void warnReadsOn() {
+            var types = fromLoader(LOADER);
+            assertEquals(types.key(RICH, RICH_WRITTEN), withReflection("warn", () -> types.key(jdkRich())));
+        }
+
+        @Test
+        @DisplayName("a value that is neither allow, warn nor forbid is refused")
+        void unknownMode() {
+            var types = fromLoader(LOADER);
+            assertThrows(IllegalStateException.class, () -> withReflection("forbidden", () -> types.key(jdkRich())));
         }
     }
 }

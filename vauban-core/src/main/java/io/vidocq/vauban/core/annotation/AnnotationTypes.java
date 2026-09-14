@@ -28,7 +28,9 @@ import io.vidocq.vauban.indexer.scanner.ClassFileScanner;
 
 import java.io.IOException;
 import java.util.Arrays;
+import java.util.Collection;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -105,6 +107,42 @@ public final class AnnotationTypes {
         return new AnnotationKey(type, members);
     }
 
+    /**
+     * The key of an annotation instance: a built-in qualifier and an instance the container built
+     * answer without reflection, anything else is read once, member by member.
+     */
+    public AnnotationKey key(java.lang.annotation.Annotation annotation) {
+        var name = annotation.annotationType().getName();
+        if (AnnotationKey.DEFAULT.type().value().equals(name)) {
+            return AnnotationKey.DEFAULT;
+        }
+        if (AnnotationKey.ANY.type().value().equals(name)) {
+            return AnnotationKey.ANY;
+        }
+        if (annotation instanceof jakarta.inject.Named named) {
+            return key(DotName.of(name), Map.of("value", new AnnotationValue.StringVal(named.value())));
+        }
+        var info = AnnotationValues.infoOf(annotation);
+        return key(info.name(), info.members());
+    }
+
+    /** The keys of the qualifiers of a lookup or an injection point, converted once. */
+    public Set<AnnotationKey> keys(java.lang.annotation.Annotation... annotations) {
+        if (annotations == null || annotations.length == 0) {
+            return Set.of();
+        }
+        var keys = new HashSet<AnnotationKey>(annotations.length * 2);
+        for (var annotation : annotations) {
+            keys.add(key(annotation));
+        }
+        return Set.copyOf(keys);
+    }
+
+    /** The keys of a collection of annotations, converted once. */
+    public Set<AnnotationKey> keys(Collection<? extends java.lang.annotation.Annotation> annotations) {
+        return keys(annotations.toArray(new java.lang.annotation.Annotation[0]));
+    }
+
     /** Completes every nested annotation of {@code value} with its defaults. */
     private AnnotationValue complete(AnnotationValue value) {
         return switch (value) {
@@ -157,9 +195,11 @@ public final class AnnotationTypes {
                 if (type.isAnnotation()) {
                     return Optional.of(reflect(type));
                 }
-            } catch (ClassNotFoundException | LinkageError | RuntimeException e) {
+            } catch (ClassNotFoundException | LinkageError | TypeNotPresentException
+                     | EnumConstantNotPresentException | ArrayStoreException e) {
                 // Not visible through this loader, or a declaration that cannot be read, such as a
-                // default naming a class missing at run time.
+                // default naming a class missing at run time. Anything else — the refusal of
+                // vauban.annotations.reflection=forbid, above all — is the caller's to see.
             }
         }
         return Optional.empty();
@@ -167,6 +207,7 @@ public final class AnnotationTypes {
 
     /** Reads a declaration: member names, their defaults, their annotations. */
     private static AnnotationTypeInfo reflect(Class<?> type) {
+        AnnotationReflection.check("reading the declaration of", type.getName());
         var members = AnnotationValues.members(type).stream()
                 .map(method -> new AnnotationTypeInfo.Member(method.getName(),
                         method.getDefaultValue() == null ? null : AnnotationValues.of(method.getDefaultValue()),

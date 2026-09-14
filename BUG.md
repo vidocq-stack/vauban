@@ -1203,18 +1203,19 @@ and a proposed upstream assertion: `CDI_TCK_PROPOSALS.md` → `TCK-GAP-001`.
 ## BUG-20260914-05 — Field injection loads qualifier types through the thread context class loader and silently drops those it cannot load
 
 - **Date**: 2026-09-14
-- **Status**: OPEN
+- **Status**: FIXED (vauban#70 PR 3b)
 - **Module**: `vauban-core` (`QualifierHelper#qualifierInstancesToAnnotations`)
 - **Symptom**: with the application's classes in their own class loader and the thread context class loader left as it is, a qualified field stays `null` after injection, without any error, although boot validation accepted it.
 - **Minimal reproduction** (`QualifierMemberResolutionTest$IsolatedClassLoader#withoutContextClassLoader`): the fixtures of BUG-20260914-04 with equal member values, built without setting the context class loader; `supplier` is `null`.
 - **Suspected cause**: the qualifier type is loaded with `Thread.currentThread().getContextClassLoader().loadClass(name)`. A `ClassNotFoundException` skips the qualifier, the injection point is then resolved with `@Default` alone, and nothing matches.
 - **Investigations**:
   - 2026-09-14: found by the vauban#70 safety net; the test is disabled with this id.
+  - 2026-09-14: **fixed** by vauban#70 PR 3b. Field injection resolves the keys of the injection point the index built, so it builds no qualifier instance and loads no qualifier type. Proven by mutation: rebuilding the qualifiers as instances through the context class loader fails the test again.
 
 ## BUG-20260914-06 — Asynchronous observers ignore qualifier member values
 
 - **Date**: 2026-09-14
-- **Status**: OPEN
+- **Status**: FIXED (vauban#70 PR 3b)
 - **Module**: `vauban-core` (`EventDispatcher#fireAsync`)
 - **Symptom**: an event fired asynchronously with `@Channel("alpha")` reaches both `@ObservesAsync @Channel("alpha")` and `@ObservesAsync @Channel("beta")`. A synchronous `fire` delivers it to the first observer only.
 - **Minimal reproduction** (`QualifierMemberEventTest#asynchronousMemberValue`):
@@ -1227,11 +1228,12 @@ and a proposed upstream assertion: `CDI_TCK_PROPOSALS.md` → `TCK-GAP-001`.
 - **Suspected cause**: `fireAsync` calls the three-argument `findMatchingObservers`, which compares qualifier names only, whereas `fire` passes the annotations on to `observerQualifiersMatchFull`.
 - **Investigations**:
   - 2026-09-14: found by the vauban#70 safety net; the test is disabled with this id.
+  - 2026-09-14: **fixed** by vauban#70 PR 3b. There is one matching method left, on `AnnotationKey`s, and both paths call it; the event's qualifiers are converted on the calling thread, before the task. Proven by mutation: matching on the qualifier type alone on the asynchronous path fails the test again, with the original two observers notified.
 
 ## BUG-20260914-07 — Observers ignore members an extension made non-binding
 
 - **Date**: 2026-09-14
-- **Status**: OPEN
+- **Status**: FIXED (vauban#70 PR 3b)
 - **Module**: `vauban-core` (`EventDispatcher#qualifierMembersMatch`)
 - **Symptom**: for a qualifier registered with `MetaAnnotations.addQualifier` whose `value` member the extension marks `@Nonbinding`, observer resolution still compares `value`, so an event with another `value` never reaches the observer. Injection and programmatic lookups honour the rule, and the observer does receive the event when every member is equal.
 - **Minimal reproduction** (`QualifierMemberEventTest#extensionNonbindingMember`):
@@ -1245,6 +1247,7 @@ and a proposed upstream assertion: `CDI_TCK_PROPOSALS.md` → `TCK-GAP-001`.
 - **Suspected cause**: `qualifierMembersMatch` skips only members annotated `@Nonbinding` in source; unlike `QualifierMatcher` and `VaubanBeanManager#qualifierEquals`, it never consults the extension-declared set.
 - **Investigations**:
   - 2026-09-14: found by the vauban#70 safety net; the test is disabled with this id.
+  - 2026-09-14: **fixed** by vauban#70 PR 3b. Observers match on keys, which the container's `AnnotationTypes` builds — and it holds what the extensions declared non-binding, so every path applies the same rule. Proven by mutation: building that metadata without the extension-declared members fails the observer test and the two injection ones.
 
 ## BUG-20260914-08 — Interceptor bindings declared by an extension ignore their member values
 

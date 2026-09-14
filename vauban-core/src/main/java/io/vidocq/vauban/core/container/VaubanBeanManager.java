@@ -19,7 +19,8 @@
  */
 package io.vidocq.vauban.core.container;
 
-import io.vidocq.vauban.core.bean.model.InterceptorDescriptor;
+import io.vidocq.vauban.core.annotation.AnnotationKey;
+import io.vidocq.vauban.core.annotation.AnnotationTypes;
 import io.vidocq.vauban.core.context.CreationalContextImpl;
 import io.vidocq.vauban.core.event.EventDispatcher;
 import io.vidocq.vauban.core.event.EventImpl;
@@ -170,9 +171,23 @@ public final class VaubanBeanManager implements BeanManager {
         return instance;
     }
 
-    @SuppressWarnings({"java:S135", "java:S1199"})
     @Override
     public Set<Bean<?>> getBeans(Type beanType, Annotation... qualifiers) {
+        validateQualifiers(qualifiers);
+        // CDI spec: with no qualifier, @Default is required
+        var required = qualifiers == null || qualifiers.length == 0
+                ? Set.of(AnnotationKey.DEFAULT)
+                : annotationTypes().keys(qualifiers);
+        return getBeans(beanType, required);
+    }
+
+    /**
+     * Resolution on keys: a bean's qualifiers are reduced to their keys once, and an injection point
+     * or a programmatic lookup converts its own once, so matching reads no annotation.
+     */
+    @SuppressWarnings({"java:S135", "java:S1199"})
+    Set<Bean<?>> getBeans(Type beanType, Set<AnnotationKey> requiredKeys) {
+        var required = requiredKeys.isEmpty() ? Set.of(AnnotationKey.DEFAULT) : requiredKeys;
         // CDI spec: primitive types and wrappers are identical
         if (beanType instanceof Class<?> c && c.isPrimitive()) {
             beanType = primitiveToWrapper(c);
@@ -181,36 +196,9 @@ public final class VaubanBeanManager implements BeanManager {
         if (beanType instanceof java.lang.reflect.TypeVariable<?>) {
             throw new IllegalArgumentException("TypeVariable is not a legal bean type");
         }
-        // Validate: all qualifiers must be qualifier annotations, no duplicates
-        if (qualifiers != null) {
-            var seen = new HashSet<Class<?>>();
-            for (var q : qualifiers) {
-                if (!isQualifier(q.annotationType())) {
-                    throw new IllegalArgumentException(
-                        q.annotationType().getName() + " is not a qualifier");
-                }
-                if (!seen.add(q.annotationType())
-                        && !q.annotationType().isAnnotationPresent(java.lang.annotation.Repeatable.class)) {
-                    throw new IllegalArgumentException(
-                        "Duplicate qualifier: " + q.annotationType().getName());
-                }
-            }
-        }
 
         var result = new LinkedHashSet<Bean<?>>();
-
-        // Determine required qualifiers: if none specified, CDI uses @Default
-        Set<Annotation> requiredQualifierAnnotations = new LinkedHashSet<>();
-        Set<Class<? extends Annotation>> requiredQualifiers = new LinkedHashSet<>();
-        if (qualifiers == null || qualifiers.length == 0) {
-            requiredQualifiers.add(jakarta.enterprise.inject.Default.class);
-            requiredQualifierAnnotations.add(jakarta.enterprise.inject.Default.Literal.INSTANCE);
-        } else {
-            for (var q : qualifiers) {
-                requiredQualifiers.add(q.annotationType());
-                requiredQualifierAnnotations.add(q);
-            }
-        }
+        var matcher = container.qualifierMatcher();
 
         // Check built-in beans
         for (var builtIn : getBuiltInBeans()) {
@@ -236,22 +224,7 @@ public final class VaubanBeanManager implements BeanManager {
                 // (they match any qualifier combination, so qualifier matching always succeeds)
                 boolean isWildcardQualifier = builtIn.getBeanClass() == Event.class
                         || builtIn.getBeanClass() == Instance.class;
-                boolean qualifiersMatch = isWildcardQualifier;
-                if (!qualifiersMatch) {
-                    qualifiersMatch = true;
-                    var beanQualifiers = builtIn.getQualifiers();
-                    for (var reqAnn : requiredQualifierAnnotations) {
-                        // @Any always matches — all beans implicitly have @Any
-                        if (reqAnn.annotationType() == jakarta.enterprise.inject.Any.class) continue;
-                        boolean found = beanQualifiers.stream()
-                            .anyMatch(bq -> qualifierEquals(bq, reqAnn));
-                        if (!found) {
-                            qualifiersMatch = false;
-                            break;
-                        }
-                    }
-                }
-                if (qualifiersMatch) {
+                if (isWildcardQualifier || matches(annotationTypes().keys(builtIn.getQualifiers()), required)) {
                     result.add(builtIn);
                 }
             }
@@ -275,27 +248,40 @@ public final class VaubanBeanManager implements BeanManager {
 
             if (!typeMatch) continue;
 
-            // Qualifier matching
-            {
-                var beanQualifiers = bean.getQualifiers();
-                boolean qualifiersMatch = true;
-                for (var reqAnn : requiredQualifierAnnotations) {
-                    // @Any always matches — all beans implicitly have @Any
-                    if (reqAnn.annotationType() == jakarta.enterprise.inject.Any.class) continue;
-                    boolean found = beanQualifiers.stream()
-                        .anyMatch(bq -> qualifierEquals(bq, reqAnn));
-                    if (!found) {
-                        qualifiersMatch = false;
-                        break;
-                    }
-                }
-                if (qualifiersMatch) {
-                    result.add(bean);
-                }
+            if (matches(bean.qualifierKeys(matcher), required)) {
+                result.add(bean);
             }
         }
-        
+
         return result;
+    }
+
+    /** CDI 4.1 §2.5: every required qualifier must be one of the bean's; {@code @Any} matches every bean. */
+    private static boolean matches(Set<AnnotationKey> beanKeys, Set<AnnotationKey> required) {
+        for (var key : required) {
+            if (key.isAny()) continue;
+            if (!beanKeys.contains(key)) return false;
+        }
+        return true;
+    }
+
+    private AnnotationTypes annotationTypes() {
+        return container.qualifierMatcher().types();
+    }
+
+    /** CDI spec: every qualifier of a lookup must be a qualifier type, and no type twice unless repeatable. */
+    private void validateQualifiers(Annotation... qualifiers) {
+        if (qualifiers == null) return;
+        var seen = new HashSet<Class<?>>();
+        for (var q : qualifiers) {
+            if (!isQualifier(q.annotationType())) {
+                throw new IllegalArgumentException(q.annotationType().getName() + " is not a qualifier");
+            }
+            if (!seen.add(q.annotationType())
+                    && !q.annotationType().isAnnotationPresent(java.lang.annotation.Repeatable.class)) {
+                throw new IllegalArgumentException("Duplicate qualifier: " + q.annotationType().getName());
+            }
+        }
     }
 
     @Override
@@ -535,13 +521,10 @@ public final class VaubanBeanManager implements BeanManager {
                 }
             }
         }
-        var eventQualifiers = new java.util.LinkedHashSet<io.vidocq.vauban.indexer.model.DotName>();
-        for (var q : qualifiers) {
-            eventQualifiers.add(io.vidocq.vauban.indexer.model.DotName.of(q.annotationType().getName()));
-        }
+        var eventKeys = annotationTypes().keys(qualifiers);
         // CDI spec: resolveObserverMethods returns both sync and async observers
-        var matching = new java.util.ArrayList<>(eventDispatcher.findMatchingObservers(event.getClass(), false, eventQualifiers, qualifiers));
-        matching.addAll(eventDispatcher.findMatchingObservers(event.getClass(), true, eventQualifiers, qualifiers));
+        var matching = new java.util.ArrayList<>(eventDispatcher.findMatchingObservers(event.getClass(), false, eventKeys));
+        matching.addAll(eventDispatcher.findMatchingObservers(event.getClass(), true, eventKeys));
         var result = new LinkedHashSet<ObserverMethod<? super T>>();
         for (var descriptor : matching) {
             // Find the declaring bean
@@ -1282,31 +1265,4 @@ public final class VaubanBeanManager implements BeanManager {
         return primitive;
     }
 
-    /**
-     * CDI qualifier matching: two qualifiers are equal if they have the same type
-     * and all non-@Nonbinding members have the same values.
-     */
-    @SuppressWarnings("java:S135")
-    private static boolean qualifierEquals(Annotation a, Annotation b) {
-        if (!a.annotationType().equals(b.annotationType())) return false;
-        // If annotation has no members, type equality is sufficient
-        var methods = a.annotationType().getDeclaredMethods();
-        if (methods.length == 0) return true;
-        // Get custom nonbinding members from @Discovery phase
-        var customNb = io.vidocq.vauban.core.bean.resolution.QualifierMatcher.getCustomNonbindingMembers(
-                a.annotationType().getName());
-        // Compare all non-@Nonbinding members
-        try {
-            for (var method : methods) {
-                if (method.isAnnotationPresent(jakarta.enterprise.util.Nonbinding.class)) continue;
-                if (customNb != null && customNb.contains(method.getName())) continue;
-                var valA = method.invoke(a);
-                var valB = method.invoke(b);
-                if (!java.util.Objects.deepEquals(valA, valB)) return false;
-            }
-        } catch (Exception e) {
-            return a.equals(b);
-        }
-        return true;
-    }
 }

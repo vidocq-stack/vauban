@@ -38,19 +38,6 @@ import java.util.concurrent.ConcurrentHashMap;
  */
 public final class QualifierMatcher {
 
-    // Volatile immutable map: assigned once at startup, read-only after — thread-safe by design.
-    // Only the run-time matching of VaubanBeanManager still reads it; vauban#70 moves that path to keys.
-    @SuppressWarnings("java:S3077")
-    private static volatile Map<String, Set<String>> customNonbindingMembers = Map.of();
-
-    public static void setCustomNonbindingMembers(Map<String, Set<String>> nonbindingMembers) {
-        customNonbindingMembers = nonbindingMembers != null ? nonbindingMembers : Map.of();
-    }
-
-    public static Set<String> getCustomNonbindingMembers(String qualifierName) {
-        return customNonbindingMembers.get(qualifierName);
-    }
-
     private final AnnotationTypes types;
     private final Map<QualifierInstance, AnnotationKey> keys = new ConcurrentHashMap<>();
 
@@ -66,6 +53,11 @@ public final class QualifierMatcher {
         return new QualifierMatcher(new AnnotationTypes(null,
                 Arrays.asList(Thread.currentThread().getContextClassLoader(), QualifierMatcher.class.getClassLoader()),
                 Map.of()));
+    }
+
+    /** The annotation type metadata this matcher builds its keys from. */
+    public AnnotationTypes types() {
+        return types;
     }
 
     /**
@@ -89,7 +81,17 @@ public final class QualifierMatcher {
         return false;
     }
 
-    private AnnotationKey key(QualifierInstance qualifier) {
+    /** The key of one qualifier, computed once per instance for the container's lifetime. */
+    public AnnotationKey key(QualifierInstance qualifier) {
         return keys.computeIfAbsent(qualifier, q -> types.key(q.annotationName(), q.members()));
+    }
+
+    /** The keys of a set of qualifiers — those of a bean, or of an injection point. */
+    public Set<AnnotationKey> keys(java.util.Collection<QualifierInstance> qualifiers) {
+        var result = new java.util.HashSet<AnnotationKey>(qualifiers.size() * 2);
+        for (var qualifier : qualifiers) {
+            result.add(key(qualifier));
+        }
+        return Set.copyOf(result);
     }
 }

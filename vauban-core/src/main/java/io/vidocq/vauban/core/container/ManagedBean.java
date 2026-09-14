@@ -54,6 +54,8 @@ public final class ManagedBean<T> implements Bean<T> {
     private volatile Set<Type> cachedTypes;
     @SuppressWarnings("java:S3077")
     private volatile Set<Annotation> qualifierInstances;
+    @SuppressWarnings("java:S3077")
+    private volatile Set<io.vidocq.vauban.core.annotation.AnnotationKey> qualifierKeys;
 
     public ManagedBean(BeanDescriptor descriptor, BeanFactory<T> factory, ClassLoader classLoader, VaubanLookup vaubanLookup) {
         this.descriptor = Objects.requireNonNull(descriptor);
@@ -877,6 +879,24 @@ public final class ManagedBean<T> implements Bean<T> {
             qualifierInstances = instances;
         }
         return instances;
+    }
+
+    /**
+     * The keys of this bean's qualifiers, computed once: what resolution compares. A {@code @Named}
+     * bean that writes no name takes the bean's, as its qualifier instance does.
+     */
+    Set<io.vidocq.vauban.core.annotation.AnnotationKey> qualifierKeys(
+            io.vidocq.vauban.core.bean.resolution.QualifierMatcher matcher) {
+        var keys = qualifierKeys;
+        if (keys == null) {
+            var computed = new java.util.HashSet<io.vidocq.vauban.core.annotation.AnnotationKey>();
+            for (var qualifier : descriptor.qualifiers()) {
+                computed.add(matcher.key(QualifierUtils.withBeanName(qualifier, descriptor.name())));
+            }
+            keys = Set.copyOf(computed);
+            qualifierKeys = keys;
+        }
+        return keys;
     }
 
     @Override
