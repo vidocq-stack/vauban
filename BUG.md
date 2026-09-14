@@ -1123,7 +1123,7 @@ and a proposed upstream assertion: `CDI_TCK_PROPOSALS.md` → `TCK-GAP-001`.
 ## BUG-20260914-01 — Boot validation ignores member defaults, so `@Q` and `@Q("default")` never match
 
 - **Date**: 2026-09-14
-- **Status**: FIXED (vauban#70 PR 2)
+- **Status**: FIXED 358fc16
 - **Module**: `vauban-core` (`QualifierMatcher#qualifierEquals`); neither `ClassFileScanner` nor `ElementScanner` records member defaults.
 - **Symptom**: a valid deployment fails with `DeploymentException: Unsatisfied dependency` when an injection point and a bean spell the same qualifier differently, one relying on a member's default and the other writing it out. The same lookup done programmatically resolves, because the run-time path reads members through the annotation, defaults included.
 - **Minimal reproduction** (`QualifierMemberResolutionTest$DefaultedMember`):
@@ -1182,7 +1182,7 @@ and a proposed upstream assertion: `CDI_TCK_PROPOSALS.md` → `TCK-GAP-001`.
 ## BUG-20260914-04 — Boot validation loses `@Nonbinding` on a qualifier type vauban-core's own class loader cannot see
 
 - **Date**: 2026-09-14
-- **Status**: FIXED (vauban#70 PR 2)
+- **Status**: FIXED 358fc16
 - **Module**: `vauban-core` (`QualifierMatcher#qualifierEquals`)
 - **Symptom**: when the application's classes live in their own class loader, as with the TCK runner or a layer created by `Launch`/`Vidocq.run`, an injection point whose `@Nonbinding` member differs from the bean's fails the deployment with `Unsatisfied dependency`. The same fixture deploys when every member value is equal.
 - **Minimal reproduction** (`QualifierMemberResolutionTest$IsolatedClassLoader#nonbindingMember`; the fixtures are generated with the Class-File API into a `URLClassLoader`, set as context class loader):
@@ -1264,7 +1264,7 @@ and a proposed upstream assertion: `CDI_TCK_PROPOSALS.md` → `TCK-GAP-001`.
 ## BUG-20260914-09 — An `@Inherited` qualifier loses its long, float, double, byte, short, char, array and nested members
 
 - **Date**: 2026-09-14
-- **Status**: FIXED (vauban#70 PR 2)
+- **Status**: FIXED 358fc16
 - **Module**: `vauban-core` (`QualifierResolver#toAnnotationInfo`)
 - **Symptom**: a bean inheriting `@Leveled(1L)` from its superclass can neither be injected nor looked up with `@Leveled(1L)`: unsatisfied at boot validation and on lookup. The same scenario with a `String` member resolves on both paths.
 - **Minimal reproduction** (`QualifierMemberResolutionTest$InheritedQualifier#longField`, `#longProgrammatic`):
@@ -1316,7 +1316,7 @@ and a proposed upstream assertion: `CDI_TCK_PROPOSALS.md` → `TCK-GAP-001`.
 ## BUG-20260914-12 — The processor names nested types canonically in member values, and loses primitive and array class literals
 
 - **Date**: 2026-09-14
-- **Status**: FIXED (vauban#70 PR 2)
+- **Status**: FIXED 358fc16
 - **Module**: `vauban-processor` (`ElementScanner#scanAnnotations`, `#convertAnnotationValue`, `#typeMirrorToDotName`)
 - **Symptom**: the processor's index disagrees with the run-time bytecode scan of the same class. For `@Probe` declared in `app.Holder`, the processor records the annotation `app.Holder.Probe`, an enum value of type `app.Holder.Hue`, a nested `@app.Holder.Inner` and the class literal `app.Holder.Hue`, where the class file says `app.Holder$Probe`, `app.Holder$Hue` and `app.Holder$Inner`. `int.class` and `String[].class` both become `java.lang.Object`.
 - **Minimal reproduction** (`ElementScannerMemberValueTest`): compile the fixture with a processor that runs `ElementScanner#scan` on `app.Holder.Target`, then compare with `ClassFileScanner#scan` of `app/Holder$Target.class`.
