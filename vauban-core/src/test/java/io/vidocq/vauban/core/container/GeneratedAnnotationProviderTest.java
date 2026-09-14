@@ -120,13 +120,15 @@ class GeneratedAnnotationProviderTest {
 
         @Override
         public int hashCode() {
-            return (127 * "value".hashCode()) ^ value.hashCode()
+            // Each member's term is parenthesised: `+` binds tighter than `^`.
+            return ((127 * "value".hashCode()) ^ value.hashCode())
                     + ((127 * "note".hashCode()) ^ note.hashCode());
         }
 
         @Override
         public String toString() {
-            return "@" + Channel.class.getName() + "(value=\"" + value + "\", note=\"" + note + "\")";
+            // Members sorted by name, as AnnotationInstances renders an instance it builds itself.
+            return "@" + Channel.class.getCanonicalName() + "(note=\"" + note + "\", value=\"" + value + "\")";
         }
     }
 
@@ -213,6 +215,8 @@ class GeneratedAnnotationProviderTest {
                 assertInstanceOf(ChannelLiteral.class, qualifier, "the module's own literal");
                 assertEquals("wire", ((Channel) qualifier).value());
                 assertEquals(wireQualifier(), qualifier, "equal to the instance the JDK builds");
+                assertEquals(wireQualifier().hashCode(), qualifier.hashCode(),
+                        "and hashing like it, so a set of qualifiers holds one of them, not two");
             }
         });
     }

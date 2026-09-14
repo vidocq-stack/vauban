@@ -160,6 +160,21 @@ public final class ComponentProviderGenerator {
     public static Generated generateFrom(String packageName, List<Component> components,
             List<FieldInject> fieldInjects, List<MethodInvoke> methodInvokes,
             List<String> clientProxyFqns, List<ProducerProxy> producerProxies) {
+        return generateFrom(packageName, components, fieldInjects, methodInvokes,
+                clientProxyFqns, producerProxies, new AnnotationArtefacts.Rendered("", ""));
+    }
+
+    /**
+     * Full overload also carrying what this package's own annotation types declare (vauban#70): the
+     * metadata, a reader that calls their members directly and a literal for each one. They are
+     * rendered here, in the annotation type's own package, so a package-private qualifier is covered
+     * like any other — the container then matches, injects and hands out that qualifier with no
+     * reflection at all.
+     */
+    public static Generated generateFrom(String packageName, List<Component> components,
+            List<FieldInject> fieldInjects, List<MethodInvoke> methodInvokes,
+            List<String> clientProxyFqns, List<ProducerProxy> producerProxies,
+            AnnotationArtefacts.Rendered annotations) {
         var className = packageName.isEmpty() ? SIMPLE_NAME : packageName + "." + SIMPLE_NAME;
         var noArg = components.stream().filter(Component::noArg).toList();
         var withArgs = components.stream().filter(c -> !c.noArg()).toList();
@@ -311,6 +326,9 @@ public final class ComponentProviderGenerator {
             sb.append("        }\n");
             sb.append("    }\n");
         }
+
+        sb.append(annotations.methods());
+        sb.append(annotations.literals());
 
         sb.append("}\n");
         return new Generated(className, sb.toString());

@@ -188,15 +188,34 @@ interceptor binding:
 - [x] `AnnotationTypes` consults them before anything else — for the metadata, for the key of an
       instance and for the instance a bean or an observer exposes — and converts a nested annotation
       through the providers too; the builder passes the deployment's providers to it
-- [ ] Processor renders them: the literal goes in the annotation type's own package when that type is
-      compiled in this module, else in the consuming package when accessible (PR 4c)
-#### PR 4c — The processor generates them
-- [ ] The processor collects the annotation types its beans and observers use as qualifiers, and
-      renders the three artefacts into the package provider: the literal goes in the annotation type's
-      own package when that type is compiled in this module, else in the consuming package when
-      accessible
+- [x] Processor renders them (PR 4c)
+#### PR 4c — The processor generates them — DONE
+- [x] `AnnotationArtefacts` renders, for every annotation type **this compilation declares**, the
+      metadata, a reader that calls its members directly and a literal class; they go into that
+      type's own package provider, so a package-private qualifier is covered like any other.
+      `Elements#getFileObjectOf` tells a type compiled here from one on the compile path.
+      A package that declares annotation types but holds no bean now gets a provider of its own
+- [x] Only runtime-retained types are rendered — the others the container never sees — and a type
+      whose defaults cannot all be written as Java expressions is left out whole rather than by halves
+- [x] The generated `toString` renders what `AnnotationInstances` renders (members sorted by name,
+      strings quoted, `X.class`, arrays in braces), so a qualifier reads the same in a message
+      whichever side built it. Arrays are copied in as well as out; `equals`/`hashCode` follow
+      `Annotation` (floats by their bits, arrays element by element, each hash term parenthesised)
+- [x] Verified: 423 unit tests + 6 new, both surefire run orders, CDI TCK 774/774, AtInject green.
+      Four mutations, each red on the test that claims it: retention filter dropped, `@Nonbinding`
+      not reported, declared defaults ignored, and the precedence bug put back in PR 4b's hand-written
+      fixture — which that fixture's new `hashCode` assertion catches (it was wrong, and unnoticed)
+
+#### PR 4d — The last reflective reads on the qualifier path
 - [ ] Parameter qualifiers from the index instead of `Parameter.getAnnotations()` (moved out of PR 3b);
-      seven of the ten sites have a descriptor to read from, three have none and stay reflective
+      seven of the ten sites have a descriptor to read from, three have none and stay reflective.
+      `QualifierHelper` also reads a *declaration* (`isAnnotationPresent(Qualifier.class)`) on that
+      path — the index answers that too
+- [ ] A qualifier from a dependency **not** built with the Vauban processor: its metadata comes from
+      the class bytes (no reflection), but the instance a bean exposes still falls to
+      `AnnotationInstances.create`, which `forbid` refuses. Either render a literal in the consuming
+      package when the type is public and accessible, or say plainly that `forbid` requires every
+      qualifier's module to be compiled with the processor. The IT below settles which
 - [ ] `vauban-module-it` runs under `-Dvauban.annotations.reflection=forbid` (a surefire
       `systemPropertyVariables` block, which that module does not have yet) over every edge shape,
       plus a run-time-only annotation proving the fallback still works. Interceptor binding comparison

@@ -27,6 +27,7 @@ import io.vidocq.vauban.processor.codegen.proxy.ClientProxyShapeFromElements;
 import io.vidocq.vauban.processor.codegen.proxy.ClientProxySourceRenderer;
 import io.vidocq.vauban.processor.codegen.proxy.InterfaceProxySourceRenderer;
 import io.vidocq.vauban.processor.codegen.proxy.ProducerProxyEligibility;
+import io.vidocq.vauban.processor.codegen.provider.AnnotationArtefacts;
 import io.vidocq.vauban.processor.codegen.provider.ComponentProviderGenerator;
 import io.vidocq.vauban.processor.codegen.interceptor.InterceptedShapeFromElements;
 import io.vidocq.vauban.processor.codegen.interceptor.InterceptedSourceRenderer;
@@ -653,6 +654,9 @@ public class VaubanProcessor extends AbstractProcessor {
         // package-private members in other packages.
         var providerClassNames = new java.util.ArrayList<String>();
         var emittedProviderPackages = new java.util.HashSet<String>();
+        // What this compilation's own annotation types declare, rendered into their own package so a
+        // package-private qualifier is covered like any other (vauban#70).
+        var annotationsByPackage = declaredAnnotationTypes(index);
         for (var pkg : packages) {
             // Proxies of this package's beans (their FQN package equals the provider's package).
             var pkgProxies = clientProxyFqns.stream()
@@ -661,16 +665,20 @@ public class VaubanProcessor extends AbstractProcessor {
             var pkgProducerProxies = producerProxiesByPackage.getOrDefault(pkg.packageName(), List.of());
             var className = writeComponentProvider(
                     pkg.packageName(), pkg.components(), pkg.fields(), pkg.methods(),
-                    pkgProxies, pkgProducerProxies);
+                    pkgProxies, pkgProducerProxies,
+                    annotationsByPackage.getOrDefault(pkg.packageName(), List.of()));
             if (className != null) providerClassNames.add(className);
             emittedProviderPackages.add(pkg.packageName());
         }
-        // A producer whose holder package has no other in-module component still needs a provider
-        // for its produced-type proxy (issue #42).
-        for (var entry : producerProxiesByPackage.entrySet()) {
-            if (emittedProviderPackages.contains(entry.getKey())) continue;
-            var className = writeComponentProvider(
-                    entry.getKey(), List.of(), List.of(), List.of(), List.of(), entry.getValue());
+        // A package with no in-module component of its own still needs a provider when it holds a
+        // produced-type proxy (issue #42) or declares an annotation type (vauban#70).
+        var remainingPackages = new java.util.LinkedHashSet<>(producerProxiesByPackage.keySet());
+        remainingPackages.addAll(annotationsByPackage.keySet());
+        for (var pkg : remainingPackages) {
+            if (!emittedProviderPackages.add(pkg)) continue;
+            var className = writeComponentProvider(pkg, List.of(), List.of(), List.of(), List.of(),
+                    producerProxiesByPackage.getOrDefault(pkg, List.of()),
+                    annotationsByPackage.getOrDefault(pkg, List.of()));
             if (className != null) providerClassNames.add(className);
         }
         if (!providerClassNames.isEmpty()) {
@@ -1006,6 +1014,34 @@ public class VaubanProcessor extends AbstractProcessor {
         return element != null && element.getKind() == ElementKind.ANNOTATION_TYPE ? element : null;
     }
 
+    /**
+     * The annotation types this compilation declares, by package — the only ones whose artefacts it
+     * may render: the metadata, the reader and the literal all name the type's members directly, so
+     * they have to sit in its own package, and a type from a dependency already ships its own.
+     *
+     * <p>{@code Elements} tells the two apart by where the type comes from: a source file of this
+     * compilation (including one a companion processor generated), or a class file on the path.
+     */
+    private Map<String, List<ClassInfo>> declaredAnnotationTypes(io.vidocq.vauban.indexer.VaubanIndex index) {
+        var elements = processingEnv.getElementUtils();
+        var byPackage = new java.util.LinkedHashMap<String, List<ClassInfo>>();
+        for (var classInfo : index.getKnownClasses()) {
+            if (!classInfo.isAnnotation()) continue;
+            var element = annotationTypeElement(elements, classInfo.name());
+            if (element == null || !compiledHere(elements, element)) continue;
+            byPackage.computeIfAbsent(classInfo.name().packageName(), pkg -> new java.util.ArrayList<>())
+                    .add(classInfo);
+        }
+        return byPackage;
+    }
+
+    /** Whether {@code element} comes from a source file of this compilation rather than the path. */
+    private static boolean compiledHere(Elements elements, TypeElement element) {
+        var file = elements.getFileObjectOf(element);
+        return file instanceof javax.tools.JavaFileObject source
+                && source.getKind() == javax.tools.JavaFileObject.Kind.SOURCE;
+    }
+
     /** Every annotation named on a class, on its fields, on its methods and on their parameters. */
     private static void collectAnnotationNames(ClassInfo classInfo, Collection<DotName> into) {
         classInfo.annotations().forEach(annotation -> collectAnnotationNames(annotation, into));
@@ -1015,6 +1051,10 @@ public class VaubanProcessor extends AbstractProcessor {
             method.annotations().forEach(annotation -> collectAnnotationNames(annotation, into));
             method.parameters().forEach(parameter ->
                     parameter.annotations().forEach(annotation -> collectAnnotationNames(annotation, into)));
+            // An annotation member may default to a nested annotation, whose type is named nowhere else.
+            if (method.defaultValue() != null) {
+                collectAnnotationNames(method.defaultValue(), into);
+            }
         }
     }
 
@@ -1642,9 +1682,10 @@ public class VaubanProcessor extends AbstractProcessor {
             List<io.vidocq.vauban.indexer.codegen.FieldInject> fieldInjects,
             List<io.vidocq.vauban.indexer.codegen.MethodInvoke> methodInvokes,
             List<String> clientProxyFqns,
-            List<ComponentProviderGenerator.ProducerProxy> producerProxies) {
+            List<ComponentProviderGenerator.ProducerProxy> producerProxies,
+            List<ClassInfo> annotationTypes) {
         var gen = ComponentProviderGenerator.generateFrom(pkg, components, fieldInjects, methodInvokes,
-                clientProxyFqns, producerProxies);
+                clientProxyFqns, producerProxies, AnnotationArtefacts.render(annotationTypes));
         try {
             var file = processingEnv.getFiler().createSourceFile(gen.className());
             try (var w = file.openWriter()) {
