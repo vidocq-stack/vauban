@@ -167,6 +167,69 @@ jobs:
         # install runs the full lifecycle incl. integration-test/verify.
         run: mvn -B -ntp install
 
+      # The repository's own TCK, on the pull request rather than after the merge.
+      #
+      # Opt-in and DECLARED BY THE REPOSITORY, in its root pom.xml:
+      #
+      #   <properties>
+      #     <ci.tck.modules>foo-tck-runner,foo-atinject-tck-runner</ci.tck.modules>
+      #     <ci.tck.command>./run-official-tck-x-1.0.sh all</ci.tck.command>
+      #   </properties>
+      #
+      # `ci.tck.modules` is a comma-separated list of Maven modules, each run with `-Ptck`.
+      # `ci.tck.command` is a shell command, for a suite a plain `-Ptck` cannot run on its own.
+      # Either, both, or neither. A repository that declares NEITHER skips this step entirely —
+      # it has no TCK, or one too heavy for a pull request.
+      #
+      # Detection was deliberately rejected. Knowing that a TCK exists is easy (a `*-tck*` module);
+      # knowing how to run it MEANINGFULLY is not, and it differs per repository: cassini's real
+      # suite needs `-Ptck,tck-official` and non-public artefacts, vidocq's ten runners live in a
+      # sub-aggregator and never appear in the root module list, grimm's and mansart's TCKs are out
+      # of reactor entirely. A gate that runs a subset while reporting success is worse than no gate
+      # — see Vidocq/vauban#85, where seven CDI TCK tests went red while every unit test stayed
+      # green, and where the runner's own `testFailureIgnore` had been hiding failures for months.
+      #
+      # So each repository states what its gate certifies, and nobody can make it vacuous by
+      # accident.
+      - name: TCK declared by this repository
+        if: steps.changes.outputs.docs-only != 'true'
+        run: |
+          set -euo pipefail
+          python3 - > .ci-tck.env <<'PY'
+          import shlex, xml.etree.ElementTree as ET
+          root = ET.parse("pom.xml").getroot()
+          ns = root.tag[1:].split("}", 1)[0] if root.tag.startswith("{") else ""
+          q = (lambda t: "{%s}%s" % (ns, t)) if ns else (lambda t: t)
+          props = root.find(q("properties"))
+          def get(name):
+              node = props.find(q(name)) if props is not None else None
+              return (node.text or "").strip() if node is not None else ""
+          print("TCK_MODULES=" + shlex.quote(get("ci.tck.modules")))
+          print("TCK_COMMAND=" + shlex.quote(get("ci.tck.command")))
+          PY
+          . ./.ci-tck.env
+          rm -f .ci-tck.env
+
+          if [ -z "$TCK_MODULES" ] && [ -z "$TCK_COMMAND" ]; then
+            echo "This repository declares no TCK to gate (no ci.tck.modules / ci.tck.command in pom.xml)."
+            exit 0
+          fi
+
+          if [ -n "$TCK_COMMAND" ]; then
+            echo "TCK via the declared command: $TCK_COMMAND"
+            bash -c "$TCK_COMMAND"
+          fi
+
+          if [ -n "$TCK_MODULES" ]; then
+            IFS=',' read -ra modules <<< "$TCK_MODULES"
+            for module in "${modules[@]}"; do
+              module="$(echo "$module" | xargs)"
+              [ -n "$module" ] || continue
+              echo "TCK: mvn -B -ntp -pl $module -Ptck test"
+              mvn -B -ntp -pl "$module" -Ptck test
+            done
+          fi
+
       - name: Rebuild impacted downstream consumers against the local PR artifacts
         if: steps.changes.outputs.docs-only != 'true'
         uses: https://codefloe.com/Vidocq/ci/build-impacted@main

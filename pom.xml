@@ -91,6 +91,14 @@
         <sonar.java.source>25</sonar.java.source>
         <sonar.coverage.jacoco.xmlReportPaths>${project.build.directory}/site/jacoco/jacoco.xml</sonar.coverage.jacoco.xmlReportPaths>
         <sonar.exclusions>**/generated/**</sonar.exclusions>
+
+        <!--
+            The TCK this repository's pull requests are gated on (vauban#85). Read by the shared
+            pr-validate workflow, which runs `mvn -pl <module> -Ptck test` for each and skips the
+            step entirely when this property is absent. Both suites are a certification claim, and
+            both fail the build on a red run — neither carries surefire's testFailureIgnore.
+        -->
+        <ci.tck.modules>vauban-tck-runner,vauban-atinject-tck-runner</ci.tck.modules>
     </properties>
 
     <dependencyManagement>
