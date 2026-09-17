@@ -510,6 +510,13 @@ public final class VaubanContainerBuilder {
         // read this field at creation time, preferring generated instantiation over reflection.
         componentProviders = ComponentProviders.load(discoveryClassLoader, componentProviderList);
 
+        // vauban#98: the build-compatible extension phase resolves a bean class the way the
+        // container already knows it — a deployment spans several loaders (vidocq:dev defines
+        // the application's classes in the layer while its libraries stay on the module path),
+        // and one bean's loader cannot see the other side.
+        var bceClassLoader =
+                DeploymentClassLoader.forDeployment(beanClasses, this.classLoader, discoveryClassLoader);
+
         // --- Identify BCE classes and unprocessed archive classes ---
         var bceClasses = beanClasses.stream()
                 .filter(c -> ReflectionValidator.isBuildCompatibleExtension(c))
@@ -551,6 +558,9 @@ public final class VaubanContainerBuilder {
             for (var className : discoveryResult.scannedClasses().getAddedClasses()) {
                 try {
                     var cls = Class.forName(className, false, discoveryClassLoader);
+                    // A class an extension added is part of the deployment from now on: the
+                    // later extension phases resolve it by identity, not by loading it again.
+                    bceClassLoader.register(cls);
                     String resource = className.replace('.', '/') + ".class";
                     try (var is = discoveryClassLoader.getResourceAsStream(resource)) {
                         if (is != null) {
@@ -611,8 +621,7 @@ public final class VaubanContainerBuilder {
 
             if (!unprocessedArchiveClasses.isEmpty() && !fullBceClasses.isEmpty()) {
                 var enhMods = io.vidocq.vauban.core.extensions.BceProcessor.processEnhancementOnly(
-                        List.copyOf(fullBceClasses), unprocessedArchiveClasses, index,
-                        beanClasses.isEmpty() ? discoveryClassLoader : beanClasses.getFirst().getClassLoader());
+                        List.copyOf(fullBceClasses), unprocessedArchiveClasses, index, bceClassLoader);
                 enhMods.forEach((k, v) -> combinedEnhMods.computeIfAbsent(k, _ -> new ArrayList<>()).addAll(v));
             }
 
@@ -735,8 +744,7 @@ public final class VaubanContainerBuilder {
             if (!bceClasses.isEmpty()) {
                 var bceResult = io.vidocq.vauban.core.extensions.BceProcessor.process(
                         bceClasses, descriptors, observers, interceptors, index,
-                        beanClasses.isEmpty() ? Thread.currentThread().getContextClassLoader()
-                                : beanClasses.getFirst().getClassLoader(),
+                        bceClassLoader,
                         discoveryResult.bceInstances(),
                         nonBceClasses);
 
