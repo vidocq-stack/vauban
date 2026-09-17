@@ -102,7 +102,7 @@ other and does run them — if you declare it yourself, keep field initializers 
 
 Find your situation in the left column. Most of them ask nothing of you; the few that do,
 say so in one line. The mechanics behind each row are in
-xref:internals.adoc#_client_proxies_one_strategy_per_case[Internals — one strategy per case].
+xref:internals.adoc#proxy-strategies[Internals — one strategy per case].
 
 [cols="2,2,1"]
 |===
