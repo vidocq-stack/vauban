@@ -9,7 +9,7 @@ on:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: vidocq-runner
     steps:
       - uses: actions/checkout@v4
 
@@ -32,7 +32,7 @@ jobs:
         run: mvn -B -ntp verify
 
   tck:
-    runs-on: ubuntu-latest
+    runs-on: vidocq-runner
     needs: build
     steps:
       - uses: actions/checkout@v4
@@ -58,7 +58,7 @@ jobs:
           module: vauban-tck-runner
 
   deploy:
-    runs-on: ubuntu-latest
+    runs-on: vidocq-runner
     needs: tck
     steps:
       - uses: actions/checkout@v4
