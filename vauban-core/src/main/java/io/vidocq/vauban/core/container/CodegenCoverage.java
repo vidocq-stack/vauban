@@ -22,12 +22,19 @@ package io.vidocq.vauban.core.container;
 import io.vidocq.vauban.api.GeneratedCoverage;
 import io.vidocq.vauban.api.VaubanComponentProvider;
 import io.vidocq.vauban.core.bean.model.DisposerDescriptor;
+import io.vidocq.vauban.core.bean.model.InterceptorDescriptor;
+import io.vidocq.vauban.core.bean.model.ObserverDescriptor;
 import io.vidocq.vauban.core.interceptor.InterceptedShape;
 import io.vidocq.vauban.core.proxy.RuntimeClientProxyGenerator;
+import io.vidocq.vauban.indexer.model.TypeInfo;
 import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
+import jakarta.enterprise.event.Observes;
+import jakarta.enterprise.event.ObservesAsync;
 import jakarta.enterprise.inject.spi.Bean;
+import jakarta.interceptor.InvocationContext;
 
+import java.lang.annotation.Annotation;
 import java.lang.reflect.Field;
 import java.lang.reflect.Member;
 import java.lang.reflect.Method;
@@ -114,6 +121,120 @@ public final class CodegenCoverage {
     /** The coverage of a bean the bean manager lists. */
     public Coverage of(Bean<?> bean) {
         return verdict(operations(bean));
+    }
+
+    /** The coverage of an observer method the event dispatcher lists. */
+    public Coverage of(ObserverDescriptor observer) {
+        return verdict(operations(observer));
+    }
+
+    /** The coverage of an interceptor the interceptor manager lists. */
+    public Coverage of(InterceptorDescriptor interceptor) {
+        return verdict(operations(interceptor));
+    }
+
+    List<Operation> operations(ObserverDescriptor observer) {
+        if (observer.isSynthetic()) {
+            return List.of();
+        }
+        Class<?> declaring = load(observer.declaringClass().value());
+        if (declaring == null) {
+            return List.of();
+        }
+        Method method = observerMethod(declaring, observer);
+        return List.of(method == null ? none("observer " + observer.methodName() + "()", declaring)
+                : invoke(method, "observer"));
+    }
+
+    List<Operation> operations(InterceptorDescriptor interceptor) {
+        Class<?> type = load(interceptor.interceptorClass().value());
+        if (type == null) {
+            return List.of();
+        }
+        var ops = new ArrayList<Operation>();
+        ops.add(new Operation(Kind.INSTANTIATE, type.getName(), "constructor", type));
+        for (Field field : BeanInjector.injectedFields(type)) {
+            ops.add(field(field));
+        }
+        Method own = ownPostConstruct(type);
+        if (own != null) {
+            ops.add(invoke(own, "@PostConstruct"));
+        }
+        // VaubanInvocationContext.InterceptorInvocation calls these by Method.invoke: no provider runs them (#109).
+        if (interceptor.aroundInvokeMethod() != null) {
+            ops.add(none("@AroundInvoke " + interceptor.aroundInvokeMethod() + "()", type));
+        }
+        if (interceptor.aroundConstructMethod() != null) {
+            ops.add(none("@AroundConstruct " + interceptor.aroundConstructMethod() + "()", type));
+        }
+        for (Method method : lifecycleInterceptorMethods(type, PostConstruct.class)) {
+            ops.add(none("@PostConstruct " + method.getName() + "(InvocationContext)", type));
+        }
+        for (Method method : lifecycleInterceptorMethods(type, PreDestroy.class)) {
+            ops.add(none("@PreDestroy " + method.getName() + "(InvocationContext)", type));
+        }
+        return ops;
+    }
+
+    private Class<?> load(String name) {
+        try {
+            return container.loadClass(name);
+        } catch (ClassNotFoundException | LinkageError e) {
+            return null;
+        }
+    }
+
+    /**
+     * The observer's method, as {@code EventDispatcher.findMethod} finds it, but by the declared event type: no event
+     * is at hand. Up the hierarchy, a method of that name with an {@code @Observes} or {@code @ObservesAsync}
+     * parameter of that type; failing that, the first such method of that name.
+     */
+    private static Method observerMethod(Class<?> declaring, ObserverDescriptor observer) {
+        String event = rawName(observer.eventType());
+        Method byName = null;
+        for (Class<?> type = declaring; type != null && type != Object.class; type = type.getSuperclass()) {
+            for (Method method : type.getDeclaredMethods()) {
+                if (!method.getName().equals(observer.methodName())) continue;
+                for (var parameter : method.getParameters()) {
+                    if (parameter.isAnnotationPresent(Observes.class)
+                            || parameter.isAnnotationPresent(ObservesAsync.class)) {
+                        if (event == null || parameter.getType().getName().equals(event)) {
+                            return method;
+                        }
+                        if (byName == null) {
+                            byName = method;
+                        }
+                    }
+                }
+            }
+        }
+        return byName;
+    }
+
+    private static String rawName(TypeInfo type) {
+        return switch (type) {
+            case TypeInfo.ClassType classType -> classType.name().value();
+            case TypeInfo.ParameterizedType parameterized -> parameterized.rawType().value();
+            case null, default -> null;
+        };
+    }
+
+    /** An interceptor's own {@code @PostConstruct}, as {@code BeanLifecycle.callPostConstruct} takes it. */
+    private static Method ownPostConstruct(Class<?> type) {
+        for (Method method : type.getDeclaredMethods()) {
+            if (method.isAnnotationPresent(PostConstruct.class) && method.getParameterCount() == 0) {
+                return method;
+            }
+        }
+        return null;
+    }
+
+    /** The lifecycle callbacks an interceptor intercepts with: one {@link InvocationContext} parameter. */
+    private static List<Method> lifecycleInterceptorMethods(Class<?> type, Class<? extends Annotation> annotation) {
+        return BeanLifecycle.collectLifecycleMethodsInHierarchy(type, annotation).stream()
+                .filter(method -> method.getParameterCount() == 1
+                        && method.getParameterTypes()[0] == InvocationContext.class)
+                .toList();
     }
 
     List<Operation> operations(Bean<?> bean) {

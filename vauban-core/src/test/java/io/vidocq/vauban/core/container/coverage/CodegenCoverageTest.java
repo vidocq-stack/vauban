@@ -22,11 +22,15 @@ package io.vidocq.vauban.core.container.coverage;
 import io.vidocq.vauban.api.GeneratedCoverage;
 import io.vidocq.vauban.api.GeneratedCoverage.Generator;
 import io.vidocq.vauban.api.VaubanComponentProvider;
+import io.vidocq.vauban.core.bean.model.InterceptorDescriptor;
+import io.vidocq.vauban.core.bean.model.ObserverDescriptor;
 import io.vidocq.vauban.core.container.CodegenCoverage.Coverage;
 import io.vidocq.vauban.core.container.CodegenCoverage.Verdict;
 import io.vidocq.vauban.core.container.VaubanContainer;
 import io.vidocq.vauban.core.container.coverage.legacy.LegacyBean;
 import io.vidocq.vauban.core.container.coverage.legacy.LegacyProvider;
+import io.vidocq.vauban.indexer.model.DotName;
+import io.vidocq.vauban.indexer.model.TypeInfo;
 import jakarta.enterprise.inject.spi.Bean;
 import jakarta.enterprise.inject.spi.BeanManager;
 import org.junit.jupiter.api.DisplayName;
@@ -224,6 +228,68 @@ class CodegenCoverageTest {
                 CoverageFixtures.Factory.class)) {
             assertEquals(new Coverage(Verdict.REFLECTION, List.of("producer field gadget")),
                     coverage(container, CoverageFixtures.Gadget.class));
+        }
+    }
+
+    static final String PINGER = PREFIX + "Pinger";
+    static final String AUDIT = PREFIX + "AuditInterceptor";
+
+    static ObserverDescriptor observer(VaubanContainer container, String declaringClass) {
+        return container.eventDispatcher().observers().stream()
+                .filter(observer -> observer.declaringClass().value().equals(declaringClass))
+                .findFirst().orElseThrow();
+    }
+
+    static InterceptorDescriptor interceptor(VaubanContainer container, String type) {
+        return container.interceptorManager().getInterceptors().stream()
+                .filter(interceptor -> interceptor.interceptorClass().value().equals(type))
+                .findFirst().orElseThrow();
+    }
+
+    @Test
+    @DisplayName("an observer is covered by the method a provider invokes")
+    void observerMethod() {
+        Set<String> methods = Set.of(PINGER + "#onPing(" + PREFIX + "Ping)");
+        try (var container = container(List.of(declaring(Generator.APT, Set.of(), Set.of(), methods, Set.of())),
+                CoverageFixtures.Pinger.class)) {
+            assertEquals(new Coverage(Verdict.APT, List.of()),
+                    container.codegenCoverage().of(observer(container, PINGER)));
+        }
+        try (var container = container(List.of(), CoverageFixtures.Pinger.class)) {
+            assertEquals(new Coverage(Verdict.REFLECTION, List.of("observer onPing()")),
+                    container.codegenCoverage().of(observer(container, PINGER)));
+        }
+    }
+
+    @Test
+    @DisplayName("a synthetic observer is not evaluated")
+    void syntheticObserverIsNotApplicable() {
+        var synthetic = new ObserverDescriptor(DotName.of(PINGER), "synthetic",
+                new TypeInfo.ClassType(DotName.of(PREFIX + "Ping")), List.of(), false, 0, null, null,
+                (instance, qualifiers) -> {});
+        try (var container = container(List.of(), CoverageFixtures.Pinger.class)) {
+            assertEquals(new Coverage(Verdict.NOT_APPLICABLE, List.of()), container.codegenCoverage().of(synthetic));
+        }
+    }
+
+    @Test
+    @DisplayName("an interceptor's @AroundInvoke is always called by reflection, so the interceptor is partial")
+    void interceptorAroundInvokeIsReflection() {
+        try (var container = container(List.of(declaring(Generator.APT, Set.of(AUDIT),
+                        Set.of(AUDIT + "#dependency"), Set.of(), Set.of())),
+                CoverageFixtures.Dependency.class, CoverageFixtures.AuditInterceptor.class,
+                CoverageFixtures.AuditedBean.class)) {
+            assertEquals(new Coverage(Verdict.PARTIAL, List.of("@AroundInvoke around()")),
+                    container.codegenCoverage().of(interceptor(container, AUDIT)));
+        }
+    }
+
+    @Test
+    @DisplayName("an interceptor whose class cannot be loaded is not evaluated")
+    void unloadableInterceptorIsNotApplicable() {
+        var missing = new InterceptorDescriptor(DotName.of("does.not.Exist"), Set.of(), "around", 1);
+        try (var container = container(List.of(), CoverageFixtures.BareBean.class)) {
+            assertEquals(new Coverage(Verdict.NOT_APPLICABLE, List.of()), container.codegenCoverage().of(missing));
         }
     }
 

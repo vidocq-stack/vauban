@@ -23,6 +23,7 @@ import jakarta.annotation.PostConstruct;
 import jakarta.annotation.Priority;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.enterprise.context.Dependent;
+import jakarta.enterprise.event.Observes;
 import jakarta.enterprise.inject.Disposes;
 import jakarta.enterprise.inject.Produces;
 import jakarta.inject.Inject;
@@ -107,5 +108,12 @@ public final class CoverageFixtures {
         }
 
         void dispose(@Disposes Widget widget) {}
+    }
+
+    public record Ping(String value) {}
+
+    @Dependent
+    public static class Pinger {
+        void onPing(@Observes Ping ping) {}
     }
 }
