@@ -56,6 +56,14 @@ final class InterceptorBeanWrapper {
     private final java.util.Map<io.vidocq.vauban.core.bean.model.BeanId, Boolean> interceptedSubclasses =
             new java.util.concurrent.ConcurrentHashMap<>();
 
+    /**
+     * The {@code $$Intercepted} subclasses Vauban generated and defined at boot, in this JVM, whichever container did
+     * it. A class stays defined in its loader after its container closes, so a later boot sharing the loader finds it:
+     * this set tells such a class apart from one built ahead of time. Weak, so it never holds a loader alive.
+     */
+    private static final java.util.Set<Class<?>> DEFINED_AT_RUNTIME =
+            java.util.Collections.synchronizedSet(java.util.Collections.newSetFromMap(new java.util.WeakHashMap<>()));
+
     /** Whether the bean {@code id}'s intercepted subclass was pre-generated; {@code null} if it is not intercepted. */
     Boolean interceptedSubclassPreGenerated(io.vidocq.vauban.core.bean.model.BeanId id) {
         return interceptedSubclasses.get(id);
@@ -651,7 +659,8 @@ final class InterceptorBeanWrapper {
                         // bean's module (an `opens … to io.vidocq.vauban.core`); an already-compiled
                         // sibling on the bean's own loader avoids that entirely.
                         interceptedClass = Class.forName(interceptedName, false, beanClass.getClassLoader());
-                        preGenerated = true;
+                        // Found is not built ahead: an earlier boot sharing this loader may have defined it.
+                        preGenerated = !DEFINED_AT_RUNTIME.contains(interceptedClass);
                     } catch (ClassNotFoundException notPreGenerated) {
                         preGenerated = false;
                         var generated = io.vidocq.vauban.core.interceptor.InterceptorSubclassGenerator
@@ -665,6 +674,7 @@ final class InterceptorBeanWrapper {
                                 throw new jakarta.enterprise.inject.spi.DeploymentException("Could not define interceptor subclass", e);
                             }
                         }
+                        DEFINED_AT_RUNTIME.add(interceptedClass);
                     }
 
                     var mgr = this.interceptorManager;
@@ -855,6 +865,7 @@ final class InterceptorBeanWrapper {
                                     "Fallback interception also failed for " + descriptor.beanClass().value(), ex2);
                             throw new jakarta.enterprise.inject.spi.DeploymentException("Could not define interceptor subclass", ex2);
                         }
+                        DEFINED_AT_RUNTIME.add(interceptedClass2);
                     var mgr2 = this.interceptorManager;
                     var bds2 = bindings;
                     final var finalBeanClass2 = currentBeanClass;

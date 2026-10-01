@@ -188,6 +188,21 @@ class CodegenCoverageTest {
     }
 
     @Test
+    @DisplayName("a subclass an earlier boot defined in the same loader is still not pre-generated")
+    void subclassDefinedByAnEarlierBootIsNotPreGenerated() {
+        String subclass = PREFIX + "AuditedBean$$Intercepted";
+        for (int boot = 1; boot <= 2; boot++) {
+            try (var container = container(List.of(declaring(Generator.APT, Set.of(subclass), Set.of(), Set.of(),
+                            Set.of())),
+                    CoverageFixtures.Dependency.class, CoverageFixtures.AuditInterceptor.class,
+                    CoverageFixtures.AuditedBean.class)) {
+                assertEquals(new Coverage(Verdict.PARTIAL, List.of("intercepted subclass")),
+                        coverage(container, CoverageFixtures.AuditedBean.class), "boot " + boot);
+            }
+        }
+    }
+
+    @Test
     @DisplayName("a built-in bean is not evaluated")
     void builtInBeanIsNotApplicable() {
         try (var container = container(List.of(), CoverageFixtures.BareBean.class)) {
