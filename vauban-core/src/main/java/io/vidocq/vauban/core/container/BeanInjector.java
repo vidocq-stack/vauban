@@ -66,25 +66,13 @@ final class BeanInjector {
      */
     void performInjection(Object instance, BeanDescriptor descriptor, CreationalContext<?> ctx) {
         var beanClass = unwrapInterceptedSubclass(instance.getClass());
-        var hierarchy = hierarchySuperFirst(beanClass);
         var ownerBean = container.findBeanForInstance(instance);
         var typeMapping = ManagedBean.buildTypeVariableMapping(beanClass);
-
-        for (int i = 0; i < hierarchy.size(); i++) {
-            var clazz = hierarchy.get(i);
-            // Fields of this class first (supertype-before-subtype guaranteed by outer loop order).
-            for (var field : clazz.getDeclaredFields()) {
-                if (!field.isAnnotationPresent(jakarta.inject.Inject.class)) continue;
-                if (Modifier.isStatic(field.getModifiers())) continue;
+        for (var member : injectionOrder(beanClass)) {
+            if (member instanceof Field field) {
                 injectSingleField(instance, field, descriptor, ctx, typeMapping);
-            }
-            // Then initializer methods of this class, skipping any that a subtype overrides.
-            var subclasses = hierarchy.subList(i + 1, hierarchy.size());
-            for (var method : clazz.getDeclaredMethods()) {
-                if (!method.isAnnotationPresent(jakarta.inject.Inject.class)) continue;
-                if (Modifier.isStatic(method.getModifiers())) continue;
-                if (isOverriddenInSubclasses(method, subclasses)) continue;
-                injectSingleMethod(instance, method, descriptor, ctx, ownerBean, typeMapping);
+            } else {
+                injectSingleMethod(instance, (Method) member, descriptor, ctx, ownerBean, typeMapping);
             }
         }
     }
@@ -96,13 +84,42 @@ final class BeanInjector {
     void injectFieldsByReflection(Object instance, BeanDescriptor descriptor, CreationalContext<?> parentCtx) {
         var beanClass = unwrapInterceptedSubclass(instance.getClass());
         var typeMapping = ManagedBean.buildTypeVariableMapping(beanClass);
-        for (var clazz : hierarchySuperFirst(beanClass)) {
+        for (var field : injectedFields(beanClass)) {
+            injectSingleField(instance, field, descriptor, parentCtx, typeMapping);
+        }
+    }
+
+    /**
+     * The members {@link #performInjection} injects, in its order, mandated by the Jakarta Dependency Injection
+     * spec: supertype members before subtype members; within a class, the non-static {@code @Inject} fields, then
+     * the non-static {@code @Inject} methods that no subtype overrides. {@link CodegenCoverage} reads the same list.
+     */
+    static List<java.lang.reflect.Member> injectionOrder(Class<?> beanClass) {
+        var hierarchy = hierarchySuperFirst(unwrapInterceptedSubclass(beanClass));
+        var members = new ArrayList<java.lang.reflect.Member>();
+        for (int i = 0; i < hierarchy.size(); i++) {
+            var clazz = hierarchy.get(i);
             for (var field : clazz.getDeclaredFields()) {
-                if (!field.isAnnotationPresent(jakarta.inject.Inject.class)) continue;
-                if (Modifier.isStatic(field.getModifiers())) continue;
-                injectSingleField(instance, field, descriptor, parentCtx, typeMapping);
+                if (field.isAnnotationPresent(jakarta.inject.Inject.class)
+                        && !Modifier.isStatic(field.getModifiers())) {
+                    members.add(field);
+                }
+            }
+            var subclasses = hierarchy.subList(i + 1, hierarchy.size());
+            for (var method : clazz.getDeclaredMethods()) {
+                if (!method.isAnnotationPresent(jakarta.inject.Inject.class)) continue;
+                if (Modifier.isStatic(method.getModifiers())) continue;
+                if (isOverriddenInSubclasses(method, subclasses)) continue;
+                members.add(method);
             }
         }
+        return members;
+    }
+
+    /** The fields of {@link #injectionOrder}, in its order: what {@link #injectFieldsByReflection} injects. */
+    static List<Field> injectedFields(Class<?> beanClass) {
+        return injectionOrder(beanClass).stream()
+                .filter(Field.class::isInstance).map(Field.class::cast).toList();
     }
 
     @SuppressWarnings({"java:S3776", "java:S1181"})

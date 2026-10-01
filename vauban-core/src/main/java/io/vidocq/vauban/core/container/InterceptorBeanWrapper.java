@@ -49,6 +49,18 @@ final class InterceptorBeanWrapper {
     private final BiFunction<String, byte[], Class<?>> classDefiner;
     private final java.util.Map<io.vidocq.vauban.core.bean.model.BeanId, Object> proxyCache = new java.util.concurrent.ConcurrentHashMap<>();
 
+    /**
+     * Each intercepted bean, by id: whether its {@code $$Intercepted} subclass was pre-generated (Vauban APT or Maven
+     * plugin) rather than generated and defined at boot. Read by {@link CodegenCoverage}; nothing dispatches on it.
+     */
+    private final java.util.Map<io.vidocq.vauban.core.bean.model.BeanId, Boolean> interceptedSubclasses =
+            new java.util.concurrent.ConcurrentHashMap<>();
+
+    /** Whether the bean {@code id}'s intercepted subclass was pre-generated; {@code null} if it is not intercepted. */
+    Boolean interceptedSubclassPreGenerated(io.vidocq.vauban.core.bean.model.BeanId id) {
+        return interceptedSubclasses.get(id);
+    }
+
     InterceptorBeanWrapper(VaubanContainer container, VaubanLookup vaubanLookup,
                            InterceptorManager interceptorManager, ClassLoader classLoader,
                            BiFunction<String, byte[], Class<?>> classDefiner) {
@@ -368,7 +380,7 @@ final class InterceptorBeanWrapper {
         });
     }
 
-    Class<?> resolveProxyTargetClass(ManagedBean<?> bean) {
+    static Class<?> resolveProxyTargetClass(ManagedBean<?> bean) {
         if (bean.descriptor().kind() == BeanDescriptor.BeanKind.PRODUCER_METHOD
                 || bean.descriptor().kind() == BeanDescriptor.BeanKind.PRODUCER_FIELD) {
             // First pass: prefer a concrete (non-interface) type
@@ -631,6 +643,7 @@ final class InterceptorBeanWrapper {
 
                 try {
                     Class<?> interceptedClass;
+                    boolean preGenerated;
                     var interceptedName = beanClass.getName() + io.vidocq.vauban.core.interceptor.InterceptedShape.SUBCLASS_SUFFIX;
                     try {
                         // Prefer a PRE-GENERATED subclass (Vauban APT or Maven plugin). On the strict
@@ -638,7 +651,9 @@ final class InterceptorBeanWrapper {
                         // bean's module (an `opens … to io.vidocq.vauban.core`); an already-compiled
                         // sibling on the bean's own loader avoids that entirely.
                         interceptedClass = Class.forName(interceptedName, false, beanClass.getClassLoader());
+                        preGenerated = true;
                     } catch (ClassNotFoundException notPreGenerated) {
+                        preGenerated = false;
                         var generated = io.vidocq.vauban.core.interceptor.InterceptorSubclassGenerator
                                 .generate(beanClass);
                         if (classDefiner != null) {
@@ -820,6 +835,7 @@ final class InterceptorBeanWrapper {
                         interceptedBean.setDestroyer((java.util.function.BiConsumer) originalBean.getDestroyer());
                     }
                     interceptedBean.setInterceptorManager(this.interceptorManager);
+                    interceptedSubclasses.put(descriptor.id(), preGenerated);
                     container.beans.put(descriptor.id(), interceptedBean);
                 } catch (Exception e) {
                     if (e instanceof jakarta.enterprise.inject.spi.DeploymentException de) throw de;
@@ -918,6 +934,7 @@ final class InterceptorBeanWrapper {
                             ib2.setDestroyer((java.util.function.BiConsumer) originalBean2.getDestroyer());
                         }
                         ib2.setInterceptorManager(this.interceptorManager);
+                        interceptedSubclasses.put(descriptor.id(), false);
                         container.beans.put(descriptor.id(), ib2);
                     } catch (LinkageError le2) {
                         throw new jakarta.enterprise.inject.spi.DefinitionException(

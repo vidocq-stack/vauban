@@ -144,6 +144,19 @@ public final class VaubanContainer implements AutoCloseable {
         return componentProviders;
     }
 
+    /**
+     * Which code generator covers what each bean, observer and interceptor needs, and what falls back to reflection —
+     * for diagnostics such as the Vidocq dev console. Asks every provider for its coverage once; creates no bean.
+     */
+    public CodegenCoverage codegenCoverage() {
+        return new CodegenCoverage(this);
+    }
+
+    /** Whether the bean {@code id}'s intercepted subclass was pre-generated; {@code null} if it is not intercepted. */
+    Boolean interceptedSubclassPreGenerated(BeanId id) {
+        return interceptorWrapper == null ? null : interceptorWrapper.interceptedSubclassPreGenerated(id);
+    }
+
     VaubanContainer(VaubanIndex index, List<BeanDescriptor> descriptors,
                             List<ObserverDescriptor> observers,
                             List<InterceptorDescriptor> interceptorDescriptors,
