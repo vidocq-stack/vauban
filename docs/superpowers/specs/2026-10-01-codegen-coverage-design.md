@@ -124,7 +124,11 @@ Each operation carries a key, computed with the helpers the runtime uses (`Vauba
 
 Which fields and methods a managed bean needs follows the container's own selection rules (`BeanInjector` for
 fields, initializers and override rules, `BeanLifecycle` for callbacks): `CodegenCoverage` reuses them rather than
-restating them. The observer's `Method` is resolved the way `EventDispatcher` resolves it.
+restating them. Two decisions are taken once at boot and are recorded where they are taken, not recomputed: whether
+a bean is intercepted and whether its `$$Intercepted` subclass was pre-generated (`InterceptorBeanWrapper`), and
+which disposer a producer got (`DisposerInvoker`). The producer, disposer and observer `Method`s are looked up the
+way `VaubanContainer`, `DisposerInvoker` and `EventDispatcher` look them up — the observer by its declared event
+type, since no event is at hand.
 
 #### Verdict
 
@@ -133,8 +137,10 @@ restating them. The observer's `Method` is resolved the way `EventDispatcher` re
    `intercepted subclass` operation is covered when the pre-generated class exists and adds no generator of its
    own: the provider that lists `<bean>$$Intercepted` in `instantiated` names it through the `constructor`
    operation.
-3. An uncovered operation is **unknown** when a provider with `coverage() == null` serves its declaring class:
-   same named module, or same package for the unnamed module.
+3. An uncovered operation is **unknown** when a provider with `coverage() == null` serves its owner class: the
+   provider lives in the owner's package. Every generator writes one `_VaubanComponents` per package (APT,
+   `vauban:generate`, `enhance-dependencies`), so the package is what a provider serves. The owner is the field's
+   or method's declaring class, and the bean class for `constructor` and `client proxy`.
 4. Any unknown operation: `UNKNOWN`. Otherwise all covered: `APT`, `CLASS_FILE` or `APT_AND_CLASS_FILE` by the
    generators met. Some covered: `PARTIAL`. None: `REFLECTION`.
 5. `byReflection` lists the labels of uncovered operations, in the table order above. For `UNKNOWN`, the list is
@@ -161,7 +167,8 @@ than `coverage()` is called.
   `beans codegen: 41 APT, 12 Class-File, 3 partial, 20 reflection, 4 n/a` (zero counts omitted).
 - Read once in `onStart`, with the rest of the inventory; strings only, as today. `DevMcp` serves the same tables
   and gets the columns for free.
-- Documentation: `docs/en/modules/ROOT/pages/dev-console-panels.adoc` describes the new columns and values.
+- Documentation: the `cdi-panel` section of `docs/en/modules/ROOT/pages/dev-console.adoc` describes the new columns
+  and values.
 
 ## Delivery
 
@@ -177,7 +184,8 @@ show `unknown`, which is accurate.
 - **Generators (unit):** for each generator, `coverage()` of a generated provider lists exactly the keys its
   `create`/`injectField`/`invoke`/`createClientProxy` accept, with the right `Generator`; the APT output compiles
   and the Class-File output verifies.
-- **Container (integration, a fixture module compiled with the APT):** one case per verdict — fully generated bean
+- **Container (integration, a container built with test providers that declare a given coverage; the APT output
+  itself is covered by the generator tests):** one case per verdict — fully generated bean
   (`APT`); private `@Inject` field (`PARTIAL`, `field x`); class without provider (`REFLECTION`); provider without
   `coverage()` (`UNKNOWN`); `@Dependent` producer field (`REFLECTION`, `producer field f`); intercepted bean
   with and without pre-generated subclass; normal-scoped bean proxy; observer; interceptor (`PARTIAL`, its
