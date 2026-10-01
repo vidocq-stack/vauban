@@ -327,10 +327,33 @@ public final class ComponentProviderGenerator {
             sb.append("    }\n");
         }
 
+        // coverage(): what this provider runs in-module, from the same lists as the switches above, so the
+        // declaration cannot diverge from the dispatch. Diagnostics only (Vidocq dev console).
+        var proxyKeys = new java.util.ArrayList<>(clientProxyFqns);
+        producerProxies.forEach(pp -> proxyKeys.add(pp.key()));
+        sb.append("    @Override\n");
+        sb.append("    public io.vidocq.vauban.api.GeneratedCoverage coverage() {\n");
+        sb.append("        return io.vidocq.vauban.api.GeneratedCoverage.of(")
+                .append("io.vidocq.vauban.api.GeneratedCoverage.Generator.APT,\n");
+        sb.append("                ").append(stringArray(components.stream().map(Component::fqn).toList()))
+                .append(",\n");
+        sb.append("                ").append(stringArray(fieldInjects.stream()
+                .map(fi -> fi.declaringClassFqn() + "#" + fi.fieldName()).toList())).append(",\n");
+        sb.append("                ").append(stringArray(methodInvokes.stream()
+                .map(mi -> mi.declaringClassFqn() + "#" + mi.methodId()).toList())).append(",\n");
+        sb.append("                ").append(stringArray(proxyKeys)).append(");\n");
+        sb.append("    }\n");
+
         sb.append(annotations.methods());
         sb.append(annotations.literals());
 
         sb.append("}\n");
         return new Generated(className, sb.toString());
+    }
+
+    /** {@code new String[] {"a", "b"}}: the keys never hold a quote or a backslash (class and member names). */
+    private static String stringArray(List<String> values) {
+        return values.stream().map(value -> "\"" + value + "\"")
+                .collect(Collectors.joining(", ", "new String[] {", "}"));
     }
 }

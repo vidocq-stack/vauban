@@ -300,6 +300,48 @@ class ComponentProviderCompileTimeTest {
         assertTrue(subSrc.contains("getDeclaredMethod(\"$$super$compute\", int[].class, long[].class, java.lang.String.class)"), subSrc);
     }
 
+    @Test
+    @DisplayName("the compiled provider declares exactly what its switches handle, a nested bean included")
+    void compiledProviderCoverageMatchesItsSwitches() throws Exception {
+        var result = compile("Greeter", """
+                package app;
+
+                @jakarta.enterprise.context.ApplicationScoped
+                public class Greeter {
+                    @jakarta.inject.Inject jakarta.enterprise.inject.spi.BeanManager beanManager;
+
+                    @jakarta.inject.Inject
+                    void setUp(jakarta.enterprise.inject.spi.BeanManager beanManager) {}
+
+                    @jakarta.enterprise.context.Dependent
+                    public static class Inner {}
+                }
+                """);
+        assertTrue(result.success(), "compilation should succeed. Messages: " + result.messages());
+
+        try (var loader = new java.net.URLClassLoader(new java.net.URL[] {result.outputDir().toUri().toURL()},
+                getClass().getClassLoader())) {
+            var provider = (VaubanComponentProvider)
+                    loader.loadClass("app._VaubanComponents").getDeclaredConstructor().newInstance();
+            var coverage = provider.coverage();
+            var greeter = loader.loadClass("app.Greeter").getDeclaredConstructor().newInstance();
+
+            assertEquals(io.vidocq.vauban.api.GeneratedCoverage.Generator.APT, coverage.generator());
+            assertTrue(coverage.instantiated().contains("app.Greeter"), coverage.toString());
+            for (var name : List.of("app.Greeter", "app.Greeter$Inner", "app.Greeter.Inner")) {
+                assertEquals(provider.create(name) != null, coverage.instantiated().contains(name), name);
+            }
+            assertEquals(provider.injectField(greeter, "app.Greeter", "beanManager", null),
+                    coverage.injectedFields().contains("app.Greeter#beanManager"), coverage.toString());
+            var setUp = "setUp(jakarta.enterprise.inject.spi.BeanManager)";
+            assertEquals(provider.invoke(greeter, "app.Greeter", setUp, new Object[] {null})
+                            != VaubanComponentProvider.NOT_INVOKED,
+                    coverage.invokedMethods().contains("app.Greeter#" + setUp), coverage.toString());
+            assertEquals(provider.createClientProxy("app.Greeter_ClientProxy", () -> null) != null,
+                    coverage.clientProxies().contains("app.Greeter_ClientProxy"), coverage.toString());
+        }
+    }
+
     // ---- minimal in-process compilation harness (with -s for generated sources) ----
 
     private CompilationResult compile(String simpleName, String source) throws IOException {

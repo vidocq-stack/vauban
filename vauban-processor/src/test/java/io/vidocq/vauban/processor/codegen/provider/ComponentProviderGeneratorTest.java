@@ -173,4 +173,24 @@ class ComponentProviderGeneratorTest {
 
         assertFalse(gen.source().contains("invoke"), gen.source());
     }
+
+    @Test
+    @DisplayName("coverage() declares the keys of every switch, as APT")
+    void declaresItsCoverage() {
+        var gen = ComponentProviderGenerator.generateFrom("app",
+                List.of(new Component("app.Foo", List.of())),
+                List.of(new FieldInject("app.Foo", "repo", "app.Repo")),
+                List.of(new MethodInvoke("app.Foo", "init", List.of(), false, true, "void")),
+                List.of("app.Foo_ClientProxy"),
+                List.of(new ComponentProviderGenerator.ProducerProxy(
+                        "java.util.ArrayList_ClientProxy", "app.ArrayList_ClientProxy")));
+        var s = gen.source();
+
+        assertTrue(s.contains("public io.vidocq.vauban.api.GeneratedCoverage coverage() {"), s);
+        assertTrue(s.contains("io.vidocq.vauban.api.GeneratedCoverage.Generator.APT"), s);
+        assertTrue(s.contains("new String[] {\"app.Foo\"}"), s);
+        assertTrue(s.contains("new String[] {\"app.Foo#repo\"}"), s);
+        assertTrue(s.contains("new String[] {\"app.Foo#init()\"}"), s);
+        assertTrue(s.contains("new String[] {\"app.Foo_ClientProxy\", \"java.util.ArrayList_ClientProxy\"}"), s);
+    }
 }
