@@ -28,7 +28,10 @@ import java.lang.classfile.attribute.ModuleAttribute;
 import java.lang.classfile.attribute.ModuleRequireInfo;
 import java.lang.constant.ModuleDesc;
 import java.util.List;
+import java.util.Set;
+import java.util.stream.Collectors;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /** Stage 2 (issue #42): the module-info.class rewrite adds the provider service and API requirement. */
@@ -62,5 +65,19 @@ class ModuleInfoRewriterTest {
         assertTrue(spi.providesWith().stream().anyMatch(
                         w -> w.asSymbol().descriptorString().equals("Ltest/pkg/_VaubanComponents;")),
                 "provides ... with test.pkg._VaubanComponents");
+    }
+
+    @Test
+    @DisplayName("adds extra requires, and leaves provides alone when there is no provider")
+    void addsExtraRequiresAndKeepsProvidesUntouchedWhenNoProvider() {
+        byte[] original = ClassFile.of().buildModule(ModuleAttribute.of(ModuleDesc.of("lib.mod"), mb -> { }));
+
+        byte[] rewritten = ModuleInfoRewriter.addComponentProvider(original, List.of(),
+                Set.of("io.vidocq.vauban.core"));
+
+        var attr = ClassFile.of().parse(rewritten).findAttribute(Attributes.module()).orElseThrow();
+        assertEquals(Set.of("io.vidocq.vauban.api", "io.vidocq.vauban.core"), attr.requires().stream()
+                .map(r -> r.requires().name().stringValue()).collect(Collectors.toSet()));
+        assertEquals(List.of(), attr.provides());
     }
 }
