@@ -211,4 +211,19 @@ public interface VaubanComponentProvider {
     default Object invoke(Object target, String className, String methodId, Object[] args) {
         return NOT_INVOKED;
     }
+
+    /**
+     * What this provider runs in-module — the components it instantiates, the fields it injects, the methods it
+     * invokes and the client proxies it creates — for diagnostics such as the Vidocq dev console. The container never
+     * dispatches on it. Both generators render it from the very lists that feed {@link #create}, {@link #injectField},
+     * {@link #invoke} and {@link #createClientProxy}, so it cannot diverge from them.
+     *
+     * <p>The default returns {@code null}: a provider that predates this method declares nothing, and its coverage is
+     * reported as unknown rather than as reflection.
+     *
+     * @return what this provider covers, or {@code null} if it does not say
+     */
+    default GeneratedCoverage coverage() {
+        return null;
+    }
 }
