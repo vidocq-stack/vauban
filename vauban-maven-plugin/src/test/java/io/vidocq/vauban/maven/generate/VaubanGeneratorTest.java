@@ -322,6 +322,38 @@ class VaubanGeneratorTest {
         }
     }
 
+    @Test
+    @DisplayName("writes a _VaubanComponents per package of a scanned jar, listed in no service file")
+    void shouldGenerateProvidersForScannedJarBeans() throws IOException {
+        var jarPath = createTestJar("dep-lib.jar",
+                new TestClass("org.dep.lib.Service", CD_DEPENDENT),
+                new TestClass("org.dep.lib.Helper", null));
+        var outputDir = tempDir.resolve("dep-output");
+        Files.createDirectories(outputDir);
+
+        var result = VaubanGenerator.generate(
+                new VaubanGenerator.Config(List.of(jarPath), null, outputDir, null, true));
+
+        assertEquals(List.of("org.dep.lib._VaubanComponents"), result.generatedProviders());
+        assertTrue(Files.isRegularFile(outputDir.resolve("org/dep/lib/_VaubanComponents.class")));
+        assertFalse(Files.exists(outputDir.resolve(
+                        "META-INF/services/io.vidocq.vauban.api.VaubanComponentProvider")),
+                "a dependency's providers are declared by its own module, not by the project");
+    }
+
+    @Test
+    @DisplayName("writes no provider for a scanned jar by default: vauban:generate is unchanged")
+    void shouldNotGenerateProvidersForScannedJarByDefault() throws IOException {
+        var jarPath = createTestJar("dep-lib2.jar", new TestClass("org.dep.lib2.Service", CD_DEPENDENT));
+        var outputDir = tempDir.resolve("dep-output2");
+        Files.createDirectories(outputDir);
+
+        var result = VaubanGenerator.generate(new VaubanGenerator.Config(List.of(jarPath), null, outputDir));
+
+        assertEquals(List.of(), result.generatedProviders());
+        assertFalse(Files.exists(outputDir.resolve("org/dep/lib2/_VaubanComponents.class")));
+    }
+
     private void writeClassToDir(Path classesDir, String className, ClassDesc annotation) throws IOException {
         var classBytes = generateClassWithAnnotation(className, annotation);
         var classFile = classesDir.resolve(className.replace('.', '/') + ".class");

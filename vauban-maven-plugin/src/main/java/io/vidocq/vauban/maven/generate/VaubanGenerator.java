@@ -80,24 +80,33 @@ public final class VaubanGenerator {
     /**
      * Configuration for the generator.
      *
-     * @param dependencyJars    JAR files to scan for CDI beans
-     * @param projectClassesDir project's compiled classes directory (may be null)
-     * @param outputDir         where to write generated files
-     * @param classLoader       ClassLoader with all deps + project classes for proxy generation (may be null to skip generation)
+     * @param dependencyJars      JAR files to scan for CDI beans
+     * @param projectClassesDir   project's compiled classes directory (may be null)
+     * @param outputDir           where to write generated files
+     * @param classLoader         ClassLoader with all deps + project classes for proxy generation (may be null to
+     *                            skip generation)
+     * @param dependencyProviders also write a {@code _VaubanComponents} per package of the scanned jars' managed
+     *                            beans, for a caller that moves them into those jars' modules ({@code vidocq:generate})
      */
     public record Config(
             List<Path> dependencyJars,
             Path projectClassesDir,
             Path outputDir,
-            ClassLoader classLoader
+            ClassLoader classLoader,
+            boolean dependencyProviders
     ) {
         public Config {
             dependencyJars = List.copyOf(dependencyJars);
         }
 
+        /** Config for the project's own providers only, as {@code vauban:generate} uses it. */
+        public Config(List<Path> dependencyJars, Path projectClassesDir, Path outputDir, ClassLoader classLoader) {
+            this(dependencyJars, projectClassesDir, outputDir, classLoader, false);
+        }
+
         /** Config without ClassLoader — discovery only, no proxy generation. */
         public Config(List<Path> dependencyJars, Path projectClassesDir, Path outputDir) {
-            this(dependencyJars, projectClassesDir, outputDir, null);
+            this(dependencyJars, projectClassesDir, outputDir, null, false);
         }
     }
 
@@ -120,6 +129,8 @@ public final class VaubanGenerator {
         var warnings = new ArrayList<String>();
         var alreadyKnownBeans = new LinkedHashSet<String>();
 
+        var dependencyClasses = new LinkedHashSet<String>();
+
         // 1. Scan dependency JARs
         for (var dep : config.dependencyJars()) {
             if (Files.isDirectory(dep)) {
@@ -139,6 +150,7 @@ public final class VaubanGenerator {
                     try {
                         var classInfos = JarScanner.scan(dep);
                         indexBuilder.addAll(classInfos);
+                        classInfos.forEach(ci -> dependencyClasses.add(ci.name().value()));
                     } catch (IOException e) {
                         warnings.add("Failed to scan JAR " + dep.getFileName() + ": " + e.getMessage());
                     }
@@ -312,8 +324,13 @@ public final class VaubanGenerator {
         //    without reflection and the module can drop `opens … to io.vidocq.vauban.core`.
         generateComponentProvider(config, index, beans, warnings);
 
+        // 10. The same providers for the scanned jars' packages, when the caller moves them into those modules.
+        var generatedProviders = config.dependencyProviders()
+                ? generateDependencyProviders(config, index, beans, dependencyClasses, warnings)
+                : List.<String>of();
+
         return new GenerationResult(sortedBeanClassNames, generatedProxies, generatedInterceptors,
-                wovenBeans, warnings);
+                wovenBeans, warnings, generatedProviders);
     }
 
     /**
@@ -513,6 +530,49 @@ public final class VaubanGenerator {
         } catch (Exception e) {
             warnings.add("Failed to write component provider service file: " + e.getMessage());
         }
+    }
+
+    /**
+     * One {@code _VaubanComponents} per package of the scanned jars' managed beans, written to {@code outputDir} next
+     * to their proxies, with the eligibility rules of the project's providers. Unlike those, they are listed in no
+     * service file: they live in another module's packages, so the caller moves them into that module and declares
+     * them there.
+     *
+     * @return the providers written, by fully-qualified name
+     */
+    private static List<String> generateDependencyProviders(Config config,
+            io.vidocq.vauban.indexer.VaubanIndex index, List<BeanDescriptor> beans,
+            java.util.Set<String> dependencyClasses, List<String> warnings) {
+        var provided = new ArrayList<ProvidedClass>();
+        var clientProxyFqns = new LinkedHashSet<String>();
+        for (var bean : beans) {
+            if (bean.kind() != BeanKind.MANAGED) continue;
+            var fqn = bean.beanClass().value();
+            if (fqn.contains("$") || !dependencyClasses.contains(fqn)) continue;
+            var ci = index.getClassByName(io.vidocq.vauban.indexer.model.DotName.of(fqn)).orElse(null);
+            if (ci == null) continue;
+            provided.add(new ProvidedClass(fqn, ci, true));
+            // Only a proxy that exists: a provider must never name a class it cannot load.
+            if (bean.scope().isNormal() && classFileExists(config.outputDir(), fqn + "_ClientProxy")) {
+                clientProxyFqns.add(fqn + "_ClientProxy");
+            }
+        }
+        var providerFqns = new ArrayList<String>();
+        for (var pkg : ComponentCollector.collect(provided, warnings)) {
+            var pkgProxies = clientProxyFqns.stream()
+                    .filter(p -> packageOf(p).equals(pkg.packageName()))
+                    .toList();
+            try {
+                var gen = io.vidocq.vauban.core.provider.ComponentProviderClassGenerator.generate(
+                        pkg.providerFqn(), pkg.components(), pkg.fields(), pkg.methods(), pkgProxies, List.of());
+                writeClassFile(config.outputDir(), gen.className(), gen.bytecode());
+                providerFqns.add(gen.className());
+            } catch (Exception e) {
+                warnings.add("Failed to generate component provider for dependency package "
+                        + pkg.packageName() + ": " + e.getMessage());
+            }
+        }
+        return providerFqns;
     }
 
     private static void scanClassesDirectory(Path classesDir, IndexBuilder indexBuilder,

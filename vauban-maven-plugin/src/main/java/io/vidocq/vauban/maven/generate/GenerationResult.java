@@ -30,13 +30,16 @@ import java.util.List;
  * @param wovenBeanClasses      class names into which the synthetic {@code (ProxyLink)}
  *                              client-proxy entry constructor was woven (Vidocq/vauban#24)
  * @param warnings              non-fatal issues encountered during generation
+ * @param generatedProviders    the {@code _VaubanComponents} written for the packages of scanned dependency jars
+ *                              (only with {@code Config#dependencyProviders})
  */
 public record GenerationResult(
         List<String> discoveredBeanClasses,
         List<String> generatedProxies,
         List<String> generatedInterceptors,
         List<String> wovenBeanClasses,
-        List<String> warnings
+        List<String> warnings,
+        List<String> generatedProviders
 ) {
     public GenerationResult {
         discoveredBeanClasses = List.copyOf(discoveredBeanClasses);
@@ -44,5 +47,12 @@ public record GenerationResult(
         generatedInterceptors = List.copyOf(generatedInterceptors);
         wovenBeanClasses = List.copyOf(wovenBeanClasses);
         warnings = List.copyOf(warnings);
+        generatedProviders = List.copyOf(generatedProviders);
+    }
+
+    /** A result without dependency providers. */
+    public GenerationResult(List<String> discoveredBeanClasses, List<String> generatedProxies,
+                            List<String> generatedInterceptors, List<String> wovenBeanClasses, List<String> warnings) {
+        this(discoveredBeanClasses, generatedProxies, generatedInterceptors, wovenBeanClasses, warnings, List.of());
     }
 }
