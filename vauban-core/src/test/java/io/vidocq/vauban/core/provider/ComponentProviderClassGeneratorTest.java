@@ -19,6 +19,7 @@
  */
 package io.vidocq.vauban.core.provider;
 
+import io.vidocq.vauban.api.GeneratedCoverage;
 import io.vidocq.vauban.api.VaubanComponentProvider;
 import io.vidocq.vauban.core.container.ProvidedBean;
 import io.vidocq.vauban.indexer.codegen.Component;
@@ -32,6 +33,8 @@ import java.lang.constant.ClassDesc;
 import java.lang.constant.ConstantDescs;
 import java.lang.constant.MethodTypeDesc;
 import java.util.List;
+import java.util.Set;
+import java.util.stream.IntStream;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -39,6 +42,7 @@ import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNotSame;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -337,6 +341,43 @@ class ComponentProviderClassGeneratorTest {
                 "each createClientProxy call returns a fresh proxy");
         assertNull(provider.createClientProxy("does.not.Exist_ClientProxy", delegate),
                 "unlisted proxy must return null");
+    }
+
+    @Test
+    @DisplayName("coverage() declares the keys of every switch, as CLASS_FILE")
+    void declaresItsCoverage() throws Exception {
+        String bean = ProvidedBean.class.getName();
+        var gen = ComponentProviderClassGenerator.generate(
+                "io.vidocq.vauban.core.provider._CoverageTestComponents",
+                List.of(new Component(bean, List.of())),
+                List.of(new FieldInject(bean, "greeting", "java.lang.String")),
+                List.of(new MethodInvoke(bean, "hello", List.of(), false, false, "java.lang.String")),
+                List.of(bean + "_ClientProxy"),
+                List.of(new ComponentProviderClassGenerator.ProducerProxy("java.util.ArrayList_ClientProxy",
+                        "io.vidocq.vauban.core.provider.ArrayList_ClientProxy")));
+
+        var loader = new ByteClassLoader(getClass().getClassLoader());
+        var provider = (VaubanComponentProvider) loader.define(gen.className(), gen.bytecode())
+                .getDeclaredConstructor().newInstance();
+        var coverage = provider.coverage();
+
+        assertEquals(GeneratedCoverage.Generator.CLASS_FILE, coverage.generator());
+        assertEquals(Set.of(bean), coverage.instantiated());
+        assertEquals(Set.of(bean + "#greeting"), coverage.injectedFields());
+        assertEquals(Set.of(bean + "#hello()"), coverage.invokedMethods());
+        assertEquals(Set.of(bean + "_ClientProxy", "java.util.ArrayList_ClientProxy"), coverage.clientProxies());
+    }
+
+    @Test
+    @DisplayName("a provider too large for one coverage() method fails with its name, not as an invalid class")
+    void tooManyCoverageKeysFailClearly() {
+        var components = IntStream.rangeClosed(0, ComponentProviderClassGenerator.MAX_COVERAGE_KEYS)
+                .mapToObj(i -> new Component("big.Bean" + i, List.of())).toList();
+
+        var failure = assertThrows(IllegalStateException.class,
+                () -> ComponentProviderClassGenerator.generate("big._VaubanComponents", components));
+
+        assertTrue(failure.getMessage().contains("big._VaubanComponents"), failure.getMessage());
     }
 
     /** Minimal loader exposing {@code defineClass} for the generated provider bytecode. */

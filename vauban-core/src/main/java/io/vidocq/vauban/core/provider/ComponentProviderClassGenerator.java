@@ -77,6 +77,17 @@ public final class ComponentProviderClassGenerator {
             MethodTypeDesc.of(CD_Object, CD_String, CD_Supplier);
     private static final MethodTypeDesc MTD_setDelegate =
             MethodTypeDesc.of(ConstantDescs.CD_void, CD_Supplier);
+    private static final ClassDesc CD_Coverage = ClassDesc.of("io.vidocq.vauban.api.GeneratedCoverage");
+    private static final ClassDesc CD_Generator = ClassDesc.of("io.vidocq.vauban.api.GeneratedCoverage$Generator");
+    private static final MethodTypeDesc MTD_coverage = MethodTypeDesc.of(CD_Coverage);
+    private static final MethodTypeDesc MTD_coverageOf = MethodTypeDesc.of(CD_Coverage, CD_Generator,
+            CD_String.arrayType(), CD_String.arrayType(), CD_String.arrayType(), CD_String.arrayType());
+
+    /**
+     * The most keys one {@code coverage()} method holds: each costs 8 bytes of bytecode ({@code dup}, index,
+     * {@code ldc_w}, {@code aastore}), and a method body stops at 64 KiB.
+     */
+    public static final int MAX_COVERAGE_KEYS = 7000;
 
     private ComponentProviderClassGenerator() {}
 
@@ -148,6 +159,16 @@ public final class ComponentProviderClassGenerator {
     public static Generated generate(String providerClassName, List<Component> components,
             List<FieldInject> fieldInjects, List<MethodInvoke> methodInvokes,
             List<String> clientProxyFqns, List<ProducerProxy> producerProxies) {
+        var instantiatedKeys = components.stream().map(Component::fqn).toList();
+        var fieldKeys = fieldInjects.stream().map(fi -> fi.declaringClassFqn() + "#" + fi.fieldName()).toList();
+        var methodKeys = methodInvokes.stream().map(mi -> mi.declaringClassFqn() + "#" + mi.methodId()).toList();
+        var proxyKeys = new java.util.ArrayList<>(clientProxyFqns);
+        producerProxies.forEach(pp -> proxyKeys.add(pp.key()));
+        int keys = instantiatedKeys.size() + fieldKeys.size() + methodKeys.size() + proxyKeys.size();
+        if (keys > MAX_COVERAGE_KEYS) {
+            throw new IllegalStateException(providerClassName + " would declare " + keys + " keys in coverage(), "
+                    + "more than the " + MAX_COVERAGE_KEYS + " one method holds: split the package");
+        }
         var providerCD = ClassDesc.of(providerClassName);
         var noArg = components.stream().filter(Component::noArg).toList();
         var withArgs = components.stream().filter(c -> !c.noArg()).toList();
@@ -428,8 +449,34 @@ public final class ComponentProviderClassGenerator {
                     cob.areturn();
                 });
             }
+
+            // public GeneratedCoverage coverage() {
+            //     return GeneratedCoverage.of(Generator.CLASS_FILE, new String[] {…}, …);
+            // }
+            // From the same lists as the switches above, so the declaration cannot diverge from the dispatch.
+            clb.withMethodBody("coverage", MTD_coverage, ClassFile.ACC_PUBLIC, cob -> {
+                cob.getstatic(CD_Generator, "CLASS_FILE", CD_Generator);
+                pushStringArray(cob, instantiatedKeys);
+                pushStringArray(cob, fieldKeys);
+                pushStringArray(cob, methodKeys);
+                pushStringArray(cob, proxyKeys);
+                cob.invokestatic(CD_Coverage, "of", MTD_coverageOf);
+                cob.areturn();
+            });
         });
         return new Generated(providerClassName, bytecode);
+    }
+
+    /** Pushes {@code new String[] {values…}} on the stack. */
+    private static void pushStringArray(java.lang.classfile.CodeBuilder cob, List<String> values) {
+        loadIntConstant(cob, values.size());
+        cob.anewarray(CD_String);
+        for (int i = 0; i < values.size(); i++) {
+            cob.dup();
+            loadIntConstant(cob, i);
+            cob.ldc(values.get(i));
+            cob.aastore();
+        }
     }
 
     /**
