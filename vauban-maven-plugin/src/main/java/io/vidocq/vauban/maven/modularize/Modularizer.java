@@ -33,6 +33,7 @@ import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.function.Consumer;
 import java.util.regex.Matcher;
@@ -136,6 +137,37 @@ public final class Modularizer {
 
         Files.writeString(outDir.resolve(REPORT_FILE_NAME), report.toString());
         return new Result(patched, allSkipped, report.toString());
+    }
+
+    /**
+     * A descriptor for one automatic jar, synthesized as {@link #run} would but written nowhere: neither the jar nor
+     * {@code target/vauban-modularized/} is touched, so a caller can build a copy of its own. Empty when the jar
+     * already has a descriptor, or when a {@code ServiceLoader} lookup it makes cannot be declared by an explicit
+     * module — the reason is logged with {@link #KEPT_AUTOMATIC_PREFIX}.
+     *
+     * @param jar     the jar
+     * @param closure every jar of the dependency closure, {@code jar} included: jdeps needs it for {@code requires}
+     * @param open    synthesize an {@code open module}
+     * @param log     receives what the synthesis reports
+     */
+    public static Optional<byte[]> synthesizeOne(Path jar, List<Path> closure, boolean open, Consumer<String> log)
+            throws IOException {
+        JarModuleInfo info = JarModuleClassifier.classify(jar);
+        if (!info.isAutomatic()) {
+            return Optional.empty();
+        }
+        Options options = new Options(Mode.ALL_AUTOMATIC, Set.of(), Set.of(), Map.of(), open, false);
+        ModuleDescriptor first = synthesize(jar, info.moduleName(), closure, options, Set.of(), log).descriptor();
+        Set<String> scanned = ServiceUsesScanner.over(closure, log).scan(jar);
+        UsesLegality.Verdict verdict = UsesLegality.of(closure, Set.of(jar), Map.of(jar, first))
+                .check(Map.of(jar, scanned));
+        if (verdict.hasUnreadableDrop(jar)) {
+            log.accept(KEPT_AUTOMATIC_PREFIX + jar.getFileName()
+                    + " (a ServiceLoader lookup it makes cannot be declared by an explicit module)");
+            return Optional.empty();
+        }
+        Set<String> uses = verdict.legal().getOrDefault(jar, Set.of());
+        return Optional.of(synthesize(jar, info.moduleName(), closure, options, uses, log).moduleInfo());
     }
 
     /** Phase 3: the jars {@code options} wants patched, and everything it leaves alone. */

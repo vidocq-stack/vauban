@@ -30,6 +30,7 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.stream.Collectors;
 
@@ -52,6 +53,38 @@ class ModularizerTest {
 
     private static Modularizer.Options defaults() {
         return new Modularizer.Options(Modularizer.Mode.DERIVED, Set.of(), Set.of(), Map.of(), true, false);
+    }
+
+    @Test
+    void synthesizeOneReturnsAnOpenDescriptorAndWritesNothing() throws IOException {
+        Path jar = plainJar("acme-one-1.0.0.jar", "com.acme.one", "One", Map.of());
+        Path buildDir = tmp.resolve("target");
+
+        Optional<byte[]> moduleInfo = Modularizer.synthesizeOne(jar, List.of(jar), true, line -> { });
+
+        assertTrue(moduleInfo.isPresent());
+        ModuleDescriptor md = ModuleDescriptor.read(java.nio.ByteBuffer.wrap(moduleInfo.get()));
+        assertTrue(md.isOpen());
+        assertEquals("acme.one", md.name());
+        assertFalse(Files.exists(ModularizedJars.root(buildDir)), "the goal's own directory is not touched");
+    }
+
+    @Test
+    void synthesizeOneLeavesAnExplicitModuleAlone() throws IOException {
+        Path jar = tmp.resolve("m2/acme-explicit-1.0.jar");
+        Files.createDirectories(jar.getParent());
+        byte[] descriptor = java.lang.classfile.ClassFile.of().buildModule(
+                java.lang.classfile.attribute.ModuleAttribute.of(java.lang.constant.ModuleDesc.of("acme.explicit"),
+                        mb -> mb.requires(java.lang.classfile.attribute.ModuleRequireInfo.of(
+                                java.lang.constant.ModuleDesc.of("java.base"),
+                                java.lang.classfile.ClassFile.ACC_MANDATED, null))));
+        try (var out = new java.util.jar.JarOutputStream(Files.newOutputStream(jar))) {
+            out.putNextEntry(new java.util.jar.JarEntry("module-info.class"));
+            out.write(descriptor);
+            out.closeEntry();
+        }
+
+        assertTrue(Modularizer.synthesizeOne(jar, List.of(jar), true, line -> { }).isEmpty());
     }
 
     @Test
