@@ -1409,7 +1409,10 @@ public class VaubanProcessor extends AbstractProcessor {
     }
 
     private void writeBeansList(List<BeanDescriptor> beans) {
+        // A synthetic bean has no class of its own to discover — its class may well be
+        // java.lang.String — and reaches the container through the synthetic metadata.
         var beanClassNames = beans.stream()
+                .filter(bean -> bean.kind() != BeanDescriptor.BeanKind.SYNTHETIC)
                 .map(BeanDescriptor::beanClass)
                 .map(DotName::value)
                 .distinct()

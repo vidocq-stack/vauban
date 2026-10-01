@@ -1449,6 +1449,17 @@ and a proposed upstream assertion: `CDI_TCK_PROPOSALS.md` → `TCK-GAP-001`.
   - 2026-09-14: found while fixing vauban#89. It is older than that change and independent of it: the count is 2 whether the disposer's other parameter is qualified or not, which is why the test pins both cases. It was invisible until #89 made the disposer's body actually run — before, its parameters resolved to nothing and the call failed inside a `catch (Exception) { /* Best effort */ }`.
   - CDI 4.1 §5.5.3: a disposer runs once per destroyed instance. Note `ManagedBean#destroy` suppresses any exception a disposer throws, which the specification does require — that swallow is not this bug.
 
+## BUG-20261001-01 — A synthetic bean built in the processor is listed as a managed bean, and the boot fails
+
+- **Date**: 2026-10-01
+- **Status**: FIXED (`fix/extension-build-time-signal`)
+- **Module**: `vauban-processor` (`VaubanProcessor#writeBeansList`)
+- **Surfaced by**: Vidocq/ravel#21 (Sébastien Blanc), once Ravel's extension ran in the compiler.
+- **Symptom**: an application compiled with a Build Compatible Extension on the processor path does not start. A synthetic bean the extension adds in `@Synthesis` (Ravel: one typed `java.lang.String`, qualified `@ConfigProperty`) is written to `META-INF/vauban-beans.list` as well as to the synthetic metadata. The container scans every class the list names: `java.lang.String` comes from the bootstrap loader, `getClassLoader()` is `null`, and `VaubanContainerBuilder#build` throws a `NullPointerException`.
+- **Minimal reproduction**: `BceCompileTimeTest#syntheticBeanClassStaysOutOfTheBeanList` — a BCE that calls `components.addBean(String.class)`; the bean list held `[RealBean, java.lang.String]`.
+- **Cause**: the synthetic descriptors are appended to the discovered beans so that validation sees them, and `writeBeansList` listed every descriptor, synthetic ones included.
+- **Fix**: `writeBeansList` skips `BeanKind.SYNTHETIC`; the synthetic metadata already carries those beans to the container.
+
 ## BUG-20261001-02 — An extension cannot tell the processor from the container start
 
 - **Date**: 2026-10-01

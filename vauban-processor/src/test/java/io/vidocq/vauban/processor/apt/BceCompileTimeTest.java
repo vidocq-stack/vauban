@@ -424,6 +424,26 @@ class BceCompileTimeTest {
     }
 
     @Test
+    @DisplayName("a synthetic bean travels in its metadata, never in the bean list (ravel#21)")
+    void syntheticBeanClassStaysOutOfTheBeanList() throws IOException {
+        // The container loads every class the list names as a managed bean: a synthetic bean typed
+        // java.lang.String made it scan a class of the bootstrap loader, and the boot failed.
+        var result = compileWithBce(
+                List.of(TestSynthesisBce.class),
+                """
+                import jakarta.enterprise.context.ApplicationScoped;
+
+                @ApplicationScoped
+                public class RealBean {
+                }
+                """
+        );
+
+        assertTrue(result.success(), "Compilation should succeed. Messages: " + result.messages());
+        assertEquals(List.of("RealBean"), result.readBeansList());
+    }
+
+    @Test
     @DisplayName("every phase the processor runs tells the extension it runs at build time (ravel#21)")
     void extensionKnowsItRunsAtBuildTime() throws IOException {
         // An extension that checks a configuration value must leave it to the container start: at
