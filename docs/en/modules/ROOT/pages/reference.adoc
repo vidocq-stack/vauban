@@ -320,7 +320,7 @@ original jars. Bind it to `process-classes` when dev mode must run against the p
 | Option | Effect
 
 | `-Avauban.validation=false`
-| Skips the static deployment validation (unsatisfied/ambiguous, unproxyable and circular-dependency checks). Useful when beans rely on injections that only a runtime Build Compatible Extension can satisfy (e.g. MicroProfile `@ConfigProperty`, `@Claim`, `@RegisterRestClient`) and the BCE is not on the APT classpath. The runtime container still runs the full validation at start; this option only silences the compile-time check, it does not disable wiring.
+| Skips the static deployment validation (unsatisfied/ambiguous, unproxyable and circular-dependency checks). Useful when beans rely on injections that only a runtime Build Compatible Extension can satisfy (e.g. MicroProfile `@Claim`, `@RegisterRestClient`) and the BCE is not on the APT classpath. Prefer putting the BCE on the APT classpath when it supports it: Ravel's does, so `@ConfigProperty` needs no such option (xref:concepts.adoc#extension-phase[Build time or container start]). The runtime container still runs the full validation at start; this option only silences the compile-time check, it does not disable wiring.
 
 | `-Avauban.validation.scope=all`
 | Default `main`: validation only runs on the principal source set and is skipped automatically when the processor detects a `testCompile` invocation (default output pointing at `target/test-classes`). Set to `all` to enforce validation on test sources too.

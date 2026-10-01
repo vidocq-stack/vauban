@@ -1448,3 +1448,12 @@ and a proposed upstream assertion: `CDI_TCK_PROPOSALS.md` → `TCK-GAP-001`.
 - **Investigations**:
   - 2026-09-14: found while fixing vauban#89. It is older than that change and independent of it: the count is 2 whether the disposer's other parameter is qualified or not, which is why the test pins both cases. It was invisible until #89 made the disposer's body actually run — before, its parameters resolved to nothing and the call failed inside a `catch (Exception) { /* Best effort */ }`.
   - CDI 4.1 §5.5.3: a disposer runs once per destroyed instance. Note `ManagedBean#destroy` suppresses any exception a disposer throws, which the specification does require — that swallow is not this bug.
+
+## BUG-20261001-02 — An extension cannot tell the processor from the container start
+
+- **Date**: 2026-10-01
+- **Status**: FIXED (`fix/extension-build-time-signal`)
+- **Module**: `vauban-api` (new `ExtensionPhase`), `vauban-processor`, `vauban-maven-plugin`
+- **Surfaced by**: Vidocq/ravel#21.
+- **Symptom**: Ravel's extension, run in the processor, checked configuration values against the build machine (`Missing required config property 'shop.name'`) although the value comes from the deployment. CDI Lite gives an extension no way to know where it runs.
+- **Fix**: `ExtensionPhase.isBuildTime()`, a `ScopedValue` the processor and the Maven plugin bind around every extension phase they run (`ExtensionPhase.atBuildTime`). Pinned by `ExtensionPhaseTest`, `BceCompileTimeTest#extensionKnowsItRunsAtBuildTime` and `VaubanGeneratorTest#extensionsRunByThePluginKnowTheyRunAtBuildTime`.

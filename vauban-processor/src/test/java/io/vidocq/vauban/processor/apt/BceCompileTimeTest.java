@@ -98,6 +98,31 @@ class BceCompileTimeTest {
         }
     }
 
+    /** Test BCE that records, phase by phase, whether it was told it runs at build time. */
+    public static class PhaseRecordingBce implements BuildCompatibleExtension {
+        static final Map<String, Boolean> SEEN = new java.util.concurrent.ConcurrentHashMap<>();
+
+        @Discovery
+        public void discovery() {
+            SEEN.put("discovery", io.vidocq.vauban.api.ExtensionPhase.isBuildTime());
+        }
+
+        @Registration(types = Object.class)
+        public void registration(BeanInfo bean) {
+            SEEN.put("registration", io.vidocq.vauban.api.ExtensionPhase.isBuildTime());
+        }
+
+        @Synthesis
+        public void synthesis() {
+            SEEN.put("synthesis", io.vidocq.vauban.api.ExtensionPhase.isBuildTime());
+        }
+
+        @Validation
+        public void validation() {
+            SEEN.put("validation", io.vidocq.vauban.api.ExtensionPhase.isBuildTime());
+        }
+    }
+
     /** SyntheticBeanCreator for test — creates a String bean. */
     public static class TestStringCreator
             implements jakarta.enterprise.inject.build.compatible.spi.SyntheticBeanCreator<String> {
@@ -396,6 +421,29 @@ class BceCompileTimeTest {
                 "Should contain exactly 1 synthetic bean");
         assertTrue(metadataContent.contains(TestStringCreator.class.getName()),
                 "Should reference the creator class");
+    }
+
+    @Test
+    @DisplayName("every phase the processor runs tells the extension it runs at build time (ravel#21)")
+    void extensionKnowsItRunsAtBuildTime() throws IOException {
+        // An extension that checks a configuration value must leave it to the container start: at
+        // compile time it would read the build machine's environment, not the deployment's.
+        PhaseRecordingBce.SEEN.clear();
+
+        var result = compileWithBce(
+                List.of(PhaseRecordingBce.class),
+                """
+                import jakarta.enterprise.context.ApplicationScoped;
+
+                @ApplicationScoped
+                public class RealBean {
+                }
+                """
+        );
+
+        assertTrue(result.success(), "Compilation should succeed. Messages: " + result.messages());
+        assertEquals(Map.of("discovery", true, "registration", true, "synthesis", true, "validation", true),
+                PhaseRecordingBce.SEEN);
     }
 
     // ---- Utility methods (same as VaubanProcessorTest) ----

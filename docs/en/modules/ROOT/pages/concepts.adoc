@@ -102,6 +102,13 @@ The user never touches the `_Factory` classes. They call `VaubanContainer.builde
 
 CDI 4.1 introduces Build Compatible Extensions (BCEs): `@Discovery`, `@Enhancement`, `@Registration`, `@Synthesis` and `@Validation` hooks. Vauban runs them in the annotation processor at build time and records the result. At boot, the container runs them only for archives the build did not process, and replays the enhancements the recorded patch does not cover. The tests under `vauban-core/src/test/java/io/vidocq/vauban/core/extensions/` exercise each hook — `BceEnhancementTest`, `BceRegistrationSynthesisTest` and `BceRuntimeReplayTest` among them.
 
+[#extension-phase]
+=== Build time or container start [.tag-new]#NEW#
+
+CDI Lite lets an implementation run an extension at either moment and does not tell the extension which. Most extensions do the same work both times. One that checks the deployment's environment — a configuration value, a resource the application will open — would find the build machine's in the processor. `io.vidocq.vauban.api.ExtensionPhase.isBuildTime()` tells it: `true` while the annotation processor or the Maven plugin runs it, `false` when the container does. Such an extension leaves the check to the container start. Ravel does this for the values `@ConfigProperty` injects (ravel#21).
+
+The answer belongs to the calling thread, for the duration of the call that opened the phase (`ExtensionPhase.atBuildTime(...)`, a `ScopedValue` binding). A build tool that runs extensions itself opens it the same way.
+
 == Differences from CDI Full
 
 Vauban implements the _Lite_ profile. The following are absent:

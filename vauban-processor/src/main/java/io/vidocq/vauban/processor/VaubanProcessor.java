@@ -19,6 +19,7 @@
  */
 package io.vidocq.vauban.processor;
 
+import io.vidocq.vauban.api.ExtensionPhase;
 import io.vidocq.vauban.processor.apt.ElementScanner;
 import io.vidocq.vauban.processor.codegen.GeneratedClass;
 import io.vidocq.vauban.processor.codegen.factory.BeanFactoryGenerator;
@@ -254,7 +255,7 @@ public class VaubanProcessor extends AbstractProcessor {
         if (!bceClasses.isEmpty()) {
             // --- @Discovery phase ---
             var lookup = new IndexLookup(index);
-            discoveryResult = BceProcessor.processDiscovery(bceClasses, lookup);
+            discoveryResult = ExtensionPhase.atBuildTime(() -> BceProcessor.processDiscovery(bceClasses, lookup));
 
             // Add scanned classes to the index.
             // These classes come from dependency jars (added via ScannedClasses.add()), not from
@@ -292,10 +293,12 @@ public class VaubanProcessor extends AbstractProcessor {
             var observers = discovery.discoverObservers();
             var interceptors = discovery.discoverInterceptors();
 
-            var bceResult = BceProcessor.process(bceClasses, beans,
+            var bceIndex = index;
+            var bceInstances = discoveryResult.bceInstances();
+            var bceResult = ExtensionPhase.atBuildTime(() -> BceProcessor.process(bceClasses, beans,
                     observers, interceptors,
-                    index, aptClassLoader,
-                    discoveryResult.bceInstances(), archiveClasses);
+                    bceIndex, aptClassLoader,
+                    bceInstances, archiveClasses));
 
             // Report BCE errors as compilation errors
             boolean hasErrors = false;

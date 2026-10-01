@@ -214,34 +214,8 @@ class VaubanGeneratorTest {
     @Test
     @DisplayName("BCE @Enhancement enriches non-CDI classes from dependency JARs")
     void shouldEnrichNonCdiBeanViaBceEnhancement() throws Exception {
-        // Create a JAR with a @Named class (no CDI scope) — simulates an external JAR
-        // Using @Named as trigger because jakarta.ws.rs.Path is not on the maven-plugin classpath
-        var namedCD = ClassDesc.of("jakarta.inject.Named");
-        var jarPath = createTestJar("external-lib.jar",
-                new TestClass("com.external.HelloResource", namedCD),
-                new TestClass("com.external.PlainHelper", null)
-        );
-
-        // Also write classes to a directory for ClassLoader
-        var classesDir = tempDir.resolve("classes");
-        writeClassToDir(classesDir, "com.external.HelloResource", namedCD);
-        writeClassToDir(classesDir, "com.external.PlainHelper", null);
-
-        // Create a BCE service file in the classesDir so ServiceLoader finds it
-        var svcDir = classesDir.resolve("META-INF/services");
-        Files.createDirectories(svcDir);
-        Files.writeString(svcDir.resolve(
-                "jakarta.enterprise.inject.build.compatible.spi.BuildCompatibleExtension"),
-                TestNamedScopeBce.class.getName());
-
         var outputDir = tempDir.resolve("output");
-        // ClassLoader must include test classes (for BCE) + generated classes
-        var testClassesUrl = TestNamedScopeBce.class.getProtectionDomain().getCodeSource().getLocation();
-        var cl = new java.net.URLClassLoader(new java.net.URL[]{
-                classesDir.toUri().toURL(), testClassesUrl});
-
-        var config = new VaubanGenerator.Config(List.of(jarPath), null, outputDir, cl);
-        var result = VaubanGenerator.generate(config);
+        var result = generateWithNamedScopeBce(outputDir);
 
         // HelloResource should be discovered as a bean (promoted by BCE @Enhancement)
         assertTrue(result.discoveredBeanClasses().contains("com.external.HelloResource"),
@@ -270,6 +244,48 @@ class VaubanGeneratorTest {
     }
 
     @Test
+    @DisplayName("the extensions the plugin runs know they run at build time (ravel#21)")
+    void extensionsRunByThePluginKnowTheyRunAtBuildTime() throws Exception {
+        TestNamedScopeBce.SAW_BUILD_TIME.set(false);
+
+        generateWithNamedScopeBce(tempDir.resolve("output"));
+
+        assertTrue(TestNamedScopeBce.SAW_BUILD_TIME.get(),
+                "the @Enhancement the plugin runs must see ExtensionPhase.isBuildTime()");
+    }
+
+    /** Generates for a dependency JAR whose @Named class the test BCE turns into a @RequestScoped bean. */
+    private GenerationResult generateWithNamedScopeBce(Path outputDir) throws Exception {
+        // Create a JAR with a @Named class (no CDI scope) — simulates an external JAR
+        // Using @Named as trigger because jakarta.ws.rs.Path is not on the maven-plugin classpath
+        var namedCD = ClassDesc.of("jakarta.inject.Named");
+        var jarPath = createTestJar("external-lib.jar",
+                new TestClass("com.external.HelloResource", namedCD),
+                new TestClass("com.external.PlainHelper", null)
+        );
+
+        // Also write classes to a directory for ClassLoader
+        var classesDir = tempDir.resolve("classes");
+        writeClassToDir(classesDir, "com.external.HelloResource", namedCD);
+        writeClassToDir(classesDir, "com.external.PlainHelper", null);
+
+        // Create a BCE service file in the classesDir so ServiceLoader finds it
+        var svcDir = classesDir.resolve("META-INF/services");
+        Files.createDirectories(svcDir);
+        Files.writeString(svcDir.resolve(
+                "jakarta.enterprise.inject.build.compatible.spi.BuildCompatibleExtension"),
+                TestNamedScopeBce.class.getName());
+
+        // ClassLoader must include test classes (for BCE) + generated classes
+        var testClassesUrl = TestNamedScopeBce.class.getProtectionDomain().getCodeSource().getLocation();
+        var cl = new java.net.URLClassLoader(new java.net.URL[]{
+                classesDir.toUri().toURL(), testClassesUrl});
+
+        var config = new VaubanGenerator.Config(List.of(jarPath), null, outputDir, cl);
+        return VaubanGenerator.generate(config);
+    }
+
+    @Test
     @DisplayName("generates a _VaubanComponents provider .class + service file for project no-arg beans")
     void shouldGenerateComponentProviderForProjectBeans() throws Exception {
         var classesDir = tempDir.resolve("classes");
@@ -294,10 +310,14 @@ class VaubanGeneratorTest {
      */
     public static class TestNamedScopeBce
             implements jakarta.enterprise.inject.build.compatible.spi.BuildCompatibleExtension {
+        static final java.util.concurrent.atomic.AtomicBoolean SAW_BUILD_TIME =
+                new java.util.concurrent.atomic.AtomicBoolean();
+
         @jakarta.enterprise.inject.build.compatible.spi.Enhancement(
                 types = Object.class,
                 withAnnotations = jakarta.inject.Named.class)
         public void addScope(jakarta.enterprise.inject.build.compatible.spi.ClassConfig clazz) {
+            SAW_BUILD_TIME.set(io.vidocq.vauban.api.ExtensionPhase.isBuildTime());
             clazz.addAnnotation(jakarta.enterprise.context.RequestScoped.class);
         }
     }

@@ -173,8 +173,10 @@ public final class VaubanGenerator {
             var bceClasses = discoverBceClasses(config.classLoader());
             if (!bceClasses.isEmpty()) {
                 var archiveClasses = loadArchiveClasses(index, config.classLoader());
-                var enhMods = io.vidocq.vauban.core.extensions.BceProcessor.processEnhancementOnly(
-                        bceClasses, archiveClasses, index, config.classLoader());
+                var enhancementIndex = index;
+                var enhMods = io.vidocq.vauban.api.ExtensionPhase.atBuildTime(() ->
+                        io.vidocq.vauban.core.extensions.BceProcessor.processEnhancementOnly(
+                                bceClasses, archiveClasses, enhancementIndex, config.classLoader()));
 
                 // Brique A for plugin-processed modules (cervantes/cyrano/knock/dirac, which use
                 // this plugin instead of the APT): freeze the @Enhancement result as a static
