@@ -132,6 +132,34 @@ class ComponentProviderCompileTimeTest {
     }
 
     @Test
+    @DisplayName("an @Inject constructor wins over a public no-arg one, as the container picks it (grimm#15)")
+    void injectConstructorWinsOverNoArgConstructor() throws Exception {
+        // The container builds a bean through its @Inject constructor and asks the provider for
+        // create(name, args). A provider that only knew the no-arg constructor answered null, and
+        // the container fell back to reflection — which a named module refuses without `opens`.
+        var result = compile("ModelCache", """
+                package app;
+
+                @jakarta.enterprise.context.ApplicationScoped
+                public class ModelCache {
+                    private final Config config;
+                    @jakarta.inject.Inject
+                    public ModelCache(Config config) { this.config = config; }
+                    /** For tests and use without CDI. */
+                    public ModelCache() { this(new Config()); }
+                }
+
+                @jakarta.enterprise.context.ApplicationScoped
+                class Config {
+                }
+                """);
+
+        assertTrue(result.success(), "compilation should succeed. Messages: " + result.messages());
+        var src = Files.readString(result.genDir().resolve("app/_VaubanComponents.java"));
+        assertTrue(src.contains("case \"app.ModelCache\" -> new app.ModelCache((app.Config) args[0]);"), src);
+    }
+
+    @Test
     @DisplayName("a nested bean is carried by the provider, keyed binary and built canonical")
     void nestedBeanIsCarriedByTheProvider() throws Exception {
         var result = compile("Outer", """

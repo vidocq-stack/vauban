@@ -112,10 +112,10 @@ public final class ComponentCollector {
      * <ol>
      *   <li>Abstract classes → {@link Optional#empty()}.</li>
      *   <li>No declared constructors → implicit default constructor → empty list.</li>
-     *   <li>A non-private no-arg constructor → empty list (simplest path).</li>
-     *   <li>Otherwise the {@code @Inject}-annotated constructor, or the sole declared constructor
-     *       when there is exactly one — if non-private and all parameters have a non-null
-     *       erasure → the erasure list.  Otherwise {@link Optional#empty()}.</li>
+     *   <li>An {@code @Inject}-annotated constructor, even next to a no-arg one, or else the sole
+     *       declared constructor when it takes parameters — if non-private and all parameters have
+     *       a non-null erasure → the erasure list. Otherwise {@link Optional#empty()}.</li>
+     *   <li>Without an {@code @Inject} constructor, a non-private no-arg constructor → empty list.</li>
      * </ol>
      *
      * @param ci the class to examine
@@ -131,13 +131,16 @@ public final class ComponentCollector {
                         && PROXY_LINK.equals(erasure(c.parameters().getFirst().type()))))
                 .toList();
         if (ctors.isEmpty()) return Optional.of(List.of()); // implicit default ctor
-        if (ctors.stream().anyMatch(c -> c.parameters().isEmpty() && !c.isPrivate())) {
-            return Optional.of(List.of()); // prefer the simplest path
-        }
+        // The bean constructor is the @Inject one whenever there is one (CDI 4.1 §3.1.1), even next
+        // to a no-arg constructor: the container builds the bean through it, asking the provider for
+        // create(name, args) — a provider that only knew the no-arg one answered null (grimm#15).
         var injected = ctors.stream()
                 .filter(m -> m.annotations().stream()
                         .anyMatch(a -> INJECT.equals(a.name().value())))
                 .findFirst();
+        if (injected.isEmpty() && ctors.stream().anyMatch(c -> c.parameters().isEmpty() && !c.isPrivate())) {
+            return Optional.of(List.of()); // prefer the simplest path
+        }
         if (injected.isEmpty() && ctors.size() == 1) {
             injected = Optional.of(ctors.get(0));
         }

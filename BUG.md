@@ -1468,3 +1468,13 @@ and a proposed upstream assertion: `CDI_TCK_PROPOSALS.md` → `TCK-GAP-001`.
 - **Surfaced by**: Vidocq/ravel#21.
 - **Symptom**: Ravel's extension, run in the processor, checked configuration values against the build machine (`Missing required config property 'shop.name'`) although the value comes from the deployment. CDI Lite gives an extension no way to know where it runs.
 - **Fix**: `ExtensionPhase.isBuildTime()`, a `ScopedValue` the processor and the Maven plugin bind around every extension phase they run (`ExtensionPhase.atBuildTime`). Pinned by `ExtensionPhaseTest`, `BceCompileTimeTest#extensionKnowsItRunsAtBuildTime` and `VaubanGeneratorTest#extensionsRunByThePluginKnowTheyRunAtBuildTime`.
+
+## BUG-20261001-03 — An `@Inject` constructor next to a no-arg one falls back to reflection (grimm#15)
+
+- **Date**: 2026-10-01
+- **Status**: FIXED (`fix/inject-constructor-over-no-arg`)
+- **Module**: `vauban-indexer` (`ComponentCollector#instantiableCtorParams`)
+- **Symptom**: once Grimm shipped named modules, `GrimmModelCache` (an `@Inject` constructor taking `GrimmConfig, ScannedTypes` next to a public no-arg one) could not be built: `Cannot reflectively access io.vidocq.grimm.cdi.GrimmModelCache on the module path … does not open io.vidocq.grimm.cdi to module io.vidocq.vauban.core`.
+- **Minimal reproduction**: `ComponentProviderCompileTimeTest#injectConstructorWinsOverNoArgConstructor`.
+- **Cause**: the collector chose the no-arg constructor whenever one existed. The container picks the `@Inject` one (CDI 4.1 §3.1.1) and asks the provider for `create(name, args)`. The generated provider only had `create(name)`, so the default `create(name, args)` answered `null` and the container fell back to reflection. On an automatic module, which is open, this went unnoticed.
+- **Fix**: the `@Inject` constructor comes first. A no-arg constructor is chosen only when there is no `@Inject` one.
