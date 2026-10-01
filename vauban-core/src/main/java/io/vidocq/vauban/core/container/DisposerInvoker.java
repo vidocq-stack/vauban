@@ -51,6 +51,15 @@ final class DisposerInvoker {
         this.vaubanLookup = vaubanLookup;
     }
 
+    /** The disposer wired to each producer, by the producer's id. Read by {@link CodegenCoverage}. */
+    private final java.util.Map<io.vidocq.vauban.core.bean.model.BeanId, DisposerDescriptor> wired =
+            new java.util.concurrent.ConcurrentHashMap<>();
+
+    /** The disposer wired to {@code producer}, or {@code null} when it has none. */
+    DisposerDescriptor disposerOf(io.vidocq.vauban.core.bean.model.BeanId producer) {
+        return wired.get(producer);
+    }
+
     static void validateDisposerParameters(
             List<DisposerDescriptor> disposers,
             List<BeanDescriptor> descriptors,
@@ -214,6 +223,7 @@ final class DisposerInvoker {
                     throw new jakarta.enterprise.inject.spi.DefinitionException(
                         "Multiple disposer methods for producer " + descriptor.id() + " in " + descriptor.beanClass());
                 }
+                wired.put(descriptor.id(), disposer);
                 bean.setDestroyer((instance, ctx) -> callDisposer(instance, disposer, ctx));
             }
         }

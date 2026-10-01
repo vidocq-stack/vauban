@@ -21,6 +21,7 @@ package io.vidocq.vauban.core.container;
 
 import io.vidocq.vauban.api.GeneratedCoverage;
 import io.vidocq.vauban.api.VaubanComponentProvider;
+import io.vidocq.vauban.core.bean.model.DisposerDescriptor;
 import io.vidocq.vauban.core.interceptor.InterceptedShape;
 import io.vidocq.vauban.core.proxy.RuntimeClientProxyGenerator;
 import jakarta.annotation.PostConstruct;
@@ -121,7 +122,9 @@ public final class CodegenCoverage {
         }
         return switch (managed.descriptor().kind()) {
             case MANAGED -> managedOperations(managed);
-            case PRODUCER_METHOD, PRODUCER_FIELD, SYNTHETIC -> List.of();
+            case PRODUCER_METHOD -> producerMethodOperations(managed);
+            case PRODUCER_FIELD -> producerFieldOperations(managed);
+            case SYNTHETIC -> List.of();
         };
     }
 
@@ -148,6 +151,57 @@ public final class CodegenCoverage {
         }
         clientProxy(bean, ops);
         return ops;
+    }
+
+    private List<Operation> producerMethodOperations(ManagedBean<?> bean) {
+        Class<?> declaring = bean.getBeanClass();
+        String name = VaubanContainer.extractProducerMethodName(bean.descriptor().id());
+        var ops = new ArrayList<Operation>();
+        Method producer = producerMethod(declaring, name);
+        ops.add(producer == null ? none("producer " + name + "()", declaring) : invoke(producer, "producer"));
+        disposer(bean, declaring, ops);
+        clientProxy(bean, ops);
+        return ops;
+    }
+
+    private List<Operation> producerFieldOperations(ManagedBean<?> bean) {
+        Class<?> declaring = bean.getBeanClass();
+        var ops = new ArrayList<Operation>();
+        ops.add(none("producer field " + VaubanContainer.extractProducerFieldName(bean.descriptor().id()), declaring));
+        disposer(bean, declaring, ops);
+        clientProxy(bean, ops);
+        return ops;
+    }
+
+    private void disposer(ManagedBean<?> bean, Class<?> declaring, List<Operation> ops) {
+        DisposerDescriptor disposer = container.disposerInvoker.disposerOf(bean.descriptor().id());
+        if (disposer == null) {
+            return;
+        }
+        Method method = disposerMethod(declaring, disposer);
+        ops.add(method == null ? none("disposer " + disposer.methodName() + "()", declaring)
+                : invoke(method, "disposer"));
+    }
+
+    /** The first declared method of that name, as {@code VaubanContainer.createProducerMethodFactory} takes it. */
+    private static Method producerMethod(Class<?> declaring, String name) {
+        for (Method method : declaring.getDeclaredMethods()) {
+            if (method.getName().equals(name)) {
+                return method;
+            }
+        }
+        return null;
+    }
+
+    /** The disposer's method, as {@code DisposerInvoker.callDisposer} takes it. */
+    private static Method disposerMethod(Class<?> declaring, DisposerDescriptor disposer) {
+        for (Method method : declaring.getDeclaredMethods()) {
+            if (method.getName().equals(disposer.methodName())
+                    && method.getParameterCount() > disposer.parameterIndex()) {
+                return method;
+            }
+        }
+        return null;
     }
 
     /** A normal-scoped bean's client proxy, keyed as {@code InterceptorBeanWrapper.getOrCreateProxy} asks for it. */

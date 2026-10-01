@@ -200,6 +200,33 @@ class CodegenCoverageTest {
         }
     }
 
+    static final String FACTORY = PREFIX + "Factory";
+
+    @Test
+    @DisplayName("a producer method and its disposer are covered by the methods a provider invokes")
+    void producerMethodAndDisposer() {
+        Set<String> methods = Set.of(FACTORY + "#widget()", FACTORY + "#dispose(" + PREFIX + "Widget)");
+        try (var container = container(List.of(declaring(Generator.APT, Set.of(), Set.of(), methods, Set.of())),
+                CoverageFixtures.Factory.class)) {
+            assertEquals(new Coverage(Verdict.APT, List.of()), coverage(container, CoverageFixtures.Widget.class));
+        }
+        try (var container = container(List.of(), CoverageFixtures.Factory.class)) {
+            assertEquals(new Coverage(Verdict.REFLECTION, List.of("producer widget()", "disposer dispose()")),
+                    coverage(container, CoverageFixtures.Widget.class));
+        }
+    }
+
+    @Test
+    @DisplayName("a producer field is always read by reflection: no provider method reads a field")
+    void producerFieldIsReflection() {
+        try (var container = container(List.of(declaring(Generator.APT, Set.of(FACTORY), Set.of(), Set.of(),
+                        Set.of())),
+                CoverageFixtures.Factory.class)) {
+            assertEquals(new Coverage(Verdict.REFLECTION, List.of("producer field gadget")),
+                    coverage(container, CoverageFixtures.Gadget.class));
+        }
+    }
+
     @Test
     @DisplayName("in a package an old and a new provider share, only the uncovered operations are unknown")
     void mixedPackageIsUnknownOnlyWhereUncovered() {

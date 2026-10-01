@@ -23,6 +23,8 @@ import jakarta.annotation.PostConstruct;
 import jakarta.annotation.Priority;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.enterprise.context.Dependent;
+import jakarta.enterprise.inject.Disposes;
+import jakarta.enterprise.inject.Produces;
 import jakarta.inject.Inject;
 import jakarta.interceptor.AroundInvoke;
 import jakarta.interceptor.Interceptor;
@@ -89,5 +91,21 @@ public final class CoverageFixtures {
     @Audited @Dependent
     public static class AuditedBean {
         public void work() {}
+    }
+
+    public static class Widget {}
+
+    public static class Gadget {}
+
+    @Dependent
+    public static class Factory {
+        @Produces Gadget gadget = new Gadget();
+
+        @Produces
+        Widget widget() {
+            return new Widget();
+        }
+
+        void dispose(@Disposes Widget widget) {}
     }
 }

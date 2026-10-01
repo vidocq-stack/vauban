@@ -948,13 +948,13 @@ public final class VaubanContainer implements AutoCloseable {
         };
     }
 
-    private static String extractProducerMethodName(BeanId id) {
+    static String extractProducerMethodName(BeanId id) {
         var value = id.value();
         int hash = value.lastIndexOf('#');
         return hash >= 0 ? value.substring(hash + 1) : value;
     }
 
-    private static String extractProducerFieldName(BeanId id) {
+    static String extractProducerFieldName(BeanId id) {
         var value = id.value();
         int dot = value.lastIndexOf('.');
         return dot >= 0 ? value.substring(dot + 1) : value;
