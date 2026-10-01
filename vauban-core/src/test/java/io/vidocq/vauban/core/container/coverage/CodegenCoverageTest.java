@@ -47,7 +47,7 @@ class CodegenCoverageTest {
 
     static final String COVERED = PREFIX + "CoveredBean";
     static final Set<String> COVERED_METHODS = Set.of(
-            COVERED + "#setUp(" + PREFIX + "Dependency)", COVERED + "#init()");
+            COVERED + "#setUp(" + PREFIX + "Dependency)", COVERED + "#init()", COVERED + "#close()");
 
     /** A provider that declares what it is given and runs nothing, so the container falls back as it would. */
     record Declaring(GeneratedCoverage coverage) implements VaubanComponentProvider {
@@ -121,7 +121,7 @@ class CodegenCoverageTest {
                         Set.of())),
                 CoverageFixtures.Dependency.class, CoverageFixtures.CoveredBean.class)) {
             assertEquals(new Coverage(Verdict.PARTIAL, List.of("field dependency", "initializer setUp()",
-                            "@PostConstruct init()")),
+                            "@PostConstruct init()", "@PreDestroy close()")),
                     coverage(container, CoverageFixtures.CoveredBean.class));
         }
     }
@@ -199,6 +199,28 @@ class CodegenCoverageTest {
                 assertEquals(new Coverage(Verdict.PARTIAL, List.of("intercepted subclass")),
                         coverage(container, CoverageFixtures.AuditedBean.class), "boot " + boot);
             }
+        }
+    }
+
+    @Test
+    @DisplayName("a subclass built ahead of time is pre-generated: the bean needs no reflection for it")
+    void preGeneratedSubclassIsCovered() throws Exception {
+        Class<?> bean = CoverageFixtures.PreGeneratedBean.class;
+        String subclass = PREFIX + "PreGeneratedBean$$Intercepted";
+        try {
+            Class.forName(subclass, false, bean.getClassLoader());
+        } catch (ClassNotFoundException absent) {
+            // Defined by the test, not by Vauban: what a subclass shipped by the build looks like at boot.
+            var generated = io.vidocq.vauban.core.interceptor.InterceptorSubclassGenerator.generate(bean);
+            java.lang.invoke.MethodHandles.privateLookupIn(bean, java.lang.invoke.MethodHandles.lookup())
+                    .defineClass(generated.bytecode());
+        }
+        try (var container = container(List.of(declaring(Generator.APT, Set.of(subclass), Set.of(), Set.of(),
+                        Set.of())),
+                CoverageFixtures.Dependency.class, CoverageFixtures.AuditInterceptor.class,
+                CoverageFixtures.PreGeneratedBean.class)) {
+            assertEquals(new Coverage(Verdict.APT, List.of()),
+                    coverage(container, CoverageFixtures.PreGeneratedBean.class));
         }
     }
 
@@ -294,9 +316,20 @@ class CodegenCoverageTest {
                         Set.of(AUDIT + "#dependency"), Set.of(), Set.of())),
                 CoverageFixtures.Dependency.class, CoverageFixtures.AuditInterceptor.class,
                 CoverageFixtures.AuditedBean.class)) {
-            assertEquals(new Coverage(Verdict.PARTIAL, List.of("@AroundInvoke around()")),
+            assertEquals(new Coverage(Verdict.PARTIAL, List.of("initializer setUp()", "@AroundInvoke around()")),
                     container.codegenCoverage().of(interceptor(container, AUDIT)));
         }
+    }
+
+    @Test
+    @DisplayName("reading a class's coverage never runs its static initializer")
+    void readingCoverageInitializesNoClass() {
+        var probe = new InterceptorDescriptor(DotName.of(PREFIX + "StaticInitProbe"), Set.of(), "around", 1);
+        try (var container = container(List.of(), CoverageFixtures.BareBean.class)) {
+            assertEquals(new Coverage(Verdict.REFLECTION, List.of("constructor", "@AroundInvoke around()")),
+                    container.codegenCoverage().of(probe));
+        }
+        assertEquals(Set.of(), Set.copyOf(CoverageFixtures.INITIALIZED));
     }
 
     @Test

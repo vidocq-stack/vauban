@@ -153,8 +153,9 @@ public final class CodegenCoverage {
         }
         var ops = new ArrayList<Operation>();
         ops.add(new Operation(Kind.INSTANTIATE, type.getName(), "constructor", type));
-        for (Field field : BeanInjector.injectedFields(type)) {
-            ops.add(field(field));
+        // An interceptor is created as a bean, so performInjection runs its fields and initializers alike.
+        for (Member member : BeanInjector.injectionOrder(type)) {
+            ops.add(member instanceof Field field ? field(field) : invoke((Method) member, "initializer"));
         }
         Method own = ownPostConstruct(type);
         if (own != null) {
@@ -176,9 +177,10 @@ public final class CodegenCoverage {
         return ops;
     }
 
+    /** The class, loaded as the container loads it but never initialized: no static initializer of the application runs. */
     private Class<?> load(String name) {
         try {
-            return container.loadClass(name);
+            return Class.forName(name, false, container.classLoader());
         } catch (ClassNotFoundException | LinkageError e) {
             return null;
         }

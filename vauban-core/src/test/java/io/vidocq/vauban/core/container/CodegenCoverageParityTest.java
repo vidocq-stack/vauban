@@ -87,9 +87,10 @@ class CodegenCoverageParityTest {
     }
 
     @Test
-    @DisplayName("every key the coverage computes is one the container asked a provider for")
+    @DisplayName("the keys the coverage computes are exactly the keys the container asks providers for")
     void computedKeysAreAskedKeys() {
         var recording = new Recording();
+        var operations = new ArrayList<CodegenCoverage.Operation>();
         try (var container = VaubanContainer.builder()
                 .classLoader(getClass().getClassLoader())
                 .addComponentProvider(recording)
@@ -102,7 +103,8 @@ class CodegenCoverageParityTest {
                 .addBeanClass(CoverageFixtures.AuditedBean.class)
                 .build()) {
             BeanManager manager = container.getBeanManager();
-            container.select(CoverageFixtures.CoveredBean.class);
+            var covered = manager.createInstance().select(CoverageFixtures.CoveredBean.class);
+            covered.destroy(covered.get());
             Bean<?> scoped = manager.resolve(manager.getBeans(CoverageFixtures.ScopedBean.class));
             ((CoverageFixtures.ScopedBean) manager.getReference(scoped, CoverageFixtures.ScopedBean.class,
                     manager.createCreationalContext(scoped))).hello();
@@ -112,26 +114,32 @@ class CodegenCoverageParityTest {
             manager.getEvent().select(CoverageFixtures.Ping.class).fire(new CoverageFixtures.Ping("x"));
 
             var coverage = container.codegenCoverage();
-            var operations = new ArrayList<CodegenCoverage.Operation>();
-            for (Class<?> type : List.of(CoverageFixtures.CoveredBean.class, CoverageFixtures.ScopedBean.class,
-                    CoverageFixtures.Widget.class, CoverageFixtures.AuditedBean.class)) {
-                operations.addAll(coverage.operations(manager.resolve(manager.getBeans(type))));
-            }
+            manager.getBeans(Object.class, jakarta.enterprise.inject.Any.Literal.INSTANCE).stream()
+                    .filter(bean -> bean.getBeanClass().getName().startsWith(CoverageFixtures.PREFIX))
+                    .forEach(bean -> operations.addAll(coverage.operations(bean)));
             container.eventDispatcher().observers().stream()
-                    .filter(o -> o.declaringClass().value().equals(CoverageFixtures.Pinger.class.getName()))
+                    .filter(o -> o.declaringClass().value().startsWith(CoverageFixtures.PREFIX))
                     .forEach(o -> operations.addAll(coverage.operations(o)));
             container.interceptorManager().getInterceptors().stream()
-                    .filter(i -> i.interceptorClass().value().equals(CoverageFixtures.AuditInterceptor.class.getName()))
+                    .filter(i -> i.interceptorClass().value().startsWith(CoverageFixtures.PREFIX))
                     .forEach(i -> operations.addAll(coverage.operations(i)));
-
-            assertFalse(operations.isEmpty(), "the fixtures need operations");
-            for (var op : operations) {
-                if (op.kind() == CodegenCoverage.Kind.NONE || op.kind() == CodegenCoverage.Kind.PRE_GENERATED) {
-                    continue;
-                }
-                assertTrue(recording.asked(op.kind()).contains(op.key()),
-                        op.label() + ": " + op.key() + " was never asked; asked " + recording.asked(op.kind()));
-            }
         }
+
+        assertFalse(operations.isEmpty(), "the fixtures need operations");
+        for (var kind : List.of(CodegenCoverage.Kind.INSTANTIATE, CodegenCoverage.Kind.INJECT_FIELD,
+                CodegenCoverage.Kind.INVOKE, CodegenCoverage.Kind.CLIENT_PROXY)) {
+            Set<String> computed = new java.util.TreeSet<>();
+            operations.stream().filter(op -> op.kind() == kind).forEach(op -> computed.add(op.key()));
+            Set<String> asked = new java.util.TreeSet<>();
+            recording.asked(kind).stream().filter(key -> key.startsWith(CoverageFixtures.PREFIX)).forEach(asked::add);
+            assertTrue(asked.containsAll(computed), kind + ": computed but never asked " + minus(computed, asked));
+            assertTrue(computed.containsAll(asked), kind + ": asked but not computed " + minus(asked, computed));
+        }
+    }
+
+    private static Set<String> minus(Set<String> left, Set<String> right) {
+        Set<String> rest = new java.util.TreeSet<>(left);
+        rest.removeAll(right);
+        return rest;
     }
 }

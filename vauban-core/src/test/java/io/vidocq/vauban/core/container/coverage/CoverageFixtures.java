@@ -20,6 +20,7 @@
 package io.vidocq.vauban.core.container.coverage;
 
 import jakarta.annotation.PostConstruct;
+import jakarta.annotation.PreDestroy;
 import jakarta.annotation.Priority;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.enterprise.context.Dependent;
@@ -43,6 +44,9 @@ public final class CoverageFixtures {
     /** The binary-name prefix of every fixture. */
     public static final String PREFIX = CoverageFixtures.class.getName() + "$";
 
+    /** The fixtures whose static initializer ran. */
+    public static final java.util.Set<String> INITIALIZED = java.util.concurrent.ConcurrentHashMap.newKeySet();
+
     private CoverageFixtures() {}
 
     @Dependent
@@ -57,6 +61,9 @@ public final class CoverageFixtures {
 
         @PostConstruct
         void init() {}
+
+        @PreDestroy
+        void close() {}
     }
 
     @Dependent
@@ -83,6 +90,9 @@ public final class CoverageFixtures {
     public static class AuditInterceptor {
         @Inject Dependency dependency;
 
+        @Inject
+        void setUp(Dependency dependency) {}
+
         @AroundInvoke
         public Object around(InvocationContext context) throws Exception {
             return context.proceed();
@@ -91,6 +101,24 @@ public final class CoverageFixtures {
 
     @Audited @Dependent
     public static class AuditedBean {
+        public void work() {}
+    }
+
+    /** Records its own initialization: reading its metadata must never run it. Named by string only, never loaded. */
+    public static class StaticInitProbe {
+        static {
+            INITIALIZED.add("StaticInitProbe");
+        }
+
+        @AroundInvoke
+        public Object around(InvocationContext context) throws Exception {
+            return context.proceed();
+        }
+    }
+
+    /** Intercepted, with a subclass the test defines before boot, as a build would ship it; used by one test only. */
+    @Audited @Dependent
+    public static class PreGeneratedBean {
         public void work() {}
     }
 
