@@ -85,7 +85,9 @@ public final class ComponentProviderClassGenerator {
 
     /**
      * The most keys one {@code coverage()} method holds: each costs 8 bytes of bytecode ({@code dup}, index,
-     * {@code ldc_w}, {@code aastore}), and a method body stops at 64 KiB.
+     * {@code ldc_w}, {@code aastore}), and a method body stops at 64 KiB. A provider with more emits no
+     * {@code coverage()} — the diagnostics report it unknown — and keeps its dispatch: a diagnostic never costs the
+     * container its generated code.
      */
     public static final int MAX_COVERAGE_KEYS = 7000;
 
@@ -159,16 +161,21 @@ public final class ComponentProviderClassGenerator {
     public static Generated generate(String providerClassName, List<Component> components,
             List<FieldInject> fieldInjects, List<MethodInvoke> methodInvokes,
             List<String> clientProxyFqns, List<ProducerProxy> producerProxies) {
+        return generate(providerClassName, components, fieldInjects, methodInvokes, clientProxyFqns, producerProxies,
+                MAX_COVERAGE_KEYS);
+    }
+
+    /** The full overload, with the most keys {@code coverage()} may declare before it is left out. */
+    static Generated generate(String providerClassName, List<Component> components,
+            List<FieldInject> fieldInjects, List<MethodInvoke> methodInvokes,
+            List<String> clientProxyFqns, List<ProducerProxy> producerProxies, int maxCoverageKeys) {
         var instantiatedKeys = components.stream().map(Component::fqn).toList();
         var fieldKeys = fieldInjects.stream().map(fi -> fi.declaringClassFqn() + "#" + fi.fieldName()).toList();
         var methodKeys = methodInvokes.stream().map(mi -> mi.declaringClassFqn() + "#" + mi.methodId()).toList();
         var proxyKeys = new java.util.ArrayList<>(clientProxyFqns);
         producerProxies.forEach(pp -> proxyKeys.add(pp.key()));
-        int keys = instantiatedKeys.size() + fieldKeys.size() + methodKeys.size() + proxyKeys.size();
-        if (keys > MAX_COVERAGE_KEYS) {
-            throw new IllegalStateException(providerClassName + " would declare " + keys + " keys in coverage(), "
-                    + "more than the " + MAX_COVERAGE_KEYS + " one method holds: split the package");
-        }
+        boolean declaresCoverage = instantiatedKeys.size() + fieldKeys.size() + methodKeys.size() + proxyKeys.size()
+                <= maxCoverageKeys;
         var providerCD = ClassDesc.of(providerClassName);
         var noArg = components.stream().filter(Component::noArg).toList();
         var withArgs = components.stream().filter(c -> !c.noArg()).toList();
@@ -454,15 +461,17 @@ public final class ComponentProviderClassGenerator {
             //     return GeneratedCoverage.of(Generator.CLASS_FILE, new String[] {…}, …);
             // }
             // From the same lists as the switches above, so the declaration cannot diverge from the dispatch.
-            clb.withMethodBody("coverage", MTD_coverage, ClassFile.ACC_PUBLIC, cob -> {
-                cob.getstatic(CD_Generator, "CLASS_FILE", CD_Generator);
-                pushStringArray(cob, instantiatedKeys);
-                pushStringArray(cob, fieldKeys);
-                pushStringArray(cob, methodKeys);
-                pushStringArray(cob, proxyKeys);
-                cob.invokestatic(CD_Coverage, "of", MTD_coverageOf);
-                cob.areturn();
-            });
+            if (declaresCoverage) {
+                clb.withMethodBody("coverage", MTD_coverage, ClassFile.ACC_PUBLIC, cob -> {
+                    cob.getstatic(CD_Generator, "CLASS_FILE", CD_Generator);
+                    pushStringArray(cob, instantiatedKeys);
+                    pushStringArray(cob, fieldKeys);
+                    pushStringArray(cob, methodKeys);
+                    pushStringArray(cob, proxyKeys);
+                    cob.invokestatic(CD_Coverage, "of", MTD_coverageOf);
+                    cob.areturn();
+                });
+            }
         });
         return new Generated(providerClassName, bytecode);
     }

@@ -89,9 +89,11 @@ nothing.
   `Generator.CLASS_FILE`. It serves `vauban:generate`, `enhance-dependencies`, and `vidocq:generate`'s patches.
 - Rendering `coverage()` from the very lists the switches are rendered from is what keeps the declaration and the
   dispatch from diverging.
-- Size: one `ldc` + `aastore` per key. A provider is per package (APT) or per module (Class-File); a method-size
-  overflow would need thousands of keys in one provider. The generator fails the build with a clear message rather
-  than emitting an invalid class if the limit is ever reached.
+- Size: one `ldc` + `aastore` per key. A provider is per package; a method-size overflow would need thousands of keys
+  in one provider. Past `MAX_COVERAGE_KEYS` (7000), the Class-File generator emits no `coverage()` — the provider is
+  then reported unknown — and keeps its dispatch: a diagnostic never costs the container its generated code (a
+  review finding: `vauban:generate` swallowed a thrown limit and dropped the whole provider). On the APT side,
+  javac's own "code too large" already fails the build.
 
 ### 3. Container — `vauban-core`
 
