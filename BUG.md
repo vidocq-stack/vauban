@@ -1478,3 +1478,11 @@ and a proposed upstream assertion: `CDI_TCK_PROPOSALS.md` → `TCK-GAP-001`.
 - **Minimal reproduction**: `ComponentProviderCompileTimeTest#injectConstructorWinsOverNoArgConstructor`.
 - **Cause**: the collector chose the no-arg constructor whenever one existed. The container picks the `@Inject` one (CDI 4.1 §3.1.1) and asks the provider for `create(name, args)`. The generated provider only had `create(name)`, so the default `create(name, args)` answered `null` and the container fell back to reflection. On an automatic module, which is open, this went unnoticed.
 - **Fix**: the `@Inject` constructor comes first. A no-arg constructor is chosen only when there is no `@Inject` one.
+
+## BUG-20261001-04 — A bean class that cannot be loaded is skipped without a word (grimm#15)
+
+- **Date**: 2026-10-01
+- **Status**: FIXED (`fix/inject-constructor-over-no-arg`)
+- **Module**: `vauban-core` (`ContainerScanner#tryAddBeanClass`)
+- **Symptom**: every Grimm bean vanished from a modular application (its package split into the application module), and nothing in the log said so.
+- **Fix**: a class listed in a `META-INF/vauban-beans.list` that cannot be loaded is still skipped, but with a warning that names it and the likely causes: a split package, or a missing module. `ScanClasspathTest#shouldReportUnloadableListedClass`. Not a single one shows in the CDI TCK run.

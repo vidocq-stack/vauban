@@ -95,6 +95,37 @@ class ScanClasspathTest {
         assertNotNull(builder);
     }
 
+    @Test
+    @DisplayName("names a listed class it cannot load, instead of dropping it in silence (grimm#15)")
+    void shouldReportUnloadableListedClass() {
+        // An archive's beans vanished without a word when its package was split into another
+        // module: every class of its list failed to load, and the scan said nothing.
+        var beansListContent = """
+                com.nonexistent.FakeClass
+                java.util.ArrayList
+                """;
+        // The tests run inside io.vidocq.vauban.core, which does not read java.logging, the backend of
+        // System.Logger here: read it for the capture.
+        getClass().getModule().addReads(ModuleLayer.boot().findModule("java.logging").orElseThrow());
+        var out = new java.io.ByteArrayOutputStream();
+        var handler = new java.util.logging.StreamHandler(out, new java.util.logging.SimpleFormatter());
+        handler.setLevel(java.util.logging.Level.WARNING);
+        var logger = java.util.logging.Logger.getLogger(ContainerScanner.class.getName());
+        logger.addHandler(handler);
+        try {
+            var cl = new BeansListClassLoader(beansListContent, getClass().getClassLoader());
+            VaubanContainer.builder().classLoader(cl).scanClasspath();
+        } finally {
+            handler.flush();
+            logger.removeHandler(handler);
+        }
+
+        // The handler lets warnings and above through, and the formatter localises the level's name.
+        var logged = out.toString(StandardCharsets.UTF_8);
+        assertTrue(logged.contains("com.nonexistent.FakeClass"),
+                "expected a warning naming the class; got: " + logged);
+    }
+
     /**
      * Custom ClassLoader that serves a synthetic META-INF/vauban-beans.list.
      */

@@ -98,7 +98,12 @@ final class ContainerScanner {
             if (clazz.isAnnotation() || clazz.isInterface() || clazz.isSynthetic()) return;
             host.addBeanClass(clazz);
         } catch (ClassNotFoundException | NoClassDefFoundError e) {
-            // Skip unloadable classes
+            // Skipped, but said: a whole archive's beans once vanished this way without a word,
+            // their package split into another module of the layer (Vidocq/grimm#15).
+            LOG.log(System.Logger.Level.WARNING,
+                    "{0} is listed as a bean but cannot be loaded ({1}); its bean is skipped. On the module "
+                            + "path, its package may be split with another module, or a module it needs missing.",
+                    className, e.toString());
         }
     }
 
