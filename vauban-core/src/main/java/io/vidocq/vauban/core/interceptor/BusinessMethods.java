@@ -20,6 +20,7 @@
 package io.vidocq.vauban.core.interceptor;
 
 import java.lang.reflect.Method;
+import java.lang.reflect.Modifier;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -29,7 +30,7 @@ import java.util.concurrent.ConcurrentHashMap;
  * the interceptor chain ({@link InterceptorManager}) both ask here, so they cannot disagree.
  *
  * <p>The declaration is the one a call on an instance of the bean class reaches: the most derived
- * declaration up the bean's superclass chain, whatever its access, else the interface default
+ * non-private instance declaration up the bean's superclass chain, else the interface default
  * method the bean inherits. Its own annotations are the method-level bindings, which is CDI 4.1
  * §4.2: a binding declared on an inherited method applies only while no class below overrides the
  * method. A non-overridden interface default method is a member of the bean class in the same way
@@ -83,15 +84,22 @@ final class BusinessMethods {
 
     /**
      * The declaration a call of {@code method} — or of the business method a bridge stands for — runs
-     * on an instance of {@code beanClass}: the most derived one up the superclass chain, whatever its
-     * access, else the interface default method the bean inherits; {@code null} when there is none.
+     * on an instance of {@code beanClass}: the most derived instance method up the superclass chain
+     * that is not private, whatever its other access, else the interface default method the bean
+     * inherits; {@code null} when there is none. A private or static declaration is not a member the
+     * bean inherits (JLS 8.4.8): a private superclass method with the signature of an inherited
+     * default method does not stand for it.
      */
     static Method declarationOf(Class<?> beanClass, Method method) {
         var name = businessName(method);
         var parameterTypes = method.getParameterTypes();
         for (Class<?> c = beanClass; c != null; c = c.getSuperclass()) {
             try {
-                return c.getDeclaredMethod(name, parameterTypes);
+                var declared = c.getDeclaredMethod(name, parameterTypes);
+                int modifiers = declared.getModifiers();
+                if (!Modifier.isPrivate(modifiers) && !Modifier.isStatic(modifiers)) {
+                    return declared;
+                }
             } catch (NoSuchMethodException declaredHigherUp) {
                 // keep walking
             }

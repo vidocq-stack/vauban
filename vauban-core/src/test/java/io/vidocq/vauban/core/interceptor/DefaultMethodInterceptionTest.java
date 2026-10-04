@@ -46,6 +46,7 @@ import java.util.stream.Collectors;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -155,20 +156,43 @@ class DefaultMethodInterceptionTest {
     public static class BoundOnlyByADefaultMethod implements MarkedOnly {
     }
 
+    /** A private method with the signature of {@link Hider#hidden}: not inherited, never called. */
+    public static class PrivateHidden {
+        @SuppressWarnings("unused")
+        private String hidden(String who) {
+            return "private " + who;
+        }
+    }
+
+    public interface Hider {
+        @Marked
+        default String hidden(String who) {
+            return "default " + who;
+        }
+    }
+
+    /** Inherits {@link Hider#hidden}; its superclass's private {@code hidden} is not a member. */
+    @Traced
+    @Dependent
+    public static class ShadowedGreeter extends PrivateHidden implements Hider {
+    }
+
     private static SeContainer container;
     private static ScopedGreeter scoped;
     private static DependentGreeter dependent;
     private static BoundOnlyByADefaultMethod boundOnlyByADefaultMethod;
+    private static ShadowedGreeter shadowed;
 
     @BeforeAll
     static void boot() {
         container = SeContainerInitializer.newInstance()
                 .addBeanClasses(ScopedGreeter.class, DependentGreeter.class, BoundOnlyByADefaultMethod.class,
-                        TracingInterceptor.class, MarkingInterceptor.class)
+                        ShadowedGreeter.class, TracingInterceptor.class, MarkingInterceptor.class)
                 .initialize();
         scoped = container.select(ScopedGreeter.class).get();
         dependent = container.select(DependentGreeter.class).get();
         boundOnlyByADefaultMethod = container.select(BoundOnlyByADefaultMethod.class).get();
+        shadowed = container.select(ShadowedGreeter.class).get();
     }
 
     @AfterAll
@@ -221,6 +245,25 @@ class DefaultMethodInterceptionTest {
     void beanBoundOnlyByADefaultMethod() throws Exception {
         assertEquals("only", boundOnlyByADefaultMethod.only());
         assertEquals(List.of(MarkedOnly.class.getDeclaredMethod("only")), MarkingInterceptor.CALLS);
+    }
+
+    @Test
+    @DisplayName("a private superclass method with the same signature does not shadow the default method")
+    void privateSuperclassMethodDoesNotShadowTheDefault() throws Exception {
+        // The bean's member is Hider.hidden: the private PrivateHidden.hidden is not inherited
+        // (JLS 8.4.8). getMethod(), the bindings and the chain must report that one. Called through
+        // Hider: this test class is a nestmate of PrivateHidden, so a call typed ShadowedGreeter
+        // would resolve to the private method and run it directly.
+        Hider hider = shadowed;
+        // BUG-20261004-08 (open): the JVM resolves the generated bridge's super.hidden(...) to the
+        // private PrivateHidden.hidden — as it resolves any call typed ShadowedGreeter from outside
+        // the nest — so the chain ends in IllegalAccessError instead of reaching the default.
+        assertThrows(IllegalAccessError.class, () -> hider.hidden("x"));
+        var seen = onlySeen();
+        var hidden = Hider.class.getDeclaredMethod("hidden", String.class);
+        assertEquals(hidden, seen.method());
+        assertTrue(seen.bindings().contains("Marked"), "got " + seen.bindings());
+        assertEquals(List.of(hidden), MarkingInterceptor.CALLS);
     }
 
     @Test
