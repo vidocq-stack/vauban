@@ -45,22 +45,25 @@ public final class ShadowedDefaults {
 
     /**
      * Whether a class of {@code beanClass}'s superclass chain declares a method with the name and
-     * descriptor of {@code defaultMethod}, an interface default method the bean inherits: that
-     * declaration is not a member of the bean (it would have overridden the default otherwise),
-     * but the JVM resolves a call typed by the bean class to it.
+     * descriptor of {@code defaultMethod}, an interface default method the bean inherits, that is
+     * <em>not</em> a member of the bean — private, or package-private in another package (JLS
+     * 8.4.8) — and to which the JVM resolves a call typed by the bean class. A declaration the bean
+     * inherits is no shadow: it is the bean's member, and implements the default.
      */
     public static boolean isShadowed(Class<?> beanClass, Method defaultMethod) {
         if (!defaultMethod.isDefault()) return false;
+        boolean shadowed = false;
         for (Class<?> c = beanClass; c != null && c != Object.class; c = c.getSuperclass()) {
             for (var declared : c.getDeclaredMethods()) {
                 if (declared.getName().equals(defaultMethod.getName())
                         && declared.getReturnType() == defaultMethod.getReturnType()
                         && java.util.Arrays.equals(declared.getParameterTypes(), defaultMethod.getParameterTypes())) {
-                    return true;
+                    if (BusinessMethods.isBusinessMethodOf(beanClass, declared)) return false;
+                    shadowed = true;
                 }
             }
         }
-        return false;
+        return shadowed;
     }
 
     /**

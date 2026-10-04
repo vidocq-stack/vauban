@@ -119,20 +119,47 @@ public final class InterceptedShapeFromElements {
 
     /**
      * Whether {@code method}, an interface default method {@code bean} inherits, is shadowed: a class
-     * of the bean's superclass chain declares a method with its name and erased descriptor — a
-     * private one, not inherited — to which the JVM resolves a call typed by the bean class, the
-     * generated subclass's {@code super.<name>()} included, and which it then refuses. As
+     * of the bean's superclass chain declares a method with its name and erased descriptor that is
+     * <em>not</em> a member of the bean — private, or package-private in another package (JLS
+     * 8.4.8) — to which the JVM resolves a call typed by the bean class, the generated subclass's
+     * {@code super.<name>()} included, and which it then refuses. A declaration the bean inherits
+     * is no shadow: it is the bean's member, and implements the default. As
      * {@code io.vidocq.vauban.core.interceptor.ShadowedDefaults#isShadowed} (BUG-20261004-08).
      */
     public static boolean isShadowedDefault(TypeElement bean, ExecutableElement method, Types types) {
         if (!method.getModifiers().contains(Modifier.DEFAULT)) return false;
         var descriptor = erasedDescriptor(method, types);
+        boolean shadowed = false;
         for (TypeElement c = bean; c != null && !isObject(c); c = superclassOf(c)) {
             for (ExecutableElement declared : ElementFilter.methodsIn(c.getEnclosedElements())) {
-                if (erasedDescriptor(declared, types).equals(descriptor)) return true;
+                if (!erasedDescriptor(declared, types).equals(descriptor)) continue;
+                if (isMemberOf(bean, declared, c)) return false;
+                shadowed = true;
             }
         }
-        return false;
+        return shadowed;
+    }
+
+    /**
+     * Whether {@code declared}, a method of {@code owner} — {@code bean} or one of its superclasses —
+     * is a member of {@code bean}: not private, and when package-private, inherited through classes
+     * of {@code owner}'s package only (JLS 8.4.8).
+     */
+    private static boolean isMemberOf(TypeElement bean, ExecutableElement declared, TypeElement owner) {
+        var modifiers = declared.getModifiers();
+        if (modifiers.contains(Modifier.PRIVATE)) return owner.equals(bean);
+        if (modifiers.contains(Modifier.PUBLIC) || modifiers.contains(Modifier.PROTECTED)) return true;
+        var ownerPackage = packageOf(owner);
+        for (TypeElement c = bean; c != null && !c.equals(owner); c = superclassOf(c)) {
+            if (!packageOf(c).equals(ownerPackage)) return false;
+        }
+        return true;
+    }
+
+    private static Element packageOf(TypeElement type) {
+        Element e = type;
+        while (e != null && e.getKind() != ElementKind.PACKAGE) e = e.getEnclosingElement();
+        return e;
     }
 
     /**

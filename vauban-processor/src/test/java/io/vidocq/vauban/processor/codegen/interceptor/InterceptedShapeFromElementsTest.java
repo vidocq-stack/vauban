@@ -163,6 +163,20 @@ class InterceptedShapeFromElementsTest {
         assertEquals(Set.of("relabel(java.lang.String)"), assertSameMethodSet(OverridingRelabel.class));
     }
 
+    /** A default method with the descriptor of the public {@link PlainLabelBase#label(String)}. */
+    public interface PlainLabel {
+        default String label(String value) { return "plain-label " + value; }
+    }
+
+    public static class PlainLabelledBySuperclass extends PlainLabelBase implements PlainLabel {
+    }
+
+    @Test
+    @DisplayName("a public superclass method with a default method's descriptor is no shadow: one method")
+    void inheritedClassMethodIsNoShadow() throws Exception {
+        assertEquals(Set.of("label(java.lang.String)"), assertSameMethodSet(PlainLabelledBySuperclass.class));
+    }
+
     /** A private method with the signature of {@link ShadowHider#hidden()}. */
     public static class PrivateHiddenBase {
         @SuppressWarnings("unused")

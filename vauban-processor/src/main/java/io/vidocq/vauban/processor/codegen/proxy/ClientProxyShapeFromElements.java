@@ -109,6 +109,9 @@ public final class ClientProxyShapeFromElements {
      */
     private static void addDefaultMethods(TypeElement bean, boolean asMember, Elements elements,
             Types types, java.util.Set<String> seen, List<ProxyMethodShape> methods) {
+        // What the proxy already declares: whatever path finds a method, it is declared once.
+        var declared = new java.util.HashSet<String>();
+        for (var m : methods) declared.add(declaredSignature(m));
         for (ExecutableElement m : ElementFilter.methodsIn(elements.getAllMembers(bean))) {
             if (!m.getModifiers().contains(Modifier.DEFAULT) || !shouldProxy(m)) continue;
             if (InterceptedShapeFromElements.isShadowedDefault(bean, m, types)) {
@@ -118,6 +121,7 @@ public final class ClientProxyShapeFromElements {
                 var owner = InterceptedShapeFromElements.accessibleDefaultOwner(bean, m, elements, types);
                 if (owner == null) continue;
                 var shape = methodShape(bean, m, asMember, false, elements, types);
+                if (!declared.add(declaredSignature(shape))) continue;
                 methods.add(new ProxyMethodShape(shape.name(), shape.returnType(), shape.params(),
                         shape.thrownTypes(), false,
                         TypeRef.ofReference(elements.getBinaryName(owner).toString(), 0)));
@@ -126,8 +130,14 @@ public final class ClientProxyShapeFromElements {
             // A class method that is the same member (PlainBase.tag(String) implementing
             // Tagged<String>.tag(T)) was seen first and is the one the bean runs.
             if (!seen.add(memberKey(bean, m, types))) continue;
-            methods.add(methodShape(bean, m, asMember, false, elements, types)); // interface methods are public
+            var shape = methodShape(bean, m, asMember, false, elements, types); // interface methods are public
+            if (declared.add(declaredSignature(shape))) methods.add(shape);
         }
+    }
+
+    /** The name and parameter types the proxy declares a method with. */
+    private static String declaredSignature(ProxyMethodShape m) {
+        return m.name() + m.params();
     }
 
     /**

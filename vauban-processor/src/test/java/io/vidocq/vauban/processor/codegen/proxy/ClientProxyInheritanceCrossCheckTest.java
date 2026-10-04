@@ -300,15 +300,41 @@ class ClientProxyInheritanceCrossCheckTest {
         return distinctParts(joined);
     }
 
-    /** The {@code ;}-separated keys, failing on one listed twice: the proxy would declare it twice. */
+    /**
+     * The {@code ;}-separated keys, failing on a signature listed twice — the proxy would declare it
+     * twice — whatever the {@code #mh} or {@code @owner} suffix of either entry.
+     */
     private static Set<String> distinctParts(String joined) {
         var set = new LinkedHashSet<String>();
+        var signatures = new java.util.HashSet<String>();
         for (var part : joined.split(";")) {
             if (!part.isBlank()) {
-                assertTrue(set.add(part), "the shape lists " + part + " twice: " + joined);
+                var signature = part.replaceAll("[#@].*$", "");
+                assertTrue(signatures.add(signature), "the shape lists " + signature + " twice: " + joined);
+                set.add(part);
             }
         }
         return set;
+    }
+
+    /** Implements {@link PlainTagged#tag(String)} through the public {@link PlainTagBase#tag(String)}. */
+    public interface PlainTagged {
+        default String tag(String value) { return "plain-tagged " + value; }
+    }
+
+    public static class PlainTaggedChild extends PlainTagBase implements PlainTagged {
+    }
+
+    @Test
+    @DisplayName("a public superclass method with a default method's descriptor is no shadow: one forward")
+    void inheritedClassMethodIsNoShadow() throws Exception {
+        // PlainTagBase.tag(String) is the bean's member and implements PlainTagged.tag(String):
+        // forwarded once, through the bean class. Taking it for a shadow added a second forward
+        // through the interface: "method tag(String) is already defined".
+        Set<String> expected = Set.of("tag(java.lang.String)");
+        assertEquals(expected, runtimeShape(PlainTaggedChild.class), "run-time shape");
+        assertEquals(expected, shapeFromElements(PlainTaggedChild.class), "source shape");
+        assertEquals(expected, colocatedShapeFromElements(PlainTaggedChild.class), "co-located shape");
     }
 
     private static final Set<String> OBJECT_METHODS =

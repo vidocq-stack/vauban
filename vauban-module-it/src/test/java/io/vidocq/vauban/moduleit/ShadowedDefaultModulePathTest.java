@@ -64,6 +64,20 @@ class ShadowedDefaultModulePathTest {
     }
 
     @Test
+    @DisplayName("a public superclass method with the default's descriptor is no shadow: proxy and subclass agree")
+    void inheritedClassMethodIsNoShadow() throws Exception {
+        try (var container = boot(ScopedPlainLabelledService.class)) {
+            var service = container.select(ScopedPlainLabelledService.class);
+            assertEquals(Class.forName(ScopedPlainLabelledService.class.getName() + "_ClientProxy"), service.getClass());
+            assertEquals("plain x", service.label("x"));
+            PlainLabeled labeled = service;
+            assertEquals("plain y", labeled.label("y"));
+            var declaration = PlainLabelBase.class.getDeclaredMethod("label", String.class);
+            assertEquals(List.of(declaration, declaration), AuditInterceptor.METHODS);
+        }
+    }
+
+    @Test
     @DisplayName("through the build-time client proxy: forwarded, intercepted, and the default body runs")
     void throughTheClientProxy() throws Exception {
         try (var container = boot(ScopedShadowedService.class)) {
