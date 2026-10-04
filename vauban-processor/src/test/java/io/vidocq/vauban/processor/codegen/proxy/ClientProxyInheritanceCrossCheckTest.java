@@ -480,6 +480,30 @@ class ClientProxyInheritanceCrossCheckTest {
         assertEquals(own, colocatedShapeFromElements(CrossPackageOnlyChild.class), "co-located shape");
     }
 
+    /** A generic bean: its proxy extends it raw, where every inherited member is erased. */
+    public static class GenericNoShadowChild<X> implements Tagged<String> {
+    }
+
+    /** A generic bean whose shadowed default comes from a generic interface. */
+    public static class GenericShadowedGenericChild<X> extends PrivateObjectTag implements Tagged<String> {
+    }
+
+    @Test
+    @DisplayName("a generic bean is extended raw: every path overrides the erased member")
+    void genericBeanIsExtendedRaw() throws Exception {
+        // tag(String) is the member of GenericNoShadowChild<X>, but the proxy extends the raw
+        // GenericNoShadowChild, whose member is tag(Object): a tag(String) override "does not
+        // override or implement a method from a supertype".
+        Set<String> expected = Set.of("tag(java.lang.Object)");
+        assertEquals(expected, runtimeShape(GenericNoShadowChild.class), "run-time shape");
+        assertEquals(expected, shapeFromElements(GenericNoShadowChild.class), "source shape");
+        assertEquals(expected, colocatedShapeFromElements(GenericNoShadowChild.class), "co-located shape");
+        Set<String> shadowed = Set.of("tag(java.lang.Object)@" + Tagged.class.getName());
+        assertEquals(shadowed, runtimeShape(GenericShadowedGenericChild.class), "run-time shape");
+        assertEquals(shadowed, shapeFromElements(GenericShadowedGenericChild.class), "source shape");
+        assertEquals(shadowed, colocatedShapeFromElements(GenericShadowedGenericChild.class), "co-located shape");
+    }
+
     /** A private {@code tag(Object)}: the erased descriptor of {@link Tagged#tag(Object)}. */
     public static class PrivateObjectTag {
         @SuppressWarnings("unused")

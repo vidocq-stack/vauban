@@ -110,6 +110,21 @@ class GenericInheritanceModulePathTest {
     }
 
     @Test
+    @DisplayName("a generic bean is extended raw: the subclass overrides the erased member")
+    void genericBeanIsExtendedRaw() throws Exception {
+        // GenericNoShadowService<X>'s member is label(String), but its subclass extends the raw
+        // GenericNoShadowService, whose member is label(Object): an override label(String) "does
+        // not override or implement a method from a supertype".
+        try (var container = boot(GenericNoShadowService.class)) {
+            GenericNoShadowService<?> service = container.select(GenericNoShadowService.class);
+            assertEquals(Class.forName(GenericNoShadowService.class.getName() + "$$Intercepted"), service.getClass());
+            Labeled<String> labeled = service;
+            assertEquals("label x", labeled.label("x"));
+            assertEquals(List.of(Labeled.class.getDeclaredMethod("label", Object.class)), AuditInterceptor.METHODS);
+        }
+    }
+
+    @Test
     @DisplayName("a bean bound only through a generic superclass method")
     void beanBoundThroughAGenericSuperclassMethod() throws Exception {
         try (var container = boot(GenericBoundService.class)) {

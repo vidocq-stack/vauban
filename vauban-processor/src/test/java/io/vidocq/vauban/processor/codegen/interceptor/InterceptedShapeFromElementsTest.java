@@ -225,6 +225,33 @@ class InterceptedShapeFromElementsTest {
                 assertSameMethodSet(CrossPackageShadowedBean.class));
     }
 
+    /** A generic bean: its subclass extends it raw, where every inherited member is erased. */
+    public static class GenericNoShadow<X> implements GenericLabel<String> {
+    }
+
+    public static class GenericShadowed extends PrivateObjectLabel implements GenericLabel<String> {
+    }
+
+    /** A generic bean whose shadowed default comes from a generic interface. */
+    public static class GenericShadowedGeneric<X> extends PrivateObjectLabel implements GenericLabel<String> {
+    }
+
+    @Test
+    @DisplayName("a generic bean is extended raw: the source overrides the erased member (regression)")
+    void genericBeanIsExtendedRaw() throws Exception {
+        // label(String) is the member of GenericNoShadow<X>, but the subclass extends the raw
+        // GenericNoShadow, whose member is label(Object): the override label(String) "does not
+        // override or implement a method from a supertype". A non-generic bean keeps its bound
+        // member signature (GenericShadowed: label(String) overrides, with the erased bridge).
+        assertEquals(Set.of("label(java.lang.Object)"), assertSameMethodSet(GenericNoShadow.class));
+        assertEquals(Set.of("label(java.lang.Object)"), memberSignatures(GenericNoShadow.class));
+        var owner = "@" + GenericLabel.class.getName();
+        assertEquals(Set.of("label(java.lang.Object)" + owner), assertSameMethodSet(GenericShadowed.class));
+        assertEquals(Set.of("label(java.lang.String)"), memberSignatures(GenericShadowed.class));
+        assertEquals(Set.of("label(java.lang.Object)" + owner), assertSameMethodSet(GenericShadowedGeneric.class));
+        assertEquals(Set.of("label(java.lang.Object)"), memberSignatures(GenericShadowedGeneric.class));
+    }
+
     /** A private {@code label(Object)}: the erased descriptor of {@link GenericLabel#label(Object)}. */
     public static class PrivateObjectLabel {
         @SuppressWarnings("unused")

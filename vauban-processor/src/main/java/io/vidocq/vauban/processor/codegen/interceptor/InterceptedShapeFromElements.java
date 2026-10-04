@@ -344,12 +344,16 @@ public final class InterceptedShapeFromElements {
     }
 
     /**
-     * {@code method} as a member of {@code type}: its type variables replaced by what {@code type}
-     * binds them to through its supertypes ({@code label(T)} of {@code Labeled<T>} is
-     * {@code label(String)} in a class implementing {@code Labeled<String>}).
+     * {@code method} as a member of {@code type}, as the generated subclass or proxy sees it: its
+     * type variables replaced by what {@code type} binds them to through its supertypes
+     * ({@code label(T)} of {@code Labeled<T>} is {@code label(String)} in a class implementing
+     * {@code Labeled<String>}). A generic {@code type} is extended raw by the generated class, and
+     * every member of a raw type is erased (JLS 4.8): {@code label(Object)} there, whatever the
+     * bean binds — a {@code label(String)} override would not override anything.
      */
     public static ExecutableType memberType(TypeElement type, ExecutableElement method, Types types) {
-        return (ExecutableType) types.asMemberOf((DeclaredType) type.asType(), method);
+        var seenBy = type.getTypeParameters().isEmpty() ? type.asType() : types.erasure(type.asType());
+        return (ExecutableType) types.asMemberOf((DeclaredType) seenBy, method);
     }
 
     private static List<TypeRef> paramShapes(ExecutableElement method, Elements elements, Types types) {
