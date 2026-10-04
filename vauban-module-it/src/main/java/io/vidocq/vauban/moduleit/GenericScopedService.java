@@ -19,31 +19,15 @@
  */
 package io.vidocq.vauban.moduleit;
 
+import jakarta.enterprise.context.ApplicationScoped;
+
 /**
- * Two levels above {@link InheritingService}: every method here reaches the bean by
- * inheritance, so the processor's {@code $$Intercepted} bridges it from a class that does not
- * declare it (BUG-20261004-01).
+ * A normal-scoped {@code @Audited} bean that binds the type variable of a superclass and of an
+ * interface with default methods: the processor's client proxy and {@code $$Intercepted} sources
+ * must override {@code echo(String)}, {@code identity(String)} and {@code label(String)} as the bean
+ * sees them, not their {@code Object} erasure, or they do not compile (BUG-20261004-06).
  */
-public class AuditedBase {
-
-    public String fromGrandparent(String s) {
-        return "A:" + s;
-    }
-
-    public String overridden() {
-        return "A";
-    }
-
-    protected String inheritedProtected() {
-        return "A-prot";
-    }
-
-    String inheritedPackagePrivate() {
-        return "A-pp";
-    }
-
-    /** Overloaded, not overridden, by {@link AuditedMiddle#overloaded(int)}. */
-    public String overloaded(String s) {
-        return "A-string:" + s;
-    }
+@ApplicationScoped
+@Audited
+public class GenericScopedService extends GenericBase<String> implements Labeled<String> {
 }

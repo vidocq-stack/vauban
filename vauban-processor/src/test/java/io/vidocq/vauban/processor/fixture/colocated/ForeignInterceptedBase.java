@@ -17,33 +17,20 @@
  *
  * SPDX-License-Identifier: EPL-2.0 OR EUPL-1.2 OR GPL-2.0-or-later
  */
-package io.vidocq.vauban.moduleit;
+package io.vidocq.vauban.processor.fixture.colocated;
 
 /**
- * Two levels above {@link InheritingService}: every method here reaches the bean by
- * inheritance, so the processor's {@code $$Intercepted} bridges it from a class that does not
- * declare it (BUG-20261004-01).
+ * A superclass in ANOTHER package than the intercepted bean fixture: the bean inherits its
+ * protected method, which its {@code $$Intercepted} subclass can override, but not its
+ * package-private one, which no class outside this package can override (JLS 8.4.8).
  */
-public class AuditedBase {
+public class ForeignInterceptedBase {
 
-    public String fromGrandparent(String s) {
-        return "A:" + s;
+    protected String foreignProtected() {
+        return "foreign";
     }
 
-    public String overridden() {
-        return "A";
-    }
-
-    protected String inheritedProtected() {
-        return "A-prot";
-    }
-
-    String inheritedPackagePrivate() {
-        return "A-pp";
-    }
-
-    /** Overloaded, not overridden, by {@link AuditedMiddle#overloaded(int)}. */
-    public String overloaded(String s) {
-        return "A-string:" + s;
+    String foreignPackagePrivate() {
+        return "foreign-pp";
     }
 }

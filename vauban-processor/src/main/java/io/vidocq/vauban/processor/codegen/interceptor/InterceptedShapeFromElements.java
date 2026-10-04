@@ -99,7 +99,7 @@ public final class InterceptedShapeFromElements {
             String key = dedupeKey(method, elements, types);
             if (!seen.add(key)) continue;
 
-            methods.add(methodShape(method, elements, types));
+            methods.add(methodShape(bean, method, elements, types));
         }
 
         return new InterceptedShape(beanBinaryName, ctors, methods);
@@ -149,13 +149,35 @@ public final class InterceptedShapeFromElements {
         return sb.toString();
     }
 
-    private static MethodShape methodShape(ExecutableElement method, Elements elements, Types types) {
+    /**
+     * The erased declaration — the descriptor the run-time front-end sees — and the signature as a
+     * member of {@code bean}, which differs when the bean binds a type variable of the declaring
+     * supertype: the source renderer can only override that one (BUG-20261004-06).
+     */
+    private static MethodShape methodShape(TypeElement bean, ExecutableElement method,
+            Elements elements, Types types) {
         TypeRef returnType = typeRefOf(method.getReturnType(), elements, types, 0);
         var params = new ArrayList<TypeRef>();
         for (VariableElement p : method.getParameters()) {
             params.add(typeRefOf(p.asType(), elements, types, 0));
         }
-        return new MethodShape(method.getSimpleName().toString(), returnType, params);
+        var member = memberType(bean, method, types);
+        TypeRef memberReturnType = typeRefOf(member.getReturnType(), elements, types, 0);
+        var memberParams = new ArrayList<TypeRef>();
+        for (TypeMirror p : member.getParameterTypes()) {
+            memberParams.add(typeRefOf(p, elements, types, 0));
+        }
+        return new MethodShape(method.getSimpleName().toString(), returnType, params,
+                memberReturnType, memberParams);
+    }
+
+    /**
+     * {@code method} as a member of {@code type}: its type variables replaced by what {@code type}
+     * binds them to through its supertypes ({@code label(T)} of {@code Labeled<T>} is
+     * {@code label(String)} in a class implementing {@code Labeled<String>}).
+     */
+    public static ExecutableType memberType(TypeElement type, ExecutableElement method, Types types) {
+        return (ExecutableType) types.asMemberOf((DeclaredType) type.asType(), method);
     }
 
     private static List<TypeRef> paramShapes(ExecutableElement method, Elements elements, Types types) {

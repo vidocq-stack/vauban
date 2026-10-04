@@ -20,30 +20,23 @@
 package io.vidocq.vauban.moduleit;
 
 /**
- * Two levels above {@link InheritingService}: every method here reaches the bean by
- * inheritance, so the processor's {@code $$Intercepted} bridges it from a class that does not
- * declare it (BUG-20261004-01).
+ * A generic superclass whose methods take and return its type variable: a subclass binding
+ * {@code T} inherits {@code echo(String)} and {@code String identity(String)}, erased to
+ * {@code Object} in the class file (BUG-20261004-06). {@link #store(Object)} carries the
+ * {@code @Audited} binding itself.
  */
-public class AuditedBase {
+public class GenericBase<T> {
 
-    public String fromGrandparent(String s) {
-        return "A:" + s;
+    public String echo(T value) {
+        return "echo " + value;
     }
 
-    public String overridden() {
-        return "A";
+    public T identity(T value) {
+        return value;
     }
 
-    protected String inheritedProtected() {
-        return "A-prot";
-    }
-
-    String inheritedPackagePrivate() {
-        return "A-pp";
-    }
-
-    /** Overloaded, not overridden, by {@link AuditedMiddle#overloaded(int)}. */
-    public String overloaded(String s) {
-        return "A-string:" + s;
+    @Audited
+    public String store(T value) {
+        return "stored " + value;
     }
 }

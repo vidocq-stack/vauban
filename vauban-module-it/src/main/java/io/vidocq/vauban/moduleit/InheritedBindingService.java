@@ -19,31 +19,18 @@
  */
 package io.vidocq.vauban.moduleit;
 
+import jakarta.enterprise.context.Dependent;
+
 /**
- * Two levels above {@link InheritingService}: every method here reaches the bean by
- * inheritance, so the processor's {@code $$Intercepted} bridges it from a class that does not
- * declare it (BUG-20261004-01).
+ * No binding of its own: the bean is bound only through {@link BoundBase#inheritedBound()}, a
+ * method it inherits (CDI 4.1 §4.2), so the processor must still pre-generate its subclass. It
+ * overrides {@link BoundBase#overriddenBound()} without the binding, which drops it.
  */
-public class AuditedBase {
+@Dependent
+public class InheritedBindingService extends BoundBase {
 
-    public String fromGrandparent(String s) {
-        return "A:" + s;
-    }
-
-    public String overridden() {
-        return "A";
-    }
-
-    protected String inheritedProtected() {
-        return "A-prot";
-    }
-
-    String inheritedPackagePrivate() {
-        return "A-pp";
-    }
-
-    /** Overloaded, not overridden, by {@link AuditedMiddle#overloaded(int)}. */
-    public String overloaded(String s) {
-        return "A-string:" + s;
+    @Override
+    public String overriddenBound() {
+        return "child";
     }
 }

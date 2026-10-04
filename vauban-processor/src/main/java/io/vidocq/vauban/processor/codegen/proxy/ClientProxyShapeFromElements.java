@@ -43,7 +43,10 @@ import java.util.List;
  * <p>Front-end specifics, mirrored from the historical source renderer:
  * <ul>
  *   <li><em>declared</em>, non-static, non-private, non-final, non-abstract instance
- *       methods only (erased signatures);</li>
+ *       methods, the inherited ones each front-end allows, and the interface default methods the
+ *       bean inherits; erased signatures — for {@link #from}, rendered as source, the signature as a
+ *       member of the bean, its type variables bound, which may differ from the bytecode
+ *       descriptor (BUG-20261004-06);</li>
  *   <li>the super constructor is the simplest non-private declared one — its parameter
  *       types become {@link ClientProxyShape#superCtorParams()} (default-value call);</li>
  *   <li>thrown types are kept (erased) so the rendered overrides preserve the bean
@@ -76,6 +79,9 @@ public final class ClientProxyShapeFromElements {
         // declaring package for protected members, and which package-private members do not allow
         // either. ProducerProxyEligibility rejects a produced type in exactly those cases, so an
         // eligible cross-package proxy never loses a method here.
+        //
+        // Each override is declared with the signature the bean sees (its type variables bound),
+        // the only one Java source can override (BUG-20261004-06); javac adds the bridge.
         var seen = new java.util.HashSet<String>();
         boolean declaring = true;
         for (TypeElement c = bean; c != null && !isObject(c); c = superclassOf(c), declaring = false) {
@@ -83,16 +89,53 @@ public final class ClientProxyShapeFromElements {
                 if (!shouldProxy(m)) continue;
                 if (!declaring && !m.getModifiers().contains(Modifier.PUBLIC)) continue;
                 if (!seen.add(signatureKey(m, types))) continue;
-                methods.add(new ProxyMethodShape(
-                        m.getSimpleName().toString(),
-                        typeRef(m.getReturnType(), elements, types),
-                        typeRefs(m.getParameters(), elements, types),
-                        thrownTypeRefs(m.getThrownTypes(), elements, types),
-                        false));
+                methods.add(methodShape(bean, m, true, false, elements, types));
             }
         }
+        addDefaultMethods(bean, true, elements, types, seen, methods);
 
         return new ClientProxyShape(beanBinaryName, superCtorParams(bean, elements, types), methods);
+    }
+
+    /**
+     * The interface default methods {@code bean} inherits — those no class of the bean overrides,
+     * which {@link Elements#getAllMembers} already leaves out — forwarded like any public method.
+     * Left out, a call on the proxy runs the default body on the proxy itself, bypassing the
+     * contextual instance and its interceptors (BUG-20261004-02). As in
+     * {@code RuntimeClientProxyGenerator.shapeOf}, and {@link InterfaceProxySourceRenderer} for an
+     * interface-typed proxy.
+     */
+    private static void addDefaultMethods(TypeElement bean, boolean asMember, Elements elements,
+            Types types, java.util.Set<String> seen, List<ProxyMethodShape> methods) {
+        for (ExecutableElement m : ElementFilter.methodsIn(elements.getAllMembers(bean))) {
+            if (!m.getModifiers().contains(Modifier.DEFAULT)) continue;
+            if (!shouldProxy(m) || !seen.add(signatureKey(m, types))) continue;
+            methods.add(methodShape(bean, m, asMember, false, elements, types)); // interface methods are public
+        }
+    }
+
+    /**
+     * {@code m} forwarded by the proxy of {@code bean}. {@code asMember}: with the signature
+     * {@code bean} sees, its type variables bound — what a source override must declare; else the
+     * erased declaration — the descriptor a bytecode override must have.
+     */
+    private static ProxyMethodShape methodShape(TypeElement bean, ExecutableElement m, boolean asMember,
+            boolean needsMethodHandle, Elements elements, Types types) {
+        if (asMember) {
+            var member = InterceptedShapeFromElements.memberType(bean, m, types);
+            return new ProxyMethodShape(
+                    m.getSimpleName().toString(),
+                    typeRef(member.getReturnType(), elements, types),
+                    mirrorRefs(member.getParameterTypes(), elements, types),
+                    mirrorRefs(member.getThrownTypes(), elements, types),
+                    needsMethodHandle);
+        }
+        return new ProxyMethodShape(
+                m.getSimpleName().toString(),
+                typeRef(m.getReturnType(), elements, types),
+                typeRefs(m.getParameters(), elements, types),
+                mirrorRefs(m.getThrownTypes(), elements, types),
+                needsMethodHandle);
     }
 
     /**
@@ -130,14 +173,10 @@ public final class ClientProxyShapeFromElements {
                 if (!declaring && !isPublic && !mods.contains(Modifier.PROTECTED) && !samePackage) {
                     continue; // package-private in another runtime package: not overridable from here
                 }
-                methods.add(new ProxyMethodShape(
-                        m.getSimpleName().toString(),
-                        typeRef(m.getReturnType(), elements, types),
-                        typeRefs(m.getParameters(), elements, types),
-                        thrownTypeRefs(m.getThrownTypes(), elements, types),
-                        !isPublic && !samePackage));
+                methods.add(methodShape(bean, m, false, !isPublic && !samePackage, elements, types));
             }
         }
+        addDefaultMethods(bean, false, elements, types, seen, methods);
         return new ClientProxyShape(beanBinaryName, superCtorParams(bean, elements, types), methods);
     }
 
@@ -188,10 +227,10 @@ public final class ClientProxyShapeFromElements {
         return refs;
     }
 
-    private static List<TypeRef> thrownTypeRefs(List<? extends TypeMirror> thrown,
+    private static List<TypeRef> mirrorRefs(List<? extends TypeMirror> mirrors,
             Elements elements, Types types) {
-        var refs = new ArrayList<TypeRef>(thrown.size());
-        for (TypeMirror t : thrown) refs.add(typeRef(t, elements, types));
+        var refs = new ArrayList<TypeRef>(mirrors.size());
+        for (TypeMirror t : mirrors) refs.add(typeRef(t, elements, types));
         return refs;
     }
 

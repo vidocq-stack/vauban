@@ -131,4 +131,18 @@ class InheritedMethodModulePathTest {
         assertEquals("hi y", service.greet("y"));
         assertEquals(Greeting.class.getDeclaredMethod("greet", String.class), onlyMethod());
     }
+
+    @Test
+    @DisplayName("an overload declared on the grandparent resolves to the grandparent's method")
+    void overloadOnTheGrandparent() throws Exception {
+        assertEquals("A-string:s", service.overloaded("s"));
+        assertEquals(AuditedBase.class.getDeclaredMethod("overloaded", String.class), onlyMethod());
+    }
+
+    @Test
+    @DisplayName("an overload declared on the parent resolves to the parent's method")
+    void overloadOnTheParent() throws Exception {
+        assertEquals("B-int:4", service.overloaded(4));
+        assertEquals(AuditedMiddle.class.getDeclaredMethod("overloaded", int.class), onlyMethod());
+    }
 }

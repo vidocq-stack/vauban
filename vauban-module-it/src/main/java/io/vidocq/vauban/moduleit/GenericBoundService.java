@@ -19,31 +19,13 @@
  */
 package io.vidocq.vauban.moduleit;
 
+import jakarta.enterprise.context.Dependent;
+
 /**
- * Two levels above {@link InheritingService}: every method here reaches the bean by
- * inheritance, so the processor's {@code $$Intercepted} bridges it from a class that does not
- * declare it (BUG-20261004-01).
+ * No binding of its own: bound only through {@link GenericBase#store(Object)}, a generic method it
+ * inherits, the common shape of a repository bound through its base class
+ * (BUG-20261004-05, BUG-20261004-06).
  */
-public class AuditedBase {
-
-    public String fromGrandparent(String s) {
-        return "A:" + s;
-    }
-
-    public String overridden() {
-        return "A";
-    }
-
-    protected String inheritedProtected() {
-        return "A-prot";
-    }
-
-    String inheritedPackagePrivate() {
-        return "A-pp";
-    }
-
-    /** Overloaded, not overridden, by {@link AuditedMiddle#overloaded(int)}. */
-    public String overloaded(String s) {
-        return "A-string:" + s;
-    }
+@Dependent
+public class GenericBoundService extends GenericBase<String> {
 }

@@ -135,11 +135,13 @@ public final class InterceptedSourceRenderer {
     }
 
     private static void renderOverride(StringBuilder sb, String subSimple, MethodShape m, String tiName) {
-        TypeRef ret = m.returnType();
+        // Declared with the signature the bean sees: Java source cannot override echo(T) of a
+        // Base<String> as echo(Object) (BUG-20261004-06); javac adds the bridge for the descriptor.
+        TypeRef ret = m.memberReturnType();
         String retType = sourceName(ret);
         sb.append("    @Override\n");
         sb.append("    public ").append(retType).append(" ").append(m.name())
-                .append("(").append(params(m.params())).append(") {\n");
+                .append("(").append(params(m.memberParams())).append(") {\n");
 
         sb.append("        try {\n");
         // Pre-init guard: during construction the container has not called $$init yet. It lives
@@ -158,7 +160,7 @@ public final class InterceptedSourceRenderer {
         sb.append("            java.lang.reflect.Method $$m = getClass().getDeclaredMethod(\"")
                 .append(InterceptedShape.superBridgeName(m.name())).append("\"")
                 .append(classLiterals(m.params())).append(");\n");
-        sb.append("            Object[] $$args = new Object[] {").append(boxedArgs(m.params())).append("};\n");
+        sb.append("            Object[] $$args = new Object[] {").append(boxedArgs(m.memberParams())).append("};\n");
         sb.append("            java.util.List $$chain = this.$$manager.resolveChainForMethod(")
                 .append("this.$$bindings, $$m, this, this.$$context);\n");
         sb.append("            ").append(CTX).append(" $$ctx = new ").append(CTX)
@@ -181,17 +183,36 @@ public final class InterceptedSourceRenderer {
         sb.append("    }\n\n");
     }
 
+    /**
+     * The bridge keeps the erased declaration — the descriptor the run-time front-end's bridge has,
+     * which {@code getMethod()} resolves to the declaration — and casts each argument to the type
+     * the bean binds when the two differ, so {@code super.<name>(…)} compiles (BUG-20261004-06).
+     */
     private static void renderSuperBridge(StringBuilder sb, MethodShape m) {
         TypeRef ret = m.returnType();
         sb.append("    public ").append(sourceName(ret)).append(" ")
                 .append(InterceptedShape.superBridgeName(m.name()))
                 .append("(").append(params(m.params())).append(") throws Exception {\n");
         if (ret.isVoid()) {
-            sb.append("        super.").append(m.name()).append("(").append(args(m.params().size())).append(");\n");
+            sb.append("        super.").append(m.name()).append("(").append(memberArgs(m)).append(");\n");
         } else {
-            sb.append("        return super.").append(m.name()).append("(").append(args(m.params().size())).append(");\n");
+            sb.append("        return super.").append(m.name()).append("(").append(memberArgs(m)).append(");\n");
         }
         sb.append("    }\n\n");
+    }
+
+    /** {@code p0, (java.lang.String) p1, …}: each declared-type argument cast to its member type. */
+    private static String memberArgs(MethodShape m) {
+        var sb = new StringBuilder();
+        for (int i = 0; i < m.params().size(); i++) {
+            if (i > 0) sb.append(", ");
+            var member = m.memberParams().get(i);
+            if (!member.equals(m.params().get(i))) {
+                sb.append("(").append(sourceName(member)).append(") ");
+            }
+            sb.append("p").append(i);
+        }
+        return sb.toString();
     }
 
     private static void renderTargetInvokerGlue(StringBuilder sb, String subSimple, MethodShape m, String tiName) {

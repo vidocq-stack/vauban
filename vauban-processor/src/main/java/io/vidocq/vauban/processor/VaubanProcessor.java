@@ -1544,7 +1544,10 @@ public class VaubanProcessor extends AbstractProcessor {
      * <p>Detection uses the javac {@code Elements} API rather than the indexer model: a custom
      * binding annotation defined in (or brought into) the module isn't necessarily in the Vauban
      * index, but its meta-{@code @InterceptorBinding} is always resolvable from the compiler symbol
-     * table. This also covers method-level bindings, which the Maven plugin (class-level only) misses.
+     * table. This also covers method-level bindings, which the Maven plugin (class-level only) misses,
+     * including those of an inherited method: a superclass method or an interface default method the
+     * bean does not override (CDI 4.1 §4.2) — the container intercepts such a bean, and on the strict
+     * module path it cannot define the subclass itself.
      */
     private boolean isInterceptedTarget(TypeElement beanElement) {
         if (beanElement.getModifiers().contains(Modifier.FINAL)) return false;
@@ -1558,11 +1561,34 @@ public class VaubanProcessor extends AbstractProcessor {
         }
         for (var enclosed : beanElement.getEnclosedElements()) {
             if (enclosed.getKind() != ElementKind.METHOD) continue;
-            if (enclosed.getModifiers().contains(Modifier.STATIC)
-                    || enclosed.getModifiers().contains(Modifier.PRIVATE)) continue;
-            for (var am : enclosed.getAnnotationMirrors()) {
-                if (isInterceptorBinding(am)) return true;
+            if (hasMethodLevelBinding((ExecutableElement) enclosed)) return true;
+        }
+        try {
+            // The methods it inherits, as getAllMembers lists them: overridden ones are left out,
+            // so the binding of a method a class of the bean overrides does not count.
+            for (var inherited : javax.lang.model.util.ElementFilter.methodsIn(
+                    processingEnv.getElementUtils().getAllMembers(beanElement))) {
+                if (inherited.getEnclosingElement().equals(beanElement)) continue; // done above
+                if (inherited.getEnclosingElement() instanceof TypeElement owner
+                        && owner.getQualifiedName().contentEquals("java.lang.Object")) continue;
+                if (hasMethodLevelBinding(inherited)) return true;
             }
+        } catch (RuntimeException incomplete) {
+            // A binary supertype or annotation the compiler cannot complete: leave the bean to the
+            // run-time fallback, as for any bean not detected here.
+            processingEnv.getMessager().printMessage(Diagnostic.Kind.NOTE,
+                    "[Vauban] Could not inspect the inherited methods of " + beanElement
+                            + " for interceptor bindings: " + incomplete.getMessage());
+        }
+        return false;
+    }
+
+    /** A non-static, non-private method annotated with an interceptor binding. */
+    private static boolean hasMethodLevelBinding(ExecutableElement method) {
+        if (method.getModifiers().contains(Modifier.STATIC)
+                || method.getModifiers().contains(Modifier.PRIVATE)) return false;
+        for (var am : method.getAnnotationMirrors()) {
+            if (isInterceptorBinding(am)) return true;
         }
         return false;
     }

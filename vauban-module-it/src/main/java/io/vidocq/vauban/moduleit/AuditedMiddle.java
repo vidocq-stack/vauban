@@ -19,7 +19,10 @@
  */
 package io.vidocq.vauban.moduleit;
 
-/** The direct superclass of {@link InheritingService}; overrides one method of its own parent. */
+/**
+ * The direct superclass of {@link InheritingService}; overrides one method of its own parent and
+ * overloads another.
+ */
 public class AuditedMiddle extends AuditedBase {
 
     public String fromParent(int n) {
@@ -29,5 +32,9 @@ public class AuditedMiddle extends AuditedBase {
     @Override
     public String overridden() {
         return "B";
+    }
+
+    public String overloaded(int n) {
+        return "B-int:" + n;
     }
 }

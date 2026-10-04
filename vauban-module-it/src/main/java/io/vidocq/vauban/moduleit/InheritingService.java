@@ -28,7 +28,8 @@ import jakarta.enterprise.context.Dependent;
  *
  * <p>{@code @Dependent}, so a call reaches the generated subclass directly: the processor's client
  * proxy forwards no inherited non-public method (by design, see
- * {@code ClientProxyShapeFromElements#from}) and no interface default method (BUG-20261004-02).</p>
+ * {@code ClientProxyShapeFromElements#from}). {@link ScopedGreetingService} covers a default
+ * method reached through the client proxy (BUG-20261004-02).</p>
  */
 @Dependent
 @Audited

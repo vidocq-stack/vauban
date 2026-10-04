@@ -29,7 +29,8 @@ import java.util.List;
 
 /**
  * Runtime ({@code Class<?>}-driven) front-end of the client-proxy generation: walks the
- * full class hierarchy, selects the proxied methods, decides per method whether the
+ * full class hierarchy and the inherited interface default methods, selects the proxied methods,
+ * decides per method whether the
  * override must dispatch through a {@code MethodHandle} (JVMS §4.10.1.9 — protected or
  * package-private member declared in another runtime package), picks the simplest
  * non-private super constructor, and builds the neutral {@link ClientProxyShape}.
@@ -101,6 +102,21 @@ public final class RuntimeClientProxyGenerator {
                 }
             }
             current = current.getSuperclass();
+        }
+        // The interface default methods no class above overrides: left out, a call on the proxy
+        // would run the default body on the proxy itself, bypassing the contextual instance and its
+        // interceptors (BUG-20261004-02). getMethods() lists the most specific default of each.
+        for (var method : beanClass.getMethods()) {
+            if (!method.isDefault()) continue;
+            var key = method.getName() + java.util.Arrays.toString(method.getParameterTypes());
+            if (proxiedSeen.add(key) && shouldProxy(method)) {
+                methods.add(new ProxyMethodShape(
+                        method.getName(),
+                        TypeRef.fromClass(method.getReturnType()),
+                        typeRefs(method.getParameterTypes()),
+                        typeRefs(method.getExceptionTypes()),
+                        false)); // interface methods are public
+            }
         }
 
         // CDI 4.1: beans with only @Inject constructors (no no-arg) must still be proxyable —

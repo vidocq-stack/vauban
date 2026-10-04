@@ -63,6 +63,9 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * <p>Deliberate residual divergence: the source path stops at {@code java.lang.Object}, whereas the
  * bytecode path also forwards {@code toString/equals/hashCode}. CDI 4.1 leaves the behaviour of
  * {@code Object} methods (except {@code toString}) undefined, so the comparison below excludes them.
+ * And a method whose parameters or return type use a type variable the bean binds is declared, in
+ * source, with the signature the bean sees ({@code echo(String)}), in bytecode with the erased
+ * descriptor ({@code echo(Object)}): each is the only override its language accepts.
  */
 @DisplayName("Client proxy — source and bytecode paths agree on inherited members")
 class ClientProxyInheritanceCrossCheckTest {
@@ -181,6 +184,73 @@ class ClientProxyInheritanceCrossCheckTest {
                     "co-located source and bytecode shapes disagree on " + fixture.getSimpleName()
                             + " (method set or MethodHandle dispatch)");
         }
+    }
+
+    /** Default methods: one inherited as is, one overridden by the class, one re-declared lower. */
+    public interface Greeting {
+        default String greet() { return "hi"; }
+        default String rebound() { return "iface"; }
+        default String refined() { return "greeting"; }
+    }
+
+    /** Overrides {@link Greeting#refined()} with a default method of its own. */
+    public interface RefinedGreeting extends Greeting {
+        @Override
+        default String refined() { return "refined"; }
+    }
+
+    public static class DefaultChild implements RefinedGreeting {
+        public String own() { return "own"; }
+
+        @Override
+        public String rebound() { return "class"; }
+    }
+
+    @Test
+    @DisplayName("every path forwards an inherited interface default method, once (BUG-20261004-02)")
+    void defaultMethodsAreForwarded() throws Exception {
+        // Not forwarding greet() lets a call on the proxy run the default body against the proxy
+        // itself: the contextual instance and its interceptors are bypassed.
+        ClientProxyShape fromClass = RuntimeClientProxyGenerator.shapeOf(DefaultChild.class);
+        Set<String> bytecode = fromClass.methods().stream()
+                .map(m -> m.name() + "(" + m.params().stream().map(Object::toString)
+                        .collect(Collectors.joining(",")) + ")" + (m.needsMethodHandle() ? "#mh" : ""))
+                .filter(k -> !OBJECT_METHODS.contains(k))
+                .collect(Collectors.toCollection(LinkedHashSet::new));
+        Set<String> expected = Set.of("own()", "rebound()", "greet()", "refined()");
+        assertEquals(expected, bytecode, "bytecode shape");
+        assertEquals(fromClass.methods().size() - 3, expected.size(),
+                "each signature once (plus the 3 Object methods): " + fromClass.methods());
+        assertEquals(expected, shapeFromElements(DefaultChild.class), "source shape");
+        assertEquals(expected, colocatedShapeFromElements(DefaultChild.class), "co-located shape");
+    }
+
+    /** A generic base and interface whose methods take their type variable. */
+    public static class TaggedBase<T> {
+        public String echo(T value) { return "echo " + value; }
+    }
+
+    public interface Tagged<T> {
+        default String tag(T value) { return "tag " + value; }
+    }
+
+    public static class GenericChild extends TaggedBase<String> implements Tagged<String> {
+    }
+
+    @Test
+    @DisplayName("the source shape overrides a generic method as the bean sees it, the bytecode shapes by descriptor")
+    void genericMethodsUseTheMemberSignatureInSource() throws Exception {
+        // Java source can only override echo(String) in a subclass of TaggedBase<String>: echo(Object)
+        // is a name clash (BUG-20261004-06). A class file overrides by descriptor, echo(Object).
+        assertEquals(Set.of("echo(java.lang.String)", "tag(java.lang.String)"),
+                shapeFromElements(GenericChild.class), "source shape");
+        Set<String> bytecode = Set.of("echo(java.lang.Object)", "tag(java.lang.Object)");
+        assertEquals(bytecode, colocatedShapeFromElements(GenericChild.class), "co-located (bytecode) shape");
+        assertEquals(bytecode, RuntimeClientProxyGenerator.shapeOf(GenericChild.class).methods().stream()
+                .map(m -> m.name() + "(" + m.params().stream().map(Object::toString)
+                        .collect(Collectors.joining(",")) + ")")
+                .filter(k -> !OBJECT_METHODS.contains(k))
+                .collect(Collectors.toSet()), "run-time shape");
     }
 
     private Set<String> colocatedShapeFromElements(Class<?> fixture) throws Exception {

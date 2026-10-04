@@ -577,16 +577,28 @@ final class InterceptorBeanWrapper {
 
                 var matches = interceptorManager.resolveInterceptorDescriptors(classBindings);
                 if (matches.isEmpty()) {
+                    // A method-level binding on a business method the bean declares or inherits —
+                    // from a superclass or as an interface default method — as long as no class of
+                    // the bean overrides it (CDI 4.1 §4.2): each method is resolved from the bean
+                    // class, exactly as the chain resolves it at invocation time.
                     boolean hasInterceptors = false;
                     var checkClass = beanClass;
                     while (checkClass != null && checkClass != Object.class && !hasInterceptors) {
                         for (var m : checkClass.getDeclaredMethods()) {
-                            if (!interceptorManager.resolveInterceptorDescriptorsForMethod(classBindings, m).isEmpty()) {
+                            if (!interceptorManager.resolveInterceptorDescriptorsForMethod(
+                                    classBindings, beanClass, m).isEmpty()) {
                                 hasInterceptors = true;
                                 break;
                             }
                         }
                         checkClass = checkClass.getSuperclass();
+                    }
+                    for (var m : beanClass.getMethods()) {
+                        if (hasInterceptors) break;
+                        if (m.isDefault() && !interceptorManager.resolveInterceptorDescriptorsForMethod(
+                                classBindings, beanClass, m).isEmpty()) {
+                            hasInterceptors = true;
+                        }
                     }
                     if (!hasInterceptors) {
                         for (var ctor : beanClass.getDeclaredConstructors()) {

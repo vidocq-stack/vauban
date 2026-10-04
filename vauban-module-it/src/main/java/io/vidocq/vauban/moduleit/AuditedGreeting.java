@@ -19,31 +19,17 @@
  */
 package io.vidocq.vauban.moduleit;
 
-/**
- * Two levels above {@link InheritingService}: every method here reaches the bean by
- * inheritance, so the processor's {@code $$Intercepted} bridges it from a class that does not
- * declare it (BUG-20261004-01).
- */
-public class AuditedBase {
+/** Default methods that carry the {@code @Audited} binding themselves. */
+public interface AuditedGreeting {
 
-    public String fromGrandparent(String s) {
-        return "A:" + s;
+    @Audited
+    default String audited(String who) {
+        return "audited " + who;
     }
 
-    public String overridden() {
-        return "A";
-    }
-
-    protected String inheritedProtected() {
-        return "A-prot";
-    }
-
-    String inheritedPackagePrivate() {
-        return "A-pp";
-    }
-
-    /** Overloaded, not overridden, by {@link AuditedMiddle#overloaded(int)}. */
-    public String overloaded(String s) {
-        return "A-string:" + s;
+    /** Overridden by {@link DefaultBoundService} without the binding. */
+    @Audited
+    default String rebound() {
+        return "iface";
     }
 }

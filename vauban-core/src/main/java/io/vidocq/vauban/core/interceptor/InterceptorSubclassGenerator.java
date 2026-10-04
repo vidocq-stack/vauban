@@ -59,7 +59,8 @@ public final class InterceptorSubclassGenerator {
     /**
      * Build an {@link InterceptedShape} from a runtime {@link Class}.
      *
-     * <p>Iteration order is IDENTICAL to the original pre-refactor code:
+     * <p>Iteration order is IDENTICAL to the original pre-refactor code, the inherited non-public
+     * methods added last so the shape of a bean that has none is unchanged:
      * <ol>
      *   <li>Constructors via {@link Class#getDeclaredConstructors()}, skipping private ones.</li>
      *   <li>Declared methods via {@link Class#getDeclaredMethods()} filtered by
@@ -67,6 +68,8 @@ public final class InterceptorSubclassGenerator {
      *   <li>Inherited public methods via {@link Class#getMethods()}, skipping those whose
      *       declaring class is the bean itself (already covered) or {@code Object}, and deduplicating
      *       by {@code name + Arrays.toString(parameterTypes)}, filtered by {@link #shouldIntercept(Method)}.</li>
+     *   <li>Inherited protected and package-private methods, walking the superclasses (see
+     *       {@code addInheritedNonPublicMethods}), so the set matches the processor's front-end.</li>
      * </ol>
      */
     public static InterceptedShape fromClass(Class<?> beanClass) {
@@ -107,8 +110,51 @@ public final class InterceptorSubclassGenerator {
                 seen.add(key);
             }
         }
+        // And the inherited protected and package-private ones, which getMethods() leaves out:
+        // business methods too, and intercepted by the processor's subclass (BUG-20261004-03).
+        addInheritedNonPublicMethods(beanClass, methods, seen);
 
         return new InterceptedShape(beanBinaryName, ctors, methods);
+    }
+
+    /**
+     * The protected and package-private methods {@code beanClass} inherits from its superclasses,
+     * as {@code Elements#getAllMembers} lists them for the processor's front-end: the most derived
+     * declaration of a signature decides (a {@code final} or {@code private} one hides the rest), and
+     * a package-private method is inherited only when every class from the bean up to its declaring
+     * class shares that class's runtime package (JLS 8.4.8) — the only case a subclass can override.
+     */
+    private static void addInheritedNonPublicMethods(Class<?> beanClass, List<MethodShape> methods,
+            java.util.Set<String> seen) {
+        var declared = new java.util.HashSet<String>();
+        for (Class<?> c = beanClass; c != null && c != Object.class; c = c.getSuperclass()) {
+            var declaredHere = new ArrayList<String>();
+            for (var method : c.getDeclaredMethods()) {
+                var key = method.getName() + Arrays.toString(method.getParameterTypes());
+                declaredHere.add(key);
+                if (c == beanClass || declared.contains(key) || seen.contains(key)) continue;
+                int mods = method.getModifiers();
+                boolean inherited = Modifier.isProtected(mods)
+                        || (!Modifier.isPublic(mods) && !Modifier.isPrivate(mods)
+                                && packagePrivateInherited(beanClass, c));
+                if (inherited && shouldIntercept(method)) {
+                    methods.add(methodShapeOf(method));
+                    seen.add(key);
+                }
+            }
+            declared.addAll(declaredHere);
+        }
+    }
+
+    /** Whether a package-private member of {@code declaring} is inherited by {@code beanClass}. */
+    private static boolean packagePrivateInherited(Class<?> beanClass, Class<?> declaring) {
+        for (Class<?> c = beanClass; c != declaring; c = c.getSuperclass()) {
+            if (!c.getPackageName().equals(declaring.getPackageName())
+                    || c.getClassLoader() != declaring.getClassLoader()) {
+                return false;
+            }
+        }
+        return true;
     }
 
     // ---- helpers ----

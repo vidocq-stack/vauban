@@ -20,30 +20,12 @@
 package io.vidocq.vauban.moduleit;
 
 /**
- * Two levels above {@link InheritingService}: every method here reaches the bean by
- * inheritance, so the processor's {@code $$Intercepted} bridges it from a class that does not
- * declare it (BUG-20261004-01).
+ * A generic interface whose default method takes its type variable: a bean binding {@code T} sees
+ * {@code label(String)}, while the erased declaration is {@code label(Object)} (BUG-20261004-06).
  */
-public class AuditedBase {
+public interface Labeled<T> {
 
-    public String fromGrandparent(String s) {
-        return "A:" + s;
-    }
-
-    public String overridden() {
-        return "A";
-    }
-
-    protected String inheritedProtected() {
-        return "A-prot";
-    }
-
-    String inheritedPackagePrivate() {
-        return "A-pp";
-    }
-
-    /** Overloaded, not overridden, by {@link AuditedMiddle#overloaded(int)}. */
-    public String overloaded(String s) {
-        return "A-string:" + s;
+    default String label(T value) {
+        return "label " + value;
     }
 }

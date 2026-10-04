@@ -19,31 +19,18 @@
  */
 package io.vidocq.vauban.moduleit;
 
+import jakarta.enterprise.context.ApplicationScoped;
+
 /**
- * Two levels above {@link InheritingService}: every method here reaches the bean by
- * inheritance, so the processor's {@code $$Intercepted} bridges it from a class that does not
- * declare it (BUG-20261004-01).
+ * A normal-scoped {@code @Audited} bean that inherits {@link Greeting#greet(String)}: a call
+ * through the processor's client proxy must reach the contextual instance and its interceptor
+ * (BUG-20261004-02).
  */
-public class AuditedBase {
+@ApplicationScoped
+@Audited
+public class ScopedGreetingService implements Greeting {
 
-    public String fromGrandparent(String s) {
-        return "A:" + s;
-    }
-
-    public String overridden() {
-        return "A";
-    }
-
-    protected String inheritedProtected() {
-        return "A-prot";
-    }
-
-    String inheritedPackagePrivate() {
-        return "A-pp";
-    }
-
-    /** Overloaded, not overridden, by {@link AuditedMiddle#overloaded(int)}. */
-    public String overloaded(String s) {
-        return "A-string:" + s;
+    public String own() {
+        return "own";
     }
 }

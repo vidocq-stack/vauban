@@ -40,7 +40,6 @@ import java.util.function.Predicate;
 public final class InterceptorManager {
 
     private static final String INTERCEPTED_SUFFIX = InterceptedShape.SUBCLASS_SUFFIX;
-    private static final String SUPER_PREFIX = InterceptedShape.SUPER_BRIDGE_PREFIX;
 
     private final List<InterceptorDescriptor> interceptors;
     private final Map<DotName, Object> interceptorInstances = new LinkedHashMap<>();
@@ -246,33 +245,29 @@ public final class InterceptorManager {
         return matches;
     }
 
-    @SuppressWarnings("java:S135")
     public List<InterceptorDescriptor> resolveInterceptorDescriptorsForMethod(
             Set<DotName> classBindings, java.lang.reflect.Method method) {
         if (method == null) return List.of();
-        
         Class<?> beanClass = method.getDeclaringClass();
         if (beanClass.getName().contains(INTERCEPTED_SUFFIX)) {
             beanClass = beanClass.getSuperclass();
         }
+        return resolveInterceptorDescriptorsForMethod(classBindings, beanClass, method);
+    }
+
+    /**
+     * The interceptors bound to {@code method} — a business method of {@code beanClass}, possibly
+     * inherited — without creating instances: the bean's class-level bindings plus those of the
+     * declaration the call runs ({@code BusinessMethods.declarationOf}), as the chain will apply them.
+     */
+    @SuppressWarnings("java:S135")
+    public List<InterceptorDescriptor> resolveInterceptorDescriptorsForMethod(
+            Set<DotName> classBindings, Class<?> beanClass, java.lang.reflect.Method method) {
+        if (method == null) return List.of();
 
         var bindingsMap = collectAllBindings(beanClass);
-        var methodName = method.getName();
-        if (methodName.startsWith(SUPER_PREFIX)) {
-            methodName = methodName.substring(SUPER_PREFIX.length());
-        }
-        
-        var current = beanClass;
-        while (current != null && current != Object.class) {
-            try {
-                var originalMethod = current.getDeclaredMethod(methodName, method.getParameterTypes());
-                collectBindingsRecursively(originalMethod.getAnnotations(), bindingsMap, new java.util.HashSet<>());
-                break;
-            } catch (NoSuchMethodException e) {
-                current = current.getSuperclass();
-            }
-        }
-        
+        collectDeclarationBindings(beanClass, method, bindingsMap);
+
         var allBindingNames = new java.util.LinkedHashSet<DotName>();
         for (var type : bindingsMap.keySet()) {
             allBindingNamesAdd(allBindingNames, type.getName());
@@ -440,25 +435,14 @@ public final class InterceptorManager {
         return chain;
     }
 
-    /** The bindings of {@code beanClass} and of {@code method}, and the interceptors they select. */
+    /**
+     * The bindings of {@code beanClass} and of the declaration {@code method} runs, and the
+     * interceptors they select.
+     */
     private List<InterceptorDescriptor> matchingForMethod(Class<?> beanClass,
             java.lang.reflect.Method method, Set<DotName> classBindings) {
         var bindingsMap = collectAllBindings(beanClass);
-
-        var methodName = method.getName();
-        if (methodName.startsWith(SUPER_PREFIX)) {
-            methodName = methodName.substring(SUPER_PREFIX.length());
-        }
-        var current = beanClass;
-        while (current != null && current != Object.class) {
-            try {
-                var originalMethod = current.getDeclaredMethod(methodName, method.getParameterTypes());
-                collectBindingsRecursively(originalMethod.getAnnotations(), bindingsMap, new java.util.HashSet<>());
-                break;
-            } catch (NoSuchMethodException e) {
-                current = current.getSuperclass();
-            }
-        }
+        collectDeclarationBindings(beanClass, method, bindingsMap);
 
         var allBindingNames = new java.util.LinkedHashSet<DotName>();
         for (var type : bindingsMap.keySet()) {
@@ -466,6 +450,19 @@ public final class InterceptorManager {
         }
         allBindingNames.addAll(classBindings);
         return matching(allBindingNames, new java.util.ArrayList<>(bindingsMap.values()));
+    }
+
+    /**
+     * Adds the method-level bindings of the declaration a call of {@code method} (or of the business
+     * method its {@code $$super$} bridge stands for) runs on a {@code beanClass} instance — the
+     * declaration {@link VaubanInvocationContext#getMethod()} reports and reads its own bindings from.
+     */
+    private void collectDeclarationBindings(Class<?> beanClass, java.lang.reflect.Method method,
+            Map<Class<? extends java.lang.annotation.Annotation>, java.lang.annotation.Annotation> bindingsMap) {
+        var declaration = BusinessMethods.declarationOf(beanClass, method);
+        if (declaration != null) {
+            collectBindingsRecursively(declaration.getAnnotations(), bindingsMap, new java.util.HashSet<>());
+        }
     }
 
     /**

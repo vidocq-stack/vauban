@@ -58,9 +58,14 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * class actually declares or inherits — its declaring class and its name — never the bridge,
  * wherever it sits in the hierarchy (BUG-20261004-01).</p>
  *
- * <p>Private methods are not business methods and are never intercepted. This front-end does not
- * intercept an inherited protected or package-private method at all (BUG-20261004-03), so the
- * inherited non-public edge is pinned on the processor's subclass, in {@code vauban-module-it}.</p>
+ * <p>An inherited protected or package-private business method is intercepted too, as the
+ * processor's subclass does (BUG-20261004-03). Private methods are not business methods and are
+ * never intercepted.</p>
+ *
+ * <p>The method-level bindings follow CDI 4.1 §4.2: a binding declared on a superclass method
+ * applies only while no class below overrides the method, so the {@code @Marked} interceptor runs
+ * exactly for the declaration {@code getMethod()} reports, and {@code getInterceptorBindings()}
+ * lists {@code @Marked} exactly then.</p>
  */
 @DisplayName("InvocationContext.getMethod() — method inherited by the intercepted bean")
 class InheritedInterceptedMethodTest {
@@ -71,11 +76,25 @@ class InheritedInterceptedMethodTest {
     public @interface Traced {
     }
 
-    /** A second binding, declared on an inherited method only; no interceptor is bound to it. */
+    /** A second binding, declared on inherited methods only. */
     @InterceptorBinding
     @Retention(RetentionPolicy.RUNTIME)
     @Target({ElementType.TYPE, ElementType.METHOD})
     public @interface Marked {
+    }
+
+    /** Bound to {@link Marked}: records the method of each call its binding selects it for. */
+    @Marked
+    @Interceptor
+    @Priority(Interceptor.Priority.APPLICATION + 1)
+    public static class MarkingInterceptor {
+        static final List<Method> CALLS = new CopyOnWriteArrayList<>();
+
+        @AroundInvoke
+        public Object mark(InvocationContext ctx) throws Exception {
+            CALLS.add(ctx.getMethod());
+            return ctx.proceed();
+        }
     }
 
     /** What the interceptor saw for one call. */
@@ -115,6 +134,26 @@ class InheritedInterceptedMethodTest {
         public String overridden() {
             return "A";
         }
+
+        protected String inheritedProtected() {
+            return "A-prot";
+        }
+
+        String inheritedPackagePrivate() {
+            return "A-pp";
+        }
+
+        /** Overridden by {@link Parent} without the binding: the binding must not apply. */
+        @Marked
+        public String rebound() {
+            return "A-rebound";
+        }
+
+        /** Overloaded, not overridden, by {@link Parent#overloaded(String)}. */
+        @Marked
+        public String overloaded(int n) {
+            return "A-int:" + n;
+        }
     }
 
     /** B — the bean's direct superclass. */
@@ -126,6 +165,15 @@ class InheritedInterceptedMethodTest {
         @Override
         public String overridden() {
             return "B";
+        }
+
+        @Override
+        public String rebound() {
+            return "B-rebound";
+        }
+
+        public String overloaded(String s) {
+            return "B-string:" + s;
         }
     }
 
@@ -144,8 +192,8 @@ class InheritedInterceptedMethodTest {
 
     /**
      * {@code @Dependent}, so no client proxy stands between the caller and the generated
-     * subclass: the normal-scoped client proxies do not forward an interface default method
-     * (BUG-20261004-02).
+     * subclass; {@link DefaultMethodInterceptionTest} covers a default method reached through a
+     * client proxy (BUG-20261004-02).
      */
     @Traced
     @Dependent
@@ -159,7 +207,8 @@ class InheritedInterceptedMethodTest {
     @BeforeAll
     static void boot() {
         container = SeContainerInitializer.newInstance()
-                .addBeanClasses(TracedService.class, DependentGreeter.class, TracingInterceptor.class)
+                .addBeanClasses(TracedService.class, DependentGreeter.class, TracingInterceptor.class,
+                        MarkingInterceptor.class)
                 .initialize();
         service = container.select(TracedService.class).get();
         greeter = container.select(DependentGreeter.class).get();
@@ -173,6 +222,7 @@ class InheritedInterceptedMethodTest {
     @BeforeEach
     void reset() {
         TracingInterceptor.SEEN.clear();
+        MarkingInterceptor.CALLS.clear();
     }
 
     private static Seen onlySeen() {
@@ -206,6 +256,8 @@ class InheritedInterceptedMethodTest {
         assertEquals(Grandparent.class.getDeclaredMethod("fromGrandparent", String.class), seen.method());
         assertTrue(seen.bindings().contains("Marked"),
                 "the method-level binding of the inherited method must be visible, got " + seen.bindings());
+        assertEquals(List.of(seen.method()), MarkingInterceptor.CALLS,
+                "the interceptor bound to the inherited method's binding must run");
     }
 
     @Test
@@ -227,5 +279,52 @@ class InheritedInterceptedMethodTest {
     void defaultMethodOfAnInterface() throws Exception {
         assertEquals("hi y", greeter.greet("y"));
         assertEquals(Greeter.class.getDeclaredMethod("greet", String.class), onlySeen().method());
+    }
+
+    @Test
+    @DisplayName("an inherited protected method is intercepted, as the grandparent's method")
+    void inheritedProtected() throws Exception {
+        assertEquals("A-prot", service.inheritedProtected());
+        assertEquals(Grandparent.class.getDeclaredMethod("inheritedProtected"), onlySeen().method());
+    }
+
+    @Test
+    @DisplayName("an inherited package-private method is intercepted, as the grandparent's method")
+    void inheritedPackagePrivate() throws Exception {
+        assertEquals("A-pp", service.inheritedPackagePrivate());
+        assertEquals(Grandparent.class.getDeclaredMethod("inheritedPackagePrivate"), onlySeen().method());
+    }
+
+    @Test
+    @DisplayName("an overridden method drops the binding the superclass method declares")
+    void overriddenMethodDropsTheSuperclassBinding() throws Exception {
+        assertEquals("B-rebound", service.rebound());
+        var seen = onlySeen();
+        assertEquals(Parent.class.getDeclaredMethod("rebound"), seen.method());
+        assertFalse(seen.bindings().contains("Marked"),
+                "Parent overrides rebound() without @Marked, got " + seen.bindings());
+        assertEquals(List.of(), MarkingInterceptor.CALLS,
+                "the binding of the overridden Grandparent.rebound() must not select its interceptor");
+    }
+
+    @Test
+    @DisplayName("an overload declared on the grandparent resolves to the grandparent's method")
+    void overloadOnTheGrandparent() throws Exception {
+        assertEquals("A-int:3", service.overloaded(3));
+        var seen = onlySeen();
+        assertEquals(Grandparent.class.getDeclaredMethod("overloaded", int.class), seen.method());
+        assertTrue(seen.bindings().contains("Marked"), "got " + seen.bindings());
+        assertEquals(List.of(seen.method()), MarkingInterceptor.CALLS);
+    }
+
+    @Test
+    @DisplayName("an overload declared on the parent resolves to the parent's method")
+    void overloadOnTheParent() throws Exception {
+        assertEquals("B-string:s", service.overloaded("s"));
+        var seen = onlySeen();
+        assertEquals(Parent.class.getDeclaredMethod("overloaded", String.class), seen.method());
+        assertFalse(seen.bindings().contains("Marked"),
+                "the @Marked of the int overload must not leak to the String one, got " + seen.bindings());
+        assertEquals(List.of(), MarkingInterceptor.CALLS);
     }
 }

@@ -102,22 +102,54 @@ class InterceptedShapeFromElementsTest {
     @Test
     @DisplayName("fromElements and fromClass agree on the interceptable method set")
     void methodSetsAgree() throws Exception {
+        assertSameMethodSet(FixtureBean.class);
+    }
+
+    /** Non-public methods of a same-package superclass, and of one in another package. */
+    public static class NonPublicBase extends io.vidocq.vauban.processor.fixture.colocated.ForeignInterceptedBase {
+        protected String inheritedProtected() { return "prot"; }
+        String inheritedPackagePrivate() { return "pp"; }
+        private String inheritedPrivate() { return "private"; }
+        protected String overriddenProtected() { return "base"; }
+    }
+
+    /** Inherits every kind of non-public method; overrides one with a {@code final} declaration. */
+    public static class NonPublicBean extends NonPublicBase {
+        public String own() { return "own"; }
+        @Override
+        protected final String overriddenProtected() { return "bean"; }
+    }
+
+    @Test
+    @DisplayName("fromClass intercepts inherited non-public methods exactly as fromElements does (BUG-20261004-03)")
+    void inheritedNonPublicMethodsAgree() throws Exception {
+        Set<String> fromClass = assertSameMethodSet(NonPublicBean.class);
+        // Business methods are the non-private, non-static ones the bean inherits: a protected one
+        // wherever it is declared, a package-private one only from its own package (JLS 8.4.8) —
+        // a subclass in another package could not override it. A final override hides the rest.
+        assertEquals(Set.of("own()", "inheritedProtected()", "inheritedPackagePrivate()", "foreignProtected()"),
+                fromClass);
+    }
+
+    // ---- helpers ----
+
+    /** The run-time and the processor front-ends select the same methods of {@code fixture}. */
+    private Set<String> assertSameMethodSet(Class<?> fixture) throws Exception {
         // Compute the expected set from the runtime Class path
-        InterceptedShape fromClassShape = InterceptorSubclassGenerator.fromClass(FixtureBean.class);
+        InterceptedShape fromClassShape = InterceptorSubclassGenerator.fromClass(fixture);
         Set<String> expectedKeys = fromClassShape.methods().stream()
                 .map(InterceptedShapeFromElementsTest::methodKey)
                 .collect(Collectors.toCollection(LinkedHashSet::new));
 
         // Compute the actual set from the Elements path (in-process javac)
-        Set<String> actualKeys = computeFromElements();
+        Set<String> actualKeys = computeFromElements(fixture);
 
         assertEquals(expectedKeys, actualKeys,
                 "fromElements and fromClass disagree on interceptable methods.\n" +
                 "fromClass only: " + difference(expectedKeys, actualKeys) + "\n" +
                 "fromElements only: " + difference(actualKeys, expectedKeys));
+        return expectedKeys;
     }
-
-    // ---- helpers ----
 
     private static String methodKey(MethodShape m) {
         String params = m.params().stream()
@@ -137,7 +169,7 @@ class InterceptedShapeFromElementsTest {
      * live {@link TypeElement} and {@link Elements}/{@link Types} utilities, then
      * calls {@link InterceptedShapeFromElements#from}.
      */
-    private Set<String> computeFromElements() throws Exception {
+    private Set<String> computeFromElements(Class<?> fixture) throws Exception {
         // We build the source for FixtureBean and FixtureSuper from their class names
         // by referencing the already-compiled classes on the classpath.
         // Rather than re-compiling the fixture source, we use a "no-op" annotation
@@ -174,7 +206,7 @@ class InterceptedShapeFromElementsTest {
             var task = compiler.getTask(null, fm, diagnostics, options, null,
                     List.of(triggerFile, sourceFile));
 
-            task.setProcessors(List.of(new CaptureProcessor(captured)));
+            task.setProcessors(List.of(new CaptureProcessor(fixture, captured)));
             task.call();
         }
 
@@ -189,13 +221,15 @@ class InterceptedShapeFromElementsTest {
     /**
      * A minimal annotation processor that, when it sees {@code @CrossCheckTrigger},
      * captures the Elements/Types environment and calls {@link InterceptedShapeFromElements#from}
-     * on {@link FixtureBean}.
+     * on the fixture.
      */
     private static class CaptureProcessor extends javax.annotation.processing.AbstractProcessor {
 
+        private final Class<?> fixture;
         private final AtomicReference<Set<String>> sink;
 
-        CaptureProcessor(AtomicReference<Set<String>> sink) {
+        CaptureProcessor(Class<?> fixture, AtomicReference<Set<String>> sink) {
+            this.fixture = fixture;
             this.sink = sink;
         }
 
@@ -217,7 +251,7 @@ class InterceptedShapeFromElementsTest {
             Types types = processingEnv.getTypeUtils();
 
             // getTypeElement takes the canonical qualified name (dots, no $) for nested types
-            String fixtureBinaryName = FixtureBean.class.getName().replace('$', '.');
+            String fixtureBinaryName = fixture.getName().replace('$', '.');
             TypeElement beanElement = elements.getTypeElement(fixtureBinaryName);
             if (beanElement == null) {
                 // Fixture not on the compilation classpath — skip
