@@ -66,6 +66,12 @@ public final class ClientProxyShapeFromElements {
 
     /** Build the neutral shape for {@code bean}. */
     public static ClientProxyShape from(TypeElement bean, Elements elements, Types types) {
+        return from(bean, elements.getPackageOf(bean), elements, types);
+    }
+
+    /** Build the neutral shape for {@code bean}, the proxy being rendered in {@code proxyPackage}. */
+    public static ClientProxyShape from(TypeElement bean, javax.lang.model.element.PackageElement proxyPackage,
+            Elements elements, Types types) {
         String beanBinaryName = elements.getBinaryName(bean).toString();
 
         var methods = new ArrayList<ProxyMethodShape>();
@@ -94,7 +100,7 @@ public final class ClientProxyShapeFromElements {
                 methods.add(methodShape(bean, m, true, false, elements, types));
             }
         }
-        addDefaultMethods(bean, true, elements, types, seen, methods);
+        addDefaultMethods(bean, true, proxyPackage, elements, types, seen, methods);
 
         return new ClientProxyShape(beanBinaryName, superCtorParams(bean, elements, types), methods);
     }
@@ -107,7 +113,8 @@ public final class ClientProxyShapeFromElements {
      * {@code RuntimeClientProxyGenerator.shapeOf}, and {@link InterfaceProxySourceRenderer} for an
      * interface-typed proxy.
      */
-    private static void addDefaultMethods(TypeElement bean, boolean asMember, Elements elements,
+    private static void addDefaultMethods(TypeElement bean, boolean asMember,
+            javax.lang.model.element.PackageElement proxyPackage, Elements elements,
             Types types, java.util.Set<String> seen, List<ProxyMethodShape> methods) {
         // What the proxy already declares: whatever path finds a method, it is declared once.
         var declared = new java.util.HashSet<String>();
@@ -118,7 +125,9 @@ public final class ClientProxyShapeFromElements {
                 // A declaration the bean does not inherit (a private superclass method) holds the
                 // key, and a call typed by the bean class would resolve to it and be refused: forward
                 // through an interface instead (BUG-20261004-08), or not at all when none qualifies.
-                var owner = InterceptedShapeFromElements.accessibleDefaultOwner(bean, m, elements, types);
+                // The proxy must name the interface where it is rendered: the bean's package, or a
+                // producer's (#42) — where a package-private one of the bean's package is out of reach.
+                var owner = InterceptedShapeFromElements.accessibleDefaultOwner(bean, m, proxyPackage, elements, types);
                 if (owner == null) continue;
                 var shape = methodShape(bean, m, asMember, false, elements, types);
                 if (!declared.add(declaredSignature(shape))) continue;
@@ -210,7 +219,7 @@ public final class ClientProxyShapeFromElements {
                 methods.add(methodShape(bean, m, false, !isPublic && !samePackage, elements, types));
             }
         }
-        addDefaultMethods(bean, false, elements, types, seen, methods);
+        addDefaultMethods(bean, false, elements.getPackageOf(bean), elements, types, seen, methods);
         return new ClientProxyShape(beanBinaryName, superCtorParams(bean, elements, types), methods);
     }
 

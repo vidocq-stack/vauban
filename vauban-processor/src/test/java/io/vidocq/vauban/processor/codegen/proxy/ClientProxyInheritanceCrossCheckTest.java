@@ -317,6 +317,39 @@ class ClientProxyInheritanceCrossCheckTest {
         return set;
     }
 
+    /** Package-private: only a class of this package can name it. */
+    interface PackageHidingTag {
+        default String hidden() { return "default"; }
+    }
+
+    public static class ShadowedPackageTagChild extends PrivateHiddenTag implements PackageHidingTag {
+    }
+
+    @Test
+    @DisplayName("a proxy rendered in another package forwards a shadowed default only through an interface it can name")
+    void shadowedDefaultFromAnotherPackage() throws Exception {
+        // Beside the bean, the package-private PackageHidingTag can be named: forwarded through it.
+        assertEquals(Set.of("hidden()@" + PackageHidingTag.class.getName()),
+                shapeFromElements(ShadowedPackageTagChild.class), "proxy in the bean's package");
+        // A producer's proxy rendered in another package cannot name it (nor cast to it): rather than
+        // a build break, hidden() is not forwarded there — as when no interface qualifies at all.
+        assertEquals(Set.of(), shapeFromElementsIn(ShadowedPackageTagChild.class, "proxycrosscheck"),
+                "proxy in another package");
+    }
+
+    private Set<String> shapeFromElementsIn(Class<?> fixture, String proxyPackage) throws Exception {
+        String joined = capture(fixture, (element, env) -> {
+            var shape = ClientProxyShapeFromElements.from(element,
+                    env.elements().getPackageElement(proxyPackage), env.elements(), env.types());
+            return shape.methods().stream()
+                    .map(m -> m.name() + "(" + m.params().stream().map(Object::toString)
+                            .collect(Collectors.joining(",")) + ")" + ownerSuffix(m))
+                    .filter(k -> !OBJECT_METHODS.contains(k))
+                    .collect(Collectors.joining(";"));
+        });
+        return distinctParts(joined);
+    }
+
     /** Implements {@link PlainTagged#tag(String)} through the public {@link PlainTagBase#tag(String)}. */
     public interface PlainTagged {
         default String tag(String value) { return "plain-tagged " + value; }

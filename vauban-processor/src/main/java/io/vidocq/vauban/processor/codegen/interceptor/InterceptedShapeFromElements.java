@@ -171,6 +171,16 @@ public final class InterceptedShapeFromElements {
      */
     public static TypeElement accessibleDefaultOwner(TypeElement bean, ExecutableElement method,
             Elements elements, Types types) {
+        return accessibleDefaultOwner(bean, method, elements.getPackageOf(bean), elements, types);
+    }
+
+    /**
+     * The same, for a class generated in {@code generatedIn} — a producer's package for a producer's
+     * proxy (#42), from where a package-private interface of the bean's package cannot be named:
+     * there, a method whose interfaces are all out of reach gets {@code null}, and is not forwarded.
+     */
+    public static TypeElement accessibleDefaultOwner(TypeElement bean, ExecutableElement method,
+            PackageElement generatedIn, Elements elements, Types types) {
         var declaring = (TypeElement) method.getEnclosingElement();
         var candidates = new java.util.LinkedHashSet<TypeElement>();
         candidates.add(declaring);
@@ -187,7 +197,7 @@ public final class InterceptedShapeFromElements {
         }
         for (var candidate : candidates) {
             if (ElementFilter.methodsIn(elements.getAllMembers(candidate)).contains(method)
-                    && nameableFrom(candidate, bean, elements)) {
+                    && nameableFrom(candidate, generatedIn, elements)) {
                 return candidate;
             }
         }
@@ -215,18 +225,23 @@ public final class InterceptedShapeFromElements {
         return owner.getQualifiedName().toString();
     }
 
-    private static boolean nameableFrom(TypeElement candidate, TypeElement bean, Elements elements) {
-        if (elements.getPackageOf(candidate).equals(elements.getPackageOf(bean))) return true;
+    /**
+     * Whether code in {@code from} can name {@code candidate}: same package, or public and exported
+     * to it. A {@code null} {@code from} — a package not known — asks for public and exported to all.
+     */
+    private static boolean nameableFrom(TypeElement candidate, PackageElement from, Elements elements) {
+        if (from != null && elements.getPackageOf(candidate).equals(from)) return true;
         for (Element e = candidate; e instanceof TypeElement t; e = t.getEnclosingElement()) {
             if (!t.getModifiers().contains(Modifier.PUBLIC)) return false;
         }
         var ownerModule = elements.getModuleOf(candidate);
-        var beanModule = elements.getModuleOf(bean);
-        if (ownerModule == null || ownerModule.isUnnamed() || ownerModule.equals(beanModule)) return true;
+        var fromModule = from != null ? elements.getModuleOf(from) : null;
+        if (ownerModule == null || ownerModule.isUnnamed()
+                || (fromModule != null && ownerModule.equals(fromModule))) return true;
         var pkg = elements.getPackageOf(candidate);
         for (var directive : ElementFilter.exportsIn(ownerModule.getDirectives())) {
-            if (directive.getPackage().equals(pkg)
-                    && (directive.getTargetModules() == null || directive.getTargetModules().contains(beanModule))) {
+            if (directive.getPackage().equals(pkg) && (directive.getTargetModules() == null
+                    || (fromModule != null && directive.getTargetModules().contains(fromModule)))) {
                 return true;
             }
         }

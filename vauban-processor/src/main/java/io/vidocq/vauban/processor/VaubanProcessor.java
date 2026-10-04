@@ -624,7 +624,15 @@ public class VaubanProcessor extends AbstractProcessor {
                     continue;
                 }
                 var producerPkg = packageOfFqn(bean.beanClass().value());
-                var shape = ClientProxyShapeFromElements.from(producedType,
+                // Rendered in the producer's package: an interface the proxy forwards a shadowed
+                // default method through must be nameable from there (BUG-20261004-08).
+                var producerElement = processingEnv.getElementUtils()
+                        .getTypeElement(bean.beanClass().value().replace('$', '.'));
+                // Unknown package (null): only an interface nameable from anywhere qualifies.
+                var proxyPackage = producerElement != null
+                        ? processingEnv.getElementUtils().getPackageOf(producerElement)
+                        : processingEnv.getElementUtils().getPackageElement(producerPkg);
+                var shape = ClientProxyShapeFromElements.from(producedType, proxyPackage,
                         processingEnv.getElementUtils(), processingEnv.getTypeUtils());
                 var producedSimple = producedFqn.substring(producedFqn.lastIndexOf('.') + 1)
                         .replace('$', '_');
