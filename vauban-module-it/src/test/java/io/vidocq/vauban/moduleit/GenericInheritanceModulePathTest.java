@@ -86,6 +86,30 @@ class GenericInheritanceModulePathTest {
     }
 
     @Test
+    @DisplayName("a generic method the bean overrides with the bound type, through the client proxy")
+    void overriddenGenericMethodThroughTheClientProxy() throws Exception {
+        try (var container = boot(OverridingGenericService.class)) {
+            assertEquals("overridden y", container.select(OverridingGenericService.class).echo("y"));
+            assertEquals(List.of(OverridingGenericService.class.getDeclaredMethod("echo", String.class)),
+                    AuditInterceptor.METHODS);
+        }
+    }
+
+    @Test
+    @DisplayName("an interface method implemented by a plain superclass method, called both ways")
+    void interfaceMethodImplementedBySuperclass() throws Exception {
+        try (var container = boot(LabelledBySuperclassService.class)) {
+            var service = container.select(LabelledBySuperclassService.class);
+            assertEquals("plain x", service.label("x"));
+            Labeled<String> labeled = service;
+            assertEquals("plain z", labeled.label("z"));
+            var declaration = PlainLabelBase.class.getDeclaredMethod("label", String.class);
+            assertEquals(List.of(declaration, declaration), AuditInterceptor.METHODS,
+                    "intercepted once per call, through the class and through the interface");
+        }
+    }
+
+    @Test
     @DisplayName("a bean bound only through a generic superclass method")
     void beanBoundThroughAGenericSuperclassMethod() throws Exception {
         try (var container = boot(GenericBoundService.class)) {

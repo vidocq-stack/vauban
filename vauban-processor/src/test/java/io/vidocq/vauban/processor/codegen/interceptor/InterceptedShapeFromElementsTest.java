@@ -131,6 +131,38 @@ class InterceptedShapeFromElementsTest {
                 fromClass);
     }
 
+    /** A plain superclass whose method implements {@code GenericLabel<String>.label(T)} for its subclass. */
+    public static class PlainLabelBase {
+        public String label(String value) { return "plain " + value; }
+    }
+
+    public interface GenericLabel<T> {
+        default String label(T value) { return "label " + value; }
+    }
+
+    public static class LabelledBySuperclass extends PlainLabelBase implements GenericLabel<String> {
+    }
+
+    public static class GenericRelabelBase<T> {
+        public String relabel(T value) { return "base " + value; }
+    }
+
+    /** Overrides the generic {@link GenericRelabelBase#relabel} with the type it binds. */
+    public static class OverridingRelabel extends GenericRelabelBase<String> {
+        @Override
+        public String relabel(String value) { return "child " + value; }
+    }
+
+    @Test
+    @DisplayName("two declarations that are the same member of the bean give one method (BUG-20261004-06)")
+    void oneMethodPerMemberSignature() throws Exception {
+        // PlainLabelBase.label(String) implements GenericLabel.label(T) for LabelledBySuperclass:
+        // getAllMembers lists both, and keyed on the erased declarations they made two methods that
+        // the source renderer declared as the same label(String).
+        assertEquals(Set.of("label(java.lang.String)"), assertSameMethodSet(LabelledBySuperclass.class));
+        assertEquals(Set.of("relabel(java.lang.String)"), assertSameMethodSet(OverridingRelabel.class));
+    }
+
     // ---- helpers ----
 
     /** The run-time and the processor front-ends select the same methods of {@code fixture}. */
@@ -260,8 +292,16 @@ class InterceptedShapeFromElementsTest {
 
             InterceptedShape shape = InterceptedShapeFromElements.from(beanElement, elements, types);
             Set<String> keys = new LinkedHashSet<>();
+            Set<String> memberSignatures = new LinkedHashSet<>();
             for (MethodShape m : shape.methods()) {
                 keys.add(methodKey(m));
+                // The source renderer declares each method with its member signature: two alike
+                // would be "already defined". Surface them as a key no front-end ever produces.
+                var member = m.name() + "(" + m.memberParams().stream().map(TypeRef::toString)
+                        .collect(Collectors.joining(",")) + ")";
+                if (!memberSignatures.add(member)) {
+                    keys.add("DUPLICATE MEMBER SIGNATURE " + member);
+                }
             }
             sink.set(keys);
             return false;

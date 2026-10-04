@@ -50,7 +50,8 @@ import java.util.List;
  *       <li>annotated with {@code @jakarta.inject.Inject} or {@code @jakarta.interceptor.AroundInvoke}</li>
  *     </ul>
  *   </li>
- *   <li>Deduplication by {@code name + '[' + erased-param-binary-names + ']'}.</li>
+ *   <li>One method per signature as a member of the bean ({@link #memberSignatureKey}), class
+ *       methods before interface default methods.</li>
  * </ol>
  *
  * <p>Bridge/synthetic methods do not appear in the Elements model so no special handling
@@ -87,22 +88,40 @@ public final class InterceptedShapeFromElements {
             ctors.add(new CtorShape(paramShapes(ctor, elements, types)));
         }
 
-        // Methods — all members including inherited, deduped
+        // Methods — all members including inherited, one per member signature. getAllMembers drops
+        // an overridden method, but not a class method that implements an interface method for the
+        // bean (PlainBase.label(String) for Labeled<String>.label(T)): both are the member
+        // label(String), which the source renderer would declare twice (BUG-20261004-06). Class
+        // methods come first, so the one the bean runs wins; a final one still hides the other.
         var methods = new ArrayList<MethodShape>();
         var seen = new LinkedHashSet<String>();
-
-        for (Element member : elements.getAllMembers(bean)) {
-            if (member.getKind() != ElementKind.METHOD) continue;
-            ExecutableElement method = (ExecutableElement) member;
-            if (!shouldIntercept(method, elements)) continue;
-
-            String key = dedupeKey(method, elements, types);
-            if (!seen.add(key)) continue;
-
-            methods.add(methodShape(bean, method, elements, types));
+        var members = ElementFilter.methodsIn(elements.getAllMembers(bean));
+        for (boolean interfacePass : new boolean[] {false, true}) {
+            for (ExecutableElement method : members) {
+                if (declaredByInterface(method) != interfacePass) continue;
+                if (!seen.add(memberSignatureKey(bean, method, types))) continue;
+                if (!shouldIntercept(method, elements)) continue;
+                methods.add(methodShape(bean, method, elements, types));
+            }
         }
 
         return new InterceptedShape(beanBinaryName, ctors, methods);
+    }
+
+    private static boolean declaredByInterface(ExecutableElement method) {
+        return method.getEnclosingElement().getKind().isInterface();
+    }
+
+    /**
+     * {@code method}'s name and erased parameter types as a member of {@code bean}: two declarations
+     * with the same key are one method of the bean, which a subclass or proxy overrides once.
+     */
+    public static String memberSignatureKey(TypeElement bean, ExecutableElement method, Types types) {
+        var sb = new StringBuilder(method.getSimpleName()).append('(');
+        for (TypeMirror p : memberType(bean, method, types).getParameterTypes()) {
+            sb.append(types.erasure(p)).append(',');
+        }
+        return sb.append(')').toString();
     }
 
     // ---- predicate ----
@@ -136,18 +155,6 @@ public final class InterceptedShapeFromElements {
     }
 
     // ---- shape builders ----
-
-    private static String dedupeKey(ExecutableElement method, Elements elements, Types types) {
-        var sb = new StringBuilder(method.getSimpleName().toString());
-        sb.append('[');
-        var params = method.getParameters();
-        for (int i = 0; i < params.size(); i++) {
-            if (i > 0) sb.append(',');
-            sb.append(erasedBinaryName(params.get(i).asType(), elements, types));
-        }
-        sb.append(']');
-        return sb.toString();
-    }
 
     /**
      * The erased declaration — the descriptor the run-time front-end sees — and the signature as a
@@ -229,19 +236,5 @@ public final class InterceptedShapeFromElements {
                 return TypeRef.ofReference("java.lang.Object", dims);
             }
         }
-    }
-
-    /** Erased binary name for dedup key computation. */
-    private static String erasedBinaryName(TypeMirror tm, Elements elements, Types types) {
-        if (tm.getKind().isPrimitive()) return tm.getKind().name().toLowerCase();
-        if (tm.getKind() == TypeKind.ARRAY) {
-            ArrayType at = (ArrayType) tm;
-            return erasedBinaryName(at.getComponentType(), elements, types) + "[]";
-        }
-        TypeMirror erased = types.erasure(tm);
-        if (erased instanceof DeclaredType dt) {
-            return elements.getBinaryName((TypeElement) dt.asElement()).toString();
-        }
-        return erased.toString();
     }
 }

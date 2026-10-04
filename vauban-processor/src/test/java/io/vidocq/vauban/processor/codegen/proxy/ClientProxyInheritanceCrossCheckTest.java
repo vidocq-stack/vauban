@@ -253,6 +253,40 @@ class ClientProxyInheritanceCrossCheckTest {
                 .collect(Collectors.toSet()), "run-time shape");
     }
 
+    /** Overrides the generic {@link TaggedBase#echo} with the type it binds. */
+    public static class OverridingGenericChild extends TaggedBase<String> {
+        @Override
+        public String echo(String value) { return "child " + value; }
+    }
+
+    /** A plain superclass whose method implements {@code Tagged<String>.tag(T)} for its subclass. */
+    public static class PlainTagBase {
+        public String tag(String value) { return "plain " + value; }
+    }
+
+    public static class TaggedBySuperclass extends PlainTagBase implements Tagged<String> {
+    }
+
+    @Test
+    @DisplayName("one override per member signature, even when two declarations are the same member (BUG-20261004-06)")
+    void oneOverridePerMemberSignature() throws Exception {
+        // echo(String) overrides TaggedBase.echo(T); PlainTagBase.tag(String) implements Tagged.tag(T).
+        // Keyed on the erased declarations, each pair counted twice and the source rendered the same
+        // member twice: "method echo(String) is already defined".
+        for (var fixture : List.of(OverridingGenericChild.class, TaggedBySuperclass.class)) {
+            Set<String> expected = Set.of(fixture == OverridingGenericChild.class
+                    ? "echo(java.lang.String)" : "tag(java.lang.String)");
+            assertEquals(expected, RuntimeClientProxyGenerator.shapeOf(fixture).methods().stream()
+                    .map(m -> m.name() + "(" + m.params().stream().map(Object::toString)
+                            .collect(Collectors.joining(",")) + ")")
+                    .filter(k -> !OBJECT_METHODS.contains(k))
+                    .collect(Collectors.toSet()), "run-time shape of " + fixture.getSimpleName());
+            assertEquals(expected, shapeFromElements(fixture), "source shape of " + fixture.getSimpleName());
+            assertEquals(expected, colocatedShapeFromElements(fixture),
+                    "co-located shape of " + fixture.getSimpleName());
+        }
+    }
+
     private Set<String> colocatedShapeFromElements(Class<?> fixture) throws Exception {
         String joined = capture(fixture, (element, env) -> {
             var shape = ClientProxyShapeFromElements.fromColocated(element, env.elements(), env.types());
@@ -262,9 +296,16 @@ class ClientProxyInheritanceCrossCheckTest {
                     .filter(k -> !OBJECT_METHODS.contains(k.replace("#mh", "")))
                     .collect(Collectors.joining(";"));
         });
+        return distinctParts(joined);
+    }
+
+    /** The {@code ;}-separated keys, failing on one listed twice: the proxy would declare it twice. */
+    private static Set<String> distinctParts(String joined) {
         var set = new LinkedHashSet<String>();
         for (var part : joined.split(";")) {
-            if (!part.isBlank()) set.add(part);
+            if (!part.isBlank()) {
+                assertTrue(set.add(part), "the shape lists " + part + " twice: " + joined);
+            }
         }
         return set;
     }
@@ -288,11 +329,7 @@ class ClientProxyInheritanceCrossCheckTest {
                     .filter(k -> !OBJECT_METHODS.contains(k))
                     .collect(Collectors.joining(";"));
         });
-        var set = new LinkedHashSet<String>();
-        for (var part : joined.split(";")) {
-            if (!part.isBlank()) set.add(part);
-        }
-        return set;
+        return distinctParts(joined);
     }
 
     /** The Elements/Types pair handed to the callback. */

@@ -81,14 +81,16 @@ public final class ClientProxyShapeFromElements {
         // eligible cross-package proxy never loses a method here.
         //
         // Each override is declared with the signature the bean sees (its type variables bound),
-        // the only one Java source can override (BUG-20261004-06); javac adds the bridge.
+        // the only one Java source can override (BUG-20261004-06); javac adds the bridge. The walk
+        // is keyed on that signature too: echo(String) overriding Base<String>.echo(T) is one
+        // member, and the most derived declaration decides, a non-proxyable one included.
         var seen = new java.util.HashSet<String>();
         boolean declaring = true;
         for (TypeElement c = bean; c != null && !isObject(c); c = superclassOf(c), declaring = false) {
             for (ExecutableElement m : ElementFilter.methodsIn(c.getEnclosedElements())) {
+                if (!seen.add(memberKey(bean, m, types))) continue;
                 if (!shouldProxy(m)) continue;
                 if (!declaring && !m.getModifiers().contains(Modifier.PUBLIC)) continue;
-                if (!seen.add(signatureKey(m, types))) continue;
                 methods.add(methodShape(bean, m, true, false, elements, types));
             }
         }
@@ -109,9 +111,19 @@ public final class ClientProxyShapeFromElements {
             Types types, java.util.Set<String> seen, List<ProxyMethodShape> methods) {
         for (ExecutableElement m : ElementFilter.methodsIn(elements.getAllMembers(bean))) {
             if (!m.getModifiers().contains(Modifier.DEFAULT)) continue;
-            if (!shouldProxy(m) || !seen.add(signatureKey(m, types))) continue;
+            // A class method that is the same member (PlainBase.tag(String) implementing
+            // Tagged<String>.tag(T)) was seen first and is the one the bean runs.
+            if (!shouldProxy(m) || !seen.add(memberKey(bean, m, types))) continue;
             methods.add(methodShape(bean, m, asMember, false, elements, types)); // interface methods are public
         }
+    }
+
+    /**
+     * The member signature of {@code m} in {@code bean}, which every walk is keyed on: two
+     * declarations with the same key are one method of the bean, forwarded once.
+     */
+    private static String memberKey(TypeElement bean, ExecutableElement m, Types types) {
+        return InterceptedShapeFromElements.memberSignatureKey(bean, m, types);
     }
 
     /**
@@ -166,7 +178,7 @@ public final class ClientProxyShapeFromElements {
         for (TypeElement c = bean; c != null && !isObject(c); c = superclassOf(c), declaring = false) {
             boolean samePackage = elements.getPackageOf(c).getQualifiedName().contentEquals(beanPackage);
             for (ExecutableElement m : ElementFilter.methodsIn(c.getEnclosedElements())) {
-                if (!seen.add(signatureKey(m, types))) continue;
+                if (!seen.add(memberKey(bean, m, types))) continue;
                 if (!shouldProxy(m)) continue;
                 var mods = m.getModifiers();
                 boolean isPublic = mods.contains(Modifier.PUBLIC);
@@ -247,14 +259,5 @@ public final class ClientProxyShapeFromElements {
     private static TypeElement superclassOf(TypeElement t) {
         return t.getSuperclass() instanceof javax.lang.model.type.DeclaredType dt
                 && dt.asElement() instanceof TypeElement se ? se : null;
-    }
-
-    /** Erased name-and-parameters key: spots an override so a superclass copy is not emitted twice. */
-    private static String signatureKey(ExecutableElement m, Types types) {
-        var sb = new StringBuilder(m.getSimpleName().toString()).append('(');
-        for (var p : m.getParameters()) {
-            sb.append(types.erasure(p.asType()).toString()).append(',');
-        }
-        return sb.append(')').toString();
     }
 }
