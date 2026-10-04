@@ -112,4 +112,33 @@ final class BusinessMethods {
             return null;
         }
     }
+
+    /**
+     * Whether {@code declaration} is a business method of {@code beanClass}: an instance method that
+     * is not private and that the bean inherits (JLS 8.4.8) — the methods its generated subclass
+     * overrides, and the only ones whose bindings count. A package-private method of a class in
+     * another runtime package is not inherited, and no subclass of the bean can override it. The
+     * processor's front-end counts the same methods ({@code Elements#getAllMembers}).
+     */
+    static boolean isBusinessMethodOf(Class<?> beanClass, Method declaration) {
+        int modifiers = declaration.getModifiers();
+        if (Modifier.isStatic(modifiers) || Modifier.isPrivate(modifiers)) return false;
+        if (Modifier.isPublic(modifiers) || Modifier.isProtected(modifiers)) return true;
+        return packagePrivateInherited(beanClass, declaration.getDeclaringClass());
+    }
+
+    /**
+     * Whether a package-private member of {@code declaring} is inherited by {@code beanClass}: every
+     * class from the bean up to its declaring class shares that class's runtime package (JLS 8.4.8),
+     * the only case in which a subclass can override it.
+     */
+    static boolean packagePrivateInherited(Class<?> beanClass, Class<?> declaring) {
+        for (Class<?> c = beanClass; c != null && c != declaring; c = c.getSuperclass()) {
+            if (!c.getPackageName().equals(declaring.getPackageName())
+                    || c.getClassLoader() != declaring.getClassLoader()) {
+                return false;
+            }
+        }
+        return true;
+    }
 }

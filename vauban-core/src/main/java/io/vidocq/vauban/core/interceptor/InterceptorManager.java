@@ -456,11 +456,14 @@ public final class InterceptorManager {
      * Adds the method-level bindings of the declaration a call of {@code method} (or of the business
      * method its {@code $$super$} bridge stands for) runs on a {@code beanClass} instance — the
      * declaration {@link VaubanInvocationContext#getMethod()} reports and reads its own bindings from.
+     * Only a business method of the bean has bindings that count: a private or static method, or a
+     * package-private one of another package, is never intercepted, and the processor does not
+     * count it either.
      */
     private void collectDeclarationBindings(Class<?> beanClass, java.lang.reflect.Method method,
             Map<Class<? extends java.lang.annotation.Annotation>, java.lang.annotation.Annotation> bindingsMap) {
         var declaration = BusinessMethods.declarationOf(beanClass, method);
-        if (declaration != null) {
+        if (declaration != null && BusinessMethods.isBusinessMethodOf(beanClass, declaration)) {
             collectBindingsRecursively(declaration.getAnnotations(), bindingsMap, new java.util.HashSet<>());
         }
     }

@@ -133,28 +133,15 @@ public final class InterceptorSubclassGenerator {
                 var key = method.getName() + Arrays.toString(method.getParameterTypes());
                 declaredHere.add(key);
                 if (c == beanClass || declared.contains(key) || seen.contains(key)) continue;
-                int mods = method.getModifiers();
-                boolean inherited = Modifier.isProtected(mods)
-                        || (!Modifier.isPublic(mods) && !Modifier.isPrivate(mods)
-                                && packagePrivateInherited(beanClass, c));
-                if (inherited && shouldIntercept(method)) {
+                // Public ones came from getMethods(); the rest only when the bean inherits them.
+                if (!Modifier.isPublic(method.getModifiers())
+                        && BusinessMethods.isBusinessMethodOf(beanClass, method) && shouldIntercept(method)) {
                     methods.add(methodShapeOf(method));
                     seen.add(key);
                 }
             }
             declared.addAll(declaredHere);
         }
-    }
-
-    /** Whether a package-private member of {@code declaring} is inherited by {@code beanClass}. */
-    private static boolean packagePrivateInherited(Class<?> beanClass, Class<?> declaring) {
-        for (Class<?> c = beanClass; c != declaring; c = c.getSuperclass()) {
-            if (!c.getPackageName().equals(declaring.getPackageName())
-                    || c.getClassLoader() != declaring.getClassLoader()) {
-                return false;
-            }
-        }
-        return true;
     }
 
     // ---- helpers ----
