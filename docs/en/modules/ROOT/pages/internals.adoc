@@ -44,7 +44,7 @@ The processor generates:
 | Subclass generated for normal scopes. Forwards every public method to the active context. Where the proxy is generated depends on who owns the proxied type — see <<proxy-strategies>>.
 
 | `MyBean$$Intercepted`
-| Subclass generated for beans with interceptor bindings — routes the intercepted methods through the interceptor chain.
+| Subclass generated for beans with interceptor bindings — routes the intercepted methods through the interceptor chain (see <<intercepted-methods,which methods it covers>>).
 
 | `_VaubanComponents`
 | One per package. Implements `io.vidocq.vauban.api.VaubanComponentProvider`: instantiates the package's components in-module (`new X(…)`), injects fields, creates client proxies and invokes producers, observers, disposers and lifecycle callbacks — no reflection, no `opens`. Its `coverage()` declares all of these, keyed as the container asks for them; `VaubanContainer.codegenCoverage()` reads it to tell, per bean, observer and interceptor, which generator covers each operation and which falls back to reflection — what the Vidocq dev console shows. For a scanned dependency jar, `vidocq:generate` asks the generator for the same providers (`VaubanGenerator.Config#dependencyProviders`) and moves them into an enriched copy of that jar, whose descriptor declares them.
@@ -56,6 +56,29 @@ A build on a newer JDK would otherwise write classes next to javac's own output 
 runtime refuses to load, with `UnsupportedClassVersionError` at deployment and `jlink` refusing the
 image. Weaving is the mirror rule: it patches a class someone else compiled, so it hands back that
 class's own version untouched.
+
+[#intercepted-methods]
+=== Which methods the intercepted subclass covers [.tag-new]#NEW#
+
+`MyBean$$Intercepted` overrides every business method of the bean: the ones it declares, the
+public, protected and package-private superclass methods it inherits, and the interface default
+methods no class of the bean overrides. The processor's subclass already covered the inherited
+protected and package-private methods; the subclass the container generates at run time and the
+one `vauban:generate` writes now cover them too, so a call the bean makes on itself to such a method
+is intercepted as well.
+
+A method-level interceptor binding is read from the declaration a call runs. The binding of an
+inherited method, on a default method as on a superclass method, stops applying once a class of the
+bean overrides that method. The class-level bindings of an interface never apply.
+`InvocationContext.getMethod()` reports that declaration, not the generated `$$super$` bridge, and
+`getInterceptorBindings()` includes its bindings. The client proxy of a normal-scoped bean forwards
+the same default methods to the contextual instance.
+
+When the processor cannot write an inherited default method in Java source, it leaves that method
+out of the class and prints a `[Vauban]` warning that says what a call does instead. That happens
+when the method's signature, as a member of the bean, names a type the generated class's package
+cannot name, or when a superclass method the bean does not inherit shadows the default and no
+interface carrying the default can be named there.
 
 [#proxy-strategies]
 == Client proxies — one strategy per case [.tag-new]#NEW#
@@ -363,13 +386,32 @@ Normal scoped bean com.acme.Report has final method render
 Normal scoped bean com.acme.Session has only a private no-arg constructor
 ----
 
-Interception adds its own pair, because an intercepted bean is also a subclass:
+[#unproxyable-intercepted]
+Interception adds its own checks, because an intercepted bean is also a subclass. A managed bean
+that is not normal-scoped and carries a class-level interceptor binding is checked with the rest of
+the deployment, in the block above:
 
 [source,text]
 ----
   - Intercepted bean com.acme.Audit cannot be final (interception requires subclassing)
   - Intercepted bean com.acme.Audit has final method write (interception requires subclassing)
 ----
+
+[.tag-new]#NEW# A bean intercepted any other way is checked when the container wraps it: through a
+method-level binding it declares or inherits, an interface default method included, a constructor
+binding, or an `@AroundInvoke` method of its own. The `DeploymentException` then says why the bean
+is intercepted, since its own source may carry no binding at all:
+
+[source,text]
+----
+jakarta.enterprise.inject.spi.DeploymentException: Intercepted bean com.acme.Audit must not be
+final. An intercepted bean must be proxyable (CDI 4.1 §3.10); com.acme.Audit is intercepted
+because of the method-level interceptor binding @com.acme.Logged of com.acme.Journaled.write(),
+an interface default method it inherits.
+----
+
+The same explanation follows `has final method <name>.` and `has only private no-arg constructor
+(unproxyable).` A final class used to fail there with a `DefinitionException`.
 
 None of these has a workaround in Vauban, and that is deliberate: CDI 4.1 §3.10 rules them out, so
 the answer is to change the type — drop `final`, add a non-private constructor — or to produce an
