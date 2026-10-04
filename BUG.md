@@ -1569,7 +1569,7 @@ and a proposed upstream assertion: `CDI_TCK_PROPOSALS.md` → `TCK-GAP-001`.
 ## BUG-20261004-08 — A default method shadowed by a private superclass method cannot be called through the generated classes
 
 - **Date**: 2026-10-04
-- **Status**: FIXED 2026-10-04 (`1de9e00`, branch `pr/ybl/inherited-interceptor-method`)
+- **Status**: FIXED 2026-10-04 (`1de9e00`; re-review fixes `016858e`, `3caac57`, `1e3a925`, branch `pr/ybl/inherited-interceptor-method`)
 - **Module**: `vauban-core` (`ShadowedDefaults`, `InterceptorSubclassGenerator`, `InterceptedEmitter`, `RuntimeClientProxyGenerator`, `ClientProxyEmitter`, `MethodShape`, `ClientProxyShape`), `vauban-processor` (`InterceptedShapeFromElements`, `InterceptedSourceRenderer`, `ClientProxyShapeFromElements`, `ClientProxySourceRenderer`)
 - **Surfaced by**: the review follow-up on `BusinessMethods#declarationOf` (BUG-20261004-04).
 - **Symptom**: `class C extends Base implements I`, where `I` has a default `m()` and `Base` a *private* `m()` with the same signature. `C`'s member is `I.m()` (JLS 8.4.8), but once `C` is intercepted a call through `I` ended in `IllegalAccessError: C$$Intercepted tried to access private method Base.m()`: the interceptors ran, then the `$$super$m` bridge's `super.m()` failed. Normal-scoped, the client proxy did not forward `m()` (the private method held its key), and a call on the proxy ended in `AbstractMethodError`.
