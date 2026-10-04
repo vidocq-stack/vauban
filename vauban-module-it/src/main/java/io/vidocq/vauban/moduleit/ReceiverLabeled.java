@@ -17,20 +17,17 @@
  *
  * SPDX-License-Identifier: EPL-2.0 OR EUPL-1.2 OR GPL-2.0-or-later
  */
-package io.vidocq.vauban.moduleit.foreign;
-
-import io.vidocq.vauban.moduleit.ReceiverLabeled;
+package io.vidocq.vauban.moduleit;
 
 /**
- * Binds {@link ReceiverLabeled} to the package-private {@link HiddenArgument}, with no shadow: a
- * bean in another package inherits the default {@code label(HiddenArgument)} as its member, a
- * signature its rendered client proxy cannot write (BUG-20261004-02). The default names the class
- * of the instance it runs on, which tells a forwarded call from one that is not.
+ * A generic interface whose default method names the class of the instance it runs on.
+ * {@code getClass()} is final, so no client proxy forwards it: through a proxy that forwards the
+ * default, {@code label} answers with the bean's class; through one that leaves it out, with the
+ * proxy's own (InaccessibleMemberTypeModulePathTest).
  */
-public class HiddenDefaultBase implements ReceiverLabeled<HiddenArgument> {
+public interface ReceiverLabeled<T> {
 
-    /** {@code bean.label(…)} as this package writes it, with an argument only it can make. */
-    public static String callLabel(HiddenDefaultBase bean) {
-        return bean.label(new HiddenArgument());
+    default String label(T value) {
+        return getClass().getSimpleName() + " " + value;
     }
 }
