@@ -19,8 +19,9 @@
  */
 package io.vidocq.vauban.core.interceptor;
 
+import io.vidocq.vauban.core.codegen.BeanMembers;
+
 import java.lang.reflect.Method;
-import java.lang.reflect.Modifier;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -37,12 +38,11 @@ import java.util.concurrent.ConcurrentHashMap;
  * (JLS 8.4.8), so its bindings apply too, as with Weld; the class-level bindings of an interface
  * never do (CDI 4.1 §4: type-level metadata is not inherited from interfaces).</p>
  *
- * <p>{@link #isBusinessMethodOf} is the one decision every run-time generator takes on a method a
- * superclass declares — intercepted by the subclass, forwarded by the client proxy, or neither
- * because the bean does not inherit it — which keeps them in line with the processor's front-ends
- * ({@code Elements#getAllMembers}).</p>
+ * <p>Which declarations count as members of the bean is decided once, in
+ * {@link io.vidocq.vauban.core.codegen.BeanMembers}, for this package and for the run-time client
+ * proxy alike.</p>
  */
-public final class BusinessMethods {
+final class BusinessMethods {
 
     private BusinessMethods() {}
 
@@ -124,29 +124,8 @@ public final class BusinessMethods {
      * overrides, and the only ones whose bindings count. A package-private method of a class in
      * another runtime package is not inherited, and no subclass of the bean can override it. The
      * processor's front-end counts the same methods ({@code Elements#getAllMembers}).
-     *
-     * @param beanClass   the bean class, {@code declaration}'s declaring class or a subclass of it
-     * @param declaration a method a class of {@code beanClass}'s superclass chain declares
      */
-    public static boolean isBusinessMethodOf(Class<?> beanClass, Method declaration) {
-        int modifiers = declaration.getModifiers();
-        if (Modifier.isStatic(modifiers) || Modifier.isPrivate(modifiers)) return false;
-        if (Modifier.isPublic(modifiers) || Modifier.isProtected(modifiers)) return true;
-        return packagePrivateInherited(beanClass, declaration.getDeclaringClass());
-    }
-
-    /**
-     * Whether a package-private member of {@code declaring} is inherited by {@code beanClass}: every
-     * class from the bean up to its declaring class shares that class's runtime package (JLS 8.4.8),
-     * the only case in which a subclass can override it.
-     */
-    static boolean packagePrivateInherited(Class<?> beanClass, Class<?> declaring) {
-        for (Class<?> c = beanClass; c != null && c != declaring; c = c.getSuperclass()) {
-            if (!c.getPackageName().equals(declaring.getPackageName())
-                    || c.getClassLoader() != declaring.getClassLoader()) {
-                return false;
-            }
-        }
-        return true;
+    static boolean isBusinessMethodOf(Class<?> beanClass, Method declaration) {
+        return BeanMembers.isBusinessMethodOf(beanClass, declaration);
     }
 }

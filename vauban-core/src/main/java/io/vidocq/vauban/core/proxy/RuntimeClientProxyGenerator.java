@@ -19,7 +19,7 @@
  */
 package io.vidocq.vauban.core.proxy;
 
-import io.vidocq.vauban.core.interceptor.BusinessMethods;
+import io.vidocq.vauban.core.codegen.BeanMembers;
 import io.vidocq.vauban.core.interceptor.ShadowedDefaults;
 import io.vidocq.vauban.core.interceptor.TypeRef;
 import io.vidocq.vauban.core.proxy.ClientProxyShape.ProxyMethodShape;
@@ -32,7 +32,7 @@ import java.util.List;
 /**
  * Runtime ({@code Class<?>}-driven) front-end of the client-proxy generation: walks the
  * full class hierarchy and the inherited interface default methods, selects the proxied methods —
- * the members of the bean ({@link BusinessMethods#isBusinessMethodOf}), as the processor's
+ * the members of the bean ({@link BeanMembers#isBusinessMethodOf}), as the processor's
  * front-ends do — decides per method whether the
  * override must dispatch through a {@code MethodHandle} (JVMS §4.10.1.9 — protected member
  * declared in another runtime package), picks the simplest
@@ -110,7 +110,7 @@ public final class RuntimeClientProxyGenerator {
                 // generator already decide: forwarding it would reach a method the bean does not
                 // have, and an interface default with its descriptor — the bean's member — is
                 // shadowed by it, and forwarded through its interface below.
-                if (current != beanClass && !BusinessMethods.isBusinessMethodOf(beanClass, method)) continue;
+                if (current != beanClass && !BeanMembers.isBusinessMethodOf(beanClass, method)) continue;
                 methods.add(new ProxyMethodShape(
                         method.getName(),
                         TypeRef.fromClass(method.getReturnType()),
