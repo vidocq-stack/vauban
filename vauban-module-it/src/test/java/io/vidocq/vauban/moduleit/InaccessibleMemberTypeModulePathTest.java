@@ -54,4 +54,22 @@ class InaccessibleMemberTypeModulePathTest {
                     "not forwarded: on the proxy, the default runs on the proxy instance, not on the contextual instance");
         }
     }
+
+    @Test
+    @DisplayName("a private nested type of the bean's own package: the default is left as well (BUG-20261004-09, n11a)")
+    void privateNestedDefaultLeftAlone() throws Exception {
+        // label(Secret), Secret being private in PrivateNestedHolder of this very package: the
+        // rendered proxy, another top-level class, cannot name it either. Before the fix this
+        // module did not compile ("Secret has private access in PrivateNestedHolder").
+        try (var container = VaubanContainer.builder().addBeanClass(ScopedSecretLabeledService.class).build()) {
+            var service = container.select(ScopedSecretLabeledService.class);
+            assertEquals(Class.forName(ScopedSecretLabeledService.class.getName() + "_ClientProxy"), service.getClass());
+            assertEquals("own", service.own());
+            assertEquals("ScopedSecretLabeledService secret",
+                    PrivateNestedHolder.callLabel(new ScopedSecretLabeledService()),
+                    "on a plain instance, the default runs on the bean");
+            assertEquals("ScopedSecretLabeledService_ClientProxy secret", PrivateNestedHolder.callLabel(service),
+                    "not forwarded: on the proxy, the default runs on the proxy instance, not on the contextual instance");
+        }
+    }
 }

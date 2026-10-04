@@ -546,6 +546,37 @@ class ClientProxyInheritanceCrossCheckTest {
                 && omitted.getFirst().contains("HiddenArgument"), omitted.getFirst());
     }
 
+    /** A private nested type of this package, bound by a public nested class (BUG-20261004-09, n11a). */
+    public static class PrivateNestedOuter {
+        private static class Secret {
+        }
+
+        public static class SecretLabeledBase
+                implements io.vidocq.vauban.processor.fixture.colocated.HiddenLabeled<Secret> {
+        }
+    }
+
+    /** Same package as {@link PrivateNestedOuter}: inherits the member {@code label(Secret)}. */
+    public static class PrivateNestedChild extends PrivateNestedOuter.SecretLabeledBase {
+        public String own() { return "own"; }
+    }
+
+    @Test
+    @DisplayName("a default whose member signature names a private nested type of the same package is left out of the source")
+    void nonShadowedDefaultWithAPrivateNestedMemberType() throws Exception {
+        // label(Secret): Secret is private, so only the body of its top-level class can name it
+        // (JLS 6.6.1) — not the proxy, a top-level class of the same package. Same outcome as for a
+        // package-private type of another package: left out of the source, reported; bytecode
+        // forwards by descriptor.
+        Set<String> bytecode = Set.of("own()", "label(java.lang.Object)");
+        assertEquals(bytecode, runtimeShape(PrivateNestedChild.class), "run-time shape");
+        assertEquals(bytecode, colocatedShapeFromElements(PrivateNestedChild.class), "co-located shape");
+        assertEquals(Set.of("own()"), shapeFromElements(PrivateNestedChild.class), "source shape");
+        var report = onlyReport(PrivateNestedChild.class, false);
+        assertTrue(report.contains("label(") && report.contains("Secret")
+                && report.contains("runs the default body on the proxy instance"), report);
+    }
+
     @Test
     @DisplayName("the report of a default the source proxy leaves out says what a call on the proxy does")
     void omittedDefaultReportsSayWhatACallDoes() throws Exception {

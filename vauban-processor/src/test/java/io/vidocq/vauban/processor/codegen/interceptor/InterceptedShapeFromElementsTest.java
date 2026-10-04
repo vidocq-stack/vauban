@@ -271,6 +271,32 @@ class InterceptedShapeFromElementsTest {
         assertEquals(Set.of("own()"), computeFromElements(HiddenArgBean.class, KEYS), "processor shape");
     }
 
+    /** A private nested type of this package, bound under a private shadow (BUG-20261004-09, n11). */
+    public static class PrivateNestedShadowOuter {
+        private static class Secret {
+        }
+
+        public static class ShadowedSecretBase extends PrivateObjectLabel implements GenericLabel<Secret> {
+        }
+    }
+
+    /** Same package as {@link PrivateNestedShadowOuter}: inherits the shadowed member {@code label(Secret)}. */
+    public static class PrivateNestedShadowedBean extends PrivateNestedShadowOuter.ShadowedSecretBase {
+        public String own() { return "own"; }
+    }
+
+    @Test
+    @DisplayName("a shadowed default whose type argument is a private nested type of the same package is left out of the source")
+    void shadowedDefaultWithAPrivateNestedTypeArgument() throws Exception {
+        // The member is label(Secret), and the subclass would list GenericLabel<Secret>: Secret is
+        // private, so a generated top-level class of the same package cannot name it (JLS 6.6.1).
+        assertEquals(Set.of("own()", "label(java.lang.Object)@" + GenericLabel.class.getName()),
+                runtimeMethodSet(PrivateNestedShadowedBean.class), "run-time shape");
+        assertEquals(Set.of("own()"), computeFromElements(PrivateNestedShadowedBean.class, KEYS), "processor shape");
+        var report = onlyReport(PrivateNestedShadowedBean.class);
+        assertTrue(report.contains("label(") && report.contains("Secret") && report.contains("keep it"), report);
+    }
+
     @Test
     @DisplayName("the report of a default the source subclass leaves out compares it with the bytecode generators")
     void omittedDefaultReportsCompareTheGenerators() throws Exception {

@@ -310,12 +310,20 @@ public final class InterceptedShapeFromElements {
     }
 
     /**
-     * Whether code in {@code from} can name {@code candidate}: same package, or public through every
-     * enclosing type, in a module {@code from}'s module reads, and exported to it. A {@code null}
-     * {@code from} — a package not known — asks for public and exported to all.
+     * Whether code in {@code from} — a generated top-level class there — can name {@code candidate}:
+     * same package and neither it nor an enclosing type private, or public through every enclosing
+     * type, in a module {@code from}'s module reads, and exported to it. A {@code null} {@code from}
+     * — a package not known — asks for public and exported to all.
      */
     private static boolean nameableFrom(TypeElement candidate, PackageElement from, Elements elements) {
-        if (from != null && elements.getPackageOf(candidate).equals(from)) return true;
+        if (from != null && elements.getPackageOf(candidate).equals(from)) {
+            // A private type, or a type nested in one, can be named only in the body of its
+            // top-level class (JLS 6.6.1), which a generated class never is (BUG-20261004-09, n11a).
+            for (Element e = candidate; e instanceof TypeElement t; e = t.getEnclosingElement()) {
+                if (t.getModifiers().contains(Modifier.PRIVATE)) return false;
+            }
+            return true;
+        }
         for (Element e = candidate; e instanceof TypeElement t; e = t.getEnclosingElement()) {
             if (!t.getModifiers().contains(Modifier.PUBLIC)) return false;
         }
