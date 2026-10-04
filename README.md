@@ -507,10 +507,10 @@ Full documentation: [vauban-sjar/README.md](vauban-sjar/README.md)
 **Stack**: Arquillian 1.8 + TestNG 7.9 + ShrinkWrap.
 
 ```bash
-# Run the full TCK
+# Run the full TCK (CDI Lite and AtInject), against this working tree's modules (-am)
 ./run-tck.sh
 
-# Un test specifique
+# A single test
 ./run-tck.sh -Dtest=EventMetadataTest
 ```
 
