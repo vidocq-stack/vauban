@@ -297,22 +297,55 @@ class InterceptedShapeFromElementsTest {
         assertTrue(report.contains("label(") && report.contains("Secret") && report.contains("keep it"), report);
     }
 
+    /**
+     * The only interface carrying a shadowed default is a private nested one of this package: the
+     * processor cannot name it (JLS 6.6.1), while a class file may list it (BUG-20261004-09, n14).
+     */
+    public static class PrivateCarrierOuter {
+        private interface Carrier {
+            default String carried() { return "default"; }
+        }
+
+        public static class CarrierShadow {
+            @SuppressWarnings("unused")
+            private String carried() { return "private"; }
+        }
+
+        public static class CarrierMid extends CarrierShadow implements Carrier {
+        }
+    }
+
+    public static class PrivateCarrierBean extends PrivateCarrierOuter.CarrierMid {
+        public String own() { return "own"; }
+    }
+
     @Test
     @DisplayName("the report of a default the source subclass leaves out compares it with the bytecode generators")
     void omittedDefaultReportsCompareTheGenerators() throws Exception {
-        // No nameable interface: InterceptorSubclassGenerator leaves the method out too, so the
-        // report must not announce a difference.
+        // No nameable interface. InterceptorSubclassGenerator decides by class-file access, a
+        // different rule: it leaves carried() out for CarriedBean (a package-private interface of
+        // another package) but lists the private nested interface of PrivateCarrierBean's package.
         var noOwner = onlyReport(CarriedBean.class);
         assertTrue(noOwner.contains("does not intercept") && noOwner.contains("carried()")
-                && noOwner.contains("leave it out too"), noOwner);
+                && noOwner.contains("depends on class-file access"), noOwner);
+        assertEquals(Set.of("own()"), runtimeMethodSet(CarriedBean.class), "run-time shape");
+        var privateCarrier = onlyReport(PrivateCarrierBean.class);
+        assertTrue(privateCarrier.contains("depends on class-file access"), privateCarrier);
+        assertEquals(Set.of("own()", "carried()@" + PrivateCarrierOuter.class.getName() + "$Carrier"),
+                runtimeMethodSet(PrivateCarrierBean.class), "run-time shape");
+        assertEquals(Set.of("own()"), computeFromElements(PrivateCarrierBean.class, KEYS), "processor shape");
         // Unnameable in source only: the bytecode generators override by descriptor and keep it.
         // The generated class is used on the class path and on the module path alike, so the
         // difference is between generators, not between the two paths.
         var unnameable = onlyReport(HiddenArgBean.class);
         assertTrue(unnameable.contains("does not intercept") && unnameable.contains("keep it"), unnameable);
-        for (var report : List.of(noOwner, unnameable)) {
-            assertTrue(report.contains("as on a plain instance of the bean"), report);
-            assertFalse(report.contains("module path"), report);
+        // Under the shadow, a subclass that does not override the default may not reach it at all
+        // (AbstractMethodError on HotSpot 25, BUG-20261004-08), even when a plain instance does.
+        for (var report : List.of(noOwner, privateCarrier, unnameable)) {
+            assertTrue(report.contains("is not intercepted and may fail") && report.contains("AbstractMethodError"),
+                    report);
+            assertFalse(report.contains("plain instance") || report.contains("leave it out too")
+                    || report.contains("module path"), report);
         }
     }
 

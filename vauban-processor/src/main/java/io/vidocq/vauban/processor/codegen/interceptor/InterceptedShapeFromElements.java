@@ -121,11 +121,14 @@ public final class InterceptedShapeFromElements {
                     var beanPackage = elements.getPackageOf(bean);
                     var owner = accessibleDefaultOwner(bean, method, beanPackage, elements, types);
                     if (owner == null) {
-                        // InterceptorSubclassGenerator cannot list such an interface either, and
-                        // leaves the method out too: both generators agree.
+                        // InterceptorSubclassGenerator decides by class-file access instead
+                        // (ShadowedDefaults#accessibleOwner): it leaves out a package-private interface
+                        // of another package too, but lists a private nested interface of the bean's
+                        // package, which Java source cannot name (BUG-20261004-09).
                         omitted.accept(notIntercepted(bean, method, "no interface carrying it can be named from package "
                                 + beanPackage.getQualifiedName(),
-                                "the bytecode generators (run-time fallback, Maven plugin) leave it out too."));
+                                "Whether the bytecode generators (run-time fallback, Maven plugin) intercept it"
+                                        + " depends on class-file access, a different rule (BUG-20261004-09)."));
                         continue;
                     }
                     var ownerType = asTheBeanParameterisesIt(bean, owner, types);
@@ -134,7 +137,7 @@ public final class InterceptedShapeFromElements {
                         omitted.accept(notIntercepted(bean, method, "its override, or the interface "
                                 + ownerType + " the subclass would list, names a type package "
                                 + beanPackage.getQualifiedName() + " cannot",
-                                "the bytecode generators (run-time fallback, Maven plugin) override by descriptor"
+                                "The bytecode generators (run-time fallback, Maven plugin) override by descriptor"
                                         + " and keep it, so a subclass they generate differs from this one."));
                         continue;
                     }
@@ -149,15 +152,19 @@ public final class InterceptedShapeFromElements {
     }
 
     /**
-     * The processor's report of a default method the generated subclass leaves alone, why, and how
-     * the bytecode generators treat it. The class the processor generates is used wherever it is
-     * found, on the class path and the module path alike.
+     * The processor's report of a default method the generated subclass leaves alone, why, what a
+     * call does, and how the bytecode generators treat it. The subclass leaves out a shadowed default
+     * only, and a subclass that inherits the carrying interface only through its superclass may not
+     * reach the default under the shadow, even where a plain instance of the bean does
+     * (BUG-20261004-08). The class the processor generates is used wherever it is found, on the class
+     * path and the module path alike.
      */
     private static String notIntercepted(TypeElement bean, ExecutableElement method, String why,
             String bytecodeGenerators) {
         return bean.getQualifiedName() + ": the generated subclass does not intercept the inherited default method "
                 + ((TypeElement) method.getEnclosingElement()).getQualifiedName() + "." + method + " — " + why
-                + "; a call behaves as on a plain instance of the bean, and " + bytecodeGenerators;
+                + "; a call is not intercepted and may fail, as it does on any subclass under such a shadow"
+                + " (AbstractMethodError on HotSpot 25, BUG-20261004-08). " + bytecodeGenerators;
     }
 
     /**
