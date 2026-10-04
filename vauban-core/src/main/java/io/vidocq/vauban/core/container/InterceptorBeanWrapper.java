@@ -575,55 +575,59 @@ final class InterceptorBeanWrapper {
                     }
                 }
 
+                // Why the bean is intercepted, kept for the proxyability errors below: a bean bound
+                // only through a method it inherits carries no binding in its own source.
+                String interceptedBecause = null;
                 var matches = interceptorManager.resolveInterceptorDescriptors(classBindings);
-                if (matches.isEmpty()) {
+                if (!matches.isEmpty()) {
+                    interceptedBecause = "its class-level interceptor bindings " + classBindings.stream()
+                            .map(name -> "@" + name.value()).collect(java.util.stream.Collectors.joining(", "));
+                } else {
                     // A method-level binding on a business method the bean declares or inherits —
                     // from a superclass or as an interface default method — as long as no class of
                     // the bean overrides it (CDI 4.1 §4.2): each method is resolved from the bean
                     // class, exactly as the chain resolves it at invocation time.
-                    boolean hasInterceptors = false;
                     var checkClass = beanClass;
-                    while (checkClass != null && checkClass != Object.class && !hasInterceptors) {
+                    while (checkClass != null && checkClass != Object.class && interceptedBecause == null) {
                         for (var m : checkClass.getDeclaredMethods()) {
                             if (!interceptorManager.resolveInterceptorDescriptorsForMethod(
                                     classBindings, beanClass, m).isEmpty()) {
-                                hasInterceptors = true;
+                                interceptedBecause = interceptorManager.describeMethodBindings(beanClass, m);
                                 break;
                             }
                         }
                         checkClass = checkClass.getSuperclass();
                     }
                     for (var m : beanClass.getMethods()) {
-                        if (hasInterceptors) break;
+                        if (interceptedBecause != null) break;
                         if (m.isDefault() && !interceptorManager.resolveInterceptorDescriptorsForMethod(
                                 classBindings, beanClass, m).isEmpty()) {
-                            hasInterceptors = true;
+                            interceptedBecause = interceptorManager.describeMethodBindings(beanClass, m);
                         }
                     }
-                    if (!hasInterceptors) {
+                    if (interceptedBecause == null) {
                         for (var ctor : beanClass.getDeclaredConstructors()) {
                             var ctorDescriptors = interceptorManager.resolveInterceptorDescriptorsAroundConstruct(
                                     classBindings, ctor, (Class<?>) beanClass, java.util.Collections.emptyList());
                             if (!ctorDescriptors.isEmpty()) {
-                                hasInterceptors = true;
+                                interceptedBecause = "the interceptor binding of its constructor " + ctor;
                                 break;
                             }
                         }
                     }
-                    if (!hasInterceptors) {
+                    if (interceptedBecause == null) {
                         var cur = beanClass;
-                        while (cur != null && cur != Object.class) {
+                        while (cur != null && cur != Object.class && interceptedBecause == null) {
                             for (var m : cur.getDeclaredMethods()) {
                                 if (m.isAnnotationPresent(jakarta.interceptor.AroundInvoke.class)) {
-                                    hasInterceptors = true;
+                                    interceptedBecause = "its @AroundInvoke method " + cur.getName() + "." + m.getName();
                                     break;
                                 }
                             }
-                            if (hasInterceptors) break;
                             cur = cur.getSuperclass();
                         }
                     }
-                    if (!hasInterceptors) continue;
+                    if (interceptedBecause == null) continue;
                 }
 
                 // The bean is actually intercepted (class/method/constructor binding or a target
@@ -632,16 +636,20 @@ final class InterceptorBeanWrapper {
                 // constructor. Enforcing them earlier wrongly rejected beans that merely coexist with
                 // interceptors elsewhere in the deployment — e.g. a generated, pseudo-scoped final
                 // @Named DataSource holder. The proxyability constraints bind to intercepted beans only.
+                // An unproxyable intercepted bean is a deployment problem (CDI 4.1 §3.10, §8.3).
+                var unproxyable = " An intercepted bean must be proxyable (CDI 4.1 §3.10); "
+                        + beanClass.getName() + " is intercepted because of " + interceptedBecause + ".";
                 if (java.lang.reflect.Modifier.isFinal(beanClass.getModifiers())) {
-                    throw new jakarta.enterprise.inject.spi.DefinitionException(
-                            "Bean class " + beanClass.getName() + " with interceptor bindings must not be final");
+                    throw new jakarta.enterprise.inject.spi.DeploymentException(
+                            "Intercepted bean " + beanClass.getName() + " must not be final." + unproxyable);
                 }
                 for (var m : beanClass.getDeclaredMethods()) {
                     if (java.lang.reflect.Modifier.isFinal(m.getModifiers())
                             && !java.lang.reflect.Modifier.isPrivate(m.getModifiers())
                             && !java.lang.reflect.Modifier.isStatic(m.getModifiers())) {
                         throw new jakarta.enterprise.inject.spi.DeploymentException(
-                                "Intercepted bean " + beanClass.getName() + " has final method " + m.getName());
+                                "Intercepted bean " + beanClass.getName() + " has final method " + m.getName()
+                                        + "." + unproxyable);
                     }
                 }
 
@@ -658,7 +666,7 @@ final class InterceptorBeanWrapper {
                 if (hasPrivateNoArgCtor2) {
                     throw new jakarta.enterprise.inject.spi.DeploymentException(
                             "Intercepted bean " + beanClass.getName()
-                                    + " has only private no-arg constructor (unproxyable)");
+                                    + " has only private no-arg constructor (unproxyable)." + unproxyable);
                 }
 
                 try {

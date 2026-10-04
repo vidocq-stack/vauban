@@ -453,6 +453,27 @@ public final class InterceptorManager {
     }
 
     /**
+     * Why {@code method} makes {@code beanClass} intercepted, for a deployment error: the method-level
+     * interceptor bindings of the declaration it runs, and where that declaration sits — a bean bound
+     * only through an inherited method carries no binding in its own source.
+     */
+    public String describeMethodBindings(Class<?> beanClass, java.lang.reflect.Method method) {
+        var declaration = BusinessMethods.declarationOf(beanClass, method);
+        if (declaration == null) return "method " + method.getName();
+        var bindings = new LinkedHashMap<Class<? extends java.lang.annotation.Annotation>, java.lang.annotation.Annotation>();
+        collectBindingsRecursively(declaration.getAnnotations(), bindings, new java.util.HashSet<>());
+        var names = bindings.keySet().stream().map(type -> "@" + type.getName())
+                .collect(java.util.stream.Collectors.joining(", "));
+        var owner = declaration.getDeclaringClass();
+        var params = java.util.Arrays.stream(declaration.getParameterTypes()).map(Class::getName)
+                .collect(java.util.stream.Collectors.joining(", "));
+        var where = owner == beanClass ? "a method it declares"
+                : owner.isInterface() ? "an interface default method it inherits" : "a method it inherits";
+        return "the method-level interceptor binding " + names + " of " + owner.getName() + "."
+                + declaration.getName() + "(" + params + "), " + where;
+    }
+
+    /**
      * Adds the method-level bindings of the declaration a call of {@code method} (or of the business
      * method its {@code $$super$} bridge stands for) runs on a {@code beanClass} instance — the
      * declaration {@link VaubanInvocationContext#getMethod()} reports and reads its own bindings from.
