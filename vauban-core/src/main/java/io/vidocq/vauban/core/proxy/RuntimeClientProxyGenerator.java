@@ -93,7 +93,7 @@ public final class RuntimeClientProxyGenerator {
      *                  qualifies to forward a shadowed default method through; a proxy placed in a
      *                  producer's package only uses public ones
      */
-    private static ClientProxyShape shapeOf(Class<?> beanClass, boolean colocated) {
+    public static ClientProxyShape shapeOf(Class<?> beanClass, boolean colocated) {
         // The proxy is generated in the bean's package (the suffix carries no dot).
         String proxyPackage = packageOf(beanClass.getName());
         var proxiedSeen = new java.util.HashSet<String>();

@@ -205,24 +205,128 @@ class InterceptedShapeFromElementsTest {
         assertEquals(Set.of("own()"), assertSameMethodSet(CarriedBean.class));
     }
 
+    /** A private {@code label(Object)}: the erased descriptor of {@link GenericLabel#label(Object)}. */
+    public static class PrivateObjectLabel {
+        @SuppressWarnings("unused")
+        private String label(Object value) { return "private " + value; }
+    }
+
+    /** A private shadow above a public member: the member wins, through {@code super}. */
+    public static class PrivateTopLabel {
+        @SuppressWarnings("unused")
+        private String label(String value) { return "private " + value; }
+    }
+
+    public static class PublicMidLabel extends PrivateTopLabel {
+        public String label(String value) { return "mid " + value; }
+    }
+
+    public static class MemberOverPrivate extends PublicMidLabel implements PlainLabel {
+    }
+
+    /** Two paths to {@code GenericLabel<String>}. */
+    public interface SubLabel extends GenericLabel<String> {
+    }
+
+    public static class TwoPaths extends PrivateObjectLabel implements SubLabel, GenericLabel<String> {
+    }
+
+    /** The parameterisation comes through a generic superclass. */
+    public static class MidLabel<T> extends PrivateObjectLabel implements GenericLabel<T> {
+    }
+
+    public static class ThroughMid extends MidLabel<Integer> {
+    }
+
+    public static class Holder {
+        public static class Item {
+        }
+    }
+
+    /** A wildcard and a nested type as the type argument. */
+    public static class NestedArg extends PrivateObjectLabel
+            implements GenericLabel<java.util.List<? extends Holder.Item>> {
+    }
+
+    @java.lang.annotation.Target(java.lang.annotation.ElementType.TYPE_USE)
+    @java.lang.annotation.Retention(java.lang.annotation.RetentionPolicy.RUNTIME)
+    public @interface NonEmpty {
+    }
+
+    /** A type-annotated type argument. */
+    public static class AnnotatedArg extends PrivateObjectLabel implements GenericLabel<@NonEmpty String> {
+    }
+
+    @Test
+    @DisplayName("the shadowed-default shapes found by the reviews: both front-ends agree")
+    void reviewedShadowedDefaultShapes() throws Exception {
+        assertEquals(Set.of("label(java.lang.String)"), assertSameMethodSet(MemberOverPrivate.class));
+        var throughGenericLabel = Set.of("label(java.lang.Object)@" + GenericLabel.class.getName());
+        for (var fixture : List.of(TwoPaths.class, ThroughMid.class, NestedArg.class, AnnotatedArg.class)) {
+            assertEquals(throughGenericLabel, assertSameMethodSet(fixture), fixture.getSimpleName());
+        }
+        // The member signatures the source declares: Integer through MidLabel<Integer>, the
+        // erasure of the wildcard for NestedArg.
+        assertEquals(Set.of("label(java.lang.Integer)"), memberSignatures(ThroughMid.class));
+        assertEquals(Set.of("label(java.util.List)"), memberSignatures(NestedArg.class));
+        assertEquals(Set.of("label(java.lang.String)"), memberSignatures(AnnotatedArg.class));
+    }
+
     // ---- helpers ----
 
     /** The run-time and the processor front-ends select the same methods of {@code fixture}. */
     private Set<String> assertSameMethodSet(Class<?> fixture) throws Exception {
         // Compute the expected set from the runtime Class path
-        InterceptedShape fromClassShape = InterceptorSubclassGenerator.fromClass(fixture);
-        Set<String> expectedKeys = fromClassShape.methods().stream()
-                .map(InterceptedShapeFromElementsTest::methodKey)
-                .collect(Collectors.toCollection(LinkedHashSet::new));
+        Set<String> expectedKeys = runtimeMethodSet(fixture);
 
         // Compute the actual set from the Elements path (in-process javac)
-        Set<String> actualKeys = computeFromElements(fixture);
+        Set<String> actualKeys = computeFromElements(fixture, KEYS);
 
         assertEquals(expectedKeys, actualKeys,
                 "fromElements and fromClass disagree on interceptable methods.\n" +
                 "fromClass only: " + difference(expectedKeys, actualKeys) + "\n" +
                 "fromElements only: " + difference(actualKeys, expectedKeys));
         return expectedKeys;
+    }
+
+    /** The run-time front-end's keys, through the same duplicate detection as the processor's. */
+    private static Set<String> runtimeMethodSet(Class<?> fixture) {
+        return KEYS.apply(InterceptorSubclassGenerator.fromClass(fixture));
+    }
+
+    /** The member signatures the processor's source renderer declares the overrides with. */
+    private Set<String> memberSignatures(Class<?> fixture) throws Exception {
+        return computeFromElements(fixture, shape -> shape.methods().stream()
+                .map(InterceptedShapeFromElementsTest::memberSignature)
+                .collect(Collectors.toCollection(LinkedHashSet::new)));
+    }
+
+    /**
+     * The keys of a shape, with a key no front-end ever produces for a signature listed twice —
+     * a subclass would declare it twice — whatever its {@code @owner} suffix, and for two methods
+     * with the same member signature, which the source renderer would declare alike.
+     */
+    private static final java.util.function.Function<InterceptedShape, Set<String>> KEYS = shape -> {
+        Set<String> keys = new LinkedHashSet<>();
+        Set<String> signatures = new LinkedHashSet<>();
+        Set<String> memberSignatures = new LinkedHashSet<>();
+        for (MethodShape m : shape.methods()) {
+            var key = methodKey(m);
+            keys.add(key);
+            if (!signatures.add(key.replaceAll("@.*$", ""))) {
+                keys.add("DUPLICATE SIGNATURE " + key);
+            }
+            if (!memberSignatures.add(memberSignature(m))) {
+                keys.add("DUPLICATE MEMBER SIGNATURE " + memberSignature(m));
+            }
+        }
+        return keys;
+    };
+
+    /** {@code name(memberParams)}: the signature the source renderer declares the override with. */
+    static String memberSignature(MethodShape m) {
+        return m.name() + "(" + m.memberParams().stream().map(TypeRef::toString)
+                .collect(Collectors.joining(",")) + ")";
     }
 
     /** {@code name(params)}, then {@code @<interface>} when the bridge calls that interface's default explicitly. */
@@ -244,7 +348,8 @@ class InterceptedShapeFromElementsTest {
      * live {@link TypeElement} and {@link Elements}/{@link Types} utilities, then
      * calls {@link InterceptedShapeFromElements#from}.
      */
-    private Set<String> computeFromElements(Class<?> fixture) throws Exception {
+    private Set<String> computeFromElements(Class<?> fixture,
+            java.util.function.Function<InterceptedShape, Set<String>> keys) throws Exception {
         // We build the source for FixtureBean and FixtureSuper from their class names
         // by referencing the already-compiled classes on the classpath.
         // Rather than re-compiling the fixture source, we use a "no-op" annotation
@@ -281,7 +386,7 @@ class InterceptedShapeFromElementsTest {
             var task = compiler.getTask(null, fm, diagnostics, options, null,
                     List.of(triggerFile, sourceFile));
 
-            task.setProcessors(List.of(new CaptureProcessor(fixture, captured)));
+            task.setProcessors(List.of(new CaptureProcessor(fixture, keys, captured)));
             task.call();
         }
 
@@ -301,10 +406,13 @@ class InterceptedShapeFromElementsTest {
     private static class CaptureProcessor extends javax.annotation.processing.AbstractProcessor {
 
         private final Class<?> fixture;
+        private final java.util.function.Function<InterceptedShape, Set<String>> keys;
         private final AtomicReference<Set<String>> sink;
 
-        CaptureProcessor(Class<?> fixture, AtomicReference<Set<String>> sink) {
+        CaptureProcessor(Class<?> fixture, java.util.function.Function<InterceptedShape, Set<String>> keys,
+                AtomicReference<Set<String>> sink) {
             this.fixture = fixture;
+            this.keys = keys;
             this.sink = sink;
         }
 
@@ -333,25 +441,8 @@ class InterceptedShapeFromElementsTest {
                 return false;
             }
 
-            InterceptedShape shape = InterceptedShapeFromElements.from(beanElement, elements, types);
-            Set<String> keys = new LinkedHashSet<>();
-            Set<String> memberSignatures = new LinkedHashSet<>();
-            for (MethodShape m : shape.methods()) {
-                keys.add(methodKey(m));
-                // The source renderer declares each method with its member signature: two alike
-                // would be "already defined". Surface them as a key no front-end ever produces.
-                var member = m.name() + "(" + m.memberParams().stream().map(TypeRef::toString)
-                        .collect(Collectors.joining(",")) + ")";
-                if (!memberSignatures.add(member)) {
-                    keys.add("DUPLICATE MEMBER SIGNATURE " + member);
-                }
-            }
-            sink.set(keys);
+            sink.set(keys.apply(InterceptedShapeFromElements.from(beanElement, elements, types)));
             return false;
-        }
-
-        private static String methodKey(MethodShape m) {
-            return InterceptedShapeFromElementsTest.methodKey(m);
         }
     }
 

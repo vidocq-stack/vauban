@@ -431,12 +431,116 @@ class ClientProxyInheritanceCrossCheckTest {
         assertEquals(own, colocatedShapeFromElements(CarriedChild.class), "co-located shape");
     }
 
+    /** The run-time shape, through the same duplicate detection as the processor shapes. */
     private static Set<String> runtimeShape(Class<?> fixture) {
-        return RuntimeClientProxyGenerator.shapeOf(fixture).methods().stream()
+        return runtimeShape(RuntimeClientProxyGenerator.shapeOf(fixture));
+    }
+
+    /** The run-time shape of a proxy placed in a producer's package: public interfaces only. */
+    private static Set<String> runtimeProducerShape(Class<?> fixture) {
+        return runtimeShape(RuntimeClientProxyGenerator.shapeOf(fixture, false));
+    }
+
+    private static Set<String> runtimeShape(ClientProxyShape shape) {
+        return distinctParts(shape.methods().stream()
                 .map(m -> m.name() + "(" + m.params().stream().map(Object::toString)
-                        .collect(Collectors.joining(",")) + ")" + ownerSuffix(m))
+                        .collect(Collectors.joining(",")) + ")" + (m.needsMethodHandle() ? "#mh" : "")
+                        + ownerSuffix(m))
                 .filter(k -> !OBJECT_METHODS.contains(k))
-                .collect(Collectors.toCollection(LinkedHashSet::new));
+                .collect(Collectors.joining(";")));
+    }
+
+    /** A private {@code tag(Object)}: the erased descriptor of {@link Tagged#tag(Object)}. */
+    public static class PrivateObjectTag {
+        @SuppressWarnings("unused")
+        private String tag(Object value) { return "private " + value; }
+    }
+
+    /** A private shadow above a public member: the member wins, and is forwarded through the class. */
+    public static class PrivateTopTag {
+        @SuppressWarnings("unused")
+        private String tag(String value) { return "private " + value; }
+    }
+
+    public static class PublicMidTag extends PrivateTopTag {
+        public String tag(String value) { return "mid " + value; }
+    }
+
+    public static class MemberOverPrivateChild extends PublicMidTag implements PlainTagged {
+    }
+
+    /** Two paths to {@code Tagged<String>}. */
+    public interface SubTagged extends Tagged<String> {
+    }
+
+    public static class TwoPathsChild extends PrivateObjectTag implements SubTagged, Tagged<String> {
+    }
+
+    /** The parameterisation comes through a generic superclass. */
+    public static class MidTag<T> extends PrivateObjectTag implements Tagged<T> {
+    }
+
+    public static class ThroughMidChild extends MidTag<Integer> {
+    }
+
+    public static class Holder {
+        public static class Item {
+        }
+    }
+
+    /** A wildcard and a nested type as the type argument. */
+    public static class NestedArgChild extends PrivateObjectTag
+            implements Tagged<java.util.List<? extends Holder.Item>> {
+    }
+
+    @java.lang.annotation.Target(java.lang.annotation.ElementType.TYPE_USE)
+    @java.lang.annotation.Retention(java.lang.annotation.RetentionPolicy.RUNTIME)
+    public @interface NonEmpty {
+    }
+
+    /** A type-annotated type argument. */
+    public static class AnnotatedArgChild extends PrivateObjectTag implements Tagged<@NonEmpty String> {
+    }
+
+    @Test
+    @DisplayName("the shadowed-default shapes found by the reviews: every path agrees")
+    void reviewedShadowedDefaultShapes() throws Exception {
+        Set<String> member = Set.of("tag(java.lang.String)");
+        assertEquals(member, runtimeShape(MemberOverPrivateChild.class), "run-time shape");
+        assertEquals(member, shapeFromElements(MemberOverPrivateChild.class), "source shape");
+        assertEquals(member, colocatedShapeFromElements(MemberOverPrivateChild.class), "co-located shape");
+        // The bytecode shapes forward by descriptor; the source shape declares the member signature
+        // the bean sees, each through the declaring interface Tagged.
+        var owner = "@" + Tagged.class.getName();
+        Set<String> throughTagged = Set.of("tag(java.lang.Object)" + owner);
+        for (var fixture : Map.of(TwoPathsChild.class, "java.lang.String", ThroughMidChild.class, "java.lang.Integer",
+                NestedArgChild.class, "java.util.List", AnnotatedArgChild.class, "java.lang.String").entrySet()) {
+            assertEquals(throughTagged, runtimeShape(fixture.getKey()), "run-time shape of " + fixture.getKey().getSimpleName());
+            assertEquals(Set.of("tag(" + fixture.getValue() + ")" + owner), shapeFromElements(fixture.getKey()),
+                    "source shape of " + fixture.getKey().getSimpleName());
+            assertEquals(throughTagged, colocatedShapeFromElements(fixture.getKey()),
+                    "co-located shape of " + fixture.getKey().getSimpleName());
+        }
+    }
+
+    /** A shadowed default of a public top-level interface of an exported package: nameable from any package. */
+    public static class PublicShadowedTagChild extends PrivateHiddenTag implements PublicHidingTag {
+    }
+
+    @Test
+    @DisplayName("a producer's proxy, in another package: through a public interface only, on both paths")
+    void producerProxyForwardsThroughPublicInterfacesOnly() throws Exception {
+        // PublicHidingTag is public, top-level and exported: forwarded through it from anywhere. (A
+        // public interface nested in this package-private test class is not: Java source cannot name
+        // it from another package, and this module does not export it to a producer's module.)
+        Set<String> through = Set.of("hidden()@" + PublicHidingTag.class.getName());
+        assertEquals(through, runtimeProducerShape(PublicShadowedTagChild.class), "run-time producer shape");
+        assertEquals(through, shapeFromElementsIn(PublicShadowedTagChild.class, "proxycrosscheck"),
+                "source producer shape");
+        // ShadowedPackageTagChild's PackageHidingTag is package-private: forwarded from nowhere else.
+        assertEquals(Set.of(), runtimeProducerShape(ShadowedPackageTagChild.class), "run-time producer shape");
+        assertEquals(Set.of(), shapeFromElementsIn(ShadowedPackageTagChild.class, "proxycrosscheck"),
+                "source producer shape");
     }
 
     /** The Elements/Types pair handed to the callback. */
