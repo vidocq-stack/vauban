@@ -112,6 +112,35 @@ class ShadowedDefaultModulePathTest {
     }
 
     @Test
+    @DisplayName("a shadowed default whose type argument this package cannot name: left out, the build intact")
+    void inaccessibleTypeArgument() throws Exception {
+        // The member is label(HiddenArgument), HiddenArgument being package-private in foreign: the
+        // rendered subclass can neither declare that override nor list Labeled<HiddenArgument>, so
+        // it leaves the method out, and the other methods are intercepted. That this module
+        // compiles is the first half of the test; label(...) then behaves as on a plain instance.
+        try (var container = boot(HiddenArgumentService.class)) {
+            var service = container.select(HiddenArgumentService.class);
+            assertEquals(Class.forName(HiddenArgumentService.class.getName() + "$$Intercepted"), service.getClass());
+            assertEquals("own", service.own());
+            assertEquals(List.of(HiddenArgumentService.class.getDeclaredMethod("own")), AuditInterceptor.METHODS);
+            AuditInterceptor.METHODS.clear();
+            assertEquals(outcome(() -> io.vidocq.vauban.moduleit.foreign.HiddenArgumentBase.callLabel(new HiddenArgumentService())),
+                    outcome(() -> io.vidocq.vauban.moduleit.foreign.HiddenArgumentBase.callLabel(service)),
+                    "label(...) on the intercepted bean must behave as on a plain instance");
+            assertEquals(List.of(), AuditInterceptor.METHODS, "left out: not intercepted");
+        }
+    }
+
+    /** The result of {@code call}, or the class of what it threw. */
+    private static String outcome(java.util.concurrent.Callable<String> call) {
+        try {
+            return "returned " + call.call();
+        } catch (Throwable thrown) {
+            return "threw " + thrown.getClass().getName();
+        }
+    }
+
+    @Test
     @DisplayName("a public superclass method with the default's descriptor is no shadow: proxy and subclass agree")
     void inheritedClassMethodIsNoShadow() throws Exception {
         try (var container = boot(ScopedPlainLabelledService.class)) {

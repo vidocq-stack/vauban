@@ -105,11 +105,16 @@ public final class InterceptedShapeFromElements {
                 if (isShadowedDefault(bean, method, types)) {
                     // super.<name>() would resolve to the shadowing declaration: the bridge reaches
                     // the default through an interface the subclass lists (BUG-20261004-08), or,
-                    // when no interface it may name carries it, the method is left alone.
-                    var owner = accessibleDefaultOwner(bean, method, elements, types);
+                    // when no interface it may name carries it — or the override and the listed
+                    // interface would name a type this package cannot — the method is left alone.
+                    var beanPackage = elements.getPackageOf(bean);
+                    var owner = accessibleDefaultOwner(bean, method, beanPackage, elements, types);
                     if (owner == null) continue;
+                    var ownerType = asTheBeanParameterisesIt(bean, owner, types);
+                    if (!memberSignatureNameableFrom(bean, method, beanPackage, elements, types)
+                            || !nameableFrom(ownerType, beanPackage, elements)) continue;
                     shape = shape.withDefaultOwner(TypeRef.ofReference(elements.getBinaryName(owner).toString(), 0),
-                            asTheBeanParameterisesIt(bean, owner, types));
+                            ownerType.toString());
                 }
                 methods.add(shape);
             }
@@ -205,29 +210,72 @@ public final class InterceptedShapeFromElements {
     }
 
     /**
-     * {@code owner}, a superinterface of {@code bean}, in Java source as the bean parameterises it
+     * {@code owner}, a superinterface of {@code bean}, as the bean parameterises it
      * ({@code p.Labeled<java.lang.String>}), so a subclass may list it next to the bean: a raw
      * {@code p.Labeled} is "inherited with different arguments". A generic bean is extended raw by
      * its generated subclass, so its supertypes are taken erased too.
      */
-    private static String asTheBeanParameterisesIt(TypeElement bean, TypeElement owner, Types types) {
+    private static DeclaredType asTheBeanParameterisesIt(TypeElement bean, TypeElement owner, Types types) {
         TypeMirror start = bean.getTypeParameters().isEmpty() ? bean.asType() : types.erasure(bean.asType());
         var queue = new java.util.ArrayDeque<TypeMirror>();
         queue.add(start);
         while (!queue.isEmpty()) {
             for (TypeMirror supertype : types.directSupertypes(queue.poll())) {
                 if (supertype instanceof DeclaredType dt && dt.asElement().equals(owner)) {
-                    return dt.toString();
+                    return dt;
                 }
                 queue.add(supertype);
             }
         }
-        return owner.getQualifiedName().toString();
+        return (DeclaredType) types.erasure(owner.asType());
     }
 
     /**
-     * Whether code in {@code from} can name {@code candidate}: same package, or public and exported
-     * to it. A {@code null} {@code from} — a package not known — asks for public and exported to all.
+     * Whether Java source in {@code generatedIn} can declare {@code method} with its signature as a
+     * member of {@code bean} — {@link #memberType}, erased — the override a rendered subclass or
+     * proxy writes: every parameter and return type nameable from there. {@code label(Hidden)}, the
+     * member a bean gets from {@code implements Labeled<Hidden>} with {@code Hidden} package-private
+     * in another package, is not (BUG-20261004-08).
+     */
+    public static boolean memberSignatureNameableFrom(TypeElement bean, ExecutableElement method,
+            PackageElement generatedIn, Elements elements, Types types) {
+        var member = memberType(bean, method, types);
+        if (!nameableFrom(types.erasure(member.getReturnType()), generatedIn, elements)) return false;
+        for (TypeMirror p : member.getParameterTypes()) {
+            if (!nameableFrom(types.erasure(p), generatedIn, elements)) return false;
+        }
+        return true;
+    }
+
+    /**
+     * Whether code in {@code from} can write {@code type}: its class and every type argument,
+     * bound and component nameable from there ({@link #nameableFrom(TypeElement, PackageElement,
+     * Elements)}). A type variable needs no name.
+     */
+    public static boolean nameableFrom(TypeMirror type, PackageElement from, Elements elements) {
+        return switch (type.getKind()) {
+            case DECLARED -> {
+                var dt = (DeclaredType) type;
+                if (!(dt.asElement() instanceof TypeElement te) || !nameableFrom(te, from, elements)) yield false;
+                for (TypeMirror argument : dt.getTypeArguments()) {
+                    if (!nameableFrom(argument, from, elements)) yield false;
+                }
+                yield true;
+            }
+            case ARRAY -> nameableFrom(((ArrayType) type).getComponentType(), from, elements);
+            case WILDCARD -> {
+                var wt = (WildcardType) type;
+                yield (wt.getExtendsBound() == null || nameableFrom(wt.getExtendsBound(), from, elements))
+                        && (wt.getSuperBound() == null || nameableFrom(wt.getSuperBound(), from, elements));
+            }
+            default -> true;
+        };
+    }
+
+    /**
+     * Whether code in {@code from} can name {@code candidate}: same package, or public through every
+     * enclosing type, and exported to it. A {@code null}
+     * {@code from} — a package not known — asks for public and exported to all.
      */
     private static boolean nameableFrom(TypeElement candidate, PackageElement from, Elements elements) {
         if (from != null && elements.getPackageOf(candidate).equals(from)) return true;

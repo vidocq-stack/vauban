@@ -252,6 +252,25 @@ class InterceptedShapeFromElementsTest {
         assertEquals(Set.of("label(java.lang.Object)"), memberSignatures(GenericShadowedGeneric.class));
     }
 
+    /** Inherits a shadowed default whose member signature names a type this package cannot. */
+    public static class HiddenArgBean extends io.vidocq.vauban.processor.fixture.colocated.HiddenArgumentBase {
+        public String own() { return "own"; }
+    }
+
+    @Test
+    @DisplayName("a shadowed default whose type argument cannot be named is left out of the source, intercepted in bytecode")
+    void shadowedDefaultWithAnInaccessibleTypeArgument() throws Exception {
+        // The member is label(HiddenArgument), HiddenArgument being package-private in another
+        // package: the rendered subclass can neither declare that override nor list
+        // HiddenLabeled<HiddenArgument>, so it leaves the method out — not intercepted — rather
+        // than breaking the build. The run-time subclass overrides by descriptor, through the raw
+        // interface: the one documented divergence between the two front-ends.
+        var owner = io.vidocq.vauban.processor.fixture.colocated.HiddenLabeled.class.getName();
+        assertEquals(Set.of("own()", "label(java.lang.Object)@" + owner),
+                runtimeMethodSet(HiddenArgBean.class), "run-time shape");
+        assertEquals(Set.of("own()"), computeFromElements(HiddenArgBean.class, KEYS), "processor shape");
+    }
+
     /** A private {@code label(Object)}: the erased descriptor of {@link GenericLabel#label(Object)}. */
     public static class PrivateObjectLabel {
         @SuppressWarnings("unused")

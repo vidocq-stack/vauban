@@ -504,6 +504,25 @@ class ClientProxyInheritanceCrossCheckTest {
         assertEquals(shadowed, colocatedShapeFromElements(GenericShadowedGenericChild.class), "co-located shape");
     }
 
+    /** Inherits a shadowed default whose member signature names a type this package cannot. */
+    public static class HiddenArgChild extends io.vidocq.vauban.processor.fixture.colocated.HiddenArgumentBase {
+        public String own() { return "own"; }
+    }
+
+    @Test
+    @DisplayName("a shadowed default whose type argument cannot be named is left out of the source, forwarded in bytecode")
+    void shadowedDefaultWithAnInaccessibleTypeArgument() throws Exception {
+        // The member is label(HiddenArgument), and HiddenArgument is package-private in another
+        // package: Java source can neither declare that override nor cast to
+        // HiddenLabeled<HiddenArgument>, so the rendered proxy leaves the method out rather than
+        // breaking the build. Bytecode forwards by descriptor, through the raw interface.
+        var owner = io.vidocq.vauban.processor.fixture.colocated.HiddenLabeled.class.getName();
+        Set<String> bytecode = Set.of("own()", "label(java.lang.Object)@" + owner);
+        assertEquals(bytecode, runtimeShape(HiddenArgChild.class), "run-time shape");
+        assertEquals(bytecode, colocatedShapeFromElements(HiddenArgChild.class), "co-located shape");
+        assertEquals(Set.of("own()"), shapeFromElements(HiddenArgChild.class), "source shape");
+    }
+
     /** A private {@code tag(Object)}: the erased descriptor of {@link Tagged#tag(Object)}. */
     public static class PrivateObjectTag {
         @SuppressWarnings("unused")

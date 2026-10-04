@@ -129,6 +129,11 @@ public final class ClientProxyShapeFromElements {
                 // producer's (#42) — where a package-private one of the bean's package is out of reach.
                 var owner = InterceptedShapeFromElements.accessibleDefaultOwner(bean, m, proxyPackage, elements, types);
                 if (owner == null) continue;
+                // Rendered as source, the override declares the member signature: when that names
+                // a type the proxy's package cannot (a package-private type argument of another
+                // package), the method is not forwarded either, rather than breaking the build.
+                if (asMember && !InterceptedShapeFromElements.memberSignatureNameableFrom(
+                        bean, m, proxyPackage, elements, types)) continue;
                 var shape = methodShape(bean, m, asMember, false, elements, types);
                 if (!declared.add(declaredSignature(shape))) continue;
                 methods.add(new ProxyMethodShape(shape.name(), shape.returnType(), shape.params(),
