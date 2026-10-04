@@ -87,10 +87,12 @@ public final class InterceptedSourceRenderer {
         sb.append("@SuppressWarnings({\"unchecked\", \"rawtypes\"})\n");
         sb.append("public class ").append(subSimple).append(" extends ").append(beanSource);
         // The interfaces whose shadowed default methods the bridges reach explicitly (BUG-20261004-08):
-        // findSpecial on an interface method needs it among the class's direct superinterfaces.
-        var owners = shape.explicitDefaultOwners();
+        // findSpecial on an interface method needs it among the class's direct superinterfaces. Each
+        // is written as the bean parameterises it: a raw one beside the bean's Labeled<String> is
+        // "inherited with different arguments".
+        var owners = shape.explicitDefaultOwnerSources();
         if (!owners.isEmpty()) {
-            sb.append(" implements ").append(String.join(", ", owners.stream().map(TypeRef::sourceName).toList()));
+            sb.append(" implements ").append(String.join(", ", owners));
         }
         sb.append(" {\n\n");
 

@@ -64,6 +64,18 @@ class ShadowedDefaultModulePathTest {
     }
 
     @Test
+    @DisplayName("a shadowed default of a generic interface: listed with the bean's type arguments")
+    void genericInterface() throws Exception {
+        try (var container = boot(GenericShadowedService.class)) {
+            var service = container.select(GenericShadowedService.class);
+            assertEquals(Class.forName(GenericShadowedService.class.getName() + "$$Intercepted"), service.getClass());
+            Labeled<String> labeled = service;
+            assertEquals("label x", labeled.label("x"));
+            assertEquals(List.of(Labeled.class.getDeclaredMethod("label", Object.class)), AuditInterceptor.METHODS);
+        }
+    }
+
+    @Test
     @DisplayName("a public superclass method with the default's descriptor is no shadow: proxy and subclass agree")
     void inheritedClassMethodIsNoShadow() throws Exception {
         try (var container = boot(ScopedPlainLabelledService.class)) {

@@ -39,9 +39,15 @@ import java.util.List;
  * ({@code IllegalAccessError}). The generated subclass then lists {@code defaultOwner}, an
  * accessible interface that declares or inherits the default, among its direct superinterfaces,
  * and reaches the default through it explicitly (BUG-20261004-08).</p>
+ *
+ * <p>{@code defaultOwnerSource} is that interface in Java source, as the bean parameterises it
+ * ({@code p.Labeled<java.lang.String>} for a bean implementing {@code Labeled<String>}): a rendered
+ * subclass may only list it so — a raw {@code implements p.Labeled} is "inherited with different
+ * arguments". It is the erased name for a non-generic interface; the bytecode emitter ignores it.</p>
  */
 public record MethodShape(String name, TypeRef returnType, List<TypeRef> params,
-                          TypeRef memberReturnType, List<TypeRef> memberParams, TypeRef defaultOwner) {
+                          TypeRef memberReturnType, List<TypeRef> memberParams, TypeRef defaultOwner,
+                          String defaultOwnerSource) {
 
     public MethodShape {
         java.util.Objects.requireNonNull(name, "name");
@@ -53,12 +59,17 @@ public record MethodShape(String name, TypeRef returnType, List<TypeRef> params,
             throw new IllegalArgumentException("member signature of " + name + " has "
                     + memberParams.size() + " parameters, its declaration " + params.size());
         }
+        if (defaultOwner == null) {
+            defaultOwnerSource = null;
+        } else if (defaultOwnerSource == null) {
+            defaultOwnerSource = defaultOwner.sourceName();
+        }
     }
 
     /** A method whose bridge calls {@code super.<name>(…)}, with its member signature. */
     public MethodShape(String name, TypeRef returnType, List<TypeRef> params,
                        TypeRef memberReturnType, List<TypeRef> memberParams) {
-        this(name, returnType, params, memberReturnType, memberParams, null);
+        this(name, returnType, params, memberReturnType, memberParams, null, null);
     }
 
     /** A method whose member signature is its erased declaration: no type variable is bound. */
@@ -66,8 +77,16 @@ public record MethodShape(String name, TypeRef returnType, List<TypeRef> params,
         this(name, returnType, params, returnType, params);
     }
 
-    /** This method with its bridge reaching the default method of {@code owner} explicitly. */
+    /** This method with its bridge reaching the default method of a non-generic {@code owner} explicitly. */
     public MethodShape withDefaultOwner(TypeRef owner) {
-        return new MethodShape(name, returnType, params, memberReturnType, memberParams, owner);
+        return withDefaultOwner(owner, null);
+    }
+
+    /**
+     * This method with its bridge reaching the default method of {@code owner} explicitly, the
+     * interface written {@code ownerSource} in a rendered subclass ({@code null}: its erased name).
+     */
+    public MethodShape withDefaultOwner(TypeRef owner, String ownerSource) {
+        return new MethodShape(name, returnType, params, memberReturnType, memberParams, owner, ownerSource);
     }
 }

@@ -108,7 +108,8 @@ public final class InterceptedShapeFromElements {
                     // when no interface it may name carries it, the method is left alone.
                     var owner = accessibleDefaultOwner(bean, method, elements, types);
                     if (owner == null) continue;
-                    shape = shape.withDefaultOwner(TypeRef.ofReference(elements.getBinaryName(owner).toString(), 0));
+                    shape = shape.withDefaultOwner(TypeRef.ofReference(elements.getBinaryName(owner).toString(), 0),
+                            asTheBeanParameterisesIt(bean, owner, types));
                 }
                 methods.add(shape);
             }
@@ -191,6 +192,27 @@ public final class InterceptedShapeFromElements {
             }
         }
         return null;
+    }
+
+    /**
+     * {@code owner}, a superinterface of {@code bean}, in Java source as the bean parameterises it
+     * ({@code p.Labeled<java.lang.String>}), so a subclass may list it next to the bean: a raw
+     * {@code p.Labeled} is "inherited with different arguments". A generic bean is extended raw by
+     * its generated subclass, so its supertypes are taken erased too.
+     */
+    private static String asTheBeanParameterisesIt(TypeElement bean, TypeElement owner, Types types) {
+        TypeMirror start = bean.getTypeParameters().isEmpty() ? bean.asType() : types.erasure(bean.asType());
+        var queue = new java.util.ArrayDeque<TypeMirror>();
+        queue.add(start);
+        while (!queue.isEmpty()) {
+            for (TypeMirror supertype : types.directSupertypes(queue.poll())) {
+                if (supertype instanceof DeclaredType dt && dt.asElement().equals(owner)) {
+                    return dt.toString();
+                }
+                queue.add(supertype);
+            }
+        }
+        return owner.getQualifiedName().toString();
     }
 
     private static boolean nameableFrom(TypeElement candidate, TypeElement bean, Elements elements) {

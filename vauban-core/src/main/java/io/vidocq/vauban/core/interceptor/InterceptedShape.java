@@ -77,6 +77,18 @@ public record InterceptedShape(
         return List.copyOf(owners);
     }
 
+    /**
+     * {@link #explicitDefaultOwners()} as a rendered subclass lists them: each as the bean
+     * parameterises it ({@link MethodShape#defaultOwnerSource()}).
+     */
+    public List<String> explicitDefaultOwnerSources() {
+        var owners = new java.util.LinkedHashMap<TypeRef, String>();
+        for (MethodShape m : methods) {
+            if (m.defaultOwner() != null) owners.putIfAbsent(m.defaultOwner(), m.defaultOwnerSource());
+        }
+        return List.copyOf(owners.values());
+    }
+
     /** Name of the {@code $$super$<name>} bridge for a bean method. */
     public static String superBridgeName(String methodName) {
         return SUPER_BRIDGE_PREFIX + methodName;
