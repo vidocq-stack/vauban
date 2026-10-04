@@ -85,13 +85,21 @@ public final class InterceptedSourceRenderer {
                 .append(". Drives the\n");
         sb.append("// deployment-dynamic interceptor chain at run time. Do not edit.\n");
         sb.append("@SuppressWarnings({\"unchecked\", \"rawtypes\"})\n");
-        sb.append("public class ").append(subSimple).append(" extends ").append(beanSource).append(" {\n\n");
+        sb.append("public class ").append(subSimple).append(" extends ").append(beanSource);
+        // The interfaces whose shadowed default methods the bridges reach explicitly (BUG-20261004-08):
+        // findSpecial on an interface method needs it among the class's direct superinterfaces.
+        var owners = shape.explicitDefaultOwners();
+        if (!owners.isEmpty()) {
+            sb.append(" implements ").append(String.join(", ", owners.stream().map(TypeRef::sourceName).toList()));
+        }
+        sb.append(" {\n\n");
 
         // Fields — names come from the shared IR (single authority with the bytecode emitter)
         sb.append("    private ").append(IM).append(" ").append(InterceptedShape.FIELD_MANAGER).append(";\n");
         sb.append("    private java.util.Set ").append(InterceptedShape.FIELD_BINDINGS).append(";\n");
         sb.append("    private java.util.Set ").append(InterceptedShape.FIELD_CONSTRUCTOR_BINDINGS).append(";\n");
         sb.append("    private ").append(CREATIONAL).append(" ").append(InterceptedShape.FIELD_CONTEXT).append(";\n\n");
+        renderDefaultHandles(sb, subSimple, shape.methods());
 
         // Constructors mirroring each non-private super constructor
         for (CtorShape ctor : shape.constructors()) {
@@ -117,8 +125,9 @@ public final class InterceptedSourceRenderer {
         var tiNames = shape.targetInvokerNames();
         for (int i = 0; i < methods.size(); i++) {
             MethodShape m = methods.get(i);
-            renderOverride(sb, subSimple, m, tiNames.get(i));
-            renderSuperBridge(sb, m);
+            String defaultHandle = m.defaultOwner() != null ? DEFAULT_HANDLE_PREFIX + i : null;
+            renderOverride(sb, subSimple, m, tiNames.get(i), defaultHandle);
+            renderSuperBridge(sb, m, defaultHandle);
             renderTargetInvokerGlue(sb, subSimple, m, tiNames.get(i));
         }
 
@@ -134,7 +143,56 @@ public final class InterceptedSourceRenderer {
         return new Generated(subBinary, sb.toString());
     }
 
-    private static void renderOverride(StringBuilder sb, String subSimple, MethodShape m, String tiName) {
+    /** Prefix of the static {@code MethodHandle} reaching a shadowed default method explicitly. */
+    private static final String DEFAULT_HANDLE_PREFIX = "$$default$";
+
+    /**
+     * One static {@code MethodHandle} per shadowed default method (BUG-20261004-08): a
+     * {@code findSpecial} on the default of the interface the class lists — the {@code invokespecial}
+     * the bytecode emitter writes. Java source cannot write it as {@code I.super.m()}: JLS 15.12.1
+     * forbids naming {@code I} there when the superclass, the bean, is itself a subtype of {@code I}.
+     */
+    private static void renderDefaultHandles(StringBuilder sb, String subSimple, List<MethodShape> methods) {
+        boolean any = false;
+        for (int i = 0; i < methods.size(); i++) {
+            MethodShape m = methods.get(i);
+            if (m.defaultOwner() == null) continue;
+            any = true;
+            var type = new StringBuilder("java.lang.invoke.MethodType.methodType(")
+                    .append(sourceName(m.returnType())).append(".class");
+            for (TypeRef p : m.params()) type.append(", ").append(sourceName(p)).append(".class");
+            type.append(")");
+            sb.append("    private static final java.lang.invoke.MethodHandle ").append(DEFAULT_HANDLE_PREFIX).append(i)
+                    .append(" = $$special(").append(sourceName(m.defaultOwner())).append(".class, \"")
+                    .append(m.name()).append("\", ").append(type).append(");\n");
+        }
+        if (!any) return;
+        sb.append("\n    private static java.lang.invoke.MethodHandle $$special(Class<?> owner, String name,\n")
+                .append("            java.lang.invoke.MethodType type) {\n")
+                .append("        try {\n")
+                .append("            return java.lang.invoke.MethodHandles.lookup().findSpecial(owner, name, type, ")
+                .append(subSimple).append(".class);\n")
+                .append("        } catch (ReflectiveOperationException e) {\n")
+                .append("            throw new IllegalStateException(\"Cannot reach the default method \"\n")
+                .append("                    + owner.getName() + \".\" + name, e);\n")
+                .append("        }\n")
+                .append("    }\n\n");
+    }
+
+    /**
+     * The original method: {@code super.<name>(args)}, or the shadowed default through its
+     * {@code MethodHandle}, the result cast to {@code resultType} ({@code null}: a statement).
+     */
+    private static String originalCall(MethodShape m, String defaultHandle, String args, TypeRef resultType) {
+        if (defaultHandle == null) {
+            return "super." + m.name() + "(" + args + ")";
+        }
+        var call = defaultHandle + ".invoke(this" + (args.isEmpty() ? "" : ", " + args) + ")";
+        return resultType == null || resultType.isVoid() ? call : "(" + sourceName(resultType) + ") " + call;
+    }
+
+    private static void renderOverride(StringBuilder sb, String subSimple, MethodShape m, String tiName,
+            String defaultHandle) {
         // Declared with the signature the bean sees: Java source cannot override echo(T) of a
         // Base<String> as echo(Object) (BUG-20261004-06); javac adds the bridge for the descriptor.
         TypeRef ret = m.memberReturnType();
@@ -150,12 +208,11 @@ public final class InterceptedSourceRenderer {
         // `super.<m>(...)` here would otherwise be an unreported checked exception. sneaky() rethrows
         // the very same throwable, so the behaviour matches the bytecode emitter (which has no checked
         // enforcement).
+        String original = originalCall(m, defaultHandle, args(m.params().size()), ret);
         if (ret.isVoid()) {
-            sb.append("            if (this.$$manager == null) { super.").append(m.name())
-                    .append("(").append(args(m.params().size())).append("); return; }\n");
+            sb.append("            if (this.$$manager == null) { ").append(original).append("; return; }\n");
         } else {
-            sb.append("            if (this.$$manager == null) return super.").append(m.name())
-                    .append("(").append(args(m.params().size())).append(");\n");
+            sb.append("            if (this.$$manager == null) return ").append(original).append(";\n");
         }
         sb.append("            java.lang.reflect.Method $$m = getClass().getDeclaredMethod(\"")
                 .append(InterceptedShape.superBridgeName(m.name())).append("\"")
@@ -188,12 +245,20 @@ public final class InterceptedSourceRenderer {
      * which {@code getMethod()} resolves to the declaration — and casts each argument to the type
      * the bean binds when the two differ, so {@code super.<name>(…)} compiles (BUG-20261004-06).
      */
-    private static void renderSuperBridge(StringBuilder sb, MethodShape m) {
+    private static void renderSuperBridge(StringBuilder sb, MethodShape m, String defaultHandle) {
         TypeRef ret = m.returnType();
         sb.append("    public ").append(sourceName(ret)).append(" ")
                 .append(InterceptedShape.superBridgeName(m.name()))
                 .append("(").append(params(m.params())).append(") throws Exception {\n");
-        if (ret.isVoid()) {
+        if (defaultHandle != null) {
+            // MethodHandle.invoke throws Throwable: rethrown as is, the bridge's contract unchanged.
+            sb.append("        try {\n");
+            sb.append("            ").append(ret.isVoid() ? "" : "return ")
+                    .append(originalCall(m, defaultHandle, args(m.params().size()), ret)).append(";\n");
+            sb.append("        } catch (Throwable $$t) {\n");
+            sb.append("            throw sneaky($$t);\n");
+            sb.append("        }\n");
+        } else if (ret.isVoid()) {
             sb.append("        super.").append(m.name()).append("(").append(memberArgs(m)).append(");\n");
         } else {
             sb.append("        return super.").append(m.name()).append("(").append(memberArgs(m)).append(");\n");

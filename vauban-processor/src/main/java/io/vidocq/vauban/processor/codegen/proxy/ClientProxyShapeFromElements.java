@@ -110,10 +110,22 @@ public final class ClientProxyShapeFromElements {
     private static void addDefaultMethods(TypeElement bean, boolean asMember, Elements elements,
             Types types, java.util.Set<String> seen, List<ProxyMethodShape> methods) {
         for (ExecutableElement m : ElementFilter.methodsIn(elements.getAllMembers(bean))) {
-            if (!m.getModifiers().contains(Modifier.DEFAULT)) continue;
+            if (!m.getModifiers().contains(Modifier.DEFAULT) || !shouldProxy(m)) continue;
+            if (InterceptedShapeFromElements.isShadowedDefault(bean, m, types)) {
+                // A declaration the bean does not inherit (a private superclass method) holds the
+                // key, and a call typed by the bean class would resolve to it and be refused: forward
+                // through an interface instead (BUG-20261004-08), or not at all when none qualifies.
+                var owner = InterceptedShapeFromElements.accessibleDefaultOwner(bean, m, elements, types);
+                if (owner == null) continue;
+                var shape = methodShape(bean, m, asMember, false, elements, types);
+                methods.add(new ProxyMethodShape(shape.name(), shape.returnType(), shape.params(),
+                        shape.thrownTypes(), false,
+                        TypeRef.ofReference(elements.getBinaryName(owner).toString(), 0)));
+                continue;
+            }
             // A class method that is the same member (PlainBase.tag(String) implementing
             // Tagged<String>.tag(T)) was seen first and is the one the bean runs.
-            if (!shouldProxy(m) || !seen.add(memberKey(bean, m, types))) continue;
+            if (!seen.add(memberKey(bean, m, types))) continue;
             methods.add(methodShape(bean, m, asMember, false, elements, types)); // interface methods are public
         }
     }

@@ -64,6 +64,19 @@ public record InterceptedShape(
         return beanBinaryName + SUBCLASS_SUFFIX;
     }
 
+    /**
+     * The interfaces the generated subclass lists among its direct superinterfaces, in method order:
+     * those through which a bridge reaches a shadowed default method explicitly
+     * ({@link MethodShape#defaultOwner()}, BUG-20261004-08). Empty for nearly every bean.
+     */
+    public List<TypeRef> explicitDefaultOwners() {
+        var owners = new java.util.LinkedHashSet<TypeRef>();
+        for (MethodShape m : methods) {
+            if (m.defaultOwner() != null) owners.add(m.defaultOwner());
+        }
+        return List.copyOf(owners);
+    }
+
     /** Name of the {@code $$super$<name>} bridge for a bean method. */
     public static String superBridgeName(String methodName) {
         return SUPER_BRIDGE_PREFIX + methodName;

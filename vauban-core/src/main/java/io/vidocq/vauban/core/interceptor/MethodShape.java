@@ -32,9 +32,16 @@ import java.util.List;
  * ({@code echo(T)} of {@code Base<T>} is {@code echo(String)} in {@code Bean extends Base<String>}).
  * Java source can override only that member signature, so the source renderer declares its
  * override with it (BUG-20261004-06); the bytecode emitter overrides by descriptor and ignores it.</p>
+ *
+ * <p>{@code defaultOwner} is {@code null} unless the method is an interface default method that a
+ * declaration the bean does not inherit — a private method of a superclass — shadows for
+ * {@code super.<name>(…)}: the JVM resolves that call to the shadowing declaration and refuses it
+ * ({@code IllegalAccessError}). The generated subclass then lists {@code defaultOwner}, an
+ * accessible interface that declares or inherits the default, among its direct superinterfaces,
+ * and reaches the default through it explicitly (BUG-20261004-08).</p>
  */
 public record MethodShape(String name, TypeRef returnType, List<TypeRef> params,
-                          TypeRef memberReturnType, List<TypeRef> memberParams) {
+                          TypeRef memberReturnType, List<TypeRef> memberParams, TypeRef defaultOwner) {
 
     public MethodShape {
         java.util.Objects.requireNonNull(name, "name");
@@ -48,8 +55,19 @@ public record MethodShape(String name, TypeRef returnType, List<TypeRef> params,
         }
     }
 
+    /** A method whose bridge calls {@code super.<name>(…)}, with its member signature. */
+    public MethodShape(String name, TypeRef returnType, List<TypeRef> params,
+                       TypeRef memberReturnType, List<TypeRef> memberParams) {
+        this(name, returnType, params, memberReturnType, memberParams, null);
+    }
+
     /** A method whose member signature is its erased declaration: no type variable is bound. */
     public MethodShape(String name, TypeRef returnType, List<TypeRef> params) {
         this(name, returnType, params, returnType, params);
+    }
+
+    /** This method with its bridge reaching the default method of {@code owner} explicitly. */
+    public MethodShape withDefaultOwner(TypeRef owner) {
+        return new MethodShape(name, returnType, params, memberReturnType, memberParams, owner);
     }
 }

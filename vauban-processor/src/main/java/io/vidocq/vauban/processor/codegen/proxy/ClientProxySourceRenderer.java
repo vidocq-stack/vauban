@@ -179,8 +179,15 @@ public final class ClientProxySourceRenderer {
             }
         }
         sb.append(" {\n");
-        sb.append("        ").append(isVoid ? "" : "return ")
-                .append("((").append(beanSource).append(") ")
+        // A shadowed default method goes through its interface: a call typed by the bean class
+        // resolves to the shadowing private method and is refused (BUG-20261004-08). The interface
+        // may be generic, so its result is cast back to the type this override declares.
+        var owner = m.interfaceOwner();
+        sb.append("        ").append(isVoid ? "" : "return ");
+        if (owner != null && !isVoid) {
+            sb.append("(").append(m.returnType().sourceName()).append(") ");
+        }
+        sb.append("((").append(owner != null ? owner.sourceName() : beanSource).append(") ")
                 .append(ClientProxyShape.FIELD_DELEGATE).append(".get()).").append(m.name()).append("(");
         for (int i = 0; i < params.size(); i++) {
             if (i > 0) sb.append(", ");

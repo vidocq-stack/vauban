@@ -19,6 +19,7 @@
  */
 package io.vidocq.vauban.core.proxy;
 
+import io.vidocq.vauban.core.interceptor.ShadowedDefaults;
 import io.vidocq.vauban.core.interceptor.TypeRef;
 import io.vidocq.vauban.core.proxy.ClientProxyShape.ProxyMethodShape;
 
@@ -74,7 +75,7 @@ public final class RuntimeClientProxyGenerator {
      * @param proxyBinaryName the binary name of the generated proxy (producer's package)
      */
     public static GeneratedProxy generateProducerProxyAt(Class<?> producedType, String proxyBinaryName) {
-        ClientProxyShape shape = shapeOf(producedType);
+        ClientProxyShape shape = shapeOf(producedType, false);
         return new GeneratedProxy(proxyBinaryName, ClientProxyEmitter.emitAt(shape, proxyBinaryName));
     }
 
@@ -84,6 +85,15 @@ public final class RuntimeClientProxyGenerator {
      * agree with it on the forwarded method set, which a cross-check test pins.
      */
     public static ClientProxyShape shapeOf(Class<?> beanClass) {
+        return shapeOf(beanClass, true);
+    }
+
+    /**
+     * @param colocated the proxy lives in the bean's package, so an interface of that package
+     *                  qualifies to forward a shadowed default method through; a proxy placed in a
+     *                  producer's package only uses public ones
+     */
+    private static ClientProxyShape shapeOf(Class<?> beanClass, boolean colocated) {
         // The proxy is generated in the bean's package (the suffix carries no dot).
         String proxyPackage = packageOf(beanClass.getName());
         var proxiedSeen = new java.util.HashSet<String>();
@@ -107,16 +117,25 @@ public final class RuntimeClientProxyGenerator {
         // would run the default body on the proxy itself, bypassing the contextual instance and its
         // interceptors (BUG-20261004-02). getMethods() lists the most specific default of each.
         for (var method : beanClass.getMethods()) {
-            if (!method.isDefault()) continue;
-            var key = method.getName() + java.util.Arrays.toString(method.getParameterTypes());
-            if (proxiedSeen.add(key) && shouldProxy(method)) {
-                methods.add(new ProxyMethodShape(
-                        method.getName(),
-                        TypeRef.fromClass(method.getReturnType()),
-                        typeRefs(method.getParameterTypes()),
-                        typeRefs(method.getExceptionTypes()),
-                        false)); // interface methods are public
+            if (!method.isDefault() || !shouldProxy(method)) continue;
+            TypeRef interfaceOwner = null;
+            if (ShadowedDefaults.isShadowed(beanClass, method)) {
+                // A declaration the bean does not inherit (a private superclass method) holds the
+                // key, and a call typed by the bean class would resolve to it and be refused: forward
+                // through an interface instead (BUG-20261004-08), or not at all when none qualifies.
+                var owner = ShadowedDefaults.accessibleOwner(beanClass, method, colocated);
+                if (owner == null) continue;
+                interfaceOwner = TypeRef.fromClass(owner);
+            } else if (!proxiedSeen.add(method.getName() + java.util.Arrays.toString(method.getParameterTypes()))) {
+                continue;
             }
+            methods.add(new ProxyMethodShape(
+                    method.getName(),
+                    TypeRef.fromClass(method.getReturnType()),
+                    typeRefs(method.getParameterTypes()),
+                    typeRefs(method.getExceptionTypes()),
+                    false, // interface methods are public
+                    interfaceOwner));
         }
 
         // CDI 4.1: beans with only @Inject constructors (no no-arg) must still be proxyable —

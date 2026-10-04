@@ -46,7 +46,6 @@ import java.util.stream.Collectors;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
-import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -177,22 +176,31 @@ class DefaultMethodInterceptionTest {
     public static class ShadowedGreeter extends PrivateHidden implements Hider {
     }
 
+    /** The same, reached through its client proxy. */
+    @Traced
+    @ApplicationScoped
+    public static class ScopedShadowedGreeter extends PrivateHidden implements Hider {
+    }
+
     private static SeContainer container;
     private static ScopedGreeter scoped;
     private static DependentGreeter dependent;
     private static BoundOnlyByADefaultMethod boundOnlyByADefaultMethod;
     private static ShadowedGreeter shadowed;
+    private static ScopedShadowedGreeter scopedShadowed;
 
     @BeforeAll
     static void boot() {
         container = SeContainerInitializer.newInstance()
                 .addBeanClasses(ScopedGreeter.class, DependentGreeter.class, BoundOnlyByADefaultMethod.class,
-                        ShadowedGreeter.class, TracingInterceptor.class, MarkingInterceptor.class)
+                        ShadowedGreeter.class, ScopedShadowedGreeter.class,
+                        TracingInterceptor.class, MarkingInterceptor.class)
                 .initialize();
         scoped = container.select(ScopedGreeter.class).get();
         dependent = container.select(DependentGreeter.class).get();
         boundOnlyByADefaultMethod = container.select(BoundOnlyByADefaultMethod.class).get();
         shadowed = container.select(ShadowedGreeter.class).get();
+        scopedShadowed = container.select(ScopedShadowedGreeter.class).get();
     }
 
     @AfterAll
@@ -254,15 +262,27 @@ class DefaultMethodInterceptionTest {
         // (JLS 8.4.8). getMethod(), the bindings and the chain must report that one. Called through
         // Hider: this test class is a nestmate of PrivateHidden, so a call typed ShadowedGreeter
         // would resolve to the private method and run it directly.
+        // The generated subclass reaches the default explicitly, Hider being one of its direct
+        // superinterfaces: a plain super.hidden(...) resolves to the private PrivateHidden.hidden,
+        // as any call typed ShadowedGreeter from outside the nest does (BUG-20261004-08).
         Hider hider = shadowed;
-        // BUG-20261004-08 (open): the JVM resolves the generated bridge's super.hidden(...) to the
-        // private PrivateHidden.hidden — as it resolves any call typed ShadowedGreeter from outside
-        // the nest — so the chain ends in IllegalAccessError instead of reaching the default.
-        assertThrows(IllegalAccessError.class, () -> hider.hidden("x"));
+        assertEquals("default x", hider.hidden("x"));
         var seen = onlySeen();
         var hidden = Hider.class.getDeclaredMethod("hidden", String.class);
         assertEquals(hidden, seen.method());
         assertTrue(seen.bindings().contains("Marked"), "got " + seen.bindings());
+        assertEquals(List.of(hidden), MarkingInterceptor.CALLS);
+    }
+
+    @Test
+    @DisplayName("the same default method, through the client proxy of a normal-scoped bean")
+    void shadowedDefaultThroughTheClientProxy() throws Exception {
+        // The proxy forwards through Hider as well: a call typed ScopedShadowedGreeter on the
+        // contextual instance would resolve to the private method.
+        Hider hider = scopedShadowed;
+        assertEquals("default y", hider.hidden("y"));
+        var hidden = Hider.class.getDeclaredMethod("hidden", String.class);
+        assertEquals(hidden, onlySeen().method());
         assertEquals(List.of(hidden), MarkingInterceptor.CALLS);
     }
 

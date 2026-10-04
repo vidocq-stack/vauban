@@ -108,6 +108,12 @@ public final class InterceptedEmitter {
         return GeneratedClassFile.build(subclassCD, clb -> {
             clb.withFlags(ClassFile.ACC_PUBLIC | ClassFile.ACC_SUPER);
             clb.withSuperclass(beanCD);
+            // The interfaces whose shadowed default methods the bridges invoke explicitly: an
+            // invokespecial on an interface method must name a direct superinterface (JVMS 4.9.2).
+            var owners = shape.explicitDefaultOwners();
+            if (!owners.isEmpty()) {
+                clb.withInterfaceSymbols(owners.stream().map(TypeRef::classDesc).toList());
+            }
 
             // Fields
             clb.withField(FIELD_MANAGER, CD_InterceptorManager, ClassFile.ACC_PRIVATE);
@@ -196,9 +202,24 @@ public final class InterceptedEmitter {
                     for (TypeRef p : method.params()) {
                         s = loadParam(cob, p.classDesc(), s);
                     }
-                    cob.invokespecial(beanCD, method.name(), methodType);
+                    invokeOriginal(cob, beanCD, method, methodType);
                     emitReturn(cob, returnCD);
                 });
+    }
+
+    /**
+     * {@code super.<name>(…)}, or, for a shadowed default method, {@code invokespecial} on the
+     * default of {@link MethodShape#defaultOwner()} — which the subclass lists as a direct
+     * superinterface — since the JVM resolves {@code super.<name>} to the shadowing declaration and
+     * refuses it (BUG-20261004-08).
+     */
+    private static void invokeOriginal(CodeBuilder cob, ClassDesc beanCD, MethodShape method,
+            MethodTypeDesc methodType) {
+        if (method.defaultOwner() != null) {
+            cob.invokespecial(method.defaultOwner().classDesc(), method.name(), methodType, true);
+        } else {
+            cob.invokespecial(beanCD, method.name(), methodType);
+        }
     }
 
     private static void generateInterceptedMethod(
@@ -228,7 +249,7 @@ public final class InterceptedEmitter {
                     for (TypeRef p : method.params()) {
                         s = loadParam(cob, p.classDesc(), s);
                     }
-                    cob.invokespecial(beanCD, method.name(), methodType);
+                    invokeOriginal(cob, beanCD, method, methodType);
                     emitReturn(cob, returnCD);
 
                     // Intercepted path

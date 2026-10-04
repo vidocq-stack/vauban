@@ -163,6 +163,34 @@ class InterceptedShapeFromElementsTest {
         assertEquals(Set.of("relabel(java.lang.String)"), assertSameMethodSet(OverridingRelabel.class));
     }
 
+    /** A private method with the signature of {@link ShadowHider#hidden()}. */
+    public static class PrivateHiddenBase {
+        @SuppressWarnings("unused")
+        private String hidden() { return "private"; }
+    }
+
+    public interface ShadowHider {
+        default String hidden() { return "default"; }
+    }
+
+    public static class ShadowedBean extends PrivateHiddenBase implements ShadowHider {
+    }
+
+    /** Inherits a shadowed default whose only interface is package-private in another package. */
+    public static class CarriedBean extends io.vidocq.vauban.processor.fixture.colocated.DefaultCarrier {
+        public String own() { return "own"; }
+    }
+
+    @Test
+    @DisplayName("a shadowed default method is reached through its interface, or left out (BUG-20261004-08)")
+    void shadowedDefaultMethods() throws Exception {
+        // super.hidden() would resolve to the private PrivateHiddenBase.hidden(): both front-ends
+        // mark the method so that the bridge calls ShadowHider's default explicitly.
+        assertEquals(Set.of("hidden()@" + ShadowHider.class.getName()), assertSameMethodSet(ShadowedBean.class));
+        // No interface CarriedBean can name carries carried(): neither front-end intercepts it.
+        assertEquals(Set.of("own()"), assertSameMethodSet(CarriedBean.class));
+    }
+
     // ---- helpers ----
 
     /** The run-time and the processor front-ends select the same methods of {@code fixture}. */
@@ -183,11 +211,12 @@ class InterceptedShapeFromElementsTest {
         return expectedKeys;
     }
 
-    private static String methodKey(MethodShape m) {
+    /** {@code name(params)}, then {@code @<interface>} when the bridge calls that interface's default explicitly. */
+    static String methodKey(MethodShape m) {
         String params = m.params().stream()
                 .map(TypeRef::toString)
                 .collect(Collectors.joining(","));
-        return m.name() + "(" + params + ")";
+        return m.name() + "(" + params + ")" + (m.defaultOwner() != null ? "@" + m.defaultOwner() : "");
     }
 
     private static <T> Set<T> difference(Set<T> a, Set<T> b) {
@@ -308,10 +337,7 @@ class InterceptedShapeFromElementsTest {
         }
 
         private static String methodKey(MethodShape m) {
-            String params = m.params().stream()
-                    .map(TypeRef::toString)
-                    .collect(Collectors.joining(","));
-            return m.name() + "(" + params + ")";
+            return InterceptedShapeFromElementsTest.methodKey(m);
         }
     }
 

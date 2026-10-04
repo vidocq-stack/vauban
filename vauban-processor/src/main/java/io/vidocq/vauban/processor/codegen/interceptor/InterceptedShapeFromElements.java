@@ -101,11 +101,112 @@ public final class InterceptedShapeFromElements {
                 if (declaredByInterface(method) != interfacePass) continue;
                 if (!seen.add(memberSignatureKey(bean, method, types))) continue;
                 if (!shouldIntercept(method, elements)) continue;
-                methods.add(methodShape(bean, method, elements, types));
+                var shape = methodShape(bean, method, elements, types);
+                if (isShadowedDefault(bean, method, types)) {
+                    // super.<name>() would resolve to the shadowing declaration: the bridge reaches
+                    // the default through an interface the subclass lists (BUG-20261004-08), or,
+                    // when no interface it may name carries it, the method is left alone.
+                    var owner = accessibleDefaultOwner(bean, method, elements, types);
+                    if (owner == null) continue;
+                    shape = shape.withDefaultOwner(TypeRef.ofReference(elements.getBinaryName(owner).toString(), 0));
+                }
+                methods.add(shape);
             }
         }
 
         return new InterceptedShape(beanBinaryName, ctors, methods);
+    }
+
+    /**
+     * Whether {@code method}, an interface default method {@code bean} inherits, is shadowed: a class
+     * of the bean's superclass chain declares a method with its name and erased descriptor — a
+     * private one, not inherited — to which the JVM resolves a call typed by the bean class, the
+     * generated subclass's {@code super.<name>()} included, and which it then refuses. As
+     * {@code io.vidocq.vauban.core.interceptor.ShadowedDefaults#isShadowed} (BUG-20261004-08).
+     */
+    public static boolean isShadowedDefault(TypeElement bean, ExecutableElement method, Types types) {
+        if (!method.getModifiers().contains(Modifier.DEFAULT)) return false;
+        var descriptor = erasedDescriptor(method, types);
+        for (TypeElement c = bean; c != null && !isObject(c); c = superclassOf(c)) {
+            for (ExecutableElement declared : ElementFilter.methodsIn(c.getEnclosedElements())) {
+                if (erasedDescriptor(declared, types).equals(descriptor)) return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * The interface through which a class generated in {@code bean}'s package can reach the shadowed
+     * default {@code method} explicitly: its declaring interface when the generated class can name
+     * it, else an interface among the bean's supertypes that inherits it and can be named; {@code
+     * null} when there is none. As {@code ShadowedDefaults#accessibleOwner} at run time.
+     */
+    public static TypeElement accessibleDefaultOwner(TypeElement bean, ExecutableElement method,
+            Elements elements, Types types) {
+        var declaring = (TypeElement) method.getEnclosingElement();
+        var candidates = new java.util.LinkedHashSet<TypeElement>();
+        candidates.add(declaring);
+        var queue = new java.util.ArrayDeque<TypeElement>();
+        for (TypeElement c = bean; c != null; c = superclassOf(c)) {
+            queue.addAll(interfacesOf(c));
+        }
+        while (!queue.isEmpty()) {
+            var next = queue.poll();
+            if (types.isSubtype(types.erasure(next.asType()), types.erasure(declaring.asType()))
+                    && candidates.add(next)) {
+                queue.addAll(interfacesOf(next));
+            }
+        }
+        for (var candidate : candidates) {
+            if (ElementFilter.methodsIn(elements.getAllMembers(candidate)).contains(method)
+                    && nameableFrom(candidate, bean, elements)) {
+                return candidate;
+            }
+        }
+        return null;
+    }
+
+    private static boolean nameableFrom(TypeElement candidate, TypeElement bean, Elements elements) {
+        if (elements.getPackageOf(candidate).equals(elements.getPackageOf(bean))) return true;
+        for (Element e = candidate; e instanceof TypeElement t; e = t.getEnclosingElement()) {
+            if (!t.getModifiers().contains(Modifier.PUBLIC)) return false;
+        }
+        var ownerModule = elements.getModuleOf(candidate);
+        var beanModule = elements.getModuleOf(bean);
+        if (ownerModule == null || ownerModule.isUnnamed() || ownerModule.equals(beanModule)) return true;
+        var pkg = elements.getPackageOf(candidate);
+        for (var directive : ElementFilter.exportsIn(ownerModule.getDirectives())) {
+            if (directive.getPackage().equals(pkg)
+                    && (directive.getTargetModules() == null || directive.getTargetModules().contains(beanModule))) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static java.util.List<TypeElement> interfacesOf(TypeElement type) {
+        var interfaces = new ArrayList<TypeElement>();
+        for (TypeMirror i : type.getInterfaces()) {
+            if (i instanceof DeclaredType dt && dt.asElement() instanceof TypeElement te) interfaces.add(te);
+        }
+        return interfaces;
+    }
+
+    /** Name, erased parameter types and erased return type: what the JVM resolves a call by. */
+    private static String erasedDescriptor(ExecutableElement method, Types types) {
+        var sb = new StringBuilder(method.getSimpleName()).append('(');
+        for (VariableElement p : method.getParameters()) {
+            sb.append(types.erasure(p.asType())).append(',');
+        }
+        return sb.append(')').append(types.erasure(method.getReturnType())).toString();
+    }
+
+    private static boolean isObject(TypeElement t) {
+        return t.getQualifiedName().contentEquals(JAVA_LANG_OBJECT);
+    }
+
+    private static TypeElement superclassOf(TypeElement t) {
+        return t.getSuperclass() instanceof DeclaredType dt && dt.asElement() instanceof TypeElement se ? se : null;
     }
 
     private static boolean declaredByInterface(ExecutableElement method) {

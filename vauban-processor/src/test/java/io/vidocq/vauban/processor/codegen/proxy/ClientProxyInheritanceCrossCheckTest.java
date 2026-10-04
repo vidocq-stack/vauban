@@ -292,7 +292,8 @@ class ClientProxyInheritanceCrossCheckTest {
             var shape = ClientProxyShapeFromElements.fromColocated(element, env.elements(), env.types());
             return shape.methods().stream()
                     .map(m -> m.name() + "(" + m.params().stream().map(Object::toString)
-                            .collect(Collectors.joining(",")) + ")" + (m.needsMethodHandle() ? "#mh" : ""))
+                            .collect(Collectors.joining(",")) + ")" + (m.needsMethodHandle() ? "#mh" : "")
+                            + ownerSuffix(m))
                     .filter(k -> !OBJECT_METHODS.contains(k.replace("#mh", "")))
                     .collect(Collectors.joining(";"));
         });
@@ -325,11 +326,58 @@ class ClientProxyInheritanceCrossCheckTest {
             var shape = ClientProxyShapeFromElements.from(element, env.elements(), env.types());
             return shape.methods().stream()
                     .map(m -> m.name() + "(" + m.params().stream().map(Object::toString)
-                            .collect(Collectors.joining(",")) + ")")
+                            .collect(Collectors.joining(",")) + ")" + ownerSuffix(m))
                     .filter(k -> !OBJECT_METHODS.contains(k))
                     .collect(Collectors.joining(";"));
         });
         return distinctParts(joined);
+    }
+
+    /** {@code @<interface>} when the proxy forwards through that interface, else nothing. */
+    private static String ownerSuffix(ClientProxyShape.ProxyMethodShape m) {
+        return m.interfaceOwner() != null ? "@" + m.interfaceOwner() : "";
+    }
+
+    /** A private method with the signature of {@link HidingTag#hidden()}. */
+    public static class PrivateHiddenTag {
+        @SuppressWarnings("unused")
+        private String hidden() { return "private"; }
+    }
+
+    public interface HidingTag {
+        default String hidden() { return "default"; }
+    }
+
+    public static class ShadowedTagChild extends PrivateHiddenTag implements HidingTag {
+    }
+
+    /** Inherits a shadowed default whose only interface is package-private in another package. */
+    public static class CarriedChild extends io.vidocq.vauban.processor.fixture.colocated.DefaultCarrier {
+        public String own() { return "own"; }
+    }
+
+    @Test
+    @DisplayName("a shadowed default method is forwarded through its interface, or not at all (BUG-20261004-08)")
+    void shadowedDefaultMethods() throws Exception {
+        // ((ShadowedTagChild) delegate).hidden() would resolve to the private PrivateHiddenTag.hidden():
+        // every path forwards through HidingTag instead.
+        Set<String> expected = Set.of("hidden()@" + HidingTag.class.getName());
+        assertEquals(expected, runtimeShape(ShadowedTagChild.class), "run-time shape");
+        assertEquals(expected, shapeFromElements(ShadowedTagChild.class), "source shape");
+        assertEquals(expected, colocatedShapeFromElements(ShadowedTagChild.class), "co-located shape");
+        // No interface CarriedChild can name carries carried(): no path forwards it.
+        Set<String> own = Set.of("own()");
+        assertEquals(own, runtimeShape(CarriedChild.class), "run-time shape");
+        assertEquals(own, shapeFromElements(CarriedChild.class), "source shape");
+        assertEquals(own, colocatedShapeFromElements(CarriedChild.class), "co-located shape");
+    }
+
+    private static Set<String> runtimeShape(Class<?> fixture) {
+        return RuntimeClientProxyGenerator.shapeOf(fixture).methods().stream()
+                .map(m -> m.name() + "(" + m.params().stream().map(Object::toString)
+                        .collect(Collectors.joining(",")) + ")" + ownerSuffix(m))
+                .filter(k -> !OBJECT_METHODS.contains(k))
+                .collect(Collectors.toCollection(LinkedHashSet::new));
     }
 
     /** The Elements/Types pair handed to the callback. */

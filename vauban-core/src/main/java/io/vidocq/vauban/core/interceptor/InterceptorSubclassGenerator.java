@@ -106,7 +106,17 @@ public final class InterceptorSubclassGenerator {
             var key = method.getName() + Arrays.toString(method.getParameterTypes());
             if (seen.contains(key)) continue; // already intercepted
             if (shouldIntercept(method)) {
-                methods.add(methodShapeOf(method));
+                var shape = methodShapeOf(method);
+                if (ShadowedDefaults.isShadowed(beanClass, method)) {
+                    // super.<name>() would resolve to the shadowing declaration: the bridge reaches
+                    // the default through an interface the subclass lists (BUG-20261004-08), or,
+                    // when no interface it may list carries it, the method is left alone.
+                    var owner = ShadowedDefaults.accessibleOwner(beanClass, method, true);
+                    seen.add(key);
+                    if (owner == null) continue;
+                    shape = shape.withDefaultOwner(TypeRef.fromClass(owner));
+                }
+                methods.add(shape);
                 seen.add(key);
             }
         }

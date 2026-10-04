@@ -92,19 +92,30 @@ public record ClientProxyShape(
      * @param needsMethodHandle {@code true} when the override must dispatch through a
      *        {@code MethodHandle.invokeExact} (protected/package-private member declared in
      *        another runtime package — JVMS §4.10.1.9 rejects a naive {@code invokevirtual})
+     * @param interfaceOwner {@code null}, or the accessible interface to forward an interface
+     *        default method through: a declaration the bean does not inherit (a private method of
+     *        a superclass) shadows it for a call typed by the bean class, which the JVM resolves to
+     *        that declaration and refuses (BUG-20261004-08)
      */
     public record ProxyMethodShape(
             String name,
             TypeRef returnType,
             List<TypeRef> params,
             List<TypeRef> thrownTypes,
-            boolean needsMethodHandle) {
+            boolean needsMethodHandle,
+            TypeRef interfaceOwner) {
 
         public ProxyMethodShape {
             java.util.Objects.requireNonNull(name, "name");
             java.util.Objects.requireNonNull(returnType, "returnType");
             params = List.copyOf(params);
             thrownTypes = List.copyOf(thrownTypes);
+        }
+
+        /** A method forwarded through the bean class. */
+        public ProxyMethodShape(String name, TypeRef returnType, List<TypeRef> params,
+                                List<TypeRef> thrownTypes, boolean needsMethodHandle) {
+            this(name, returnType, params, thrownTypes, needsMethodHandle, null);
         }
     }
 

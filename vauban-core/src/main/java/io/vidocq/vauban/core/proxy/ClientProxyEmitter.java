@@ -180,14 +180,21 @@ public final class ClientProxyEmitter {
     private static void emitInvokevirtualInvocation(CodeBuilder cob, ClassDesc proxyCD,
                                                     ClassDesc beanCD, ProxyMethodShape method,
                                                     MethodTypeDesc methodType, ClassDesc[] paramCDs) {
-        // ((BeanClass) this.$$delegate.get()).method(params);
+        // ((BeanClass) this.$$delegate.get()).method(params); a shadowed default method goes through
+        // its interface instead: ((Owner) this.$$delegate.get()).method(params) (BUG-20261004-08).
+        var owner = method.interfaceOwner();
+        var receiverCD = owner != null ? owner.classDesc() : beanCD;
         cob.aload(0);
         cob.getfield(proxyCD, ClientProxyShape.FIELD_DELEGATE, CD_Supplier);
         cob.invokeinterface(CD_Supplier, "get", MethodTypeDesc.of(CD_Object));
-        cob.checkcast(beanCD);
+        cob.checkcast(receiverCD);
         int slot = 1;
         for (var paramCD : paramCDs) slot = loadParam(cob, paramCD, slot);
-        cob.invokevirtual(beanCD, method.name(), methodType);
+        if (owner != null) {
+            cob.invokeinterface(receiverCD, method.name(), methodType);
+        } else {
+            cob.invokevirtual(beanCD, method.name(), methodType);
+        }
     }
 
     private static void emitMethodHandleInvocation(CodeBuilder cob, ClassDesc proxyCD,
