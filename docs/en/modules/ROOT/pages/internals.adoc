@@ -74,11 +74,16 @@ bean overrides that method. The class-level bindings of an interface never apply
 `getInterceptorBindings()` includes its bindings. The client proxy of a normal-scoped bean forwards
 the same default methods to the contextual instance.
 
-When the processor cannot write an inherited default method in Java source, it leaves that method
-out of the class and prints a `[Vauban]` warning that says what a call does instead. That happens
+An inherited default method may be one the processor cannot write in Java source. That happens
 when the method's signature, as a member of the bean, names a type the generated class's package
 cannot name, or when a superclass method the bean does not inherit shadows the default and no
-interface carrying the default can be named there.
+interface carrying the default can be named there. Then:
+
+* the client proxy leaves the method out and the processor prints a `[Vauban]` warning that says
+  what a call on the proxy does instead;
+* the intercepted subclass does the same only for a shadowed default. A default that nothing
+  shadows but whose signature names such a type still breaks the build, as it did before; this is
+  recorded as open in the project's `BUG.md` (BUG-20261004-09).
 
 [#proxy-strategies]
 == Client proxies — one strategy per case [.tag-new]#NEW#
