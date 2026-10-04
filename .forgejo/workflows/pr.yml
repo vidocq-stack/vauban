@@ -220,6 +220,9 @@ jobs:
             bash -c "$TCK_COMMAND"
           fi
 
+          # No -am needed: "Build, test & install the producer locally" above ran `mvn install` on
+          # this pull request's tree, so the runner resolves the modules it tests from ~/.m2 at the
+          # PR version, not from an older install (unlike a local `-pl` run before `install`).
           if [ -n "$TCK_MODULES" ]; then
             IFS=',' read -ra modules <<< "$TCK_MODULES"
             for module in "${modules[@]}"; do
