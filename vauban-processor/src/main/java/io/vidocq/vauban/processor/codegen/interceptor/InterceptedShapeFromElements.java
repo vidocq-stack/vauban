@@ -121,8 +121,11 @@ public final class InterceptedShapeFromElements {
                     var beanPackage = elements.getPackageOf(bean);
                     var owner = accessibleDefaultOwner(bean, method, beanPackage, elements, types);
                     if (owner == null) {
+                        // InterceptorSubclassGenerator cannot list such an interface either, and
+                        // leaves the method out too: both generators agree.
                         omitted.accept(notIntercepted(bean, method, "no interface carrying it can be named from package "
-                                + beanPackage.getQualifiedName()));
+                                + beanPackage.getQualifiedName(),
+                                "the bytecode generators (run-time fallback, Maven plugin) leave it out too."));
                         continue;
                     }
                     var ownerType = asTheBeanParameterisesIt(bean, owner, types);
@@ -130,7 +133,9 @@ public final class InterceptedShapeFromElements {
                             || !nameableFrom(ownerType, beanPackage, elements)) {
                         omitted.accept(notIntercepted(bean, method, "its override, or the interface "
                                 + ownerType + " the subclass would list, names a type package "
-                                + beanPackage.getQualifiedName() + " cannot"));
+                                + beanPackage.getQualifiedName() + " cannot",
+                                "the bytecode generators (run-time fallback, Maven plugin) override by descriptor"
+                                        + " and keep it, so a subclass they generate differs from this one."));
                         continue;
                     }
                     shape = shape.withDefaultOwner(TypeRef.ofReference(elements.getBinaryName(owner).toString(), 0),
@@ -143,11 +148,16 @@ public final class InterceptedShapeFromElements {
         return new InterceptedShape(beanBinaryName, ctors, methods);
     }
 
-    /** The processor's report of a default method the generated subclass leaves alone, and why. */
-    private static String notIntercepted(TypeElement bean, ExecutableElement method, String why) {
+    /**
+     * The processor's report of a default method the generated subclass leaves alone, why, and how
+     * the bytecode generators treat it. The class the processor generates is used wherever it is
+     * found, on the class path and the module path alike.
+     */
+    private static String notIntercepted(TypeElement bean, ExecutableElement method, String why,
+            String bytecodeGenerators) {
         return bean.getQualifiedName() + ": the generated subclass does not intercept the inherited default method "
                 + ((TypeElement) method.getEnclosingElement()).getQualifiedName() + "." + method + " — " + why
-                + "; the run-time generator would, so this bean behaves differently on the module path.";
+                + "; a call behaves as on a plain instance of the bean, and " + bytecodeGenerators;
     }
 
     /**

@@ -271,6 +271,33 @@ class InterceptedShapeFromElementsTest {
         assertEquals(Set.of("own()"), computeFromElements(HiddenArgBean.class, KEYS), "processor shape");
     }
 
+    @Test
+    @DisplayName("the report of a default the source subclass leaves out compares it with the bytecode generators")
+    void omittedDefaultReportsCompareTheGenerators() throws Exception {
+        // No nameable interface: InterceptorSubclassGenerator leaves the method out too, so the
+        // report must not announce a difference.
+        var noOwner = onlyReport(CarriedBean.class);
+        assertTrue(noOwner.contains("does not intercept") && noOwner.contains("carried()")
+                && noOwner.contains("leave it out too"), noOwner);
+        // Unnameable in source only: the bytecode generators override by descriptor and keep it.
+        // The generated class is used on the class path and on the module path alike, so the
+        // difference is between generators, not between the two paths.
+        var unnameable = onlyReport(HiddenArgBean.class);
+        assertTrue(unnameable.contains("does not intercept") && unnameable.contains("keep it"), unnameable);
+        for (var report : List.of(noOwner, unnameable)) {
+            assertTrue(report.contains("as on a plain instance of the bean"), report);
+            assertFalse(report.contains("module path"), report);
+        }
+    }
+
+    /** The one report {@link InterceptedShapeFromElements#from} gives for {@code fixture}. */
+    private String onlyReport(Class<?> fixture) throws Exception {
+        var omitted = new ArrayList<String>();
+        computeFromElements(fixture, KEYS, omitted::add);
+        assertEquals(1, omitted.size(), "one omitted method reported: " + omitted);
+        return omitted.getFirst();
+    }
+
     /** A private {@code label(Object)}: the erased descriptor of {@link GenericLabel#label(Object)}. */
     public static class PrivateObjectLabel {
         @SuppressWarnings("unused")
@@ -416,6 +443,13 @@ class InterceptedShapeFromElementsTest {
      */
     private Set<String> computeFromElements(Class<?> fixture,
             java.util.function.Function<InterceptedShape, Set<String>> keys) throws Exception {
+        return computeFromElements(fixture, keys, omitted -> {});
+    }
+
+    /** The same, {@code omitted} receiving what the processor would report as left out. */
+    private Set<String> computeFromElements(Class<?> fixture,
+            java.util.function.Function<InterceptedShape, Set<String>> keys,
+            java.util.function.Consumer<String> omitted) throws Exception {
         // We build the source for FixtureBean and FixtureSuper from their class names
         // by referencing the already-compiled classes on the classpath.
         // Rather than re-compiling the fixture source, we use a "no-op" annotation
@@ -452,7 +486,7 @@ class InterceptedShapeFromElementsTest {
             var task = compiler.getTask(null, fm, diagnostics, options, null,
                     List.of(triggerFile, sourceFile));
 
-            task.setProcessors(List.of(new CaptureProcessor(fixture, keys, captured)));
+            task.setProcessors(List.of(new CaptureProcessor(fixture, keys, captured, omitted)));
             task.call();
         }
 
@@ -474,12 +508,14 @@ class InterceptedShapeFromElementsTest {
         private final Class<?> fixture;
         private final java.util.function.Function<InterceptedShape, Set<String>> keys;
         private final AtomicReference<Set<String>> sink;
+        private final java.util.function.Consumer<String> omitted;
 
         CaptureProcessor(Class<?> fixture, java.util.function.Function<InterceptedShape, Set<String>> keys,
-                AtomicReference<Set<String>> sink) {
+                AtomicReference<Set<String>> sink, java.util.function.Consumer<String> omitted) {
             this.fixture = fixture;
             this.keys = keys;
             this.sink = sink;
+            this.omitted = omitted;
         }
 
         @Override
@@ -507,7 +543,7 @@ class InterceptedShapeFromElementsTest {
                 return false;
             }
 
-            sink.set(keys.apply(InterceptedShapeFromElements.from(beanElement, elements, types)));
+            sink.set(keys.apply(InterceptedShapeFromElements.from(beanElement, elements, types, omitted)));
             return false;
         }
     }

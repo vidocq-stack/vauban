@@ -46,6 +46,7 @@ import java.util.function.BiFunction;
 import java.util.stream.Collectors;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -543,6 +544,43 @@ class ClientProxyInheritanceCrossCheckTest {
         assertTrue(omitted.getFirst().contains(NonShadowHiddenChild.class.getCanonicalName())
                 && omitted.getFirst().contains("label(")
                 && omitted.getFirst().contains("HiddenArgument"), omitted.getFirst());
+    }
+
+    @Test
+    @DisplayName("the report of a default the source proxy leaves out says what a call on the proxy does")
+    void omittedDefaultReportsSayWhatACallDoes() throws Exception {
+        // Not shadowed: the default body runs on the proxy instance.
+        var nonShadowed = onlyReport(NonShadowHiddenChild.class, false);
+        assertTrue(nonShadowed.contains("the client proxy does not forward")
+                && nonShadowed.contains("its signature as a member of the bean")
+                && nonShadowed.contains("runs the default body on the proxy instance"), nonShadowed);
+        // Shadowed — no nameable interface, or an unnameable member signature: the proxy is a
+        // subclass of the bean under the shadow, where the JVM does not run the default body
+        // (BUG-20261004-08), so the report must not say it does.
+        for (var shadowed : List.of(onlyReport(CarriedChild.class, false), onlyReport(HiddenArgChild.class, false))) {
+            assertFalse(shadowed.contains("runs the default body"), shadowed);
+            assertTrue(shadowed.contains("does not reach the contextual instance")
+                    && shadowed.contains("AbstractMethodError"), shadowed);
+        }
+        // A producer's proxy: the type is the produced type, and the proxy is the producer's.
+        var produced = onlyReport(NonShadowHiddenChild.class, true);
+        assertTrue(produced.contains("the producer's client proxy does not forward")
+                && produced.contains("its signature as a member of the produced type")
+                && !produced.contains("member of the bean"), produced);
+    }
+
+    /** The one report the source shape of {@code fixture} gives, as a bean's proxy or a producer's. */
+    private String onlyReport(Class<?> fixture, boolean produced) throws Exception {
+        var omitted = new java.util.ArrayList<String>();
+        capture(fixture, (element, env) -> {
+            var pkg = env.elements().getPackageOf(element);
+            var shape = produced
+                    ? ClientProxyShapeFromElements.fromProduced(element, pkg, env.elements(), env.types(), omitted::add)
+                    : ClientProxyShapeFromElements.from(element, pkg, env.elements(), env.types(), omitted::add);
+            return shape.proxyClassName();
+        });
+        assertEquals(1, omitted.size(), "one omitted method reported: " + omitted);
+        return omitted.getFirst();
     }
 
     /** The source shape, {@code omitted} receiving what the shape leaves out and the processor reports. */

@@ -636,9 +636,12 @@ public class VaubanProcessor extends AbstractProcessor {
                 var proxyPackage = producerElement != null
                         ? processingEnv.getElementUtils().getPackageOf(producerElement)
                         : processingEnv.getElementUtils().getPackageElement(producerPkg);
-                var shape = ClientProxyShapeFromElements.from(producedType, proxyPackage,
+                // A method the proxy leaves out is reported on the producer method, which the user
+                // wrote: the produced type is often a class of a dependency, with no source.
+                var producerSite = producerElement != null ? producerSite(bean, producerElement) : producedType;
+                var shape = ClientProxyShapeFromElements.fromProduced(producedType, proxyPackage,
                         processingEnv.getElementUtils(), processingEnv.getTypeUtils(),
-                        omitted -> warnOmitted(omitted, producedType));
+                        omitted -> warnOmitted(omitted, producerSite));
                 var producedSimple = producedFqn.substring(producedFqn.lastIndexOf('.') + 1)
                         .replace('$', '_');
                 var proxyBinaryName = (producerPkg.isEmpty() ? "" : producerPkg + ".")
@@ -1827,10 +1830,35 @@ public class VaubanProcessor extends AbstractProcessor {
     /**
      * A generated class leaves an inherited default method alone — not forwarded by the client
      * proxy, not intercepted by the subclass — because the rendered source cannot write it
-     * (BUG-20261004-02, BUG-20261004-08): said at build time, on the bean, as a warning.
+     * (BUG-20261004-02, BUG-20261004-08): said at build time, as a warning, on the bean, or on the
+     * producer method or field for a producer's proxy.
      */
-    private void warnOmitted(String omitted, javax.lang.model.element.Element bean) {
-        processingEnv.getMessager().printMessage(Diagnostic.Kind.WARNING, "[Vauban] " + omitted, bean);
+    private void warnOmitted(String omitted, javax.lang.model.element.Element site) {
+        processingEnv.getMessager().printMessage(Diagnostic.Kind.WARNING, "[Vauban] " + omitted, site);
+    }
+
+    /**
+     * The producer method or field {@code bean} stands for, among the members of {@code declaring}
+     * annotated {@code @Produces}, found by the name its id carries ({@code Class#method} or
+     * {@code Class.field}); {@code declaring} itself when none matches.
+     */
+    private javax.lang.model.element.Element producerSite(BeanDescriptor bean, TypeElement declaring) {
+        var id = bean.id().value();
+        var prefix = bean.beanClass().value();
+        char separator = bean.kind() == BeanDescriptor.BeanKind.PRODUCER_METHOD ? '#' : '.';
+        if (id.length() <= prefix.length() + 1 || !id.startsWith(prefix) || id.charAt(prefix.length()) != separator) {
+            return declaring;
+        }
+        var memberName = id.substring(prefix.length() + 1);
+        var kind = bean.kind() == BeanDescriptor.BeanKind.PRODUCER_METHOD ? ElementKind.METHOD : ElementKind.FIELD;
+        for (var member : declaring.getEnclosedElements()) {
+            if (member.getKind() == kind && member.getSimpleName().contentEquals(memberName)
+                    && member.getAnnotationMirrors().stream().anyMatch(am ->
+                            am.getAnnotationType().toString().equals("jakarta.enterprise.inject.Produces"))) {
+                return member;
+            }
+        }
+        return declaring;
     }
 
     /** Write a generated Java source file (compiled by javac in a subsequent APT round). */
