@@ -205,6 +205,26 @@ class InterceptedShapeFromElementsTest {
         assertEquals(Set.of("own()"), assertSameMethodSet(CarriedBean.class));
     }
 
+    // ---- The shapes found by the reviews, each pinned on both front-ends ----
+
+    public interface TagDefault {
+        default String tag(String value) { return "default " + value; }
+    }
+
+    /** Inherits a package-private {@code tag(String)} of another package, under a default of the same descriptor. */
+    public static class CrossPackageShadowedBean
+            extends io.vidocq.vauban.processor.fixture.colocated.ForeignPackagePrivateTagBase implements TagDefault {
+    }
+
+    @Test
+    @DisplayName("a package-private method of a superclass in another package is no member: the default is intercepted")
+    void crossPackagePackagePrivateIsNoMember() throws Exception {
+        // ForeignPackagePrivateTagBase.tag(String) is not inherited (JLS 8.4.8): the bean's member is
+        // the default, reached through TagDefault since a super.tag(…) resolves to the other one.
+        assertEquals(Set.of("tag(java.lang.String)@" + TagDefault.class.getName()),
+                assertSameMethodSet(CrossPackageShadowedBean.class));
+    }
+
     /** A private {@code label(Object)}: the erased descriptor of {@link GenericLabel#label(Object)}. */
     public static class PrivateObjectLabel {
         @SuppressWarnings("unused")

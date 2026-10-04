@@ -450,6 +450,36 @@ class ClientProxyInheritanceCrossCheckTest {
                 .collect(Collectors.joining(";")));
     }
 
+    // ---- The shapes found by the reviews, each pinned across the three paths ----
+
+    /** Inherits a package-private {@code tag(String)} of another package, under a default of the same descriptor. */
+    public static class CrossPackageTagChild
+            extends io.vidocq.vauban.processor.fixture.colocated.ForeignPackagePrivateTagBase implements PlainTagged {
+    }
+
+    /** The same superclass, no default: nothing to forward, no class of this package can override it. */
+    public static class CrossPackageOnlyChild
+            extends io.vidocq.vauban.processor.fixture.colocated.ForeignPackagePrivateTagBase {
+        public String own() { return "own"; }
+    }
+
+    @Test
+    @DisplayName("a package-private method of a superclass in another package is no member: the default is forwarded, once")
+    void crossPackagePackagePrivateIsNoMember() throws Exception {
+        // ForeignPackagePrivateTagBase.tag(String) is not inherited (JLS 8.4.8): a MethodHandle
+        // forward of it would target a method the bean does not have, and reach the wrong body. The
+        // run-time walk forwarded it so, then forwarded the shadowed default through PlainTagged as
+        // well: "Duplicate method name tag" when the proxy was defined.
+        Set<String> expected = Set.of("tag(java.lang.String)@" + PlainTagged.class.getName());
+        assertEquals(expected, runtimeShape(CrossPackageTagChild.class), "run-time shape");
+        assertEquals(expected, shapeFromElements(CrossPackageTagChild.class), "source shape");
+        assertEquals(expected, colocatedShapeFromElements(CrossPackageTagChild.class), "co-located shape");
+        Set<String> own = Set.of("own()");
+        assertEquals(own, runtimeShape(CrossPackageOnlyChild.class), "run-time shape");
+        assertEquals(own, shapeFromElements(CrossPackageOnlyChild.class), "source shape");
+        assertEquals(own, colocatedShapeFromElements(CrossPackageOnlyChild.class), "co-located shape");
+    }
+
     /** A private {@code tag(Object)}: the erased descriptor of {@link Tagged#tag(Object)}. */
     public static class PrivateObjectTag {
         @SuppressWarnings("unused")

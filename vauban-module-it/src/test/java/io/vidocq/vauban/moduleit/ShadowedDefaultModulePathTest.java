@@ -76,6 +76,29 @@ class ShadowedDefaultModulePathTest {
     }
 
     @Test
+    @DisplayName("a default shadowed by a package-private method of another package: subclass and proxy reach the default")
+    void crossPackagePackagePrivateShadow() throws Exception {
+        // ForeignPackagePrivateTagBase.tag(String) is not the beans' member (JLS 8.4.8): Tagged.tag
+        // is, and both generated classes reach it through Tagged.
+        var tag = Tagged.class.getDeclaredMethod("tag", String.class);
+        try (var container = boot(CrossPackageTagService.class)) {
+            var service = container.select(CrossPackageTagService.class);
+            assertEquals(Class.forName(CrossPackageTagService.class.getName() + "$$Intercepted"), service.getClass());
+            Tagged tagged = service;
+            assertEquals("default x", tagged.tag("x"));
+            assertEquals(List.of(tag), AuditInterceptor.METHODS);
+        }
+        AuditInterceptor.METHODS.clear();
+        try (var container = boot(ScopedCrossPackageTagService.class)) {
+            var service = container.select(ScopedCrossPackageTagService.class);
+            assertEquals(Class.forName(ScopedCrossPackageTagService.class.getName() + "_ClientProxy"), service.getClass());
+            Tagged tagged = service;
+            assertEquals("default y", tagged.tag("y"));
+            assertEquals(List.of(tag), AuditInterceptor.METHODS);
+        }
+    }
+
+    @Test
     @DisplayName("a public superclass method with the default's descriptor is no shadow: proxy and subclass agree")
     void inheritedClassMethodIsNoShadow() throws Exception {
         try (var container = boot(ScopedPlainLabelledService.class)) {

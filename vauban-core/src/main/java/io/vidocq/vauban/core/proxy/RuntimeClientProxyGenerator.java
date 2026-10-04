@@ -19,6 +19,7 @@
  */
 package io.vidocq.vauban.core.proxy;
 
+import io.vidocq.vauban.core.interceptor.BusinessMethods;
 import io.vidocq.vauban.core.interceptor.ShadowedDefaults;
 import io.vidocq.vauban.core.interceptor.TypeRef;
 import io.vidocq.vauban.core.proxy.ClientProxyShape.ProxyMethodShape;
@@ -30,10 +31,11 @@ import java.util.List;
 
 /**
  * Runtime ({@code Class<?>}-driven) front-end of the client-proxy generation: walks the
- * full class hierarchy and the inherited interface default methods, selects the proxied methods,
- * decides per method whether the
- * override must dispatch through a {@code MethodHandle} (JVMS §4.10.1.9 — protected or
- * package-private member declared in another runtime package), picks the simplest
+ * full class hierarchy and the inherited interface default methods, selects the proxied methods —
+ * the members of the bean ({@link BusinessMethods#isBusinessMethodOf}), as the processor's
+ * front-ends do — decides per method whether the
+ * override must dispatch through a {@code MethodHandle} (JVMS §4.10.1.9 — protected member
+ * declared in another runtime package), picks the simplest
  * non-private super constructor, and builds the neutral {@link ClientProxyShape}.
  *
  * <p>The bytecode itself is emitted once for all front-ends by {@link ClientProxyEmitter};
@@ -102,14 +104,19 @@ public final class RuntimeClientProxyGenerator {
         while (current != null) {
             for (var method : current.getDeclaredMethods()) {
                 var key = method.getName() + java.util.Arrays.toString(method.getParameterTypes());
-                if (proxiedSeen.add(key) && shouldProxy(method)) {
-                    methods.add(new ProxyMethodShape(
-                            method.getName(),
-                            TypeRef.fromClass(method.getReturnType()),
-                            typeRefs(method.getParameterTypes()),
-                            typeRefs(method.getExceptionTypes()),
-                            needsMethodHandleDispatch(method, proxyPackage)));
-                }
+                if (!proxiedSeen.add(key) || !shouldProxy(method)) continue;
+                // A package-private method of a superclass in another runtime package is not a
+                // member of the bean (JLS 8.4.8), as the processor's shapes and the subclass
+                // generator already decide: forwarding it would reach a method the bean does not
+                // have, and an interface default with its descriptor — the bean's member — is
+                // shadowed by it, and forwarded through its interface below.
+                if (current != beanClass && !BusinessMethods.isBusinessMethodOf(beanClass, method)) continue;
+                methods.add(new ProxyMethodShape(
+                        method.getName(),
+                        TypeRef.fromClass(method.getReturnType()),
+                        typeRefs(method.getParameterTypes()),
+                        typeRefs(method.getExceptionTypes()),
+                        needsMethodHandleDispatch(method, proxyPackage)));
             }
             current = current.getSuperclass();
         }
@@ -118,15 +125,18 @@ public final class RuntimeClientProxyGenerator {
         // interceptors (BUG-20261004-02). getMethods() lists the most specific default of each.
         for (var method : beanClass.getMethods()) {
             if (!method.isDefault() || !shouldProxy(method)) continue;
+            var key = method.getName() + java.util.Arrays.toString(method.getParameterTypes());
             TypeRef interfaceOwner = null;
             if (ShadowedDefaults.isShadowed(beanClass, method)) {
-                // A declaration the bean does not inherit (a private superclass method) holds the
-                // key, and a call typed by the bean class would resolve to it and be refused: forward
-                // through an interface instead (BUG-20261004-08), or not at all when none qualifies.
+                // A declaration the bean does not inherit (a private superclass method, or a
+                // package-private one of another package) holds the key, and a call typed by the
+                // bean class would resolve to it and be refused: forward through an interface
+                // instead (BUG-20261004-08), or not at all when none qualifies.
                 var owner = ShadowedDefaults.accessibleOwner(beanClass, method, colocated);
+                proxiedSeen.add(key);
                 if (owner == null) continue;
                 interfaceOwner = TypeRef.fromClass(owner);
-            } else if (!proxiedSeen.add(method.getName() + java.util.Arrays.toString(method.getParameterTypes()))) {
+            } else if (!proxiedSeen.add(key)) {
                 continue;
             }
             methods.add(new ProxyMethodShape(
@@ -189,7 +199,8 @@ public final class RuntimeClientProxyGenerator {
      * A protected method declared in a superclass in a different package cannot be
      * invoked via {@code invokevirtual} when the stack-top receiver type is not assignable
      * to the current class (JVMS §4.10.1.9). We route those through a {@link java.lang.invoke.MethodHandle}.
-     * Package-private methods follow the same rule when crossing package boundaries.
+     * A package-private method of another package is not forwarded at all: the bean does not
+     * inherit it, and the lookup would be refused.
      */
     private static boolean needsMethodHandleDispatch(Method method, String proxyPackage) {
         int mods = method.getModifiers();

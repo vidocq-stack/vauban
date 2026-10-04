@@ -36,8 +36,13 @@ import java.util.concurrent.ConcurrentHashMap;
  * method. A non-overridden interface default method is a member of the bean class in the same way
  * (JLS 8.4.8), so its bindings apply too, as with Weld; the class-level bindings of an interface
  * never do (CDI 4.1 §4: type-level metadata is not inherited from interfaces).</p>
+ *
+ * <p>{@link #isBusinessMethodOf} is the one decision every run-time generator takes on a method a
+ * superclass declares — intercepted by the subclass, forwarded by the client proxy, or neither
+ * because the bean does not inherit it — which keeps them in line with the processor's front-ends
+ * ({@code Elements#getAllMembers}).</p>
  */
-final class BusinessMethods {
+public final class BusinessMethods {
 
     private BusinessMethods() {}
 
@@ -84,11 +89,12 @@ final class BusinessMethods {
 
     /**
      * The declaration a call of {@code method} — or of the business method a bridge stands for — runs
-     * on an instance of {@code beanClass}: the most derived instance method up the superclass chain
-     * that is not private, whatever its other access, else the interface default method the bean
-     * inherits; {@code null} when there is none. A private or static declaration is not a member the
-     * bean inherits (JLS 8.4.8): a private superclass method with the signature of an inherited
-     * default method does not stand for it.
+     * on an instance of {@code beanClass}: the most derived declaration up the superclass chain that
+     * is a business method of the bean ({@link #isBusinessMethodOf}), else the interface default
+     * method the bean inherits; {@code null} when there is none. A private or static declaration,
+     * or a package-private one of another package, is not a member the bean inherits (JLS 8.4.8):
+     * such a superclass method with the signature of an inherited default method does not stand
+     * for it.
      */
     static Method declarationOf(Class<?> beanClass, Method method) {
         var name = businessName(method);
@@ -96,8 +102,7 @@ final class BusinessMethods {
         for (Class<?> c = beanClass; c != null; c = c.getSuperclass()) {
             try {
                 var declared = c.getDeclaredMethod(name, parameterTypes);
-                int modifiers = declared.getModifiers();
-                if (!Modifier.isPrivate(modifiers) && !Modifier.isStatic(modifiers)) {
+                if (isBusinessMethodOf(beanClass, declared)) {
                     return declared;
                 }
             } catch (NoSuchMethodException declaredHigherUp) {
@@ -119,8 +124,11 @@ final class BusinessMethods {
      * overrides, and the only ones whose bindings count. A package-private method of a class in
      * another runtime package is not inherited, and no subclass of the bean can override it. The
      * processor's front-end counts the same methods ({@code Elements#getAllMembers}).
+     *
+     * @param beanClass   the bean class, {@code declaration}'s declaring class or a subclass of it
+     * @param declaration a method a class of {@code beanClass}'s superclass chain declares
      */
-    static boolean isBusinessMethodOf(Class<?> beanClass, Method declaration) {
+    public static boolean isBusinessMethodOf(Class<?> beanClass, Method declaration) {
         int modifiers = declaration.getModifiers();
         if (Modifier.isStatic(modifiers) || Modifier.isPrivate(modifiers)) return false;
         if (Modifier.isPublic(modifiers) || Modifier.isProtected(modifiers)) return true;
