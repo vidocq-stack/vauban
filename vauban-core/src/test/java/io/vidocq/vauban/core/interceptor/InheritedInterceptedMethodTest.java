@@ -200,18 +200,26 @@ class InheritedInterceptedMethodTest {
     public static class DependentGreeter implements Greeter {
     }
 
+    /** Inherits a protected method from a superclass in another package. {@code @Dependent}, as above. */
+    @Traced
+    @Dependent
+    public static class ForeignInheritor extends io.vidocq.vauban.core.interceptor.fixtures.ForeignProtectedBase {
+    }
+
     private static SeContainer container;
     private static TracedService service;
     private static DependentGreeter greeter;
+    private static ForeignInheritor foreignInheritor;
 
     @BeforeAll
     static void boot() {
         container = SeContainerInitializer.newInstance()
-                .addBeanClasses(TracedService.class, DependentGreeter.class, TracingInterceptor.class,
-                        MarkingInterceptor.class)
+                .addBeanClasses(TracedService.class, DependentGreeter.class, ForeignInheritor.class,
+                        TracingInterceptor.class, MarkingInterceptor.class)
                 .initialize();
         service = container.select(TracedService.class).get();
         greeter = container.select(DependentGreeter.class).get();
+        foreignInheritor = container.select(ForeignInheritor.class).get();
     }
 
     @AfterAll
@@ -293,6 +301,19 @@ class InheritedInterceptedMethodTest {
     void inheritedPackagePrivate() throws Exception {
         assertEquals("A-pp", service.inheritedPackagePrivate());
         assertEquals(Grandparent.class.getDeclaredMethod("inheritedPackagePrivate"), onlySeen().method());
+    }
+
+    @Test
+    @DisplayName("a protected method of a superclass in another package is intercepted, as that class's method")
+    void inheritedProtectedFromAnotherPackage() throws Exception {
+        // Only a subclass may call it, and this test is none: reflection makes the virtual call,
+        // which the generated subclass's override answers. Without that override, the base body
+        // ran with no interceptor.
+        var foreignProtected = io.vidocq.vauban.core.interceptor.fixtures.ForeignProtectedBase.class
+                .getDeclaredMethod("foreignProtected");
+        foreignProtected.setAccessible(true);
+        assertEquals("foreign-prot", foreignProtected.invoke(foreignInheritor));
+        assertEquals(foreignProtected, onlySeen().method());
     }
 
     @Test
