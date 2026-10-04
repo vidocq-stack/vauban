@@ -1490,7 +1490,7 @@ and a proposed upstream assertion: `CDI_TCK_PROPOSALS.md` → `TCK-GAP-001`.
 ## BUG-20261004-01 — `InvocationContext.getMethod()` returns the generated `$$super$` bridge for a method the bean class does not declare
 
 - **Date**: 2026-10-04
-- **Status**: FIXED 2026-10-04 (`pr/ybl/inherited-interceptor-method`)
+- **Status**: FIXED 2026-10-04 (`2d85326`; resolution moved to `BusinessMethods` in `1165eb8`, private declarations skipped in `7202b86`, branch `pr/ybl/inherited-interceptor-method`)
 - **Module**: `vauban-core` (`VaubanInvocationContext#getMethod`)
 - **Surfaced by**: a review of the MicroProfile 7.2 upgrade (Humboldt names spans and sets `code.function.name` from `getMethod()`).
 - **Symptom**: an interceptor bound to a bean sees `ctx.getMethod()` as `<Bean>$$Intercepted.$$super$<name>` instead of the bean's method whenever the method is inherited: declared on the direct superclass, on any class above it, or as an interface default method. Every interceptor gets the wrong `Method` (wrong declaring class, `$$super$` name, no annotations), so `getInterceptorBindings()` also loses the method-level bindings of the inherited method. Both front-ends are affected: the run-time Class-File subclass and the processor's source subclass. Only a method the bean class declares itself was resolved.
@@ -1501,7 +1501,7 @@ and a proposed upstream assertion: `CDI_TCK_PROPOSALS.md` → `TCK-GAP-001`.
 ## BUG-20261004-02 — A client proxy does not forward an interface default method
 
 - **Date**: 2026-10-04
-- **Status**: FIXED 2026-10-04 (`pr/ybl/inherited-interceptor-method`)
+- **Status**: FIXED 2026-10-04 (`1165eb8`, branch `pr/ybl/inherited-interceptor-method`)
 - **Module**: `vauban-core` (`RuntimeClientProxyGenerator#shapeOf`), `vauban-processor` (`ClientProxyShapeFromElements#from`, `#fromColocated`)
 - **Symptom**: calling an interface default method that a normal-scoped bean does not override, through its client proxy, runs the default body on the proxy instance: the contextual instance is bypassed and the interceptors bound to the bean do not fire. The bean's own methods are forwarded and intercepted as expected.
 - **Minimal reproduction**: an `@ApplicationScoped @Audited` bean `implements Greeting` (default `greet`), no override; `select(…).greet("y")` returns `"hi y"` and the interceptor records nothing. Seen on both proxies while working on BUG-20261004-01 (run-time proxy in vauban-core, processor proxy in vauban-module-it); the regression tests of BUG-20261004-01 use a `@Dependent` bean to reach the generated subclass directly.
@@ -1511,7 +1511,7 @@ and a proposed upstream assertion: `CDI_TCK_PROPOSALS.md` → `TCK-GAP-001`.
 ## BUG-20261004-03 — The run-time intercepted subclass skips an inherited protected or package-private method
 
 - **Date**: 2026-10-04
-- **Status**: FIXED 2026-10-04 (`pr/ybl/inherited-interceptor-method`)
+- **Status**: FIXED 2026-10-04 (`1165eb8`; cross-package behaviour test `9fe86da`, branch `pr/ybl/inherited-interceptor-method`)
 - **Module**: `vauban-core` (`InterceptorSubclassGenerator#fromClass`, also used by the Maven plugin's `VaubanGenerator`)
 - **Symptom**: a protected or package-private business method that the bean inherits from a superclass is not intercepted when the `$$Intercepted` subclass comes from the run-time generator (class-path fallback, Maven plugin). The processor's subclass intercepts it (`InterceptedShapeFromElements` lists every member through `Elements#getAllMembers`), so the two front-ends do not produce the same override set, although both are documented to.
 - **Minimal reproduction**: a `@Dependent @Traced` bean `extends Parent extends Grandparent`, where `Grandparent` declares `protected String inheritedProtected()` and `String inheritedPackagePrivate()`; calling either from the same package reaches no interceptor, while the public inherited method is intercepted. Seen while working on BUG-20261004-01.
@@ -1521,7 +1521,7 @@ and a proposed upstream assertion: `CDI_TCK_PROPOSALS.md` → `TCK-GAP-001`.
 ## BUG-20261004-04 — An interceptor bound to an interface default method never runs, while `getInterceptorBindings()` lists its binding
 
 - **Date**: 2026-10-04
-- **Status**: FIXED 2026-10-04 (`pr/ybl/inherited-interceptor-method`)
+- **Status**: FIXED 2026-10-04 (`1165eb8`; review follow-ups `7202b86` (private declarations), `2f56400` (business methods only), branch `pr/ybl/inherited-interceptor-method`)
 - **Module**: `vauban-core` (`InterceptorManager#matchingForMethod`, `#resolveInterceptorDescriptorsForMethod`, `InterceptorBeanWrapper#wrapInterceptedBeans`)
 - **Surfaced by**: the review of the BUG-20261004-01 fix, which made `getMethod()` — and with it `getInterceptorBindings()` — answer the interface default method.
 - **Symptom**: an interceptor binding declared on an interface default method the bean does not override is listed by `getInterceptorBindings()`, but the interceptor bound to it does not run: the chain ignores it. A bean whose only binding sits on such a method is not intercepted at all.
@@ -1534,7 +1534,7 @@ and a proposed upstream assertion: `CDI_TCK_PROPOSALS.md` → `TCK-GAP-001`.
 ## BUG-20261004-05 — On the module path, a bean bound only through an inherited method cannot be deployed
 
 - **Date**: 2026-10-04
-- **Status**: FIXED 2026-10-04 (`pr/ybl/inherited-interceptor-method`)
+- **Status**: FIXED 2026-10-04 (`1165eb8`; review follow-up `2f56400`, branch `pr/ybl/inherited-interceptor-method`)
 - **Module**: `vauban-processor` (`VaubanProcessor#isInterceptedTarget`)
 - **Surfaced by**: the tests of BUG-20261004-04.
 - **Symptom**: a bean with no class-level binding whose only binding sits on a method it inherits — a superclass method, or (since BUG-20261004-04) an interface default method — gets no `$$Intercepted` subclass from the processor. On the strict module path the container then has to define the subclass itself and cannot (no `opens`): `DeploymentException: Could not define interceptor subclass`. On the class path the run-time fallback hid it.
@@ -1546,7 +1546,7 @@ and a proposed upstream assertion: `CDI_TCK_PROPOSALS.md` → `TCK-GAP-001`.
 ## BUG-20261004-06 — The processor's generated sources do not compile when the bean binds a type variable of an inherited method
 
 - **Date**: 2026-10-04
-- **Status**: FIXED 2026-10-04 (`pr/ybl/inherited-interceptor-method`)
+- **Status**: FIXED 2026-10-04 (`1165eb8`; review follow-up `982bfa1` (one override per member signature), branch `pr/ybl/inherited-interceptor-method`)
 - **Module**: `vauban-processor` (`InterceptedShapeFromElements`, `InterceptedSourceRenderer`, `ClientProxyShapeFromElements#from`), `vauban-core` (`MethodShape`)
 - **Surfaced by**: a probe written while fixing BUG-20261004-02 and -05, which would otherwise have widened it (`fv2-probe-generic.log`, probe files deleted).
 - **Symptom**: a bean that inherits a method whose parameter or return type is a type variable its supertype binds — `echo(T)` of `class Bean extends Base<String>`, or a default `label(T)` of `implements Labeled<String>` — breaks the build: the `$$Intercepted` source the processor renders for an intercepted bean, and the `_ClientProxy` source it renders for a normal-scoped bean, declare `echo(java.lang.Object)`, which javac rejects (`name clash: echo(Object) … and echo(String) … have the same erasure, yet neither overrides the other`, then `incompatible types`). Pre-existing for generic superclass methods on both sources and for generic default methods on the `$$Intercepted` source; BUG-20261004-02 would have added the default methods of the client proxy, and BUG-20261004-05 every bean bound through a generic base-class method (a repository bound through its base class), which until then fell back to the run-time generator and worked on the class path.
@@ -1559,7 +1559,7 @@ and a proposed upstream assertion: `CDI_TCK_PROPOSALS.md` → `TCK-GAP-001`.
 ## BUG-20261004-07 — An unproxyable intercepted bean is not reported as a deployment problem, nor told why it is intercepted
 
 - **Date**: 2026-10-04
-- **Status**: FIXED 2026-10-04 (`pr/ybl/inherited-interceptor-method`)
+- **Status**: FIXED 2026-10-04 (`6c1952b`, branch `pr/ybl/inherited-interceptor-method`)
 - **Module**: `vauban-core` (`InterceptorBeanWrapper#wrapInterceptedBeans`)
 - **Surfaced by**: the review of the FV2 fixes, which make more beans intercepted (bound through an inherited or default method).
 - **Symptom**: a final intercepted bean class failed with a `DefinitionException`, while CDI 4.1 treats an unproxyable intercepted bean as a deployment problem (§3.10, §8.3) and the final-method case already threw a `DeploymentException`. None of the three proxyability errors (final class, final method, private no-arg constructor) said why the bean is intercepted, which is no help when the binding sits on a method the bean inherits: its own source carries none.
