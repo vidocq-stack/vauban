@@ -19,6 +19,8 @@
  */
 package io.vidocq.vauban.core.interceptor;
 
+import io.vidocq.vauban.core.codegen.ShadowedDefaults;
+
 import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
 import java.util.ArrayList;

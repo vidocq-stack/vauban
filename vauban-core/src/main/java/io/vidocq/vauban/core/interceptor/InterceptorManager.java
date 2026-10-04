@@ -456,6 +456,9 @@ public final class InterceptorManager {
      * Why {@code method} makes {@code beanClass} intercepted, for a deployment error: the method-level
      * interceptor bindings of the declaration it runs, and where that declaration sits — a bean bound
      * only through an inherited method carries no binding in its own source.
+     *
+     * <p>Internal to Vauban, not API: public only for the container's bean wrapper in another
+     * package of this module; its text may change without notice.</p>
      */
     public String describeMethodBindings(Class<?> beanClass, java.lang.reflect.Method method) {
         var declaration = BusinessMethods.declarationOf(beanClass, method);

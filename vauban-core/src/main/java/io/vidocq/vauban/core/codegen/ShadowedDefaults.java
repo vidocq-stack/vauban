@@ -17,7 +17,7 @@
  *
  * SPDX-License-Identifier: EPL-2.0 OR EUPL-1.2 OR GPL-2.0-or-later
  */
-package io.vidocq.vauban.core.interceptor;
+package io.vidocq.vauban.core.codegen;
 
 import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
@@ -38,6 +38,10 @@ import java.util.LinkedHashSet;
  * That interface must be accessible from the generated class — no class can list or name one it
  * cannot access (JVMS 5.4.4, JLS 6.6.1) — and when none is, the method is left out: not
  * intercepted, not forwarded, the default body running as it does without Vauban.</p>
+ *
+ * <p>Internal to Vauban, shared by the run-time intercepted subclass and client proxy generators:
+ * this package is exported to the annotation processor only, so this class is not API and may
+ * change without notice.</p>
  */
 public final class ShadowedDefaults {
 
@@ -58,7 +62,7 @@ public final class ShadowedDefaults {
                 if (declared.getName().equals(defaultMethod.getName())
                         && declared.getReturnType() == defaultMethod.getReturnType()
                         && java.util.Arrays.equals(declared.getParameterTypes(), defaultMethod.getParameterTypes())) {
-                    if (BusinessMethods.isBusinessMethodOf(beanClass, declared)) return false;
+                    if (BeanMembers.isBusinessMethodOf(beanClass, declared)) return false;
                     shadowed = true;
                 }
             }

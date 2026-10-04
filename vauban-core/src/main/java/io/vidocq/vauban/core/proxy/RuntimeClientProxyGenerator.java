@@ -20,7 +20,7 @@
 package io.vidocq.vauban.core.proxy;
 
 import io.vidocq.vauban.core.codegen.BeanMembers;
-import io.vidocq.vauban.core.interceptor.ShadowedDefaults;
+import io.vidocq.vauban.core.codegen.ShadowedDefaults;
 import io.vidocq.vauban.core.interceptor.TypeRef;
 import io.vidocq.vauban.core.proxy.ClientProxyShape.ProxyMethodShape;
 

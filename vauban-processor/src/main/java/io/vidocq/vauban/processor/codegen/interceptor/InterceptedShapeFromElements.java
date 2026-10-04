@@ -157,7 +157,7 @@ public final class InterceptedShapeFromElements {
      * 8.4.8) — to which the JVM resolves a call typed by the bean class, the generated subclass's
      * {@code super.<name>()} included, and which it then refuses. A declaration the bean inherits
      * is no shadow: it is the bean's member, and implements the default. As
-     * {@code io.vidocq.vauban.core.interceptor.ShadowedDefaults#isShadowed} (BUG-20261004-08).
+     * {@code io.vidocq.vauban.core.codegen.ShadowedDefaults#isShadowed} (BUG-20261004-08).
      */
     public static boolean isShadowedDefault(TypeElement bean, ExecutableElement method, Types types) {
         if (!method.getModifiers().contains(Modifier.DEFAULT)) return false;
