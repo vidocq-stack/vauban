@@ -75,6 +75,17 @@ public final class InterceptedShapeFromElements {
      *         {@link io.vidocq.vauban.core.interceptor.InterceptedEmitter#emit}
      */
     public static InterceptedShape from(TypeElement bean, Elements elements, Types types) {
+        return from(bean, elements, types, omitted -> {});
+    }
+
+    /**
+     * The same, {@code omitted} receiving one message per inherited default method the subclass
+     * leaves alone — not intercepted — because no interface carrying it can be named from the
+     * bean's package, or because its override would name a type that package cannot: for the
+     * processor to report (BUG-20261004-08).
+     */
+    public static InterceptedShape from(TypeElement bean, Elements elements, Types types,
+            java.util.function.Consumer<String> omitted) {
         String beanBinaryName = elements.getBinaryName(bean).toString();
 
         // Constructors — the (ProxyLink) client-proxy entry constructor is not mirrored:
@@ -109,10 +120,19 @@ public final class InterceptedShapeFromElements {
                     // interface would name a type this package cannot — the method is left alone.
                     var beanPackage = elements.getPackageOf(bean);
                     var owner = accessibleDefaultOwner(bean, method, beanPackage, elements, types);
-                    if (owner == null) continue;
+                    if (owner == null) {
+                        omitted.accept(notIntercepted(bean, method, "no interface carrying it can be named from package "
+                                + beanPackage.getQualifiedName()));
+                        continue;
+                    }
                     var ownerType = asTheBeanParameterisesIt(bean, owner, types);
                     if (!memberSignatureNameableFrom(bean, method, beanPackage, elements, types)
-                            || !nameableFrom(ownerType, beanPackage, elements)) continue;
+                            || !nameableFrom(ownerType, beanPackage, elements)) {
+                        omitted.accept(notIntercepted(bean, method, "its override, or the interface "
+                                + ownerType + " the subclass would list, names a type package "
+                                + beanPackage.getQualifiedName() + " cannot"));
+                        continue;
+                    }
                     shape = shape.withDefaultOwner(TypeRef.ofReference(elements.getBinaryName(owner).toString(), 0),
                             ownerType.toString());
                 }
@@ -121,6 +141,13 @@ public final class InterceptedShapeFromElements {
         }
 
         return new InterceptedShape(beanBinaryName, ctors, methods);
+    }
+
+    /** The processor's report of a default method the generated subclass leaves alone, and why. */
+    private static String notIntercepted(TypeElement bean, ExecutableElement method, String why) {
+        return bean.getQualifiedName() + ": the generated subclass does not intercept the inherited default method "
+                + ((TypeElement) method.getEnclosingElement()).getQualifiedName() + "." + method + " — " + why
+                + "; the run-time generator would, so this bean behaves differently on the module path.";
     }
 
     /**

@@ -498,8 +498,11 @@ public class VaubanProcessor extends AbstractProcessor {
                         // in source ('$' is an identifier character), so the file compiles and the
                         // provider can name it. What it must NOT be is a member of Outer: nothing
                         // can add one to a class that already exists.
-                        var gen = ClientProxySourceRenderer.render(proxyTypeElement,
-                                processingEnv.getElementUtils(), processingEnv.getTypeUtils());
+                        var proxyShape = ClientProxyShapeFromElements.from(proxyTypeElement,
+                                processingEnv.getElementUtils().getPackageOf(proxyTypeElement),
+                                processingEnv.getElementUtils(), processingEnv.getTypeUtils(),
+                                omitted -> warnOmitted(omitted, proxyTypeElement));
+                        var gen = ClientProxySourceRenderer.render(proxyShape);
                         writeSourceFile(gen.className(), gen.source());
                         clientProxyFqns.add(proxyBeanFqn + "_ClientProxy");
                     } else {
@@ -523,7 +526,8 @@ public class VaubanProcessor extends AbstractProcessor {
                     if (typeElement != null && isInterceptedTarget(typeElement)) {
                         try {
                             var shape = InterceptedShapeFromElements.from(typeElement,
-                                    processingEnv.getElementUtils(), processingEnv.getTypeUtils());
+                                    processingEnv.getElementUtils(), processingEnv.getTypeUtils(),
+                                    omitted -> warnOmitted(omitted, typeElement));
                             // Emit the subclass as readable Java source (not bytecode). A sibling
                             // generated source — the _VaubanComponents provider — can then reference
                             // <bean>$$Intercepted by name, so the provider stays source everywhere
@@ -633,7 +637,8 @@ public class VaubanProcessor extends AbstractProcessor {
                         ? processingEnv.getElementUtils().getPackageOf(producerElement)
                         : processingEnv.getElementUtils().getPackageElement(producerPkg);
                 var shape = ClientProxyShapeFromElements.from(producedType, proxyPackage,
-                        processingEnv.getElementUtils(), processingEnv.getTypeUtils());
+                        processingEnv.getElementUtils(), processingEnv.getTypeUtils(),
+                        omitted -> warnOmitted(omitted, producedType));
                 var producedSimple = producedFqn.substring(producedFqn.lastIndexOf('.') + 1)
                         .replace('$', '_');
                 var proxyBinaryName = (producerPkg.isEmpty() ? "" : producerPkg + ".")
@@ -1817,6 +1822,15 @@ public class VaubanProcessor extends AbstractProcessor {
             processingEnv.getMessager().printMessage(Diagnostic.Kind.ERROR,
                 "[Vauban] Failed to write generated class " + generated.className() + ": " + e.getMessage());
         }
+    }
+
+    /**
+     * A generated class leaves an inherited default method alone — not forwarded by the client
+     * proxy, not intercepted by the subclass — because the rendered source cannot write it
+     * (BUG-20261004-02, BUG-20261004-08): said at build time, on the bean, as a warning.
+     */
+    private void warnOmitted(String omitted, javax.lang.model.element.Element bean) {
+        processingEnv.getMessager().printMessage(Diagnostic.Kind.WARNING, "[Vauban] " + omitted, bean);
     }
 
     /** Write a generated Java source file (compiled by javac in a subsequent APT round). */

@@ -523,6 +523,43 @@ class ClientProxyInheritanceCrossCheckTest {
         assertEquals(Set.of("own()"), shapeFromElements(HiddenArgChild.class), "source shape");
     }
 
+    /** Inherits a non-shadowed default whose member signature names a type this package cannot. */
+    public static class NonShadowHiddenChild extends io.vidocq.vauban.processor.fixture.colocated.HiddenDefaultBase {
+        public String own() { return "own"; }
+    }
+
+    @Test
+    @DisplayName("a non-shadowed default whose member signature cannot be named is left out of the source, with a warning")
+    void nonShadowedDefaultWithAnInaccessibleMemberType() throws Exception {
+        // The member is label(HiddenArgument): the rendered override cannot name it, and origin/main
+        // forwarded no default at all, so the source proxy leaves it out — and says so. Bytecode
+        // forwards by descriptor: the same divergence as for a shadowed one.
+        Set<String> bytecode = Set.of("own()", "label(java.lang.Object)");
+        assertEquals(bytecode, runtimeShape(NonShadowHiddenChild.class), "run-time shape");
+        assertEquals(bytecode, colocatedShapeFromElements(NonShadowHiddenChild.class), "co-located shape");
+        var omitted = new java.util.ArrayList<String>();
+        assertEquals(Set.of("own()"), shapeFromElementsReporting(NonShadowHiddenChild.class, omitted::add), "source shape");
+        assertEquals(1, omitted.size(), "one omitted method reported: " + omitted);
+        assertTrue(omitted.getFirst().contains(NonShadowHiddenChild.class.getCanonicalName())
+                && omitted.getFirst().contains("label(")
+                && omitted.getFirst().contains("HiddenArgument"), omitted.getFirst());
+    }
+
+    /** The source shape, {@code omitted} receiving what the shape leaves out and the processor reports. */
+    private Set<String> shapeFromElementsReporting(Class<?> fixture, java.util.function.Consumer<String> omitted)
+            throws Exception {
+        String joined = capture(fixture, (element, env) -> {
+            var shape = ClientProxyShapeFromElements.from(element, env.elements().getPackageOf(element),
+                    env.elements(), env.types(), omitted);
+            return shape.methods().stream()
+                    .map(m -> m.name() + "(" + m.params().stream().map(Object::toString)
+                            .collect(Collectors.joining(",")) + ")" + ownerSuffix(m))
+                    .filter(k -> !OBJECT_METHODS.contains(k))
+                    .collect(Collectors.joining(";"));
+        });
+        return distinctParts(joined);
+    }
+
     /** A private {@code tag(Object)}: the erased descriptor of {@link Tagged#tag(Object)}. */
     public static class PrivateObjectTag {
         @SuppressWarnings("unused")
