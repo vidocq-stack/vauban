@@ -1486,3 +1486,34 @@ and a proposed upstream assertion: `CDI_TCK_PROPOSALS.md` → `TCK-GAP-001`.
 - **Module**: `vauban-core` (`ContainerScanner#tryAddBeanClass`)
 - **Symptom**: every Grimm bean vanished from a modular application (its package split into the application module), and nothing in the log said so.
 - **Fix**: a class listed in a `META-INF/vauban-beans.list` that cannot be loaded is still skipped, but with a warning that names it and the likely causes: a split package, or a missing module. `ScanClasspathTest#shouldReportUnloadableListedClass`. Not a single one shows in the CDI TCK run.
+
+## BUG-20261004-01 — `InvocationContext.getMethod()` returns the generated `$$super$` bridge for a method the bean class does not declare
+
+- **Date**: 2026-10-04
+- **Status**: FIXED 2026-10-04 (`pr/ybl/inherited-interceptor-method`)
+- **Module**: `vauban-core` (`VaubanInvocationContext#getMethod`)
+- **Surfaced by**: a review of the MicroProfile 7.2 upgrade (Humboldt names spans and sets `code.function.name` from `getMethod()`).
+- **Symptom**: an interceptor bound to a bean sees `ctx.getMethod()` as `<Bean>$$Intercepted.$$super$<name>` instead of the bean's method whenever the method is inherited: declared on the direct superclass, on any class above it, or as an interface default method. Every interceptor gets the wrong `Method` (wrong declaring class, `$$super$` name, no annotations), so `getInterceptorBindings()` also loses the method-level bindings of the inherited method. Both front-ends are affected: the run-time Class-File subclass and the processor's source subclass. Only a method the bean class declares itself was resolved.
+- **Minimal reproduction**: `InheritedInterceptedMethodTest` (vauban-core, run-time subclass) and `InheritedMethodModulePathTest` (vauban-module-it, processor subclass on the module path): `C extends B extends A`, interceptor recording `ctx.getMethod()`. Before the fix, 4/6 and 6/8 failed with `getMethod() leaked the generated bridge`.
+- **Cause**: the generated subclass hands the context its `$$super$<name>` bridge, and `getMethod()` looked the original up with `getSuperclass().getDeclaredMethod(…)` on the bean class only, falling back to the bridge on `NoSuchMethodException`. `InterceptorManager` already walked the whole superclass chain to collect the method's bindings, so the chain was right and only the method reported to interceptors was wrong.
+- **Fix**: `getMethod()` resolves the bridge up the whole superclass chain (most derived declaration first, any access), then to the interface default method, once per bridge: the result is kept per generated subclass in a `ClassValue`. Resolving at run time rather than capturing the declaring class in the generated code keeps every already-compiled `$$Intercepted` correct, and does not name a class that may be inaccessible from the bean's package or module.
+
+## BUG-20261004-02 — A client proxy does not forward an interface default method
+
+- **Date**: 2026-10-04
+- **Status**: OPEN
+- **Module**: `vauban-core` (`RuntimeClientProxyGenerator#shapeOf`), `vauban-processor` (`ClientProxyShapeFromElements#from`, `#fromColocated`)
+- **Symptom**: calling an interface default method that a normal-scoped bean does not override, through its client proxy, runs the default body on the proxy instance: the contextual instance is bypassed and the interceptors bound to the bean do not fire. The bean's own methods are forwarded and intercepted as expected.
+- **Minimal reproduction**: an `@ApplicationScoped @Audited` bean `implements Greeting` (default `greet`), no override; `select(…).greet("y")` returns `"hi y"` and the interceptor records nothing. Seen on both proxies while working on BUG-20261004-01 (run-time proxy in vauban-core, processor proxy in vauban-module-it); the regression tests of BUG-20261004-01 use a `@Dependent` bean to reach the generated subclass directly.
+- **Cause**: all three shapes walk the superclass chain only; methods inherited from interfaces are never listed.
+- **Fix**: none yet.
+
+## BUG-20261004-03 — The run-time intercepted subclass skips an inherited protected or package-private method
+
+- **Date**: 2026-10-04
+- **Status**: OPEN
+- **Module**: `vauban-core` (`InterceptorSubclassGenerator#fromClass`, also used by the Maven plugin's `VaubanGenerator`)
+- **Symptom**: a protected or package-private business method that the bean inherits from a superclass is not intercepted when the `$$Intercepted` subclass comes from the run-time generator (class-path fallback, Maven plugin). The processor's subclass intercepts it (`InterceptedShapeFromElements` lists every member through `Elements#getAllMembers`), so the two front-ends do not produce the same override set, although both are documented to.
+- **Minimal reproduction**: a `@Dependent @Traced` bean `extends Parent extends Grandparent`, where `Grandparent` declares `protected String inheritedProtected()` and `String inheritedPackagePrivate()`; calling either from the same package reaches no interceptor, while the public inherited method is intercepted. Seen while working on BUG-20261004-01.
+- **Cause**: `fromClass` takes the bean's declared methods, then only the inherited *public* ones (`Class#getMethods()`).
+- **Fix**: none yet.

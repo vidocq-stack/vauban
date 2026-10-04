@@ -24,6 +24,7 @@ import jakarta.interceptor.AroundInvoke;
 import jakarta.interceptor.Interceptor;
 import jakarta.interceptor.InvocationContext;
 
+import java.lang.reflect.Method;
 import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
 
@@ -33,7 +34,9 @@ import java.util.concurrent.CopyOnWriteArrayList;
  * in-module, with no {@code opens} for its package.
  *
  * <p>Records {@code "<method>/<paramCount>"} for each intercepted call so the test can
- * assert that every overload was routed through its own glue (VAU-INT-001).</p>
+ * assert that every overload was routed through its own glue (VAU-INT-001), and the
+ * {@link Method} itself so it can assert which declaration the context reports
+ * (BUG-20261004-01).</p>
  */
 @Audited
 @Interceptor
@@ -43,9 +46,13 @@ public class AuditInterceptor {
     /** Visible trace of intercepted calls, as {@code "<method>/<paramCount>"}. */
     public static final List<String> CALLS = new CopyOnWriteArrayList<>();
 
+    /** {@link InvocationContext#getMethod()} of each intercepted call. */
+    public static final List<Method> METHODS = new CopyOnWriteArrayList<>();
+
     @AroundInvoke
     public Object audit(InvocationContext ctx) throws Exception {
         CALLS.add(ctx.getMethod().getName() + "/" + ctx.getParameters().length);
+        METHODS.add(ctx.getMethod());
         return ctx.proceed();
     }
 }

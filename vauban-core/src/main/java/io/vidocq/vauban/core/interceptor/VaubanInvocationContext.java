@@ -27,6 +27,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * Vauban implementation of {@link InvocationContext}.
@@ -91,19 +92,56 @@ public final class VaubanInvocationContext implements InvocationContext {
         return null;
     }
 
+    /**
+     * The method each {@code $$super$<name>} bridge stands for, one map per generated subclass.
+     * The walk in {@link #originalOf(Method)} runs once per bridge instead of on every call — a
+     * method inherited from far up would otherwise throw a {@link NoSuchMethodException} per
+     * level each time. A {@link ClassValue} ties each map to its subclass, so the cache never
+     * keeps a discarded application layer alive.
+     */
+    private static final ClassValue<Map<Method, Method>> ORIGINAL_METHODS = new ClassValue<>() {
+        @Override
+        protected Map<Method, Method> computeValue(Class<?> generatedSubclass) {
+            return new ConcurrentHashMap<>();
+        }
+    };
+
     @Override
     public Method getMethod() {
-        // If method is a $$super$ bridge, return the original method
+        // The generated subclass hands over its $$super$ bridge: answer the method it stands for
         if (method != null && method.getName().startsWith(InterceptedShape.SUPER_BRIDGE_PREFIX)) {
-            var originalName = method.getName().substring(InterceptedShape.SUPER_BRIDGE_PREFIX.length());
-            try {
-                return method.getDeclaringClass().getSuperclass()
-                        .getDeclaredMethod(originalName, method.getParameterTypes());
-            } catch (NoSuchMethodException e) {
-                // fallback
-            }
+            return ORIGINAL_METHODS.get(method.getDeclaringClass())
+                    .computeIfAbsent(method, VaubanInvocationContext::originalOf);
         }
         return method;
+    }
+
+    /**
+     * The declaration that {@code super.<name>(…)} reaches from the generated subclass: the most
+     * derived one up the bean's superclass chain, whatever its access, else the interface default
+     * method the bean inherits. The bean class need not declare the method itself (BUG-20261004-01).
+     * {@code InterceptorManager} walks the same chain for the method-level bindings.
+     *
+     * <p>Resolved here rather than captured by the generators: naming the declaring class in the
+     * generated subclass fails when that class is not accessible from the bean's package or module,
+     * and the subclasses already compiled into other modules only hand over the bridge.</p>
+     */
+    private static Method originalOf(Method bridge) {
+        var name = bridge.getName().substring(InterceptedShape.SUPER_BRIDGE_PREFIX.length());
+        var parameterTypes = bridge.getParameterTypes();
+        var beanClass = bridge.getDeclaringClass().getSuperclass();
+        for (Class<?> c = beanClass; c != null; c = c.getSuperclass()) {
+            try {
+                return c.getDeclaredMethod(name, parameterTypes);
+            } catch (NoSuchMethodException declaredHigherUp) {
+                // keep walking
+            }
+        }
+        try {
+            return beanClass.getMethod(name, parameterTypes);
+        } catch (NoSuchMethodException noSuchMethod) {
+            return bridge;
+        }
     }
 
     @Override
