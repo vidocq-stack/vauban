@@ -274,7 +274,7 @@ public final class InterceptedShapeFromElements {
 
     /**
      * Whether code in {@code from} can name {@code candidate}: same package, or public through every
-     * enclosing type, and exported to it. A {@code null}
+     * enclosing type, in a module {@code from}'s module reads, and exported to it. A {@code null}
      * {@code from} — a package not known — asks for public and exported to all.
      */
     private static boolean nameableFrom(TypeElement candidate, PackageElement from, Elements elements) {
@@ -286,11 +286,36 @@ public final class InterceptedShapeFromElements {
         var fromModule = from != null ? elements.getModuleOf(from) : null;
         if (ownerModule == null || ownerModule.isUnnamed()
                 || (fromModule != null && ownerModule.equals(fromModule))) return true;
+        if (fromModule != null && !reads(fromModule, ownerModule)) return false;
         var pkg = elements.getPackageOf(candidate);
         for (var directive : ElementFilter.exportsIn(ownerModule.getDirectives())) {
             if (directive.getPackage().equals(pkg) && (directive.getTargetModules() == null
                     || (fromModule != null && directive.getTargetModules().contains(fromModule)))) {
                 return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Whether {@code module} reads {@code target} (JLS 7.7.1): {@code java.base} and every module
+     * it requires, directly or through a chain of {@code requires transitive}. The unnamed module
+     * reads every module. A bean that inherits an interface through a superclass of another module
+     * may not read the interface's module, and then cannot name it.
+     */
+    private static boolean reads(ModuleElement module, ModuleElement target) {
+        if (module.isUnnamed() || target.getQualifiedName().contentEquals("java.base")) return true;
+        var visited = new java.util.HashSet<ModuleElement>();
+        var queue = new java.util.ArrayDeque<ModuleElement>();
+        for (var requires : ElementFilter.requiresIn(module.getDirectives())) {
+            queue.add(requires.getDependency());
+        }
+        while (!queue.isEmpty()) {
+            var read = queue.poll();
+            if (read.equals(target)) return true;
+            if (!visited.add(read)) continue;
+            for (var requires : ElementFilter.requiresIn(read.getDirectives())) {
+                if (requires.isTransitive()) queue.add(requires.getDependency());
             }
         }
         return false;
