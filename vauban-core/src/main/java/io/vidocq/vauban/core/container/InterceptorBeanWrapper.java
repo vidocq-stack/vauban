@@ -688,6 +688,18 @@ final class InterceptorBeanWrapper {
                     final var finalBeanClass = beanClass;
                     final Class<?> finalInterceptedClass = interceptedClass;
                     BeanFactory<?> interceptedFactory = new BeanFactory<Object>() {
+                /**
+                 * The qualifiers of parameter {@code i} of the bean's constructor: those the bean's
+                 * descriptor records, as the non-intercepted path takes them, read back from the
+                 * parameter only when nothing describes it — reading it back is what a module
+                 * compiled with the processor forbids (vauban#70, BUG-20261007-03).
+                 */
+                private java.lang.annotation.Annotation[] constructorParameterQualifiers(
+                        java.lang.reflect.Constructor<?> ctor, java.lang.reflect.Parameter[] params, int i) {
+                    var described = container.describedParameterQualifiers(descriptor, ctor, i);
+                    return described != null ? described : QualifierHelper.extractParamQualifiers(params[i]);
+                }
+
                 @Override
                 public Object create() {
                     return create((jakarta.enterprise.context.spi.CreationalContext<Object>) null);
@@ -767,7 +779,7 @@ final class InterceptorBeanWrapper {
                                 var cParams = finalTargetCtor.getParameters();
                                 finalArgs = new Object[pTypes.length];
                                 for (int i = 0; i < pTypes.length; i++) {
-                                    var pQuals = QualifierHelper.extractParamQualifiers(cParams[i]);
+                                    var pQuals = constructorParameterQualifiers(finalTargetCtor, cParams, i);
                                     finalArgs[i] = container.resolveParameter(pTypes[i], gpTypes[i], creationalCtx, pQuals, finalTargetCtor);
                                 }
                             }
@@ -804,7 +816,7 @@ final class InterceptorBeanWrapper {
                             var cParams = targetCtorToUse.getParameters();
                             finalArgs = new Object[pTypes.length];
                             for (int i = 0; i < pTypes.length; i++) {
-                                var pQuals = QualifierHelper.extractParamQualifiers(cParams[i]);
+                                var pQuals = constructorParameterQualifiers(targetCtorToUse, cParams, i);
                                 finalArgs[i] = container.resolveParameter(pTypes[i], gpTypes[i], creationalCtx, pQuals, targetCtorToUse);
                             }
                         }
