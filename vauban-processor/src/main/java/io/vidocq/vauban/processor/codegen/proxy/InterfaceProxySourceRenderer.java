@@ -50,7 +50,8 @@ public final class InterfaceProxySourceRenderer {
     /** Render the interface proxy at {@code proxyBinaryName}, implementing {@code iface}. */
     public static ClientProxySourceRenderer.Generated render(
             TypeElement iface, String proxyBinaryName, Elements elements, Types types) {
-        String ifaceSource = elements.getBinaryName(iface).toString().replace('$', '.');
+        // The canonical name: a '$' may be part of the interface's own name (BUG-20261007-01).
+        String ifaceSource = iface.getQualifiedName().toString();
         int lastDot = proxyBinaryName.lastIndexOf('.');
         String pkg = lastDot >= 0 ? proxyBinaryName.substring(0, lastDot) : "";
         String proxySimple = lastDot >= 0 ? proxyBinaryName.substring(lastDot + 1) : proxyBinaryName;

@@ -44,6 +44,11 @@ public final class TypeRef {
 
     private final int dims; // 0 = not array, 1+ = array
 
+    // The canonical name, when the front-end knows it, else null. Only Java source needs it, and
+    // only a '$' in the type's own name makes it differ from the binary name rewritten '$' to '.':
+    // it is not part of the type's identity (equals, hashCode).
+    private final String canonicalName;
+
     // ---- factories ----
 
     public static TypeRef ofVoid() {
@@ -72,15 +77,31 @@ public final class TypeRef {
         return new TypeRef(null, binaryName, dims);
     }
 
+    /**
+     * A reference type given its binary name and its canonical name, which {@link #sourceName()}
+     * writes: for a type whose own name contains {@code $} ({@code io.example.A$B}, top-level), the
+     * binary name does not tell it from a nested type (BUG-20261007-01). The canonical name is not
+     * part of the type's identity. {@code null} or empty: derived from the binary name.
+     */
+    public static TypeRef ofReference(String binaryName, int dims, String canonicalName) {
+        return new TypeRef(null, binaryName, dims,
+                canonicalName == null || canonicalName.isEmpty() ? null : canonicalName);
+    }
+
     /** Convenience: reference with no array dimensions. */
     public static TypeRef ofReference(String binaryName) {
         return ofReference(binaryName, 0);
     }
 
     private TypeRef(Primitive primitive, String binaryName, int dims) {
+        this(primitive, binaryName, dims, null);
+    }
+
+    private TypeRef(Primitive primitive, String binaryName, int dims, String canonicalName) {
         this.primitive = primitive;
         this.binaryName = binaryName;
         this.dims = dims;
+        this.canonicalName = canonicalName;
     }
 
     // ---- queries ----
@@ -193,12 +214,13 @@ public final class TypeRef {
 
     /**
      * Java source syntax for this type: {@code int}, {@code int[]}, {@code java.lang.String},
-     * {@code a.b.Outer.Inner} (binary {@code '$'} becomes source {@code '.'}).
+     * {@code a.b.Outer.Inner}: the canonical name when the type was given one, else the binary name
+     * with each {@code '$'} turned into {@code '.'}, which is right for a nested type only.
      */
     public String sourceName() {
         String base = primitive != null
                 ? primitive.name().toLowerCase(java.util.Locale.ROOT)
-                : binaryName.replace('$', '.');
+                : canonicalName != null ? canonicalName : binaryName.replace('$', '.');
         return base + "[]".repeat(dims);
     }
 

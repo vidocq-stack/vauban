@@ -140,7 +140,8 @@ public final class InterceptedShapeFromElements {
                                         + " and keep it, so a subclass they generate differs from this one."));
                         continue;
                     }
-                    shape = shape.withDefaultOwner(TypeRef.ofReference(elements.getBinaryName(owner).toString(), 0),
+                    shape = shape.withDefaultOwner(TypeRef.ofReference(elements.getBinaryName(owner).toString(), 0,
+                                    owner.getQualifiedName().toString()),
                             ownerType.toString());
                 }
                 methods.add(shape);
@@ -523,7 +524,8 @@ public final class InterceptedShapeFromElements {
                     TypeElement te = (TypeElement) dt.asElement();
                     // getBinaryName gives "Outer$Inner" for nested classes, matching Class.getName()
                     String binaryName = elements.getBinaryName(te).toString();
-                    return TypeRef.ofReference(binaryName, dims);
+                    // The canonical name too, for source: a '$' may be part of a type's own name.
+                    return TypeRef.ofReference(binaryName, dims, te.getQualifiedName().toString());
                 }
                 // Fallback for unusual mirrors (intersection types, error types): treat as Object
                 return TypeRef.ofReference("java.lang.Object", dims);

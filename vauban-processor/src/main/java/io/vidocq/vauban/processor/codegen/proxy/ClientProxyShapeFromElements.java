@@ -189,7 +189,8 @@ public final class ClientProxyShapeFromElements {
                 if (!declared.add(declaredSignature(shape))) continue;
                 methods.add(new ProxyMethodShape(shape.name(), shape.returnType(), shape.params(),
                         shape.thrownTypes(), false,
-                        TypeRef.ofReference(elements.getBinaryName(owner).toString(), 0)));
+                        TypeRef.ofReference(elements.getBinaryName(owner).toString(), 0,
+                                owner.getQualifiedName().toString())));
                 continue;
             }
             // A class method that is the same member (PlainBase.tag(String) implementing

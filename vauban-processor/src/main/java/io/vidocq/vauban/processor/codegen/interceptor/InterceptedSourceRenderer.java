@@ -69,13 +69,23 @@ public final class InterceptedSourceRenderer {
 
     /** Render {@code shape.subclassName()} as Java source. */
     public static Generated render(InterceptedShape shape) {
+        // The canonical name of a nested bean is its binary name with each '$' turned into '.'.
+        return render(shape, shape.beanBinaryName().replace('$', '.'));
+    }
+
+    /**
+     * Render {@code shape.subclassName()} as Java source, naming the bean by
+     * {@code beanSourceName}, its canonical name: a top-level class whose own name contains
+     * {@code $} keeps it there (BUG-20261007-01).
+     */
+    public static Generated render(InterceptedShape shape, String beanSourceName) {
         String beanBinary = shape.beanBinaryName();
         String subBinary = shape.subclassName();
         int lastDot = beanBinary.lastIndexOf('.');
         String pkg = lastDot >= 0 ? beanBinary.substring(0, lastDot) : "";
         String beanSimple = lastDot >= 0 ? beanBinary.substring(lastDot + 1) : beanBinary;
         String subSimple = beanSimple + InterceptedShape.SUBCLASS_SUFFIX;
-        String beanSource = beanBinary.replace('$', '.');
+        String beanSource = beanSourceName;
 
         var sb = new StringBuilder();
         if (!pkg.isEmpty()) {
