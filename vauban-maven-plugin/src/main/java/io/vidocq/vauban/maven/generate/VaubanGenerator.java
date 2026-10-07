@@ -487,9 +487,10 @@ public final class VaubanGenerator {
                 // Proxies of this package's beans (FQN package equals the provider's package).
                 var pkgProxies = clientProxyFqns.stream()
                         .filter(p -> packageOf(p).equals(pkg.packageName()))
+                        .sorted()
                         .toList();
-                var pkgProducerProxies =
-                        producerProxiesByPackage.getOrDefault(pkg.packageName(), List.of());
+                var pkgProducerProxies = inStableOrder(
+                        producerProxiesByPackage.getOrDefault(pkg.packageName(), List.of()));
                 // Bytecode generator handles both no-arg and injected-constructor components.
                 var gen = io.vidocq.vauban.core.provider.ComponentProviderClassGenerator.generate(
                         providerFqn, pkg.components(), pkg.fields(), pkg.methods(),
@@ -505,13 +506,13 @@ public final class VaubanGenerator {
         // A producer whose holder package has no other in-module component still needs a provider
         // for its produced-type proxy (issue #42). The module-info `provides` for such a package is
         // the user's responsibility (as for any bean package).
-        for (var entry : producerProxiesByPackage.entrySet()) {
+        for (var entry : new java.util.TreeMap<>(producerProxiesByPackage).entrySet()) {
             if (emittedProviderPackages.contains(entry.getKey())) continue;
             var providerFqn = entry.getKey().isEmpty()
                     ? "_VaubanComponents" : entry.getKey() + "._VaubanComponents";
             try {
                 var gen = io.vidocq.vauban.core.provider.ComponentProviderClassGenerator.generate(
-                        providerFqn, List.of(), List.of(), List.of(), List.of(), entry.getValue());
+                        providerFqn, List.of(), List.of(), List.of(), List.of(), inStableOrder(entry.getValue()));
                 writeClassFile(config.outputDir(), gen.className(), gen.bytecode());
                 providerFqns.add(providerFqn);
             } catch (Exception e) {
@@ -524,7 +525,7 @@ public final class VaubanGenerator {
             var svc = config.outputDir().resolve(
                     "META-INF/services/io.vidocq.vauban.api.VaubanComponentProvider");
             Files.createDirectories(svc.getParent());
-            Files.write(svc, providerFqns, StandardCharsets.UTF_8);
+            Files.write(svc, providerFqns.stream().sorted().toList(), StandardCharsets.UTF_8);
         } catch (Exception e) {
             warnings.add("Failed to write component provider service file: " + e.getMessage());
         }
@@ -559,6 +560,7 @@ public final class VaubanGenerator {
         for (var pkg : ComponentCollector.collect(provided, warnings)) {
             var pkgProxies = clientProxyFqns.stream()
                     .filter(p -> packageOf(p).equals(pkg.packageName()))
+                    .sorted()
                     .toList();
             try {
                 var gen = io.vidocq.vauban.core.provider.ComponentProviderClassGenerator.generate(
@@ -614,6 +616,19 @@ public final class VaubanGenerator {
             warnings.add("Cannot inspect " + clazz.getName() + " for interceptor bindings: " + e);
             return false;
         }
+    }
+
+    /**
+     * {@code proxies} by produced-type key, then proxy name: the producers come in bean order, which
+     * follows the index and changes from one JVM run to the next (BUG-20261007-04).
+     */
+    private static List<io.vidocq.vauban.core.provider.ComponentProviderClassGenerator.ProducerProxy> inStableOrder(
+            List<io.vidocq.vauban.core.provider.ComponentProviderClassGenerator.ProducerProxy> proxies) {
+        return proxies.stream()
+                .sorted(java.util.Comparator.comparing(
+                                io.vidocq.vauban.core.provider.ComponentProviderClassGenerator.ProducerProxy::key)
+                        .thenComparing(io.vidocq.vauban.core.provider.ComponentProviderClassGenerator.ProducerProxy::proxyFqn))
+                .toList();
     }
 
     /** Checks if a generated class file already exists on disk. */

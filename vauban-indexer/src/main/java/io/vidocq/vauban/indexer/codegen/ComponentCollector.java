@@ -273,9 +273,12 @@ public final class ComponentCollector {
      * <p>Ordering is deterministic:
      * <ul>
      *   <li>packages are sorted lexicographically (via {@link TreeMap});</li>
-     *   <li>components within a package are sorted by FQN (the caller supplies a
-     *       {@link java.util.TreeMap}-ordered bean list, or any sorted order);</li>
-     *   <li>fields and methods are emitted in the order they appear on the class (as scanned).</li>
+     *   <li>within a package, the beans come in binary-name order ({@link ProvidedClass#fqn()}),
+     *       whatever order the caller lists them in, a bean's {@code $$Intercepted} component right
+     *       after its own: the callers take the beans from the index, whose iteration order changes
+     *       from one JVM run to the next, and a provider must not (BUG-20261007-04);</li>
+     *   <li>fields and methods are emitted bean by bean, in the order they appear on the class
+     *       (as scanned).</li>
      * </ul>
      *
      * <p>Empty packages (no component, field, or method) are omitted.
@@ -292,7 +295,9 @@ public final class ComponentCollector {
                 List<MethodInvoke> methods) {}
         var byPackage = new TreeMap<String, Bundle>();
 
-        for (var provided : beans) {
+        var inNameOrder = new ArrayList<>(beans);
+        inNameOrder.sort(java.util.Comparator.comparing(ProvidedClass::fqn));
+        for (var provided : inNameOrder) {
             var fqn = provided.fqn();
             var pkg = packageOf(fqn);
             var bundle = byPackage.computeIfAbsent(pkg,

@@ -691,26 +691,30 @@ public class VaubanProcessor extends AbstractProcessor {
         var annotationsByPackage = declaredAnnotationTypes(index);
         for (var pkg : packages) {
             // Proxies of this package's beans (their FQN package equals the provider's package).
+            // Every input in a stable order: the beans, so their proxies, come in index order, which
+            // changes from one JVM run to the next (BUG-20261007-04).
             var pkgProxies = clientProxyFqns.stream()
                     .filter(p -> packageOfFqn(p).equals(pkg.packageName()))
+                    .sorted()
                     .toList();
-            var pkgProducerProxies = producerProxiesByPackage.getOrDefault(pkg.packageName(), List.of());
+            var pkgProducerProxies = inStableOrder(
+                    producerProxiesByPackage.getOrDefault(pkg.packageName(), List.of()));
             var className = writeComponentProvider(
                     pkg.packageName(), pkg.components(), pkg.fields(), pkg.methods(),
                     pkgProxies, pkgProducerProxies,
-                    annotationsByPackage.getOrDefault(pkg.packageName(), List.of()));
+                    annotationTypesInStableOrder(annotationsByPackage.getOrDefault(pkg.packageName(), List.of())));
             if (className != null) providerClassNames.add(className);
             emittedProviderPackages.add(pkg.packageName());
         }
         // A package with no in-module component of its own still needs a provider when it holds a
         // produced-type proxy (issue #42) or declares an annotation type (vauban#70).
-        var remainingPackages = new java.util.LinkedHashSet<>(producerProxiesByPackage.keySet());
+        var remainingPackages = new java.util.TreeSet<>(producerProxiesByPackage.keySet());
         remainingPackages.addAll(annotationsByPackage.keySet());
         for (var pkg : remainingPackages) {
             if (!emittedProviderPackages.add(pkg)) continue;
             var className = writeComponentProvider(pkg, List.of(), List.of(), List.of(), List.of(),
-                    producerProxiesByPackage.getOrDefault(pkg, List.of()),
-                    annotationsByPackage.getOrDefault(pkg, List.of()));
+                    inStableOrder(producerProxiesByPackage.getOrDefault(pkg, List.of())),
+                    annotationTypesInStableOrder(annotationsByPackage.getOrDefault(pkg, List.of())));
             if (className != null) providerClassNames.add(className);
         }
         if (!providerClassNames.isEmpty()) {
@@ -1857,13 +1861,27 @@ public class VaubanProcessor extends AbstractProcessor {
     }
 
     /** Class-path fallback registration (ignored for named modules, which use {@code provides}). */
+    /** {@code proxies} by produced-type key, then proxy name (BUG-20261007-04). */
+    private static List<ComponentProviderGenerator.ProducerProxy> inStableOrder(
+            List<ComponentProviderGenerator.ProducerProxy> proxies) {
+        return proxies.stream()
+                .sorted(java.util.Comparator.comparing(ComponentProviderGenerator.ProducerProxy::key)
+                        .thenComparing(ComponentProviderGenerator.ProducerProxy::proxyFqn))
+                .toList();
+    }
+
+    /** {@code types} by binary name: they come in index order (BUG-20261007-04). */
+    private static List<ClassInfo> annotationTypesInStableOrder(List<ClassInfo> types) {
+        return types.stream().sorted(java.util.Comparator.comparing(c -> c.name().value())).toList();
+    }
+
     private void writeComponentProviderService(List<String> providerClassNames) {
         try {
             var resource = processingEnv.getFiler().createResource(
                     StandardLocation.CLASS_OUTPUT, "",
                     "META-INF/services/io.vidocq.vauban.api.VaubanComponentProvider");
             try (var w = new PrintWriter(resource.openOutputStream(), false, StandardCharsets.UTF_8)) {
-                for (var name : providerClassNames) w.println(name);
+                for (var name : providerClassNames.stream().sorted().toList()) w.println(name);
             }
         } catch (IOException e) {
             processingEnv.getMessager().printMessage(Diagnostic.Kind.WARNING,
