@@ -67,6 +67,12 @@ protected and package-private methods; the subclass the container generates at r
 one `vauban:generate` writes now cover them too, so a call the bean makes on itself to such a method
 is intercepted as well.
 
+Three kinds of method are not business methods and are never overridden, by any of the generators,
+which read one list: `@Inject` initializers, the bean class's own interceptor methods
+(`@AroundInvoke`, `@AroundConstruct`, `@AroundTimeout`), and its lifecycle callbacks
+(`@PostConstruct`, `@PreDestroy`, and the EJB `@PostActivate` and `@PrePassivate`). A lifecycle
+callback therefore reaches only the interceptors' own lifecycle methods, never an `@AroundInvoke`.
+
 A method-level interceptor binding is read from the declaration a call runs. The binding of an
 inherited method, on a default method as on a superclass method, stops applying once a class of the
 bean overrides that method. The class-level bindings of an interface never apply.

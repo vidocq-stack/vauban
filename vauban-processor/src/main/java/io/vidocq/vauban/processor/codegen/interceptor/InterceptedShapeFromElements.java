@@ -19,6 +19,7 @@
  */
 package io.vidocq.vauban.processor.codegen.interceptor;
 
+import io.vidocq.vauban.core.codegen.BeanMembers;
 import io.vidocq.vauban.core.interceptor.CtorShape;
 import io.vidocq.vauban.core.interceptor.InterceptedShape;
 import io.vidocq.vauban.core.interceptor.MethodShape;
@@ -59,8 +60,6 @@ import java.util.List;
  */
 public final class InterceptedShapeFromElements {
 
-    private static final String INJECT = "jakarta.inject.Inject";
-    private static final String AROUND_INVOKE = "jakarta.interceptor.AroundInvoke";
     private static final String JAVA_LANG_OBJECT = "java.lang.Object";
 
     private InterceptedShapeFromElements() {}
@@ -429,16 +428,16 @@ public final class InterceptedShapeFromElements {
             if (JAVA_LANG_OBJECT.equals(te.getQualifiedName().toString())) return false;
         }
 
-        // CDI spec: @Inject initializer methods are NOT intercepted
-        if (hasAnnotation(method, INJECT)) return false;
-        // Target class interceptor methods (@AroundInvoke) are not business methods
-        return !hasAnnotation(method, AROUND_INVOKE);
+        // @Inject initializers, the target class's interceptor methods and lifecycle callbacks are not
+        // business methods: the run-time generator's list, matched by name
+        return !hasNonBusinessMethodAnnotation(method);
     }
 
-    private static boolean hasAnnotation(ExecutableElement method, String qualifiedName) {
+    private static boolean hasNonBusinessMethodAnnotation(ExecutableElement method) {
         for (AnnotationMirror ann : method.getAnnotationMirrors()) {
-            if (ann.getAnnotationType().asElement() instanceof TypeElement te) {
-                if (qualifiedName.equals(te.getQualifiedName().toString())) return true;
+            if (ann.getAnnotationType().asElement() instanceof TypeElement te
+                    && BeanMembers.NON_BUSINESS_METHOD_ANNOTATIONS.contains(te.getQualifiedName().toString())) {
+                return true;
             }
         }
         return false;

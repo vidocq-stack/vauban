@@ -174,10 +174,9 @@ public final class InterceptorSubclassGenerator {
         if (method.isSynthetic()) return false;
         if (method.isBridge()) return false;
         if (method.getName().startsWith("$$")) return false;
-        // CDI spec: @Inject initializer methods are NOT intercepted
-        if (method.isAnnotationPresent(jakarta.inject.Inject.class)) return false;
-        // Target class interceptor methods (@AroundInvoke etc.) are not business methods
-        return !method.isAnnotationPresent(jakarta.interceptor.AroundInvoke.class);
+        // @Inject initializers, the target class's interceptor methods and lifecycle callbacks are not
+        // business methods: one list, shared with the processor's front-end
+        return !io.vidocq.vauban.core.codegen.BeanMembers.hasNonBusinessMethodAnnotation(method);
     }
 
     public record GeneratedInterceptedClass(String className, byte[] bytecode) {

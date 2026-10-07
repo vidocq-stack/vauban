@@ -986,7 +986,7 @@ while `resolvedGat.equals(jdkGat)` was false (asymmetric), and the anonymous
 ---
 
 ## VAU-INT-006 — `@AroundInvoke` interceptors fire on `@PostConstruct` / `@PreDestroy` lifecycle callbacks
-- **Date**: 2026-09-11 — **Status**: OPEN
+- **Date**: 2026-09-11 — **Status**: FIXED (vauban#114, branch `pr/ybl/lifecycle-callbacks-not-business`)
 - **Severity**: medium (spec violation; concrete effect: a class-level `@Transactional` — or any
   business-method interceptor such as `@Retry`, `@Timed`, `@Logged` — wraps the bean's lifecycle
   callbacks, which neither Weld nor ArC do; a transaction is opened around `@PostConstruct` and
@@ -1057,6 +1057,15 @@ and a proposed upstream assertion: `CDI_TCK_PROPOSALS.md` → `TCK-GAP-001`.
   `shouldIntercept` filters above; generated `RequestAuditedService$$Intercepted` confirmed to override
   `init()`/`dispose()`. Probe fixtures removed after the run (not committed).
 - 2026-09-11 : TCK 4.1.0 coverage analysed (`cdi-tck-core-impl` sources) — gap documented as `TCK-GAP-001`.
+- 2026-10-07 : fixed. `BeanMembers.NON_BUSINESS_METHOD_ANNOTATIONS` (vauban-core, `core.codegen`, exported to the
+  processor) lists, by name, the annotations that make a method something other than a business method: `@Inject`,
+  `@AroundInvoke`, `@AroundConstruct`, `@AroundTimeout`, `@PostConstruct`, `@PreDestroy`, `@PostActivate`,
+  `@PrePassivate`. `InterceptorSubclassGenerator.shouldIntercept` and `InterceptedShapeFromElements.shouldIntercept`
+  both read it, so the callbacks are no longer overridden in `$$Intercepted` and `BeanLifecycle`'s virtual call runs
+  the bean's own method under the lifecycle chain only. Tests: `LifecycleCallbackInterceptionTest` (vauban-core,
+  run-time path: a normal-scoped and a `@Dependent` bean, `getMethod()` is `null` in the interceptor's lifecycle
+  methods) and `LifecycleCallbackModulePathTest` (vauban-module-it, processor path, module path), both failing
+  first. heisenberg, dirac, cyrano and mansart rebuilt against it, their tests green.
 
 ## BUG-20260911-01 — Build-time Class-File bytecode takes the build JDK's class-file version, not the release
 

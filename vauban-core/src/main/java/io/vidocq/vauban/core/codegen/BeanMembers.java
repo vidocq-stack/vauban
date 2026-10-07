@@ -19,8 +19,10 @@
  */
 package io.vidocq.vauban.core.codegen;
 
+import java.lang.annotation.Annotation;
 import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
+import java.util.Set;
 
 /**
  * Which methods a superclass declares are members of a bean class, and so the ones a class
@@ -34,6 +36,31 @@ import java.lang.reflect.Modifier;
 public final class BeanMembers {
 
     private BeanMembers() {}
+
+    /**
+     * Annotations that make a method something other than a business method, so that no generated
+     * class intercepts it with {@code @AroundInvoke}: an {@code @Inject} initializer (CDI 4.1), the
+     * target class's own interceptor methods, and the lifecycle callbacks, which only the
+     * interceptors' lifecycle methods intercept (Jakarta Interceptors 2.2, VAU-INT-006). Matched by
+     * name, so the EJB ones need no class on the module path, and the processor reads the same list.
+     */
+    public static final Set<String> NON_BUSINESS_METHOD_ANNOTATIONS = Set.of(
+            "jakarta.inject.Inject",
+            "jakarta.interceptor.AroundInvoke",
+            "jakarta.interceptor.AroundConstruct",
+            "jakarta.interceptor.AroundTimeout",
+            "jakarta.annotation.PostConstruct",
+            "jakarta.annotation.PreDestroy",
+            "jakarta.ejb.PostActivate",
+            "jakarta.ejb.PrePassivate");
+
+    /** Whether {@code method} carries one of {@link #NON_BUSINESS_METHOD_ANNOTATIONS}. */
+    public static boolean hasNonBusinessMethodAnnotation(Method method) {
+        for (Annotation annotation : method.getDeclaredAnnotations()) {
+            if (NON_BUSINESS_METHOD_ANNOTATIONS.contains(annotation.annotationType().getName())) return true;
+        }
+        return false;
+    }
 
     /**
      * Whether {@code declaration} is a business method of {@code beanClass}: an instance method that
