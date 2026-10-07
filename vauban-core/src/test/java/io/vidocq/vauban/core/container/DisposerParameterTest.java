@@ -19,6 +19,7 @@
  */
 package io.vidocq.vauban.core.container;
 
+import jakarta.annotation.PreDestroy;
 import jakarta.enterprise.context.Dependent;
 import jakarta.enterprise.inject.Disposes;
 import jakarta.enterprise.inject.Produces;
@@ -34,8 +35,6 @@ import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertFalse;
-import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * CDI 4.1 §10.4.3: every parameter of a disposer method other than the {@code @Disposes} one is an
@@ -48,6 +47,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class DisposerParameterTest {
 
     static final List<String> DISPOSED = new CopyOnWriteArrayList<>();
+    static final List<String> RELEASED = new CopyOnWriteArrayList<>();
 
     @Qualifier
     @Retention(RetentionPolicy.RUNTIME)
@@ -108,12 +108,18 @@ class DisposerParameterTest {
     @Dependent
     public static class Registry {
         public String name() { return "registry"; }
+
+        @PreDestroy
+        void release() {
+            RELEASED.add("registry");
+        }
     }
 
     @Test
     @DisplayName("an unqualified disposer parameter still resolves, and shows the same call count")
     void anUnqualifiedParameterIsUnaffected() {
         DISPOSED.clear();
+        RELEASED.clear();
 
         try (var container = VaubanContainer.builder()
                 .addBeanClass(Registry.class)
@@ -129,11 +135,10 @@ class DisposerParameterTest {
 
             bean.destroy(ledger, context);
 
-            assertFalse(DISPOSED.isEmpty(), "the disposer must run");
-            assertTrue(DISPOSED.stream().allMatch("plain:registry"::equals), DISPOSED.toString());
-            // The same count as the qualified case: BUG-20260914-18 does not depend on qualifiers.
-            assertEquals(2, DISPOSED.size(),
-                    "pins BUG-20260914-18 as it stands, so a fix for it fails here and gets noticed");
+            // A disposer runs once per destroyed instance (BUG-20260914-18).
+            assertEquals(List.of("plain:registry"), DISPOSED);
+            // The @Dependent parameter created for the call is destroyed when the call completes.
+            assertEquals(List.of("registry"), RELEASED);
         }
     }
 
@@ -159,11 +164,8 @@ class DisposerParameterTest {
 
             bean.destroy(ledger, context);
 
-            // What this test is about is WHICH bean the parameter received, not how many times the
-            // disposer ran: `destroy` runs it twice, which is BUG-20260914-18 and older than this.
-            assertFalse(DISPOSED.isEmpty(), "the disposer must run");
-            assertTrue(DISPOSED.stream().allMatch("ledger:wire"::equals),
-                    "every call must have received the wire payment, never the card one: " + DISPOSED);
+            // One call, and it received the wire payment, never the card one.
+            assertEquals(List.of("ledger:wire"), DISPOSED);
         }
     }
 }

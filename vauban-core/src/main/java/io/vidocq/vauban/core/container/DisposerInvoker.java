@@ -355,7 +355,11 @@ final class DisposerInvoker {
                 if (method.getName().equals(disposer.methodName())
                         && method.getParameterCount() > disposer.parameterIndex()) {
                     var bm = container.getBeanManager();
-                    var ctx = creationalContext != null ? creationalContext : new CreationalContextImpl<>();
+                    // The call gets its own context: the @Dependent objects created to receive it (the
+                    // declaring instance, the other parameters) are destroyed when it completes (CDI 4.1
+                    // §6.4.2). Releasing the produced instance's context instead destroyed the produced
+                    // instance a second time, running this disposer twice (BUG-20260914-18).
+                    var ctx = new CreationalContextImpl<>();
                     try {
                         var declBeans = bm.getBeans(declaringClass);
                         var declBean = declBeans.isEmpty() ? null : bm.resolve(declBeans);

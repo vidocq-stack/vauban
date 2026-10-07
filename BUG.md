@@ -1441,7 +1441,7 @@ and a proposed upstream assertion: `CDI_TCK_PROPOSALS.md` → `TCK-GAP-001`.
 ## BUG-20260914-18 — `Bean#destroy` runs a producer's disposer twice
 
 - **Date**: 2026-09-14
-- **Status**: OPEN
+- **Status**: FIXED (vauban#115, branch `pr/ybl/disposer-runs-once`)
 - **Module**: `vauban-core` (`ManagedBean#destroy`, the dependent-context release)
 - **Symptom**: destroying a produced `@Dependent` instance calls its `@Disposes` method **twice**. `ManagedBean#destroy` invokes the destroyer, then releases the `CreationalContext`, and the instance is destroyed a second time along the way — the `removeIf(dep -> dep.instance() == instance)` guard just above does not cover it, so the instance must also be registered as a dependent of another context.
 - **Minimal reproduction** (`DisposerParameterTest#anUnqualifiedParameterIsUnaffected`, which pins the count at 2 on purpose so a fix fails there and gets noticed):
@@ -1456,6 +1456,14 @@ and a proposed upstream assertion: `CDI_TCK_PROPOSALS.md` → `TCK-GAP-001`.
 - **Investigations**:
   - 2026-09-14: found while fixing vauban#89. It is older than that change and independent of it: the count is 2 whether the disposer's other parameter is qualified or not, which is why the test pins both cases. It was invisible until #89 made the disposer's body actually run — before, its parameters resolved to nothing and the call failed inside a `catch (Exception) { /* Best effort */ }`.
   - CDI 4.1 §5.5.3: a disposer runs once per destroyed instance. Note `ManagedBean#destroy` suppresses any exception a disposer throws, which the specification does require — that swallow is not this bug.
+  - 2026-10-07: the second call came from `DisposerInvoker.callDisposer` itself. It resolved the disposer's declaring
+    instance and other parameters in the produced instance's `CreationalContext`, then released that context when
+    the call completed — and that context also holds the produced instance (registered by `getReference`), so the
+    release ran `Bean#destroy` again, before the `removeIf` guard of `ManagedBean#destroy` was reached.
+- **Fix**: the disposer call gets its own `CreationalContext`; the `@Dependent` objects created to receive it are
+  destroyed when it completes (CDI 4.1 §6.4.2), and the produced instance's context is released once, by
+  `ManagedBean#destroy`. `DisposerParameterTest` now asserts one call in both cases (it pinned two), and that the
+  `@Dependent` parameter created for the call is still destroyed after it.
 
 ## BUG-20261001-01 — A synthetic bean built in the processor is listed as a managed bean, and the boot fails
 
