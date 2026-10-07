@@ -1679,6 +1679,16 @@ public class VaubanProcessor extends AbstractProcessor {
         return null;
     }
 
+    /**
+     * The canonical name of the type whose binary name is {@code binaryName}, or {@code null} when
+     * the compiler does not know it, or it has none (a local or an anonymous class).
+     */
+    private String canonicalName(String binaryName) {
+        var type = typeElementByBinaryName(processingEnv.getElementUtils(), binaryName);
+        if (type == null || type.getQualifiedName().isEmpty()) return null;
+        return type.getQualifiedName().toString();
+    }
+
     /** {@code type} or the member type of {@code type}, at any depth, whose binary name is {@code binaryName}. */
     private static TypeElement memberByBinaryName(Elements elements, TypeElement type, String binaryName) {
         var name = elements.getBinaryName(type).toString();
@@ -1766,7 +1776,8 @@ public class VaubanProcessor extends AbstractProcessor {
             if ("java.lang.Object".equals(fqn)) {
                 continue;
             }
-            var te = elements.getTypeElement(fqn);
+            // By binary name: a nested produced type is app.Outer$Inner here (BUG-20261007-01).
+            var te = typeElementByBinaryName(elements, fqn);
             if (te != null && te.getKind() == ElementKind.CLASS) {
                 return te;
             }
@@ -1790,7 +1801,8 @@ public class VaubanProcessor extends AbstractProcessor {
             if ("java.lang.Object".equals(fqn)) {
                 continue;
             }
-            var te = elements.getTypeElement(fqn);
+            // By binary name: a nested produced type is app.Outer$Inner here (BUG-20261007-01).
+            var te = typeElementByBinaryName(elements, fqn);
             if (te != null && te.getKind() == ElementKind.INTERFACE
                     && te.getModifiers().contains(Modifier.PUBLIC)) {
                 return te;
@@ -1825,7 +1837,7 @@ public class VaubanProcessor extends AbstractProcessor {
             List<ComponentProviderGenerator.ProducerProxy> producerProxies,
             List<ClassInfo> annotationTypes) {
         var gen = ComponentProviderGenerator.generateFrom(pkg, components, fieldInjects, methodInvokes,
-                clientProxyFqns, producerProxies, AnnotationArtefacts.render(annotationTypes));
+                clientProxyFqns, producerProxies, AnnotationArtefacts.render(annotationTypes, this::canonicalName));
         try {
             var file = processingEnv.getFiler().createSourceFile(gen.className());
             try (var w = file.openWriter()) {

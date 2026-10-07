@@ -28,6 +28,7 @@ import io.vidocq.vauban.indexer.model.TypeInfo;
 
 import java.util.Comparator;
 import java.util.List;
+import java.util.function.Function;
 import java.util.stream.Collectors;
 
 /**
@@ -49,11 +50,19 @@ public final class AnnotationArtefacts {
     private static final DotName RETENTION = DotName.of("java.lang.annotation.Retention");
     private static final DotName RETENTION_POLICY = DotName.of("java.lang.annotation.RetentionPolicy");
 
-    private AnnotationArtefacts() {
+    /**
+     * The canonical name of a type given its binary name, or {@code null} when the compiler does not
+     * know the type; then the binary name with each {@code $} turned into {@code .} is written, which
+     * is right for a nested type only (BUG-20261007-01).
+     */
+    private final Function<String, String> canonicalNames;
+
+    private AnnotationArtefacts(Function<String, String> canonicalNames) {
+        this.canonicalNames = canonicalNames;
     }
 
     /** The member methods of an annotation type, in declaration order. */
-    private static List<MethodInfo> members(ClassInfo annotationType) {
+    private List<MethodInfo> members(ClassInfo annotationType) {
         return annotationType.methods().stream()
                 .filter(method -> method.parameters().isEmpty() && !method.isStatic()
                         && !method.isSynthetic() && !method.isConstructor() && !method.isStaticInitializer())
@@ -67,7 +76,23 @@ public final class AnnotationArtefacts {
      * @param annotationTypes the annotation types this module declares, from the index
      */
     public static Rendered render(List<ClassInfo> annotationTypes) {
-        var runtime = annotationTypes.stream().filter(AnnotationArtefacts::keptAtRuntime).toList();
+        return render(annotationTypes, binaryName -> null);
+    }
+
+    /**
+     * The same, writing each type by the canonical name {@code canonicalNames} gives for its binary
+     * name: a {@code $} may be part of a top-level type's own name, so the binary name alone does not
+     * say how source names it (BUG-20261007-01).
+     *
+     * @param canonicalNames the canonical name of a type given its binary name, or {@code null} when
+     *                       the type is not known
+     */
+    public static Rendered render(List<ClassInfo> annotationTypes, Function<String, String> canonicalNames) {
+        return new AnnotationArtefacts(canonicalNames).renderAll(annotationTypes);
+    }
+
+    private Rendered renderAll(List<ClassInfo> annotationTypes) {
+        var runtime = annotationTypes.stream().filter(this::keptAtRuntime).toList();
         var renderable = runtime.stream().filter(type -> canRender(type, runtime)).toList();
         if (renderable.isEmpty()) {
             return new Rendered("", "");
@@ -85,7 +110,7 @@ public final class AnnotationArtefacts {
 
     // ---- the provider's methods ----
 
-    private static String methods(List<ClassInfo> types) {
+    private String methods(List<ClassInfo> types) {
         var sb = new StringBuilder();
         // Nothing here names an annotation type: a type is mentioned only inside its own nested
         // class, which the JVM loads when an arm below runs. A type that is on the compile path and
@@ -127,7 +152,7 @@ public final class AnnotationArtefacts {
         return sb.toString();
     }
 
-    private static String metadataMethod(ClassInfo type, List<ClassInfo> rendered) {
+    private String metadataMethod(ClassInfo type, List<ClassInfo> rendered) {
         var members = members(type);
         var sb = new StringBuilder();
         sb.append("\n        /** What the declaration says, for the container to normalize keys with. */\n");
@@ -153,7 +178,7 @@ public final class AnnotationArtefacts {
     }
 
     /** The reader, as a static method of the type's own nested class. */
-    private static String readMethod(ClassInfo type) {
+    private String readMethod(ClassInfo type) {
         var members = members(type);
         var source = sourceName(type.name());
         var sb = new StringBuilder();
@@ -173,7 +198,7 @@ public final class AnnotationArtefacts {
         return sb.toString();
     }
 
-    private static String nonbindingSet(List<MethodInfo> members) {
+    private String nonbindingSet(List<MethodInfo> members) {
         var nonbinding = members.stream()
                 .filter(member -> member.annotations().stream().anyMatch(a -> a.name().equals(NONBINDING)))
                 .map(member -> "\"" + member.name() + "\"")
@@ -183,11 +208,11 @@ public final class AnnotationArtefacts {
 
     // ---- the literal classes ----
 
-    private static String literals(List<ClassInfo> types) {
+    private String literals(List<ClassInfo> types) {
         return types.stream().map(type -> literal(type, types)).collect(Collectors.joining());
     }
 
-    private static String literal(ClassInfo type, List<ClassInfo> rendered) {
+    private String literal(ClassInfo type, List<ClassInfo> rendered) {
         var members = members(type);
         var source = sourceName(type.name());
         var name = literalName(type.name());
@@ -242,7 +267,7 @@ public final class AnnotationArtefacts {
         return sb.toString();
     }
 
-    private static String equalsMethod(String source, List<MethodInfo> members) {
+    private String equalsMethod(String source, List<MethodInfo> members) {
         var sb = new StringBuilder();
         sb.append("\n        @Override\n        public boolean equals(Object other) {\n");
         if (members.isEmpty()) {
@@ -257,7 +282,7 @@ public final class AnnotationArtefacts {
     }
 
     /** {@code Annotation#equals}: arrays element by element, floats and doubles by their bits. */
-    private static String memberEquals(MethodInfo member) {
+    private String memberEquals(MethodInfo member) {
         var field = field(member);
         var call = "that." + member.name() + "()";
         if (isArray(member.returnType())) {
@@ -273,7 +298,7 @@ public final class AnnotationArtefacts {
         return field + ".equals(" + call + ")";
     }
 
-    private static String hashCodeMethod(List<MethodInfo> members) {
+    private String hashCodeMethod(List<MethodInfo> members) {
         var sb = new StringBuilder();
         sb.append("\n        @Override\n        public int hashCode() {\n");
         if (members.isEmpty()) {
@@ -281,13 +306,13 @@ public final class AnnotationArtefacts {
             return sb.toString();
         }
         sb.append("            return ").append(members.stream()
-                .map(AnnotationArtefacts::memberHash).collect(Collectors.joining("\n                    + ")));
+                .map(this::memberHash).collect(Collectors.joining("\n                    + ")));
         sb.append(";\n        }\n");
         return sb.toString();
     }
 
     /** {@code Annotation#hashCode}: 127 times the member's name hash, exclusive-or its value's. */
-    private static String memberHash(MethodInfo member) {
+    private String memberHash(MethodInfo member) {
         var field = field(member);
         String value;
         if (isArray(member.returnType())) {
@@ -315,7 +340,7 @@ public final class AnnotationArtefacts {
      * same in a message whether the module generated its literal or the container built the instance:
      * members sorted by name, strings quoted, a {@code Class} as {@code X.class}, an array in braces.
      */
-    private static String toStringMethod(ClassInfo type, List<MethodInfo> members) {
+    private String toStringMethod(ClassInfo type, List<MethodInfo> members) {
         var sorted = members.stream().sorted(Comparator.comparing(MethodInfo::name)).toList();
         var sb = new StringBuilder();
         sb.append("\n        @Override\n        public String toString() {\n");
@@ -334,7 +359,7 @@ public final class AnnotationArtefacts {
     }
 
     /** The member's value as it appears in {@code toString}. */
-    private static String rendered(MethodInfo member) {
+    private String rendered(MethodInfo member) {
         var field = field(member);
         if (isArray(member.returnType())) {
             return renderer(member) + "(" + field + ")";
@@ -342,7 +367,7 @@ public final class AnnotationArtefacts {
         return scalarRendering(member.returnType(), field);
     }
 
-    private static String scalarRendering(TypeInfo type, String value) {
+    private String scalarRendering(TypeInfo type, String value) {
         if (type instanceof TypeInfo.ClassType classType) {
             return switch (classType.name().value()) {
                 case "java.lang.String" -> "\"\\\"\" + " + value + " + \"\\\"\"";
@@ -358,7 +383,7 @@ public final class AnnotationArtefacts {
     }
 
     /** One renderer per array member: a plain loop, so nothing here reads a value reflectively. */
-    private static String arrayRenderer(MethodInfo member) {
+    private String arrayRenderer(MethodInfo member) {
         var component = member.returnType() instanceof TypeInfo.ArrayType array
                 ? array.componentType() : member.returnType();
         return "\n        private static String " + renderer(member) + "("
@@ -369,12 +394,12 @@ public final class AnnotationArtefacts {
                 + "        }\n";
     }
 
-    private static String renderer(MethodInfo member) {
+    private String renderer(MethodInfo member) {
         return "render$" + member.name();
     }
 
     /** Whether the declaration keeps the type at runtime — the only ones the container ever sees. */
-    private static boolean keptAtRuntime(ClassInfo type) {
+    private boolean keptAtRuntime(ClassInfo type) {
         return type.annotation(RETENTION)
                 .map(retention -> retention.members().get("value"))
                 .filter(value -> value instanceof AnnotationValue.EnumVal enumValue
@@ -386,13 +411,13 @@ public final class AnnotationArtefacts {
     // ---- values as Java expressions ----
 
     /** Whether every default of {@code type} can be written as a Java expression. */
-    private static boolean canRender(ClassInfo type, List<ClassInfo> rendered) {
+    private boolean canRender(ClassInfo type, List<ClassInfo> rendered) {
         return members(type).stream()
                 .allMatch(member -> member.defaultValue() == null
                         || renderable(member.defaultValue(), rendered));
     }
 
-    private static boolean renderable(AnnotationValue value, List<ClassInfo> rendered) {
+    private boolean renderable(AnnotationValue value, List<ClassInfo> rendered) {
         return switch (value) {
             // A nested annotation needs a literal class, so its type has to be rendered here too.
             case AnnotationValue.AnnotationVal nested -> rendered.stream()
@@ -402,7 +427,7 @@ public final class AnnotationArtefacts {
         };
     }
 
-    private static String expression(AnnotationValue value, TypeInfo type, List<ClassInfo> rendered) {
+    private String expression(AnnotationValue value, TypeInfo type, List<ClassInfo> rendered) {
         return switch (value) {
             case AnnotationValue.StringVal v -> quote(v.value());
             case AnnotationValue.BooleanVal v -> String.valueOf(v.value());
@@ -420,9 +445,9 @@ public final class AnnotationArtefacts {
         };
     }
 
-    private static String nestedLiteral(AnnotationInfo annotation, List<ClassInfo> rendered) {
+    private String nestedLiteral(AnnotationInfo annotation, List<ClassInfo> rendered) {
         var type = rendered.stream().filter(candidate -> candidate.name().equals(annotation.name())).findFirst();
-        var members = type.map(AnnotationArtefacts::members).orElse(List.of());
+        var members = type.map(this::members).orElse(List.of());
         var written = annotation.members().entrySet().stream()
                 .map(entry -> {
                     var member = members.stream().filter(m -> m.name().equals(entry.getKey())).findFirst();
@@ -435,7 +460,7 @@ public final class AnnotationArtefacts {
         return "new " + literalName(annotation.name()) + "(java.util.Map.of(" + written + "))";
     }
 
-    private static String arrayExpression(AnnotationValue.ArrayVal array, TypeInfo type, List<ClassInfo> rendered) {
+    private String arrayExpression(AnnotationValue.ArrayVal array, TypeInfo type, List<ClassInfo> rendered) {
         var component = type instanceof TypeInfo.ArrayType arrayType ? arrayType.componentType() : type;
         var items = array.values().stream()
                 .map(item -> expression(item, component, rendered))
@@ -445,16 +470,25 @@ public final class AnnotationArtefacts {
 
     // ---- names and literals ----
 
-    /** {@code app.Holder$Inner} is written {@code app.Holder.Inner} in source. */
-    static String sourceName(DotName name) {
+    /**
+     * The name source writes for {@code name}: its canonical name, so {@code app.Holder$Inner} is
+     * written {@code app.Holder.Inner} and a top-level {@code app.A$B} keeps its {@code $}.
+     */
+    String sourceName(DotName name) {
         var value = name.value();
         if (value.startsWith("[")) {
             return sourceNameOfDescriptor(value);
         }
-        return value.replace('$', '.');
+        return canonicalName(value);
     }
 
-    private static String sourceNameOfDescriptor(String descriptor) {
+    /** The canonical name of the type whose binary name is {@code binaryName}. */
+    private String canonicalName(String binaryName) {
+        var canonical = canonicalNames.apply(binaryName);
+        return canonical != null ? canonical : binaryName.replace('$', '.');
+    }
+
+    private String sourceNameOfDescriptor(String descriptor) {
         int dimensions = 0;
         while (dimensions < descriptor.length() && descriptor.charAt(dimensions) == '[') {
             dimensions++;
@@ -469,18 +503,18 @@ public final class AnnotationArtefacts {
             case 'J' -> "long";
             case 'F' -> "float";
             case 'D' -> "double";
-            case 'L' -> element.substring(1, element.length() - 1).replace('$', '.');
+            case 'L' -> canonicalName(element.substring(1, element.length() - 1));
             default -> "java.lang.Object";
         };
         return name + "[]".repeat(dimensions);
     }
 
     /** The type as the declaration writes it — what a field, a parameter or an override must say. */
-    static String sourceName(TypeInfo type) {
+    String sourceName(TypeInfo type) {
         return switch (type) {
             case TypeInfo.ClassType classType -> sourceName(classType.name());
             case TypeInfo.ParameterizedType parameterized -> sourceName(parameterized.rawType())
-                    + parameterized.typeArguments().stream().map(AnnotationArtefacts::sourceName)
+                    + parameterized.typeArguments().stream().map(this::sourceName)
                             .collect(Collectors.joining(", ", "<", ">"));
             case TypeInfo.ArrayType array -> sourceName(array.componentType()) + "[]".repeat(array.dimensions());
             case TypeInfo.PrimitiveType primitive -> primitive.kind().name().toLowerCase(java.util.Locale.ROOT);
@@ -495,7 +529,7 @@ public final class AnnotationArtefacts {
     }
 
     /** The type without its arguments — what a {@code .class} literal and an array creation need. */
-    private static String erasure(TypeInfo type) {
+    private String erasure(TypeInfo type) {
         return switch (type) {
             case TypeInfo.ParameterizedType parameterized -> sourceName(parameterized.rawType());
             case TypeInfo.ArrayType array -> erasure(array.componentType()) + "[]".repeat(array.dimensions());
@@ -504,7 +538,7 @@ public final class AnnotationArtefacts {
     }
 
     /** The boxed form, for the cast of a value taken out of a {@code Map<String, Object>}. */
-    private static String boxed(TypeInfo type) {
+    private String boxed(TypeInfo type) {
         if (type instanceof TypeInfo.PrimitiveType primitive) {
             return switch (primitive.kind()) {
                 case BOOLEAN -> "Boolean";
@@ -520,29 +554,29 @@ public final class AnnotationArtefacts {
         return sourceName(type);
     }
 
-    private static String classLiteral(TypeInfo type) {
+    private String classLiteral(TypeInfo type) {
         return erasure(type) + ".class";
     }
 
-    private static boolean isArray(TypeInfo type) {
+    private boolean isArray(TypeInfo type) {
         return type instanceof TypeInfo.ArrayType;
     }
 
-    private static boolean isParameterized(TypeInfo type) {
+    private boolean isParameterized(TypeInfo type) {
         return type instanceof TypeInfo.ParameterizedType
                 || (type instanceof TypeInfo.ArrayType array && isParameterized(array.componentType()));
     }
 
-    private static String field(MethodInfo member) {
+    private String field(MethodInfo member) {
         // A member named `other`, `that` or `members` would shadow a local of the methods below.
         return member.name() + "$";
     }
 
-    private static String literalName(DotName annotationType) {
+    private String literalName(DotName annotationType) {
         return annotationType.simpleName().replace('$', '_') + "_Literal";
     }
 
-    private static String quote(String value) {
+    private String quote(String value) {
         var escaped = new StringBuilder("\"");
         for (var c : value.toCharArray()) {
             switch (c) {
@@ -557,7 +591,7 @@ public final class AnnotationArtefacts {
         return escaped.append('"').toString();
     }
 
-    private static String charLiteral(char value) {
+    private String charLiteral(char value) {
         return switch (value) {
             case '\'' -> "'\\''";
             case '\\' -> "'\\\\'";
@@ -568,14 +602,14 @@ public final class AnnotationArtefacts {
         };
     }
 
-    private static String floatLiteral(float value) {
+    private String floatLiteral(float value) {
         if (Float.isNaN(value)) return "Float.NaN";
         if (value == Float.POSITIVE_INFINITY) return "Float.POSITIVE_INFINITY";
         if (value == Float.NEGATIVE_INFINITY) return "Float.NEGATIVE_INFINITY";
         return value + "f";
     }
 
-    private static String doubleLiteral(double value) {
+    private String doubleLiteral(double value) {
         if (Double.isNaN(value)) return "Double.NaN";
         if (value == Double.POSITIVE_INFINITY) return "Double.POSITIVE_INFINITY";
         if (value == Double.NEGATIVE_INFINITY) return "Double.NEGATIVE_INFINITY";

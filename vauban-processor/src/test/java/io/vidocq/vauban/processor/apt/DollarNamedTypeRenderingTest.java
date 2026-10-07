@@ -178,6 +178,92 @@ class DollarNamedTypeRenderingTest {
                 "the interface producer proxy is rendered as source. Generated: " + emitted(result.genDir()));
     }
 
+    private static final String GRADE = """
+            package app;
+
+            public enum Dollar$Grade { LOW, HIGH }
+            """;
+
+    private static final String RANK = """
+            package app;
+
+            @jakarta.inject.Qualifier
+            @java.lang.annotation.Retention(java.lang.annotation.RetentionPolicy.RUNTIME)
+            @java.lang.annotation.Target({java.lang.annotation.ElementType.TYPE, java.lang.annotation.ElementType.FIELD,
+                    java.lang.annotation.ElementType.METHOD, java.lang.annotation.ElementType.PARAMETER})
+            public @interface Dollar$Rank {
+                Dollar$Grade grade() default Dollar$Grade.LOW;
+                Class<?> kind() default Dollar$Note.class;
+                Dollar$Grade[] grades() default {Dollar$Grade.LOW};
+                Class<?>[] kinds() default {Dollar$Note.class};
+            }
+            """;
+
+    private static final String RANKED_SERVICE = """
+            package app;
+
+            @jakarta.enterprise.context.ApplicationScoped
+            @Dollar$Rank(grade = Dollar$Grade.HIGH)
+            public class RankedService {
+                public String rank() { return "high"; }
+            }
+            """;
+
+    private static final String HOLDER = """
+            package app;
+
+            public class Holder {
+                public static class Value {
+                    public Value() {}
+                    public String value() { return "value"; }
+                }
+
+                public interface Port {
+                    String port();
+                }
+            }
+            """;
+
+    private static final String NESTED_PRODUCERS = """
+            package app;
+
+            @jakarta.enterprise.context.ApplicationScoped
+            public class NestedProducers {
+                @jakarta.enterprise.inject.Produces
+                @jakarta.enterprise.context.ApplicationScoped
+                public Holder.Value value() { return new Holder.Value(); }
+
+                @jakarta.enterprise.inject.Produces
+                @jakarta.enterprise.context.ApplicationScoped
+                public Holder.Port port() { return () -> "port"; }
+            }
+            """;
+
+    @Test
+    @DisplayName("an annotation type, a class value and an enum value whose names contain '$' are written in source")
+    void annotationArtefactsOfDollarTypes() throws Exception {
+        var result = compile(Map.of("Dollar$Note", NOTE, "Dollar$Grade", GRADE, "Dollar$Rank", RANK,
+                "RankedService", RANKED_SERVICE));
+        assertTrue(result.success(), "compilation should succeed. Messages: " + result.messages());
+        var provider = Files.readString(result.genDir().resolve("app/_VaubanComponents.java"));
+        assertTrue(provider.contains("implements app.Dollar$Rank"),
+                "the annotation literal implements the annotation type by its canonical name:\n" + provider);
+    }
+
+    @Test
+    @DisplayName("a producer of a nested class or interface gets a proxy rendered at build time")
+    void producerOfNestedTypes() throws Exception {
+        var result = compile(Map.of("Holder", HOLDER, "NestedProducers", NESTED_PRODUCERS));
+        assertTrue(result.success(), "compilation should succeed. Messages: " + result.messages());
+        assertTrue(emitted(result.genDir()).stream()
+                        .anyMatch(f -> f.startsWith("app/Holder_Value$$") && f.endsWith("_ClientProxy.java")),
+                "the producer proxy of the nested class is rendered as source. Generated: " + emitted(result.genDir()));
+        assertTrue(emitted(result.genDir()).stream()
+                        .anyMatch(f -> f.startsWith("app/Holder_Port$$") && f.endsWith("_ClientProxy.java")),
+                "the producer proxy of the nested interface is rendered as source. Generated: "
+                        + emitted(result.genDir()));
+    }
+
     // ---- minimal in-process compilation harness (with -s for generated sources) ----
 
     private CompilationResult compile(Map<String, String> sourcesBySimpleName) throws IOException {
