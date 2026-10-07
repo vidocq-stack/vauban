@@ -210,10 +210,7 @@ public final class VaubanGenerator {
                                             java.util.Map.of()));
                                 }
                             }
-                            enrichedBuilder.add(new io.vidocq.vauban.indexer.model.ClassInfo(
-                                    classInfo.name(), classInfo.superName(), classInfo.interfaces(),
-                                    classInfo.accessFlags(), classInfo.fields(), classInfo.methods(),
-                                    newAnnotations, classInfo.kind()));
+                            enrichedBuilder.add(classInfo.withAnnotations(newAnnotations));
                         } else {
                             enrichedBuilder.add(classInfo);
                         }

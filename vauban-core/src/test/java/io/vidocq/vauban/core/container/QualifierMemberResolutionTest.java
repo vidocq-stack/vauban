@@ -32,7 +32,6 @@ import jakarta.enterprise.util.Nonbinding;
 import jakarta.inject.Inject;
 import jakarta.inject.Named;
 import jakarta.inject.Qualifier;
-import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
@@ -964,7 +963,6 @@ class QualifierMemberResolutionTest {
     @DisplayName("@Named with the default bean name")
     class NamedQualifier {
         @Test @DisplayName("field injection")
-        @Disabled("BUG-20260914-11: a nested bean class's default name keeps its enclosing class")
         void field() {
             assertEquals("report", injected(NamedField.class, ReportService.class, AuditService.class));
         }
@@ -975,7 +973,6 @@ class QualifierMemberResolutionTest {
         }
 
         @Test @DisplayName("programmatic lookup")
-        @Disabled("BUG-20260914-11: a nested bean class's default name keeps its enclosing class")
         void programmatic() {
             assertEquals("report", selected(qualifiers("named"), ReportService.class, AuditService.class));
         }

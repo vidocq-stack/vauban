@@ -167,6 +167,25 @@ class ClassFileScannerTest {
         }
 
         @Test
+        @DisplayName("extracts the simple name of a nested class, without its enclosing class")
+        void shouldExtractNestedSimpleName() throws IOException {
+            assertEquals("SimpleClass", scan(SimpleClass.class).simpleName());
+        }
+
+        @Test
+        @DisplayName("extracts the simple name of a top-level class")
+        void shouldExtractTopLevelSimpleName() throws IOException {
+            assertEquals("ClassFileScannerTest", scan(ClassFileScannerTest.class).simpleName());
+        }
+
+        @Test
+        @DisplayName("extracts the simple name of a local class, as Class#getSimpleName does")
+        void shouldExtractLocalSimpleName() throws IOException {
+            class Local {}
+            assertEquals(Local.class.getSimpleName(), scan(Local.class).simpleName());
+        }
+
+        @Test
         @DisplayName("extracts the superclass (java.lang.Object)")
         void shouldExtractSuperclass() throws IOException {
             var info = scan(SimpleClass.class);

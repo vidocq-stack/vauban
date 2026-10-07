@@ -112,7 +112,8 @@ public final class ElementScanner {
             default -> ClassKind.CLASS;
         };
 
-        return new ClassInfo(name, superName, interfaces, accessFlags, fields, methods, annotations, kind);
+        return new ClassInfo(name, superName, interfaces, accessFlags, fields, methods, annotations, kind,
+                typeElement.getSimpleName().toString());
     }
 
     private FieldInfo scanField(VariableElement field) {

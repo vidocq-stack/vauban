@@ -89,16 +89,7 @@ public final class IndexEnricher {
                 // Add the scope annotation
                 var newAnnotations = new ArrayList<>(classInfo.annotations());
                 newAnnotations.add(new AnnotationInfo(rule.targetScope().annotationName(), Map.of()));
-                return new ClassInfo(
-                        classInfo.name(),
-                        classInfo.superName(),
-                        classInfo.interfaces(),
-                        classInfo.accessFlags(),
-                        classInfo.fields(),
-                        classInfo.methods(),
-                        newAnnotations,
-                        classInfo.kind()
-                );
+                return classInfo.withAnnotations(newAnnotations);
             }
         }
 

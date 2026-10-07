@@ -58,6 +58,7 @@ public final class ClassFileScanner {
         var fields = new ArrayList<FieldInfo>();
         var methods = new ArrayList<MethodInfo>();
         var annotations = new ArrayList<AnnotationInfo>();
+        String simpleName = null;
 
         for (var element : cm) {
             switch (element) {
@@ -65,12 +66,28 @@ public final class ClassFileScanner {
                 case MethodModel mm -> methods.add(buildMethodInfo(mm));
                 case RuntimeVisibleAnnotationsAttribute rvaa ->
                         rvaa.annotations().forEach(a -> annotations.add(buildAnnotationInfo(a)));
+                case InnerClassesAttribute ica -> simpleName = innerSimpleName(cm, ica);
                 default -> {}
             }
         }
 
         var kind = determineKind(cm, superName);
-        return new ClassInfo(name, superName, interfaces, accessFlags, fields, methods, annotations, kind);
+        return new ClassInfo(name, superName, interfaces, accessFlags, fields, methods, annotations, kind, simpleName);
+    }
+
+    /**
+     * The simple name a nested or local class has in source, from its own entry of the {@code InnerClasses}
+     * attribute: {@code ReportService} for {@code Outer$ReportService}, {@code ""} for an anonymous class, as
+     * {@link Class#getSimpleName()} gives it. {@code null} for a top-level class, which has no such entry.
+     */
+    private static String innerSimpleName(ClassModel cm, InnerClassesAttribute attribute) {
+        var self = cm.thisClass().asInternalName();
+        for (var inner : attribute.classes()) {
+            if (inner.innerClass().asInternalName().equals(self)) {
+                return inner.innerName().map(Utf8Entry::stringValue).orElse("");
+            }
+        }
+        return null;
     }
 
     private static ClassKind determineKind(ClassModel cm, DotName superName) {

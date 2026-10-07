@@ -242,4 +242,11 @@ class ElementScannerMemberValueTest {
         assertEquals(bytecodeTarget.superName(), processorTarget.superName());
         assertEquals(bytecodeTarget.interfaces(), processorTarget.interfaces());
     }
+
+    @Test
+    @DisplayName("simple name of a nested class, without its enclosing class (BUG-20260914-11)")
+    void nestedSimpleName() {
+        assertEquals("Target", bytecodeTarget.simpleName());
+        assertEquals("Target", processorTarget.simpleName());
+    }
 }

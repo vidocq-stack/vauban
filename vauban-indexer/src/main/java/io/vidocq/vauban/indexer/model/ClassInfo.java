@@ -30,18 +30,41 @@ public record ClassInfo(
         List<FieldInfo> fields,
         List<MethodInfo> methods,
         List<AnnotationInfo> annotations,
-        ClassKind kind
+        ClassKind kind,
+        String simpleName
 ) {
 
     public enum ClassKind {
         CLASS, INTERFACE, ENUM, RECORD, ANNOTATION
     }
 
+    /**
+     * @param simpleName the unqualified class name as {@link Class#getSimpleName()} gives it: {@code ReportService}
+     *                   for the nested class {@code Outer$ReportService}, where {@link DotName#simpleName()} keeps
+     *                   {@code Outer$ReportService}. {@code null} falls back to {@link DotName#simpleName()}, which
+     *                   is right for a top-level class only.
+     */
     public ClassInfo {
         interfaces = List.copyOf(interfaces);
         fields = List.copyOf(fields);
         methods = List.copyOf(methods);
         annotations = List.copyOf(annotations);
+        if (simpleName == null) {
+            simpleName = name.simpleName();
+        }
+    }
+
+    /** A class info whose simple name is derived from its binary name: right for a top-level class only. */
+    public ClassInfo(DotName name, DotName superName, List<DotName> interfaces, int accessFlags,
+                     List<FieldInfo> fields, List<MethodInfo> methods, List<AnnotationInfo> annotations,
+                     ClassKind kind) {
+        this(name, superName, interfaces, accessFlags, fields, methods, annotations, kind, null);
+    }
+
+    /** The same class with other annotations, as an enrichment step adds them. */
+    public ClassInfo withAnnotations(List<AnnotationInfo> newAnnotations) {
+        return new ClassInfo(name, superName, interfaces, accessFlags, fields, methods, newAnnotations, kind,
+                simpleName);
     }
 
     public boolean isPublic() {

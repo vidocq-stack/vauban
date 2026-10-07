@@ -173,13 +173,13 @@ final class StereotypeResolver {
 
     String extractNameWithStereotypes(ClassInfo classInfo) {
         // Check bean itself first (direct + inherited annotations)
-        var name = host.extractName(classInfo.annotations(), BeanDiscovery.decapitalize(classInfo.name().simpleName()));
+        var name = host.extractName(classInfo.annotations(), BeanDiscovery.decapitalize(classInfo.simpleName()));
         if (name != null) return name;
         // Check inherited @Named
         for (var ann : host.getInheritedAnnotations(classInfo)) {
             if (ann.annotationType() == jakarta.inject.Named.class) {
                 var named = (jakarta.inject.Named) ann;
-                return named.value().isEmpty() ? BeanDiscovery.decapitalize(classInfo.name().simpleName()) : named.value();
+                return named.value().isEmpty() ? BeanDiscovery.decapitalize(classInfo.simpleName()) : named.value();
             }
         }
 
@@ -188,7 +188,7 @@ final class StereotypeResolver {
         for (var annName : allAnnotationNames) {
             if (isStereotype(annName)
                     && hasNamedInStereotypeRecursive(annName, new java.util.HashSet<>())) {
-                return BeanDiscovery.decapitalize(classInfo.name().simpleName());
+                return BeanDiscovery.decapitalize(classInfo.simpleName());
             }
         }
 

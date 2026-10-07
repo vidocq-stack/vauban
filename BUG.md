@@ -1308,7 +1308,7 @@ and a proposed upstream assertion: `CDI_TCK_PROPOSALS.md` → `TCK-GAP-001`.
 ## BUG-20260914-11 — The default name of a nested bean class keeps its enclosing class
 
 - **Date**: 2026-09-14
-- **Status**: OPEN
+- **Status**: FIXED (vauban#116, branch `pr/ybl/nested-bean-default-name`)
 - **Module**: `vauban-core` (`StereotypeResolver` and `BeanDiscovery#decapitalize`), through `DotName#simpleName`
 - **Symptom**: `@Named` on the static nested class `Outer.ReportService` names the bean `outer$ReportService` instead of `reportService`, so `@Named("reportService")` is unsatisfied at boot validation and on lookup.
 - **Minimal reproduction** (`QualifierMemberResolutionTest$NamedQualifier#field`, `#programmatic`):
@@ -1319,6 +1319,14 @@ and a proposed upstream assertion: `CDI_TCK_PROPOSALS.md` → `TCK-GAP-001`.
 - **Suspected cause**: `DotName#simpleName` cuts the binary name at its last `.`, which leaves `Outer$ReportService` for a nested class; CDI 4.1 §3.1.5 takes the unqualified class name, `ReportService`.
 - **Investigations**:
   - 2026-09-14: found by the vauban#70 safety net, whose fixtures are nested classes; the tests are disabled with this id. Top-level classes are not affected. Not part of the vauban#70 rework.
+- **Fix**: `ClassInfo` gains a `simpleName` component, the unqualified name as `Class#getSimpleName()` gives it. The
+  bytecode scan reads it from the class's own entry of the `InnerClasses` attribute (`""` for an anonymous class,
+  the binary simple name for a top-level class, which has no entry); the processor's `ElementScanner` takes
+  `TypeElement#getSimpleName()`. `StereotypeResolver` builds the default name from it, and the two enrichment
+  copies (`IndexEnricher`, `VaubanGenerator`) keep it through `ClassInfo#withAnnotations`. The eight-argument
+  constructor stays and derives the name from the binary name, as before. Covered by the two re-enabled
+  `QualifierMemberResolutionTest$NamedQualifier` tests, `ClassFileScannerTest` (nested, top-level and local
+  classes) and `ElementScannerMemberValueTest#nestedSimpleName` (both scanners agree).
 
 ## BUG-20260914-12 — The processor names nested types canonically in member values, and loses primitive and array class literals
 
