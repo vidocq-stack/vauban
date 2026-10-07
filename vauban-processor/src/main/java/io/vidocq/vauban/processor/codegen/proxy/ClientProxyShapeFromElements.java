@@ -88,13 +88,16 @@ public final class ClientProxyShapeFromElements {
     }
 
     /**
-     * The class methods {@link #from} forwards whose override Java source in {@code proxyPackage}
+     * The methods a proxy of {@code bean} forwards whose override Java source in {@code proxyPackage}
      * cannot declare, as {@code name(member parameter types)}: their signature as a member of
      * {@code bean} names a type that package cannot name — a package-private type of another
-     * package, a private nested type of its own (BUG-20261004-09). Empty when the proxy can be
-     * rendered as source; otherwise the processor emits {@link #fromErased} as bytecode, which
-     * carries those types in method descriptors only. An inherited default with such a member is
-     * not counted: the source shape leaves it out, with a warning, and stays renderable.
+     * package, a private nested type of its own (BUG-20261004-09). The class methods {@link #from}
+     * forwards, and the non-shadowed defaults, which {@link #from} would leave out (n3c, n11a).
+     * Empty when the proxy can be rendered as source; otherwise the processor emits {@link
+     * #fromErased} as bytecode, which carries those types in method descriptors only and forwards
+     * those defaults as the bytecode generators do. A shadowed default is not counted: it is
+     * forwarded through an interface the source must name, and keeps the rules of
+     * BUG-20261004-08.
      */
     public static List<String> unnameableForwards(TypeElement bean,
             javax.lang.model.element.PackageElement proxyPackage, Elements elements, Types types) {
@@ -110,6 +113,17 @@ public final class ClientProxyShapeFromElements {
                         false)) {
                     unnameable.add(InterceptedShapeFromElements.memberSignature(bean, m, types));
                 }
+            }
+        }
+        // The defaults addDefaultMethods would forward through the bean class: not shadowed, and no
+        // class method with the same member signature.
+        for (ExecutableElement m : ElementFilter.methodsIn(elements.getAllMembers(bean))) {
+            if (!m.getModifiers().contains(Modifier.DEFAULT) || !shouldProxy(m)) continue;
+            if (InterceptedShapeFromElements.isShadowedDefault(bean, m, types)) continue;
+            if (!seen.add(memberKey(bean, m, types))) continue;
+            if (!InterceptedShapeFromElements.memberSignatureNameableFrom(bean, m, proxyPackage, elements, types,
+                    false)) {
+                unnameable.add(InterceptedShapeFromElements.memberSignature(bean, m, types));
             }
         }
         return unnameable;

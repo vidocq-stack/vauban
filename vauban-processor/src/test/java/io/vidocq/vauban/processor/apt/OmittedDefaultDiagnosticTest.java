@@ -45,7 +45,10 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * Where the processor reports an inherited default method a rendered client proxy leaves out
  * (BUG-20261004-02): the default {@code label(T)} of {@code lib.Labeled}, bound by
  * {@code lib.HiddenBase} to the package-private {@code lib.Hidden}, has the member signature
- * {@code label(lib.Hidden)}, which no other package can write. A bean's proxy is rendered in the
+ * {@code label(lib.Hidden)}, which no other package can write, and {@code lib.PrivateLabel}'s private
+ * {@code label(Object)} shadows it, so a proxy may only forward it through {@code Labeled}, as
+ * source (BUG-20261004-08). Without the shadow the processor would emit the proxy as bytecode,
+ * which forwards it (BUG-20261004-09). A bean's proxy is rendered in the
  * bean's package and the warning sits on the bean; a producer's proxy is rendered in the
  * producer's package (#42), so the warning sits on the producer method, and names the produced
  * type as such — the produced type is usually a class of a dependency, with no source to point at.
@@ -69,9 +72,16 @@ class OmittedDefaultDiagnosticTest {
             }
             """;
 
+    private static final String LIB_PRIVATE_LABEL = """
+            package lib;
+            public class PrivateLabel {
+                private String label(Object value) { return "private " + value; }
+            }
+            """;
+
     private static final String LIB_HIDDEN_BASE = """
             package lib;
-            public class HiddenBase implements Labeled<Hidden> {
+            public class HiddenBase extends PrivateLabel implements Labeled<Hidden> {
             }
             """;
 
@@ -106,7 +116,7 @@ class OmittedDefaultDiagnosticTest {
     @Test
     @DisplayName("on the bean for a bean's proxy, on the producer method for a producer's proxy")
     void warningsPointAtTheBeanAndTheProducerMethod() throws Exception {
-        var lib = compileDependency(LIB_LABELED, LIB_HIDDEN, LIB_HIDDEN_BASE, LIB_PRODUCED);
+        var lib = compileDependency(LIB_LABELED, LIB_HIDDEN, LIB_PRIVATE_LABEL, LIB_HIDDEN_BASE, LIB_PRODUCED);
         var warnings = compileAppWarnings(lib, APP_PRODUCER, APP_SCOPED_BEAN);
 
         var bean = only(warnings, "app.ScopedBean:");

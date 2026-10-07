@@ -591,7 +591,7 @@ class ClientProxyInheritanceCrossCheckTest {
     }
 
     @Test
-    @DisplayName("class methods whose signature the proxy's package cannot write: forwarded by an erased bytecode shape")
+    @DisplayName("members whose signature the proxy's package cannot write: forwarded by an erased bytecode shape")
     void unnameableClassMethods() throws Exception {
         // The source proxy would declare take(HiddenArgument) and give() — "HiddenArgument is not
         // public": the processor learns it beforehand and emits the erased shape as bytecode,
@@ -610,9 +610,17 @@ class ClientProxyInheritanceCrossCheckTest {
         Set<String> secretShape = Set.of("take(" + PrivateNestedOuter.class.getName() + "$Secret)");
         assertEquals(secretShape, runtimeShape(SecretTakerChild.class), "run-time shape");
         assertEquals(secretShape, erasedShapeFromElements(SecretTakerChild.class, false), "erased shape");
-        // A default whose member names such a type is no class method: left to the source proxy,
-        // which leaves it out (n3c, n11a). Every other bean renders as source, as before.
-        for (var fixture : List.of(NonShadowHiddenChild.class, PrivateNestedChild.class, HiddenChild.class,
+        // A non-shadowed default whose member names such a type takes the same path (n3c, n11a): the
+        // erased shape forwards it, as the run-time and co-located shapes do, instead of the source
+        // shape leaving it out.
+        assertEquals(List.of("label(" + hidden + ")"), unnameableForwards(NonShadowHiddenChild.class, false));
+        assertEquals(Set.of("own()", "label(java.lang.Object)"),
+                erasedShapeFromElements(NonShadowHiddenChild.class, false), "erased shape");
+        assertEquals(List.of("label(" + secret + ")"), unnameableForwards(PrivateNestedChild.class, false));
+        assertEquals(Set.of("own()", "label(java.lang.Object)"),
+                erasedShapeFromElements(PrivateNestedChild.class, false), "erased shape");
+        // Every other bean renders as source, as before.
+        for (var fixture : List.of(HiddenChild.class,
                 ForeignChild.class, CleanChild.class, DefaultChild.class, ShadowedTagChild.class)) {
             assertEquals(List.of(), unnameableForwards(fixture, false), fixture.getSimpleName());
         }
