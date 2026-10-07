@@ -1646,7 +1646,7 @@ and a proposed upstream assertion: `CDI_TCK_PROPOSALS.md` → `TCK-GAP-001`.
 ## BUG-20261004-10 — The Maven plugin pre-generates the intercepted subclass only for a bean with a class-level binding
 
 - **Date**: 2026-10-04
-- **Status**: FIXED 2026-10-07 (vauban#121, `28be2225`, branch `pr/ybl/plugin-pregenerates-every-intercepted-bean`). Was pre-existing on `main` 7384ac1, noted in the FV2 report and the final review of `pr/ybl/inherited-interceptor-method`.
+- **Status**: FIXED 2026-10-07 (vauban#121, `82670c48`, branch `pr/ybl/plugin-pregenerates-every-intercepted-bean`). Was pre-existing on `main` 7384ac1, noted in the FV2 report and the final review of `pr/ybl/inherited-interceptor-method`.
 - **Module**: `vauban-maven-plugin` (`VaubanGenerator#generate`, the `vauban:generate` goal)
 - **Symptom**: `vauban:generate` writes `<Bean>$$Intercepted` only for a managed, non-final bean whose class-level interceptor bindings are not empty (`VaubanGenerator.java:298-301`: `bean.kind() == BeanKind.MANAGED && !bean.interceptorBindings().isEmpty() && !isFinal`). `BeanDescriptor#interceptorBindings` holds the bindings on the bean class, plus the `@Inherited` ones of its superclasses (`BeanDiscovery#extractInterceptorBindings`). A bean intercepted any other way gets no pre-generated subclass from the plugin: through a method-level binding it declares or inherits, from a superclass or on an interface default method; through a constructor binding; or through an `@AroundInvoke` method of its own. The container then defines the subclass at run time. On the class path that works. On the strict module path it needs the bean's package opened to `io.vidocq.vauban.core`, and fails otherwise with `DeploymentException: Could not define interceptor subclass`, the mechanism of BUG-20261004-05.
 - **Scope**: an archive the annotation processor compiled is not affected: `VaubanProcessor#isInterceptedTarget` counts the method-level bindings of every member since BUG-20261004-05, and the plugin skips a subclass that is already on disk.
@@ -1681,7 +1681,7 @@ The same goes for a normal-scoped producer of such a class (`Dollar_Produced$$�
 ## BUG-20261007-02 — The bytes of a run-time-generated subclass depend on what the JVM loaded before
 
 - **Date**: 2026-10-07
-- **Status**: FIXED 2026-10-07 (`b701c528`, branch `pr/ybl/plugin-pregenerates-every-intercepted-bean`)
+- **Status**: FIXED 2026-10-07 (`0393dd78`, branch `pr/ybl/plugin-pregenerates-every-intercepted-bean`)
 - **Module**: `vauban-core` (`InterceptorSubclassGenerator#fromClass`, `RuntimeClientProxyGenerator`), reached at build time through `vauban:generate`
 - **Surfaced by**: the generated-bytes comparison of BUG-20261004-10.
 - **Symptom**: `vauban:generate` run twice over the same input can write a `<Bean>$$Intercepted` whose methods come in another order. Over the interceptor packages of the CDI TCK 4.1.0 jar, `contract/invocationContext/SimpleBean$$Intercepted` lists `testGetTimer` before `testGetMethod` when that package is generated with the 73 others, and the reverse when it is generated alone, on `main` as well. Same members, same size: the class works either way, but the build is not reproducible.
@@ -1694,7 +1694,7 @@ The same goes for a normal-scoped producer of such a class (`Dollar_Produced$$�
 ## BUG-20261007-04 — The entry order of a generated `_VaubanComponents` changes from one build to the next
 
 - **Date**: 2026-10-07
-- **Status**: FIXED 2026-10-08 (`9d06d8c6`, branch `pr/ybl/plugin-pregenerates-every-intercepted-bean`)
+- **Status**: FIXED 2026-10-08 (`fdf6ded1`, branch `pr/ybl/plugin-pregenerates-every-intercepted-bean`)
 - **Module**: `vauban-indexer` (`ComponentCollector#collect`), its callers `VaubanProcessor` and `VaubanGenerator` (vauban-maven-plugin)
 - **Surfaced by**: BUG-20261007-02 (the generated-bytes comparison).
 - **Symptom**: the processor and `vauban:generate` can write a different `_VaubanComponents` for the same input: the same entries, in another order. Two plugin runs, in two JVMs, over the same fixture directory wrote the components of `ClassBound`, `MethodBound`, `InheritedBound`, … in two different orders.
@@ -1706,7 +1706,7 @@ The same goes for a normal-scoped producer of such a class (`Dollar_Produced$$�
 ## BUG-20261007-05 — The plugin's `_VaubanComponents` does not list the `$$Intercepted` subclasses it pre-generates
 
 - **Date**: 2026-10-07
-- **Status**: FIXED 2026-10-08 (`ce66da15`, branch `pr/ybl/plugin-pregenerates-every-intercepted-bean`)
+- **Status**: FIXED 2026-10-08 (`6945745f`, branch `pr/ybl/plugin-pregenerates-every-intercepted-bean`)
 - **Module**: `vauban-maven-plugin` (`VaubanGenerator#generateComponentProvider`, `#generateDependencyProviders`)
 - **Surfaced by**: BUG-20261004-10.
 - **Symptom**: the plugin builds every `ProvidedClass` with `intercepted = false`, so `ComponentCollector` never adds a `<Bean>$$Intercepted` component to the provider, although the plugin wrote that subclass next to it. The processor sets the flag for each subclass it renders.
