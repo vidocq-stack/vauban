@@ -102,7 +102,7 @@ public final class RuntimeClientProxyGenerator {
         var methods = new ArrayList<ProxyMethodShape>();
         var current = beanClass;
         while (current != null) {
-            for (var method : current.getDeclaredMethods()) {
+            for (var method : BeanMembers.inStableOrder(current.getDeclaredMethods())) {
                 var key = method.getName() + java.util.Arrays.toString(method.getParameterTypes());
                 if (!proxiedSeen.add(key) || !shouldProxy(method)) continue;
                 // A package-private method of a superclass in another runtime package is not a
@@ -123,7 +123,7 @@ public final class RuntimeClientProxyGenerator {
         // The interface default methods no class above overrides: left out, a call on the proxy
         // would run the default body on the proxy itself, bypassing the contextual instance and its
         // interceptors (BUG-20261004-02). getMethods() lists the most specific default of each.
-        for (var method : beanClass.getMethods()) {
+        for (var method : BeanMembers.inStableOrder(beanClass.getMethods())) {
             if (!method.isDefault() || !shouldProxy(method)) continue;
             var key = method.getName() + java.util.Arrays.toString(method.getParameterTypes());
             TypeRef interfaceOwner = null;

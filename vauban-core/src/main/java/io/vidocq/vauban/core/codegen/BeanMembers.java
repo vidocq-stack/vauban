@@ -22,6 +22,8 @@ package io.vidocq.vauban.core.codegen;
 import java.lang.annotation.Annotation;
 import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
+import java.util.Arrays;
+import java.util.Comparator;
 import java.util.Set;
 
 /**
@@ -90,5 +92,30 @@ public final class BeanMembers {
             }
         }
         return true;
+    }
+
+    /**
+     * The order the generators list reflected methods in: by name, then parameter types, then return
+     * type, then declaring class. {@link Class#getDeclaredMethods} and {@link Class#getMethods} leave
+     * their order unspecified, and HotSpot's follows the memory order of the methods' name symbols,
+     * which depends on the classes the JVM loaded before: a generated class built in that order would
+     * differ from one build to the next (BUG-20261007-02).
+     */
+    public static final Comparator<Method> STABLE_ORDER = Comparator.comparing(Method::getName)
+            .thenComparing(m -> descriptorOf(m.getParameterTypes()))
+            .thenComparing(m -> m.getReturnType().descriptorString())
+            .thenComparing(m -> m.getDeclaringClass().getName());
+
+    /** A copy of {@code methods} in {@link #STABLE_ORDER}. */
+    public static Method[] inStableOrder(Method[] methods) {
+        var sorted = methods.clone();
+        Arrays.sort(sorted, STABLE_ORDER);
+        return sorted;
+    }
+
+    private static String descriptorOf(Class<?>[] types) {
+        var descriptor = new StringBuilder();
+        for (var type : types) descriptor.append(type.descriptorString());
+        return descriptor.toString();
     }
 }

@@ -19,6 +19,7 @@
  */
 package io.vidocq.vauban.core.interceptor;
 
+import io.vidocq.vauban.core.codegen.BeanMembers;
 import io.vidocq.vauban.core.codegen.ShadowedDefaults;
 
 import java.lang.reflect.Method;
@@ -61,8 +62,11 @@ public final class InterceptorSubclassGenerator {
     /**
      * Build an {@link InterceptedShape} from a runtime {@link Class}.
      *
-     * <p>Iteration order is IDENTICAL to the original pre-refactor code, the inherited non-public
-     * methods added last so the shape of a bean that has none is unchanged:
+     * <p>Iteration order is that of the original pre-refactor code, the inherited non-public
+     * methods added last so the shape of a bean that has none is unchanged. Within each group the
+     * methods come in {@link BeanMembers#STABLE_ORDER} rather than in reflection order, which is
+     * unspecified and depends on the classes the JVM loaded before (BUG-20261007-02). Constructors
+     * stay in reflection order: they all share one name, so the symbol order cannot move them:
      * <ol>
      *   <li>Constructors via {@link Class#getDeclaredConstructors()}, skipping private ones.</li>
      *   <li>Declared methods via {@link Class#getDeclaredMethods()} filtered by
@@ -95,14 +99,14 @@ public final class InterceptorSubclassGenerator {
         var methods = new ArrayList<MethodShape>();
         var seen = new LinkedHashSet<String>();
 
-        for (var method : beanClass.getDeclaredMethods()) {
+        for (var method : BeanMembers.inStableOrder(beanClass.getDeclaredMethods())) {
             if (shouldIntercept(method)) {
                 methods.add(methodShapeOf(method));
                 seen.add(method.getName() + Arrays.toString(method.getParameterTypes()));
             }
         }
         // Also intercept inherited public methods (from superclasses)
-        for (var method : beanClass.getMethods()) {
+        for (var method : BeanMembers.inStableOrder(beanClass.getMethods())) {
             if (method.getDeclaringClass() == beanClass) continue; // already handled
             if (method.getDeclaringClass() == Object.class) continue;
             var key = method.getName() + Arrays.toString(method.getParameterTypes());
@@ -141,7 +145,7 @@ public final class InterceptorSubclassGenerator {
         var declared = new java.util.HashSet<String>();
         for (Class<?> c = beanClass; c != null && c != Object.class; c = c.getSuperclass()) {
             var declaredHere = new ArrayList<String>();
-            for (var method : c.getDeclaredMethods()) {
+            for (var method : BeanMembers.inStableOrder(c.getDeclaredMethods())) {
                 var key = method.getName() + Arrays.toString(method.getParameterTypes());
                 declaredHere.add(key);
                 if (c == beanClass || declared.contains(key) || seen.contains(key)) continue;
