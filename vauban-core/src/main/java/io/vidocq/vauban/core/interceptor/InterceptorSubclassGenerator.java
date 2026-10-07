@@ -101,7 +101,8 @@ public final class InterceptorSubclassGenerator {
 
         for (var method : BeanMembers.inStableOrder(beanClass.getDeclaredMethods())) {
             if (shouldIntercept(method)) {
-                methods.add(methodShapeOf(method));
+                var shape = methodShapeOf(beanClass, method);
+                if (shape != null) methods.add(shape);
                 seen.add(method.getName() + Arrays.toString(method.getParameterTypes()));
             }
         }
@@ -112,7 +113,11 @@ public final class InterceptorSubclassGenerator {
             var key = method.getName() + Arrays.toString(method.getParameterTypes());
             if (seen.contains(key)) continue; // already intercepted
             if (shouldIntercept(method)) {
-                var shape = methodShapeOf(method);
+                var shape = methodShapeOf(beanClass, method);
+                if (shape == null) {
+                    seen.add(key);
+                    continue;
+                }
                 if (ShadowedDefaults.isShadowed(beanClass, method)) {
                     // super.<name>() would resolve to the shadowing declaration: the bridge reaches
                     // the default through an interface the subclass lists (BUG-20261004-08), or,
@@ -152,7 +157,8 @@ public final class InterceptorSubclassGenerator {
                 // Public ones came from getMethods(); the rest only when the bean inherits them.
                 if (!Modifier.isPublic(method.getModifiers())
                         && BusinessMethods.isBusinessMethodOf(beanClass, method) && shouldIntercept(method)) {
-                    methods.add(methodShapeOf(method));
+                    var shape = methodShapeOf(beanClass, method);
+                    if (shape != null) methods.add(shape);
                     seen.add(key);
                 }
             }
@@ -162,13 +168,48 @@ public final class InterceptorSubclassGenerator {
 
     // ---- helpers ----
 
-    private static MethodShape methodShapeOf(Method method) {
+    /**
+     * {@code method}'s shape in the subclass of {@code beanClass}; {@code null} — not intercepted —
+     * when its return type is a class the subclass may not access: the value an interceptor chain
+     * returns is an {@code Object}, and no instruction of a class outside that class's package can
+     * type it so (the {@code checkcast} throws {@code IllegalAccessError}, and so does a method
+     * handle call whose descriptor names that class). Flagged when a parameter is such a class,
+     * which the emitter handles without resolving it (BUG-20261004-09). The processor's front-end
+     * decides alike ({@code InterceptedShapeFromElements#resolvableFrom}).
+     */
+    private static MethodShape methodShapeOf(Class<?> beanClass, Method method) {
+        if (!accessibleFrom(method.getReturnType(), beanClass)) return null;
         TypeRef returnType = TypeRef.fromClass(method.getReturnType());
         var params = new ArrayList<TypeRef>();
+        boolean inaccessible = false;
         for (Class<?> p : method.getParameterTypes()) {
             params.add(TypeRef.fromClass(p));
+            inaccessible |= !accessibleFrom(p, beanClass);
         }
-        return new MethodShape(method.getName(), returnType, params);
+        var shape = new MethodShape(method.getName(), returnType, params);
+        return inaccessible ? shape.withInaccessibleTypes() : shape;
+    }
+
+    /**
+     * Whether a class generated in {@code beanClass}'s runtime package and module may access
+     * {@code type} (JVMS 5.4.4): a primitive; a class of the same runtime package, whatever its
+     * modifiers — a private nested class is package access in its class file; else a class public
+     * in its class file — declared public, or a protected member class — in a package its module
+     * exports to the bean's module, which reads it. An array, as its element type.
+     */
+    static boolean accessibleFrom(Class<?> type, Class<?> beanClass) {
+        while (type.isArray()) type = type.getComponentType();
+        if (type.isPrimitive()) return true;
+        if (type.getClassLoader() == beanClass.getClassLoader()
+                && type.getPackageName().equals(beanClass.getPackageName())) {
+            return true;
+        }
+        int modifiers = type.getModifiers();
+        boolean classFilePublic = Modifier.isPublic(modifiers)
+                || (type.isMemberClass() && Modifier.isProtected(modifiers));
+        if (!classFilePublic) return false;
+        var from = beanClass.getModule();
+        return from.canRead(type.getModule()) && type.getModule().isExported(type.getPackageName(), from);
     }
 
     static boolean shouldIntercept(Method method) {

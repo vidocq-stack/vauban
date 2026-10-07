@@ -193,4 +193,35 @@ class ComponentProviderGeneratorTest {
         assertTrue(s.contains("new String[] {\"app.Foo#init()\"}"), s);
         assertTrue(s.contains("new String[] {\"app.Foo_ClientProxy\", \"java.util.ArrayList_ClientProxy\"}"), s);
     }
+
+    @Test
+    @DisplayName("a class emitted as bytecode is instantiated through the provider's lookup, by name (BUG-20261004-09)")
+    void bytecodeClassesThroughTheLookup() {
+        var components = List.of(
+                new Component("app.Foo", List.of()),
+                new Component("app.Foo$$Intercepted", List.of()),
+                new Component("app.Svc$$Intercepted", List.of("app.Repo", "int")));
+        var proxies = List.of("app.Foo_ClientProxy", "app.Bar_ClientProxy");
+        var producerProxies = List.of(new ComponentProviderGenerator.ProducerProxy(
+                "lib.Thing_ClientProxy", "app.Thing$$1f_ClientProxy"));
+        var plain = ComponentProviderGenerator.generateFrom("app", components, List.of(), List.of(), proxies,
+                producerProxies, new AnnotationArtefacts.Rendered("", ""));
+        assertEquals(plain.source(), ComponentProviderGenerator.generateFrom("app", components, List.of(), List.of(),
+                proxies, producerProxies, new AnnotationArtefacts.Rendered("", ""), java.util.Set.of()).source(),
+                "no bytecode class: the provider is unchanged");
+        assertFalse(plain.source().contains("$$construct"), plain.source());
+
+        var s = ComponentProviderGenerator.generateFrom("app", components, List.of(), List.of(), proxies,
+                producerProxies, new AnnotationArtefacts.Rendered("", ""),
+                java.util.Set.of("app.Foo$$Intercepted", "app.Svc$$Intercepted", "app.Bar_ClientProxy",
+                        "app.Thing$$1f_ClientProxy")).source();
+        assertTrue(s.contains("case \"app.Foo\" -> new app.Foo();"), s);
+        assertTrue(s.contains("case \"app.Foo$$Intercepted\" -> $$construct(\"app.Foo$$Intercepted\", new Class<?>[0], new Object[0]);"), s);
+        assertTrue(s.contains("case \"app.Svc$$Intercepted\" -> $$construct(\"app.Svc$$Intercepted\", new Class<?>[] {app.Repo.class, int.class}, args);"), s);
+        assertTrue(s.contains("var p = new app.Foo_ClientProxy();"), s);
+        assertTrue(s.contains("return $$proxy(\"app.Bar_ClientProxy\", delegate);"), s);
+        assertTrue(s.contains("case \"lib.Thing_ClientProxy\" -> {\n                return $$proxy(\"app.Thing$$1f_ClientProxy\", delegate);"), s);
+        assertTrue(s.contains("private static Object $$construct(String className, Class<?>[] parameterTypes, Object[] args) {"), s);
+        assertTrue(s.contains("private static Object $$proxy(String className, java.util.function.Supplier<?> delegate) {"), s);
+    }
 }

@@ -554,6 +554,10 @@ class ClientProxyInheritanceCrossCheckTest {
         public static class SecretLabeledBase
                 implements io.vidocq.vauban.processor.fixture.colocated.HiddenLabeled<Secret> {
         }
+
+        public static class SecretTaker {
+            public String take(Secret secret) { return "took"; }
+        }
     }
 
     /** Same package as {@link PrivateNestedOuter}: inherits the member {@code label(Secret)}. */
@@ -575,6 +579,71 @@ class ClientProxyInheritanceCrossCheckTest {
         var report = onlyReport(PrivateNestedChild.class, false);
         assertTrue(report.contains("label(") && report.contains("Secret")
                 && report.contains("runs the default body on the proxy instance"), report);
+    }
+
+    /** Inherits class methods naming the package-private {@code HiddenArgument} of another package (n3d). */
+    public static class HiddenTakerChild extends io.vidocq.vauban.processor.fixture.colocated.HiddenArgumentTaker {
+        public String own() { return "own"; }
+    }
+
+    /** Same package as {@link PrivateNestedOuter}: inherits {@code take(Secret)} (n11b). */
+    public static class SecretTakerChild extends PrivateNestedOuter.SecretTaker {
+    }
+
+    @Test
+    @DisplayName("class methods whose signature the proxy's package cannot write: forwarded by an erased bytecode shape")
+    void unnameableClassMethods() throws Exception {
+        // The source proxy would declare take(HiddenArgument) and give() — "HiddenArgument is not
+        // public": the processor learns it beforehand and emits the erased shape as bytecode,
+        // which carries the type in descriptors only, and forwards what the source shape does.
+        var hidden = "io.vidocq.vauban.processor.fixture.colocated.HiddenArgument";
+        assertEquals(List.of("take(" + hidden + ")", "give()"), unnameableForwards(HiddenTakerChild.class, false));
+        Set<String> expected = Set.of("own()", "take(" + hidden + ")", "give()");
+        assertEquals(expected, runtimeShape(HiddenTakerChild.class), "run-time shape");
+        assertEquals(expected, erasedShapeFromElements(HiddenTakerChild.class, false), "erased shape");
+        // A producer's proxy in another package, the same.
+        assertEquals(List.of("take(" + hidden + ")", "give()"), unnameableForwards(HiddenTakerChild.class, true));
+        assertEquals(expected, erasedShapeFromElements(HiddenTakerChild.class, true), "erased producer shape");
+        // n11b: a private nested type of the proxy's own package.
+        var secret = PrivateNestedOuter.class.getCanonicalName() + ".Secret";
+        assertEquals(List.of("take(" + secret + ")"), unnameableForwards(SecretTakerChild.class, false));
+        Set<String> secretShape = Set.of("take(" + PrivateNestedOuter.class.getName() + "$Secret)");
+        assertEquals(secretShape, runtimeShape(SecretTakerChild.class), "run-time shape");
+        assertEquals(secretShape, erasedShapeFromElements(SecretTakerChild.class, false), "erased shape");
+        // A default whose member names such a type is no class method: left to the source proxy,
+        // which leaves it out (n3c, n11a). Every other bean renders as source, as before.
+        for (var fixture : List.of(NonShadowHiddenChild.class, PrivateNestedChild.class, HiddenChild.class,
+                ForeignChild.class, CleanChild.class, DefaultChild.class, ShadowedTagChild.class)) {
+            assertEquals(List.of(), unnameableForwards(fixture, false), fixture.getSimpleName());
+        }
+    }
+
+    /** What the processor checks before rendering the proxy: the class methods it cannot declare. */
+    private List<String> unnameableForwards(Class<?> fixture, boolean produced) throws Exception {
+        var joined = capture(fixture, (element, env) -> String.join(";",
+                ClientProxyShapeFromElements.unnameableForwards(element,
+                        produced ? env.elements().getPackageElement("proxycrosscheck")
+                                : env.elements().getPackageOf(element),
+                        env.elements(), env.types())));
+        return joined.isEmpty() ? List.of() : List.of(joined.split(";"));
+    }
+
+    /** The erased shape the processor emits as bytecode, in the bean's package or a producer's. */
+    private Set<String> erasedShapeFromElements(Class<?> fixture, boolean produced) throws Exception {
+        String joined = capture(fixture, (element, env) -> {
+            var shape = produced
+                    ? ClientProxyShapeFromElements.fromProducedErased(element,
+                            env.elements().getPackageElement("proxycrosscheck"), env.elements(), env.types(), o -> {})
+                    : ClientProxyShapeFromElements.fromErased(element,
+                            env.elements().getPackageOf(element), env.elements(), env.types(), o -> {});
+            return shape.methods().stream()
+                    .map(m -> m.name() + "(" + m.params().stream().map(Object::toString)
+                            .collect(Collectors.joining(",")) + ")" + (m.needsMethodHandle() ? "#mh" : "")
+                            + ownerSuffix(m))
+                    .filter(k -> !OBJECT_METHODS.contains(k))
+                    .collect(Collectors.joining(";"));
+        });
+        return distinctParts(joined);
     }
 
     @Test

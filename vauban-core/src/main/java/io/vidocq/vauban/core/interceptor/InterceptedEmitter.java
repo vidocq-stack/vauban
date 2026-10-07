@@ -60,6 +60,10 @@ public final class InterceptedEmitter {
     private static final ClassDesc CD_List = ClassDesc.of("java.util.List");
     private static final ClassDesc CD_CreationalContext =
             ClassDesc.of("jakarta.enterprise.context.spi.CreationalContext");
+    private static final ClassDesc CD_ClassLoader = ClassDesc.of("java.lang.ClassLoader");
+    private static final ClassDesc CD_MethodHandle = ClassDesc.of("java.lang.invoke.MethodHandle");
+    private static final ClassDesc CD_MethodHandles = ClassDesc.of("java.lang.invoke.MethodHandles");
+    private static final ClassDesc CD_MethodHandlesLookup = ClassDesc.of("java.lang.invoke.MethodHandles$Lookup");
     private static final ClassDesc CD_TargetInvoker =
             ClassDesc.of("io.vidocq.vauban.core.interceptor.VaubanInvocationContext$TargetInvoker");
 
@@ -260,19 +264,7 @@ public final class InterceptedEmitter {
                     cob.aload(0);
                     cob.invokevirtual(CD_Object, "getClass", MethodTypeDesc.of(CD_Class));
                     cob.ldc(InterceptedShape.superBridgeName(method.name()));
-                    cob.loadConstant(paramCDs.length);
-                    cob.anewarray(CD_Class);
-                    for (int i = 0; i < paramCDs.length; i++) {
-                        cob.dup();
-                        cob.loadConstant(i);
-                        TypeRef p = method.params().get(i);
-                        if (p.isPrimitive()) {
-                            cob.getstatic(p.wrapperClassDesc(), "TYPE", CD_Class);
-                        } else {
-                            cob.ldc(paramCDs[i]);
-                        }
-                        cob.aastore();
-                    }
+                    loadParameterClasses(cob, subclassCD, method);
                     cob.invokevirtual(CD_Class, "getDeclaredMethod",
                             MethodTypeDesc.of(CD_Method, CD_String, CD_Class.arrayType()));
                     // Compute the local-slot offset just past the parameter list. Each long/double
@@ -367,6 +359,44 @@ public final class InterceptedEmitter {
     }
 
     /**
+     * Stack: → a {@code Class[]} of {@code method}'s parameter classes, for {@code getDeclaredMethod}.
+     * A class constant ({@code ldc}) per reference parameter; for a method whose descriptor names a
+     * class the subclass may not access, {@code Class.forName(name, false, loader)} with the
+     * subclass's loader instead, which resolves no class constant and checks no access
+     * (BUG-20261004-09).
+     */
+    private static void loadParameterClasses(CodeBuilder cob, ClassDesc subclassCD, MethodShape method) {
+        var params = method.params();
+        cob.loadConstant(params.size());
+        cob.anewarray(CD_Class);
+        for (int i = 0; i < params.size(); i++) {
+            cob.dup();
+            cob.loadConstant(i);
+            TypeRef p = params.get(i);
+            if (p.isPrimitive()) {
+                cob.getstatic(p.wrapperClassDesc(), "TYPE", CD_Class);
+            } else if (method.namesInaccessibleTypes()) {
+                cob.ldc(classNameOf(p.classDesc()));
+                cob.iconst_0();
+                cob.ldc(subclassCD);
+                cob.invokevirtual(CD_Class, "getClassLoader", MethodTypeDesc.of(CD_ClassLoader));
+                cob.invokestatic(CD_Class, "forName",
+                        MethodTypeDesc.of(CD_Class, CD_String, ConstantDescs.CD_boolean, CD_ClassLoader));
+            } else {
+                cob.ldc(p.classDesc());
+            }
+            cob.aastore();
+        }
+    }
+
+    /** {@link Class#getName()} of a reference type: {@code q.Hidden}, {@code [Lq.Hidden;}, {@code [I}. */
+    private static String classNameOf(ClassDesc type) {
+        var descriptor = type.descriptorString();
+        var name = type.isArray() ? descriptor : descriptor.substring(1, descriptor.length() - 1);
+        return name.replace('/', '.');
+    }
+
+    /**
      * Generate the {@code private static Object $$ti$<name>(Object target, Object[] params)} glue
      * that the {@link DynamicCallSiteDesc} above lifts into a {@code TargetInvoker}. It casts the
      * target to the subclass, unboxes each argument from {@code params}, calls the public
@@ -385,6 +415,10 @@ public final class InterceptedEmitter {
                 MTD_TARGET_INVOKER,
                 ClassFile.ACC_PRIVATE | ClassFile.ACC_STATIC | ClassFile.ACC_SYNTHETIC,
                 cob -> {
+                    if (method.namesInaccessibleTypes()) {
+                        invokeBridgeThroughAHandle(cob, subclassCD, method);
+                        return;
+                    }
                     cob.aload(0);              // target
                     cob.checkcast(subclassCD); // -> <bean>$$Intercepted
                     var params = method.params();
@@ -397,6 +431,31 @@ public final class InterceptedEmitter {
                     cob.invokevirtual(subclassCD, InterceptedShape.superBridgeName(method.name()), superType);
                     boxResultAndReturn(cob, method.returnType());
                 });
+    }
+
+    /**
+     * The glue of a method whose descriptor names a class the subclass may not access: casting an
+     * argument to it ({@code checkcast}) would throw {@code IllegalAccessError}, and the verifier
+     * requires that cast before the bridge call. So the bridge is called through a method handle,
+     * whose {@code invokeWithArguments} casts reflectively, checking no access (BUG-20261004-09):
+     * {@code MethodHandles.lookup().unreflect(<subclass>.class.getDeclaredMethod("$$super$<name>",
+     * <classes by name>)).bindTo(target).invokeWithArguments(params)}. The handle is looked up on
+     * every call: such a method is rare, and this keeps the class free of state.
+     */
+    private static void invokeBridgeThroughAHandle(CodeBuilder cob, ClassDesc subclassCD, MethodShape method) {
+        cob.invokestatic(CD_MethodHandles, "lookup", MethodTypeDesc.of(CD_MethodHandlesLookup));
+        cob.ldc(subclassCD);
+        cob.ldc(InterceptedShape.superBridgeName(method.name()));
+        loadParameterClasses(cob, subclassCD, method);
+        cob.invokevirtual(CD_Class, "getDeclaredMethod",
+                MethodTypeDesc.of(CD_Method, CD_String, CD_Class.arrayType()));
+        cob.invokevirtual(CD_MethodHandlesLookup, "unreflect", MethodTypeDesc.of(CD_MethodHandle, CD_Method));
+        cob.aload(0);
+        cob.invokevirtual(CD_MethodHandle, "bindTo", MethodTypeDesc.of(CD_MethodHandle, CD_Object));
+        cob.aload(1);
+        cob.invokevirtual(CD_MethodHandle, "invokeWithArguments",
+                MethodTypeDesc.of(CD_Object, CD_Object.arrayType()));
+        cob.areturn();
     }
 
     /** Stack: an {@code Object} (a {@code params[i]} element) → the typed/unboxed argument. */

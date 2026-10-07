@@ -38,8 +38,24 @@ public class PrivateNestedHolder {
     public static class SecretLabeledBase implements ReceiverLabeled<Secret> {
     }
 
+    /**
+     * A class method whose parameter type is {@link Secret}: a bean extending it inherits
+     * {@code take(Secret)}, which a generated top-level class cannot declare in source
+     * (BUG-20261004-09, {@code n11b}).
+     */
+    public static class SecretTaker {
+        public String take(Secret secret) {
+            return getClass().getSimpleName() + " took " + secret;
+        }
+    }
+
     /** {@code bean.label(…)} as this class writes it, with an argument only it can make. */
     public static String callLabel(SecretLabeledBase bean) {
         return bean.label(new Secret());
+    }
+
+    /** {@code taker.take(…)} as this class writes it, with an argument only it can make. */
+    public static String callTake(SecretTaker taker) {
+        return taker.take(new Secret());
     }
 }

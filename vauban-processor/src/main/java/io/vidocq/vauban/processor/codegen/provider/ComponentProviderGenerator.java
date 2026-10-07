@@ -175,6 +175,21 @@ public final class ComponentProviderGenerator {
             List<FieldInject> fieldInjects, List<MethodInvoke> methodInvokes,
             List<String> clientProxyFqns, List<ProducerProxy> producerProxies,
             AnnotationArtefacts.Rendered annotations) {
+        return generateFrom(packageName, components, fieldInjects, methodInvokes, clientProxyFqns,
+                producerProxies, annotations, java.util.Set.of());
+    }
+
+    /**
+     * Full overload, {@code bytecodeClasses} holding the binary names of the generated subclasses and
+     * proxies the processor emitted as bytecode, because Java source cannot declare one of their
+     * overrides (BUG-20261004-09). It emits them in the last round, so javac never reads them back and
+     * this source cannot name them: it instantiates them through its own {@code MethodHandles.lookup()}
+     * instead — the provider's full-privilege lookup in its own package, so still no {@code opens}.
+     */
+    public static Generated generateFrom(String packageName, List<Component> components,
+            List<FieldInject> fieldInjects, List<MethodInvoke> methodInvokes,
+            List<String> clientProxyFqns, List<ProducerProxy> producerProxies,
+            AnnotationArtefacts.Rendered annotations, java.util.Set<String> bytecodeClasses) {
         var className = packageName.isEmpty() ? SIMPLE_NAME : packageName + "." + SIMPLE_NAME;
         var noArg = components.stream().filter(Component::noArg).toList();
         var withArgs = components.stream().filter(c -> !c.noArg()).toList();
@@ -195,6 +210,11 @@ public final class ComponentProviderGenerator {
         sb.append("    public Object create(String className) {\n");
         sb.append("        return switch (className) {\n");
         for (var c : noArg) {
+            if (bytecodeClasses.contains(c.fqn())) {
+                sb.append("            case \"").append(c.fqn()).append("\" -> ").append(CONSTRUCT)
+                        .append("(\"").append(c.fqn()).append("\", new Class<?>[0], new Object[0]);\n");
+                continue;
+            }
             sb.append("            case \"").append(c.fqn()).append("\" -> new ")
                     .append(c.sourceFqn()).append("();\n");
         }
@@ -209,6 +229,14 @@ public final class ComponentProviderGenerator {
             sb.append("        if (args == null || args.length == 0) return create(className);\n");
             sb.append("        return switch (className) {\n");
             for (var c : withArgs) {
+                if (bytecodeClasses.contains(c.fqn())) {
+                    sb.append("            case \"").append(c.fqn()).append("\" -> ").append(CONSTRUCT)
+                            .append("(\"").append(c.fqn()).append("\", new Class<?>[] {")
+                            .append(c.ctorParamTypes().stream().map(t -> t + ".class")
+                                    .collect(Collectors.joining(", ")))
+                            .append("}, args);\n");
+                    continue;
+                }
                 sb.append("            case \"").append(c.fqn()).append("\" -> new ")
                         .append(c.sourceFqn()).append("(");
                 var params = c.ctorParamTypes();
@@ -309,6 +337,10 @@ public final class ComponentProviderGenerator {
             sb.append("    public Object createClientProxy(String proxyClassName, java.util.function.Supplier<?> delegate) {\n");
             sb.append("        switch (proxyClassName) {\n");
             for (var proxyFqn : clientProxyFqns) {
+                if (bytecodeClasses.contains(proxyFqn)) {
+                    appendBytecodeProxyCase(sb, proxyFqn, proxyFqn);
+                    continue;
+                }
                 sb.append("            case \"").append(proxyFqn).append("\" -> {\n");
                 sb.append("                var p = new ").append(proxyFqn).append("();\n");
                 sb.append("                p.$$setDelegate(delegate);\n");
@@ -316,6 +348,10 @@ public final class ComponentProviderGenerator {
                 sb.append("            }\n");
             }
             for (var pp : producerProxies) {
+                if (bytecodeClasses.contains(pp.proxyFqn())) {
+                    appendBytecodeProxyCase(sb, pp.key(), pp.proxyFqn());
+                    continue;
+                }
                 sb.append("            case \"").append(pp.key()).append("\" -> {\n");
                 sb.append("                var p = new ").append(pp.proxyFqn()).append("();\n");
                 sb.append("                p.$$setDelegate(delegate);\n");
@@ -344,11 +380,64 @@ public final class ComponentProviderGenerator {
         sb.append("                ").append(stringArray(proxyKeys)).append(");\n");
         sb.append("    }\n");
 
+        if (!bytecodeClasses.isEmpty()) {
+            appendBytecodeInstantiation(sb);
+        }
+
         sb.append(annotations.methods());
         sb.append(annotations.literals());
 
         sb.append("}\n");
         return new Generated(className, sb.toString());
+    }
+
+    /** The provider's helper instantiating a class emitted as bytecode, by its binary name. */
+    private static final String CONSTRUCT = "$$construct";
+
+    /** {@code case "<key>" -> return $$proxy("<binary name>", delegate);}: a proxy emitted as bytecode. */
+    private static void appendBytecodeProxyCase(StringBuilder sb, String key, String proxyBinaryName) {
+        sb.append("            case \"").append(key).append("\" -> {\n");
+        sb.append("                return $$proxy(\"").append(proxyBinaryName).append("\", delegate);\n");
+        sb.append("            }\n");
+    }
+
+    /**
+     * The helpers instantiating, through the provider's own lookup, the classes emitted as bytecode:
+     * a full-privilege lookup in the provider's package, which needs no {@code opens}. The handle is
+     * looked up on every call — such a class is rare (BUG-20261004-09).
+     */
+    private static void appendBytecodeInstantiation(StringBuilder sb) {
+        sb.append("""
+                    // Classes this package's processor emitted as bytecode (BUG-20261004-09): this source
+                    // cannot name them, so they are instantiated through the provider's own lookup.
+                    private static Object $$construct(String className, Class<?>[] parameterTypes, Object[] args) {
+                        try {
+                            var lookup = java.lang.invoke.MethodHandles.lookup();
+                            var type = Class.forName(className, false, lookup.lookupClass().getClassLoader());
+                            return lookup.findConstructor(type,
+                                    java.lang.invoke.MethodType.methodType(void.class, parameterTypes))
+                                    .invokeWithArguments(args);
+                        } catch (RuntimeException | Error e) {
+                            throw e;
+                        } catch (Throwable t) {
+                            throw new IllegalStateException("[Vauban] Could not instantiate " + className, t);
+                        }
+                    }
+
+                    private static Object $$proxy(String className, java.util.function.Supplier<?> delegate) {
+                        var proxy = $$construct(className, new Class<?>[0], new Object[0]);
+                        try {
+                            java.lang.invoke.MethodHandles.lookup().findVirtual(proxy.getClass(), "$$setDelegate",
+                                    java.lang.invoke.MethodType.methodType(void.class, java.util.function.Supplier.class))
+                                    .invokeWithArguments(proxy, delegate);
+                        } catch (RuntimeException | Error e) {
+                            throw e;
+                        } catch (Throwable t) {
+                            throw new IllegalStateException("[Vauban] Could not wire " + className, t);
+                        }
+                        return proxy;
+                    }
+                """);
     }
 
     /** {@code new String[] {"a", "b"}}: the keys never hold a quote or a backslash (class and member names). */

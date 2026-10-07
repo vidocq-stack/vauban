@@ -424,6 +424,74 @@ class InterceptedShapeFromElementsTest {
         assertEquals(Set.of("label(java.lang.String)"), memberSignatures(AnnotatedArg.class));
     }
 
+    /** Inherits class methods naming the package-private {@code HiddenArgument} of another package. */
+    public static class HiddenTakerBean extends io.vidocq.vauban.processor.fixture.colocated.HiddenArgumentTaker {
+        public String own() { return "own"; }
+    }
+
+    /** Inherits the non-shadowed default {@code label(HiddenArgument)}, a member it cannot write (n3a). */
+    public static class HiddenDefaultBean extends io.vidocq.vauban.processor.fixture.colocated.HiddenDefaultBase {
+        public String own() { return "own"; }
+    }
+
+    /** A private nested type of this package in inherited signatures (BUG-20261004-09, n11c). */
+    public static class SecretOuter {
+        private static class Secret {
+        }
+
+        public static class SecretLabeledBase implements GenericLabel<Secret> {
+        }
+
+        public static class SecretTaker {
+            public String take(Secret secret) { return "took"; }
+        }
+    }
+
+    public static class SecretLabeledBean extends SecretOuter.SecretLabeledBase {
+    }
+
+    public static class SecretTakerBean extends SecretOuter.SecretTaker {
+    }
+
+    @Test
+    @DisplayName("members whose signature this package cannot write: same shape, the processor says source cannot render it")
+    void unnameableMemberSignatures() throws Exception {
+        // take(HiddenArgument) names, in its descriptor, a class the subclass may not resolve (JVMS
+        // 5.4.4): both front-ends flag it ("!"), so the emitter loads it by name. give() returns that
+        // class: no subclass of another package can type what the chain returns, so it is left out.
+        var hidden = "io.vidocq.vauban.processor.fixture.colocated.HiddenArgument";
+        assertEquals(Set.of("own()", "take(" + hidden + ")!"), assertSameMethodSet(HiddenTakerBean.class));
+        var omitted = new ArrayList<String>();
+        var unnameable = new ArrayList<String>();
+        computeFromElements(HiddenTakerBean.class, KEYS, omitted::add, unnameable::add);
+        assertEquals(1, omitted.size(), "give() reported: " + omitted);
+        assertTrue(omitted.getFirst().contains("give()") && omitted.getFirst().contains("not intercept"),
+                omitted.getFirst());
+        assertEquals(List.of("take(" + hidden.replace('$', '.') + ")"), unnameable);
+
+        // n3a, n11c: the descriptor erases to label(Object), which any class may resolve, but the
+        // member signature names a type the source cannot write.
+        assertEquals(Set.of("own()", "label(java.lang.Object)"), assertSameMethodSet(HiddenDefaultBean.class));
+        assertEquals(List.of("label(" + hidden + ")"), unnameableOf(HiddenDefaultBean.class));
+        assertEquals(Set.of("label(java.lang.Object)"), assertSameMethodSet(SecretLabeledBean.class));
+        var secret = SecretOuter.class.getCanonicalName() + ".Secret";
+        assertEquals(List.of("label(" + secret + ")"), unnameableOf(SecretLabeledBean.class));
+        // A private nested type of the subclass's own runtime package: accessible to a class file.
+        assertEquals(Set.of("take(" + SecretOuter.class.getName() + "$Secret)"), assertSameMethodSet(SecretTakerBean.class));
+        assertEquals(List.of("take(" + secret + ")"), unnameableOf(SecretTakerBean.class));
+        // Every other fixture renders as source, as before.
+        for (var fixture : List.of(FixtureBean.class, NonPublicBean.class, HiddenArgBean.class, ShadowedBean.class)) {
+            assertEquals(List.of(), unnameableOf(fixture), fixture.getSimpleName());
+        }
+    }
+
+    /** What {@link InterceptedShapeFromElements#from} reports as a member Java source cannot declare. */
+    private List<String> unnameableOf(Class<?> fixture) throws Exception {
+        var unnameable = new ArrayList<String>();
+        computeFromElements(fixture, KEYS, omitted -> {}, unnameable::add);
+        return unnameable;
+    }
+
     // ---- helpers ----
 
     /** The run-time and the processor front-ends select the same methods of {@code fixture}. */
@@ -481,12 +549,16 @@ class InterceptedShapeFromElementsTest {
                 .collect(Collectors.joining(",")) + ")";
     }
 
-    /** {@code name(params)}, then {@code @<interface>} when the bridge calls that interface's default explicitly. */
+    /**
+     * {@code name(params)}, then {@code @<interface>} when the bridge calls that interface's default
+     * explicitly, then {@code !} when its descriptor names a class the subclass may not resolve.
+     */
     static String methodKey(MethodShape m) {
         String params = m.params().stream()
                 .map(TypeRef::toString)
                 .collect(Collectors.joining(","));
-        return m.name() + "(" + params + ")" + (m.defaultOwner() != null ? "@" + m.defaultOwner() : "");
+        return m.name() + "(" + params + ")" + (m.defaultOwner() != null ? "@" + m.defaultOwner() : "")
+                + (m.namesInaccessibleTypes() ? "!" : "");
     }
 
     private static <T> Set<T> difference(Set<T> a, Set<T> b) {
@@ -509,6 +581,14 @@ class InterceptedShapeFromElementsTest {
     private Set<String> computeFromElements(Class<?> fixture,
             java.util.function.Function<InterceptedShape, Set<String>> keys,
             java.util.function.Consumer<String> omitted) throws Exception {
+        return computeFromElements(fixture, keys, omitted, unnameable -> {});
+    }
+
+    /** The same, {@code unnameable} receiving each member the source renderer cannot declare. */
+    private Set<String> computeFromElements(Class<?> fixture,
+            java.util.function.Function<InterceptedShape, Set<String>> keys,
+            java.util.function.Consumer<String> omitted,
+            java.util.function.Consumer<String> unnameable) throws Exception {
         // We build the source for FixtureBean and FixtureSuper from their class names
         // by referencing the already-compiled classes on the classpath.
         // Rather than re-compiling the fixture source, we use a "no-op" annotation
@@ -545,7 +625,7 @@ class InterceptedShapeFromElementsTest {
             var task = compiler.getTask(null, fm, diagnostics, options, null,
                     List.of(triggerFile, sourceFile));
 
-            task.setProcessors(List.of(new CaptureProcessor(fixture, keys, captured, omitted)));
+            task.setProcessors(List.of(new CaptureProcessor(fixture, keys, captured, omitted, unnameable)));
             task.call();
         }
 
@@ -568,13 +648,16 @@ class InterceptedShapeFromElementsTest {
         private final java.util.function.Function<InterceptedShape, Set<String>> keys;
         private final AtomicReference<Set<String>> sink;
         private final java.util.function.Consumer<String> omitted;
+        private final java.util.function.Consumer<String> unnameable;
 
         CaptureProcessor(Class<?> fixture, java.util.function.Function<InterceptedShape, Set<String>> keys,
-                AtomicReference<Set<String>> sink, java.util.function.Consumer<String> omitted) {
+                AtomicReference<Set<String>> sink, java.util.function.Consumer<String> omitted,
+                java.util.function.Consumer<String> unnameable) {
             this.fixture = fixture;
             this.keys = keys;
             this.sink = sink;
             this.omitted = omitted;
+            this.unnameable = unnameable;
         }
 
         @Override
@@ -602,7 +685,7 @@ class InterceptedShapeFromElementsTest {
                 return false;
             }
 
-            sink.set(keys.apply(InterceptedShapeFromElements.from(beanElement, elements, types, omitted)));
+            sink.set(keys.apply(InterceptedShapeFromElements.from(beanElement, elements, types, omitted, unnameable)));
             return false;
         }
     }

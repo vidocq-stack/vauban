@@ -84,7 +84,53 @@ public final class ClientProxyShapeFromElements {
      */
     public static ClientProxyShape from(TypeElement bean, javax.lang.model.element.PackageElement proxyPackage,
             Elements elements, Types types, Consumer<String> omitted) {
-        return from(bean, proxyPackage, elements, types, omitted, Subject.BEAN);
+        return from(bean, proxyPackage, elements, types, omitted, Subject.BEAN, true);
+    }
+
+    /**
+     * The class methods {@link #from} forwards whose override Java source in {@code proxyPackage}
+     * cannot declare, as {@code name(member parameter types)}: their signature as a member of
+     * {@code bean} names a type that package cannot name — a package-private type of another
+     * package, a private nested type of its own (BUG-20261004-09). Empty when the proxy can be
+     * rendered as source; otherwise the processor emits {@link #fromErased} as bytecode, which
+     * carries those types in method descriptors only. An inherited default with such a member is
+     * not counted: the source shape leaves it out, with a warning, and stays renderable.
+     */
+    public static List<String> unnameableForwards(TypeElement bean,
+            javax.lang.model.element.PackageElement proxyPackage, Elements elements, Types types) {
+        var unnameable = new ArrayList<String>();
+        var seen = new java.util.HashSet<String>();
+        boolean declaring = true;
+        for (TypeElement c = bean; c != null && !isObject(c); c = superclassOf(c), declaring = false) {
+            for (ExecutableElement m : ElementFilter.methodsIn(c.getEnclosedElements())) {
+                if (!seen.add(memberKey(bean, m, types))) continue;
+                if (!shouldProxy(m)) continue;
+                if (!declaring && !m.getModifiers().contains(Modifier.PUBLIC)) continue;
+                if (!InterceptedShapeFromElements.memberSignatureNameableFrom(bean, m, proxyPackage, elements, types,
+                        false)) {
+                    unnameable.add(InterceptedShapeFromElements.memberSignature(bean, m, types));
+                }
+            }
+        }
+        return unnameable;
+    }
+
+    /**
+     * The shape of {@link #from} with erased declarations — the descriptors a bytecode override must
+     * have — for a proxy the processor emits as bytecode because {@link #unnameableForwards} is not
+     * empty. It forwards what the source shape forwards, and also the inherited defaults whose member
+     * signature only the source cannot write.
+     */
+    public static ClientProxyShape fromErased(TypeElement bean, javax.lang.model.element.PackageElement proxyPackage,
+            Elements elements, Types types, Consumer<String> omitted) {
+        return from(bean, proxyPackage, elements, types, omitted, Subject.BEAN, false);
+    }
+
+    /** {@link #fromErased} for the proxy of a normal-scoped producer, emitted in the producer's package. */
+    public static ClientProxyShape fromProducedErased(TypeElement producedType,
+            javax.lang.model.element.PackageElement producerPackage, Elements elements, Types types,
+            Consumer<String> omitted) {
+        return from(producedType, producerPackage, elements, types, omitted, Subject.PRODUCED_TYPE, false);
     }
 
     /**
@@ -95,7 +141,7 @@ public final class ClientProxyShapeFromElements {
     public static ClientProxyShape fromProduced(TypeElement producedType,
             javax.lang.model.element.PackageElement producerPackage, Elements elements, Types types,
             Consumer<String> omitted) {
-        return from(producedType, producerPackage, elements, types, omitted, Subject.PRODUCED_TYPE);
+        return from(producedType, producerPackage, elements, types, omitted, Subject.PRODUCED_TYPE, true);
     }
 
     /** Whose proxy a shape is built for, as the processor's reports name the proxy and the type. */
@@ -113,7 +159,7 @@ public final class ClientProxyShapeFromElements {
     }
 
     private static ClientProxyShape from(TypeElement bean, javax.lang.model.element.PackageElement proxyPackage,
-            Elements elements, Types types, Consumer<String> omitted, Subject subject) {
+            Elements elements, Types types, Consumer<String> omitted, Subject subject, boolean asMember) {
         String beanBinaryName = elements.getBinaryName(bean).toString();
 
         var methods = new ArrayList<ProxyMethodShape>();
@@ -139,10 +185,10 @@ public final class ClientProxyShapeFromElements {
                 if (!seen.add(memberKey(bean, m, types))) continue;
                 if (!shouldProxy(m)) continue;
                 if (!declaring && !m.getModifiers().contains(Modifier.PUBLIC)) continue;
-                methods.add(methodShape(bean, m, true, false, elements, types));
+                methods.add(methodShape(bean, m, asMember, false, elements, types));
             }
         }
-        addDefaultMethods(bean, true, proxyPackage, elements, types, seen, methods, omitted, subject);
+        addDefaultMethods(bean, asMember, proxyPackage, elements, types, seen, methods, omitted, subject);
 
         return new ClientProxyShape(beanBinaryName, superCtorParams(bean, elements, types), methods);
     }

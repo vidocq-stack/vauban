@@ -85,6 +85,18 @@ public final class InterceptedShapeFromElements {
      */
     public static InterceptedShape from(TypeElement bean, Elements elements, Types types,
             java.util.function.Consumer<String> omitted) {
+        return from(bean, elements, types, omitted, unnameable -> {});
+    }
+
+    /**
+     * The same, {@code unnameable} receiving one {@code name(member parameter types)} per method of
+     * the shape whose override Java source in the bean's package cannot declare: its signature as a
+     * member of the bean names a type that package cannot name — a package-private type of another
+     * package, a private nested type of its own (BUG-20261004-09). The source renderer cannot render
+     * such a shape; the processor emits it as bytecode, which overrides by descriptor.
+     */
+    public static InterceptedShape from(TypeElement bean, Elements elements, Types types,
+            java.util.function.Consumer<String> omitted, java.util.function.Consumer<String> unnameable) {
         String beanBinaryName = elements.getBinaryName(bean).toString();
 
         // Constructors — the (ProxyLink) client-proxy entry constructor is not mirrored:
@@ -106,18 +118,33 @@ public final class InterceptedShapeFromElements {
         var methods = new ArrayList<MethodShape>();
         var seen = new LinkedHashSet<String>();
         var members = ElementFilter.methodsIn(elements.getAllMembers(bean));
+        var beanPackage = elements.getPackageOf(bean);
         for (boolean interfacePass : new boolean[] {false, true}) {
             for (ExecutableElement method : members) {
                 if (declaredByInterface(method) != interfacePass) continue;
                 if (!seen.add(memberSignatureKey(bean, method, types))) continue;
                 if (!shouldIntercept(method, elements)) continue;
+                // As InterceptorSubclassGenerator#methodShapeOf: a return type the subclass may not
+                // access cannot be typed from what the chain returns; a parameter is loaded by name.
+                var returnType = types.erasure(method.getReturnType());
+                if (!resolvableFrom(returnType, beanPackage, elements)) {
+                    omitted.accept(bean.getQualifiedName() + ": the generated subclass does not intercept the inherited method "
+                            + ((TypeElement) method.getEnclosingElement()).getQualifiedName() + "." + method
+                            + " — its return type " + returnType + " is a class package " + beanPackage.getQualifiedName()
+                            + " may not access, so no subclass there can type the value an interceptor chain returns;"
+                            + " a call runs it as on a plain instance of the bean. The bytecode generators (run-time"
+                            + " fallback, Maven plugin) leave it out too (BUG-20261004-09).");
+                    continue;
+                }
                 var shape = methodShape(bean, method, elements, types);
+                if (!descriptorResolvableFrom(method, beanPackage, elements, types)) {
+                    shape = shape.withInaccessibleTypes();
+                }
                 if (isShadowedDefault(bean, method, types)) {
                     // super.<name>() would resolve to the shadowing declaration: the bridge reaches
                     // the default through an interface the subclass lists (BUG-20261004-08), or,
                     // when no interface it may name carries it — or the override and the listed
                     // interface would name a type this package cannot — the method is left alone.
-                    var beanPackage = elements.getPackageOf(bean);
                     var owner = accessibleDefaultOwner(bean, method, beanPackage, elements, types);
                     if (owner == null) {
                         // InterceptorSubclassGenerator decides by class-file access instead
@@ -143,6 +170,8 @@ public final class InterceptedShapeFromElements {
                     shape = shape.withDefaultOwner(TypeRef.ofReference(elements.getBinaryName(owner).toString(), 0,
                                     owner.getQualifiedName().toString()),
                             ownerType.toString());
+                } else if (!memberSignatureNameableFrom(bean, method, beanPackage, elements, types, false)) {
+                    unnameable.accept(memberSignature(bean, method, types));
                 }
                 methods.add(shape);
             }
@@ -283,12 +312,72 @@ public final class InterceptedShapeFromElements {
      */
     public static boolean memberSignatureNameableFrom(TypeElement bean, ExecutableElement method,
             PackageElement generatedIn, Elements elements, Types types) {
+        return memberSignatureNameableFrom(bean, method, generatedIn, elements, types, true);
+    }
+
+    /**
+     * The same, {@code readability} false leaving out whether the generated class's module reads the
+     * type's module. That check reads the {@code requires} of the module being compiled, which
+     * completes it: javac then resolves its {@code provides} before the last round has written the
+     * {@code _VaubanComponents} it names ("cannot find symbol"). It is fine for the rare shadowed
+     * default, not for every forwarded method of every bean (BUG-20261004-09).
+     */
+    public static boolean memberSignatureNameableFrom(TypeElement bean, ExecutableElement method,
+            PackageElement generatedIn, Elements elements, Types types, boolean readability) {
         var member = memberType(bean, method, types);
-        if (!nameableFrom(types.erasure(member.getReturnType()), generatedIn, elements)) return false;
+        if (!nameableFrom(types.erasure(member.getReturnType()), generatedIn, elements, readability)) return false;
         for (TypeMirror p : member.getParameterTypes()) {
-            if (!nameableFrom(types.erasure(p), generatedIn, elements)) return false;
+            if (!nameableFrom(types.erasure(p), generatedIn, elements, readability)) return false;
         }
         return true;
+    }
+
+    /**
+     * {@code name(p1,p2)}: {@code method}'s signature as a member of {@code bean}, erased — what a
+     * rendered override declares.
+     */
+    public static String memberSignature(TypeElement bean, ExecutableElement method, Types types) {
+        var joiner = new java.util.StringJoiner(",", method.getSimpleName() + "(", ")");
+        for (TypeMirror p : memberType(bean, method, types).getParameterTypes()) {
+            joiner.add(types.erasure(p).toString());
+        }
+        return joiner.toString();
+    }
+
+    /** Whether every parameter class of {@code method}'s descriptor is {@link #resolvableFrom} {@code from}. */
+    private static boolean descriptorResolvableFrom(ExecutableElement method, PackageElement from,
+            Elements elements, Types types) {
+        for (VariableElement p : method.getParameters()) {
+            if (!resolvableFrom(types.erasure(p.asType()), from, elements)) return false;
+        }
+        return true;
+    }
+
+    /**
+     * Whether a class generated in {@code from} may access {@code type} — a descriptor type, erased
+     * — at run time (JVMS 5.4.4), as {@code InterceptorSubclassGenerator#accessibleFrom}: a primitive;
+     * a class of {@code from}, whatever its modifiers — a private nested class has package access in
+     * its class file; else a class public in its class file — declared public, or a protected member
+     * class, whatever its enclosing types — in a package exported to {@code from}'s module. Unlike
+     * the run-time front-end, which also asks {@code Module#canRead}, it does not check that this
+     * module reads the type's module: that would complete the module being compiled (see {@link
+     * #memberSignatureNameableFrom(TypeElement, ExecutableElement, PackageElement, Elements, Types,
+     * boolean)}). An array, as its element type. Wider than {@link #nameableFrom(TypeMirror,
+     * PackageElement, Elements)}, which is what Java source may write (BUG-20261004-09).
+     */
+    public static boolean resolvableFrom(TypeMirror type, PackageElement from, Elements elements) {
+        return switch (type.getKind()) {
+            case ARRAY -> resolvableFrom(((ArrayType) type).getComponentType(), from, elements);
+            case DECLARED -> {
+                if (!(((DeclaredType) type).asElement() instanceof TypeElement te)) yield true;
+                if (elements.getPackageOf(te).equals(from)) yield true;
+                var modifiers = te.getModifiers();
+                yield (modifiers.contains(Modifier.PUBLIC)
+                                || (te.getNestingKind() == NestingKind.MEMBER && modifiers.contains(Modifier.PROTECTED)))
+                        && exportedTo(te, from, elements, false);
+            }
+            default -> true;
+        };
     }
 
     /**
@@ -297,20 +386,26 @@ public final class InterceptedShapeFromElements {
      * Elements)}). A type variable needs no name.
      */
     public static boolean nameableFrom(TypeMirror type, PackageElement from, Elements elements) {
+        return nameableFrom(type, from, elements, true);
+    }
+
+    private static boolean nameableFrom(TypeMirror type, PackageElement from, Elements elements, boolean readability) {
         return switch (type.getKind()) {
             case DECLARED -> {
                 var dt = (DeclaredType) type;
-                if (!(dt.asElement() instanceof TypeElement te) || !nameableFrom(te, from, elements)) yield false;
+                if (!(dt.asElement() instanceof TypeElement te) || !nameableFrom(te, from, elements, readability)) {
+                    yield false;
+                }
                 for (TypeMirror argument : dt.getTypeArguments()) {
-                    if (!nameableFrom(argument, from, elements)) yield false;
+                    if (!nameableFrom(argument, from, elements, readability)) yield false;
                 }
                 yield true;
             }
-            case ARRAY -> nameableFrom(((ArrayType) type).getComponentType(), from, elements);
+            case ARRAY -> nameableFrom(((ArrayType) type).getComponentType(), from, elements, readability);
             case WILDCARD -> {
                 var wt = (WildcardType) type;
-                yield (wt.getExtendsBound() == null || nameableFrom(wt.getExtendsBound(), from, elements))
-                        && (wt.getSuperBound() == null || nameableFrom(wt.getSuperBound(), from, elements));
+                yield (wt.getExtendsBound() == null || nameableFrom(wt.getExtendsBound(), from, elements, readability))
+                        && (wt.getSuperBound() == null || nameableFrom(wt.getSuperBound(), from, elements, readability));
             }
             default -> true;
         };
@@ -323,6 +418,11 @@ public final class InterceptedShapeFromElements {
      * — a package not known — asks for public and exported to all.
      */
     private static boolean nameableFrom(TypeElement candidate, PackageElement from, Elements elements) {
+        return nameableFrom(candidate, from, elements, true);
+    }
+
+    private static boolean nameableFrom(TypeElement candidate, PackageElement from, Elements elements,
+            boolean readability) {
         if (from != null && elements.getPackageOf(candidate).equals(from)) {
             // A private type, or a type nested in one, can be named only in the body of its
             // top-level class (JLS 6.6.1), which a generated class never is (BUG-20261004-09, n11a).
@@ -334,11 +434,23 @@ public final class InterceptedShapeFromElements {
         for (Element e = candidate; e instanceof TypeElement t; e = t.getEnclosingElement()) {
             if (!t.getModifiers().contains(Modifier.PUBLIC)) return false;
         }
+        return exportedTo(candidate, from, elements, readability);
+    }
+
+    /**
+     * Whether {@code candidate}'s module lets code in {@code from} reach its package: the same or an
+     * unnamed module, or one {@code from}'s module reads and that exports the package to it. A
+     * {@code null} {@code from} asks for an export to all. {@code readability} false: the export
+     * only (see {@link #memberSignatureNameableFrom(TypeElement, ExecutableElement, PackageElement,
+     * Elements, Types, boolean)}).
+     */
+    private static boolean exportedTo(TypeElement candidate, PackageElement from, Elements elements,
+            boolean readability) {
         var ownerModule = elements.getModuleOf(candidate);
         var fromModule = from != null ? elements.getModuleOf(from) : null;
         if (ownerModule == null || ownerModule.isUnnamed()
                 || (fromModule != null && ownerModule.equals(fromModule))) return true;
-        if (fromModule != null && !reads(fromModule, ownerModule)) return false;
+        if (readability && fromModule != null && !reads(fromModule, ownerModule)) return false;
         var pkg = elements.getPackageOf(candidate);
         for (var directive : ElementFilter.exportsIn(ownerModule.getDirectives())) {
             if (directive.getPackage().equals(pkg) && (directive.getTargetModules() == null

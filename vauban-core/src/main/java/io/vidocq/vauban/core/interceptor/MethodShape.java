@@ -44,10 +44,19 @@ import java.util.List;
  * ({@code p.Labeled<java.lang.String>} for a bean implementing {@code Labeled<String>}): a rendered
  * subclass may only list it so — a raw {@code implements p.Labeled} is "inherited with different
  * arguments". It is the erased name for a non-generic interface; the bytecode emitter ignores it.</p>
+ *
+ * <p>{@code namesInaccessibleTypes} is {@code true} when a parameter of the descriptor is a class
+ * the generated subclass may not access (JVMS 5.4.4) — a package-private class of another package
+ * (BUG-20261004-09). A descriptor may name it, since the JVM checks no access to the classes a
+ * method descriptor names, but resolving a class constant for it ({@code ldc}, {@code checkcast})
+ * throws {@code IllegalAccessError}: the emitter then loads the bridge's parameter classes by name
+ * and calls the bridge through a method handle. A method whose <em>return</em> type is such a class
+ * is never in a shape: no class outside that package can type the value an interceptor chain
+ * returns.</p>
  */
 public record MethodShape(String name, TypeRef returnType, List<TypeRef> params,
                           TypeRef memberReturnType, List<TypeRef> memberParams, TypeRef defaultOwner,
-                          String defaultOwnerSource) {
+                          String defaultOwnerSource, boolean namesInaccessibleTypes) {
 
     public MethodShape {
         java.util.Objects.requireNonNull(name, "name");
@@ -69,7 +78,7 @@ public record MethodShape(String name, TypeRef returnType, List<TypeRef> params,
     /** A method whose bridge calls {@code super.<name>(…)}, with its member signature. */
     public MethodShape(String name, TypeRef returnType, List<TypeRef> params,
                        TypeRef memberReturnType, List<TypeRef> memberParams) {
-        this(name, returnType, params, memberReturnType, memberParams, null, null);
+        this(name, returnType, params, memberReturnType, memberParams, null, null, false);
     }
 
     /** A method whose member signature is its erased declaration: no type variable is bound. */
@@ -87,6 +96,13 @@ public record MethodShape(String name, TypeRef returnType, List<TypeRef> params,
      * interface written {@code ownerSource} in a rendered subclass ({@code null}: its erased name).
      */
     public MethodShape withDefaultOwner(TypeRef owner, String ownerSource) {
-        return new MethodShape(name, returnType, params, memberReturnType, memberParams, owner, ownerSource);
+        return new MethodShape(name, returnType, params, memberReturnType, memberParams, owner, ownerSource,
+                namesInaccessibleTypes);
+    }
+
+    /** This method, a parameter of its descriptor being a class the generated subclass may not access. */
+    public MethodShape withInaccessibleTypes() {
+        return new MethodShape(name, returnType, params, memberReturnType, memberParams, defaultOwner,
+                defaultOwnerSource, true);
     }
 }
