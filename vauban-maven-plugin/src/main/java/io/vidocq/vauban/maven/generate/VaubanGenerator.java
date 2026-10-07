@@ -387,8 +387,12 @@ public final class VaubanGenerator {
             if (!classFileExists(projectDir, fqn)) continue; // not part of this module
             var ci = index.getClassByName(io.vidocq.vauban.indexer.model.DotName.of(fqn)).orElse(null);
             if (ci == null) continue;
-            // instantiable=true: let ComponentCollector determine the constructor strategy
-            provided.add(new ProvidedClass(fqn, ci, true));
+            // instantiable=true: let ComponentCollector determine the constructor strategy;
+            // intercepted: the provider also creates the $$Intercepted subclass written next to the
+            // bean, as the processor's does — without it, a package exported to the container only
+            // needs `opens` for the container to instantiate it (BUG-20261007-05)
+            provided.add(new ProvidedClass(fqn, ci, true,
+                    classFileExists(config.outputDir(), fqn + "$$Intercepted")));
             if (bean.scope().isNormal()) {
                 clientProxyFqns.add(fqn + "_ClientProxy");
             }
@@ -550,7 +554,9 @@ public final class VaubanGenerator {
             if (fqn.contains("$") || !dependencyClasses.contains(fqn)) continue;
             var ci = index.getClassByName(io.vidocq.vauban.indexer.model.DotName.of(fqn)).orElse(null);
             if (ci == null) continue;
-            provided.add(new ProvidedClass(fqn, ci, true));
+            // As for the project's providers, with the subclass written next to the proxies (BUG-20261007-05).
+            provided.add(new ProvidedClass(fqn, ci, true,
+                    classFileExists(config.outputDir(), fqn + "$$Intercepted")));
             // Only a proxy that exists: a provider must never name a class it cannot load.
             if (bean.scope().isNormal() && classFileExists(config.outputDir(), fqn + "_ClientProxy")) {
                 clientProxyFqns.add(fqn + "_ClientProxy");

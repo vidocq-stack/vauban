@@ -124,6 +124,22 @@ class InterceptedSubclassGenerationTest {
         assertNotPreGenerated(LoggedInterceptor.class);
     }
 
+    @Test
+    @DisplayName("the package's _VaubanComponents creates every subclass it pre-generated (BUG-20261007-05)")
+    void providerListsThePreGeneratedSubclasses() throws IOException {
+        var provider = classFile(ClassBound.class.getPackageName() + "._VaubanComponents");
+        var strings = new java.util.HashSet<String>();
+        for (var entry : java.lang.classfile.ClassFile.of().parse(Files.readAllBytes(provider)).constantPool()) {
+            if (entry instanceof java.lang.classfile.constantpool.StringEntry s) strings.add(s.stringValue());
+        }
+        for (var bean : List.of(ClassBound.class, MethodBound.class, InheritedBound.class,
+                DefaultMethodBound.class, ConstructorBound.class, OwnAroundInvoke.class)) {
+            var name = bean.getName() + "$$Intercepted";
+            assertTrue(strings.contains(name), "the provider must create " + name + "; it knows " + strings);
+        }
+        assertFalse(strings.contains(Plain.class.getName() + "$$Intercepted"));
+    }
+
     private void assertPreGenerated(Class<?> bean) {
         var name = bean.getName() + "$$Intercepted";
         assertTrue(result.generatedInterceptors().contains(name),
