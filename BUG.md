@@ -1681,7 +1681,7 @@ The same goes for a normal-scoped producer of such a class (`Dollar_Produced$$â€
 ## BUG-20261007-02 â€” The bytes of a run-time-generated subclass depend on what the JVM loaded before
 
 - **Date**: 2026-10-07
-- **Status**: FIXED 2026-10-07 (branch `pr/ybl/plugin-pregenerates-every-intercepted-bean`, commit after `9e44af2e`)
+- **Status**: FIXED 2026-10-07 (`b701c528`, branch `pr/ybl/plugin-pregenerates-every-intercepted-bean`)
 - **Module**: `vauban-core` (`InterceptorSubclassGenerator#fromClass`, `RuntimeClientProxyGenerator`), reached at build time through `vauban:generate`
 - **Surfaced by**: the generated-bytes comparison of BUG-20261004-10.
 - **Symptom**: `vauban:generate` run twice over the same input can write a `<Bean>$$Intercepted` whose methods come in another order. Over the interceptor packages of the CDI TCK 4.1.0 jar, `contract/invocationContext/SimpleBean$$Intercepted` lists `testGetTimer` before `testGetMethod` when that package is generated with the 73 others, and the reverse when it is generated alone, on `main` as well. Same members, same size: the class works either way, but the build is not reproducible.
