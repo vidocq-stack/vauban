@@ -22,6 +22,7 @@ package io.vidocq.vauban.maven.generate;
 import io.vidocq.vauban.core.bean.discovery.BeanDiscovery;
 import io.vidocq.vauban.core.bean.model.BeanDescriptor;
 import io.vidocq.vauban.core.bean.model.BeanDescriptor.BeanKind;
+import io.vidocq.vauban.core.interceptor.InterceptionTargets;
 import io.vidocq.vauban.core.interceptor.InterceptorSubclassGenerator;
 import io.vidocq.vauban.core.proxy.RuntimeClientProxyGenerator;
 import io.vidocq.vauban.indexer.IndexBuilder;
@@ -290,11 +291,11 @@ public final class VaubanGenerator {
                     }
                 }
 
-                // Interceptor subclass for managed beans with interceptor bindings
-                // Always generate if not already on disk (APT does not generate these)
-                if (bean.kind() == BeanKind.MANAGED
-                        && !bean.interceptorBindings().isEmpty()
-                        && !java.lang.reflect.Modifier.isFinal(clazz.getModifiers())) {
+                // Interceptor subclass for every managed bean the container would wrap — a class-
+                // level binding, a method-level binding on a business method it declares or inherits,
+                // a constructor binding, or an @AroundInvoke method of its own (BUG-20261004-10) —
+                // unless already on disk: on the strict module path the container cannot define it.
+                if (bean.kind() == BeanKind.MANAGED && carriesInterception(clazz, warnings)) {
                     var interceptorClassName = className + "$$Intercepted";
                     if (!classFileExists(config.outputDir(), interceptorClassName)) {
                         try {
@@ -599,6 +600,20 @@ public final class VaubanGenerator {
             if (baseName.endsWith(suffix)) return true;
         }
         return false;
+    }
+
+    /**
+     * Whether the container may wrap {@code clazz} ({@link InterceptionTargets#carriesInterception}).
+     * Reading its members links the types of their signatures: one the plugin's class path lacks
+     * skips the bean with a warning, as a bean class that cannot be loaded is skipped above.
+     */
+    private static boolean carriesInterception(Class<?> clazz, List<String> warnings) {
+        try {
+            return InterceptionTargets.carriesInterception(clazz);
+        } catch (RuntimeException | LinkageError e) {
+            warnings.add("Cannot inspect " + clazz.getName() + " for interceptor bindings: " + e);
+            return false;
+        }
     }
 
     /** Checks if a generated class file already exists on disk. */

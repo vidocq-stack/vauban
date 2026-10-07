@@ -146,7 +146,7 @@ public final class InterceptorManager {
         this.instanceFactory = factory;
     }
 
-    private void collectBindingsRecursively(java.lang.annotation.Annotation[] annotations,
+    static void collectBindingsRecursively(java.lang.annotation.Annotation[] annotations,
                                             Map<Class<? extends java.lang.annotation.Annotation>, java.lang.annotation.Annotation> result,
                                             Set<Class<? extends java.lang.annotation.Annotation>> visited) {
         for (var ann : annotations) {
@@ -165,7 +165,7 @@ public final class InterceptorManager {
         }
     }
 
-    private Map<Class<? extends java.lang.annotation.Annotation>, java.lang.annotation.Annotation> collectAllBindings(Class<?> beanClass) {
+    static Map<Class<? extends java.lang.annotation.Annotation>, java.lang.annotation.Annotation> collectAllBindings(Class<?> beanClass) {
         var result = new java.util.LinkedHashMap<Class<? extends java.lang.annotation.Annotation>, java.lang.annotation.Annotation>();
         var visited = new java.util.HashSet<Class<? extends java.lang.annotation.Annotation>>();
 
@@ -187,7 +187,7 @@ public final class InterceptorManager {
         return result;
     }
 
-    private boolean isInterceptorBindingViaStereotype(java.lang.annotation.Annotation ann) {
+    private static boolean isInterceptorBindingViaStereotype(java.lang.annotation.Annotation ann) {
         // Check if annotation is a stereotype that carries interceptor bindings
         return ann.annotationType().isAnnotationPresent(jakarta.enterprise.inject.Stereotype.class);
     }
@@ -484,7 +484,7 @@ public final class InterceptorManager {
      * package-private one of another package, is never intercepted, and the processor does not
      * count it either.
      */
-    private void collectDeclarationBindings(Class<?> beanClass, java.lang.reflect.Method method,
+    static void collectDeclarationBindings(Class<?> beanClass, java.lang.reflect.Method method,
             Map<Class<? extends java.lang.annotation.Annotation>, java.lang.annotation.Annotation> bindingsMap) {
         var declaration = BusinessMethods.declarationOf(beanClass, method);
         if (declaration != null && BusinessMethods.isBusinessMethodOf(beanClass, declaration)) {

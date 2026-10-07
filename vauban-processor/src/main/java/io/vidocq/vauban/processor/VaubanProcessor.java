@@ -1573,9 +1573,9 @@ public class VaubanProcessor extends AbstractProcessor {
      * <p>Detection uses the javac {@code Elements} API rather than the indexer model: a custom
      * binding annotation defined in (or brought into) the module isn't necessarily in the Vauban
      * index, but its meta-{@code @InterceptorBinding} is always resolvable from the compiler symbol
-     * table. This also covers method-level bindings, which the Maven plugin (class-level only) misses,
-     * including those of an inherited method: a superclass method or an interface default method the
-     * bean does not override (CDI 4.1 §4.2) — the container intercepts such a bean, and on the strict
+     * table. This also covers method-level bindings, as the Maven plugin does through
+     * {@code InterceptionTargets}, including those of an inherited method: a superclass method or an
+     * interface default method the bean does not override (CDI 4.1 §4.2) — the container intercepts such a bean, and on the strict
      * module path it cannot define the subclass itself.
      */
     private boolean isInterceptedTarget(TypeElement beanElement) {

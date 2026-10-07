@@ -576,59 +576,42 @@ final class InterceptorBeanWrapper {
                 }
 
                 // Why the bean is intercepted, kept for the proxyability errors below: a bean bound
-                // only through a method it inherits carries no binding in its own source.
-                String interceptedBecause = null;
-                var matches = interceptorManager.resolveInterceptorDescriptors(classBindings);
-                if (!matches.isEmpty()) {
-                    interceptedBecause = "its class-level interceptor bindings " + classBindings.stream()
-                            .map(name -> "@" + name.value()).collect(java.util.stream.Collectors.joining(", "));
-                } else {
-                    // A method-level binding on a business method the bean declares or inherits —
-                    // from a superclass or as an interface default method — as long as no class of
-                    // the bean overrides it (CDI 4.1 §4.2): each method is resolved from the bean
-                    // class, exactly as the chain resolves it at invocation time.
-                    var checkClass = beanClass;
-                    while (checkClass != null && checkClass != Object.class && interceptedBecause == null) {
-                        for (var m : checkClass.getDeclaredMethods()) {
-                            if (!interceptorManager.resolveInterceptorDescriptorsForMethod(
-                                    classBindings, beanClass, m).isEmpty()) {
-                                interceptedBecause = interceptorManager.describeMethodBindings(beanClass, m);
-                                break;
+                // only through a method it inherits carries no binding in its own source. The walk is
+                // the one vauban:generate pre-generates the subclass on (InterceptionTargets).
+                final var targetClass = beanClass;
+                final var bindingsOfClass = classBindings;
+                var cause = io.vidocq.vauban.core.interceptor.InterceptionTargets.causeOf(beanClass,
+                        new io.vidocq.vauban.core.interceptor.InterceptionTargets.Bindings() {
+                            @Override
+                            public boolean onClass() {
+                                return !interceptorManager.resolveInterceptorDescriptors(bindingsOfClass).isEmpty();
                             }
-                        }
-                        checkClass = checkClass.getSuperclass();
-                    }
-                    for (var m : beanClass.getMethods()) {
-                        if (interceptedBecause != null) break;
-                        if (m.isDefault() && !interceptorManager.resolveInterceptorDescriptorsForMethod(
-                                classBindings, beanClass, m).isEmpty()) {
-                            interceptedBecause = interceptorManager.describeMethodBindings(beanClass, m);
-                        }
-                    }
-                    if (interceptedBecause == null) {
-                        for (var ctor : beanClass.getDeclaredConstructors()) {
-                            var ctorDescriptors = interceptorManager.resolveInterceptorDescriptorsAroundConstruct(
-                                    classBindings, ctor, (Class<?>) beanClass, java.util.Collections.emptyList());
-                            if (!ctorDescriptors.isEmpty()) {
-                                interceptedBecause = "the interceptor binding of its constructor " + ctor;
-                                break;
+
+                            @Override
+                            public boolean onMethod(java.lang.reflect.Method method) {
+                                return !interceptorManager.resolveInterceptorDescriptorsForMethod(
+                                        bindingsOfClass, targetClass, method).isEmpty();
                             }
-                        }
-                    }
-                    if (interceptedBecause == null) {
-                        var cur = beanClass;
-                        while (cur != null && cur != Object.class && interceptedBecause == null) {
-                            for (var m : cur.getDeclaredMethods()) {
-                                if (m.isAnnotationPresent(jakarta.interceptor.AroundInvoke.class)) {
-                                    interceptedBecause = "its @AroundInvoke method " + cur.getName() + "." + m.getName();
-                                    break;
-                                }
+
+                            @Override
+                            public boolean onConstructor(java.lang.reflect.Constructor<?> constructor) {
+                                return !interceptorManager.resolveInterceptorDescriptorsAroundConstruct(
+                                        bindingsOfClass, constructor, targetClass, java.util.Collections.emptyList())
+                                        .isEmpty();
                             }
-                            cur = cur.getSuperclass();
-                        }
-                    }
-                    if (interceptedBecause == null) continue;
-                }
+                        });
+                if (cause == null) continue;
+                String interceptedBecause = switch (cause) {
+                    case io.vidocq.vauban.core.interceptor.InterceptionTargets.ClassLevel _ ->
+                            "its class-level interceptor bindings " + classBindings.stream()
+                                    .map(name -> "@" + name.value()).collect(java.util.stream.Collectors.joining(", "));
+                    case io.vidocq.vauban.core.interceptor.InterceptionTargets.BoundMethod(var m) ->
+                            interceptorManager.describeMethodBindings(beanClass, m);
+                    case io.vidocq.vauban.core.interceptor.InterceptionTargets.BoundConstructor(var ctor) ->
+                            "the interceptor binding of its constructor " + ctor;
+                    case io.vidocq.vauban.core.interceptor.InterceptionTargets.TargetAroundInvoke(var m) ->
+                            "its @AroundInvoke method " + m.getDeclaringClass().getName() + "." + m.getName();
+                };
 
                 // The bean is actually intercepted (class/method/constructor binding or a target
                 // @AroundInvoke). Only NOW do the proxyability constraints apply: a non-intercepted
