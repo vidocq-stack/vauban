@@ -481,10 +481,9 @@ public class VaubanProcessor extends AbstractProcessor {
 
                 if (bean.scope().isNormal()) {
                     var proxyBeanFqn = bean.beanClass().value();
-                    // getTypeElement wants the canonical name; the index carries the binary one,
-                    // so a nested bean is app.Outer$Inner here and app.Outer.Inner there.
-                    var proxyTypeElement = processingEnv.getElementUtils()
-                            .getTypeElement(proxyBeanFqn.replace('$', '.'));
+                    // The index carries the binary name: a nested bean is app.Outer$Inner, and a
+                    // top-level class may have a '$' in its own name (BUG-20261004-11).
+                    var proxyTypeElement = typeElementByBinaryName(processingEnv.getElementUtils(), proxyBeanFqn);
                     if (proxyTypeElement != null && hasNonPrivateCtor(proxyTypeElement)) {
                         // SOURCE proxy: the sibling _VaubanComponents provider does
                         // `new <Bean>_ClientProxy()` in-module (createClientProxy), so the bean package
@@ -502,13 +501,24 @@ public class VaubanProcessor extends AbstractProcessor {
                                 processingEnv.getElementUtils().getPackageOf(proxyTypeElement),
                                 processingEnv.getElementUtils(), processingEnv.getTypeUtils(),
                                 omitted -> warnOmitted(omitted, proxyTypeElement));
-                        var gen = ClientProxySourceRenderer.render(proxyShape);
+                        var gen = ClientProxySourceRenderer.render(proxyShape,
+                                proxyTypeElement.getQualifiedName().toString());
                         writeSourceFile(gen.className(), gen.source());
                         clientProxyFqns.add(proxyBeanFqn + "_ClientProxy");
+                    } else if (proxyTypeElement != null) {
+                        // Private constructors only: no source can call one, so the proxy is
+                        // bytecode, chaining to the (ProxyLink) constructor the weaver adds (vauban#24);
+                        // the runtime instantiates it reflectively (its package must stay
+                        // opened/exported as before). It sits in the bean's package, so its shape is
+                        // the co-located one: the inherited members and the interface default methods
+                        // are forwarded too, not only the declared ones (BUG-20261004-11).
+                        var shape = ClientProxyShapeFromElements.fromColocated(proxyTypeElement,
+                                processingEnv.getElementUtils(), processingEnv.getTypeUtils());
+                        generateClass(new io.vidocq.vauban.processor.codegen.GeneratedClass(
+                                shape.proxyClassName(), io.vidocq.vauban.core.proxy.ClientProxyEmitter.emit(shape)));
                     } else {
-                        // No accessible constructor, or a type the compiler cannot resolve here:
-                        // keep the bytecode proxy; the runtime instantiates it reflectively (its
-                        // package must stay opened/exported as before).
+                        // A type the compiler cannot resolve here: the bytecode proxy built from the
+                        // index, which forwards the declared methods only.
                         generateClass(ClientProxyGenerator.generate(classInfo));
                     }
                 }
@@ -1644,6 +1654,38 @@ public class VaubanProcessor extends AbstractProcessor {
             return te.getNestingKind() == javax.lang.model.element.NestingKind.TOP_LEVEL;
         }
         return !fqn.contains("$");
+    }
+
+    /**
+     * The type whose binary name is {@code binaryName}, or {@code null}. {@code getTypeElement}
+     * wants the canonical name, which a {@code $} does not tell apart from the binary one: it
+     * separates a nested type from its enclosing type ({@code app.Outer$Inner}, canonically
+     * {@code app.Outer.Inner}), but it may also belong to a type's own name ({@code app.A$B}, a
+     * top-level class). So each top-level candidate is tried, then its member types walked, and the
+     * one whose binary name matches wins (BUG-20261004-11).
+     */
+    static TypeElement typeElementByBinaryName(Elements elements, String binaryName) {
+        for (int end = binaryName.length(); end > 0; end = binaryName.lastIndexOf('$', end - 1)) {
+            var candidate = elements.getTypeElement(binaryName.substring(0, end));
+            if (candidate == null || candidate.getNestingKind() != javax.lang.model.element.NestingKind.TOP_LEVEL) {
+                continue;
+            }
+            var found = memberByBinaryName(elements, candidate, binaryName);
+            if (found != null) return found;
+        }
+        return null;
+    }
+
+    /** {@code type} or the member type of {@code type}, at any depth, whose binary name is {@code binaryName}. */
+    private static TypeElement memberByBinaryName(Elements elements, TypeElement type, String binaryName) {
+        var name = elements.getBinaryName(type).toString();
+        if (name.equals(binaryName)) return type;
+        if (!binaryName.startsWith(name + "$")) return null;
+        for (var member : javax.lang.model.util.ElementFilter.typesIn(type.getEnclosedElements())) {
+            var found = memberByBinaryName(elements, member, binaryName);
+            if (found != null) return found;
+        }
+        return null;
     }
 
     /**

@@ -80,8 +80,22 @@ public final class ClientProxySourceRenderer {
      * package-private members from another package).
      */
     public static Generated renderAt(ClientProxyShape shape, String proxyBinaryName) {
-        String beanBinary = shape.beanBinaryName();
-        String beanSource = beanBinary.replace('$', '.');
+        // The canonical name of a nested bean is its binary name with each '$' turned into '.'.
+        return renderAt(shape, proxyBinaryName, shape.beanBinaryName().replace('$', '.'));
+    }
+
+    /**
+     * Render {@code shape.proxyClassName()} as Java source, naming the bean by
+     * {@code beanSourceName}, its canonical name: a top-level class whose own name contains
+     * {@code $} keeps it there (BUG-20261004-11).
+     */
+    public static Generated render(ClientProxyShape shape, String beanSourceName) {
+        return renderAt(shape, shape.proxyClassName(), beanSourceName);
+    }
+
+    /** {@link #renderAt(ClientProxyShape, String)}, naming the bean by its canonical {@code beanSourceName}. */
+    public static Generated renderAt(ClientProxyShape shape, String proxyBinaryName, String beanSourceName) {
+        String beanSource = beanSourceName;
         String proxyBinary = proxyBinaryName;
         int lastDot = proxyBinaryName.lastIndexOf('.');
         String pkg = lastDot >= 0 ? proxyBinaryName.substring(0, lastDot) : "";

@@ -36,6 +36,13 @@ import java.util.List;
  * to the shared {@link ClientProxyEmitter} — the same emitter the runtime
  * {@code RuntimeClientProxyGenerator} uses from {@code Class<?>}.
  *
+ * <p>The processor uses it only for a bean whose {@code TypeElement} it cannot find: it forwards
+ * the declared methods only, since the index carries a superclass or an interface only when it is
+ * itself indexed. A bean found by its binary name gets the element-built shape instead —
+ * {@link ClientProxyShapeFromElements#from} rendered as source, or
+ * {@link ClientProxyShapeFromElements#fromColocated} emitted as bytecode for a bean with private
+ * constructors only — which forwards the inherited methods too (BUG-20261004-11).
+ *
  * <p>Front-end specifics (captured in the shape DATA, not in a duplicated emitter):
  * <ul>
  *   <li>only methods <em>declared</em> by the bean class are overridden
