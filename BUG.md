@@ -1694,7 +1694,7 @@ The same goes for a normal-scoped producer of such a class (`Dollar_Produced$$â€
 ## BUG-20261007-04 â€” The entry order of a generated `_VaubanComponents` changes from one build to the next
 
 - **Date**: 2026-10-07
-- **Status**: FIXED 2026-10-08 (branch `pr/ybl/plugin-pregenerates-every-intercepted-bean`)
+- **Status**: FIXED 2026-10-08 (`9d06d8c6`, branch `pr/ybl/plugin-pregenerates-every-intercepted-bean`)
 - **Module**: `vauban-indexer` (`ComponentCollector#collect`), its callers `VaubanProcessor` and `VaubanGenerator` (vauban-maven-plugin)
 - **Surfaced by**: BUG-20261007-02 (the generated-bytes comparison).
 - **Symptom**: the processor and `vauban:generate` can write a different `_VaubanComponents` for the same input: the same entries, in another order. Two plugin runs, in two JVMs, over the same fixture directory wrote the components of `ClassBound`, `MethodBound`, `InheritedBound`, â€¦ in two different orders.
@@ -1702,3 +1702,13 @@ The same goes for a normal-scoped producer of such a class (`Dollar_Produced$$â€
 - **Fix direction**: sort where the provider is assembled, on a documented key, without changing the index's iteration order, which bean discovery depends on.
 - **Fix**: `ComponentCollector#collect` sorts the beans by binary name before it groups them, so each package lists its components (a bean's `$$Intercepted` right after it), field injections and method invocations in that order, whatever order the caller hands them in; bean discovery keeps the index order. The other inputs of a provider are sorted where the callers assemble it: the client proxies by name, the producers' proxies by produced-type key then proxy name, the processor's annotation types by name, and the service file's provider names.
 - **Tests**: `ComponentCollectorOrderTest` (vauban-indexer): `entriesInNameOrder` and `sameOutputWhateverTheInputOrder` failed before the fix (RED `bug07-04-red.log`: `expected: <[app.Alpha, app.Alpha$$Intercepted, app.Bravo, app.Charlie]> but was: <[app.Charlie, app.Alpha, app.Alpha$$Intercepted, app.Bravo]>`). End to end: two builds of `vauban-module-it` and `vauban-producer-module-it` with the reactor's processor write the same `_VaubanComponents` sources, classes and service files (8 files); two earlier builds with the processor from the local repository did not (the client-proxy cases and the annotation literals moved). Two `vauban:generate` runs over the same input, in two JVMs, write the same `_VaubanComponents`.
+
+## BUG-20261007-05 â€” The plugin's `_VaubanComponents` does not list the `$$Intercepted` subclasses it pre-generates
+
+- **Date**: 2026-10-07
+- **Status**: OPEN
+- **Module**: `vauban-maven-plugin` (`VaubanGenerator#generateComponentProvider`, `#generateDependencyProviders`)
+- **Surfaced by**: BUG-20261004-10.
+- **Symptom**: the plugin builds every `ProvidedClass` with `intercepted = false`, so `ComponentCollector` never adds a `<Bean>$$Intercepted` component to the provider, although the plugin wrote that subclass next to it. The processor sets the flag for each subclass it renders.
+- **What it costs at run time** (`InterceptorBeanWrapper`): the container finds the pre-generated subclass (`Class.forName`), so it does not define one. It then instantiates it through `instantiatePreferProvider`: the provider has no entry, so it tries `MethodHandles.publicLookup()` on the subclass constructor, which the emitter makes public. That works, without `opens`, when the bean's package is exported to everyone. When the package is exported to `io.vidocq.vauban.core` only (a qualified export), the public lookup is refused and the container falls back to `privateLookupIn`, which needs `opens <pkg> to io.vidocq.vauban.core`: without it, creating the bean fails with "Cannot reflectively access <Bean>$$Intercepted on the module path". So the cost is one reflective constructor call when the package is exported to everyone, and a boot failure without `opens` when the export is qualified.
+- **Fix direction**: set `intercepted` for a bean whose `$$Intercepted` the plugin wrote or found on disk, as the processor does.
