@@ -102,7 +102,7 @@ The user never touches the `_Factory` classes. They call `VaubanContainer.builde
 
 CDI 4.1 introduces Build Compatible Extensions (BCEs): `@Discovery`, `@Enhancement`, `@Registration`, `@Synthesis` and `@Validation` hooks. Vauban runs them in the annotation processor at build time and records the result. At boot, the container runs them only for archives the build did not process, and replays the enhancements the recorded patch does not cover. The tests under `vauban-core/src/test/java/io/vidocq/vauban/core/extensions/` exercise each hook — `BceEnhancementTest`, `BceRegistrationSynthesisTest` and `BceRuntimeReplayTest` among them.
 
-The beans an extension synthesises in the processor travel in `META-INF/vauban-synthetic-metadata.properties`, never in `META-INF/vauban-beans.list`: a synthetic bean has no class of its own for the container to discover.
+The beans an extension synthesises in the processor travel in `META-INF/vauban-synthetic-metadata.properties`, never in `META-INF/vauban-beans.list`: a synthetic bean has no class of its own for the container to discover. [.tag-new]#NEW# The bean list used to name them too, so an application whose extension synthesised a bean of a JDK type (Ravel's, typed `java.lang.String`) failed to boot with a `NullPointerException` (ravel#21).
 
 [#extension-phase]
 === Build time or container start [.tag-new]#NEW#

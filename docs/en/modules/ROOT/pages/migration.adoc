@@ -75,6 +75,19 @@ Lite-profile specifics worth knowing before migrating:
 * **`@Inject` field on a normal scope** — correctly resolves the client proxy (see fix VAU-INJ-001 in link:{repo-vauban}/src/branch/main/BUG.md[BUG.md]).
 * **`InjectionPoint` metadata** — supported.
 
+[#upgrading]
+== Upgrading from Vauban {release-version} [.tag-new]#NEW#
+
+What an application built on Vauban `{release-version}` may notice on the `{project-version}` line. The full list is in xref:whats-new.adoc[What's new].
+
+* **Recompile with the matching processor.** The generated classes live in your archive, so an archive compiled by an earlier processor keeps its old client proxies and intercepted subclasses until it is recompiled. See xref:internals.adoc#intercepted-methods[Which methods the intercepted subclass covers].
+* **More beans are intercepted.** An interceptor binding on an interface default method the bean does not override now applies. A `final` bean class, or a bean with a `final` method, bound only that way now fails with a `DeploymentException`. An unproxyable intercepted bean is reported as a `DeploymentException` in every case, with why it is intercepted, where a `final` class used to raise a `DefinitionException`. See xref:internals.adoc#unproxyable-intercepted[unproxyable intercepted beans].
+* **`@AroundInvoke` no longer wraps `@PostConstruct` / `@PreDestroy`.** A class-level `@Transactional`, `@Retry` or `@Timed` no longer opens a transaction, retries or records a metric around the lifecycle callbacks.
+* **Interceptors see the inherited declaration.** `InvocationContext.getMethod()` returns the superclass or interface method a call runs, not the `$$super$` bridge, and `getInterceptorBindings()` includes that declaration's bindings.
+* **Default name of a nested bean class.** `@Named` without a value on `Outer.ReportService` names the bean `reportService`, no longer `outer$ReportService`. Update any lookup by the old name. See xref:usage.adoc#qualifiers[Qualifiers].
+* **Disposers.** A producer's disposer runs once, no longer twice, and its qualified parameters resolve on their qualifiers. See xref:usage.adoc#producers-and-disposes[Producers and `@Disposes`].
+* **Injection failures propagate.** A failed field injection reaches the caller instead of leaving the field `null`. See xref:internals.adoc#boot-failures[Failures are reported, not swallowed].
+
 == Recommended strategy
 
 . Run the existing code on Vauban in a dedicated branch.
