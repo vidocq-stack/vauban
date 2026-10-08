@@ -190,5 +190,26 @@ class SyntheticMetadataSerializerTest {
                     new ByteArrayInputStream(baos.toByteArray()));
             assertTrue(beans.isEmpty());
         }
+
+        /**
+         * BUG-20261008-01: a build compatible extension run by the processor names a type the compilation is
+         * still producing through the language model ({@code addBean(Object.class).type(langModelType)}); the
+         * runtime must see that type too.
+         */
+        @Test
+        @DisplayName("a class type given through the language model survives the round-trip")
+        void shouldRoundTripALanguageModelClassType() throws IOException {
+            var builder = new VaubanSyntheticBeanBuilder<>(Object.class);
+            builder.type(new io.vidocq.vauban.core.langmodel.types.VaubanClassType(
+                    io.vidocq.vauban.indexer.model.DotName.of("com.example.NotYetCompiledApi"), null));
+            var baos = new ByteArrayOutputStream();
+            SyntheticMetadataSerializer.write(List.of(builder), List.of(), baos);
+
+            var beans = SyntheticMetadataSerializer.readBeans(new ByteArrayInputStream(baos.toByteArray()));
+
+            assertEquals(1, beans.size());
+            assertTrue(beans.getFirst().types().contains("com.example.NotYetCompiledApi"),
+                    beans.getFirst().types().toString());
+        }
     }
 }

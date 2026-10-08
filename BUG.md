@@ -1739,3 +1739,26 @@ The same goes for a normal-scoped producer of such a class (`Dollar_Produced$$�
 - **Cause (from the trace)**: `InterceptorBeanWrapper$1#create` (`InterceptorBeanWrapper.java:824`) resolves the constructor arguments itself, through `QualifierHelper#extractParamQualifiers(Parameter)`, which reads the parameter's annotations reflectively. It does not use the metadata the processor generates for the bean's injection points.
 - **Fix**: `InterceptorBeanWrapper`'s intercepted factory takes each constructor parameter's qualifiers from the bean's descriptor (`VaubanContainer#describedParameterQualifiers`), as `VaubanContainer` does for a bean that is not intercepted, and reads the parameter back only when nothing describes it. This covers both of its constructor paths: with and without an `@AroundConstruct` chain. Interceptor instances built with constructor arguments (`getOrCreateInterceptorInstance`) still read their parameters: they have no bean descriptor there. Not probed.
 - **Tests**: `ConstructorInjectedInterceptedModulePathTest#sourceSubclass` and `#bytecodeSubclass` (vauban-module-it; RED `bug09b/red-ctor.log`: `Forbidden … reading the qualifiers off parameter 0 of …<init>()` for both).
+
+## BUG-20261008-01 — A synthetic bean type given as a language-model type is lost between build time and run time
+
+- **Date**: 2026-10-08
+- **Status**: FIXED (branch pr/ybl/rest-client-module-path)
+- **Affected module**: `vauban-core` (`SyntheticMetadataSerializer.writeBeanBuilder`)
+- **Symptom**: a build compatible extension run by the Vauban processor declares a synthetic bean with
+  `components.addBean(Object.class).type(langModelType)` — the only way to name a type the compilation is still
+  producing, which cannot be loaded. The processor validates the deployment against that type, then writes
+  `META-INF/vauban-synthetic-metadata.properties` with `bean.N.types=java.lang.Object` only: at run time the bean has
+  no other type and every injection point of that type is unsatisfied. Seen with Cyrano's `@RestClient` beans on the
+  Vidocq runtime (`DeploymentException: Unsatisfied dependency: field RelayResource.greetings of type GreetingClient`)
+  after cyrano BUG-20261008-06 made the extension declare them that way.
+- **Minimal repro**: `new VaubanSyntheticBeanBuilder<>(Object.class).type(new VaubanClassType(DotName.of("com.example.Api"), null))`,
+  `SyntheticMetadataSerializer.write(...)`, `readBeans(...)`: the types are `[java.lang.Object]`.
+- **Root cause**: `VaubanSyntheticBeanBuilder.type(Type)` keeps language-model types in `indexTypes`;
+  `writeBeanBuilder` writes `getTypes()` (the `Class` types) only.
+- **Investigations**:
+  - 2026-10-08: `SyntheticMetadataSerializerTest.shouldRoundTripALanguageModelClassType` read back `[java.lang.Object]`.
+    Fixed: a class type given through the language model is written by name with the other types and loaded at run
+    time like them. Parameterized language-model types (`Optional<String>`…) are still not written: the `types` list
+    has no notation for them. With the fix, the Vidocq Rest Client example (Cyrano's `@RestClient` bean, declared at
+    build time) starts and answers on the module path and from its jlink image.

@@ -91,6 +91,15 @@ public final class SyntheticMetadataSerializer {
                 typeNames.add(cls.getName());
             }
         }
+        // Types given through the language model: at build time, the only way to name a class the
+        // compilation is still producing. A class type is written by name and loaded at run time like
+        // the others (BUG-20261008-01); this format has no notation for a parameterized type yet.
+        for (var type : builder.getIndexTypes()) {
+            if (type instanceof io.vidocq.vauban.indexer.model.TypeInfo.ClassType ct
+                    && !typeNames.contains(ct.name().value())) {
+                typeNames.add(ct.name().value());
+            }
+        }
         props.setProperty(prefix + ".types", String.join(",", typeNames));
 
         var qualifierNames = new ArrayList<String>();
