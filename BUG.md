@@ -1798,7 +1798,7 @@ The same goes for a normal-scoped producer of such a class (`Dollar_Produced$$�
 ## BUG-20261008-03 — @Registration does not see the beans that @Enhancement creates
 
 - **Date**: 2026-10-08
-- **Status**: OPEN — Vidocq/vauban#131
+- **Status**: FIXED 2026-10-08 (Vidocq/vauban#131, branch `pr/ybl/registration-after-enhancement`)
 - **Affected module**: `vauban-core` (`BceProcessor`)
 - **Surfaced by**: Foy Phase 2 (`FoyWebExtension`).
 - **Symptom**: an extension adds `@Dependent` in `@Enhancement(types = Object.class, withAnnotations = WebServlet.class)`
@@ -1814,6 +1814,37 @@ The same goes for a normal-scoped producer of such a class (`Dollar_Produced$$�
   classes that end up without a bean, with a WARNING.
 - **Investigations**:
   - 2026-10-08: confirmed on `main` @ `4ce059fa` by reading `BceProcessor`.
+  - 2026-10-08: `BceCompileTimeTest.registrationSeesTheBeansEnhancementCreated` fails on `main` `76f530bc`. The
+    first failure is a different one: `bean.scope().name()` threw a `NullPointerException` in `@Registration`,
+    because `VaubanBceScopeInfo.annotation()` returned `null` for a scope outside the index, which every built-in
+    scope is at build time. A second cause showed when reading `process`: each extension went through all its phases
+    before the next extension started, so an extension's `@Registration` could run before another extension's
+    `@Enhancement`. At container start the bug was masked: the index is rebuilt with the enhanced annotations
+    before discovery (but see BUG-20261008-05).
+- **Fix**: `BceProcessor.process` runs each phase for every extension before the next phase, and hands
+  `@Registration` the beans as `@Enhancement` left them, through `beansAfterEnhancement`. That method is now the one
+  place that applies the enhancements and makes a bean of a class that gained a scope. The processor and the
+  container each had a copy of that code; both copies are gone. `VaubanBceScopeInfo` names a scope outside the index
+  and gives the stub declaration a class type gives. Tests: `BceCompileTimeTest.registrationSeesTheBeansEnhancementCreated`
+  (the extension that registers is listed before the one that enhances), `VaubanBceScopeInfoTest`.
+
+## BUG-20261008-05 — An annotation added by @Enhancement loses its member values
+
+- **Date**: 2026-10-08
+- **Status**: OPEN — Vidocq/vauban#135
+- **Affected module**: `vauban-core` (`VaubanContainerBuilder` index rebuild, `EnhancementPatchSerializer`,
+  `VaubanClassConfig`)
+- **Surfaced by**: the tests of BUG-20261008-03.
+- **Symptom**: `ClassConfig.addAnnotation(NamedLiteral.of("enhanced"))` on a `@Dependent` bean gives the bean its
+  default name, not `enhanced`; a qualifier with members added the same way loses its members. The default name of a
+  nested class on that path keeps the binary simple name (`bceRegistrationAfterEnhancementTest$Plain`).
+- **Minimal repro**: two extensions on `SeContainerInitializer.addBeanClasses`, one adding `@Named("enhanced")` to a
+  bean in `@Enhancement`, the other recording `BeanInfo.name()` in `@Registration`: it records the default name.
+- **Root cause**: at container start, the rebuilt index takes the added annotations from
+  `VaubanClassConfig.getAddedAnnotations()`, which holds their types only, and writes each with no member. At build
+  time, the frozen patch `META-INF/vauban-enhancements.properties` records annotation names only.
+- **Investigations**:
+  - 2026-10-08: found on `pr/ybl/registration-after-enhancement` (based on `main` `76f530bc`).
 
 ## BUG-20261008-04 — Application stereotypes are not bean-defining at build time
 

@@ -298,7 +298,8 @@ public class VaubanProcessor extends AbstractProcessor {
             var bceResult = ExtensionPhase.atBuildTime(() -> BceProcessor.process(bceClasses, beans,
                     observers, interceptors,
                     bceIndex, aptClassLoader,
-                    bceInstances, archiveClasses));
+                    bceInstances, archiveClasses,
+                    name -> bceIndex.getClassByName(name).map(discovery::buildManagedBean).orElse(null)));
 
             // Report BCE errors as compilation errors
             boolean hasErrors = false;
@@ -317,12 +318,11 @@ public class VaubanProcessor extends AbstractProcessor {
 
             // Apply enhancement modifications
             if (!bceResult.enhancementModifications().isEmpty()) {
-                var modified = BceProcessor.applyEnhancements(beans, bceResult.enhancementModifications());
+                // Modified beans, plus the non-beans that gained a scope via Enhancement
+                var modified = BceProcessor.beansAfterEnhancement(beans, bceResult.enhancementModifications(),
+                        name -> bceIndex.getClassByName(name).map(discovery::buildManagedBean).orElse(null));
                 beans.clear();
                 beans.addAll(modified);
-
-                // Promote non-beans that gained a scope via Enhancement
-                promoteEnhancedClasses(beans, bceResult.enhancementModifications(), index, discovery);
 
                 // Freeze the enhancement *result* (target -> added annotation FQNs) so the
                 // runtime applies it WITHOUT re-instantiating the BCE on the module path.
@@ -1322,59 +1322,6 @@ public class VaubanProcessor extends AbstractProcessor {
                     .collect(Collectors.toSet());
             discovery.setForcedBeanClasses(scannedDotNames);
         }
-    }
-
-    private void promoteEnhancedClasses(List<BeanDescriptor> beans,
-                                         Map<DotName, List<VaubanClassConfig>> modifications,
-                                         io.vidocq.vauban.indexer.VaubanIndex index,
-                                         BeanDiscovery discovery) {
-        var existingBeanClasses = beans.stream()
-                .map(BeanDescriptor::beanClass)
-                .collect(Collectors.toSet());
-
-        for (var entry : modifications.entrySet()) {
-            if (existingBeanClasses.contains(entry.getKey())) continue;
-            var enhancedScope = extractEnhancedScope(entry.getValue());
-            if (enhancedScope == null) continue;
-            var classInfo = index.getClassByName(entry.getKey()).orElse(null);
-            if (classInfo == null) continue;
-
-            var newBean = discovery.buildManagedBean(classInfo);
-            newBean = new BeanDescriptor(
-                    newBean.id(), newBean.beanClass(), newBean.kind(), newBean.types(),
-                    newBean.qualifiers(), enhancedScope, newBean.isAlternative(),
-                    newBean.priority(), newBean.injectionPoints(), newBean.name(),
-                    newBean.interceptorBindings(), newBean.constructorBindings(),
-                    newBean.interceptorBindingAnnotations());
-            beans.add(newBean);
-        }
-    }
-
-    private static ScopeInfo extractEnhancedScope(List<VaubanClassConfig> configs) {
-        for (var config : configs) {
-            for (var ann : config.getAddedAnnotations()) {
-                if (ann.isAnnotationPresent(jakarta.enterprise.context.NormalScope.class)) {
-                    return new ScopeInfo(DotName.of(ann.getName()), true);
-                }
-                if (ann.isAnnotationPresent(jakarta.inject.Scope.class)) {
-                    return new ScopeInfo(DotName.of(ann.getName()), false);
-                }
-                String name = ann.getName();
-                if (name.equals("jakarta.enterprise.context.RequestScoped")
-                        || name.equals("jakarta.enterprise.context.ApplicationScoped")
-                        || name.equals("jakarta.enterprise.context.SessionScoped")
-                        || name.equals("jakarta.enterprise.context.ConversationScoped")) {
-                    return new ScopeInfo(DotName.of(name), true);
-                }
-                if (name.equals("jakarta.enterprise.context.Dependent")) {
-                    return ScopeInfo.DEPENDENT;
-                }
-                if (name.equals("jakarta.inject.Singleton")) {
-                    return ScopeInfo.SINGLETON;
-                }
-            }
-        }
-        return null;
     }
 
     // --- Utility methods ---

@@ -170,41 +170,6 @@ final class SyntheticComponentRegistrar {
         }
     }
 
-    /**
-     * Extract the scope added by Enhancement, if any. Returns null if no scope was added.
-     */
-    static io.vidocq.vauban.core.bean.model.ScopeInfo extractEnhancedScope(
-            java.util.List<io.vidocq.vauban.core.extensions.VaubanClassConfig> configs) {
-        for (var config : configs) {
-            for (var ann : config.getAddedAnnotations()) {
-                if (ann.isAnnotationPresent(jakarta.enterprise.context.NormalScope.class)) {
-                    return new io.vidocq.vauban.core.bean.model.ScopeInfo(
-                            DotName.of(ann.getName()), true);
-                }
-                if (ann.isAnnotationPresent(jakarta.inject.Scope.class)) {
-                    return new io.vidocq.vauban.core.bean.model.ScopeInfo(
-                            DotName.of(ann.getName()), false);
-                }
-                // Explicit well-known scope check (for annotations without meta-annotations)
-                String name = ann.getName();
-                if (name.equals("jakarta.enterprise.context.RequestScoped")
-                        || name.equals("jakarta.enterprise.context.ApplicationScoped")
-                        || name.equals("jakarta.enterprise.context.SessionScoped")
-                        || name.equals("jakarta.enterprise.context.ConversationScoped")) {
-                    return new io.vidocq.vauban.core.bean.model.ScopeInfo(
-                            DotName.of(name), true);
-                }
-                if (name.equals("jakarta.enterprise.context.Dependent")) {
-                    return io.vidocq.vauban.core.bean.model.ScopeInfo.DEPENDENT;
-                }
-                if (name.equals("jakarta.inject.Singleton")) {
-                    return io.vidocq.vauban.core.bean.model.ScopeInfo.SINGLETON;
-                }
-            }
-        }
-        return null;
-    }
-
     @SuppressWarnings({"unchecked", "rawtypes"})
     static ObserverDescriptor buildSyntheticObserver(
             io.vidocq.vauban.core.extensions.VaubanSyntheticObserverBuilder<?> synObs) {

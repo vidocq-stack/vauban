@@ -248,6 +248,12 @@ public final class VaubanContainerBuilder {
      * BCE class or target class cannot be resolved are skipped silently (partial JARs,
      * stripped distributions, etc.).
      */
+    /** The managed bean each class of {@code index} would be, for the classes an Enhancement gives a scope. */
+    private static java.util.function.Function<DotName, BeanDescriptor> managedBeans(
+            io.vidocq.vauban.indexer.VaubanIndex index, BeanDiscovery discovery) {
+        return name -> index.getClassByName(name).map(discovery::buildManagedBean).orElse(null);
+    }
+
     private static List<Map.Entry<Class<?>, Class<?>>> loadRuntimeReplayList(ClassLoader cl) {
         var pairs = new ArrayList<Map.Entry<Class<?>, Class<?>>>();
         try {
@@ -755,7 +761,8 @@ public final class VaubanContainerBuilder {
                         bceClasses, descriptors, observers, interceptors, index,
                         bceClassLoader,
                         discoveryResult.bceInstances(),
-                        nonBceClasses);
+                        nonBceClasses,
+                        managedBeans(index, discovery));
 
                 // BCE definition errors → DefinitionException
                 if (!bceResult.definitionErrors().isEmpty()) {
@@ -804,31 +811,13 @@ public final class VaubanContainerBuilder {
 
             // Apply ALL enhancement modifications (replay + full BCE) to descriptors
             if (!combinedEnhMods.isEmpty()) {
-                var modified = io.vidocq.vauban.core.extensions.BceProcessor.applyEnhancements(
-                        descriptors, combinedEnhMods);
+                // Modified beans, plus the non-beans that gained a scope via Enhancement
+                // (e.g. @Path classes that receive @RequestScoped from a BCE)
+                var modified = io.vidocq.vauban.core.extensions.BceProcessor.beansAfterEnhancement(
+                        descriptors, combinedEnhMods,
+                        managedBeans(index, discovery));
                 descriptors.clear();
                 descriptors.addAll(modified);
-
-                // Create beans for non-bean classes that gained a scope via Enhancement
-                // (e.g. @Path classes that receive @RequestScoped from a BCE)
-                var existingBeanClasses = descriptors.stream()
-                        .map(BeanDescriptor::beanClass)
-                        .collect(java.util.stream.Collectors.toSet());
-                for (var entry : combinedEnhMods.entrySet()) {
-                    if (existingBeanClasses.contains(entry.getKey())) continue;
-                    var enhancedScope = SyntheticComponentRegistrar.extractEnhancedScope(entry.getValue());
-                    if (enhancedScope == null) continue;
-                    var classInfo = index.getClassByName(entry.getKey()).orElse(null);
-                    if (classInfo == null) continue;
-                    var newBean = discovery.buildManagedBean(classInfo);
-                    newBean = new BeanDescriptor(
-                            newBean.id(), newBean.beanClass(), newBean.kind(), newBean.types(),
-                            newBean.qualifiers(), enhancedScope, newBean.isAlternative(),
-                            newBean.priority(), newBean.injectionPoints(), newBean.name(),
-                            newBean.interceptorBindings(), newBean.constructorBindings(),
-                            newBean.interceptorBindingAnnotations());
-                    descriptors.add(newBean);
-                }
 
                 interceptors = new ArrayList<>(io.vidocq.vauban.core.extensions.BceProcessor.applyInterceptorEnhancements(
                         interceptors, combinedEnhMods));

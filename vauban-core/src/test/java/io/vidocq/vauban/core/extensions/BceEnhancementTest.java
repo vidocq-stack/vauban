@@ -29,7 +29,6 @@ import org.junit.jupiter.api.Test;
 import java.lang.annotation.Annotation;
 import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
-import java.lang.reflect.Method;
 import java.util.List;
 import java.util.Map;
 
@@ -86,15 +85,9 @@ class BceEnhancementTest {
         return BceTypeMatcher.matchesClass(types, withSubtypes, targetClass);
     }
 
-    /**
-     * Invoke the package-private static extractEnhancedScope(List) via reflection
-     * (the test lives in another package).
-     */
-    private static ScopeInfo invokeExtractEnhancedScope(List<VaubanClassConfig> configs) throws Exception {
-        Class<?> registrar = Class.forName("io.vidocq.vauban.core.container.SyntheticComponentRegistrar");
-        Method m = registrar.getDeclaredMethod("extractEnhancedScope", java.util.List.class);
-        m.setAccessible(true);
-        return (ScopeInfo) m.invoke(null, configs);
+    /** The scope an Enhancement added, as {@link BceProcessor#enhancedScope} reads it. */
+    private static ScopeInfo invokeExtractEnhancedScope(List<VaubanClassConfig> configs) {
+        return BceProcessor.enhancedScope(configs);
     }
 
     /**

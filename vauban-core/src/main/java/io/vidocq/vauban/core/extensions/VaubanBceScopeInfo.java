@@ -20,8 +20,6 @@
 package io.vidocq.vauban.core.extensions;
 
 import io.vidocq.vauban.core.langmodel.IndexLookup;
-import io.vidocq.vauban.core.langmodel.declarations.VaubanClassInfo;
-import io.vidocq.vauban.indexer.model.DotName;
 import jakarta.enterprise.lang.model.declarations.ClassInfo;
 
 /**
@@ -37,14 +35,19 @@ public final class VaubanBceScopeInfo implements jakarta.enterprise.inject.build
         this.lookup = lookup;
     }
 
+    /**
+     * The scope annotation's declaration. A scope from a spec jar (every built-in one, at build time)
+     * is not in the index: the declaration is then the stub a class type gives for a class outside the
+     * index, which names it. It used to be {@code null}, so {@code name()} threw in {@code @Registration}.
+     */
     @Override
     public ClassInfo annotation() {
-        var indexClass = lookup.getClass(scope.annotationName()).orElse(null);
-        if (indexClass != null) {
-            return new VaubanClassInfo(indexClass, lookup);
-        }
-        // Fallback: create a minimal ClassInfo from the annotation name
-        return null;
+        return new io.vidocq.vauban.core.langmodel.types.VaubanClassType(scope.annotationName(), lookup).declaration();
+    }
+
+    @Override
+    public String name() {
+        return scope.annotationName().value();
     }
 
     @Override

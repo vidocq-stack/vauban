@@ -535,6 +535,45 @@ class BceCompileTimeTest {
         }
     }
 
+    /** Registers what it sees; listed before the extension that enhances, which must not matter. */
+    public static class RecordingRegistrationBce implements BuildCompatibleExtension {
+        static final List<String> SEEN = new java.util.concurrent.CopyOnWriteArrayList<>();
+
+        @Registration(types = Object.class)
+        public void registration(BeanInfo bean) {
+            SEEN.add(bean.declaringClass().name() + "@" + bean.scope().name());
+        }
+    }
+
+    /** Makes the classes annotated {@code @Named} beans, as Foy does for {@code @WebServlet}. */
+    public static class DependentEnhancementBce implements BuildCompatibleExtension {
+        @Enhancement(types = Object.class, withAnnotations = jakarta.inject.Named.class)
+        public void addScope(ClassConfig clazz) {
+            clazz.addAnnotation(jakarta.enterprise.context.Dependent.class);
+        }
+    }
+
+    @Test
+    @DisplayName("@Registration of every extension sees the beans @Enhancement created (BUG-20261008-03)")
+    void registrationSeesTheBeansEnhancementCreated() throws IOException {
+        RecordingRegistrationBce.SEEN.clear();
+
+        var result = compileWithBce(
+                List.of(RecordingRegistrationBce.class, DependentEnhancementBce.class),
+                """
+                import jakarta.inject.Named;
+
+                @Named
+                public class Unscoped {
+                }
+                """
+        );
+
+        assertTrue(result.success(), "Compilation should succeed. Messages: " + result.messages());
+        assertTrue(result.readBeansList().contains("Unscoped"), "Precondition: Enhancement made it a bean");
+        assertEquals(List.of("Unscoped@jakarta.enterprise.context.Dependent"), RecordingRegistrationBce.SEEN);
+    }
+
     // ---- Utility methods (same as VaubanProcessorTest) ----
 
     private String extractClassName(String source) {
