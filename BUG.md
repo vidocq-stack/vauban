@@ -1831,20 +1831,33 @@ The same goes for a normal-scoped producer of such a class (`Dollar_Produced$$�
 ## BUG-20261008-05 — An annotation added by @Enhancement loses its member values
 
 - **Date**: 2026-10-08
-- **Status**: OPEN — Vidocq/vauban#135
+- **Status**: FIXED 2026-10-08 (Vidocq/vauban#135, branch `pr/ybl/enhancement-annotation-members`)
 - **Affected module**: `vauban-core` (`VaubanContainerBuilder` index rebuild, `EnhancementPatchSerializer`,
-  `VaubanClassConfig`)
+  `VaubanClassConfig`, `VaubanFieldConfig`, `EnhancementApplier`), `vauban-processor`, `vauban-maven-plugin`
 - **Surfaced by**: the tests of BUG-20261008-03.
 - **Symptom**: `ClassConfig.addAnnotation(NamedLiteral.of("enhanced"))` on a `@Dependent` bean gives the bean its
-  default name, not `enhanced`; a qualifier with members added the same way loses its members. The default name of a
-  nested class on that path keeps the binary simple name (`bceRegistrationAfterEnhancementTest$Plain`).
+  default name, not `enhanced`; a qualifier with members added the same way, to a class or to a field, loses its
+  members, so an injection point that tells two beans apart by a member is unsatisfied. The default name of a nested
+  class on that path keeps the binary simple name (`bceRegistrationAfterEnhancementTest$Plain`).
 - **Minimal repro**: two extensions on `SeContainerInitializer.addBeanClasses`, one adding `@Named("enhanced")` to a
   bean in `@Enhancement`, the other recording `BeanInfo.name()` in `@Registration`: it records the default name.
-- **Root cause**: at container start, the rebuilt index takes the added annotations from
-  `VaubanClassConfig.getAddedAnnotations()`, which holds their types only, and writes each with no member. At build
-  time, the frozen patch `META-INF/vauban-enhancements.properties` records annotation names only.
+- **Root cause**: `VaubanClassConfig.addAnnotation(Annotation)` and `VaubanFieldConfig.addAnnotation(Annotation)`
+  kept the annotation type only. At container start, the rebuilt index wrote each added annotation with no member,
+  through the 8-argument `ClassInfo` constructor that loses the simple name; `addAnnotation(AnnotationInfo)` did not
+  reach it at all. At build time, the frozen patch `META-INF/vauban-enhancements.properties` recorded annotation
+  names only, in the processor and in `vauban:generate`. `EnhancementApplier` built the added qualifiers from their
+  type and never applied an added `@Named` to the bean's name.
 - **Investigations**:
   - 2026-10-08: found on `pr/ybl/registration-after-enhancement` (based on `main` `76f530bc`).
+    `BceEnhancementMembersTest` fails on `main`: `Unsatisfied dependency ... @Channel(value=beta)`.
+- **Fix**: the class and field configs keep the instance an extension gives; `VaubanClassConfig.getAddedAnnotationsIndexed()`
+  gives every added annotation in index form, members included, whichever `addAnnotation` added it. The rebuilt index
+  uses it and `ClassInfo.withAnnotations`, which keeps the simple name. The frozen patch writes each annotation with
+  its members through `SyntheticParamCodec.encodeAnnotation`; the names-only form of earlier builds still reads.
+  `EnhancementApplier` builds added qualifiers from the instance and applies an added `@Named` (its value, or the
+  default name) to the bean and its `@Named` qualifier. Tests: `BceEnhancementMembersTest` (name, default name of a
+  nested class, class and field qualifier members, seen by another extension's `@Registration`),
+  `EnhancementPatchSerializerTest`, `BceCompileTimeTest.frozenPatchKeepsMembers`.
 
 ## BUG-20261008-04 — Application stereotypes are not bean-defining at build time
 

@@ -402,6 +402,41 @@ class BceCompileTimeTest {
                 "Client proxy should be generated (RequestScoped is normal-scoped)");
     }
 
+    /** Names the classes annotated {@code @Named}, at build time, with a value of its own. */
+    public static class RenamingBce implements BuildCompatibleExtension {
+        @Enhancement(types = Object.class, withAnnotations = jakarta.inject.Named.class)
+        public void rename(ClassConfig clazz) {
+            clazz.addAnnotation(jakarta.enterprise.inject.literal.NamedLiteral.of("renamed"));
+        }
+    }
+
+    @Test
+    @DisplayName("the frozen @Enhancement patch keeps the members of an added annotation (BUG-20261008-05)")
+    void frozenPatchKeepsMembers() throws IOException {
+        var result = compileWithBce(
+                List.of(RenamingBce.class),
+                """
+                import jakarta.enterprise.context.ApplicationScoped;
+                import jakarta.inject.Named;
+
+                @ApplicationScoped
+                @Named
+                public class Renamed {
+                }
+                """
+        );
+
+        assertTrue(result.success(), "Compilation should succeed. Messages: " + result.messages());
+        Map<String, List<io.vidocq.vauban.indexer.model.AnnotationInfo>> patch;
+        try (var in = Files.newInputStream(result.outputDir().resolve(
+                io.vidocq.vauban.core.extensions.EnhancementPatchSerializer.PATCH_PATH))) {
+            patch = io.vidocq.vauban.core.extensions.EnhancementPatchSerializer.read(in);
+        }
+        var named = patch.get("Renamed").stream()
+                .filter(a -> a.name().value().equals("jakarta.inject.Named")).findFirst().orElseThrow();
+        assertEquals(new io.vidocq.vauban.indexer.model.AnnotationValue.StringVal("renamed"), named.member("value"));
+    }
+
     @Test
     @DisplayName("an application stereotype with a scope is bean-defining and gives its scope (BUG-20261008-04)")
     void applicationStereotypeIsBeanDefining() throws IOException {

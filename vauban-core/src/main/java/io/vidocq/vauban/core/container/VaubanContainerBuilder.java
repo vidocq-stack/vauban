@@ -299,13 +299,15 @@ public final class VaubanContainerBuilder {
 
     /**
      * Loads the frozen {@code @Enhancement} patch ({@code META-INF/vauban-enhancements.properties})
-     * from every source on the classpath, merged into {@code target -> added annotation DotNames}.
+     * from every source on the classpath, merged into {@code target -> added annotations}, members
+     * included.
      * This is the build-time <em>result</em> of the @Enhancement phases; applying it lets the
      * container skip the reflective BCE replay — and therefore the {@code opens ... to
      * io.vidocq.vauban.core} that replay required on the module path.
      */
-    private static Map<DotName, List<DotName>> loadEnhancementPatch(ClassLoader cl) {
-        var merged = new java.util.LinkedHashMap<DotName, List<DotName>>();
+    private static Map<DotName, List<io.vidocq.vauban.indexer.model.AnnotationInfo>> loadEnhancementPatch(
+            ClassLoader cl) {
+        var merged = new java.util.LinkedHashMap<DotName, List<io.vidocq.vauban.indexer.model.AnnotationInfo>>();
         try {
             var urls = cl.getResources(
                     io.vidocq.vauban.core.extensions.EnhancementPatchSerializer.PATCH_PATH);
@@ -315,8 +317,7 @@ public final class VaubanContainerBuilder {
                     patch.forEach((target, anns) -> {
                         var list = merged.computeIfAbsent(DotName.of(target), _ -> new ArrayList<>());
                         for (var ann : anns) {
-                            var d = DotName.of(ann);
-                            if (!list.contains(d)) list.add(d);
+                            if (!list.contains(ann)) list.add(ann);
                         }
                     });
                 } catch (IOException _) {
@@ -656,24 +657,19 @@ public final class VaubanContainerBuilder {
                     var patched = enhancementPatch.get(classInfo.name());
                     if (mods != null || patched != null) {
                         var newAnnotations = new java.util.ArrayList<>(classInfo.annotations());
+                        // With their members: an added @Named("x") or qualifier member is part of the
+                        // class (BUG-20261008-05).
                         if (mods != null) {
                             for (var config : mods) {
-                                for (var ann : config.getAddedAnnotations()) {
-                                    newAnnotations.add(new io.vidocq.vauban.indexer.model.AnnotationInfo(
-                                            DotName.of(ann.getName()), java.util.Map.of()));
-                                }
+                                newAnnotations.addAll(config.getAddedAnnotationsIndexed());
                             }
                         }
                         if (patched != null) {
-                            for (var ann : patched) {
-                                newAnnotations.add(new io.vidocq.vauban.indexer.model.AnnotationInfo(
-                                        ann, java.util.Map.of()));
-                            }
+                            newAnnotations.addAll(patched);
                         }
-                        enrichedBuilder.add(new io.vidocq.vauban.indexer.model.ClassInfo(
-                                classInfo.name(), classInfo.superName(), classInfo.interfaces(),
-                                classInfo.accessFlags(), classInfo.fields(), classInfo.methods(),
-                                newAnnotations, classInfo.kind()));
+                        // withAnnotations keeps the simple name: a nested class's default bean name
+                        // is not its binary simple name (Outer$Bean)
+                        enrichedBuilder.add(classInfo.withAnnotations(newAnnotations));
                     } else {
                         enrichedBuilder.add(classInfo);
                     }

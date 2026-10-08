@@ -237,8 +237,8 @@ class VaubanGeneratorTest {
         assertTrue(Files.exists(patchFile), "enhancement patch should be written by the plugin");
         try (var is = Files.newInputStream(patchFile)) {
             var patch = io.vidocq.vauban.core.extensions.EnhancementPatchSerializer.read(is);
-            assertTrue(patch.getOrDefault("com.external.HelloResource", List.of())
-                            .contains("jakarta.enterprise.context.RequestScoped"),
+            assertTrue(patch.getOrDefault("com.external.HelloResource", List.of()).stream()
+                            .anyMatch(a -> a.name().value().equals("jakarta.enterprise.context.RequestScoped")),
                     "patch must record the BCE-added @RequestScoped on HelloResource: " + patch);
         }
     }

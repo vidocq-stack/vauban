@@ -32,6 +32,9 @@ public final class VaubanFieldConfig implements FieldConfig {
     private final FieldInfo fieldInfo;
     private final Set<Class<? extends Annotation>> addedAnnotations = new LinkedHashSet<>();
     private final List<AnnotationInfo> addedAnnotationInfos = new ArrayList<>();
+    /** The instances given to {@link #addAnnotation(Annotation)}, which carry member values. */
+    private final java.util.Map<Class<? extends Annotation>, Annotation> addedAnnotationInstances =
+            new java.util.LinkedHashMap<>();
     private final List<Predicate<AnnotationInfo>> removePredicates = new ArrayList<>();
     private boolean allAnnotationsRemoved;
 
@@ -59,6 +62,7 @@ public final class VaubanFieldConfig implements FieldConfig {
     @Override
     public FieldConfig addAnnotation(Annotation annotation) {
         addedAnnotations.add(annotation.annotationType());
+        addedAnnotationInstances.put(annotation.annotationType(), annotation);
         return this;
     }
 
@@ -72,6 +76,14 @@ public final class VaubanFieldConfig implements FieldConfig {
     public FieldConfig removeAllAnnotations() {
         allAnnotationsRemoved = true;
         return this;
+    }
+
+    /**
+     * The instance given to {@link #addAnnotation(Annotation)} for {@code type}, carrying its member
+     * values, or {@code null} when the annotation was added by type only.
+     */
+    public Annotation getAddedAnnotationInstance(Class<? extends Annotation> type) {
+        return addedAnnotationInstances.get(type);
     }
 
     public Set<Class<? extends Annotation>> getAddedAnnotations() {

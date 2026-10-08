@@ -1517,24 +1517,18 @@ public class VaubanProcessor extends AbstractProcessor {
     }
 
     /**
-     * Freezes the {@code @Enhancement} result as a {@code target FQN -> added annotation FQNs}
-     * patch ({@link EnhancementPatchSerializer#PATCH_PATH}). The runtime applies this patch
-     * directly, so it never re-instantiates the BCE — removing the deep-reflection that forced
-     * {@code opens ... to io.vidocq.vauban.core} on the module path.
-     *
-     * <p>Only added annotations expressed as a type are frozen (the runtime applies them as
-     * member-less annotations, matching {@code VaubanClassConfig.getAddedAnnotations()}).
-     * Annotations added with members fall back to the legacy replay list.
+     * Freezes the {@code @Enhancement} result as a {@code target -> added annotations} patch
+     * ({@link EnhancementPatchSerializer#PATCH_PATH}), member values included (BUG-20261008-05). The
+     * runtime applies this patch directly, so it never re-instantiates the BCE — removing the
+     * deep-reflection that forced {@code opens ... to io.vidocq.vauban.core} on the module path.
      */
     private void writeEnhancementsPatch(Map<DotName, List<VaubanClassConfig>> modifications) {
-        var patch = new java.util.TreeMap<String, List<String>>();
+        var patch = new java.util.TreeMap<String, List<io.vidocq.vauban.indexer.model.AnnotationInfo>>();
         for (var entry : modifications.entrySet()) {
-            var added = new java.util.LinkedHashSet<String>();
+            var added = new java.util.LinkedHashSet<io.vidocq.vauban.indexer.model.AnnotationInfo>();
             for (var config : entry.getValue()) {
                 if (!config.isModified()) continue;
-                for (var ann : config.getAddedAnnotations()) {
-                    added.add(ann.getName());
-                }
+                added.addAll(config.getAddedAnnotationsIndexed());
             }
             if (!added.isEmpty()) {
                 patch.put(entry.getKey().value(), List.copyOf(added));

@@ -137,6 +137,19 @@ public final class SyntheticParamCodec {
         return out.toString();
     }
 
+    /**
+     * The text form of an annotation in index form, every member kept; {@link #decodeAnnotation} reads
+     * it back. Shared with the frozen {@code @Enhancement} patch (BUG-20261008-05).
+     */
+    public static String encodeAnnotation(AnnotationInfo info) {
+        return annotation(info);
+    }
+
+    /** The annotation {@link #encodeAnnotation} wrote, in index form. */
+    public static AnnotationInfo decodeAnnotation(String encoded) {
+        return readAnnotation(new Frames(encoded));
+    }
+
     private static String annotation(AnnotationInfo info) {
         var out = new StringBuilder(frame(info.name().value()));
         for (var member : new TreeMap<>(info.members()).entrySet()) {

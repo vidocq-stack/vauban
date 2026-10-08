@@ -223,6 +223,37 @@ final class EnhancementApplier {
         );
     }
 
+    /**
+     * The qualifier an added annotation stands for, with the member values of the instance an
+     * extension gave, when it gave one (BUG-20261008-05).
+     */
+    private static QualifierInstance qualifierOf(Class<? extends Annotation> type, Annotation instance) {
+        return instance != null
+                ? QualifierInstance.from(io.vidocq.vauban.core.annotation.AnnotationValues.infoOf(instance))
+                : new QualifierInstance(DotName.of(type.getName()), Map.of());
+    }
+
+    /**
+     * The name an added {@code @Named} gives the bean — its value, or the default name when it has
+     * none — or {@code null} when the configs add no {@code @Named}.
+     */
+    private static String addedName(List<VaubanClassConfig> configs) {
+        String name = null;
+        for (var config : configs) {
+            for (var info : config.getAddedAnnotationsIndexed()) {
+                if (!info.name().equals(QualifierInstance.NAMED_NAME)) continue;
+                var value = info.member("value") instanceof io.vidocq.vauban.indexer.model.AnnotationValue.StringVal sv
+                        ? sv.value() : "";
+                if (value.isEmpty() && config.info() != null) {
+                    var simpleName = config.info().simpleName();
+                    value = Character.toLowerCase(simpleName.charAt(0)) + simpleName.substring(1);
+                }
+                if (!value.isEmpty()) name = value;
+            }
+        }
+        return name;
+    }
+
     private static BeanDescriptor applyClassConfigs(BeanDescriptor bean, List<VaubanClassConfig> configs) {
         var qualifiers = new LinkedHashSet<>(bean.qualifiers());
         var interceptorBindings = new LinkedHashSet<>(bean.interceptorBindings());
@@ -251,7 +282,7 @@ final class EnhancementApplier {
             for (var ann : config.getAddedAnnotations()) {
                 if (!isQualifierAnnotation(ann)) continue;
                 var qName = DotName.of(ann.getName());
-                qualifiers.add(new QualifierInstance(qName, Map.of()));
+                qualifiers.add(qualifierOf(ann, config.getAddedAnnotationInstance(ann)));
                 if (!qName.equals(QualifierInstance.ANY_NAME) && !qName.equals(QualifierInstance.NAMED_NAME)) {
                     classHasExplicit = true;
                 }
@@ -318,10 +349,20 @@ final class EnhancementApplier {
             qualifiers.add(QualifierInstance.ANY);
         }
 
+        // An added @Named names the bean, and its qualifier carries that name, as discovery gives it
+        var name = bean.name();
+        var addedName = addedName(configs);
+        if (addedName != null) {
+            name = addedName;
+            qualifiers.removeIf(q -> q.annotationName().equals(QualifierInstance.NAMED_NAME));
+            qualifiers.add(new QualifierInstance(QualifierInstance.NAMED_NAME,
+                    Map.of("value", new io.vidocq.vauban.indexer.model.AnnotationValue.StringVal(addedName))));
+        }
+
         return new BeanDescriptor(
                 bean.id(), bean.beanClass(), bean.kind(), bean.types(),
                 qualifiers, bean.scope(), bean.isAlternative(), bean.priority(),
-                injectionPoints, bean.name(), interceptorBindings,
+                injectionPoints, name, interceptorBindings,
                 bean.constructorBindings(), interceptorBindingAnnotations
         );
     }
@@ -345,7 +386,7 @@ final class EnhancementApplier {
             boolean hasExplicitQualifier = false;
             for (var ann : fieldConfig.getAddedAnnotations()) {
                 var qName = DotName.of(ann.getName());
-                ipQualifiers.add(new QualifierInstance(qName, Map.of()));
+                ipQualifiers.add(qualifierOf(ann, fieldConfig.getAddedAnnotationInstance(ann)));
                 if (!qName.equals(QualifierInstance.ANY_NAME) && !qName.equals(QualifierInstance.NAMED_NAME)) {
                     hasExplicitQualifier = true;
                 }
