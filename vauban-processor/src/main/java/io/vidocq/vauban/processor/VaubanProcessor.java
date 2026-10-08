@@ -1597,6 +1597,11 @@ public class VaubanProcessor extends AbstractProcessor {
         } catch (IOException e) {
             processingEnv.getMessager().printMessage(Diagnostic.Kind.WARNING,
                     "[Vauban] Failed to write synthetic metadata: " + e.getMessage());
+        } catch (IllegalArgumentException e) {
+            // A param the run time could not be handed: failing the build beats a creator that
+            // silently receives null (BUG-20261008-02).
+            processingEnv.getMessager().printMessage(Diagnostic.Kind.ERROR,
+                    "[Vauban] Cannot record a synthetic component: " + e.getMessage());
         }
     }
 

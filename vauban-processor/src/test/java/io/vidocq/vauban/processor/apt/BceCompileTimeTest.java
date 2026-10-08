@@ -466,6 +466,75 @@ class BceCompileTimeTest {
                 PhaseRecordingBce.SEEN);
     }
 
+    /**
+     * Test BCE that hands its synthetic bean a param of each kind a build-time extension needs:
+     * class arrays (Foy's servlet index), language-model classes and annotations, array params.
+     */
+    public static class ParamKindsBce implements BuildCompatibleExtension {
+        static jakarta.enterprise.lang.model.declarations.ClassInfo target;
+
+        @Registration(types = Object.class)
+        public void registration(BeanInfo bean) {
+            if (bean.declaringClass().simpleName().equals("ParamTarget")) {
+                target = bean.declaringClass();
+            }
+        }
+
+        @Synthesis
+        public void synthesis(SyntheticComponents components) {
+            components.addBean(String.class)
+                    .type(String.class)
+                    .createWith(TestStringCreator.class)
+                    .withParam("classes", new Class<?>[] {String.class, Integer.class})
+                    .withParam("classInfo", target)
+                    .withParam("classInfos", new jakarta.enterprise.lang.model.declarations.ClassInfo[] {target})
+                    .withParam("annotationInfo", target.annotation(jakarta.inject.Named.class))
+                    .withParam("annotation", jakarta.enterprise.inject.literal.NamedLiteral.of("literal"))
+                    .withParam("strings", new String[] {"a,b", "c"})
+                    .withParam("ints", new int[] {1, 2});
+        }
+    }
+
+    @Test
+    @DisplayName("every withParam value a build-time extension passes reaches the creator (BUG-20261008-02)")
+    void syntheticParamsOfEveryKindSurviveTheBuild() throws Exception {
+        ParamKindsBce.target = null;
+        var result = compileWithBce(
+                List.of(ParamKindsBce.class),
+                """
+                import jakarta.enterprise.context.ApplicationScoped;
+                import jakarta.inject.Named;
+
+                @ApplicationScoped
+                @Named("target")
+                public class ParamTarget {
+                }
+                """
+        );
+        assertTrue(result.success(), "Compilation should succeed. Messages: " + result.messages());
+
+        Map<String, String> written;
+        try (var in = Files.newInputStream(result.outputDir().resolve(SyntheticMetadataSerializer.METADATA_PATH))) {
+            written = SyntheticMetadataSerializer.readBeans(in).getFirst().params();
+        }
+        try (var loader = new java.net.URLClassLoader(new java.net.URL[] {result.outputDir().toUri().toURL()},
+                getClass().getClassLoader())) {
+            var decoded = new LinkedHashMap<String, Object>();
+            written.forEach((key, value) ->
+                    decoded.put(key, io.vidocq.vauban.core.extensions.SyntheticParamCodec.decode(value, loader)));
+            var params = new io.vidocq.vauban.core.extensions.VaubanParameters(decoded);
+            var targetClass = loader.loadClass("ParamTarget");
+
+            assertArrayEquals(new Class<?>[] {String.class, Integer.class}, params.get("classes", Class[].class));
+            assertEquals(targetClass, params.get("classInfo", Class.class));
+            assertArrayEquals(new Class<?>[] {targetClass}, params.get("classInfos", Class[].class));
+            assertEquals("target", params.get("annotationInfo", jakarta.inject.Named.class).value());
+            assertEquals("literal", params.get("annotation", jakarta.inject.Named.class).value());
+            assertArrayEquals(new String[] {"a,b", "c"}, params.get("strings", String[].class));
+            assertArrayEquals(new int[] {1, 2}, params.get("ints", int[].class));
+        }
+    }
+
     // ---- Utility methods (same as VaubanProcessorTest) ----
 
     private String extractClassName(String source) {

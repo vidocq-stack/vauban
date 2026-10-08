@@ -35,60 +35,6 @@ import static org.junit.jupiter.api.Assertions.*;
 @DisplayName("SyntheticMetadataSerializer - serialization of synthetic beans/observers")
 class SyntheticMetadataSerializerTest {
 
-    @Nested
-    @DisplayName("encodeParam / decodeParam - round-trip")
-    class ParamEncoding {
-
-        @Test
-        @DisplayName("String round-trip")
-        void shouldEncodeDecodeString() {
-            var encoded = SyntheticMetadataSerializer.encodeParam("hello");
-            assertEquals("S:hello", encoded);
-            assertEquals("hello", SyntheticMetadataSerializer.decodeParam(encoded));
-        }
-
-        @Test
-        @DisplayName("boolean round-trip")
-        void shouldEncodeDecodeBoolean() {
-            assertEquals("B:true", SyntheticMetadataSerializer.encodeParam(true));
-            assertEquals(true, SyntheticMetadataSerializer.decodeParam("B:true"));
-            assertEquals(false, SyntheticMetadataSerializer.decodeParam("B:false"));
-        }
-
-        @Test
-        @DisplayName("int round-trip")
-        void shouldEncodeDecodeInt() {
-            assertEquals("I:42", SyntheticMetadataSerializer.encodeParam(42));
-            assertEquals(42, SyntheticMetadataSerializer.decodeParam("I:42"));
-        }
-
-        @Test
-        @DisplayName("long round-trip")
-        void shouldEncodeDecodeLong() {
-            assertEquals("L:123456789", SyntheticMetadataSerializer.encodeParam(123456789L));
-            assertEquals(123456789L, SyntheticMetadataSerializer.decodeParam("L:123456789"));
-        }
-
-        @Test
-        @DisplayName("double round-trip")
-        void shouldEncodeDecodeDouble() {
-            assertEquals("D:3.14", SyntheticMetadataSerializer.encodeParam(3.14));
-            assertEquals(3.14, SyntheticMetadataSerializer.decodeParam("D:3.14"));
-        }
-
-        @Test
-        @DisplayName("Class encode returns the FQCN")
-        void shouldEncodeClass() {
-            assertEquals("C:java.lang.String", SyntheticMetadataSerializer.encodeParam(String.class));
-        }
-
-        @Test
-        @DisplayName("null returns null")
-        void shouldReturnNullForNull() {
-            assertNull(SyntheticMetadataSerializer.encodeParam(null));
-            assertNull(SyntheticMetadataSerializer.decodeParam(null));
-        }
-    }
 
     @Nested
     @DisplayName("readBeans - deserialization")

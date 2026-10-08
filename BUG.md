@@ -1743,7 +1743,7 @@ The same goes for a normal-scoped producer of such a class (`Dollar_Produced$$�
 ## BUG-20261008-01 — A synthetic bean type given as a language-model type is lost between build time and run time
 
 - **Date**: 2026-10-08
-- **Status**: FIXED (branch pr/ybl/rest-client-module-path)
+- **Status**: FIXED 2026-10-08 (`ca601963`, branch `pr/ybl/rest-client-module-path`)
 - **Affected module**: `vauban-core` (`SyntheticMetadataSerializer.writeBeanBuilder`)
 - **Symptom**: a build compatible extension run by the Vauban processor declares a synthetic bean with
   `components.addBean(Object.class).type(langModelType)` — the only way to name a type the compilation is still
@@ -1766,7 +1766,7 @@ The same goes for a normal-scoped producer of such a class (`Dollar_Produced$$�
 ## BUG-20261008-02 — A build-time synthetic bean param that is an array, an annotation or a ClassInfo is silently dropped
 
 - **Date**: 2026-10-08
-- **Status**: OPEN — Vidocq/vauban#130
+- **Status**: FIXED 2026-10-08 (Vidocq/vauban#130, branch `pr/ybl/synthetic-param-types`)
 - **Affected module**: `vauban-core` (`SyntheticMetadataSerializer.encodeParam`, `SyntheticComponentRegistrar.applyParam`)
 - **Surfaced by**: Foy Phase 2 (`FoyWebExtension`, foy branch `pr/ybl/servlet-completion-phase2`).
 - **Symptom**: a build compatible extension run by `vauban-processor` calls
@@ -1783,6 +1783,17 @@ The same goes for a normal-scoped producer of such a class (`Dollar_Produced$$�
 - **Investigations**:
   - 2026-10-08: confirmed on `main` @ `4ce059fa` by reading `encodeParam`; observed end to end on `0.4.0-SNAPSHOT`
     from `feat/dependency-providers` @ `7384ac10`.
+  - 2026-10-08: `BceRuntimeParamsTest` (boot from written metadata) fails on `main` `76f530bc`: the creator gets a
+    `String` where it asked for an enum. Reading the boot side showed more of the same: `applyParam` dropped `Class`
+    and `Enum` params too (its switch had no case for them), and the params of a synthetic observer were never
+    applied at all.
+- **Fix**: `SyntheticParamCodec` writes every value `withParam` accepts — primitive, `String`, `Class`, `Enum` and
+  annotation arrays, `ClassInfo` (read back as `Class`), `Annotation` and `AnnotationInfo` (read back as
+  `Annotation`, every member kept), `InvokerInfo` (bean class, method, lookups) — in length-prefixed frames, so a
+  value may hold any character. Earlier files still read. A value of another type fails the build with the bean and
+  the param named; a class the boot cannot load fails the deployment the same way. Observer params are applied, and
+  the duplicate check of synthetic beans compares array params by content. Tests: `SyntheticParamCodecTest`,
+  `BceRuntimeParamsTest`, `BceCompileTimeTest.syntheticParamsOfEveryKindSurviveTheBuild` (Foy's `Class<?>[]`).
 
 ## BUG-20261008-03 — @Registration does not see the beans that @Enhancement creates
 
