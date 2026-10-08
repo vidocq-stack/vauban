@@ -81,6 +81,12 @@
                         <id>default-testCompile</id>
                         <configuration>
                             <proc>none</proc>
+                            <!-- Test-only, as the Surefire argLine below: ModuleLookupModulePathTest
+                                 uses ModuleLookups. -->
+                            <compilerArgs combine.children="append">
+                                <arg>--add-exports</arg>
+                                <arg>io.vidocq.vauban.core/io.vidocq.vauban.core.access=io.vidocq.vauban.moduleit</arg>
+                            </compilerArgs>
                         </configuration>
                     </execution>
                 </executions>
@@ -96,6 +102,9 @@
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-surefire-plugin</artifactId>
                 <configuration>
+                    <!-- Test-only: ModuleLookupModulePathTest calls ModuleLookups, whose package the
+                         container exports to the trusted extension modules alone. -->
+                    <argLine>--add-exports io.vidocq.vauban.core/io.vidocq.vauban.core.access=io.vidocq.vauban.moduleit</argLine>
                     <systemPropertyVariables>
                         <vauban.annotations.reflection>forbid</vauban.annotations.reflection>
                     </systemPropertyVariables>

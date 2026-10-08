@@ -171,7 +171,21 @@ class ComponentProviderGeneratorTest {
                 List.of(),
                 List.of());
 
-        assertFalse(gen.source().contains("invoke"), gen.source());
+        // The grantModuleLookup body names java.lang.invoke, so look for the method itself.
+        assertFalse(gen.source().contains("public Object invoke("), gen.source());
+    }
+
+    @Test
+    @DisplayName("grantModuleLookup() hands the provider's own lookup to the container's grant")
+    void grantsItsOwnLookup() {
+        var gen = ComponentProviderGenerator.generateFrom("app",
+                List.of(new Component("app.Foo", List.of())),
+                List.of(),
+                List.of());
+
+        var s = gen.source();
+        assertTrue(s.contains("public void grantModuleLookup(io.vidocq.vauban.api.ModuleLookupGrant grant) {"), s);
+        assertTrue(s.contains("grant.accept(java.lang.invoke.MethodHandles.lookup());"), s);
     }
 
     @Test

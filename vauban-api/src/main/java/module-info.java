@@ -21,4 +21,7 @@ module io.vidocq.vauban.api {
     requires transitive jakarta.cdi;
 
     exports io.vidocq.vauban.api;
+
+    // Only the container may create a ModuleLookupGrant, i.e. ask a generated provider for its lookup.
+    exports io.vidocq.vauban.api.access to io.vidocq.vauban.core;
 }

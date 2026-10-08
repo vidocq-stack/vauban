@@ -549,6 +549,7 @@ public final class VaubanContainerBuilder {
         }
 
         io.vidocq.vauban.core.extensions.BceProcessor.DiscoveryResult discoveryResult = null;
+        var extensionAddedClasses = new ArrayList<Class<?>>();
         if (!bceClasses.isEmpty()) {
             var tempIndex = indexBuilder.build();
             var tempLookup = new io.vidocq.vauban.core.langmodel.IndexLookup(tempIndex);
@@ -561,6 +562,7 @@ public final class VaubanContainerBuilder {
                     // A class an extension added is part of the deployment from now on: the
                     // later extension phases resolve it by identity, not by loading it again.
                     bceClassLoader.register(cls);
+                    extensionAddedClasses.add(cls);
                     String resource = className.replace('.', '/') + ".class";
                     try (var is = discoveryClassLoader.getResourceAsStream(resource)) {
                         if (is != null) {
@@ -578,6 +580,13 @@ public final class VaubanContainerBuilder {
         }
 
         var index = indexBuilder.build();
+
+        // Extensions trusted with the managed classes' lookups (ModuleLookups) may ask from the
+        // @Enhancement phase on; the container withdraws them at shutdown, a failed build right away.
+        var moduleLookups = io.vidocq.vauban.core.access.ModuleLookups.register(
+                componentProviders.providers(), beanClasses);
+        extensionAddedClasses.forEach(moduleLookups::addManagedClass);
+        boolean built = false;
 
         // Validate class-level CDI rules (before bean discovery)
         try {
@@ -940,8 +949,13 @@ public final class VaubanContainerBuilder {
                 }
             }
 
+            container.withdrawOnClose(moduleLookups);
+            built = true;
             return container;
         } finally {
+            if (!built) {
+                moduleLookups.close();
+            }
             Thread.currentThread().setContextClassLoader(previousCl);
         }
     }

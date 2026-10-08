@@ -747,6 +747,24 @@ xref:se.adoc[Vauban in Java SE], _Limits_).
 Project Leyden CDS and `jlink` images are unaffected: every byte is produced at build time, and the
 Vauban layer reads modules straight from a runtime image.
 
+[[module-lookups]]
+== Module lookups for trusted extensions [.tag-new]#NEW#
+
+Some extensions must call a member the application never opened. MicroProfile Fault Tolerance is the first: `@Fallback(fallbackMethod = "recover")` may name a `private` method, and the implementation lives in another module. Without help it needs `opens <package> to <extension>`, which is exactly what Vauban removes everywhere else.
+
+`io.vidocq.vauban.core.access.ModuleLookups.lookupFor(Class<?>)` returns an `Optional<MethodHandles.Lookup>`: a full-privilege lookup on that one class, so the extension can `findSpecial` / `findVirtual` the member and nothing else needs to change.
+
+Where the lookup comes from::
+The generated `_VaubanComponents` of the class's own package. It is written by the processor, or by `vauban:generate` / `vauban:enhance-dependencies` into the completed dependency's package, so in both cases it belongs to the class's module. Its `grantModuleLookup(ModuleLookupGrant)` does `grant.accept(MethodHandles.lookup())`. The container keeps that lookup only if its lookup class is the provider itself and it has full privilege. It then hands out `privateLookupIn(managedClass, providerLookup)`, which is legal without any read edge or `opens` because both are in the same module. The application writes nothing and opens nothing: shipping the generated provider is the consent, as it already is for in-module instantiation and field injection.
+
+What is handed out::
+A lookup only for a class the running container, or the container being built, manages, whose package has a generated provider granting one. Nothing for any other class, and nothing once that container is closed. A deployment is registered once its providers are loaded, so build compatible extensions can already ask during `@Enhancement`.
+
+Who may ask::
+Only the modules named in `io.vidocq.vauban.core`'s qualified `exports io.vidocq.vauban.core.access to …`. Today that is `io.vidocq.heisenberg.cdi.vauban`. A new consumer is added there, by name, in review. A provider hands its lookup over only through a `ModuleLookupGrant`, and only the container can create one: the factory sits in `io.vidocq.vauban.api.access`, exported to `io.vidocq.vauban.core` alone. Code that reaches a provider through `ServiceLoader` cannot make it give its lookup away. On the class path every module is unnamed and nothing of this is enforced, but nothing is encapsulated there anyway.
+
+Providers generated before this method existed grant nothing; the extension keeps its own fallback (for Heisenberg, an `opens` to `io.vidocq.heisenberg.core`).
+
 == Exported Java modules
 
 [cols="2,3"]
@@ -757,7 +775,7 @@ Vauban layer reads modules straight from a runtime image.
 | `io.vidocq.vauban.api` (`Vauban` version marker, `ProxyLink`, `VaubanComponentProvider`)
 
 | `io.vidocq.vauban.core`
-| `io.vidocq.vauban.core.container`, `io.vidocq.vauban.core.bean.model`, `io.vidocq.vauban.core.context`, `io.vidocq.vauban.core.event`, `io.vidocq.vauban.core.interceptor`, `io.vidocq.vauban.core.extensions`
+| `io.vidocq.vauban.core.container`, `io.vidocq.vauban.core.bean.model`, `io.vidocq.vauban.core.context`, `io.vidocq.vauban.core.event`, `io.vidocq.vauban.core.interceptor`, `io.vidocq.vauban.core.extensions`; `io.vidocq.vauban.core.access` to the trusted extension modules only (xref:#module-lookups[module lookups])
 
 | `io.vidocq.vauban.indexer`
 | `io.vidocq.vauban.indexer`, `io.vidocq.vauban.indexer.codegen`, `io.vidocq.vauban.indexer.model`, `io.vidocq.vauban.indexer.scanner`

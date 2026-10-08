@@ -363,6 +363,13 @@ public final class ComponentProviderGenerator {
             sb.append("    }\n");
         }
 
+        // grantModuleLookup(): the provider's own lookup, handed to the container through a grant only the
+        // container can create; it passes it on for this package's managed classes (ModuleLookups).
+        sb.append("    @Override\n");
+        sb.append("    public void grantModuleLookup(io.vidocq.vauban.api.ModuleLookupGrant grant) {\n");
+        sb.append("        grant.accept(java.lang.invoke.MethodHandles.lookup());\n");
+        sb.append("    }\n");
+
         // coverage(): what this provider runs in-module, from the same lists as the switches above, so the
         // declaration cannot diverge from the dispatch. Diagnostics only (Vidocq dev console).
         var proxyKeys = new java.util.ArrayList<>(clientProxyFqns);

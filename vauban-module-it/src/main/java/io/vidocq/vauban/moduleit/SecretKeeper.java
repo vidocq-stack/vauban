@@ -17,22 +17,17 @@
  *
  * SPDX-License-Identifier: EPL-2.0 OR EUPL-1.2 OR GPL-2.0-or-later
  */
-package vauban.plugin.it.beans;
+package io.vidocq.vauban.moduleit;
 
 import jakarta.enterprise.context.Dependent;
-import vauban.plugin.it.api.Service;
 
-/** Bound only through a method it declares (BUG-20261004-10). */
+/**
+ * A bean with a private method only an extension holding the module's own lookup can reach —
+ * the package is not open to any module ({@code ModuleLookupModulePathTest}).
+ */
 @Dependent
-public class MethodBoundService implements Service {
+public class SecretKeeper {
 
-    @Override
-    @Audited
-    public String write(String text) {
-        return "wrote " + text;
-    }
-
-    /** Reached only through the lookup the container hands an extension (ModuleLookups). */
     private String secret(String name) {
         return "secret of " + name;
     }
