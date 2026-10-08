@@ -1762,3 +1762,63 @@ The same goes for a normal-scoped producer of such a class (`Dollar_Produced$$�
     time like them. Parameterized language-model types (`Optional<String>`…) are still not written: the `types` list
     has no notation for them. With the fix, the Vidocq Rest Client example (Cyrano's `@RestClient` bean, declared at
     build time) starts and answers on the module path and from its jlink image.
+
+## BUG-20261008-02 — A build-time synthetic bean param that is an array, an annotation or a ClassInfo is silently dropped
+
+- **Date**: 2026-10-08
+- **Status**: OPEN — Vidocq/vauban#130
+- **Affected module**: `vauban-core` (`SyntheticMetadataSerializer.encodeParam`, `SyntheticComponentRegistrar.applyParam`)
+- **Surfaced by**: Foy Phase 2 (`FoyWebExtension`, foy branch `pr/ybl/servlet-completion-phase2`).
+- **Symptom**: a build compatible extension run by `vauban-processor` calls
+  `SyntheticBeanBuilder.withParam("classes", Class<?>[])`; at run time the creator's
+  `Parameters.get("classes", Class[].class)` is `null`, and nothing is reported at build time (no `.param.classes=`
+  line in `META-INF/vauban-synthetic-metadata.properties`). CDI 4.1 Lite requires every `withParam` overload to reach
+  the creator: primitive and `String`/`Class`/`Enum` arrays, `ClassInfo`, `AnnotationInfo`/`Annotation`, `InvokerInfo`.
+- **Minimal repro**: `@Synthesis` with `syn.addBean(X.class).type(X.class).withParam("classes", new Class<?>[]{String.class}).createWith(Creator.class)`,
+  compiled with `vauban-processor`, then booted: `Creator` receives `null`. Pinned by foy's spike test
+  `BceCapabilitySpikeTest.synthesisWithClassArrayParam` (foy `383b850`).
+- **Root cause**: `encodeParam` (`main` @ `4ce059fa`, ~l.158-168) encodes `String`, `Boolean`, `Integer`, `Long`,
+  `Double`, `Class`, `Enum` and returns `null` ("unsupported param type — skipped") for everything else.
+- **Workaround (Foy)**: one `String` param of comma-joined binary names, split by the creator.
+- **Investigations**:
+  - 2026-10-08: confirmed on `main` @ `4ce059fa` by reading `encodeParam`; observed end to end on `0.4.0-SNAPSHOT`
+    from `feat/dependency-providers` @ `7384ac10`.
+
+## BUG-20261008-03 — @Registration does not see the beans that @Enhancement creates
+
+- **Date**: 2026-10-08
+- **Status**: OPEN — Vidocq/vauban#131
+- **Affected module**: `vauban-core` (`BceProcessor`)
+- **Surfaced by**: Foy Phase 2 (`FoyWebExtension`).
+- **Symptom**: an extension adds `@Dependent` in `@Enhancement(types = Object.class, withAnnotations = WebServlet.class)`
+  to an unscoped `@WebServlet` class. The class becomes a bean (listed in `vauban-beans.list`, resolvable at run time),
+  but the extension's `@Registration(types = Servlet.class)` method is never called for it. CDI 4.1 Lite runs
+  Registration on the bean set as it stands after Enhancement.
+- **Minimal repro**: foy `FoyWebExtensionTest.scopesAndIndex` (foy-cdi-vauban) before Foy's workaround — the index built
+  in `@Registration` held only the class that already had a scope.
+- **Root cause**: `BceProcessor` (`main` @ `4ce059fa`, ~l.229-234) passes the same pre-enhancement `beans` list (from
+  discovery) to `processEnhancement` and `processRegistration`; the enhancement modifications are applied to the
+  descriptors afterwards (`applyEnhancements`).
+- **Workaround (Foy)**: `FoyWebExtension` also records the classes it sees in `@Enhancement`; foy-core skips listed
+  classes that end up without a bean, with a WARNING.
+- **Investigations**:
+  - 2026-10-08: confirmed on `main` @ `4ce059fa` by reading `BceProcessor`.
+
+## BUG-20261008-04 — Application stereotypes are not bean-defining at build time
+
+- **Date**: 2026-10-08
+- **Status**: OPEN — Vidocq/vauban#132
+- **Affected module**: `vauban-processor` (indexing / bean-defining annotations), `vauban-core` (stereotype scope)
+- **Surfaced by**: Foy Phase 2 (`FoyWebExtension`, fix round of Task 2.10).
+- **Symptom**: with `vauban-processor`, (1) a class whose only CDI annotation is an application stereotype
+  (`@Stereotype @ApplicationScoped @interface Managed`) is not indexed — no bean — although a scoped stereotype is
+  bean-defining (CDI 4.1 §2.5.1, §2.8); (2) a class indexed for another reason and carrying that stereotype gets
+  `@Dependent` instead of the stereotype's `@ApplicationScoped`. Same result with the stereotype in the same compilation
+  or in a separate library jar.
+- **Minimal repro**: a `@WebServlet @Managed` class plus a control class carrying only `@Managed`, compiled with
+  `vauban-processor` + foy-cdi-vauban on the processor path: the first is a `@Dependent` bean, the second is no bean.
+  (Foy dropped the harness tests and covers its logic with `FoyWebExtensionScopeTest`.)
+- **Root cause**: not investigated.
+- **Investigations**:
+  - 2026-10-08: observed on `0.4.0-SNAPSHOT` from `feat/dependency-providers` @ `7384ac10`; not re-run on `main`
+    (`main` gained build-time annotation-type indexing in vauban#70, which may change part (2)).
