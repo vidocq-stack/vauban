@@ -136,6 +136,11 @@ class BceCompileTimeTest {
     // ---- Helper: compile with the processor and an injected BCE ----
 
     private CompilationResult compileWithBce(List<Class<?>> bceClasses, String... sources) throws IOException {
+        return compileWithBce(bceClasses, List.of(), sources);
+    }
+
+    private CompilationResult compileWithBce(List<Class<?>> bceClasses, List<Path> extraClasspath,
+                                             String... sources) throws IOException {
         var compiler = ToolProvider.getSystemJavaCompiler();
         var diagnostics = new DiagnosticCollector<JavaFileObject>();
 
@@ -165,6 +170,9 @@ class BceCompileTimeTest {
         Files.createDirectories(outputDir);
 
         var classpath = resolveCompilationClasspath();
+        for (var entry : extraClasspath) {
+            classpath = entry + File.pathSeparator + classpath;
+        }
 
         var options = List.of(
                 "-d", outputDir.toString(),
@@ -392,6 +400,116 @@ class BceCompileTimeTest {
                 "Factory should be generated for promoted bean");
         assertTrue(result.hasFile("HelloResource_ClientProxy.class"),
                 "Client proxy should be generated (RequestScoped is normal-scoped)");
+    }
+
+    @Test
+    @DisplayName("an application stereotype with a scope is bean-defining and gives its scope (BUG-20261008-04)")
+    void applicationStereotypeIsBeanDefining() throws IOException {
+        var result = compileWithBce(
+                List.of(),
+                """
+                package app;
+
+                import jakarta.enterprise.context.ApplicationScoped;
+                import jakarta.enterprise.inject.Stereotype;
+                import java.lang.annotation.*;
+
+                @Stereotype
+                @ApplicationScoped
+                @Retention(RetentionPolicy.RUNTIME)
+                @Target(ElementType.TYPE)
+                public @interface Managed {
+                }
+                """,
+                """
+                package app;
+
+                @Managed
+                public class OnlyStereotyped {
+                    public String hello() { return "hello"; }
+                }
+                """,
+                """
+                package app;
+
+                import jakarta.enterprise.inject.Produces;
+
+                @Managed
+                public class WithProducer {
+                    public String hello() { return "hello"; }
+
+                    @Produces
+                    Integer answer() { return 42; }
+                }
+                """
+        );
+
+        assertTrue(result.success(), "Compilation should succeed. Messages: " + result.messages());
+        var beans = result.readBeansList();
+        assertTrue(beans.contains("app.OnlyStereotyped"), "a class whose only annotation is the stereotype: " + beans);
+        assertTrue(beans.contains("app.WithProducer"), "a class indexed through its producer: " + beans);
+        // Normal-scoped beans get a client proxy; a @Dependent one gets none.
+        assertTrue(result.hasFile("app/OnlyStereotyped_ClientProxy.class"), "OnlyStereotyped is @ApplicationScoped");
+        assertTrue(result.hasFile("app/WithProducer_ClientProxy.class"), "WithProducer is @ApplicationScoped");
+    }
+
+    @Test
+    @DisplayName("an application stereotype from a library on the class path is bean-defining too (BUG-20261008-04)")
+    void libraryStereotypeIsBeanDefining() throws IOException {
+        var library = tempDir.resolve("library");
+        Files.createDirectories(library.resolve("lib"));
+        var stereotype = library.resolve("lib/Managed.java");
+        Files.writeString(stereotype, """
+                package lib;
+
+                import jakarta.enterprise.context.ApplicationScoped;
+                import jakarta.enterprise.inject.Stereotype;
+                import java.lang.annotation.*;
+
+                @Stereotype
+                @ApplicationScoped
+                @Retention(RetentionPolicy.RUNTIME)
+                @Target(ElementType.TYPE)
+                public @interface Managed {
+                }
+                """);
+        var compiled = ToolProvider.getSystemJavaCompiler().run(null, null, null,
+                "-proc:none", "--release", "25", "-classpath", resolveCompilationClasspath(),
+                "-d", library.toString(), stereotype.toString());
+        assertEquals(0, compiled, "Precondition: the library compiles");
+
+        var result = compileWithBce(
+                List.of(),
+                List.of(library),
+                """
+                package app;
+
+                @lib.Managed
+                public class OnlyStereotyped {
+                    public String hello() { return "hello"; }
+                }
+                """,
+                """
+                package app;
+
+                import jakarta.enterprise.inject.Produces;
+
+                @lib.Managed
+                public class WithProducer {
+                    public String hello() { return "hello"; }
+
+                    @Produces
+                    Integer answer() { return 42; }
+                }
+                """
+        );
+
+        assertTrue(result.success(), "Compilation should succeed. Messages: " + result.messages());
+        var beans = result.readBeansList();
+        assertTrue(beans.contains("app.OnlyStereotyped"), "a class whose only annotation is the stereotype: " + beans);
+        assertTrue(beans.contains("app.WithProducer"), "a class indexed through its producer: " + beans);
+        assertTrue(result.hasFile("app/OnlyStereotyped_ClientProxy.class"), "OnlyStereotyped is @ApplicationScoped");
+        assertTrue(result.hasFile("app/WithProducer_ClientProxy.class"), "WithProducer is @ApplicationScoped");
     }
 
     @Test

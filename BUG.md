@@ -1849,7 +1849,7 @@ The same goes for a normal-scoped producer of such a class (`Dollar_Produced$$â€
 ## BUG-20261008-04 â€” Application stereotypes are not bean-defining at build time
 
 - **Date**: 2026-10-08
-- **Status**: OPEN â€” Vidocq/vauban#132
+- **Status**: FIXED 2026-10-08 (Vidocq/vauban#132, branch `pr/ybl/stereotype-bean-defining`)
 - **Affected module**: `vauban-processor` (indexing / bean-defining annotations), `vauban-core` (stereotype scope)
 - **Surfaced by**: Foy Phase 2 (`FoyWebExtension`, fix round of Task 2.10).
 - **Symptom**: with `vauban-processor`, (1) a class whose only CDI annotation is an application stereotype
@@ -1864,3 +1864,14 @@ The same goes for a normal-scoped producer of such a class (`Dollar_Produced$$â€
 - **Investigations**:
   - 2026-10-08: observed on `0.4.0-SNAPSHOT` from `feat/dependency-providers` @ `7384ac10`; not re-run on `main`
     (`main` gained build-time annotation-type indexing in vauban#70, which may change part (2)).
+  - 2026-10-08: `BceCompileTimeTest.applicationStereotypeIsBeanDefining` fails on `main` `76f530bc` with part (1):
+    the class carrying only the stereotype is not in the bean list. Root cause: the processor only looked at the
+    classes carrying an annotation of a fixed list (`ApplicationScoped`, `RequestScoped`, `Dependent`, `Singleton`,
+    `Produces`, `Interceptor`) plus the extensions' triggers, so a class whose only bean-defining annotation was a
+    stereotype, a custom scope, `@SessionScoped` or `@Model` never entered the index. Part (2) no longer reproduces
+    on `main`: a class indexed through its producer gets the stereotype's `@ApplicationScoped`, with the stereotype
+    in the same compilation or in a library (the annotation-type indexing of vauban#70 sees it).
+- **Fix**: the processor supports every annotation (`*`, never claimed) and indexes a class carrying one of the fixed
+  list, an extension trigger, or an annotation meta-annotated `@Stereotype`, `@NormalScope` or `@Scope`. Tests:
+  `BceCompileTimeTest.applicationStereotypeIsBeanDefining`, `libraryStereotypeIsBeanDefining` (stereotype compiled
+  separately, on the class path); both also check that the beans are normal-scoped (they get a client proxy).

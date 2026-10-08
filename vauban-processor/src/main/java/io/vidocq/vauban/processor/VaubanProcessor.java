@@ -111,6 +111,12 @@ public class VaubanProcessor extends AbstractProcessor {
             "jakarta.interceptor.Interceptor"
     );
 
+    /** The meta-annotations that make an annotation bean-defining: stereotypes and scopes. */
+    private static final Set<String> BEAN_DEFINING_META_ANNOTATIONS = Set.of(
+            "jakarta.enterprise.inject.Stereotype",
+            "jakarta.enterprise.context.NormalScope",
+            "jakarta.inject.Scope");
+
     private static final String BEANS_LIST_PATH = "META-INF/vauban-beans.list";
     private static final String REQUIRED_OPENS_PATH = "META-INF/vauban/required-opens.list";
     /** Where the co-located proxy bytes of a listed produced type are shipped (#42 Stage 4). */
@@ -172,13 +178,34 @@ public class VaubanProcessor extends AbstractProcessor {
         bceAnnotationTypes = extractBceAnnotationTypes(discoveredBceClasses);
     }
 
+    /**
+     * Every annotation: whether an annotation makes a class a bean can depend on the annotation's own
+     * meta-annotations — an application stereotype or a custom scope, which no fixed list can name
+     * (BUG-20261008-04). {@link #isIndexTrigger} picks the ones that matter. The processor never claims
+     * an annotation, so other processors still see them all.
+     */
     @Override
     public Set<String> getSupportedAnnotationTypes() {
-        var types = new LinkedHashSet<>(CDI_ANNOTATIONS);
-        // Trigger annotations derived from BCE @Enhancement(withAnnotations=...)
-        // Replaces vauban-apt.properties — the BCE declares its own triggers
-        types.addAll(bceAnnotationTypes);
-        return Set.copyOf(types);
+        return Set.of("*");
+    }
+
+    /**
+     * Whether a class carrying {@code annotation} enters the index: a CDI annotation of the fixed
+     * list, a trigger an extension declares in {@code @Enhancement(withAnnotations=...)}, or an
+     * annotation that is a stereotype or a scope (CDI 4.1 §2.5.1: those are bean-defining).
+     */
+    private boolean isIndexTrigger(TypeElement annotation) {
+        var name = annotation.getQualifiedName().toString();
+        if (CDI_ANNOTATIONS.contains(name) || bceAnnotationTypes.contains(name)) {
+            return true;
+        }
+        for (var meta : annotation.getAnnotationMirrors()) {
+            var metaName = ((TypeElement) meta.getAnnotationType().asElement()).getQualifiedName().toString();
+            if (BEAN_DEFINING_META_ANNOTATIONS.contains(metaName)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**
@@ -218,6 +245,7 @@ public class VaubanProcessor extends AbstractProcessor {
         // Accumulate types annotated this round into the cross-round index.
         var scanner = new ElementScanner(processingEnv.getElementUtils(), processingEnv.getTypeUtils());
         for (var annotation : annotations) {
+            if (!isIndexTrigger(annotation)) continue;
             for (var element : roundEnv.getElementsAnnotatedWith(annotation)) {
                 if (element instanceof TypeElement typeElement) {
                     var name = DotName.of(typeElement.getQualifiedName().toString());

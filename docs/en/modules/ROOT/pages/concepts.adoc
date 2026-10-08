@@ -10,7 +10,7 @@ A _bean_ is a class managed by the container: its lifecycle, its dependency reso
 
 Three conditions are enough for a class to become a Vauban bean:
 
-. The class is annotated with a scope (`@ApplicationScoped`, `@Singleton`, `@Dependent`, `@RequestScoped`) or a stereotype.
+. The class is annotated with a scope (`@ApplicationScoped`, `@Singleton`, `@Dependent`, `@RequestScoped`, or a scope of your own) or a stereotype. [.tag-new]#NEW# The annotation processor recognises any annotation meta-annotated `@Stereotype`, `@NormalScope` or `@Scope`, declared in the same compilation or in a library; it used to index only the classes carrying a built-in scope, `@Produces` or `@Interceptor`, so a class marked only with an application stereotype was no bean (vauban#132).
 . The class is visible from the `module-info.java` (`exports` or same module).
 . The class shows up in the bean index written at compile time by the annotation processor, or by the Maven plugin for archives it did not compile.
 
