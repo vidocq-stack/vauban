@@ -1739,3 +1739,72 @@ The same goes for a normal-scoped producer of such a class (`Dollar_Produced$$�
 - **Cause (from the trace)**: `InterceptorBeanWrapper$1#create` (`InterceptorBeanWrapper.java:824`) resolves the constructor arguments itself, through `QualifierHelper#extractParamQualifiers(Parameter)`, which reads the parameter's annotations reflectively. It does not use the metadata the processor generates for the bean's injection points.
 - **Fix**: `InterceptorBeanWrapper`'s intercepted factory takes each constructor parameter's qualifiers from the bean's descriptor (`VaubanContainer#describedParameterQualifiers`), as `VaubanContainer` does for a bean that is not intercepted, and reads the parameter back only when nothing describes it. This covers both of its constructor paths: with and without an `@AroundConstruct` chain. Interceptor instances built with constructor arguments (`getOrCreateInterceptorInstance`) still read their parameters: they have no bean descriptor there. Not probed.
 - **Tests**: `ConstructorInjectedInterceptedModulePathTest#sourceSubclass` and `#bytecodeSubclass` (vauban-module-it; RED `bug09b/red-ctor.log`: `Forbidden … reading the qualifiers off parameter 0 of …<init>()` for both).
+
+## BUG-20261009-01 — BCE-added injection annotations do not create the corresponding injection points
+
+- **Date**: 2026-10-09
+- **Status**: FIXED (working tree, uncommitted)
+- **Module**: `vauban-core` (`extensions/EnhancementApplier`, `container/BeanInjector`, `container/ManagedBean`)
+- **Symptom**: a CDI Build Compatible Extension that adds `@Inject` to a plain field or initializer leaves it absent from the bean's injection-point metadata and runtime injection. Qualifier changes to constructor and initializer parameters are ignored; class-level method annotation additions can also be misclassified as interceptor bindings. Enhanced bean classes created after scope promotion miss the member changes.
+- **Minimal reproduction**:
+  ```
+  cd vauban/main
+  ./mvnw -ntp -pl vauban-core -Dtest='BceEnhancementTest,BceInjectionEnhancementTest' test
+  ```
+  The direct descriptor regressions were red before the fix: the field and initializer points were missing and a constructor parameter kept `@Default` after an explicit qualifier was added.
+- **Hypothesized cause**: `EnhancementApplier` only matched field changes against already-discovered field points, left parameter changes as a no-op, and treated every added method annotation as an interceptor binding. Runtime injection enumerated source-bytecode `@Inject` annotations only; newly enhanced beans created after scope promotion bypassed the enhancer.
+- **Investigations**:
+  - 2026-10-09 : the direct descriptor regressions reproduced the missing field and initializer injection points and ignored constructor qualifier mutation.
+  - 2026-10-09 : fixed member metadata application, retained qualifier member values, recorded exact initializer signatures for runtime injection, applied enhancements to scope-promoted beans, and added an end-to-end test covering an enhanced field, constructor parameter, overloaded initializer, member-value qualifier and bean metadata.
+  - 2026-10-09 : `./mvnw -ntp -pl vauban-core -Dtest='BceEnhancementTest,BceInjectionEnhancementTest' test` passed (27 tests).
+
+## BUG-20261009-02 — APT providers cannot write public fields enhanced only by a runtime BCE
+
+- **Date**: 2026-10-09
+- **Status**: FIXED (working tree, uncommitted)
+- **Module**: `vauban-processor` (`VaubanProcessor`, `ComponentProviderGenerator`)
+- **Symptom**: the runtime injection metadata fixed by BUG-20261009-01 contains a BCE-enhanced
+  public field, but `_VaubanComponents.injectField()` has no matching write case. The reported
+  Mansart module-path persistence integration consequently still cannot inject it without reflection.
+- **Minimal reproduction**:
+  ```
+  cd vauban/main
+  ./mvnw -ntp -pl vauban-processor -am \
+    -Dtest=ComponentProviderCompileTimeTest -Dsurefire.failIfNoSpecifiedTests=false test
+  ```
+- **Hypothesized cause**: the shared `ComponentCollector.collectFields()` selects source-level
+  `@Inject` fields only; annotations added by a runtime BCE are unknown during APT.
+- **Investigations**:
+  - 2026-10-09: `publicFieldsCanBeInjectedAfterRuntimeEnhancement` was red: provider coverage
+    contained only `alreadyInjected`, not the unannotated public `context`, `unit` and `repositories`.
+  - 2026-10-09: supplemented the APT collector output with public, non-static, non-final reference
+    fields whose erased types are accessible from the provider package. Existing cases are
+    deduplicated; private field types are skipped. Runtime injection metadata remains authoritative.
+    Nested bean write cases use canonical source owner names and binary dispatch keys.
+  - 2026-10-09: `ComponentProviderCompileTimeTest` passes (10 tests), including a named-module
+    ServiceLoader probe without opens or an export to the API module. All 143 processor tests pass:
+    `./mvnw -ntp -pl vauban-processor -am -Dtest='io.vidocq.vauban.processor.**.*Test'
+    -Dsurefire.failIfNoSpecifiedTests=false test`.
+  - 2026-10-09: the Mansart module-path IT (`mansart-jpa-cdi-module-it`) then failed to compile:
+    `module-info.java:[14,98] cannot find symbol … class _VaubanComponents`. Root cause: a regression
+    of this supplement, not of the fixture. It filtered candidate field types with
+    `InterceptedShapeFromElements.nameableFrom(type, pkg, elements)`, whose module *readability* check
+    reads `ModuleElement.getDirectives()` of the module being compiled. That completes the module, so
+    javac resolves its `provides … with pkg._VaubanComponents` before the last annotation-processing
+    round has written the provider, and the error is frozen (the BUG-20261004-09 hazard; a
+    `jakarta.persistence.EntityManager` field from another module triggered it, an earlier
+    same-module `String` fixture did not).
+  - 2026-10-09: RED `publicFieldOfAnotherModuleTypeDoesNotCompleteTheCompiledModule` — one javac
+    pass over a named module (`requires java.sql`, `provides … with app._VaubanComponents`) with a
+    `public java.sql.Connection` field — failed with the same `cannot find symbol` in module-info.
+    Fix: the supplement calls the new `nameableFrom(type, pkg, elements, false)` overload, leaving out
+    readability. Sound there: the field's own declaration names the type, so javac already checks the
+    module reads it. Accessibility/export checks remain. GREEN; processor suite 144/144; the Mansart
+    module IT compiles and its 4 tests pass unchanged.
+  - Limitations (unchanged by the fix, documented rather than claimed): write cases cover only
+    public, non-static, non-final, reference-typed fields declared in a class of the compiling
+    module that already has a package provider (nested owners need a component-table entry), with
+    an erased type nameable from that package. Non-public fields, primitives, fields inherited from a
+    class of another module, and initializer methods whose `@Inject` is added only by a runtime BCE
+    get no generated access; they fall back to `VaubanLookup`, which needs the qualified `opens` and
+    fails loudly without it (`RuntimeException` "Cannot reflectively access …", caused by `IllegalAccessException`) — never a silent skip.

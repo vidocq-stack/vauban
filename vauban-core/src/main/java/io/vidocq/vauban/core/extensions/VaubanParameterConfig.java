@@ -32,6 +32,7 @@ public final class VaubanParameterConfig implements ParameterConfig {
     private final ParameterInfo parameterInfo;
     private final List<AnnotationInfo> addedAnnotations = new ArrayList<>();
     private final Set<Class<? extends Annotation>> addedAnnotationClasses = new LinkedHashSet<>();
+    private final List<Annotation> addedAnnotationInstances = new ArrayList<>();
     private boolean allAnnotationsRemoved;
     private final List<Predicate<AnnotationInfo>> removePredicates = new ArrayList<>();
 
@@ -59,6 +60,7 @@ public final class VaubanParameterConfig implements ParameterConfig {
     @Override
     public ParameterConfig addAnnotation(Annotation annotation) {
         addedAnnotationClasses.add(annotation.annotationType());
+        addedAnnotationInstances.add(annotation);
         return this;
     }
 
@@ -82,6 +84,10 @@ public final class VaubanParameterConfig implements ParameterConfig {
         return List.copyOf(addedAnnotations);
     }
 
+    public List<Annotation> getAddedAnnotationInstances() {
+        return List.copyOf(addedAnnotationInstances);
+    }
+
     public boolean isAllAnnotationsRemoved() {
         return allAnnotationsRemoved;
     }
@@ -92,6 +98,6 @@ public final class VaubanParameterConfig implements ParameterConfig {
 
     public boolean isModified() {
         return !addedAnnotationClasses.isEmpty() || !addedAnnotations.isEmpty()
-                || allAnnotationsRemoved || !removePredicates.isEmpty();
+                || !addedAnnotationInstances.isEmpty() || allAnnotationsRemoved || !removePredicates.isEmpty();
     }
 }

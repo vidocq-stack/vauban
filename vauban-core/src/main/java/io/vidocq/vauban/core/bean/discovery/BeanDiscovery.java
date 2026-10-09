@@ -608,7 +608,8 @@ public final class BeanDiscovery {
                     param.type(), paramQualifiers,
                     declaredInjectionPointQualifiers(param.annotations()),
                     InjectionPointInfo.InjectionKind.METHOD_PARAMETER,
-                    InjectionPointInfo.parameterDescription(declaringClass.name().simpleName(), method.name(), i)
+                    InjectionPointInfo.parameterDescription(declaringClass.name().simpleName(), method.name(), i,
+                            method.parameters().stream().map(parameter -> parameter.type()).toList())
             ));
         }
 
@@ -1136,7 +1137,8 @@ public final class BeanDiscovery {
                         resolvedType, computeInjectionPointQualifiers(param.annotations()),
                         declaredInjectionPointQualifiers(param.annotations()),
                         InjectionPointInfo.InjectionKind.CONSTRUCTOR_PARAMETER,
-                        InjectionPointInfo.parameterDescription(classInfo.name().simpleName(), null, i)
+                        InjectionPointInfo.parameterDescription(classInfo.name().simpleName(), null, i,
+                                ctor.parameters().stream().map(parameter -> parameter.type()).toList())
                 ));
             }
         }
@@ -1179,7 +1181,8 @@ public final class BeanDiscovery {
                             resolvedType, computeInjectionPointQualifiers(param.annotations()),
                             declaredInjectionPointQualifiers(param.annotations()),
                             InjectionPointInfo.InjectionKind.METHOD_PARAMETER,
-                            InjectionPointInfo.parameterDescription(classInfo.name().simpleName(), method.name(), i)
+                            InjectionPointInfo.parameterDescription(classInfo.name().simpleName(), method.name(), i,
+                                    method.parameters().stream().map(parameter -> parameter.type()).toList())
                     ));
                 }
             }
@@ -1208,7 +1211,8 @@ public final class BeanDiscovery {
                         resolvedType, computeInjectionPointQualifiers(param.annotations()),
                         declaredInjectionPointQualifiers(param.annotations()),
                         InjectionPointInfo.InjectionKind.METHOD_PARAMETER,
-                        InjectionPointInfo.parameterDescription(classInfo.name().simpleName(), method.name(), i)
+                        InjectionPointInfo.parameterDescription(classInfo.name().simpleName(), method.name(), i,
+                                method.parameters().stream().map(parameter -> parameter.type()).toList())
                 ));
             }
         }

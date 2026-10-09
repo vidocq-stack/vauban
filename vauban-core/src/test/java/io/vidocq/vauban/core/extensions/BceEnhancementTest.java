@@ -476,4 +476,144 @@ class BceEnhancementTest {
                     "Non-binding annotations must not leak into interceptorBindings");
         }
     }
+
+    @Nested
+    @DisplayName("injection-point annotations")
+    class InjectionPointAnnotations {
+
+        @jakarta.inject.Qualifier
+        @Retention(RetentionPolicy.RUNTIME)
+        @interface Chosen {}
+
+        static class EnhancedBean {
+            String dependency;
+
+            EnhancedBean(String dependency) {}
+
+            void initialize(String dependency) {}
+        }
+
+        private VaubanClassConfig config() {
+            var beanName = DotName.of(EnhancedBean.class.getName());
+            var inject = new io.vidocq.vauban.indexer.model.AnnotationInfo(
+                    DotName.of(jakarta.inject.Inject.class.getName()), Map.of());
+            var stringType = new io.vidocq.vauban.indexer.model.TypeInfo.ClassType(
+                    DotName.of(String.class.getName()));
+            var field = new io.vidocq.vauban.indexer.model.FieldInfo(
+                    "dependency", stringType, 0x0000, List.of());
+            var constructor = new io.vidocq.vauban.indexer.model.MethodInfo(
+                    "<init>", new io.vidocq.vauban.indexer.model.TypeInfo.ClassType(DotName.of("void")),
+                    List.of(new io.vidocq.vauban.indexer.model.ParameterInfo("dependency", stringType, List.of())),
+                    List.of(), 0x0001, List.of(inject));
+            var initializer = new io.vidocq.vauban.indexer.model.MethodInfo(
+                    "initialize", new io.vidocq.vauban.indexer.model.TypeInfo.ClassType(DotName.of("void")),
+                    List.of(new io.vidocq.vauban.indexer.model.ParameterInfo("dependency", stringType, List.of())),
+                    List.of(), 0x0000, List.of());
+            var classInfo = new io.vidocq.vauban.indexer.model.ClassInfo(
+                    beanName, DotName.of(Object.class.getName()), List.of(), 0x0001,
+                    List.of(field), List.of(constructor, initializer), List.of(),
+                    io.vidocq.vauban.indexer.model.ClassInfo.ClassKind.CLASS,
+                    EnhancedBean.class.getSimpleName());
+            var indexBuilder = new IndexBuilder().add(classInfo);
+            var lookup = new io.vidocq.vauban.core.langmodel.IndexLookup(indexBuilder.build());
+            return new VaubanClassConfig(
+                    new io.vidocq.vauban.core.langmodel.declarations.VaubanClassInfo(classInfo, lookup));
+        }
+
+        private io.vidocq.vauban.core.bean.model.BeanDescriptor bean(List<io.vidocq.vauban.core.bean.model.InjectionPointInfo> points) {
+            var className = DotName.of(EnhancedBean.class.getName());
+            return new io.vidocq.vauban.core.bean.model.BeanDescriptor(
+                    new io.vidocq.vauban.core.bean.model.BeanId(className.value()),
+                    className,
+                    io.vidocq.vauban.core.bean.model.BeanDescriptor.BeanKind.MANAGED,
+                    java.util.Set.of(new io.vidocq.vauban.indexer.model.TypeInfo.ClassType(className)),
+                    java.util.Set.of(io.vidocq.vauban.core.bean.model.QualifierInstance.DEFAULT,
+                            io.vidocq.vauban.core.bean.model.QualifierInstance.ANY),
+                    io.vidocq.vauban.core.bean.model.ScopeInfo.DEPENDENT, false, 0,
+                    points, null);
+        }
+
+        private static io.vidocq.vauban.core.bean.model.InjectionPointInfo constructorPoint() {
+            var qualifiers = java.util.Set.of(
+                    io.vidocq.vauban.core.bean.model.QualifierInstance.DEFAULT,
+                    io.vidocq.vauban.core.bean.model.QualifierInstance.ANY);
+            return new io.vidocq.vauban.core.bean.model.InjectionPointInfo(
+                    new io.vidocq.vauban.indexer.model.TypeInfo.ClassType(DotName.of(String.class.getName())),
+                    qualifiers, java.util.Set.of(),
+                    io.vidocq.vauban.core.bean.model.InjectionPointInfo.InjectionKind.CONSTRUCTOR_PARAMETER,
+                    io.vidocq.vauban.core.bean.model.InjectionPointInfo.parameterDescription(
+                            EnhancedBean.class.getName().substring(EnhancedBean.class.getName().lastIndexOf('.') + 1),
+                            null, 0,
+                            List.of(new io.vidocq.vauban.indexer.model.TypeInfo.ClassType(
+                                    DotName.of(String.class.getName())))));
+        }
+
+        @Test
+        @DisplayName("adding @Inject to a field creates its injection point without treating @Inject as a qualifier")
+        void addedFieldInjectionIsDiscovered() {
+            var config = config();
+            var fieldConfig = config.getFieldConfigs().getFirst();
+            fieldConfig.addAnnotation(jakarta.inject.Inject.class);
+            fieldConfig.addAnnotation(Chosen.class);
+
+            var bean = bean(List.of());
+            var enhanced = BceProcessor.applyEnhancements(
+                    List.of(bean), Map.of(bean.beanClass(), List.of(config))).getFirst();
+
+            var point = enhanced.injectionPoints().getFirst();
+            assertEquals(io.vidocq.vauban.core.bean.model.InjectionPointInfo.InjectionKind.FIELD, point.kind());
+            assertEquals(new io.vidocq.vauban.indexer.model.TypeInfo.ClassType(DotName.of(String.class.getName())),
+                    point.requiredType());
+            assertTrue(point.declaredQualifiers().stream().anyMatch(q ->
+                    q.annotationName().equals(DotName.of(Chosen.class.getName()))));
+            assertFalse(point.qualifiers().stream().anyMatch(q ->
+                    q.annotationName().equals(DotName.of(jakarta.inject.Inject.class.getName()))));
+            assertFalse(point.qualifiers().stream().anyMatch(q -> q.isDefault()));
+            assertTrue(point.qualifiers().stream().anyMatch(q -> q.isAny()));
+        }
+
+        @Test
+        @DisplayName("adding @Inject to an initializer creates parameter injection points with enhanced qualifiers")
+        void addedInitializerInjectionIsDiscovered() {
+            var config = config();
+            var initializer = config.getMethodConfigs().stream()
+                    .filter(method -> method.info().name().equals("initialize"))
+                    .findFirst().orElseThrow();
+            initializer.addAnnotation(jakarta.inject.Inject.class);
+            initializer.getParameterConfigs().getFirst().addAnnotation(Chosen.class);
+
+            var bean = bean(List.of());
+            var enhanced = BceProcessor.applyEnhancements(
+                    List.of(bean), Map.of(bean.beanClass(), List.of(config))).getFirst();
+
+            var point = enhanced.injectionPoints().getFirst();
+            assertEquals(io.vidocq.vauban.core.bean.model.InjectionPointInfo.InjectionKind.METHOD_PARAMETER,
+                    point.kind());
+            assertTrue(point.description().startsWith("parameter 0 of "
+                    + EnhancedBean.class.getName().substring(EnhancedBean.class.getName().lastIndexOf('.') + 1)
+                    + ".initialize()"));
+            assertTrue(point.declaredQualifiers().stream().anyMatch(q ->
+                    q.annotationName().equals(DotName.of(Chosen.class.getName()))));
+            assertFalse(enhanced.interceptorBindings().contains(DotName.of(jakarta.inject.Inject.class.getName())));
+        }
+
+        @Test
+        @DisplayName("parameter qualifier changes apply to existing constructor injection points")
+        void constructorParameterQualifierIsEnhanced() {
+            var config = config();
+            var constructor = config.getMethodConfigs().stream()
+                    .filter(method -> method.info().isConstructor())
+                    .findFirst().orElseThrow();
+            constructor.getParameterConfigs().getFirst().addAnnotation(Chosen.class);
+
+            var bean = bean(List.of(constructorPoint()));
+            var enhanced = BceProcessor.applyEnhancements(
+                    List.of(bean), Map.of(bean.beanClass(), List.of(config))).getFirst();
+
+            var point = enhanced.injectionPoints().getFirst();
+            assertTrue(point.declaredQualifiers().stream().anyMatch(q ->
+                    q.annotationName().equals(DotName.of(Chosen.class.getName()))));
+            assertFalse(point.qualifiers().stream().anyMatch(q -> q.isDefault()));
+        }
+    }
 }

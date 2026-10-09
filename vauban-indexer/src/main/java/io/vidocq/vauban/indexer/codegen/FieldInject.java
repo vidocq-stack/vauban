@@ -20,8 +20,10 @@
 package io.vidocq.vauban.indexer.codegen;
 
 /**
- * Describes an {@code @Inject} instance field (non-private, non-static) that the generated
+ * Describes an assignable instance field (non-private, non-static) that the generated
  * {@code _VaubanComponents} provider can assign in-module without reflection.
+ * A write case does not declare an injection point: APT also supplies public mutable fields
+ * whose injection annotations may be added later by a runtime BCE.
  *
  * <p>Only fields in the same package as the generated provider are eligible: a {@code putfield}
  * to a package-private field only compiles (or executes without {@code opens}) from the same

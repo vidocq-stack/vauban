@@ -20,6 +20,7 @@
 package io.vidocq.vauban.core.container;
 
 import io.vidocq.vauban.core.bean.model.BeanDescriptor;
+import io.vidocq.vauban.core.bean.model.InjectionPointInfo;
 import io.vidocq.vauban.core.context.CreationalContextImpl;
 import io.vidocq.vauban.core.event.EventImpl;
 import jakarta.enterprise.context.spi.CreationalContext;
@@ -32,6 +33,7 @@ import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
 import java.lang.reflect.ParameterizedType;
+import java.lang.invoke.MethodType;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
@@ -68,7 +70,7 @@ final class BeanInjector {
         var beanClass = unwrapInterceptedSubclass(instance.getClass());
         var ownerBean = container.findBeanForInstance(instance);
         var typeMapping = ManagedBean.buildTypeVariableMapping(beanClass);
-        for (var member : injectionOrder(beanClass)) {
+        for (var member : injectionOrder(beanClass, descriptor)) {
             if (member instanceof Field field) {
                 injectSingleField(instance, field, descriptor, ctx, typeMapping);
             } else {
@@ -84,7 +86,8 @@ final class BeanInjector {
     void injectFieldsByReflection(Object instance, BeanDescriptor descriptor, CreationalContext<?> parentCtx) {
         var beanClass = unwrapInterceptedSubclass(instance.getClass());
         var typeMapping = ManagedBean.buildTypeVariableMapping(beanClass);
-        for (var field : injectedFields(beanClass)) {
+        for (var member : injectionOrder(beanClass, descriptor)) {
+            if (!(member instanceof Field field)) continue;
             injectSingleField(instance, field, descriptor, parentCtx, typeMapping);
         }
     }
@@ -95,25 +98,42 @@ final class BeanInjector {
      * the non-static {@code @Inject} methods that no subtype overrides. {@link CodegenCoverage} reads the same list.
      */
     static List<java.lang.reflect.Member> injectionOrder(Class<?> beanClass) {
+        return injectionOrder(beanClass, null);
+    }
+
+    static List<java.lang.reflect.Member> injectionOrder(Class<?> beanClass, BeanDescriptor descriptor) {
         var hierarchy = hierarchySuperFirst(unwrapInterceptedSubclass(beanClass));
         var members = new ArrayList<java.lang.reflect.Member>();
         for (int i = 0; i < hierarchy.size(); i++) {
             var clazz = hierarchy.get(i);
             for (var field : clazz.getDeclaredFields()) {
-                if (field.isAnnotationPresent(jakarta.inject.Inject.class)
+                if ((field.isAnnotationPresent(jakarta.inject.Inject.class) || isEnhancedField(descriptor, field))
                         && !Modifier.isStatic(field.getModifiers())) {
                     members.add(field);
                 }
             }
             var subclasses = hierarchy.subList(i + 1, hierarchy.size());
             for (var method : clazz.getDeclaredMethods()) {
-                if (!method.isAnnotationPresent(jakarta.inject.Inject.class)) continue;
+                if (!method.isAnnotationPresent(jakarta.inject.Inject.class)
+                        && !isEnhancedInitializer(descriptor, method)) continue;
                 if (Modifier.isStatic(method.getModifiers())) continue;
                 if (isOverriddenInSubclasses(method, subclasses)) continue;
                 members.add(method);
             }
         }
         return members;
+    }
+
+    private static boolean isEnhancedField(BeanDescriptor descriptor, Field field) {
+        return descriptor != null && QualifierHelper.fieldPoint(descriptor.injectionPoints(), field) != null;
+    }
+
+    private static boolean isEnhancedInitializer(BeanDescriptor descriptor, Method method) {
+        if (descriptor == null) return false;
+        var methodDescriptor = MethodType.methodType(void.class, method.getParameterTypes()).descriptorString();
+        var key = InjectionPointInfo.enhancedInitializerMethod(
+                method.getDeclaringClass().getName(), method.getName(), methodDescriptor);
+        return descriptor.enhancedInjectionMethods().contains(key);
     }
 
     /** The fields of {@link #injectionOrder}, in its order: what {@link #injectFieldsByReflection} injects. */

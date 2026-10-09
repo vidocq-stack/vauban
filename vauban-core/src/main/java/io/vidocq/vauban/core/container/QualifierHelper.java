@@ -24,6 +24,7 @@ import io.vidocq.vauban.core.bean.model.InjectionPointInfo;
 
 import java.lang.annotation.Annotation;
 import java.lang.reflect.Field;
+import java.lang.invoke.MethodType;
 import java.lang.reflect.Parameter;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
@@ -46,17 +47,25 @@ final class QualifierHelper {
         if (points == null || points.isEmpty()) {
             return null;
         }
-        var wanted = InjectionPointInfo.parameterDescription(simpleName(member.getDeclaringClass()),
-                member instanceof java.lang.reflect.Constructor<?> ? null : member.getName(), index);
+        var declaringSimpleName = simpleName(member.getDeclaringClass());
+        var methodName = member instanceof java.lang.reflect.Constructor<?> ? null : member.getName();
+        var wanted = InjectionPointInfo.parameterDescription(declaringSimpleName,
+                methodName, index, MethodType.methodType(void.class, member.getParameterTypes()).descriptorString());
+        var legacy = InjectionPointInfo.parameterDescription(declaringSimpleName,
+                methodName, index);
+        InjectionPointInfo exact = null;
         InjectionPointInfo found = null;
         for (var point : points) {
             if (point.kind() == InjectionPointInfo.InjectionKind.FIELD) continue;
-            if (!point.description().equals(wanted)) continue;
-            // Overloaded initializer methods describe their parameters identically, so two matches
-            // mean the description cannot tell them apart: read the parameter instead of guessing.
-            if (found != null) return null;
-            found = point;
+            if (point.description().equals(wanted)) exact = point;
+            else if (point.description().equals(legacy)) {
+                // Old descriptors use the name/position-only format. A unique legacy match is safe;
+                // overloaded members remain unresolved rather than receiving another member's qualifier.
+                if (found != null) return null;
+                found = point;
+            }
         }
+        if (exact != null) found = exact;
         if (found == null) {
             return null;
         }

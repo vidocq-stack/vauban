@@ -263,7 +263,7 @@ public final class CodegenCoverage {
             ops.add(new Operation(preGenerated ? Kind.PRE_GENERATED : Kind.NONE, subclass, "intercepted subclass",
                     beanClass));
         }
-        for (Member member : BeanInjector.injectionOrder(beanClass)) {
+        for (Member member : BeanInjector.injectionOrder(beanClass, bean.descriptor())) {
             ops.add(member instanceof Field field ? field(field) : invoke((Method) member, "initializer"));
         }
         for (Method method : BeanLifecycle.collectLifecycleMethodsInHierarchy(beanClass, PostConstruct.class)) {

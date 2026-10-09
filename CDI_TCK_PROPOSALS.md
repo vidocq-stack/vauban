@@ -128,3 +128,69 @@ lifecycle annotations. Also run it against Weld 5.1 / 6.0 SE to confirm the refe
 implementation is green.
 
 ---
+
+## TCK-GAP-002 — `@Enhancement` adding `@Inject` does not create a field or initializer injection point
+
+- **Date**: 2026-10-09 — **Status**: DRAFT (not yet reported upstream)
+- **Spec**: CDI 4.1, Build Compatible Extensions chapter 28, `@Enhancement` phase. An enhancement
+  changes the annotations CDI uses for the subsequent container lifecycle; adding `@Inject` to a
+  field or initializer therefore makes that member an injection point just as if the annotation
+  appeared in source. The CDI 4.1 injection-point rules in §5.2 apply to the resulting member.
+- **Existing coverage that nearly covers it**:
+  - `ChangeInjectionPointExtension` adds a qualifier to `MyOtherService.myService`, but that field
+    already has `@Inject`. It tests qualifier mutation, not changing a plain field into an injection
+    point.
+  - `ChangeObserverQualifierExtension` changes a parameter qualifier on an observer. Observer
+    discovery is a separate path; it does not exercise an initializer method added through
+    `MethodConfig.addAnnotation(@Inject)`.
+- **Gap**: there is no target with an unannotated instance field or ordinary method whose only
+  `@Inject` annotation is added during `@Enhancement`. An implementation can pass the existing
+  qualifier tests while never adding the new field/parameters to `BeanInfo.injectionPoints()`, never
+  resolving them at creation, or never invoking the enhanced initializer.
+- **Proposed TCK change**: add one test with a bean defining extension which adds `@Inject` to a
+  plain field and to a plain initializer method. Give the field and initializer parameter an added
+  qualifier with a non-default member value; provide only a bean with that qualifier. Assert both
+  members receive the expected bean, the initializer runs, and `Bean.getInjectionPoints()` (and,
+  where the test uses BCE registration, `BeanInfo.injectionPoints()`) reports both members with the
+  same qualifier value. Include a class whose scope is also added by the extension so the fixture
+  proves the enhanced bean created by discovery follows the same rules.
+- **Exposed by**: Vauban `BUG.md` → `BUG-20261009-01`. `vauban-core` tests
+  `BceEnhancementTest` and `BceInjectionEnhancementTest` provide the local regression; the direct
+  descriptor tests were red before the Vauban change.
+- **Why it matters**: extensions commonly add injection annotations as part of integration or
+  framework wiring. If this mutation is ignored, deployment validation, bean metadata and runtime
+  injection disagree with the annotations the extension requested.
+
+## TCK-GAP-003 — qualifier changes to constructor and initializer parameters are not tested as injection-point changes
+
+- **Date**: 2026-10-09 — **Status**: DRAFT (not yet reported upstream)
+- **Spec**: CDI 4.1, Build Compatible Extensions chapter 28 (`MethodConfig.parameters()` and
+  `ParameterConfig`), together with §5.2.2's injection-point qualifier completion rules. A parameter
+  qualifier added during enhancement participates in resolution; an explicit qualifier replaces the
+  implicit `@Default`, and its annotation member values remain part of qualifier matching.
+- **Existing coverage that nearly covers it**:
+  - `ChangeInjectionPointExtension` tests adding a qualifier to an existing injected *field*, not
+    to an injected constructor or initializer parameter.
+  - `ChangeObserverQualifierExtension` tests an observer event parameter, not an ordinary
+    constructor or initializer injection parameter. It does not prove parameter resolution uses the
+    enhanced injection-point qualifiers.
+  - `ChangeBeanQualifierTest` changes bean qualifiers and does not cover member-level parameter
+    configuration.
+- **Gap**: an implementation can correctly enhance field and observer qualifiers but leave
+  constructor parameters or initializer parameters at their source-level qualifiers. In particular,
+  a parameter that acquires an explicit qualifier may incorrectly continue requiring `@Default`.
+  Overloaded initializer methods also need distinct member identity so a qualifier change applies to
+  the selected overload only.
+- **Proposed TCK change**: add constructor and initializer cases where the source parameter is
+  unqualified and the extension adds `@Q("selected")` using `AnnotationBuilder`. Define the only
+  matching bean with `@Q("selected")` and no `@Default`; assert construction and initializer
+  invocation succeed, the reported injection points carry the member value and not `@Default`, and
+  an overloaded non-injected method is not invoked. Keep the existing field and observer cases as
+  separate controls.
+- **Exposed by**: Vauban `BUG.md` → `BUG-20261009-01`; the constructor and initializer regression
+  also runs through the real container in `BceInjectionEnhancementTest`.
+- **Why it matters**: parameter qualifier changes are part of the BCE public contract, and a stale
+  default qualifier makes a valid enhanced injection unsatisfied. Signature ambiguity can silently
+  apply another overload's metadata or fall back to source annotations.
+
+---

@@ -255,7 +255,8 @@ final class ObserverDisposerDiscovery {
                     host.computeInjectionPointQualifiers(param.annotations()),
                     host.declaredInjectionPointQualifiers(param.annotations()),
                     InjectionPointInfo.InjectionKind.METHOD_PARAMETER,
-                    InjectionPointInfo.parameterDescription(classInfo.name().simpleName(), method.name(), i)));
+                    InjectionPointInfo.parameterDescription(classInfo.name().simpleName(), method.name(), i,
+                            method.parameters().stream().map(parameter -> parameter.type()).toList())));
         }
         return points;
     }

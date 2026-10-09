@@ -44,6 +44,7 @@ import io.vidocq.vauban.core.langmodel.IndexLookup;
 import io.vidocq.vauban.core.types.AssignabilityRules;
 import io.vidocq.vauban.indexer.IndexBuilder;
 import io.vidocq.vauban.indexer.codegen.ComponentCollector;
+import io.vidocq.vauban.indexer.codegen.FieldInject;
 import io.vidocq.vauban.indexer.codegen.ProvidedClass;
 import io.vidocq.vauban.indexer.model.AnnotationInfo;
 import io.vidocq.vauban.indexer.model.AnnotationValue;
@@ -727,6 +728,33 @@ public class VaubanProcessor extends AbstractProcessor {
         // package-private qualifier is covered like any other (vauban#70).
         var annotationsByPackage = declaredAnnotationTypes(index);
         for (var pkg : packages) {
+            var fields = new ArrayList<>(pkg.fields());
+            for (var provided : providedClasses.stream()
+                    .sorted(Comparator.comparing(ProvidedClass::fqn)).toList()) {
+                var owner = typeElementByBinaryName(processingEnv.getElementUtils(), provided.fqn());
+                if (owner == null || !processingEnv.getElementUtils().getPackageOf(owner)
+                        .getQualifiedName().contentEquals(pkg.packageName())) continue;
+                // Nested owners need a canonical source name in the provider's component table.
+                if (!provided.fqn().equals(provided.sourceFqn())
+                        && pkg.components().stream().noneMatch(c -> c.fqn().equals(provided.fqn()))) continue;
+                for (var field : javax.lang.model.util.ElementFilter.fieldsIn(owner.getEnclosedElements())) {
+                    var modifiers = field.getModifiers();
+                    if (!modifiers.contains(Modifier.PUBLIC) || modifiers.contains(Modifier.STATIC)
+                            || modifiers.contains(Modifier.FINAL) || field.asType().getKind().isPrimitive()) continue;
+                    var erasure = processingEnv.getTypeUtils().erasure(field.asType());
+                    // The field's own declaration names this type, so javac has already checked that
+                    // the module reads it. Re-checking readability would complete the module being
+                    // compiled and resolve its `provides` before this provider exists.
+                    if (!InterceptedShapeFromElements.nameableFrom(erasure,
+                            processingEnv.getElementUtils().getPackageOf(owner),
+                            processingEnv.getElementUtils(), false)) continue;
+                    var name = field.getSimpleName().toString();
+                    if (fields.stream().anyMatch(f -> f.declaringClassFqn().equals(provided.fqn())
+                            && f.fieldName().equals(name))) continue;
+                    // This is write capability, not injection metadata: runtime BCE may add @Inject.
+                    fields.add(new FieldInject(provided.fqn(), name, erasure.toString()));
+                }
+            }
             // Proxies of this package's beans (their FQN package equals the provider's package).
             // Every input in a stable order: the beans, so their proxies, come in index order, which
             // changes from one JVM run to the next (BUG-20261007-04).
@@ -737,7 +765,7 @@ public class VaubanProcessor extends AbstractProcessor {
             var pkgProducerProxies = inStableOrder(
                     producerProxiesByPackage.getOrDefault(pkg.packageName(), List.of()));
             var className = writeComponentProvider(
-                    pkg.packageName(), pkg.components(), pkg.fields(), pkg.methods(),
+                    pkg.packageName(), pkg.components(), fields, pkg.methods(),
                     pkgProxies, pkgProducerProxies,
                     annotationTypesInStableOrder(annotationsByPackage.getOrDefault(pkg.packageName(), List.of())));
             if (className != null) providerClassNames.add(className);

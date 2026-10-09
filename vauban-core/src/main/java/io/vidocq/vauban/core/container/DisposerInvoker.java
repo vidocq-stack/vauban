@@ -341,10 +341,13 @@ final class DisposerInvoker {
     private static InjectionPointInfo describedParameter(DisposerDescriptor disposer, int index) {
         var wanted = InjectionPointInfo.parameterDescription(
                 disposer.declaringClass().simpleName(), disposer.methodName(), index);
+        InjectionPointInfo found = null;
         for (var point : disposer.injectionPoints()) {
-            if (point.description().equals(wanted)) return point;
+            if (!point.description().equals(wanted) && !point.description().startsWith(wanted + " ")) continue;
+            if (found != null) return null;
+            found = point;
         }
-        return null;
+        return found;
     }
 
     void callDisposer(Object producedInstance, DisposerDescriptor disposer, CreationalContext<?> creationalContext) {

@@ -73,8 +73,57 @@ public record InjectionPointInfo(
                 + (methodName == null ? "" : "." + methodName) + "()";
     }
 
+    /** Include the erased parameter descriptor so overloaded methods and constructors stay distinct. */
+    public static String parameterDescription(String declaringSimpleName, String methodName, int index,
+            String executableDescriptor) {
+        return parameterDescription(declaringSimpleName, methodName, index) + " " + executableDescriptor;
+    }
+
+    public static String parameterDescription(String declaringSimpleName, String methodName, int index,
+            java.util.List<io.vidocq.vauban.indexer.model.TypeInfo> parameterTypes) {
+        return parameterDescription(declaringSimpleName, methodName, index, methodDescriptor(parameterTypes));
+    }
+
+    public static String methodDescriptor(java.util.List<io.vidocq.vauban.indexer.model.TypeInfo> parameterTypes) {
+        var descriptor = new StringBuilder("(");
+        parameterTypes.forEach(type -> descriptor.append(jvmDescriptor(type)));
+        return descriptor.append(")V").toString();
+    }
+
     /** How a field injection point is described. */
     public static String fieldDescription(String declaringSimpleName, String fieldName) {
         return "field " + declaringSimpleName + "." + fieldName;
+    }
+
+    /** Stable identity for a BCE-added initializer, including overload-disambiguating JVM parameter types. */
+    public static String enhancedInitializerMethod(String declaringClassName, String methodName,
+            String methodDescriptor) {
+        return "initializer " + declaringClassName + "." + methodName + methodDescriptor;
+    }
+
+    private static String jvmDescriptor(io.vidocq.vauban.indexer.model.TypeInfo type) {
+        return switch (type) {
+            case io.vidocq.vauban.indexer.model.TypeInfo.VoidType ignored -> "V";
+            case io.vidocq.vauban.indexer.model.TypeInfo.PrimitiveType primitive -> switch (primitive.kind()) {
+                case BOOLEAN -> "Z";
+                case BYTE -> "B";
+                case CHAR -> "C";
+                case SHORT -> "S";
+                case INT -> "I";
+                case LONG -> "J";
+                case FLOAT -> "F";
+                case DOUBLE -> "D";
+            };
+            case io.vidocq.vauban.indexer.model.TypeInfo.ArrayType array ->
+                    "[".repeat(array.dimensions()) + jvmDescriptor(array.componentType());
+            case io.vidocq.vauban.indexer.model.TypeInfo.ParameterizedType parameterized ->
+                    "L" + parameterized.rawType().value().replace('.', '/') + ";";
+            case io.vidocq.vauban.indexer.model.TypeInfo.ClassType clazz ->
+                    "L" + clazz.name().value().replace('.', '/') + ";";
+            case io.vidocq.vauban.indexer.model.TypeInfo.TypeVariable variable ->
+                    variable.bounds().isEmpty() ? "Ljava/lang/Object;" : jvmDescriptor(variable.bounds().getFirst());
+            case io.vidocq.vauban.indexer.model.TypeInfo.WildcardType wildcard ->
+                    wildcard.upperBound() == null ? "Ljava/lang/Object;" : jvmDescriptor(wildcard.upperBound());
+        };
     }
 }

@@ -41,7 +41,8 @@ public record BeanDescriptor(
         String name,                       // @Named value, null if not named
         Set<DotName> interceptorBindings,   // interceptor bindings on this bean class
         Set<DotName> constructorBindings,  // interceptor bindings on the bean constructor
-        List<java.lang.annotation.Annotation> interceptorBindingAnnotations // full annotations for member-value comparison
+        List<java.lang.annotation.Annotation> interceptorBindingAnnotations, // full annotations for member-value comparison
+        Set<String> enhancedInjectionMethods
 ) {
 
     public enum BeanKind {
@@ -55,6 +56,18 @@ public record BeanDescriptor(
         interceptorBindings = interceptorBindings != null ? Set.copyOf(interceptorBindings) : Set.of();
         constructorBindings = constructorBindings != null ? Set.copyOf(constructorBindings) : Set.of();
         interceptorBindingAnnotations = interceptorBindingAnnotations != null ? List.copyOf(interceptorBindingAnnotations) : List.of();
+        enhancedInjectionMethods = enhancedInjectionMethods != null ? Set.copyOf(enhancedInjectionMethods) : Set.of();
+    }
+
+    /** Backward-compatible constructor with interceptor metadata but no BCE-added initializer methods. */
+    public BeanDescriptor(BeanId id, DotName beanClass, BeanKind kind,
+            Set<TypeInfo> types, Set<QualifierInstance> qualifiers, ScopeInfo scope,
+            boolean isAlternative, int priority, List<InjectionPointInfo> injectionPoints,
+            String name, Set<DotName> interceptorBindings, Set<DotName> constructorBindings,
+            List<java.lang.annotation.Annotation> interceptorBindingAnnotations) {
+        this(id, beanClass, kind, types, qualifiers, scope, isAlternative, priority,
+                injectionPoints, name, interceptorBindings, constructorBindings,
+                interceptorBindingAnnotations, Set.of());
     }
 
     /**

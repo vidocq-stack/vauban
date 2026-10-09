@@ -168,6 +168,7 @@ class ComponentProviderCompileTimeTest {
                 public class Outer {
                     @jakarta.enterprise.context.ApplicationScoped
                     public static class Inner {
+                        public String enhancedField;
                         public String v() { return "inner"; }
                     }
                 }
@@ -188,6 +189,8 @@ class ComponentProviderCompileTimeTest {
         // up by Class#getName (binary), and only the canonical name can be written in source.
         assertTrue(src.contains("case \"app.Outer$Inner\" -> new app.Outer.Inner();"),
                 "a nested bean must be instantiated in-module, keyed by its binary name: " + src);
+        assertTrue(src.contains("var b = (app.Outer.Inner) bean;"), src);
+        assertTrue(src.contains("b.enhancedField = (java.lang.String) value; return true;"), src);
         assertFalse(Files.exists(result.genDir().resolve("app/Outer/_VaubanComponents.java")),
                 "no provider must be generated into a class-as-package directory");
     }
@@ -340,6 +343,157 @@ class ComponentProviderCompileTimeTest {
             assertEquals(provider.createClientProxy("app.Greeter_ClientProxy", () -> null) != null,
                     coverage.clientProxies().contains("app.Greeter_ClientProxy"), coverage.toString());
         }
+    }
+
+    @Test
+    @DisplayName("public mutable fields have in-module write cases before BCE adds @Inject")
+    void publicFieldsCanBeInjectedAfterRuntimeEnhancement() throws Exception {
+        var result = compile("EnhancedBean", """
+                package app;
+
+                @jakarta.enterprise.context.Dependent
+                public class EnhancedBean {
+                    public Object context;
+                    public String unit;
+                    public java.util.List<String> repositories;
+                    @jakarta.inject.Inject public jakarta.enterprise.inject.spi.BeanManager alreadyInjected;
+                    public static Object staticField;
+                    public final Object finalField = new Object();
+                    private Object privateField;
+                    protected Object protectedField;
+                    Object packageField;
+                    public int primitiveField;
+                    private static class Hidden {}
+                    public Hidden hiddenType;
+                }
+                """);
+        assertTrue(result.success(), "compilation should succeed. Messages: " + result.messages());
+
+        try (var loader = new java.net.URLClassLoader(new java.net.URL[] {result.outputDir().toUri().toURL()},
+                getClass().getClassLoader())) {
+            var provider = (VaubanComponentProvider)
+                    loader.loadClass("app._VaubanComponents").getDeclaredConstructor().newInstance();
+            var bean = provider.create("app.EnhancedBean");
+            var beanType = loader.loadClass("app.EnhancedBean");
+            var context = new Object();
+            var repositories = List.of("repo");
+            assertEquals(java.util.Set.of("app.EnhancedBean#context", "app.EnhancedBean#unit",
+                            "app.EnhancedBean#repositories", "app.EnhancedBean#alreadyInjected"),
+                    provider.coverage().injectedFields());
+            assertTrue(provider.injectField(bean, "app.EnhancedBean", "context", context));
+            assertTrue(provider.injectField(bean, "app.EnhancedBean", "unit", "main"));
+            assertTrue(provider.injectField(bean, "app.EnhancedBean", "repositories", repositories));
+            assertTrue(provider.injectField(bean, "app.EnhancedBean", "alreadyInjected", null));
+            assertTrue(beanType.getField("context").get(bean) == context);
+            assertEquals("main", beanType.getField("unit").get(bean));
+            assertTrue(beanType.getField("repositories").get(bean) == repositories);
+            for (var field : List.of("staticField", "finalField", "privateField", "protectedField",
+                    "packageField", "primitiveField", "hiddenType", "missing")) {
+                assertFalse(provider.injectField(bean, "app.EnhancedBean", field, null), field);
+            }
+            assertFalse(provider.injectField(bean, "app.Unknown", "context", context));
+        }
+    }
+
+    @Test
+    @DisplayName("the generated provider writes a runtime-BCE candidate in a named module without opens")
+    void publicFieldWriteOnModulePathWithoutOpens() throws Exception {
+        var result = compile("ModuleBean", """
+                package app;
+
+                @jakarta.enterprise.context.Dependent
+                public class ModuleBean {
+                    public String unit;
+
+                    public static boolean verify() {
+                        var bean = new ModuleBean();
+                        for (var provider : java.util.ServiceLoader.load(
+                                io.vidocq.vauban.api.VaubanComponentProvider.class,
+                                ModuleBean.class.getClassLoader())) {
+                            if (provider.injectField(bean, "app.ModuleBean", "unit", "main")) {
+                                return "main".equals(bean.unit);
+                            }
+                        }
+                        return false;
+                    }
+                }
+                """);
+        assertTrue(result.success(), result.messages().toString());
+        var descriptor = tempDir.resolve("module-info.java");
+        Files.writeString(descriptor, """
+                module app.enhanced {
+                    requires io.vidocq.vauban.api;
+                    requires jakarta.cdi;
+                    uses io.vidocq.vauban.api.VaubanComponentProvider;
+                    provides io.vidocq.vauban.api.VaubanComponentProvider with app._VaubanComponents;
+                    exports app to io.vidocq.vauban.processor;
+                }
+                """);
+        var compiler = ToolProvider.getSystemJavaCompiler();
+        var diagnostics = new DiagnosticCollector<JavaFileObject>();
+        try (var manager = compiler.getStandardFileManager(diagnostics, null, null)) {
+            var options = List.of("-proc:none", "--release", "25",
+                    "--module-path", resolveCompilationClasspath(),
+                    "--patch-module", "app.enhanced=" + result.outputDir(),
+                    "-d", result.outputDir().toString());
+            assertTrue(compiler.getTask(null, manager, diagnostics, options, null,
+                    manager.getJavaFileObjects(descriptor)).call(), diagnostics.getDiagnostics().toString());
+        }
+        var finder = java.lang.module.ModuleFinder.of(result.outputDir());
+        var configuration = ModuleLayer.boot().configuration()
+                .resolve(finder, java.lang.module.ModuleFinder.of(), java.util.Set.of("app.enhanced"));
+        var layer = ModuleLayer.boot().defineModulesWithOneLoader(configuration, getClass().getClassLoader());
+        var module = layer.findModule("app.enhanced").orElseThrow();
+        assertFalse(module.isOpen("app"));
+        assertFalse(module.isExported("app", VaubanComponentProvider.class.getModule()));
+        var probe = layer.findLoader("app.enhanced").loadClass("app.ModuleBean");
+        assertEquals(true, probe.getMethod("verify").invoke(null));
+    }
+
+    @Test
+    @DisplayName("a public field typed from another module keeps the module's provides clause compilable in one javac pass")
+    void publicFieldOfAnotherModuleTypeDoesNotCompleteTheCompiledModule() throws Exception {
+        // Module directives of the module being compiled must not be read before the last round has
+        // written _VaubanComponents: completing them resolves `provides` too early ("cannot find symbol").
+        var root = Files.createDirectories(tempDir.resolve("module-src"));
+        Files.writeString(root.resolve("module-info.java"), """
+                module app.fields {
+                    requires io.vidocq.vauban.api;
+                    requires java.sql;
+                    provides io.vidocq.vauban.api.VaubanComponentProvider with app._VaubanComponents;
+                }
+                """);
+        var pkg = Files.createDirectories(root.resolve("app"));
+        Files.writeString(pkg.resolve("Holder.java"), """
+                package app;
+
+                @jakarta.enterprise.context.Dependent
+                public class Holder {
+                    public java.sql.Connection connection;
+                }
+                """);
+        var modulePath = new LinkedHashSet<String>();
+        for (var clazz : List.of(VaubanComponentProvider.class, ApplicationScoped.class,
+                jakarta.inject.Inject.class, jakarta.annotation.Priority.class,
+                jakarta.interceptor.Interceptor.class, jakarta.enterprise.lang.model.AnnotationInfo.class)) {
+            modulePath.add(Path.of(clazz.getProtectionDomain().getCodeSource().getLocation().toURI()).toString());
+        }
+        var outputDir = Files.createDirectories(tempDir.resolve("module-classes"));
+        var genDir = Files.createDirectories(tempDir.resolve("module-gen"));
+        var compiler = ToolProvider.getSystemJavaCompiler();
+        var diagnostics = new DiagnosticCollector<JavaFileObject>();
+        try (var manager = compiler.getStandardFileManager(diagnostics, null, StandardCharsets.UTF_8)) {
+            var options = List.of("--release", "25", "-proc:full",
+                    "--module-path", String.join(File.pathSeparator, modulePath),
+                    "-d", outputDir.toString(), "-s", genDir.toString());
+            var task = compiler.getTask(null, manager, diagnostics, options, null,
+                    manager.getJavaFileObjects(root.resolve("module-info.java"), pkg.resolve("Holder.java")));
+            task.setProcessors(List.of(new VaubanProcessor()));
+            assertTrue(task.call(), diagnostics.getDiagnostics().toString());
+        }
+        var src = Files.readString(genDir.resolve("app/_VaubanComponents.java"));
+        assertTrue(src.contains("b.connection = (java.sql.Connection) value; return true;"), src);
+        assertTrue(Files.exists(outputDir.resolve("app/_VaubanComponents.class")));
     }
 
     // ---- minimal in-process compilation harness (with -s for generated sources) ----

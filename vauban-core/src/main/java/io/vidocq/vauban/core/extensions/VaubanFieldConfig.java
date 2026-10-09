@@ -32,6 +32,7 @@ public final class VaubanFieldConfig implements FieldConfig {
     private final FieldInfo fieldInfo;
     private final Set<Class<? extends Annotation>> addedAnnotations = new LinkedHashSet<>();
     private final List<AnnotationInfo> addedAnnotationInfos = new ArrayList<>();
+    private final List<Annotation> addedAnnotationInstances = new ArrayList<>();
     private final List<Predicate<AnnotationInfo>> removePredicates = new ArrayList<>();
     private boolean allAnnotationsRemoved;
 
@@ -59,6 +60,7 @@ public final class VaubanFieldConfig implements FieldConfig {
     @Override
     public FieldConfig addAnnotation(Annotation annotation) {
         addedAnnotations.add(annotation.annotationType());
+        addedAnnotationInstances.add(annotation);
         return this;
     }
 
@@ -82,6 +84,10 @@ public final class VaubanFieldConfig implements FieldConfig {
         return List.copyOf(addedAnnotationInfos);
     }
 
+    public List<Annotation> getAddedAnnotationInstances() {
+        return List.copyOf(addedAnnotationInstances);
+    }
+
     public boolean isAllAnnotationsRemoved() {
         return allAnnotationsRemoved;
     }
@@ -92,6 +98,6 @@ public final class VaubanFieldConfig implements FieldConfig {
 
     public boolean isModified() {
         return !addedAnnotations.isEmpty() || !addedAnnotationInfos.isEmpty()
-                || allAnnotationsRemoved || !removePredicates.isEmpty();
+                || !addedAnnotationInstances.isEmpty() || allAnnotationsRemoved || !removePredicates.isEmpty();
     }
 }

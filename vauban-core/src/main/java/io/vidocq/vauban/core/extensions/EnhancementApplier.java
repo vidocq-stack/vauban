@@ -228,6 +228,7 @@ final class EnhancementApplier {
         var interceptorBindings = new LinkedHashSet<>(bean.interceptorBindings());
         var interceptorBindingAnnotations = new ArrayList<>(bean.interceptorBindingAnnotations());
         var injectionPoints = new ArrayList<>(bean.injectionPoints());
+        var enhancedInjectionMethods = new LinkedHashSet<>(bean.enhancedInjectionMethods());
 
         for (var config : configs) {
             // Class-level annotation removals
@@ -299,15 +300,23 @@ final class EnhancementApplier {
                 applyFieldEnhancement(fieldConfig, injectionPoints);
             }
 
-            // Method-level modifications -> update interceptor bindings
+            // Method-level modifications -> update interceptor bindings and injection points
             for (var methodConfig : config.getMethodConfigs()) {
                 if (!methodConfig.isModified()) continue;
                 applyMethodEnhancement(methodConfig, interceptorBindings, interceptorBindingAnnotations);
 
-                // Parameter-level modifications -> update observer/injection qualifiers
-                for (var paramConfig : methodConfig.getParameterConfigs()) {
-                    if (!paramConfig.isModified()) continue;
-                    applyParameterEnhancement();
+                boolean initializer = !methodConfig.info().isConstructor()
+                        && !methodConfig.info().isStatic()
+                        && hasAnnotation(methodConfig, jakarta.inject.Inject.class);
+                if (initializer && hasAddedAnnotation(methodConfig, jakarta.inject.Inject.class)) {
+                    enhancedInjectionMethods.add(initializerMethodKey(methodConfig));
+                }
+
+                for (int i = 0; i < methodConfig.getParameterConfigs().size(); i++) {
+                    var paramConfig = methodConfig.getParameterConfigs().get(i);
+                    if (paramConfig.isModified()) {
+                        applyParameterEnhancement(methodConfig, paramConfig, i, initializer, injectionPoints);
+                    }
                 }
             }
         }
@@ -322,63 +331,62 @@ final class EnhancementApplier {
                 bean.id(), bean.beanClass(), bean.kind(), bean.types(),
                 qualifiers, bean.scope(), bean.isAlternative(), bean.priority(),
                 injectionPoints, bean.name(), interceptorBindings,
-                bean.constructorBindings(), interceptorBindingAnnotations
+                bean.constructorBindings(), interceptorBindingAnnotations, enhancedInjectionMethods
         );
     }
 
-    @SuppressWarnings("java:S135")
     private static void applyFieldEnhancement(VaubanFieldConfig fieldConfig,
                                                List<InjectionPointInfo> injectionPoints) {
-        String fieldName = fieldConfig.info().name();
-
-        for (int i = 0; i < injectionPoints.size(); i++) {
-            var ip = injectionPoints.get(i);
-            if (ip.kind() != InjectionPointInfo.InjectionKind.FIELD) continue;
-            if (!ip.description().contains(fieldName)) continue;
-
-            var ipQualifiers = new LinkedHashSet<>(ip.qualifiers());
-
-            if (fieldConfig.isAllAnnotationsRemoved()) {
-                ipQualifiers.clear();
-            }
-
-            boolean hasExplicitQualifier = false;
-            for (var ann : fieldConfig.getAddedAnnotations()) {
-                var qName = DotName.of(ann.getName());
-                ipQualifiers.add(new QualifierInstance(qName, Map.of()));
-                if (!qName.equals(QualifierInstance.ANY_NAME) && !qName.equals(QualifierInstance.NAMED_NAME)) {
-                    hasExplicitQualifier = true;
-                }
-            }
-            for (var annInfo : fieldConfig.getAddedAnnotationInfos()) {
-                var qi = annotationInfoToQualifier(annInfo);
-                ipQualifiers.add(qi);
-                if (!qi.annotationName().equals(QualifierInstance.ANY_NAME)
-                        && !qi.annotationName().equals(QualifierInstance.NAMED_NAME)) {
-                    hasExplicitQualifier = true;
-                }
-            }
-            // CDI spec: @Default is removed when an explicit qualifier is added
-            if (hasExplicitQualifier) {
-                ipQualifiers.removeIf(q -> q.annotationName().equals(QualifierInstance.DEFAULT_NAME));
-            }
-
-            injectionPoints.set(i, new InjectionPointInfo(
-                    ip.requiredType(), ipQualifiers, ip.kind(), ip.description()));
+        String description = InjectionPointInfo.fieldDescription(
+                indexedSimpleName(fieldConfig.info().declaringClass().name()), fieldConfig.info().name());
+        int existingIndex = findPoint(injectionPoints, InjectionPointInfo.InjectionKind.FIELD, description);
+        var sourceInject = fieldConfig.info().annotation(jakarta.inject.Inject.class);
+        boolean removedInject = fieldConfig.isAllAnnotationsRemoved()
+                || (sourceInject != null && fieldConfig.getRemovePredicates().stream().anyMatch(p -> p.test(sourceInject)));
+        boolean injected = hasAddedAnnotation(fieldConfig, jakarta.inject.Inject.class)
+                || (sourceInject != null && !removedInject);
+        if (!injected) {
+            if (existingIndex >= 0) injectionPoints.remove(existingIndex);
+            return;
         }
+
+        var existing = existingIndex >= 0 ? injectionPoints.get(existingIndex) : null;
+        var declared = existing == null
+                ? new LinkedHashSet<QualifierInstance>()
+                : new LinkedHashSet<>(existing.declaredQualifiers());
+        if (fieldConfig.isAllAnnotationsRemoved()) declared.clear();
+        for (var predicate : fieldConfig.getRemovePredicates()) {
+            declared.removeIf(q -> {
+                var annotation = qualifierToAnnotationInfo(q);
+                return annotation != null && predicate.test(annotation);
+            });
+        }
+        addQualifiers(declared, fieldConfig.getAddedAnnotations(), fieldConfig.getAddedAnnotationInfos(),
+                fieldConfig.getAddedAnnotationInstances());
+        completeDeclaredQualifiers(declared);
+        var resolved = completedQualifiers(declared);
+
+        var requiredType = existing == null
+                ? LangModelTypeMapper.toIndexType(fieldConfig.info().type())
+                : existing.requiredType();
+        var point = new InjectionPointInfo(requiredType, resolved, declared,
+                InjectionPointInfo.InjectionKind.FIELD, description);
+        if (existingIndex >= 0) injectionPoints.set(existingIndex, point);
+        else injectionPoints.add(point);
     }
 
     private static void applyMethodEnhancement(VaubanMethodConfig methodConfig,
                                                 Set<DotName> interceptorBindings,
                                                 List<Annotation> interceptorBindingAnnotations) {
         for (var ann : methodConfig.getAddedAnnotations()) {
-            interceptorBindings.add(DotName.of(ann.getName()));
+            if (isInterceptorBindingAnnotation(ann)) interceptorBindings.add(DotName.of(ann.getName()));
         }
         // Store annotation instances for member value matching
         for (var ann : methodConfig.getAddedAnnotationInstances()) {
-            interceptorBindingAnnotations.add(ann);
+            if (isInterceptorBindingAnnotation(ann.annotationType())) interceptorBindingAnnotations.add(ann);
         }
         for (var annInfo : methodConfig.getAddedAnnotationInfos()) {
+            if (!isInterceptorBindingAnnotationInfo(annInfo)) continue;
             interceptorBindings.add(DotName.of(annInfo.name()));
             if (annInfo instanceof BuiltAnnotationInfo built) {
                 try {
@@ -391,10 +399,127 @@ final class EnhancementApplier {
         }
     }
 
-    private static void applyParameterEnhancement() {
-        // Parameter modifications affect observer qualifiers, handled via observer descriptors
-        // For now this is mainly used by ChangeObserverQualifierTest which modifies observer parameters
-        // The actual observer modification happens in the observer discovery phase
+    private static void applyParameterEnhancement(VaubanMethodConfig methodConfig,
+            VaubanParameterConfig parameterConfig, int index, boolean initializer,
+            List<InjectionPointInfo> injectionPoints) {
+        var method = methodConfig.info();
+        var kind = method.isConstructor()
+                ? InjectionPointInfo.InjectionKind.CONSTRUCTOR_PARAMETER
+                : InjectionPointInfo.InjectionKind.METHOD_PARAMETER;
+        var description = InjectionPointInfo.parameterDescription(
+                indexedSimpleName(method.declaringClass().name()),
+                method.isConstructor() ? null : method.name(), index,
+                method.parameters().stream()
+                        .map(parameter -> LangModelTypeMapper.toIndexType(parameter.type())).toList());
+        int existingIndex = findPoint(injectionPoints, kind, description);
+        if (existingIndex < 0 && !initializer) return;
+
+        var existing = existingIndex >= 0 ? injectionPoints.get(existingIndex) : null;
+        var declared = existing == null
+                ? new LinkedHashSet<QualifierInstance>()
+                : new LinkedHashSet<>(existing.declaredQualifiers());
+        if (parameterConfig.isAllAnnotationsRemoved()) declared.clear();
+        for (var predicate : parameterConfig.getRemovePredicates()) {
+            declared.removeIf(q -> {
+                var annotation = qualifierToAnnotationInfo(q);
+                return annotation != null && predicate.test(annotation);
+            });
+        }
+        addQualifiers(declared, parameterConfig.getAddedAnnotationClasses(),
+                parameterConfig.getAddedAnnotations(), parameterConfig.getAddedAnnotationInstances());
+        completeDeclaredQualifiers(declared);
+        var resolved = completedQualifiers(declared);
+
+        var requiredType = existing == null
+                ? LangModelTypeMapper.toIndexType(parameterConfig.info().type())
+                : existing.requiredType();
+        var point = new InjectionPointInfo(requiredType, resolved, declared, kind, description);
+        if (existingIndex >= 0) injectionPoints.set(existingIndex, point);
+        else injectionPoints.add(point);
+    }
+
+    private static int findPoint(List<InjectionPointInfo> points,
+            InjectionPointInfo.InjectionKind kind, String description) {
+        for (int i = 0; i < points.size(); i++) {
+            var point = points.get(i);
+            if (point.kind() == kind && point.description().equals(description)) return i;
+        }
+        return -1;
+    }
+
+    private static void completeDeclaredQualifiers(Set<QualifierInstance> qualifiers) {
+        boolean explicit = qualifiers.stream().anyMatch(q -> !q.annotationName().equals(QualifierInstance.ANY_NAME)
+                && !q.annotationName().equals(QualifierInstance.DEFAULT_NAME));
+        if (explicit) {
+            qualifiers.removeIf(q -> q.annotationName().equals(QualifierInstance.DEFAULT_NAME));
+        } else {
+            qualifiers.add(QualifierInstance.DEFAULT);
+        }
+    }
+
+    private static Set<QualifierInstance> completedQualifiers(Set<QualifierInstance> declared) {
+        var qualifiers = new LinkedHashSet<>(declared);
+        qualifiers.add(QualifierInstance.ANY);
+        return qualifiers;
+    }
+
+    private static void addQualifiers(Set<QualifierInstance> qualifiers,
+            Set<Class<? extends Annotation>> classes, List<AnnotationInfo> infos,
+            List<Annotation> instances) {
+        var instanceNames = instances.stream().map(a -> a.annotationType().getName())
+                .collect(java.util.stream.Collectors.toSet());
+        for (var annotation : classes) {
+            if (isQualifierAnnotation(annotation) && !instanceNames.contains(annotation.getName())) {
+                qualifiers.add(new QualifierInstance(DotName.of(annotation.getName()), Map.of()));
+            }
+        }
+        for (var annotation : infos) {
+            if (isQualifierAnnotationInfo(annotation)) qualifiers.add(annotationInfoToQualifier(annotation));
+        }
+        for (var annotation : instances) {
+            if (isQualifierAnnotation(annotation.annotationType())) {
+                qualifiers.add(QualifierInstance.from(
+                        io.vidocq.vauban.core.annotation.AnnotationValues.infoOf(annotation)));
+            }
+        }
+    }
+
+    private static boolean hasAddedAnnotation(VaubanFieldConfig config, Class<? extends Annotation> type) {
+        return config.getAddedAnnotations().contains(type)
+                || config.getAddedAnnotationInfos().stream().anyMatch(a -> a.name().equals(type.getName()))
+                || config.getAddedAnnotationInstances().stream().anyMatch(a -> a.annotationType() == type);
+    }
+
+    private static boolean hasAddedAnnotation(VaubanMethodConfig config, Class<? extends Annotation> type) {
+        return config.getAddedAnnotations().contains(type)
+                || config.getAddedAnnotationInfos().stream().anyMatch(a -> a.name().equals(type.getName()))
+                || config.getAddedAnnotationInstances().stream().anyMatch(a -> a.annotationType() == type);
+    }
+
+    private static boolean hasAddedAnnotation(VaubanParameterConfig config, Class<? extends Annotation> type) {
+        return config.getAddedAnnotationClasses().contains(type)
+                || config.getAddedAnnotations().stream().anyMatch(a -> a.name().equals(type.getName()))
+                || config.getAddedAnnotationInstances().stream().anyMatch(a -> a.annotationType() == type);
+    }
+
+    private static boolean hasAnnotation(VaubanMethodConfig config, Class<? extends Annotation> type) {
+        var original = config.info().annotation(type);
+        boolean removed = config.isAllAnnotationsRemoved()
+                || (original != null && config.getRemovePredicates().stream().anyMatch(p -> p.test(original)));
+        return hasAddedAnnotation(config, type) || (original != null && !removed);
+    }
+
+    private static String initializerMethodKey(VaubanMethodConfig config) {
+        var method = config.info();
+        return InjectionPointInfo.enhancedInitializerMethod(
+                method.declaringClass().name(), method.name(),
+                InjectionPointInfo.methodDescriptor(method.parameters().stream()
+                        .map(parameter -> LangModelTypeMapper.toIndexType(parameter.type())).toList()));
+    }
+
+    private static String indexedSimpleName(String className) {
+        int packageSeparator = className.lastIndexOf('.');
+        return className.substring(packageSeparator + 1);
     }
 
     private static boolean isQualifierAnnotation(Class<? extends Annotation> ann) {

@@ -1,3 +1,23 @@
+# BCE-added public field injection — 2026-10-09
+
+- [x] Inspect the shared collector and APT provider generation without changing existing runtime work.
+- [x] Reproduce missing public field write cases with a focused processor test.
+- [x] Add APT-only coverage for legally assignable public mutable reference fields.
+- [x] Run focused red/green tests and the processor suite; document limitations.
+
+Review: the regression was red with only `alreadyInjected` in provider coverage, then green
+with the public reference-field cases. `ComponentProviderCompileTimeTest` passes (10 tests),
+including a named-module ServiceLoader probe without opens, and all processor tests pass
+(143 tests). Existing runtime work and Mansart were not edited. This is APT-only write
+coverage, not new injection metadata: primitive, inaccessible and unannotated non-public
+fields remain unsupported, as do runtime-added initializers. Only bean declarations already
+eligible for a package provider are covered; nested owners need a component-table entry.
+
+Follow-up (same day): the supplement's readability check completed the module under compilation
+and broke `provides … _VaubanComponents` in Mansart's module IT. Red one-pass named-module test
+`publicFieldOfAnotherModuleTypeDoesNotCompleteTheCompiledModule`, fixed with the
+`nameableFrom(…, readability=false)` overload; processor 144/144, Mansart module IT 4/4.
+
 # vauban#70 — Annotation metadata at build time, no reflection on the matching hot path — PLAN, awaiting confirmation
 
 Issue: https://codefloe.com/Vidocq/vauban/issues/70 · Mapped on `main` @ ceac964, 2026-09-14.

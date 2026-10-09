@@ -389,7 +389,15 @@ public final class InterceptedShapeFromElements {
         return nameableFrom(type, from, elements, true);
     }
 
-    private static boolean nameableFrom(TypeMirror type, PackageElement from, Elements elements, boolean readability) {
+    /**
+     * The same, {@code readability} false leaving out whether {@code from}'s module reads the type's
+     * module: that check completes the module being compiled, whose {@code provides} javac then
+     * resolves before the last round has written {@code _VaubanComponents} (see
+     * {@link #memberSignatureNameableFrom(TypeElement, ExecutableElement, PackageElement, Elements,
+     * Types, boolean)}). Sound only where a declaration of {@code from}'s module already names
+     * {@code type}, which javac checks for readability itself.
+     */
+    public static boolean nameableFrom(TypeMirror type, PackageElement from, Elements elements, boolean readability) {
         return switch (type.getKind()) {
             case DECLARED -> {
                 var dt = (DeclaredType) type;

@@ -953,20 +953,26 @@ public final class ManagedBean<T> implements Bean<T> {
         try {
             var typeMapping = buildTypeVariableMapping(beanClass);
 
-            // Scan fields (walk hierarchy)
-            Class<?> cls = beanClass;
-            while (cls != null && cls != Object.class) {
-                for (var field : cls.getDeclaredFields()) {
-                    if (field.isAnnotationPresent(jakarta.inject.Inject.class)) {
-                        var described = QualifierHelper.fieldQualifiers(points, field, annotationTypes);
-                        result.add(new VaubanInjectionPoint(
-                                resolveType(field.getGenericType(), typeMapping),
-                                described != null ? Set.of(described)
-                                        : VaubanInjectionPoint.extractQualifiersStatic(field),
-                                this, field));
-                    }
+            for (var member : BeanInjector.injectionOrder(beanClass, descriptor)) {
+                if (member instanceof java.lang.reflect.Field field) {
+                    var described = QualifierHelper.fieldQualifiers(points, field, annotationTypes);
+                    result.add(new VaubanInjectionPoint(
+                            resolveType(field.getGenericType(), typeMapping),
+                            described != null ? Set.of(described)
+                                    : VaubanInjectionPoint.extractQualifiersStatic(field),
+                            this, field));
+                    continue;
                 }
-                cls = cls.getSuperclass();
+                var method = (java.lang.reflect.Method) member;
+                var paramTypes = method.getGenericParameterTypes();
+                var params = method.getParameters();
+                for (int i = 0; i < params.length; i++) {
+                    var described = QualifierHelper.parameterQualifiers(points, method, i, annotationTypes);
+                    var qualifiers = described != null
+                            ? Set.of(described) : extractParamQualifiers(params[i]);
+                    result.add(new VaubanInjectionPoint(params[i], i, method,
+                            resolveType(paramTypes[i], typeMapping), qualifiers, this));
+                }
             }
             // Scan @Inject constructor
             for (var ctor : beanClass.getDeclaredConstructors()) {
@@ -981,24 +987,6 @@ public final class ManagedBean<T> implements Bean<T> {
                                 resolveType(paramTypes[i], typeMapping), qualifiers, this));
                     }
                 }
-            }
-            // Scan @Inject initializer methods (walk hierarchy)
-            cls = beanClass;
-            while (cls != null && cls != Object.class) {
-                for (var method : cls.getDeclaredMethods()) {
-                    if (method.isAnnotationPresent(jakarta.inject.Inject.class)) {
-                        var paramTypes = method.getGenericParameterTypes();
-                        var params = method.getParameters();
-                        for (int i = 0; i < params.length; i++) {
-                            var described = QualifierHelper.parameterQualifiers(points, method, i, annotationTypes);
-                            var qualifiers = described != null
-                                    ? Set.of(described) : extractParamQualifiers(params[i]);
-                            result.add(new VaubanInjectionPoint(params[i], i, method,
-                                    resolveType(paramTypes[i], typeMapping), qualifiers, this));
-                        }
-                    }
-                }
-                cls = cls.getSuperclass();
             }
         } catch (RuntimeException e) {
             // Reporting that a bean has no injection points, or half of them, is a wrong answer —

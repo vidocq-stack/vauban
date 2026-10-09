@@ -817,8 +817,10 @@ public final class VaubanContainerBuilder {
                             newBean.qualifiers(), enhancedScope, newBean.isAlternative(),
                             newBean.priority(), newBean.injectionPoints(), newBean.name(),
                             newBean.interceptorBindings(), newBean.constructorBindings(),
-                            newBean.interceptorBindingAnnotations());
-                    descriptors.add(newBean);
+                            newBean.interceptorBindingAnnotations(), newBean.enhancedInjectionMethods());
+                    var enhancedBeans = io.vidocq.vauban.core.extensions.BceProcessor.applyEnhancements(
+                            List.of(newBean), Map.of(entry.getKey(), entry.getValue()));
+                    descriptors.addAll(enhancedBeans);
                 }
 
                 interceptors = new ArrayList<>(io.vidocq.vauban.core.extensions.BceProcessor.applyInterceptorEnhancements(

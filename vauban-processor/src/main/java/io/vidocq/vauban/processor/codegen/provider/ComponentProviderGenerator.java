@@ -111,8 +111,8 @@ public final class ComponentProviderGenerator {
     /**
      * @param packageName  package the provider lives in (a package of the current module)
      * @param components   components to instantiate, no-arg and/or injected-constructor
-     * @param fieldInjects non-private, non-static {@code @Inject} fields in the provider's own
-     *                     package that the provider can assign directly (no reflection, no opens)
+     * @param fieldInjects assignable fields in the provider's own package: source-level
+     *                     {@code @Inject} fields and public mutable runtime-BCE candidates
      */
     public static Generated generateFrom(String packageName, List<Component> components,
             List<FieldInject> fieldInjects) {
@@ -122,8 +122,8 @@ public final class ComponentProviderGenerator {
     /**
      * @param packageName   package the provider lives in (a package of the current module)
      * @param components    components to instantiate, no-arg and/or injected-constructor
-     * @param fieldInjects  non-private, non-static {@code @Inject} fields in the provider's own
-     *                      package that the provider can assign directly (no reflection, no opens)
+     * @param fieldInjects  assignable fields in the provider's own package: source-level
+     *                      {@code @Inject} fields and public mutable runtime-BCE candidates
      * @param methodInvokes methods in the provider's own package that the provider can invoke
      *                      directly (no reflection, no opens): producers, observers, disposers,
      *                      lifecycle callbacks, and initializers
@@ -136,8 +136,8 @@ public final class ComponentProviderGenerator {
     /**
      * @param packageName     package the provider lives in (a package of the current module)
      * @param components      components to instantiate, no-arg and/or injected-constructor
-     * @param fieldInjects    non-private, non-static {@code @Inject} fields in the provider's own
-     *                        package that the provider can assign directly (no reflection, no opens)
+     * @param fieldInjects    assignable fields in the provider's own package: source-level
+     *                        {@code @Inject} fields and public mutable runtime-BCE candidates
      * @param methodInvokes   methods in the provider's own package the provider can call directly
      *                        (producers, observers, disposers, lifecycle callbacks, initializers)
      * @param clientProxyFqns fully-qualified {@code <Bean>_ClientProxy} names (top-level normal-scoped
@@ -263,7 +263,9 @@ public final class ComponentProviderGenerator {
             sb.append("        switch (className) {\n");
             for (var entry : byClass.entrySet()) {
                 sb.append("            case \"").append(entry.getKey()).append("\" -> {\n");
-                sb.append("                var b = (").append(entry.getKey()).append(") bean;\n");
+                var ownerSourceName = components.stream().filter(c -> c.fqn().equals(entry.getKey()))
+                        .map(Component::sourceFqn).findFirst().orElse(entry.getKey());
+                sb.append("                var b = (").append(ownerSourceName).append(") bean;\n");
                 sb.append("                switch (fieldName) {\n");
                 for (var fi : entry.getValue()) {
                     sb.append("                    case \"").append(fi.fieldName()).append("\" -> { ")
