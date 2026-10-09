@@ -184,6 +184,7 @@ without a Vauban layer, the container falls back to opening the package at runti
 so at boot.
 ----
 
+[#qualifiers]
 == Qualifiers
 
 Discriminate multiple implementations of the same type.
@@ -209,6 +210,9 @@ public class Service {
 
 `@Named`, `@Default`, `@Any` are supported. Custom qualifiers with `@Nonbinding` members work too.
 
+[.tag-new]#NEW# A `@Named` without a value on a `static` nested bean class takes the class's simple name, as CDI 4.1 §3.1.5 requires: `Outer.ReportService` is named `reportService`, where it used to be named `outer$ReportService`.
+
+[#producers-and-disposes]
 == Producers and `@Disposes`
 
 [source,java]
@@ -228,6 +232,8 @@ public class DataSourceProducer {
 ----
 
 The `@Disposes` callback runs when the producing bean is destroyed. No dedicated class is generated per producer method: the container invokes producers and disposers through the module's generated `_VaubanComponents` provider, with reflection only as a fallback.
+
+[.tag-new]#NEW# The disposer runs once per destroyed instance; it used to run twice, because its own call released the produced instance's context a second time. It now gets a context of its own (CDI 4.1 §6.4.2). Every parameter of a disposer other than the `@Disposes` one is an injection point, qualifiers included (CDI 4.1 §10.4.3): a qualified parameter used to fail validation as an unsatisfied dependency, or receive the `@Default` bean at run time.
 
 == Events
 

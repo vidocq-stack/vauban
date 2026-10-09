@@ -18,6 +18,28 @@ and broke `provides … _VaubanComponents` in Mansart's module IT. Red one-pass 
 `publicFieldOfAnotherModuleTypeDoesNotCompleteTheCompiledModule`, fixed with the
 `nameableFrom(…, readability=false)` overload; processor 144/144, Mansart module IT 4/4.
 
+Adaptation to `main` `afe2ed3e` (2026-10-09, PR #139):
+
+- [x] Merge main without discarding #130/#131/#132/#135 or the generated lookup-grant bridge.
+- [x] Keep Yann's annotation-instance maps and added bean names; remove the obsolete duplicate
+  scope-promotion loop and apply member enhancement in `BceProcessor.beansAfterEnhancement`.
+- [x] Reproduce and fix promoted-bean member metadata, unchanged initializer parameters,
+  zero-opens private-member access and frozen member additions (BUG-20261009-01/02/03).
+- [x] Verify the clean reactor install, full CDI Lite/AtInject TCK and actual Mansart module IT.
+
+The old generated-access limitation above is now narrower: a managed class whose generated
+package provider grants its module lookup also supports non-public enhanced fields and private
+runtime-added initializers without opens. Direct generated write/invoke cases stay first.
+Frozen additions retain member values and overload identity without re-instantiating the BCE.
+
+Review: Java 25.0.4-tem / Maven 3.9.16, `./mvnw -ntp clean install` succeeds; non-TCK
+reactor reports total 981 tests, 0 failures/errors, 2 existing skips (processor 152/152,
+module IT 70/70). `./run-tck.sh -ntp` succeeds: official CDI Lite 774/774, no skips,
+4 infrastructure tests and the AtInject suite wrapper green, no new exclusions.
+In `mansart/main`, `./mvnw -ntp -pl mansart-persistence/mansart-jpa-cdi-module-it -am clean test`
+passes all four `ContainerModuleTest` cases unchanged, including plain persistence fields
+and enhanced setter parameter qualifiers. No Mansart source was edited.
+
 # vauban#70 — Annotation metadata at build time, no reflection on the matching hot path — PLAN, awaiting confirmation
 
 Issue: https://codefloe.com/Vidocq/vauban/issues/70 · Mapped on `main` @ ceac964, 2026-09-14.

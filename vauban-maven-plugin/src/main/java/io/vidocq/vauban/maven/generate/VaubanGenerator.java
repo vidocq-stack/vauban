@@ -204,12 +204,9 @@ public final class VaubanGenerator {
                         var mods = enhMods.get(classInfo.name());
                         if (mods != null) {
                             var newAnnotations = new java.util.ArrayList<>(classInfo.annotations());
+                            // With their members (BUG-20261008-05)
                             for (var mod : mods) {
-                                for (var ann : mod.getAddedAnnotations()) {
-                                    newAnnotations.add(new io.vidocq.vauban.indexer.model.AnnotationInfo(
-                                            io.vidocq.vauban.indexer.model.DotName.of(ann.getName()),
-                                            java.util.Map.of()));
-                                }
+                                newAnnotations.addAll(mod.getAddedAnnotationsIndexed());
                             }
                             enrichedBuilder.add(classInfo.withAnnotations(newAnnotations));
                         } else {
@@ -685,19 +682,7 @@ public final class VaubanGenerator {
             Map<io.vidocq.vauban.indexer.model.DotName,
                     List<io.vidocq.vauban.core.extensions.VaubanClassConfig>> modifications,
             List<String> warnings) {
-        var patch = new TreeMap<String, List<String>>();
-        for (var entry : modifications.entrySet()) {
-            var added = new LinkedHashSet<String>();
-            for (var cfg : entry.getValue()) {
-                if (!cfg.isModified()) continue;
-                for (var ann : cfg.getAddedAnnotations()) {
-                    added.add(ann.getName());
-                }
-            }
-            if (!added.isEmpty()) {
-                patch.put(entry.getKey().value(), List.copyOf(added));
-            }
-        }
+        var patch = io.vidocq.vauban.core.extensions.EnhancementPatchSerializer.additions(modifications);
         if (patch.isEmpty()) return;
         try {
             var patchFile = outputDir.resolve(

@@ -38,6 +38,8 @@ public final class VaubanClassConfig implements ClassConfig {
     private final List<VaubanFieldConfig> fieldConfigs;
     private final Set<Class<? extends Annotation>> addedAnnotations = new LinkedHashSet<>();
     private final List<AnnotationInfo> addedAnnotationInfos = new ArrayList<>();
+    /** The instances given to {@link #addAnnotation(Annotation)}, which carry member values. */
+    private final Map<Class<? extends Annotation>, Annotation> addedAnnotationInstances = new LinkedHashMap<>();
     private final List<Predicate<AnnotationInfo>> removePredicates = new ArrayList<>();
     private boolean allAnnotationsRemoved;
     private Class<?> sourceBce;
@@ -105,6 +107,7 @@ public final class VaubanClassConfig implements ClassConfig {
     @Override
     public ClassConfig addAnnotation(Annotation annotation) {
         addedAnnotations.add(annotation.annotationType());
+        addedAnnotationInstances.put(annotation.annotationType(), annotation);
         return this;
     }
 
@@ -151,6 +154,33 @@ public final class VaubanClassConfig implements ClassConfig {
 
     public List<AnnotationInfo> getAddedAnnotationInfos() {
         return List.copyOf(addedAnnotationInfos);
+    }
+
+    /**
+     * The instance given to {@link #addAnnotation(Annotation)} for {@code type}, carrying its member
+     * values, or {@code null} when the annotation was added by type only.
+     */
+    public Annotation getAddedAnnotationInstance(Class<? extends Annotation> type) {
+        return addedAnnotationInstances.get(type);
+    }
+
+    /**
+     * Every annotation added to the class, in index form and with its member values, whichever
+     * {@code addAnnotation} added it: one added by type has no member (BUG-20261008-05).
+     */
+    public List<io.vidocq.vauban.indexer.model.AnnotationInfo> getAddedAnnotationsIndexed() {
+        var result = new ArrayList<io.vidocq.vauban.indexer.model.AnnotationInfo>();
+        for (var type : addedAnnotations) {
+            var instance = addedAnnotationInstances.get(type);
+            result.add(instance != null
+                    ? io.vidocq.vauban.core.annotation.AnnotationValues.infoOf(instance)
+                    : new io.vidocq.vauban.indexer.model.AnnotationInfo(
+                            io.vidocq.vauban.indexer.model.DotName.of(type.getName()), Map.of()));
+        }
+        for (var info : addedAnnotationInfos) {
+            result.add(io.vidocq.vauban.core.langmodel.LangModelAnnotations.toIndex(info));
+        }
+        return result;
     }
 
     public boolean isAllAnnotationsRemoved() {

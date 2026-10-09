@@ -1743,7 +1743,7 @@ The same goes for a normal-scoped producer of such a class (`Dollar_Produced$$�
 ## BUG-20261009-01 — BCE-added injection annotations do not create the corresponding injection points
 
 - **Date**: 2026-10-09
-- **Status**: FIXED (working tree, uncommitted)
+- **Status**: FIXED (branch `fix/bce-injection-enhancement`, PR #139)
 - **Module**: `vauban-core` (`extensions/EnhancementApplier`, `container/BeanInjector`, `container/ManagedBean`)
 - **Symptom**: a CDI Build Compatible Extension that adds `@Inject` to a plain field or initializer leaves it absent from the bean's injection-point metadata and runtime injection. Qualifier changes to constructor and initializer parameters are ignored; class-level method annotation additions can also be misclassified as interceptor bindings. Enhanced bean classes created after scope promotion miss the member changes.
 - **Minimal reproduction**:
@@ -1757,11 +1757,19 @@ The same goes for a normal-scoped producer of such a class (`Dollar_Produced$$�
   - 2026-10-09 : the direct descriptor regressions reproduced the missing field and initializer injection points and ignored constructor qualifier mutation.
   - 2026-10-09 : fixed member metadata application, retained qualifier member values, recorded exact initializer signatures for runtime injection, applied enhancements to scope-promoted beans, and added an end-to-end test covering an enhanced field, constructor parameter, overloaded initializer, member-value qualifier and bean metadata.
   - 2026-10-09 : `./mvnw -ntp -pl vauban-core -Dtest='BceEnhancementTest,BceInjectionEnhancementTest' test` passed (27 tests).
+  - 2026-10-09 : adapted to `main` `afe2ed3e` without restoring the duplicate scope-promotion
+    code removed by #131. RED `scopePromotionAppliesMemberEnhancementsBeforeRegistration`:
+    the centralized `BceProcessor.beansAfterEnhancement` returned zero member points for a promoted
+    bean. The helper now enhances that descriptor too, so Registration and boot share the result.
+  - 2026-10-09 : the zero-opens module regression exposed another missing case: an initializer
+    that gained `@Inject` but whose parameters were not modified had no parameter descriptor and
+    tried reading qualifiers reflectively under `vauban.annotations.reflection=forbid`. Every
+    parameter of an added initializer is now described, retaining its source qualifier members.
 
 ## BUG-20261009-02 — APT providers cannot write public fields enhanced only by a runtime BCE
 
 - **Date**: 2026-10-09
-- **Status**: FIXED (working tree, uncommitted)
+- **Status**: FIXED (branch `fix/bce-injection-enhancement`, PR #139)
 - **Module**: `vauban-processor` (`VaubanProcessor`, `ComponentProviderGenerator`)
 - **Symptom**: the runtime injection metadata fixed by BUG-20261009-01 contains a BCE-enhanced
   public field, but `_VaubanComponents.injectField()` has no matching write case. The reported
@@ -1801,10 +1809,201 @@ The same goes for a normal-scoped producer of such a class (`Dollar_Produced$$�
     readability. Sound there: the field's own declaration names the type, so javac already checks the
     module reads it. Accessibility/export checks remain. GREEN; processor suite 144/144; the Mansart
     module IT compiles and its 4 tests pass unchanged.
-  - Limitations (unchanged by the fix, documented rather than claimed): write cases cover only
+  - Initial generated-write limitations (the lookup limitation below was superseded on merging
+    `main` `afe2ed3e`): write cases cover only
     public, non-static, non-final, reference-typed fields declared in a class of the compiling
     module that already has a package provider (nested owners need a component-table entry), with
     an erased type nameable from that package. Non-public fields, primitives, fields inherited from a
     class of another module, and initializer methods whose `@Inject` is added only by a runtime BCE
     get no generated access; they fall back to `VaubanLookup`, which needs the qualified `opens` and
     fails loudly without it (`RuntimeException` "Cannot reflectively access …", caused by `IllegalAccessException`) — never a silent skip.
+  - 2026-10-09 : adapted member access to the generated provider's `ModuleLookupGrant` bridge.
+    Direct public-field write cases stay first; `VaubanLookup` consults `ModuleLookups` before its
+    existing explicit-lookup/qualified-opens fallback. A managed class with a granting package
+    provider can therefore receive private fields and private runtime-added initializers without
+    opening anything. RED/GREEN `ModuleLookupModulePathTest.runtimeEnhancementInjectsPrivateMembersThroughTheGrantedLookup`.
+    This does not grant access to arbitrary classes: the upstream managed-class/provider/module
+    checks and registration lifetime remain authoritative. A declaring class without such a grant
+    still needs the existing supplied lookup or qualified opens.
+## BUG-20261008-01 — A synthetic bean type given as a language-model type is lost between build time and run time
+
+- **Date**: 2026-10-08
+- **Status**: FIXED 2026-10-08 (`ca601963`, branch `pr/ybl/rest-client-module-path`)
+- **Affected module**: `vauban-core` (`SyntheticMetadataSerializer.writeBeanBuilder`)
+- **Symptom**: a build compatible extension run by the Vauban processor declares a synthetic bean with
+  `components.addBean(Object.class).type(langModelType)` — the only way to name a type the compilation is still
+  producing, which cannot be loaded. The processor validates the deployment against that type, then writes
+  `META-INF/vauban-synthetic-metadata.properties` with `bean.N.types=java.lang.Object` only: at run time the bean has
+  no other type and every injection point of that type is unsatisfied. Seen with Cyrano's `@RestClient` beans on the
+  Vidocq runtime (`DeploymentException: Unsatisfied dependency: field RelayResource.greetings of type GreetingClient`)
+  after cyrano BUG-20261008-06 made the extension declare them that way.
+- **Minimal repro**: `new VaubanSyntheticBeanBuilder<>(Object.class).type(new VaubanClassType(DotName.of("com.example.Api"), null))`,
+  `SyntheticMetadataSerializer.write(...)`, `readBeans(...)`: the types are `[java.lang.Object]`.
+- **Root cause**: `VaubanSyntheticBeanBuilder.type(Type)` keeps language-model types in `indexTypes`;
+  `writeBeanBuilder` writes `getTypes()` (the `Class` types) only.
+- **Investigations**:
+  - 2026-10-08: `SyntheticMetadataSerializerTest.shouldRoundTripALanguageModelClassType` read back `[java.lang.Object]`.
+    Fixed: a class type given through the language model is written by name with the other types and loaded at run
+    time like them. Parameterized language-model types (`Optional<String>`…) are still not written: the `types` list
+    has no notation for them. With the fix, the Vidocq Rest Client example (Cyrano's `@RestClient` bean, declared at
+    build time) starts and answers on the module path and from its jlink image.
+
+## BUG-20261008-02 — A build-time synthetic bean param that is an array, an annotation or a ClassInfo is silently dropped
+
+- **Date**: 2026-10-08
+- **Status**: FIXED 2026-10-08 (Vidocq/vauban#130, branch `pr/ybl/synthetic-param-types`)
+- **Affected module**: `vauban-core` (`SyntheticMetadataSerializer.encodeParam`, `SyntheticComponentRegistrar.applyParam`)
+- **Surfaced by**: Foy Phase 2 (`FoyWebExtension`, foy branch `pr/ybl/servlet-completion-phase2`).
+- **Symptom**: a build compatible extension run by `vauban-processor` calls
+  `SyntheticBeanBuilder.withParam("classes", Class<?>[])`; at run time the creator's
+  `Parameters.get("classes", Class[].class)` is `null`, and nothing is reported at build time (no `.param.classes=`
+  line in `META-INF/vauban-synthetic-metadata.properties`). CDI 4.1 Lite requires every `withParam` overload to reach
+  the creator: primitive and `String`/`Class`/`Enum` arrays, `ClassInfo`, `AnnotationInfo`/`Annotation`, `InvokerInfo`.
+- **Minimal repro**: `@Synthesis` with `syn.addBean(X.class).type(X.class).withParam("classes", new Class<?>[]{String.class}).createWith(Creator.class)`,
+  compiled with `vauban-processor`, then booted: `Creator` receives `null`. Pinned by foy's spike test
+  `BceCapabilitySpikeTest.synthesisWithClassArrayParam` (foy `383b850`).
+- **Root cause**: `encodeParam` (`main` @ `4ce059fa`, ~l.158-168) encodes `String`, `Boolean`, `Integer`, `Long`,
+  `Double`, `Class`, `Enum` and returns `null` ("unsupported param type — skipped") for everything else.
+- **Workaround (Foy)**: one `String` param of comma-joined binary names, split by the creator.
+- **Investigations**:
+  - 2026-10-08: confirmed on `main` @ `4ce059fa` by reading `encodeParam`; observed end to end on `0.4.0-SNAPSHOT`
+    from `feat/dependency-providers` @ `7384ac10`.
+  - 2026-10-08: `BceRuntimeParamsTest` (boot from written metadata) fails on `main` `76f530bc`: the creator gets a
+    `String` where it asked for an enum. Reading the boot side showed more of the same: `applyParam` dropped `Class`
+    and `Enum` params too (its switch had no case for them), and the params of a synthetic observer were never
+    applied at all.
+- **Fix**: `SyntheticParamCodec` writes every value `withParam` accepts — primitive, `String`, `Class`, `Enum` and
+  annotation arrays, `ClassInfo` (read back as `Class`), `Annotation` and `AnnotationInfo` (read back as
+  `Annotation`, every member kept), `InvokerInfo` (bean class, method, lookups) — in length-prefixed frames, so a
+  value may hold any character. Earlier files still read. A value of another type fails the build with the bean and
+  the param named; a class the boot cannot load fails the deployment the same way. Observer params are applied, and
+  the duplicate check of synthetic beans compares array params by content. Tests: `SyntheticParamCodecTest`,
+  `BceRuntimeParamsTest`, `BceCompileTimeTest.syntheticParamsOfEveryKindSurviveTheBuild` (Foy's `Class<?>[]`).
+
+## BUG-20261008-03 — @Registration does not see the beans that @Enhancement creates
+
+- **Date**: 2026-10-08
+- **Status**: FIXED 2026-10-08 (Vidocq/vauban#131, branch `pr/ybl/registration-after-enhancement`)
+- **Affected module**: `vauban-core` (`BceProcessor`)
+- **Surfaced by**: Foy Phase 2 (`FoyWebExtension`).
+- **Symptom**: an extension adds `@Dependent` in `@Enhancement(types = Object.class, withAnnotations = WebServlet.class)`
+  to an unscoped `@WebServlet` class. The class becomes a bean (listed in `vauban-beans.list`, resolvable at run time),
+  but the extension's `@Registration(types = Servlet.class)` method is never called for it. CDI 4.1 Lite runs
+  Registration on the bean set as it stands after Enhancement.
+- **Minimal repro**: foy `FoyWebExtensionTest.scopesAndIndex` (foy-cdi-vauban) before Foy's workaround — the index built
+  in `@Registration` held only the class that already had a scope.
+- **Root cause**: `BceProcessor` (`main` @ `4ce059fa`, ~l.229-234) passes the same pre-enhancement `beans` list (from
+  discovery) to `processEnhancement` and `processRegistration`; the enhancement modifications are applied to the
+  descriptors afterwards (`applyEnhancements`).
+- **Workaround (Foy)**: `FoyWebExtension` also records the classes it sees in `@Enhancement`; foy-core skips listed
+  classes that end up without a bean, with a WARNING.
+- **Investigations**:
+  - 2026-10-08: confirmed on `main` @ `4ce059fa` by reading `BceProcessor`.
+  - 2026-10-08: `BceCompileTimeTest.registrationSeesTheBeansEnhancementCreated` fails on `main` `76f530bc`. The
+    first failure is a different one: `bean.scope().name()` threw a `NullPointerException` in `@Registration`,
+    because `VaubanBceScopeInfo.annotation()` returned `null` for a scope outside the index, which every built-in
+    scope is at build time. A second cause showed when reading `process`: each extension went through all its phases
+    before the next extension started, so an extension's `@Registration` could run before another extension's
+    `@Enhancement`. At container start the bug was masked: the index is rebuilt with the enhanced annotations
+    before discovery (but see BUG-20261008-05).
+- **Fix**: `BceProcessor.process` runs each phase for every extension before the next phase, and hands
+  `@Registration` the beans as `@Enhancement` left them, through `beansAfterEnhancement`. That method is now the one
+  place that applies the enhancements and makes a bean of a class that gained a scope. The processor and the
+  container each had a copy of that code; both copies are gone. `VaubanBceScopeInfo` names a scope outside the index
+  and gives the stub declaration a class type gives. Tests: `BceCompileTimeTest.registrationSeesTheBeansEnhancementCreated`
+  (the extension that registers is listed before the one that enhances), `VaubanBceScopeInfoTest`.
+
+## BUG-20261008-05 — An annotation added by @Enhancement loses its member values
+
+- **Date**: 2026-10-08
+- **Status**: FIXED 2026-10-08 (Vidocq/vauban#135, branch `pr/ybl/enhancement-annotation-members`)
+- **Affected module**: `vauban-core` (`VaubanContainerBuilder` index rebuild, `EnhancementPatchSerializer`,
+  `VaubanClassConfig`, `VaubanFieldConfig`, `EnhancementApplier`), `vauban-processor`, `vauban-maven-plugin`
+- **Surfaced by**: the tests of BUG-20261008-03.
+- **Symptom**: `ClassConfig.addAnnotation(NamedLiteral.of("enhanced"))` on a `@Dependent` bean gives the bean its
+  default name, not `enhanced`; a qualifier with members added the same way, to a class or to a field, loses its
+  members, so an injection point that tells two beans apart by a member is unsatisfied. The default name of a nested
+  class on that path keeps the binary simple name (`bceRegistrationAfterEnhancementTest$Plain`).
+- **Minimal repro**: two extensions on `SeContainerInitializer.addBeanClasses`, one adding `@Named("enhanced")` to a
+  bean in `@Enhancement`, the other recording `BeanInfo.name()` in `@Registration`: it records the default name.
+- **Root cause**: `VaubanClassConfig.addAnnotation(Annotation)` and `VaubanFieldConfig.addAnnotation(Annotation)`
+  kept the annotation type only. At container start, the rebuilt index wrote each added annotation with no member,
+  through the 8-argument `ClassInfo` constructor that loses the simple name; `addAnnotation(AnnotationInfo)` did not
+  reach it at all. At build time, the frozen patch `META-INF/vauban-enhancements.properties` recorded annotation
+  names only, in the processor and in `vauban:generate`. `EnhancementApplier` built the added qualifiers from their
+  type and never applied an added `@Named` to the bean's name.
+- **Investigations**:
+  - 2026-10-08: found on `pr/ybl/registration-after-enhancement` (based on `main` `76f530bc`).
+    `BceEnhancementMembersTest` fails on `main`: `Unsatisfied dependency ... @Channel(value=beta)`.
+- **Fix**: the class and field configs keep the instance an extension gives; `VaubanClassConfig.getAddedAnnotationsIndexed()`
+  gives every added annotation in index form, members included, whichever `addAnnotation` added it. The rebuilt index
+  uses it and `ClassInfo.withAnnotations`, which keeps the simple name. The frozen patch writes each annotation with
+  its members through `SyntheticParamCodec.encodeAnnotation`; the names-only form of earlier builds still reads.
+  `EnhancementApplier` builds added qualifiers from the instance and applies an added `@Named` (its value, or the
+  default name) to the bean and its `@Named` qualifier. Tests: `BceEnhancementMembersTest` (name, default name of a
+  nested class, class and field qualifier members, seen by another extension's `@Registration`),
+  `EnhancementPatchSerializerTest`, `BceCompileTimeTest.frozenPatchKeepsMembers`.
+
+## BUG-20261008-04 — Application stereotypes are not bean-defining at build time
+
+- **Date**: 2026-10-08
+- **Status**: FIXED 2026-10-08 (Vidocq/vauban#132, branch `pr/ybl/stereotype-bean-defining`)
+- **Affected module**: `vauban-processor` (indexing / bean-defining annotations), `vauban-core` (stereotype scope)
+- **Surfaced by**: Foy Phase 2 (`FoyWebExtension`, fix round of Task 2.10).
+- **Symptom**: with `vauban-processor`, (1) a class whose only CDI annotation is an application stereotype
+  (`@Stereotype @ApplicationScoped @interface Managed`) is not indexed — no bean — although a scoped stereotype is
+  bean-defining (CDI 4.1 §2.5.1, §2.8); (2) a class indexed for another reason and carrying that stereotype gets
+  `@Dependent` instead of the stereotype's `@ApplicationScoped`. Same result with the stereotype in the same compilation
+  or in a separate library jar.
+- **Minimal repro**: a `@WebServlet @Managed` class plus a control class carrying only `@Managed`, compiled with
+  `vauban-processor` + foy-cdi-vauban on the processor path: the first is a `@Dependent` bean, the second is no bean.
+  (Foy dropped the harness tests and covers its logic with `FoyWebExtensionScopeTest`.)
+- **Root cause**: not investigated.
+- **Investigations**:
+  - 2026-10-08: observed on `0.4.0-SNAPSHOT` from `feat/dependency-providers` @ `7384ac10`; not re-run on `main`
+    (`main` gained build-time annotation-type indexing in vauban#70, which may change part (2)).
+  - 2026-10-08: `BceCompileTimeTest.applicationStereotypeIsBeanDefining` fails on `main` `76f530bc` with part (1):
+    the class carrying only the stereotype is not in the bean list. Root cause: the processor only looked at the
+    classes carrying an annotation of a fixed list (`ApplicationScoped`, `RequestScoped`, `Dependent`, `Singleton`,
+    `Produces`, `Interceptor`) plus the extensions' triggers, so a class whose only bean-defining annotation was a
+    stereotype, a custom scope, `@SessionScoped` or `@Model` never entered the index. Part (2) no longer reproduces
+    on `main`: a class indexed through its producer gets the stereotype's `@ApplicationScoped`, with the stereotype
+    in the same compilation or in a library (the annotation-type indexing of vauban#70 sees it).
+- **Fix**: the processor supports every annotation (`*`, never claimed) and indexes a class carrying one of the fixed
+  list, an extension trigger, or an annotation meta-annotated `@Stereotype`, `@NormalScope` or `@Scope`. Tests:
+  `BceCompileTimeTest.applicationStereotypeIsBeanDefining`, `libraryStereotypeIsBeanDefining` (stereotype compiled
+  separately, on the class path); both also check that the beans are normal-scoped (they get a client proxy).
+
+## BUG-20261009-03 — Frozen enhancements drop field, initializer and parameter additions at boot
+
+- **Date**: 2026-10-09
+- **Status**: FIXED (branch `fix/bce-injection-enhancement`, PR #139)
+- **Module**: `vauban-core` (`EnhancementPatchSerializer`, `VaubanContainerBuilder`),
+  `vauban-processor`, `vauban-maven-plugin`
+- **Symptom**: an extension run at build time adds `@Inject` to a field and private initializer,
+  and changes a constructor parameter qualifier. After boot from the processed archive, the field
+  and initializer remain null and the constructor parameter keeps its source qualifiers.
+- **Minimal reproduction**:
+  ```
+  ./mvnw -ntp -pl vauban-processor -am \
+    -Dtest='BceCompileTimeTest#frozenPatchAppliesAddedFieldInitializerAndParameterQualifierAtBoot' \
+    -Dsurefire.failIfNoSpecifiedTests=false test
+  ```
+- **Hypothesized cause**: the frozen patch records class additions only. Its presence suppresses
+  replay for the whole class, silently dropping its member additions.
+- **Investigations**:
+  - 2026-10-09: RED after `scanClasspath()` enabled the processed-archive path: the enhanced field
+    was null. An explicit-class-only bootstrap misleadingly passed by replaying the extension.
+    The regression now asserts that no enhancement runs at boot.
+  - 2026-10-09: one shared collector writes class, field, method and parameter additions for both
+    APT and the Maven plugin. Member keys include method descriptors and parameter positions;
+    annotation frames retain every member value and the old class-only formats still read.
+    Boot restores the member configs before descriptor enhancement. A member-only patch also
+    suppresses replay without needing an added class annotation.
+  - 2026-10-09: GREEN for promoted and already-scoped beans, private initializer invocation,
+    unchanged source parameter qualifiers, added constructor/field qualifier members and member
+    target round trips. The frozen format still records additions, not annotation removals; that
+    pre-existing limitation is outside this change.
+  - 2026-10-09: verified on Java 25.0.4-tem / Maven 3.9.16: clean Vauban install (981 non-TCK
+    tests, zero failures/errors, two existing skips), full CDI Lite 774/774 without new exclusions,
+    AtInject runner green, and the actual Mansart `ContainerModuleTest` 4/4 after a clean build.

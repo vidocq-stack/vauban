@@ -72,6 +72,11 @@ module io.vidocq.vauban.core {
     // the JDK running the build (BUG-20260911-01) — the APT front-end generates through it too.
     exports io.vidocq.vauban.core.codegen to io.vidocq.vauban.processor;
 
+    // Full-privilege lookups of managed classes, supplied by their package's generated provider
+    // (ModuleLookups): exported only to the extension modules trusted with them, added by name.
+    // MicroProfile Fault Tolerance resolves private @Fallback methods through it (heisenberg BUG-003).
+    exports io.vidocq.vauban.core.access to io.vidocq.heisenberg.cdi.vauban;
+
     provides jakarta.enterprise.inject.spi.CDIProvider
             with io.vidocq.vauban.core.container.VaubanCDIProvider;
 

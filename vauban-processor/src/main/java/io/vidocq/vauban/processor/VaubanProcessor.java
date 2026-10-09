@@ -112,6 +112,12 @@ public class VaubanProcessor extends AbstractProcessor {
             "jakarta.interceptor.Interceptor"
     );
 
+    /** The meta-annotations that make an annotation bean-defining: stereotypes and scopes. */
+    private static final Set<String> BEAN_DEFINING_META_ANNOTATIONS = Set.of(
+            "jakarta.enterprise.inject.Stereotype",
+            "jakarta.enterprise.context.NormalScope",
+            "jakarta.inject.Scope");
+
     private static final String BEANS_LIST_PATH = "META-INF/vauban-beans.list";
     private static final String REQUIRED_OPENS_PATH = "META-INF/vauban/required-opens.list";
     /** Where the co-located proxy bytes of a listed produced type are shipped (#42 Stage 4). */
@@ -173,13 +179,34 @@ public class VaubanProcessor extends AbstractProcessor {
         bceAnnotationTypes = extractBceAnnotationTypes(discoveredBceClasses);
     }
 
+    /**
+     * Every annotation: whether an annotation makes a class a bean can depend on the annotation's own
+     * meta-annotations — an application stereotype or a custom scope, which no fixed list can name
+     * (BUG-20261008-04). {@link #isIndexTrigger} picks the ones that matter. The processor never claims
+     * an annotation, so other processors still see them all.
+     */
     @Override
     public Set<String> getSupportedAnnotationTypes() {
-        var types = new LinkedHashSet<>(CDI_ANNOTATIONS);
-        // Trigger annotations derived from BCE @Enhancement(withAnnotations=...)
-        // Replaces vauban-apt.properties — the BCE declares its own triggers
-        types.addAll(bceAnnotationTypes);
-        return Set.copyOf(types);
+        return Set.of("*");
+    }
+
+    /**
+     * Whether a class carrying {@code annotation} enters the index: a CDI annotation of the fixed
+     * list, a trigger an extension declares in {@code @Enhancement(withAnnotations=...)}, or an
+     * annotation that is a stereotype or a scope (CDI 4.1 §2.5.1: those are bean-defining).
+     */
+    private boolean isIndexTrigger(TypeElement annotation) {
+        var name = annotation.getQualifiedName().toString();
+        if (CDI_ANNOTATIONS.contains(name) || bceAnnotationTypes.contains(name)) {
+            return true;
+        }
+        for (var meta : annotation.getAnnotationMirrors()) {
+            var metaName = ((TypeElement) meta.getAnnotationType().asElement()).getQualifiedName().toString();
+            if (BEAN_DEFINING_META_ANNOTATIONS.contains(metaName)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**
@@ -219,6 +246,7 @@ public class VaubanProcessor extends AbstractProcessor {
         // Accumulate types annotated this round into the cross-round index.
         var scanner = new ElementScanner(processingEnv.getElementUtils(), processingEnv.getTypeUtils());
         for (var annotation : annotations) {
+            if (!isIndexTrigger(annotation)) continue;
             for (var element : roundEnv.getElementsAnnotatedWith(annotation)) {
                 if (element instanceof TypeElement typeElement) {
                     var name = DotName.of(typeElement.getQualifiedName().toString());
@@ -299,7 +327,8 @@ public class VaubanProcessor extends AbstractProcessor {
             var bceResult = ExtensionPhase.atBuildTime(() -> BceProcessor.process(bceClasses, beans,
                     observers, interceptors,
                     bceIndex, aptClassLoader,
-                    bceInstances, archiveClasses));
+                    bceInstances, archiveClasses,
+                    name -> bceIndex.getClassByName(name).map(discovery::buildManagedBean).orElse(null)));
 
             // Report BCE errors as compilation errors
             boolean hasErrors = false;
@@ -318,12 +347,11 @@ public class VaubanProcessor extends AbstractProcessor {
 
             // Apply enhancement modifications
             if (!bceResult.enhancementModifications().isEmpty()) {
-                var modified = BceProcessor.applyEnhancements(beans, bceResult.enhancementModifications());
+                // Modified beans, plus the non-beans that gained a scope via Enhancement
+                var modified = BceProcessor.beansAfterEnhancement(beans, bceResult.enhancementModifications(),
+                        name -> bceIndex.getClassByName(name).map(discovery::buildManagedBean).orElse(null));
                 beans.clear();
                 beans.addAll(modified);
-
-                // Promote non-beans that gained a scope via Enhancement
-                promoteEnhancedClasses(beans, bceResult.enhancementModifications(), index, discovery);
 
                 // Freeze the enhancement *result* (target -> added annotation FQNs) so the
                 // runtime applies it WITHOUT re-instantiating the BCE on the module path.
@@ -1352,59 +1380,6 @@ public class VaubanProcessor extends AbstractProcessor {
         }
     }
 
-    private void promoteEnhancedClasses(List<BeanDescriptor> beans,
-                                         Map<DotName, List<VaubanClassConfig>> modifications,
-                                         io.vidocq.vauban.indexer.VaubanIndex index,
-                                         BeanDiscovery discovery) {
-        var existingBeanClasses = beans.stream()
-                .map(BeanDescriptor::beanClass)
-                .collect(Collectors.toSet());
-
-        for (var entry : modifications.entrySet()) {
-            if (existingBeanClasses.contains(entry.getKey())) continue;
-            var enhancedScope = extractEnhancedScope(entry.getValue());
-            if (enhancedScope == null) continue;
-            var classInfo = index.getClassByName(entry.getKey()).orElse(null);
-            if (classInfo == null) continue;
-
-            var newBean = discovery.buildManagedBean(classInfo);
-            newBean = new BeanDescriptor(
-                    newBean.id(), newBean.beanClass(), newBean.kind(), newBean.types(),
-                    newBean.qualifiers(), enhancedScope, newBean.isAlternative(),
-                    newBean.priority(), newBean.injectionPoints(), newBean.name(),
-                    newBean.interceptorBindings(), newBean.constructorBindings(),
-                    newBean.interceptorBindingAnnotations());
-            beans.add(newBean);
-        }
-    }
-
-    private static ScopeInfo extractEnhancedScope(List<VaubanClassConfig> configs) {
-        for (var config : configs) {
-            for (var ann : config.getAddedAnnotations()) {
-                if (ann.isAnnotationPresent(jakarta.enterprise.context.NormalScope.class)) {
-                    return new ScopeInfo(DotName.of(ann.getName()), true);
-                }
-                if (ann.isAnnotationPresent(jakarta.inject.Scope.class)) {
-                    return new ScopeInfo(DotName.of(ann.getName()), false);
-                }
-                String name = ann.getName();
-                if (name.equals("jakarta.enterprise.context.RequestScoped")
-                        || name.equals("jakarta.enterprise.context.ApplicationScoped")
-                        || name.equals("jakarta.enterprise.context.SessionScoped")
-                        || name.equals("jakarta.enterprise.context.ConversationScoped")) {
-                    return new ScopeInfo(DotName.of(name), true);
-                }
-                if (name.equals("jakarta.enterprise.context.Dependent")) {
-                    return ScopeInfo.DEPENDENT;
-                }
-                if (name.equals("jakarta.inject.Singleton")) {
-                    return ScopeInfo.SINGLETON;
-                }
-            }
-        }
-        return null;
-    }
-
     // --- Utility methods ---
 
     private List<Class<?>> loadArchiveClasses(io.vidocq.vauban.indexer.VaubanIndex index, ClassLoader cl) {
@@ -1570,29 +1545,13 @@ public class VaubanProcessor extends AbstractProcessor {
     }
 
     /**
-     * Freezes the {@code @Enhancement} result as a {@code target FQN -> added annotation FQNs}
-     * patch ({@link EnhancementPatchSerializer#PATCH_PATH}). The runtime applies this patch
-     * directly, so it never re-instantiates the BCE — removing the deep-reflection that forced
-     * {@code opens ... to io.vidocq.vauban.core} on the module path.
-     *
-     * <p>Only added annotations expressed as a type are frozen (the runtime applies them as
-     * member-less annotations, matching {@code VaubanClassConfig.getAddedAnnotations()}).
-     * Annotations added with members fall back to the legacy replay list.
+     * Freezes the {@code @Enhancement} result as a {@code target -> added annotations} patch
+     * ({@link EnhancementPatchSerializer#PATCH_PATH}), member values included (BUG-20261008-05). The
+     * runtime applies this patch directly, so it never re-instantiates the BCE — removing the
+     * deep-reflection that forced {@code opens ... to io.vidocq.vauban.core} on the module path.
      */
     private void writeEnhancementsPatch(Map<DotName, List<VaubanClassConfig>> modifications) {
-        var patch = new java.util.TreeMap<String, List<String>>();
-        for (var entry : modifications.entrySet()) {
-            var added = new java.util.LinkedHashSet<String>();
-            for (var config : entry.getValue()) {
-                if (!config.isModified()) continue;
-                for (var ann : config.getAddedAnnotations()) {
-                    added.add(ann.getName());
-                }
-            }
-            if (!added.isEmpty()) {
-                patch.put(entry.getKey().value(), List.copyOf(added));
-            }
-        }
+        var patch = io.vidocq.vauban.core.extensions.EnhancementPatchSerializer.additions(modifications);
         if (patch.isEmpty()) return;
 
         try {
@@ -1603,7 +1562,7 @@ public class VaubanProcessor extends AbstractProcessor {
                 io.vidocq.vauban.core.extensions.EnhancementPatchSerializer.write(patch, os);
             }
             processingEnv.getMessager().printMessage(Diagnostic.Kind.NOTE,
-                    "[Vauban] Froze enhancement patch for " + patch.size() + " class(es)");
+                    "[Vauban] Froze enhancement patch for " + patch.size() + " target(s)");
         } catch (IOException e) {
             processingEnv.getMessager().printMessage(Diagnostic.Kind.WARNING,
                     "[Vauban] Failed to write enhancement patch: " + e.getMessage());
@@ -1625,6 +1584,11 @@ public class VaubanProcessor extends AbstractProcessor {
         } catch (IOException e) {
             processingEnv.getMessager().printMessage(Diagnostic.Kind.WARNING,
                     "[Vauban] Failed to write synthetic metadata: " + e.getMessage());
+        } catch (IllegalArgumentException e) {
+            // A param the run time could not be handed: failing the build beats a creator that
+            // silently receives null (BUG-20261008-02).
+            processingEnv.getMessager().printMessage(Diagnostic.Kind.ERROR,
+                    "[Vauban] Cannot record a synthetic component: " + e.getMessage());
         }
     }
 

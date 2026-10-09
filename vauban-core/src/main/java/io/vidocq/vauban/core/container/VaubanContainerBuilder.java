@@ -248,6 +248,12 @@ public final class VaubanContainerBuilder {
      * BCE class or target class cannot be resolved are skipped silently (partial JARs,
      * stripped distributions, etc.).
      */
+    /** The managed bean each class of {@code index} would be, for the classes an Enhancement gives a scope. */
+    private static java.util.function.Function<DotName, BeanDescriptor> managedBeans(
+            io.vidocq.vauban.indexer.VaubanIndex index, BeanDiscovery discovery) {
+        return name -> index.getClassByName(name).map(discovery::buildManagedBean).orElse(null);
+    }
+
     private static List<Map.Entry<Class<?>, Class<?>>> loadRuntimeReplayList(ClassLoader cl) {
         var pairs = new ArrayList<Map.Entry<Class<?>, Class<?>>>();
         try {
@@ -293,13 +299,15 @@ public final class VaubanContainerBuilder {
 
     /**
      * Loads the frozen {@code @Enhancement} patch ({@code META-INF/vauban-enhancements.properties})
-     * from every source on the classpath, merged into {@code target -> added annotation DotNames}.
+     * from every source on the classpath, merged into {@code target -> added annotations}, members
+     * included.
      * This is the build-time <em>result</em> of the @Enhancement phases; applying it lets the
      * container skip the reflective BCE replay — and therefore the {@code opens ... to
      * io.vidocq.vauban.core} that replay required on the module path.
      */
-    private static Map<DotName, List<DotName>> loadEnhancementPatch(ClassLoader cl) {
-        var merged = new java.util.LinkedHashMap<DotName, List<DotName>>();
+    private static Map<DotName, List<io.vidocq.vauban.indexer.model.AnnotationInfo>> loadEnhancementPatch(
+            ClassLoader cl) {
+        var merged = new java.util.LinkedHashMap<DotName, List<io.vidocq.vauban.indexer.model.AnnotationInfo>>();
         try {
             var urls = cl.getResources(
                     io.vidocq.vauban.core.extensions.EnhancementPatchSerializer.PATCH_PATH);
@@ -309,8 +317,7 @@ public final class VaubanContainerBuilder {
                     patch.forEach((target, anns) -> {
                         var list = merged.computeIfAbsent(DotName.of(target), _ -> new ArrayList<>());
                         for (var ann : anns) {
-                            var d = DotName.of(ann);
-                            if (!list.contains(d)) list.add(d);
+                            if (!list.contains(ann)) list.add(ann);
                         }
                     });
                 } catch (IOException _) {
@@ -537,8 +544,11 @@ public final class VaubanContainerBuilder {
         // target, it replaces the reflective replay below: we apply the annotations directly
         // and never re-instantiate the BCE (no `opens` needed on the module path).
         var enhancementPatch = loadEnhancementPatch(discoveryClassLoader);
+        var frozenEnhancementClasses = enhancementPatch.keySet().stream()
+                .map(io.vidocq.vauban.core.extensions.EnhancementPatchSerializer::owner)
+                .collect(java.util.stream.Collectors.toSet());
         var effectiveReplayPairs = runtimeReplayPairs.stream()
-                .filter(p -> !enhancementPatch.containsKey(DotName.of(p.getValue().getName())))
+                .filter(p -> !frozenEnhancementClasses.contains(DotName.of(p.getValue().getName())))
                 .toList();
 
         // If ALL sources are pre-processed AND we have a replay list, skip full BCE
@@ -549,6 +559,7 @@ public final class VaubanContainerBuilder {
         }
 
         io.vidocq.vauban.core.extensions.BceProcessor.DiscoveryResult discoveryResult = null;
+        var extensionAddedClasses = new ArrayList<Class<?>>();
         if (!bceClasses.isEmpty()) {
             var tempIndex = indexBuilder.build();
             var tempLookup = new io.vidocq.vauban.core.langmodel.IndexLookup(tempIndex);
@@ -561,6 +572,7 @@ public final class VaubanContainerBuilder {
                     // A class an extension added is part of the deployment from now on: the
                     // later extension phases resolve it by identity, not by loading it again.
                     bceClassLoader.register(cls);
+                    extensionAddedClasses.add(cls);
                     String resource = className.replace('.', '/') + ".class";
                     try (var is = discoveryClassLoader.getResourceAsStream(resource)) {
                         if (is != null) {
@@ -578,6 +590,13 @@ public final class VaubanContainerBuilder {
         }
 
         var index = indexBuilder.build();
+
+        // Extensions trusted with the managed classes' lookups (ModuleLookups) may ask from the
+        // @Enhancement phase on; the container withdraws them at shutdown, a failed build right away.
+        var moduleLookups = io.vidocq.vauban.core.access.ModuleLookups.register(
+                componentProviders.providers(), beanClasses);
+        extensionAddedClasses.forEach(moduleLookups::addManagedClass);
+        boolean built = false;
 
         // Validate class-level CDI rules (before bean discovery)
         try {
@@ -632,6 +651,10 @@ public final class VaubanContainerBuilder {
                 replayMods.forEach((k, v) -> combinedEnhMods.computeIfAbsent(k, _ -> new ArrayList<>()).addAll(v));
             }
 
+            io.vidocq.vauban.core.extensions.EnhancementPatchSerializer
+                    .memberConfigurations(enhancementPatch, index).forEach((name, configs) ->
+                            combinedEnhMods.computeIfAbsent(name, _ -> new ArrayList<>()).addAll(configs));
+
             // Rebuild index with annotations added by Enhancement: live modifications
             // (full scan for unprocessed JARs / legacy replay) plus the frozen patch.
             if (!combinedEnhMods.isEmpty() || !enhancementPatch.isEmpty()) {
@@ -641,24 +664,19 @@ public final class VaubanContainerBuilder {
                     var patched = enhancementPatch.get(classInfo.name());
                     if (mods != null || patched != null) {
                         var newAnnotations = new java.util.ArrayList<>(classInfo.annotations());
+                        // With their members: an added @Named("x") or qualifier member is part of the
+                        // class (BUG-20261008-05).
                         if (mods != null) {
                             for (var config : mods) {
-                                for (var ann : config.getAddedAnnotations()) {
-                                    newAnnotations.add(new io.vidocq.vauban.indexer.model.AnnotationInfo(
-                                            DotName.of(ann.getName()), java.util.Map.of()));
-                                }
+                                newAnnotations.addAll(config.getAddedAnnotationsIndexed());
                             }
                         }
                         if (patched != null) {
-                            for (var ann : patched) {
-                                newAnnotations.add(new io.vidocq.vauban.indexer.model.AnnotationInfo(
-                                        ann, java.util.Map.of()));
-                            }
+                            newAnnotations.addAll(patched);
                         }
-                        enrichedBuilder.add(new io.vidocq.vauban.indexer.model.ClassInfo(
-                                classInfo.name(), classInfo.superName(), classInfo.interfaces(),
-                                classInfo.accessFlags(), classInfo.fields(), classInfo.methods(),
-                                newAnnotations, classInfo.kind()));
+                        // withAnnotations keeps the simple name: a nested class's default bean name
+                        // is not its binary simple name (Outer$Bean)
+                        enrichedBuilder.add(classInfo.withAnnotations(newAnnotations));
                     } else {
                         enrichedBuilder.add(classInfo);
                     }
@@ -746,7 +764,8 @@ public final class VaubanContainerBuilder {
                         bceClasses, descriptors, observers, interceptors, index,
                         bceClassLoader,
                         discoveryResult.bceInstances(),
-                        nonBceClasses);
+                        nonBceClasses,
+                        managedBeans(index, discovery));
 
                 // BCE definition errors → DefinitionException
                 if (!bceResult.definitionErrors().isEmpty()) {
@@ -795,33 +814,13 @@ public final class VaubanContainerBuilder {
 
             // Apply ALL enhancement modifications (replay + full BCE) to descriptors
             if (!combinedEnhMods.isEmpty()) {
-                var modified = io.vidocq.vauban.core.extensions.BceProcessor.applyEnhancements(
-                        descriptors, combinedEnhMods);
+                // Modified beans, plus the non-beans that gained a scope via Enhancement
+                // (e.g. @Path classes that receive @RequestScoped from a BCE)
+                var modified = io.vidocq.vauban.core.extensions.BceProcessor.beansAfterEnhancement(
+                        descriptors, combinedEnhMods,
+                        managedBeans(index, discovery));
                 descriptors.clear();
                 descriptors.addAll(modified);
-
-                // Create beans for non-bean classes that gained a scope via Enhancement
-                // (e.g. @Path classes that receive @RequestScoped from a BCE)
-                var existingBeanClasses = descriptors.stream()
-                        .map(BeanDescriptor::beanClass)
-                        .collect(java.util.stream.Collectors.toSet());
-                for (var entry : combinedEnhMods.entrySet()) {
-                    if (existingBeanClasses.contains(entry.getKey())) continue;
-                    var enhancedScope = SyntheticComponentRegistrar.extractEnhancedScope(entry.getValue());
-                    if (enhancedScope == null) continue;
-                    var classInfo = index.getClassByName(entry.getKey()).orElse(null);
-                    if (classInfo == null) continue;
-                    var newBean = discovery.buildManagedBean(classInfo);
-                    newBean = new BeanDescriptor(
-                            newBean.id(), newBean.beanClass(), newBean.kind(), newBean.types(),
-                            newBean.qualifiers(), enhancedScope, newBean.isAlternative(),
-                            newBean.priority(), newBean.injectionPoints(), newBean.name(),
-                            newBean.interceptorBindings(), newBean.constructorBindings(),
-                            newBean.interceptorBindingAnnotations(), newBean.enhancedInjectionMethods());
-                    var enhancedBeans = io.vidocq.vauban.core.extensions.BceProcessor.applyEnhancements(
-                            List.of(newBean), Map.of(entry.getKey(), entry.getValue()));
-                    descriptors.addAll(enhancedBeans);
-                }
 
                 interceptors = new ArrayList<>(io.vidocq.vauban.core.extensions.BceProcessor.applyInterceptorEnhancements(
                         interceptors, combinedEnhMods));
@@ -942,8 +941,13 @@ public final class VaubanContainerBuilder {
                 }
             }
 
+            container.withdrawOnClose(moduleLookups);
+            built = true;
             return container;
         } finally {
+            if (!built) {
+                moduleLookups.close();
+            }
             Thread.currentThread().setContextClassLoader(previousCl);
         }
     }

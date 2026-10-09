@@ -17,23 +17,12 @@
  *
  * SPDX-License-Identifier: EPL-2.0 OR EUPL-1.2 OR GPL-2.0-or-later
  */
-package vauban.plugin.it.beans;
+package io.vidocq.vauban.moduleit;
 
-import jakarta.enterprise.context.Dependent;
-import vauban.plugin.it.api.Service;
+/** A class of the module that no container manages ({@code ModuleLookupModulePathTest}). */
+public class NotABean {
 
-/** Bound only through a method it declares (BUG-20261004-10). */
-@Dependent
-public class MethodBoundService implements Service {
-
-    @Override
-    @Audited
-    public String write(String text) {
-        return "wrote " + text;
-    }
-
-    /** Reached only through the lookup the container hands an extension (ModuleLookups). */
-    private String secret(String name) {
-        return "secret of " + name;
+    private String secret() {
+        return "unreachable";
     }
 }

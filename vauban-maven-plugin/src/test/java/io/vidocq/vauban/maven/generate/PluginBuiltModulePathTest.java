@@ -99,6 +99,52 @@ class PluginBuiltModulePathTest {
         }
     }
 
+    @Test
+    @DisplayName("an extension gets a managed class's lookup from the plugin-written provider of its package")
+    void pluginWrittenProviderGrantsTheModuleLookup() throws Throwable {
+        var modules = modulesOnTheClassPath();
+        var classes = buildModule(modules);
+
+        var finder = ModuleFinder.of(Stream.concat(Stream.of(classes), modules.stream()).toArray(Path[]::new));
+        var configuration = ModuleLayer.boot().configuration().resolveAndBind(finder, ModuleFinder.of(), Set.of(MODULE));
+        var controller = ModuleLayer.defineModulesWithOneLoader(configuration, List.of(ModuleLayer.boot()),
+                ClassLoader.getPlatformClassLoader());
+        var layer = controller.layer();
+        var loader = layer.findLoader(MODULE);
+        var core = layer.findModule("io.vidocq.vauban.core").orElseThrow();
+        // Test-only: ModuleLookups is exported to the trusted extension modules alone.
+        controller.addExports(core, "io.vidocq.vauban.core.access", PluginBuiltModulePathTest.class.getModule());
+
+        var bean = loader.loadClass("vauban.plugin.it.beans.MethodBoundService");
+        var interceptor = loader.loadClass("vauban.plugin.it.beans.AuditInterceptor");
+        assertTrue(!bean.getModule().isOpen(bean.getPackageName(), core), "nothing is opened to the container");
+        var containerType = loader.loadClass("io.vidocq.vauban.core.container.VaubanContainer");
+        var lookupFor = loader.loadClass("io.vidocq.vauban.core.access.ModuleLookups").getMethod("lookupFor", Class.class);
+
+        var thread = Thread.currentThread();
+        var previous = thread.getContextClassLoader();
+        thread.setContextClassLoader(loader);
+        try {
+            var builder = containerType.getMethod("builder").invoke(null);
+            var add = builder.getClass().getMethod("addBeanClass", Class.class);
+            add.invoke(builder, interceptor);
+            add.invoke(builder, bean);
+            try (var container = (AutoCloseable) builder.getClass().getMethod("build").invoke(builder)) {
+                var lookup = ((java.util.Optional<?>) lookupFor.invoke(null, bean))
+                        .map(java.lang.invoke.MethodHandles.Lookup.class::cast).orElseThrow();
+                assertEquals(bean, lookup.lookupClass());
+                assertTrue(lookup.hasFullPrivilegeAccess());
+                var secret = lookup.findSpecial(bean, "secret",
+                        java.lang.invoke.MethodType.methodType(String.class, String.class), bean);
+                var instance = containerType.getMethod("select", Class.class).invoke(container, bean);
+                assertEquals("secret of duke", (String) secret.invoke(instance, "duke"));
+            }
+            assertTrue(((java.util.Optional<?>) lookupFor.invoke(null, bean)).isEmpty(), "withdrawn at shutdown");
+        } finally {
+            thread.setContextClassLoader(previous);
+        }
+    }
+
     /** Compiles the fixture module, runs the generator over it, then compiles its descriptor. */
     private Path buildModule(List<Path> modules) throws Exception {
         var fixture = Path.of(PluginBuiltModulePathTest.class.getResource("/plugin-module-it").toURI());

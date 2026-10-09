@@ -223,6 +223,37 @@ final class EnhancementApplier {
         );
     }
 
+    /**
+     * The qualifier an added annotation stands for, with the member values of the instance an
+     * extension gave, when it gave one (BUG-20261008-05).
+     */
+    private static QualifierInstance qualifierOf(Class<? extends Annotation> type, Annotation instance) {
+        return instance != null
+                ? QualifierInstance.from(io.vidocq.vauban.core.annotation.AnnotationValues.infoOf(instance))
+                : new QualifierInstance(DotName.of(type.getName()), Map.of());
+    }
+
+    /**
+     * The name an added {@code @Named} gives the bean — its value, or the default name when it has
+     * none — or {@code null} when the configs add no {@code @Named}.
+     */
+    private static String addedName(List<VaubanClassConfig> configs) {
+        String name = null;
+        for (var config : configs) {
+            for (var info : config.getAddedAnnotationsIndexed()) {
+                if (!info.name().equals(QualifierInstance.NAMED_NAME)) continue;
+                var value = info.member("value") instanceof io.vidocq.vauban.indexer.model.AnnotationValue.StringVal sv
+                        ? sv.value() : "";
+                if (value.isEmpty() && config.info() != null) {
+                    var simpleName = config.info().simpleName();
+                    value = Character.toLowerCase(simpleName.charAt(0)) + simpleName.substring(1);
+                }
+                if (!value.isEmpty()) name = value;
+            }
+        }
+        return name;
+    }
+
     private static BeanDescriptor applyClassConfigs(BeanDescriptor bean, List<VaubanClassConfig> configs) {
         var qualifiers = new LinkedHashSet<>(bean.qualifiers());
         var interceptorBindings = new LinkedHashSet<>(bean.interceptorBindings());
@@ -252,7 +283,7 @@ final class EnhancementApplier {
             for (var ann : config.getAddedAnnotations()) {
                 if (!isQualifierAnnotation(ann)) continue;
                 var qName = DotName.of(ann.getName());
-                qualifiers.add(new QualifierInstance(qName, Map.of()));
+                qualifiers.add(qualifierOf(ann, config.getAddedAnnotationInstance(ann)));
                 if (!qName.equals(QualifierInstance.ANY_NAME) && !qName.equals(QualifierInstance.NAMED_NAME)) {
                     classHasExplicit = true;
                 }
@@ -314,7 +345,8 @@ final class EnhancementApplier {
 
                 for (int i = 0; i < methodConfig.getParameterConfigs().size(); i++) {
                     var paramConfig = methodConfig.getParameterConfigs().get(i);
-                    if (paramConfig.isModified()) {
+                    if (paramConfig.isModified()
+                            || (initializer && hasAddedAnnotation(methodConfig, jakarta.inject.Inject.class))) {
                         applyParameterEnhancement(methodConfig, paramConfig, i, initializer, injectionPoints);
                     }
                 }
@@ -327,10 +359,20 @@ final class EnhancementApplier {
             qualifiers.add(QualifierInstance.ANY);
         }
 
+        // An added @Named names the bean, and its qualifier carries that name, as discovery gives it
+        var name = bean.name();
+        var addedName = addedName(configs);
+        if (addedName != null) {
+            name = addedName;
+            qualifiers.removeIf(q -> q.annotationName().equals(QualifierInstance.NAMED_NAME));
+            qualifiers.add(new QualifierInstance(QualifierInstance.NAMED_NAME,
+                    Map.of("value", new io.vidocq.vauban.indexer.model.AnnotationValue.StringVal(addedName))));
+        }
+
         return new BeanDescriptor(
                 bean.id(), bean.beanClass(), bean.kind(), bean.types(),
                 qualifiers, bean.scope(), bean.isAlternative(), bean.priority(),
-                injectionPoints, bean.name(), interceptorBindings,
+                injectionPoints, name, interceptorBindings,
                 bean.constructorBindings(), interceptorBindingAnnotations, enhancedInjectionMethods
         );
     }
@@ -352,7 +394,7 @@ final class EnhancementApplier {
 
         var existing = existingIndex >= 0 ? injectionPoints.get(existingIndex) : null;
         var declared = existing == null
-                ? new LinkedHashSet<QualifierInstance>()
+                ? sourceQualifiers(fieldConfig.info().annotations())
                 : new LinkedHashSet<>(existing.declaredQualifiers());
         if (fieldConfig.isAllAnnotationsRemoved()) declared.clear();
         for (var predicate : fieldConfig.getRemovePredicates()) {
@@ -416,7 +458,7 @@ final class EnhancementApplier {
 
         var existing = existingIndex >= 0 ? injectionPoints.get(existingIndex) : null;
         var declared = existing == null
-                ? new LinkedHashSet<QualifierInstance>()
+                ? sourceQualifiers(parameterConfig.info().annotations())
                 : new LinkedHashSet<>(existing.declaredQualifiers());
         if (parameterConfig.isAllAnnotationsRemoved()) declared.clear();
         for (var predicate : parameterConfig.getRemovePredicates()) {
@@ -445,6 +487,14 @@ final class EnhancementApplier {
             if (point.kind() == kind && point.description().equals(description)) return i;
         }
         return -1;
+    }
+
+    private static LinkedHashSet<QualifierInstance> sourceQualifiers(
+            java.util.Collection<AnnotationInfo> annotations) {
+        var qualifiers = new LinkedHashSet<QualifierInstance>();
+        annotations.stream().filter(EnhancementApplier::isQualifierAnnotationInfo)
+                .map(EnhancementApplier::annotationInfoToQualifier).forEach(qualifiers::add);
+        return qualifiers;
     }
 
     private static void completeDeclaredQualifiers(Set<QualifierInstance> qualifiers) {

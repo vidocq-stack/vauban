@@ -72,3 +72,13 @@
 ## 17. CI does not gate the TCK — run it and read its reports
 **Context**: vauban#71 (2026-09-13) moved the CDI `Invoker` path to a method handle. `unreflect` returns a variable-arity handle for a varargs method, and `invokeWithArguments` collected the caller's array into a new one: `VarargsMethodInvokerTest` failed (773/774). The PR workflow runs no TCK and the main workflow ignores TCK failures, so the change merged green and was found a day later (BUG-20260914-14).
 **Rule**: before merging a change to runtime code, install, then run `-pl vauban-tck-runner -Ptck verify` and `-pl vauban-atinject-tck-runner -Ptck verify` and count failures in `target/surefire-reports`: with `testFailureIgnore=true`, BUILD SUCCESS means nothing. A method handle that replaces `Method.invoke` takes `asFixedArity()`.
+
+## 18. Adapt a BCE fix to the current phase and generated-access architecture
+**Context**: PR #139 conflicted with freshly pulled #131/#135. Keeping the old container
+scope-promotion loop would undo the new single enhancement path, while old access limitations
+ignored the generated provider's lookup grant.
+**Rule**: merge the current base before adapting, put promoted-bean member changes in
+`beansAfterEnhancement`, preserve annotation instances and added names, and prefer generated
+access/lookup grants to widening module access. Test both runtime enhancement and boot from an
+APT-processed archive; assert that the latter does not replay the extension. Install updated
+API/core/processor artifacts before running downstream module-path tests.

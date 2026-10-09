@@ -29,7 +29,6 @@ import org.junit.jupiter.api.Test;
 import java.lang.annotation.Annotation;
 import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
-import java.lang.reflect.Method;
 import java.util.List;
 import java.util.Map;
 
@@ -86,15 +85,9 @@ class BceEnhancementTest {
         return BceTypeMatcher.matchesClass(types, withSubtypes, targetClass);
     }
 
-    /**
-     * Invoke the package-private static extractEnhancedScope(List) via reflection
-     * (the test lives in another package).
-     */
-    private static ScopeInfo invokeExtractEnhancedScope(List<VaubanClassConfig> configs) throws Exception {
-        Class<?> registrar = Class.forName("io.vidocq.vauban.core.container.SyntheticComponentRegistrar");
-        Method m = registrar.getDeclaredMethod("extractEnhancedScope", java.util.List.class);
-        m.setAccessible(true);
-        return (ScopeInfo) m.invoke(null, configs);
+    /** The scope an Enhancement added, as {@link BceProcessor#enhancedScope} reads it. */
+    private static ScopeInfo invokeExtractEnhancedScope(List<VaubanClassConfig> configs) {
+        return BceProcessor.enhancedScope(configs);
     }
 
     /**
@@ -614,6 +607,42 @@ class BceEnhancementTest {
             assertTrue(point.declaredQualifiers().stream().anyMatch(q ->
                     q.annotationName().equals(DotName.of(Chosen.class.getName()))));
             assertFalse(point.qualifiers().stream().anyMatch(q -> q.isDefault()));
+        }
+
+        @Test
+        void addedInitializerDescribesUnmodifiedParameters() {
+            var config = config();
+            config.getMethodConfigs().stream().filter(method -> method.info().name().equals("initialize"))
+                    .findFirst().orElseThrow().addAnnotation(jakarta.inject.Inject.class);
+            var discovered = bean(List.of());
+
+            var enhanced = BceProcessor.applyEnhancements(List.of(discovered),
+                    Map.of(discovered.beanClass(), List.of(config))).getFirst();
+
+            assertEquals(1, enhanced.injectionPoints().size());
+            assertTrue(enhanced.injectionPoints().getFirst().qualifiers().stream().anyMatch(q -> q.isDefault()));
+        }
+
+        @Test
+        void scopePromotionAppliesMemberEnhancementsBeforeRegistration() {
+            var config = config();
+            config.addAnnotation(jakarta.enterprise.context.Dependent.class);
+            config.getFieldConfigs().getFirst().addAnnotation(jakarta.inject.Inject.class);
+            var initializer = config.getMethodConfigs().stream()
+                    .filter(method -> method.info().name().equals("initialize"))
+                    .findFirst().orElseThrow();
+            initializer.addAnnotation(jakarta.inject.Inject.class);
+            initializer.parameters().getFirst().addAnnotation(Chosen.class);
+            var discovered = bean(List.of());
+
+            var enhanced = BceProcessor.beansAfterEnhancement(
+                    List.of(), Map.of(discovered.beanClass(), List.of(config)), ignored -> discovered);
+
+            assertEquals(1, enhanced.size());
+            assertEquals(2, enhanced.getFirst().injectionPoints().size(),
+                    "Registration must see the field and initializer of the promoted bean");
+            assertEquals(1, enhanced.getFirst().enhancedInjectionMethods().size(),
+                    "the promoted bean must retain its added initializer for runtime invocation");
         }
     }
 }

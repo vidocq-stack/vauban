@@ -80,6 +80,11 @@ public final class ComponentProviderClassGenerator {
     private static final ClassDesc CD_Coverage = ClassDesc.of("io.vidocq.vauban.api.GeneratedCoverage");
     private static final ClassDesc CD_Generator = ClassDesc.of("io.vidocq.vauban.api.GeneratedCoverage$Generator");
     private static final MethodTypeDesc MTD_coverage = MethodTypeDesc.of(CD_Coverage);
+    private static final ClassDesc CD_Grant = ClassDesc.of("io.vidocq.vauban.api.ModuleLookupGrant");
+    private static final MethodTypeDesc MTD_grantModuleLookup = MethodTypeDesc.of(ConstantDescs.CD_void, CD_Grant);
+    private static final MethodTypeDesc MTD_lookup = MethodTypeDesc.of(ConstantDescs.CD_MethodHandles_Lookup);
+    private static final MethodTypeDesc MTD_accept =
+            MethodTypeDesc.of(ConstantDescs.CD_void, ConstantDescs.CD_MethodHandles_Lookup);
     private static final MethodTypeDesc MTD_coverageOf = MethodTypeDesc.of(CD_Coverage, CD_Generator,
             CD_String.arrayType(), CD_String.arrayType(), CD_String.arrayType(), CD_String.arrayType());
 
@@ -456,6 +461,18 @@ public final class ComponentProviderClassGenerator {
                     cob.areturn();
                 });
             }
+
+            // public void grantModuleLookup(ModuleLookupGrant grant) {
+            //     grant.accept(MethodHandles.lookup());
+            // }
+            // The provider's own lookup — this class is written into the completed package, so it carries
+            // that package's module access — handed to the container for its managed classes (ModuleLookups).
+            clb.withMethodBody("grantModuleLookup", MTD_grantModuleLookup, ClassFile.ACC_PUBLIC, cob -> {
+                cob.aload(1);
+                cob.invokestatic(ConstantDescs.CD_MethodHandles, "lookup", MTD_lookup);
+                cob.invokevirtual(CD_Grant, "accept", MTD_accept);
+                cob.return_();
+            });
 
             // public GeneratedCoverage coverage() {
             //     return GeneratedCoverage.of(Generator.CLASS_FILE, new String[] {…}, …);

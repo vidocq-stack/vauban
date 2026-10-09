@@ -35,60 +35,6 @@ import static org.junit.jupiter.api.Assertions.*;
 @DisplayName("SyntheticMetadataSerializer - serialization of synthetic beans/observers")
 class SyntheticMetadataSerializerTest {
 
-    @Nested
-    @DisplayName("encodeParam / decodeParam - round-trip")
-    class ParamEncoding {
-
-        @Test
-        @DisplayName("String round-trip")
-        void shouldEncodeDecodeString() {
-            var encoded = SyntheticMetadataSerializer.encodeParam("hello");
-            assertEquals("S:hello", encoded);
-            assertEquals("hello", SyntheticMetadataSerializer.decodeParam(encoded));
-        }
-
-        @Test
-        @DisplayName("boolean round-trip")
-        void shouldEncodeDecodeBoolean() {
-            assertEquals("B:true", SyntheticMetadataSerializer.encodeParam(true));
-            assertEquals(true, SyntheticMetadataSerializer.decodeParam("B:true"));
-            assertEquals(false, SyntheticMetadataSerializer.decodeParam("B:false"));
-        }
-
-        @Test
-        @DisplayName("int round-trip")
-        void shouldEncodeDecodeInt() {
-            assertEquals("I:42", SyntheticMetadataSerializer.encodeParam(42));
-            assertEquals(42, SyntheticMetadataSerializer.decodeParam("I:42"));
-        }
-
-        @Test
-        @DisplayName("long round-trip")
-        void shouldEncodeDecodeLong() {
-            assertEquals("L:123456789", SyntheticMetadataSerializer.encodeParam(123456789L));
-            assertEquals(123456789L, SyntheticMetadataSerializer.decodeParam("L:123456789"));
-        }
-
-        @Test
-        @DisplayName("double round-trip")
-        void shouldEncodeDecodeDouble() {
-            assertEquals("D:3.14", SyntheticMetadataSerializer.encodeParam(3.14));
-            assertEquals(3.14, SyntheticMetadataSerializer.decodeParam("D:3.14"));
-        }
-
-        @Test
-        @DisplayName("Class encode returns the FQCN")
-        void shouldEncodeClass() {
-            assertEquals("C:java.lang.String", SyntheticMetadataSerializer.encodeParam(String.class));
-        }
-
-        @Test
-        @DisplayName("null returns null")
-        void shouldReturnNullForNull() {
-            assertNull(SyntheticMetadataSerializer.encodeParam(null));
-            assertNull(SyntheticMetadataSerializer.decodeParam(null));
-        }
-    }
 
     @Nested
     @DisplayName("readBeans - deserialization")
@@ -189,6 +135,27 @@ class SyntheticMetadataSerializerTest {
             var beans = SyntheticMetadataSerializer.readBeans(
                     new ByteArrayInputStream(baos.toByteArray()));
             assertTrue(beans.isEmpty());
+        }
+
+        /**
+         * BUG-20261008-01: a build compatible extension run by the processor names a type the compilation is
+         * still producing through the language model ({@code addBean(Object.class).type(langModelType)}); the
+         * runtime must see that type too.
+         */
+        @Test
+        @DisplayName("a class type given through the language model survives the round-trip")
+        void shouldRoundTripALanguageModelClassType() throws IOException {
+            var builder = new VaubanSyntheticBeanBuilder<>(Object.class);
+            builder.type(new io.vidocq.vauban.core.langmodel.types.VaubanClassType(
+                    io.vidocq.vauban.indexer.model.DotName.of("com.example.NotYetCompiledApi"), null));
+            var baos = new ByteArrayOutputStream();
+            SyntheticMetadataSerializer.write(List.of(builder), List.of(), baos);
+
+            var beans = SyntheticMetadataSerializer.readBeans(new ByteArrayInputStream(baos.toByteArray()));
+
+            assertEquals(1, beans.size());
+            assertTrue(beans.getFirst().types().contains("com.example.NotYetCompiledApi"),
+                    beans.getFirst().types().toString());
         }
     }
 }

@@ -36,6 +36,7 @@ import java.util.concurrent.ConcurrentHashMap;
  * <p>
  * The user's module consents to access either by:
  * <ul>
+ *   <li>Shipping a generated provider that grants its module lookup for managed classes</li>
  *   <li>{@code opens my.package to io.vidocq.vauban.core;} in module-info.java</li>
  *   <li>Providing a {@code MethodHandles.Lookup} via {@code VaubanContainer.builder().lookup(...)}</li>
  * </ul>
@@ -303,11 +304,14 @@ public final class VaubanLookup {
 
     /**
      * Get a private Lookup for the given target class.
-     * Uses cache for performance. Works for both Java modules (with opens)
+     * Uses the generated provider's granted lookup for managed classes first, then the supplied
+     * root lookup. Uses cache for performance. Works for both Java modules (with a grant or opens)
      * and unnamed modules (classpath).
      */
     MethodHandles.Lookup lookupFor(Class<?> targetClass) {
         return lookupCache.computeIfAbsent(targetClass, clazz -> {
+            var granted = io.vidocq.vauban.core.access.ModuleLookups.lookupFor(clazz);
+            if (granted.isPresent()) return granted.get();
             try {
                 // Ensure vauban.core can read the target module (required for Java Modules)
                 Module vaubanModule = VaubanLookup.class.getModule();

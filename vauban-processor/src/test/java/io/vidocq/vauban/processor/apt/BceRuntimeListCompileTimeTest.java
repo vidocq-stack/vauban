@@ -272,8 +272,12 @@ class BceRuntimeListCompileTimeTest {
                     "Expected " + PATCH_PATH + " to be generated when a BCE adds an annotation");
 
             var raw = Files.readString(result.outputDir().resolve(PATCH_PATH), StandardCharsets.UTF_8);
-            assertTrue(raw.contains("PatchResource=jakarta.enterprise.context.RequestScoped"),
-                    "Patch should map the target to the added annotation FQN. Actual:\n" + raw);
+            try (var in = Files.newInputStream(result.outputDir().resolve(PATCH_PATH))) {
+                var patch = io.vidocq.vauban.core.extensions.EnhancementPatchSerializer.read(in);
+                assertTrue(patch.getOrDefault("PatchResource", java.util.List.of()).stream()
+                                .anyMatch(a -> a.name().value().equals("jakarta.enterprise.context.RequestScoped")),
+                        "Patch should map the target to the added annotation. Actual:\n" + raw);
+            }
         }
 
         @Test

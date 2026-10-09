@@ -213,6 +213,26 @@ public interface VaubanComponentProvider {
     }
 
     /**
+     * Hands the provider's own full-privilege lookup to the container, through a grant only the
+     * container can create. The generated implementation is
+     * {@code grant.accept(java.lang.invoke.MethodHandles.lookup())}: its lookup class is the
+     * provider, so the lookup carries the access of the provider's package and module, nothing more.
+     *
+     * <p>The container passes it on, for one managed class of this package at a time, to the
+     * extension modules it trusts ({@code io.vidocq.vauban.core.access.ModuleLookups}), which can
+     * then reach a member the application did not open — for instance a {@code private}
+     * {@code @Fallback} method. Nobody else can obtain it: a {@link ModuleLookupGrant} cannot be
+     * created outside {@code io.vidocq.vauban.core}, and the container accepts only a lookup whose
+     * lookup class is this provider.</p>
+     *
+     * <p>The default grants nothing (providers generated before this method existed).</p>
+     *
+     * @param grant the container's grant
+     */
+    default void grantModuleLookup(ModuleLookupGrant grant) {
+    }
+
+    /**
      * What this provider runs in-module — the components it instantiates, the fields it injects, the methods it
      * invokes and the client proxies it creates — for diagnostics such as the Vidocq dev console. The container never
      * dispatches on it. Both generators render it from the very lists that feed {@link #create}, {@link #injectField},

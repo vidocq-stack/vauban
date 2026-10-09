@@ -40,9 +40,7 @@ import java.util.*;
  * </pre>
  *
  * <h2>Param encoding</h2>
- * Values are prefixed with a type tag:
- * {@code S:} (String), {@code I:} (int), {@code L:} (long), {@code D:} (double),
- * {@code B:} (boolean), {@code C:} (Class FQCN), {@code E:type:value} (Enum).
+ * See {@link SyntheticParamCodec}.
  */
 public final class SyntheticMetadataSerializer {
 
@@ -91,6 +89,15 @@ public final class SyntheticMetadataSerializer {
                 typeNames.add(cls.getName());
             }
         }
+        // Types given through the language model: at build time, the only way to name a class the
+        // compilation is still producing. A class type is written by name and loaded at run time like
+        // the others (BUG-20261008-01); this format has no notation for a parameterized type yet.
+        for (var type : builder.getIndexTypes()) {
+            if (type instanceof io.vidocq.vauban.indexer.model.TypeInfo.ClassType ct
+                    && !typeNames.contains(ct.name().value())) {
+                typeNames.add(ct.name().value());
+            }
+        }
         props.setProperty(prefix + ".types", String.join(",", typeNames));
 
         var qualifierNames = new ArrayList<String>();
@@ -107,7 +114,7 @@ public final class SyntheticMetadataSerializer {
         props.setProperty(prefix + ".alternative", String.valueOf(builder.isAlternative()));
         props.setProperty(prefix + ".priority", String.valueOf(builder.getPriority()));
 
-        writeParams(props, prefix, builder.getParams());
+        writeParams(props, prefix, "synthetic bean " + builder.getBeanClass().getName(), builder.getParams());
     }
 
     private static void writeObserverBuilder(Properties props, String prefix,
@@ -134,28 +141,25 @@ public final class SyntheticMetadataSerializer {
         props.setProperty(prefix + ".priority", String.valueOf(builder.getPriority()));
         props.setProperty(prefix + ".async", String.valueOf(builder.isAsync()));
 
-        writeParams(props, prefix, builder.getParams());
+        writeParams(props, prefix, "synthetic observer of " + builder.getEventType().getTypeName(), builder.getParams());
     }
 
-    private static void writeParams(Properties props, String prefix, Map<String, Object> params) {
+    /**
+     * @throws IllegalArgumentException when a param is of no type {@code withParam} accepts: it is
+     *                                  refused, never dropped (BUG-20261008-02)
+     */
+    private static void writeParams(Properties props, String prefix, String owner, Map<String, Object> params) {
         for (var entry : params.entrySet()) {
-            var encoded = encodeParam(entry.getValue());
+            String encoded;
+            try {
+                encoded = SyntheticParamCodec.encode(entry.getValue());
+            } catch (IllegalArgumentException e) {
+                throw new IllegalArgumentException(owner + ", param '" + entry.getKey() + "': " + e.getMessage(), e);
+            }
             if (encoded != null) {
                 props.setProperty(prefix + ".param." + entry.getKey(), encoded);
             }
         }
-    }
-
-    public static String encodeParam(Object value) {
-        if (value == null) return null;
-        if (value instanceof String s) return "S:" + s;
-        if (value instanceof Boolean b) return "B:" + b;
-        if (value instanceof Integer i) return "I:" + i;
-        if (value instanceof Long l) return "L:" + l;
-        if (value instanceof Double d) return "D:" + d;
-        if (value instanceof Class<?> c) return "C:" + c.getName();
-        if (value instanceof Enum<?> e) return "E:" + e.getClass().getName() + ":" + e.name();
-        return null; // unsupported param type — skipped
     }
 
     // ---- Read ----
@@ -207,22 +211,6 @@ public final class SyntheticMetadataSerializer {
         }
 
         return observers;
-    }
-
-    public static Object decodeParam(String encoded) {
-        if (encoded == null || encoded.length() < 2) return null;
-        char type = encoded.charAt(0);
-        var value = encoded.substring(2); // skip "X:"
-        return switch (type) {
-            case 'S' -> value;
-            case 'B' -> Boolean.parseBoolean(value);
-            case 'I' -> Integer.parseInt(value);
-            case 'L' -> Long.parseLong(value);
-            case 'D' -> Double.parseDouble(value);
-            case 'C' -> value; // Class name as string, resolved by consumer
-            case 'E' -> value; // "type:name" as string, resolved by consumer
-            default -> null;
-        };
     }
 
     private static Map<String, String> readParams(Properties props, String prefix) {

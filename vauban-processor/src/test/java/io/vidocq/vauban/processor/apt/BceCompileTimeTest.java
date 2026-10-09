@@ -136,6 +136,11 @@ class BceCompileTimeTest {
     // ---- Helper: compile with the processor and an injected BCE ----
 
     private CompilationResult compileWithBce(List<Class<?>> bceClasses, String... sources) throws IOException {
+        return compileWithBce(bceClasses, List.of(), sources);
+    }
+
+    private CompilationResult compileWithBce(List<Class<?>> bceClasses, List<Path> extraClasspath,
+                                             String... sources) throws IOException {
         var compiler = ToolProvider.getSystemJavaCompiler();
         var diagnostics = new DiagnosticCollector<JavaFileObject>();
 
@@ -165,6 +170,9 @@ class BceCompileTimeTest {
         Files.createDirectories(outputDir);
 
         var classpath = resolveCompilationClasspath();
+        for (var entry : extraClasspath) {
+            classpath = entry + File.pathSeparator + classpath;
+        }
 
         var options = List.of(
                 "-d", outputDir.toString(),
@@ -394,6 +402,231 @@ class BceCompileTimeTest {
                 "Client proxy should be generated (RequestScoped is normal-scoped)");
     }
 
+    /** Names the classes annotated {@code @Named}, at build time, with a value of its own. */
+    public static class RenamingBce implements BuildCompatibleExtension {
+        @Enhancement(types = Object.class, withAnnotations = jakarta.inject.Named.class)
+        public void rename(ClassConfig clazz) {
+            clazz.addAnnotation(jakarta.enterprise.inject.literal.NamedLiteral.of("renamed"));
+        }
+    }
+
+    @Test
+    @DisplayName("the frozen @Enhancement patch keeps the members of an added annotation (BUG-20261008-05)")
+    void frozenPatchKeepsMembers() throws IOException {
+        var result = compileWithBce(
+                List.of(RenamingBce.class),
+                """
+                import jakarta.enterprise.context.ApplicationScoped;
+                import jakarta.inject.Named;
+
+                @ApplicationScoped
+                @Named
+                public class Renamed {
+                }
+                """
+        );
+
+        assertTrue(result.success(), "Compilation should succeed. Messages: " + result.messages());
+        Map<String, List<io.vidocq.vauban.indexer.model.AnnotationInfo>> patch;
+        try (var in = Files.newInputStream(result.outputDir().resolve(
+                io.vidocq.vauban.core.extensions.EnhancementPatchSerializer.PATCH_PATH))) {
+            patch = io.vidocq.vauban.core.extensions.EnhancementPatchSerializer.read(in);
+        }
+        var named = patch.get("Renamed").stream()
+                .filter(a -> a.name().value().equals("jakarta.inject.Named")).findFirst().orElseThrow();
+        assertEquals(new io.vidocq.vauban.indexer.model.AnnotationValue.StringVal("renamed"), named.member("value"));
+    }
+
+    public static class MemberEnhancementBce implements BuildCompatibleExtension {
+        static int enhancements;
+
+        @Enhancement(types = Object.class, withAnnotations = jakarta.inject.Named.class)
+        public void enhance(ClassConfig config) {
+            if (!config.info().name().equals("app.FrozenTarget")) return;
+            enhancements++;
+            if (!config.info().hasAnnotation(jakarta.enterprise.context.Dependent.class)) {
+                config.addAnnotation(jakarta.enterprise.context.Dependent.class);
+            }
+            var qualifier = jakarta.enterprise.inject.literal.NamedLiteral.of("selected");
+            config.fields().stream().filter(field -> field.info().name().equals("field"))
+                    .forEach(field -> {
+                        field.addAnnotation(jakarta.inject.Inject.class);
+                        field.addAnnotation(qualifier);
+                    });
+            config.methods().stream().filter(method -> method.info().name().equals("initialize"))
+                    .forEach(method -> method.addAnnotation(jakarta.inject.Inject.class));
+            config.constructors().forEach(constructor ->
+                    constructor.parameters().getFirst().addAnnotation(qualifier));
+        }
+    }
+
+    @Test
+    void frozenPatchAppliesAddedFieldInitializerAndParameterQualifierAtBoot() throws Exception {
+        assertFrozenMemberInjection(true);
+    }
+
+    @Test
+    void memberOnlyFrozenPatchDoesNotReplayTheExtension() throws Exception {
+        assertFrozenMemberInjection(false);
+    }
+
+    private void assertFrozenMemberInjection(boolean promoted) throws Exception {
+        var result = compileWithBce(List.of(MemberEnhancementBce.class), """
+                package app;
+                @jakarta.enterprise.context.Dependent
+                @jakarta.inject.Named("selected")
+                public class FrozenDependency {}
+                """, """
+                package app;
+                @jakarta.inject.Named("target")
+                %s
+                public class FrozenTarget {
+                    public FrozenDependency field;
+                    public FrozenDependency initialized;
+                    public FrozenDependency constructed;
+                    @jakarta.inject.Inject
+                    public FrozenTarget(FrozenDependency dependency) { constructed = dependency; }
+                    private void initialize(@jakarta.inject.Named("selected") FrozenDependency dependency) {
+                        initialized = dependency;
+                    }
+                }
+                """.formatted(promoted ? "" : "@jakarta.enterprise.context.Dependent"));
+        assertTrue(result.success(), "Compilation should succeed. Messages: " + result.messages());
+        assertTrue(result.hasFile(io.vidocq.vauban.core.extensions.EnhancementPatchSerializer.PATCH_PATH));
+        MemberEnhancementBce.enhancements = 0;
+        try (var loader = new java.net.URLClassLoader(
+                new java.net.URL[] {result.outputDir().toUri().toURL()}, getClass().getClassLoader())) {
+            var targetClass = loader.loadClass("app.FrozenTarget");
+            var dependencyClass = loader.loadClass("app.FrozenDependency");
+            try (var container = io.vidocq.vauban.core.container.VaubanContainer.builder()
+                    .classLoader(loader).scanClasspath()
+                    .addBeanClass(targetClass).addBeanClass(dependencyClass).build()) {
+                assertEquals(0, MemberEnhancementBce.enhancements,
+                        "boot must apply the frozen patch, not replay the build-time extension");
+                var target = container.select(targetClass);
+                assertNotNull(targetClass.getField("field").get(target));
+                assertNotNull(targetClass.getField("initialized").get(target));
+                assertNotNull(targetClass.getField("constructed").get(target));
+                var bean = container.getBeanManager().getBeans(targetClass,
+                        jakarta.enterprise.inject.literal.NamedLiteral.of("target")).iterator().next();
+                assertEquals(3, bean.getInjectionPoints().size());
+                assertTrue(bean.getInjectionPoints().stream().allMatch(point ->
+                        point.getQualifiers().stream().anyMatch(annotation ->
+                                annotation instanceof jakarta.inject.Named named && named.value().equals("selected"))));
+            }
+        }
+    }
+
+    @Test
+    @DisplayName("an application stereotype with a scope is bean-defining and gives its scope (BUG-20261008-04)")
+    void applicationStereotypeIsBeanDefining() throws IOException {
+        var result = compileWithBce(
+                List.of(),
+                """
+                package app;
+
+                import jakarta.enterprise.context.ApplicationScoped;
+                import jakarta.enterprise.inject.Stereotype;
+                import java.lang.annotation.*;
+
+                @Stereotype
+                @ApplicationScoped
+                @Retention(RetentionPolicy.RUNTIME)
+                @Target(ElementType.TYPE)
+                public @interface Managed {
+                }
+                """,
+                """
+                package app;
+
+                @Managed
+                public class OnlyStereotyped {
+                    public String hello() { return "hello"; }
+                }
+                """,
+                """
+                package app;
+
+                import jakarta.enterprise.inject.Produces;
+
+                @Managed
+                public class WithProducer {
+                    public String hello() { return "hello"; }
+
+                    @Produces
+                    Integer answer() { return 42; }
+                }
+                """
+        );
+
+        assertTrue(result.success(), "Compilation should succeed. Messages: " + result.messages());
+        var beans = result.readBeansList();
+        assertTrue(beans.contains("app.OnlyStereotyped"), "a class whose only annotation is the stereotype: " + beans);
+        assertTrue(beans.contains("app.WithProducer"), "a class indexed through its producer: " + beans);
+        // Normal-scoped beans get a client proxy; a @Dependent one gets none.
+        assertTrue(result.hasFile("app/OnlyStereotyped_ClientProxy.class"), "OnlyStereotyped is @ApplicationScoped");
+        assertTrue(result.hasFile("app/WithProducer_ClientProxy.class"), "WithProducer is @ApplicationScoped");
+    }
+
+    @Test
+    @DisplayName("an application stereotype from a library on the class path is bean-defining too (BUG-20261008-04)")
+    void libraryStereotypeIsBeanDefining() throws IOException {
+        var library = tempDir.resolve("library");
+        Files.createDirectories(library.resolve("lib"));
+        var stereotype = library.resolve("lib/Managed.java");
+        Files.writeString(stereotype, """
+                package lib;
+
+                import jakarta.enterprise.context.ApplicationScoped;
+                import jakarta.enterprise.inject.Stereotype;
+                import java.lang.annotation.*;
+
+                @Stereotype
+                @ApplicationScoped
+                @Retention(RetentionPolicy.RUNTIME)
+                @Target(ElementType.TYPE)
+                public @interface Managed {
+                }
+                """);
+        var compiled = ToolProvider.getSystemJavaCompiler().run(null, null, null,
+                "-proc:none", "--release", "25", "-classpath", resolveCompilationClasspath(),
+                "-d", library.toString(), stereotype.toString());
+        assertEquals(0, compiled, "Precondition: the library compiles");
+
+        var result = compileWithBce(
+                List.of(),
+                List.of(library),
+                """
+                package app;
+
+                @lib.Managed
+                public class OnlyStereotyped {
+                    public String hello() { return "hello"; }
+                }
+                """,
+                """
+                package app;
+
+                import jakarta.enterprise.inject.Produces;
+
+                @lib.Managed
+                public class WithProducer {
+                    public String hello() { return "hello"; }
+
+                    @Produces
+                    Integer answer() { return 42; }
+                }
+                """
+        );
+
+        assertTrue(result.success(), "Compilation should succeed. Messages: " + result.messages());
+        var beans = result.readBeansList();
+        assertTrue(beans.contains("app.OnlyStereotyped"), "a class whose only annotation is the stereotype: " + beans);
+        assertTrue(beans.contains("app.WithProducer"), "a class indexed through its producer: " + beans);
+        assertTrue(result.hasFile("app/OnlyStereotyped_ClientProxy.class"), "OnlyStereotyped is @ApplicationScoped");
+        assertTrue(result.hasFile("app/WithProducer_ClientProxy.class"), "WithProducer is @ApplicationScoped");
+    }
+
     @Test
     @DisplayName("@Synthesis BCE serializes the synthetic beans into the metadata file")
     void shouldSerializeSyntheticBeanMetadata() throws IOException {
@@ -464,6 +697,114 @@ class BceCompileTimeTest {
         assertTrue(result.success(), "Compilation should succeed. Messages: " + result.messages());
         assertEquals(Map.of("discovery", true, "registration", true, "synthesis", true, "validation", true),
                 PhaseRecordingBce.SEEN);
+    }
+
+    /**
+     * Test BCE that hands its synthetic bean a param of each kind a build-time extension needs:
+     * class arrays (Foy's servlet index), language-model classes and annotations, array params.
+     */
+    public static class ParamKindsBce implements BuildCompatibleExtension {
+        static jakarta.enterprise.lang.model.declarations.ClassInfo target;
+
+        @Registration(types = Object.class)
+        public void registration(BeanInfo bean) {
+            if (bean.declaringClass().simpleName().equals("ParamTarget")) {
+                target = bean.declaringClass();
+            }
+        }
+
+        @Synthesis
+        public void synthesis(SyntheticComponents components) {
+            components.addBean(String.class)
+                    .type(String.class)
+                    .createWith(TestStringCreator.class)
+                    .withParam("classes", new Class<?>[] {String.class, Integer.class})
+                    .withParam("classInfo", target)
+                    .withParam("classInfos", new jakarta.enterprise.lang.model.declarations.ClassInfo[] {target})
+                    .withParam("annotationInfo", target.annotation(jakarta.inject.Named.class))
+                    .withParam("annotation", jakarta.enterprise.inject.literal.NamedLiteral.of("literal"))
+                    .withParam("strings", new String[] {"a,b", "c"})
+                    .withParam("ints", new int[] {1, 2});
+        }
+    }
+
+    @Test
+    @DisplayName("every withParam value a build-time extension passes reaches the creator (BUG-20261008-02)")
+    void syntheticParamsOfEveryKindSurviveTheBuild() throws Exception {
+        ParamKindsBce.target = null;
+        var result = compileWithBce(
+                List.of(ParamKindsBce.class),
+                """
+                import jakarta.enterprise.context.ApplicationScoped;
+                import jakarta.inject.Named;
+
+                @ApplicationScoped
+                @Named("target")
+                public class ParamTarget {
+                }
+                """
+        );
+        assertTrue(result.success(), "Compilation should succeed. Messages: " + result.messages());
+
+        Map<String, String> written;
+        try (var in = Files.newInputStream(result.outputDir().resolve(SyntheticMetadataSerializer.METADATA_PATH))) {
+            written = SyntheticMetadataSerializer.readBeans(in).getFirst().params();
+        }
+        try (var loader = new java.net.URLClassLoader(new java.net.URL[] {result.outputDir().toUri().toURL()},
+                getClass().getClassLoader())) {
+            var decoded = new LinkedHashMap<String, Object>();
+            written.forEach((key, value) ->
+                    decoded.put(key, io.vidocq.vauban.core.extensions.SyntheticParamCodec.decode(value, loader)));
+            var params = new io.vidocq.vauban.core.extensions.VaubanParameters(decoded);
+            var targetClass = loader.loadClass("ParamTarget");
+
+            assertArrayEquals(new Class<?>[] {String.class, Integer.class}, params.get("classes", Class[].class));
+            assertEquals(targetClass, params.get("classInfo", Class.class));
+            assertArrayEquals(new Class<?>[] {targetClass}, params.get("classInfos", Class[].class));
+            assertEquals("target", params.get("annotationInfo", jakarta.inject.Named.class).value());
+            assertEquals("literal", params.get("annotation", jakarta.inject.Named.class).value());
+            assertArrayEquals(new String[] {"a,b", "c"}, params.get("strings", String[].class));
+            assertArrayEquals(new int[] {1, 2}, params.get("ints", int[].class));
+        }
+    }
+
+    /** Registers what it sees; listed before the extension that enhances, which must not matter. */
+    public static class RecordingRegistrationBce implements BuildCompatibleExtension {
+        static final List<String> SEEN = new java.util.concurrent.CopyOnWriteArrayList<>();
+
+        @Registration(types = Object.class)
+        public void registration(BeanInfo bean) {
+            SEEN.add(bean.declaringClass().name() + "@" + bean.scope().name());
+        }
+    }
+
+    /** Makes the classes annotated {@code @Named} beans, as Foy does for {@code @WebServlet}. */
+    public static class DependentEnhancementBce implements BuildCompatibleExtension {
+        @Enhancement(types = Object.class, withAnnotations = jakarta.inject.Named.class)
+        public void addScope(ClassConfig clazz) {
+            clazz.addAnnotation(jakarta.enterprise.context.Dependent.class);
+        }
+    }
+
+    @Test
+    @DisplayName("@Registration of every extension sees the beans @Enhancement created (BUG-20261008-03)")
+    void registrationSeesTheBeansEnhancementCreated() throws IOException {
+        RecordingRegistrationBce.SEEN.clear();
+
+        var result = compileWithBce(
+                List.of(RecordingRegistrationBce.class, DependentEnhancementBce.class),
+                """
+                import jakarta.inject.Named;
+
+                @Named
+                public class Unscoped {
+                }
+                """
+        );
+
+        assertTrue(result.success(), "Compilation should succeed. Messages: " + result.messages());
+        assertTrue(result.readBeansList().contains("Unscoped"), "Precondition: Enhancement made it a bean");
+        assertEquals(List.of("Unscoped@jakarta.enterprise.context.Dependent"), RecordingRegistrationBce.SEEN);
     }
 
     // ---- Utility methods (same as VaubanProcessorTest) ----

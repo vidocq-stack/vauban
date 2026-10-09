@@ -127,6 +127,7 @@ public final class VaubanContainer implements AutoCloseable {
     private final BeanInjector beanInjector;
     private InterceptorBeanWrapper interceptorWrapper;
     private volatile boolean running;
+    private io.vidocq.vauban.core.access.ModuleLookups.Registration moduleLookups;
 
     public VaubanLookup getVaubanLookup() {
         return vaubanLookup;
@@ -142,6 +143,11 @@ public final class VaubanContainer implements AutoCloseable {
 
     ComponentProviders componentProviders() {
         return componentProviders;
+    }
+
+    /** The deployment's ModuleLookups registration, withdrawn when this container closes. */
+    void withdrawOnClose(io.vidocq.vauban.core.access.ModuleLookups.Registration registration) {
+        this.moduleLookups = registration;
     }
 
     /**
@@ -978,6 +984,9 @@ public final class VaubanContainer implements AutoCloseable {
 
         if (currentInstance == this) {
             currentInstance = null;
+        }
+        if (moduleLookups != null) {
+            moduleLookups.close();
         }
         requestContext.deactivate();
         applicationContext.deactivate();

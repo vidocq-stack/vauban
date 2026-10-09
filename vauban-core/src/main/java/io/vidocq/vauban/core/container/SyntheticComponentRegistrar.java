@@ -112,9 +112,7 @@ final class SyntheticComponentRegistrar {
             builder.alternative(synDesc.alternative());
             builder.priority(synDesc.priority());
 
-            for (var paramEntry : synDesc.params().entrySet()) {
-                applyParam(builder, paramEntry.getKey(), paramEntry.getValue());
-            }
+            applyParams(builder.getParams(), synDesc.params(), cl, "synthetic bean " + synDesc.beanClassName());
 
             registerSyntheticBean(builder, descriptors, factories, syntheticDisposers, seenSyntheticSignatures);
         } catch (ClassNotFoundException _) {
@@ -137,6 +135,8 @@ final class SyntheticComponentRegistrar {
             }
             builder.priority(synDesc.priority());
             builder.async(synDesc.async());
+            applyParams(builder.getParams(), synDesc.params(), cl,
+                    "synthetic observer of " + synDesc.eventTypeName());
 
             observers.add(buildSyntheticObserver(builder));
         } catch (ClassNotFoundException _) {
@@ -152,52 +152,22 @@ final class SyntheticComponentRegistrar {
         }
     }
 
-    private static void applyParam(io.vidocq.vauban.core.extensions.VaubanSyntheticBeanBuilder builder,
-                                   String key, String encoded) {
-        var decoded = io.vidocq.vauban.core.extensions.SyntheticMetadataSerializer.decodeParam(encoded);
-        switch (decoded) {
-            case String s -> builder.withParam(key, s);
-            case Boolean b -> builder.withParam(key, b);
-            case Integer i -> builder.withParam(key, i);
-            case Long l -> builder.withParam(key, l);
-            case Double d -> builder.withParam(key, d);
-            default -> { /* unsupported decoded type — ignored */ }
-        }
-    }
-
     /**
-     * Extract the scope added by Enhancement, if any. Returns null if no scope was added.
+     * Every param the build wrote, read back as the type its creator or observer looks it up with. A
+     * param that names a class this boot cannot load fails the deployment: dropping it would hand the
+     * creator {@code null} without a word (BUG-20261008-02).
      */
-    static io.vidocq.vauban.core.bean.model.ScopeInfo extractEnhancedScope(
-            java.util.List<io.vidocq.vauban.core.extensions.VaubanClassConfig> configs) {
-        for (var config : configs) {
-            for (var ann : config.getAddedAnnotations()) {
-                if (ann.isAnnotationPresent(jakarta.enterprise.context.NormalScope.class)) {
-                    return new io.vidocq.vauban.core.bean.model.ScopeInfo(
-                            DotName.of(ann.getName()), true);
-                }
-                if (ann.isAnnotationPresent(jakarta.inject.Scope.class)) {
-                    return new io.vidocq.vauban.core.bean.model.ScopeInfo(
-                            DotName.of(ann.getName()), false);
-                }
-                // Explicit well-known scope check (for annotations without meta-annotations)
-                String name = ann.getName();
-                if (name.equals("jakarta.enterprise.context.RequestScoped")
-                        || name.equals("jakarta.enterprise.context.ApplicationScoped")
-                        || name.equals("jakarta.enterprise.context.SessionScoped")
-                        || name.equals("jakarta.enterprise.context.ConversationScoped")) {
-                    return new io.vidocq.vauban.core.bean.model.ScopeInfo(
-                            DotName.of(name), true);
-                }
-                if (name.equals("jakarta.enterprise.context.Dependent")) {
-                    return io.vidocq.vauban.core.bean.model.ScopeInfo.DEPENDENT;
-                }
-                if (name.equals("jakarta.inject.Singleton")) {
-                    return io.vidocq.vauban.core.bean.model.ScopeInfo.SINGLETON;
-                }
+    private static void applyParams(Map<String, Object> target, Map<String, String> encoded, ClassLoader cl,
+                                    String owner) {
+        for (var entry : encoded.entrySet()) {
+            try {
+                target.put(entry.getKey(),
+                        io.vidocq.vauban.core.extensions.SyntheticParamCodec.decode(entry.getValue(), cl));
+            } catch (IllegalArgumentException e) {
+                throw new jakarta.enterprise.inject.spi.DeploymentException(
+                        owner + ", param '" + entry.getKey() + "': " + e.getMessage(), e);
             }
         }
-        return null;
     }
 
     @SuppressWarnings({"unchecked", "rawtypes"})
@@ -292,7 +262,9 @@ final class SyntheticComponentRegistrar {
             qualifiers.add(qualifier.toString());
         }
         var params = new java.util.TreeMap<String, String>();
-        synBean.getParams().forEach((k, v) -> params.put(k, java.util.Objects.toString(v)));
+        // deepToString: an array param would otherwise print its identity, and two identical
+        // registrations would no longer collapse
+        synBean.getParams().forEach((k, v) -> params.put(k, java.util.Arrays.deepToString(new Object[] {v})));
         return synBean.getBeanClass().getName()
                 + "|types=" + types
                 + "|qualifiers=" + qualifiers

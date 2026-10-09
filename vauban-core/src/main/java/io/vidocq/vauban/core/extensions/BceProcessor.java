@@ -194,9 +194,19 @@ public final class BceProcessor {
                                  ClassLoader classLoader,
                                  Map<Class<?>, Object> bceInstances,
                                  List<Class<?>> allArchiveClasses) {
-        return process(bceClasses, beans, List.of(), List.of(), index, classLoader, bceInstances, allArchiveClasses);
+        return process(bceClasses, beans, List.of(), List.of(), index, classLoader, bceInstances, allArchiveClasses,
+                _ -> null);
     }
 
+    /**
+     * Runs the phases after {@code @Discovery}, each one for every extension before the next phase
+     * starts, as CDI 4.1 requires: an extension's {@code @Registration} must see what every
+     * {@code @Enhancement} did, whichever extension did it.
+     *
+     * @param managedBean the managed bean a class of the index would be, or {@code null} when it
+     *                    cannot be one; it makes a bean of a class an {@code @Enhancement} gave a scope
+     *                    (see {@link #beansAfterEnhancement})
+     */
     @SuppressWarnings("java:S107") // CDI BCE processing requires multiple contextual parameters
     public static Result process(List<Class<?>> bceClasses,
                                  List<BeanDescriptor> beans,
@@ -205,7 +215,8 @@ public final class BceProcessor {
                                  VaubanIndex index,
                                  ClassLoader classLoader,
                                  Map<Class<?>, Object> bceInstances,
-                                 List<Class<?>> allArchiveClasses) {
+                                 List<Class<?>> allArchiveClasses,
+                                 java.util.function.Function<DotName, BeanDescriptor> managedBean) {
         var lookup = new IndexLookup(index);
         var definitionErrors = new ArrayList<String>();
         var deploymentErrors = new ArrayList<String>();
@@ -215,41 +226,145 @@ public final class BceProcessor {
         var allEnhancementMods = new HashMap<io.vidocq.vauban.indexer.model.DotName, List<VaubanClassConfig>>();
 
         for (var bceClass : bceClasses) {
-            try {
-                // Validate method signatures before processing
-                ExtensionMethodValidator.validateExtensionMethods(bceClass, definitionErrors);
-                if (!definitionErrors.isEmpty()) continue;
-
-                // Reuse instance from Discovery phase to maintain state
-                var bce = bceInstances != null ? bceInstances.get(bceClass) : null;
-                if (bce == null) bce = instantiateBce(bceClass);
-
-                var types = new VaubanTypes(lookup);
-
-                // Phase: @Enhancement — iterates over beans, fallback to archive classes if none match
-                processEnhancement(bce, bceClass, beans, allArchiveClasses, lookup, classLoader, deploymentErrors,
-                        deploymentErrorCauses, allEnhancementMods);
-
-                // Phase: @Registration
-                processRegistration(bce, bceClass, beans, observers, interceptors, lookup, classLoader, types, deploymentErrors, allArchiveClasses);
-
-                // Phase: @Synthesis
-                var synthesisResult = processSynthesis(bce, bceClass, types, deploymentErrors);
-                allSyntheticBeans.addAll(synthesisResult.beans());
-                allSyntheticObservers.addAll(synthesisResult.observers());
-
-                // Phase: @Validation
-                processValidation(bce, bceClass, types, deploymentErrors);
-
-            } catch (Exception e) {
-                var className = bceClass != null ? bceClass.getName() : "unknown";
-                deploymentErrors.add("BCE processing failed for " + className + ": " + e.getMessage());
-                deploymentErrorCauses.add(e);
-            }
+            // Validate method signatures before processing
+            ExtensionMethodValidator.validateExtensionMethods(bceClass, definitionErrors);
         }
+        if (!definitionErrors.isEmpty()) {
+            return new Result(allSyntheticBeans, allSyntheticObservers, definitionErrors, deploymentErrors,
+                    allEnhancementMods, deploymentErrorCauses);
+        }
+
+        // Reuse the instances of the Discovery phase to keep the state an extension builds across phases.
+        // An extension that fails in one phase takes no part in the next ones.
+        var extensions = new LinkedHashMap<Class<?>, Object>();
+        for (var bceClass : bceClasses) {
+            runPhase(bceClass, deploymentErrors, deploymentErrorCauses, () -> {
+                var bce = bceInstances != null ? bceInstances.get(bceClass) : null;
+                extensions.put(bceClass, bce != null ? bce : instantiateBce(bceClass));
+            });
+        }
+        var types = new VaubanTypes(lookup);
+
+        // Phase: @Enhancement — iterates over beans, fallback to archive classes if none match
+        runPhase(extensions, deploymentErrors, deploymentErrorCauses, (bceClass, bce) ->
+                processEnhancement(bce, bceClass, beans, allArchiveClasses, lookup, classLoader, deploymentErrors,
+                        deploymentErrorCauses, allEnhancementMods));
+
+        // Phase: @Registration — on the beans as Enhancement left them, the classes it made beans included
+        // (BUG-20261008-03)
+        var enhancedBeans = beansAfterEnhancement(beans, allEnhancementMods, managedBean);
+        runPhase(extensions, deploymentErrors, deploymentErrorCauses, (bceClass, bce) ->
+                processRegistration(bce, bceClass, enhancedBeans, observers, interceptors, lookup, classLoader, types,
+                        deploymentErrors, allArchiveClasses));
+
+        // Phase: @Synthesis
+        runPhase(extensions, deploymentErrors, deploymentErrorCauses, (bceClass, bce) -> {
+            var synthesisResult = processSynthesis(bce, bceClass, types, deploymentErrors);
+            allSyntheticBeans.addAll(synthesisResult.beans());
+            allSyntheticObservers.addAll(synthesisResult.observers());
+        });
+
+        // Phase: @Validation
+        runPhase(extensions, deploymentErrors, deploymentErrorCauses, (bceClass, bce) ->
+                processValidation(bce, bceClass, types, deploymentErrors));
 
         return new Result(allSyntheticBeans, allSyntheticObservers, definitionErrors, deploymentErrors,
                 allEnhancementMods, deploymentErrorCauses);
+    }
+
+    /** One phase of every extension still taking part, in their order. */
+    private static void runPhase(Map<Class<?>, Object> extensions, List<String> deploymentErrors,
+                                 List<Throwable> deploymentErrorCauses, PhaseStep step) {
+        for (var it = extensions.entrySet().iterator(); it.hasNext(); ) {
+            var extension = it.next();
+            if (!runPhase(extension.getKey(), deploymentErrors, deploymentErrorCauses,
+                    () -> step.run(extension.getKey(), extension.getValue()))) {
+                it.remove();
+            }
+        }
+    }
+
+    private static boolean runPhase(Class<?> bceClass, List<String> deploymentErrors,
+                                    List<Throwable> deploymentErrorCauses, PhaseAction action) {
+        try {
+            action.run();
+            return true;
+        } catch (Exception e) {
+            deploymentErrors.add("BCE processing failed for " + bceClass.getName() + ": " + e.getMessage());
+            deploymentErrorCauses.add(e);
+            return false;
+        }
+    }
+
+    @FunctionalInterface
+    private interface PhaseStep {
+        void run(Class<?> bceClass, Object bce) throws Exception;
+    }
+
+    @FunctionalInterface
+    private interface PhaseAction {
+        void run() throws Exception;
+    }
+
+    /**
+     * The beans once the {@code @Enhancement} modifications apply: the existing beans modified, plus a
+     * bean for each class that was none and gained a scope.
+     *
+     * @param managedBean the managed bean a class of the index would be, or {@code null}
+     */
+    public static List<BeanDescriptor> beansAfterEnhancement(
+            List<BeanDescriptor> beans,
+            Map<DotName, List<VaubanClassConfig>> modifications,
+            java.util.function.Function<DotName, BeanDescriptor> managedBean) {
+        if (modifications.isEmpty()) {
+            return beans;
+        }
+        var result = new ArrayList<>(applyEnhancements(beans, modifications));
+        var existingBeanClasses = result.stream().map(BeanDescriptor::beanClass).collect(Collectors.toSet());
+        for (var entry : modifications.entrySet()) {
+            if (existingBeanClasses.contains(entry.getKey())) continue;
+            var enhancedScope = enhancedScope(entry.getValue());
+            if (enhancedScope == null) continue;
+            var bean = managedBean.apply(entry.getKey());
+            if (bean == null) continue;
+            var promoted = new BeanDescriptor(
+                    bean.id(), bean.beanClass(), bean.kind(), bean.types(),
+                    bean.qualifiers(), enhancedScope, bean.isAlternative(),
+                    bean.priority(), bean.injectionPoints(), bean.name(),
+                    bean.interceptorBindings(), bean.constructorBindings(),
+                    bean.interceptorBindingAnnotations(), bean.enhancedInjectionMethods());
+            result.addAll(applyEnhancements(List.of(promoted), Map.of(entry.getKey(), entry.getValue())));
+        }
+        return result;
+    }
+
+    /** The scope an {@code @Enhancement} added to a class, or {@code null} when it added none. */
+    public static ScopeInfo enhancedScope(List<VaubanClassConfig> configs) {
+        for (var config : configs) {
+            for (var ann : config.getAddedAnnotations()) {
+                if (ann.isAnnotationPresent(jakarta.enterprise.context.NormalScope.class)) {
+                    return new ScopeInfo(DotName.of(ann.getName()), true);
+                }
+                if (ann.isAnnotationPresent(jakarta.inject.Scope.class)) {
+                    return new ScopeInfo(DotName.of(ann.getName()), false);
+                }
+                // Explicit well-known scope check (for annotations without meta-annotations)
+                String name = ann.getName();
+                if (name.equals("jakarta.enterprise.context.RequestScoped")
+                        || name.equals("jakarta.enterprise.context.ApplicationScoped")
+                        || name.equals("jakarta.enterprise.context.SessionScoped")
+                        || name.equals("jakarta.enterprise.context.ConversationScoped")) {
+                    return new ScopeInfo(DotName.of(name), true);
+                }
+                if (name.equals("jakarta.enterprise.context.Dependent")) {
+                    return ScopeInfo.DEPENDENT;
+                }
+                if (name.equals("jakarta.inject.Singleton")) {
+                    return ScopeInfo.SINGLETON;
+                }
+            }
+        }
+        return null;
     }
 
     private static void makeAccessibleSafe(java.lang.reflect.AccessibleObject member) {

@@ -153,7 +153,10 @@ implementation is green.
   members receive the expected bean, the initializer runs, and `Bean.getInjectionPoints()` (and,
   where the test uses BCE registration, `BeanInfo.injectionPoints()`) reports both members with the
   same qualifier value. Include a class whose scope is also added by the extension so the fixture
-  proves the enhanced bean created by discovery follows the same rules.
+  proves the enhanced bean created by discovery follows the same rules. Add an initializer control
+  whose parameters are not modified: they must still become injection points, keeping any source
+  qualifier members. Check the promoted bean's member metadata in `@Registration`, not only at boot,
+  so phase ordering cannot hide a missing enhancement application.
 - **Exposed by**: Vauban `BUG.md` → `BUG-20261009-01`. `vauban-core` tests
   `BceEnhancementTest` and `BceInjectionEnhancementTest` provide the local regression; the direct
   descriptor tests were red before the Vauban change.

@@ -310,8 +310,9 @@ final class BeanInjector {
      * Writes a resolved value into an {@code @Inject} field, delegating to the module's generated
      * {@code VaubanComponentProvider} when one owns the field's declaring class (an in-module
      * {@code putfield} — no reflection, no {@code opens}); otherwise falls back to reflective
-     * {@link VaubanLookup#setField} (which still needs the qualified {@code opens} on the module
-     * path). The provider is keyed on the field's declaring class, so a field inherited from a
+     * {@link VaubanLookup#setField} (which uses the provider's granted lookup when available,
+     * otherwise needs the qualified {@code opens} on the module path). The provider is keyed on
+     * the field's declaring class, so a field inherited from a
      * superclass is routed to that superclass's provider.
      */
     private void writeField(Object instance, Field field, Object value) {

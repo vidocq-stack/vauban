@@ -60,6 +60,26 @@ public final class VaubanInvoker implements Invoker<Object, Object>, InvokerInfo
         }
     }
 
+    /** The invoked method. */
+    public Method method() {
+        return method;
+    }
+
+    /** The class of the bean whose method is invoked. */
+    public Class<?> beanClass() {
+        return beanClass;
+    }
+
+    /** Whether the target instance is looked up rather than passed. */
+    public boolean instanceLookup() {
+        return instanceLookup;
+    }
+
+    /** The positions of the arguments that are looked up rather than passed. */
+    public Set<Integer> argumentLookups() {
+        return argumentLookups;
+    }
+
     /**
      * A method handle for {@code method}, or {@code null} when this module may not have one.
      *

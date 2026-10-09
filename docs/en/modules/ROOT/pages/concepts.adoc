@@ -10,7 +10,7 @@ A _bean_ is a class managed by the container: its lifecycle, its dependency reso
 
 Three conditions are enough for a class to become a Vauban bean:
 
-. The class is annotated with a scope (`@ApplicationScoped`, `@Singleton`, `@Dependent`, `@RequestScoped`) or a stereotype.
+. The class is annotated with a scope (`@ApplicationScoped`, `@Singleton`, `@Dependent`, `@RequestScoped`, or a scope of your own) or a stereotype. [.tag-new]#NEW# The annotation processor recognises any annotation meta-annotated `@Stereotype`, `@NormalScope` or `@Scope`, declared in the same compilation or in a library; it used to index only the classes carrying a built-in scope, `@Produces` or `@Interceptor`, so a class marked only with an application stereotype was no bean (vauban#132).
 . The class is visible from the `module-info.java` (`exports` or same module).
 . The class shows up in the bean index written at compile time by the annotation processor, or by the Maven plugin for archives it did not compile.
 
@@ -100,9 +100,21 @@ The user never touches the `_Factory` classes. They call `VaubanContainer.builde
 
 == Build Compatible Extensions
 
-CDI 4.1 introduces Build Compatible Extensions (BCEs): `@Discovery`, `@Enhancement`, `@Registration`, `@Synthesis` and `@Validation` hooks. Vauban runs them in the annotation processor at build time and records the result. At boot, the container runs them only for archives the build did not process, and replays the enhancements the recorded patch does not cover. The tests under `vauban-core/src/test/java/io/vidocq/vauban/core/extensions/` exercise each hook — `BceEnhancementTest`, `BceRegistrationSynthesisTest` and `BceRuntimeReplayTest` among them.
+CDI 4.1 introduces Build Compatible Extensions (BCEs): `@Discovery`, `@Enhancement`, `@Registration`, `@Synthesis` and `@Validation` hooks. Vauban runs them in the annotation processor at build time and records the result. [.tag-new]#NEW# Each phase runs for every extension before the next one starts, so an extension's `@Registration` sees the beans as every `@Enhancement` left them, including the classes an enhancement made beans (vauban#131). [.tag-new]#NEW# The recorded result keeps the member values of the annotations an `@Enhancement` adds, so an added `@Named("x")` or a qualifier member reaches the container (vauban#135). At boot, the container runs them only for archives the build did not process, and replays the enhancements the recorded patch does not cover. The tests under `vauban-core/src/test/java/io/vidocq/vauban/core/extensions/` exercise each hook — `BceEnhancementTest`, `BceRegistrationSynthesisTest` and `BceRuntimeReplayTest` among them.
 
-The beans an extension synthesises in the processor travel in `META-INF/vauban-synthetic-metadata.properties`, never in `META-INF/vauban-beans.list`: a synthetic bean has no class of its own for the container to discover.
+An enhancement that adds `@Inject` to a field or initializer creates its injection points,
+including every initializer parameter; constructor and initializer qualifier changes retain their
+member values and identify the exact overload (vauban#139). This also applies to a class that gains
+its scope through enhancement. The frozen build-time patch records class and member additions,
+so boot does not need to instantiate the extension again to restore them.
+Direct generated field writes and method calls remain the first access path. For a managed class
+whose package provider grants its module lookup, non-public enhanced fields and private initializers
+need no `opens`; a declaring class without that grant still needs a supplied lookup or qualified opens.
+The frozen patch records annotation additions, not removals.
+
+The beans an extension synthesises in the processor travel in `META-INF/vauban-synthetic-metadata.properties`, never in `META-INF/vauban-beans.list`: a synthetic bean has no class of its own for the container to discover. [.tag-new]#NEW# The bean list used to name them too, so an application whose extension synthesised a bean of a JDK type (Ravel's, typed `java.lang.String`) failed to boot with a `NullPointerException` (ravel#21). [.tag-new]#NEW# A bean type given as a language-model type — `addBean(...).type(types.ofClass(info))`, for a class the compilation is still producing — is written into that metadata by name, like a `Class` type, and loaded at run time. Only the `Class` types used to be written, so the bean was typed `Object` alone at run time and its injection points were unsatisfied. A *parameterized* language-model type is still not written: the format has no notation for it (BUG-20261008-01).
+
+[.tag-new]#NEW# Every value `withParam` accepts reaches the creator or the observer when the extension ran in the processor: primitive, `String`, `Class`, `Enum` and annotation arrays, a `ClassInfo` (looked up as a `Class`), an `Annotation` or `AnnotationInfo` (looked up as the annotation, every member kept) and an `InvokerInfo`. Arrays, annotations and invokers used to be dropped without a word, and `Class` and `Enum` params were lost at boot, so the creator read `null`; a synthetic observer got none of its params. A param the build cannot record now fails the build, naming the bean and the param, and a param naming a class the boot cannot load fails the deployment (vauban#130, BUG-20261008-02).
 
 [#extension-phase]
 === Build time or container start [.tag-new]#NEW#
