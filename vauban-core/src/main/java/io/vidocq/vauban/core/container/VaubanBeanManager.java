@@ -101,6 +101,11 @@ public final class VaubanBeanManager implements BeanManager {
         this.interceptorManager = interceptorManager;
     }
 
+    /** The container's request context, for the built-in {@code @ActivateRequestContext} interceptor. */
+    public io.vidocq.vauban.core.context.RequestContext requestContext() {
+        return container.requestContext();
+    }
+
     private List<Bean<?>> getBuiltInBeans() {
         if (builtInBeans == null) {
             builtInBeans = List.of(
@@ -115,7 +120,11 @@ public final class VaubanBeanManager implements BeanManager {
                     () -> createInstance()),
                 new BuiltInBean<>(InjectionPoint.class,
                     Set.of(InjectionPoint.class),
-                    VaubanContainer::getCurrentInjectionPoint)
+                    VaubanContainer::getCurrentInjectionPoint),
+                // CDI 4.1 §6.5.8: @Dependent, one controller per lookup (Vidocq/vauban#147).
+                new BuiltInBean<>(jakarta.enterprise.context.control.RequestContextController.class,
+                    Set.of(jakarta.enterprise.context.control.RequestContextController.class, Object.class),
+                    () -> new io.vidocq.vauban.core.context.VaubanRequestContextController(container.requestContext()))
             );
         }
         return builtInBeans;

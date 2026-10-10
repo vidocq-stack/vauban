@@ -439,7 +439,8 @@ public final class DeploymentValidator {
             "jakarta.inject.Provider",
             "jakarta.enterprise.inject.spi.BeanManager",
             "jakarta.enterprise.inject.spi.BeanContainer",
-            "jakarta.enterprise.inject.spi.InjectionPoint"
+            "jakarta.enterprise.inject.spi.InjectionPoint",
+            "jakarta.enterprise.context.control.RequestContextController"
     );
 
     private static final Set<String> METADATA_BUILT_IN_TYPES = Set.of(

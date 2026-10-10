@@ -253,6 +253,7 @@ public final class VaubanContainer implements AutoCloseable {
         }
 
         this.beanManager = new VaubanBeanManager(this, contexts, beans.values(), eventDispatcher, interceptorManager);
+        requestContext.lifecycleEvents(requestContextEvents(beanManager));
         this.running = true;
         currentInstance = this;
 
@@ -470,6 +471,24 @@ public final class VaubanContainer implements AutoCloseable {
 
     public RequestContext requestContext() {
         return requestContext;
+    }
+
+    /**
+     * Fires the request context's {@code @Initialized}, {@code @BeforeDestroyed} and
+     * {@code @Destroyed(RequestScoped.class)} events (CDI 4.1 §6.7.1). Whether an event has
+     * observers is resolved once, on its first firing, so a request costs nothing when none
+     * listens, which is the common case for a REST endpoint.
+     */
+    private static java.util.function.Consumer<java.lang.annotation.Annotation> requestContextEvents(
+            VaubanBeanManager beanManager) {
+        var observed = new java.util.concurrent.ConcurrentHashMap<java.lang.annotation.Annotation, Boolean>();
+        var payload = new Object();
+        return qualifier -> {
+            if (observed.computeIfAbsent(qualifier,
+                    q -> !beanManager.resolveObserverMethods(payload, q).isEmpty())) {
+                beanManager.getEvent().select(qualifier).fire(payload);
+            }
+        };
     }
 
     public VaubanBeanManager getBeanManager() {

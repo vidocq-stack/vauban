@@ -248,6 +248,22 @@ public final class VaubanContainerBuilder {
      * BCE class or target class cannot be resolved are skipped silently (partial JARs,
      * stripped distributions, etc.).
      */
+    private static final DotName ACTIVATE_REQUEST_CONTEXT =
+            DotName.of("jakarta.enterprise.context.control.ActivateRequestContext");
+
+    /** Whether a class of {@code index}, or one of its methods, carries {@code binding}. */
+    private static boolean usesBinding(io.vidocq.vauban.indexer.VaubanIndex index, DotName binding) {
+        for (var classInfo : index.getKnownClasses()) {
+            if (classInfo.hasAnnotation(binding)) return true;
+            for (var method : classInfo.methods()) {
+                for (var annotation : method.annotations()) {
+                    if (annotation.name().equals(binding)) return true;
+                }
+            }
+        }
+        return false;
+    }
+
     /** The managed bean each class of {@code index} would be, for the classes an Enhancement gives a scope. */
     private static java.util.function.Function<DotName, BeanDescriptor> managedBeans(
             io.vidocq.vauban.indexer.VaubanIndex index, BeanDiscovery discovery) {
@@ -755,7 +771,17 @@ public final class VaubanContainerBuilder {
 
             var descriptors = new ArrayList<>(discovery.discoverBeans());
             var observers = new ArrayList<>(discovery.discoverObservers());
-            var interceptors = discovery.discoverInterceptors();
+            var interceptors = new ArrayList<>(discovery.discoverInterceptors());
+            // CDI 4.1 §6.5.9: the built-in @ActivateRequestContext interceptor, only when a class
+            // of the deployment uses the binding, so that no other deployment pays for interception
+            // checks it does not need (Vidocq/vauban#147).
+            if (usesBinding(index, ACTIVATE_REQUEST_CONTEXT)) {
+                interceptors.add(new io.vidocq.vauban.core.bean.model.InterceptorDescriptor(
+                        DotName.of(io.vidocq.vauban.core.context.ActivateRequestContextInterceptor.class.getName()),
+                        java.util.Set.of(ACTIVATE_REQUEST_CONTEXT),
+                        io.vidocq.vauban.core.context.ActivateRequestContextInterceptor.AROUND_INVOKE, null,
+                        io.vidocq.vauban.core.context.ActivateRequestContextInterceptor.PRIORITY, true, List.of()));
+            }
             var disposers = discovery.discoverDisposerMethods();
             var syntheticDisposers = new LinkedHashMap<DotName, java.util.function.BiConsumer<Object, CreationalContext<?>>>();
 
