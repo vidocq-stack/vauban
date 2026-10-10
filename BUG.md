@@ -2106,3 +2106,31 @@ The same goes for a normal-scoped producer of such a class (`Dollar_Produced$$â€
   `#interceptedBeanWithThrowingConstructorsCompiles`: red without the fix, green now. Clean
   install green; CDI Lite TCK 774/774; AtInject TCK green. The original Vidocq application, with
   its `throws Exception` observer, compiles and runs under `vidocq:run`.
+
+## BUG-20261010-04 â€” A context registered by an extension is lost when the application is compiled with the processor
+
+- **Date**: 2026-10-10
+- **Status**: FIXED (branch `feat/webcontexts-session`)
+- **Module**: `vauban-core` (`VaubanContainerBuilder`), `vauban-processor`
+- **Symptom**: a build-compatible extension registers a context with
+  `MetaAnnotations.addContext(scope, normal, contextClass)`; in an application compiled with the
+  Vauban annotation processor, every bean of that scope fails at its first use with
+  `ContextNotActiveException: No context registered for scope ...`. Found with
+  `vauban-webcontexts` (`@SessionScoped`) on Foy (Vidocq/foy#21). With
+  `VaubanContainer.builder().scanClasspath()` on classes the processor never saw, it works.
+- **Minimal reproduction**: compile a `@SessionScoped` bean and a servlet with the processor and
+  `vauban-webcontexts` on the processor path, serve them with `FoyChappeBoot` and Vauban's
+  `BeanManager`, call the servlet (`FoyWebExtensionTest#sessionScopedThroughFoyChappeBoot` in
+  `foy-cdi-vauban`).
+- **Cause**: when every source of the deployment was processed at build time, the builder skips
+  the extensions at boot (`allSourcesProcessed`), and the processor wrote down the result of every
+  other phase (`vauban-enhancements.properties`, `vauban-synthetic-metadata.properties`) but not the
+  contexts `@Discovery` registered, which are runtime objects. Nothing installed them.
+- **Fix**: the processor writes them to `META-INF/vauban-contexts.list`
+  (`<scope>;<context class>;<normal>`); the builder reads every such list of the deployment and
+  installs those contexts next to the ones registered by extensions run at boot, without
+  duplicates (`FrozenContexts`).
+- **Verification**: `BceRuntimeListCompileTimeTest$FrozenContexts` (the list is written, and only
+  when a context is registered) and `FrozenContextsTest` (the lists are read; the container installs
+  a frozen context with no extension to run): red without the fix, green now. The Foy test above
+  green. Clean install green; CDI Lite TCK 774/774; AtInject TCK green.

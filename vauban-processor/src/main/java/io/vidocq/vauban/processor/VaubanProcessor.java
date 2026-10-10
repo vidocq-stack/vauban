@@ -285,6 +285,9 @@ public class VaubanProcessor extends AbstractProcessor {
             // --- @Discovery phase ---
             var lookup = new IndexLookup(index);
             discoveryResult = ExtensionPhase.atBuildTime(() -> BceProcessor.processDiscovery(bceClasses, lookup));
+            // The contexts the extensions registered are runtime objects: write them down, since
+            // the container skips the extensions of an application compiled here (vauban-webcontexts).
+            writeFrozenContexts(discoveryResult.metaAnnotations().getCustomContexts());
 
             // Add scanned classes to the index.
             // These classes come from dependency jars (added via ScannedClasses.add()), not from
@@ -1589,6 +1592,24 @@ public class VaubanProcessor extends AbstractProcessor {
             // silently receives null (BUG-20261008-02).
             processingEnv.getMessager().printMessage(Diagnostic.Kind.ERROR,
                     "[Vauban] Cannot record a synthetic component: " + e.getMessage());
+        }
+    }
+
+    private void writeFrozenContexts(List<io.vidocq.vauban.core.extensions.VaubanMetaAnnotations.ContextRegistration> registrations) {
+        if (registrations.isEmpty()) return;
+        var path = io.vidocq.vauban.core.extensions.FrozenContexts.PATH;
+        try {
+            var resource = processingEnv.getFiler().createResource(StandardLocation.CLASS_OUTPUT, "", path);
+            try (var writer = new PrintWriter(resource.openOutputStream(), false, StandardCharsets.UTF_8)) {
+                writer.println("# Contexts registered by build-compatible extensions (MetaAnnotations.addContext):");
+                writer.println("# <scope>;<context class>;<normal>, installed by the container at boot");
+                for (var entry : io.vidocq.vauban.core.extensions.FrozenContexts.of(registrations)) {
+                    writer.println(entry.line());
+                }
+            }
+        } catch (IOException e) {
+            processingEnv.getMessager().printMessage(Diagnostic.Kind.WARNING,
+                    "[Vauban] Failed to write " + path + ": " + e.getMessage());
         }
     }
 

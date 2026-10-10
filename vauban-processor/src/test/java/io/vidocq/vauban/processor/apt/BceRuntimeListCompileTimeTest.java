@@ -308,6 +308,62 @@ class BceRuntimeListCompileTimeTest {
     // Helpers (reused from the BceCompileTimeTest pattern)
     // ======================================================================
 
+    /** Registers {@link FrozenSessionContext} for {@code @SessionScoped} (vauban: frozen contexts). */
+    public static class ContextBce implements BuildCompatibleExtension {
+        @jakarta.enterprise.inject.build.compatible.spi.Discovery
+        public void register(jakarta.enterprise.inject.build.compatible.spi.MetaAnnotations meta) {
+            meta.addContext(jakarta.enterprise.context.SessionScoped.class, true, FrozenSessionContext.class);
+        }
+    }
+
+    /** A context class for {@link ContextBce}; never instantiated at compile time. */
+    public static class FrozenSessionContext implements jakarta.enterprise.context.spi.AlterableContext {
+        @Override public Class<? extends java.lang.annotation.Annotation> getScope() {
+            return jakarta.enterprise.context.SessionScoped.class;
+        }
+        @Override public <T> T get(jakarta.enterprise.context.spi.Contextual<T> c,
+                                   jakarta.enterprise.context.spi.CreationalContext<T> cc) { return null; }
+        @Override public <T> T get(jakarta.enterprise.context.spi.Contextual<T> c) { return null; }
+        @Override public boolean isActive() { return false; }
+        @Override public void destroy(jakarta.enterprise.context.spi.Contextual<?> c) { }
+    }
+
+    @Nested
+    @DisplayName("A context registered by a BCE is written for the runtime")
+    class FrozenContexts {
+
+        @Test
+        @DisplayName("MetaAnnotations.addContext → META-INF/vauban-contexts.list '<scope>;<context>;<normal>'")
+        void contextRegistrationIsFrozen() throws IOException {
+            var result = compileWithBce(List.of(ContextBce.class), """
+                    @jakarta.enterprise.context.SessionScoped
+                    public class Cart implements java.io.Serializable {
+                    }
+                    """);
+
+            assertTrue(result.success(), "Compilation should succeed. Messages: " + result.messages());
+            var path = "META-INF/vauban-contexts.list";
+            assertTrue(result.hasFile(path), "Expected " + path + " when a BCE registers a context");
+            var lines = Files.readAllLines(result.outputDir().resolve(path), StandardCharsets.UTF_8).stream()
+                    .filter(l -> !l.isBlank() && !l.startsWith("#"))
+                    .toList();
+            assertEquals(List.of("jakarta.enterprise.context.SessionScoped;"
+                    + FrozenSessionContext.class.getName() + ";true"), lines);
+        }
+
+        @Test
+        @DisplayName("no context registered → no list")
+        void noContextNoList() throws IOException {
+            var result = compileWithBce(List.of(WritingScopeBce.class), """
+                    public class Plain {
+                    }
+                    """);
+
+            assertTrue(result.success(), "Compilation should succeed. Messages: " + result.messages());
+            assertFalse(result.hasFile("META-INF/vauban-contexts.list"));
+        }
+    }
+
     private CompilationResult compileWithBce(List<Class<?>> bceClasses, String... sources) throws IOException {
         var compiler = ToolProvider.getSystemJavaCompiler();
         var diagnostics = new DiagnosticCollector<JavaFileObject>();

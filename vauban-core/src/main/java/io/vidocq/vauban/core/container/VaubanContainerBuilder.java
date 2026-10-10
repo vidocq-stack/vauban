@@ -915,9 +915,34 @@ public final class VaubanContainerBuilder {
             // A declared scope whose context cannot be installed is a deployment error: silently
             // skipping it makes every bean of that scope silently fall back to per-lookup
             // instances (VAU-CTX-001, surfaced as mansart's "empty @TransactionScoped" bug).
+            // Registered by the extensions that ran at boot, then those the processor froze into
+            // META-INF/vauban-contexts.list: an application compiled with the processor skips its
+            // extensions at boot, and would otherwise lose every context they register.
+            var contextRegistrations = new java.util.LinkedHashMap<String, java.util.Map.Entry<Class<? extends java.lang.annotation.Annotation>, Class<?>>>();
             if (discoveryResult != null) {
                 for (var reg : discoveryResult.metaAnnotations().getCustomContexts()) {
-                    var contextClass = reg.contextClass();
+                    contextRegistrations.putIfAbsent(reg.scopeAnnotation().getName() + ";" + reg.contextClass().getName(),
+                            java.util.Map.entry(reg.scopeAnnotation(), reg.contextClass()));
+                }
+            }
+            for (var frozen : io.vidocq.vauban.core.extensions.FrozenContexts.read(discoveryClassLoader)) {
+                var key = frozen.scope() + ";" + frozen.contextClass();
+                if (contextRegistrations.containsKey(key)) continue;
+                try {
+                    @SuppressWarnings("unchecked")
+                    var scope = (Class<? extends java.lang.annotation.Annotation>)
+                            Class.forName(frozen.scope(), false, discoveryClassLoader);
+                    contextRegistrations.put(key, java.util.Map.entry(scope,
+                            Class.forName(frozen.contextClass(), false, discoveryClassLoader)));
+                } catch (ClassNotFoundException | LinkageError e) {
+                    throw new jakarta.enterprise.inject.spi.DeploymentException(
+                            "Cannot load the context " + frozen.contextClass() + " registered for scope "
+                                    + frozen.scope() + " (" + io.vidocq.vauban.core.extensions.FrozenContexts.PATH + ")", e);
+                }
+            }
+            {
+                for (var reg : contextRegistrations.values()) {
+                    var contextClass = reg.getValue();
                     try {
                         Object instance = componentProviders.create(contextClass.getName());
                         if (instance == null) {
@@ -931,11 +956,11 @@ public final class VaubanContainerBuilder {
                             instance = vaubanLookup.newInstance(contextClass);
                         }
                         var ctx = (jakarta.enterprise.context.spi.Context) instance;
-                        container.contexts.computeIfAbsent(reg.scopeAnnotation(), k -> new java.util.ArrayList<>()).add(ctx);
+                        container.contexts.computeIfAbsent(reg.getKey(), k -> new java.util.ArrayList<>()).add(ctx);
                     } catch (Exception e) {
                         throw new jakarta.enterprise.inject.spi.DeploymentException(
                                 "Cannot install the context " + contextClass.getName()
-                                        + " registered for scope " + reg.scopeAnnotation().getName()
+                                        + " registered for scope " + reg.getKey().getName()
                                         + " (MetaAnnotations.addContext). The context class must be public"
                                         + " with a public no-arg constructor in an exported package.", e);
                     }
