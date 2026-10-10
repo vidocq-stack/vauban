@@ -462,6 +462,46 @@ final class InterceptorBeanWrapper {
     }
 
     /**
+     * Calls the post-construction wiring ({@code $$init}) of a {@code $$Intercepted} instance.
+     *
+     * <p>Through a method handle found with the bean module's own lookup, when the generated
+     * {@code _VaubanComponents} of the bean's package grants one ({@code ModuleLookups}): same
+     * module, so the package needs neither {@code exports} nor {@code opens} to
+     * {@code io.vidocq.vauban.core} (BUG-20261010-02). Reflection otherwise, as before, which needs
+     * the package exported. A failure of {@code $$init} itself is wrapped in an
+     * {@link java.lang.reflect.InvocationTargetException} on both paths.</p>
+     */
+    private static void initIntercepted(Class<?> interceptedClass, Object instance, InterceptorManager manager,
+                                        Set<?> bindings, Set<?> constructorBindings,
+                                        CreationalContext<?> creationalContext) throws Exception {
+        var moduleLookup = io.vidocq.vauban.core.access.ModuleLookups.lookupFor(interceptedClass.getSuperclass());
+        if (moduleLookup.isPresent()) {
+            java.lang.invoke.MethodHandle init = null;
+            try {
+                init = moduleLookup.get().findVirtual(interceptedClass,
+                        io.vidocq.vauban.core.interceptor.InterceptedShape.INIT_METHOD, INIT_TYPE);
+            } catch (NoSuchMethodException | IllegalAccessException notReachable) {
+                // Fall back to reflection below.
+            }
+            if (init != null) {
+                try {
+                    init.invoke(instance, manager, bindings, constructorBindings, creationalContext);
+                } catch (Throwable t) {
+                    throw new java.lang.reflect.InvocationTargetException(t);
+                }
+                return;
+            }
+        }
+        interceptedClass.getMethod(io.vidocq.vauban.core.interceptor.InterceptedShape.INIT_METHOD,
+                        INIT_TYPE.parameterArray())
+                .invoke(instance, manager, bindings, constructorBindings, creationalContext);
+    }
+
+    /** {@code void $$init(InterceptorManager, Set, Set, CreationalContext)}. */
+    private static final java.lang.invoke.MethodType INIT_TYPE = java.lang.invoke.MethodType.methodType(
+            void.class, InterceptorManager.class, Set.class, Set.class, CreationalContext.class);
+
+    /**
      * Instantiates a managed class — an intercepted {@code $$Intercepted} subclass OR an
      * {@code @Interceptor} bean — preferring zero reflection. Order:
      * <ol>
@@ -832,12 +872,7 @@ final class InterceptorBeanWrapper {
 
                         var instance = instantiatePreferProvider(subclassCtor, finalArgs);
 
-                        var initMethod = finalInterceptedClass.getMethod(io.vidocq.vauban.core.interceptor.InterceptedShape.INIT_METHOD,
-                                io.vidocq.vauban.core.interceptor.InterceptorManager.class,
-                                java.util.Set.class,
-                                java.util.Set.class,
-                                jakarta.enterprise.context.spi.CreationalContext.class);
-                        initMethod.invoke(instance, mgr, bds, descriptor.constructorBindings(), creationalCtx);
+                        initIntercepted(finalInterceptedClass, instance, mgr, bds, descriptor.constructorBindings(), creationalCtx);
                         return instance;
                     } catch (RuntimeException e) {
                         throw e;
@@ -928,21 +963,13 @@ final class InterceptorBeanWrapper {
                                         throw new jakarta.enterprise.inject.CreationException(
                                                 "Interceptor chain for @AroundConstruct failed to create an instance for " + finalInterceptedClass.getName());
                                     }
-                                    finalInterceptedClass.getMethod(io.vidocq.vauban.core.interceptor.InterceptedShape.INIT_METHOD,
-                                            io.vidocq.vauban.core.interceptor.InterceptorManager.class,
-                                            java.util.Set.class,
-                                            java.util.Set.class,
-                                            jakarta.enterprise.context.spi.CreationalContext.class).invoke(inst, mgr2, bds2, descriptor.constructorBindings(), ctx);
+                                    initIntercepted(finalInterceptedClass, inst, mgr2, bds2, descriptor.constructorBindings(), ctx);
                                     return inst;
                             } else {
                             var ctor2 = finalInterceptedClass.getDeclaredConstructor();
                             Object[] finalArgs2 = new Object[0];
                             var inst = instantiatePreferProvider(ctor2, finalArgs2);
-                                    finalInterceptedClass.getMethod(io.vidocq.vauban.core.interceptor.InterceptedShape.INIT_METHOD,
-                                            io.vidocq.vauban.core.interceptor.InterceptorManager.class,
-                                            java.util.Set.class,
-                                            java.util.Set.class,
-                                            jakarta.enterprise.context.spi.CreationalContext.class).invoke(inst, mgr2, bds2, descriptor.constructorBindings(), ctx);
+                                    initIntercepted(finalInterceptedClass, inst, mgr2, bds2, descriptor.constructorBindings(), ctx);
                                     return inst;
                                 }
                             } catch (Exception ex) {

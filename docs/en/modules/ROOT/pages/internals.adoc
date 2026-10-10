@@ -817,6 +817,8 @@ Only the modules named in `io.vidocq.vauban.core`'s qualified `exports io.vidocq
 
 Providers generated before this method existed grant nothing; the extension keeps its own fallback (for Heisenberg, an `opens` to `io.vidocq.heisenberg.core`).
 
+The container uses the same lookup itself to wire an intercepted bean: once the generated provider has created the `$$Intercepted` subclass, its post-construction method `$$init` is called through a method handle found with that lookup, so the bean's package needs neither `exports` nor `opens` (BUG-20261010-02). Without a granting provider, the call falls back to reflection, which needs the package exported to `io.vidocq.vauban.core`.
+
 == Exported Java modules
 
 [cols="2,3"]

@@ -43,5 +43,7 @@ module io.vidocq.vauban.moduleit {
     // Build-time, in-module instantiation + field injection of every bean and interceptor —
     // the container needs no `opens … to io.vidocq.vauban.core`.
     provides io.vidocq.vauban.api.VaubanComponentProvider
-            with io.vidocq.vauban.moduleit._VaubanComponents;
+            with io.vidocq.vauban.moduleit._VaubanComponents,
+                 // io.vidocq.vauban.moduleit.internal is neither exported nor opened.
+                 io.vidocq.vauban.moduleit.internal._VaubanComponents;
 }

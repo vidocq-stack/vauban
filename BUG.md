@@ -2037,7 +2037,7 @@ The same goes for a normal-scoped producer of such a class (`Dollar_Produced$$â€
 ## BUG-20261010-02 â€” An intercepted bean in a non-exported package fails at creation
 
 - **Date**: 2026-10-10
-- **Status**: OPEN
+- **Status**: FIXED (branch `fix/intercepted-init-without-exports`)
 - **Module**: `vauban-core` (`InterceptorBeanWrapper`, the `create` of the intercepted-subclass
   bean, around line 845)
 - **Symptom**: in a Vidocq application whose module exports and opens nothing (what
@@ -2064,3 +2064,14 @@ The same goes for a normal-scoped producer of such a class (`Dollar_Produced$$â€
   `$$init` (an interface call needs no export), or route `$$init` through the generated provider
   like the constructor; keep the reflective call as the fallback for subclasses generated before.
   Both generators (APT and Class-File) emit the subclass.
+- **Fix**: `InterceptorBeanWrapper.initIntercepted` calls `$$init` through a method handle found
+  with `ModuleLookups.lookupFor(beanClass)`, the full-privilege lookup granted by the generated
+  `_VaubanComponents` of the bean's package (same module: no exports, no opens), at all three
+  call sites; reflection stays the fallback when no provider grants a lookup. No generator
+  change: subclasses already generated are wired the same way.
+- **Verification**: `NonExportedInterceptedModulePathTest` (`vauban-module-it`, a `@Dependent`
+  intercepted bean in the non-exported package `io.vidocq.vauban.moduleit.internal`) red on `main`
+  with the same `IllegalAccessException`, green now. Clean install with `-Ptck`: 1822 tests,
+  0 failures, 2 existing skips; CDI Lite TCK 774/774; AtInject TCK green. The Fault Tolerance
+  application with no `exports` runs its `@Retry` bean under `vidocq:run` and in a jlink image
+  (with the scaffold fix of vidocq BUG-20261010-01).
