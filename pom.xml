@@ -68,6 +68,7 @@
         <module>vauban-weaver</module>
         <module>vauban-classloader</module>
         <module>vauban-core</module>
+        <module>vauban-webcontexts</module>
         <module>vauban-indexer</module>
         <module>vauban-processor</module>
         <module>vauban-sjar</module>

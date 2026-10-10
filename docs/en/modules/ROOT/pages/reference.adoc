@@ -38,6 +38,10 @@ This page lists every artefact published by Vauban, the Java Modules packages th
 | `runtime`
 | Universal class-loader engine (`VaubanClassLoader`, `VaubanLayerFactory`) and the Java SE launcher (`Launch`) [.tag-new]#NEW#
 
+| `io.vidocq.vauban:vauban-webcontexts:{project-version}`
+| `runtime`
+| The session context for a web container to drive (`WebContexts`, `SessionStore`), see xref:usage.adoc#web-contexts[Web contexts] [.tag-new]#NEW#
+
 | `io.vidocq.vauban:vauban-weaver:{project-version}`
 | `runtime`
 | Client-proxy weaving transforms (Class-File API), also packaged as a load-time agent
@@ -85,6 +89,9 @@ This page lists every artefact published by Vauban, the Java Modules packages th
 
 | `io.vidocq.vauban.weaver`
 | `io.vidocq.vauban.weaver`
+
+| `io.vidocq.vauban.webcontexts` [.tag-new]#NEW#
+| `io.vidocq.vauban.webcontexts`
 
 | `io.vidocq.vauban.sjar`
 | `io.vidocq.vauban.sjar`, `.sjar.cli`
@@ -427,7 +434,7 @@ Bean selection:
 | `@SessionScoped`
 | ❌
 | ✅
-| // TODO@user: confirm
+| ✅ with `vauban-webcontexts`, driven by a web container (Foy). xref:usage.adoc#web-contexts[Web contexts] [.tag-new]#NEW#
 
 | Passivation, bean serialisation
 | ❌

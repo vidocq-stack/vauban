@@ -26,11 +26,11 @@ CDI 4.1 Lite ships four standard scopes. Vauban supports all of them, plus `@Req
 
 | `@RequestScoped`
 | One instance per request, normal-scope proxy.
-| ✅ (with Cassini or Foy active)
+| ✅ with Cassini; not yet with Foy, which activates it through `RequestContextController`, a built-in bean Vauban lacks (link:https://codefloe.com/Vidocq/vauban/issues/147[vauban#147])
 
 | `@SessionScoped`
 | One instance per HTTP session.
-| // TODO@user: confirm status with Foy / Cassini
+| ✅ with `vauban-webcontexts`, when Foy serves the request (xref:usage.adoc#web-contexts[Web contexts]) [.tag-new]#NEW#
 |===
 
 [NOTE]
@@ -328,7 +328,35 @@ public class OrderResource {
 
 == Integration with Foy (Jakarta Servlet)
 
-xref:foy::index.adoc[Foy] exposes servlets, filters and listeners as CDI beans. `@RequestScoped` follows the HTTP request/response lifecycle.
+xref:foy::index.adoc[Foy] exposes servlets, filters and listeners as CDI beans, and `@SessionScoped` follows the HTTP session, through the web contexts below. `@RequestScoped` does not work under Foy yet: Foy activates the request context through `RequestContextController`, a CDI Lite built-in bean Vauban does not provide (link:https://codefloe.com/Vidocq/vauban/issues/147[vauban#147]).
+
+[#web-contexts]
+=== Web contexts: `@SessionScoped` [.tag-new]#NEW#
+
+CDI Lite has no session context: CDI 4.1 §6.7.2 leaves it to the container that implements Servlet. `vauban-webcontexts` provides it, independent of any transport, and a web container drives it. With Foy there is nothing to do: `foy-cdi-vauban` depends on `vauban-webcontexts` and binds each request's `HttpSession` to it.
+
+* **One instance per session.** A `@SessionScoped` bean is created on first use in a session and kept in that session's attributes, one attribute per bean, so every request of the session sees it. The first session-scoped bean a request uses creates the session, as `getSession()` would.
+* **Ends with the session.** When the session is invalidated or expires, Vauban fires `@BeforeDestroyed(SessionScoped.class)`, destroys the session's instances (their `@PreDestroy` methods run, and may still use session-scoped beans), then fires `@Destroyed(SessionScoped.class)`. A new session fires `@Initialized(SessionScoped.class)`. The event payload is the `HttpSession`.
+* **Outside a request, the context is inactive**: a call to a session-scoped bean throws `ContextNotActiveException`.
+* **Not covered**: passivation. Vauban does not check at deployment that a session-scoped bean is `Serializable`, and the instances are not written out with the session. `@ConversationScoped` is not provided.
+* **The extension must be seen at build time.** `vauban-webcontexts` registers its context from a build-compatible extension. When the application is compiled with Vauban's annotation processor, `foy-cdi-vauban` on the processor path brings it along.
+
+The same scenarios, two clients, one cart each, a new cart after `invalidate()`, the events, pass on Foy with Vauban and on Foy hosting Weld's own Servlet integration, which serves as the reference (Foy's `foy-it-vauban-session` and `foy-it-weld-servlet` modules).
+
+Another web container drives the context through `WebContexts`:
+
+[source,java]
+----
+// When a request starts and ends, on the thread that serves it:
+WebContexts.activateSession(store);      // store: a SessionStore over the request's session
+WebContexts.deactivateSession();
+
+// When the web container creates and ends a session:
+WebContexts.sessionInitialized(beanManager, session);
+WebContexts.destroySession(beanManager, store, session);
+----
+
+`SessionStore` adapts the session's attributes: get, set, remove, list, and the object to lock while an instance is created, the same for every request of one session.
 
 == JUnit tests with `@VaubanTest`
 

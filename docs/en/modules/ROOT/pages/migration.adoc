@@ -51,7 +51,7 @@ Key differences:
 * **No runtime `AnnotatedType` lookup** — Vauban resolves everything at compile time. Code that calls `BeanManager.createAnnotatedType(Class)` must be rewritten as a Build Compatible Extension.
 * **No runtime `BeforeBeanDiscovery` / `AfterBeanDiscovery`** — replaced by the BCE phases `@Discovery` / `@Enhancement` / `@Registration` / `@Synthesis` / `@Validation`.
 * **No portable extensions** — the `Extension` interface is not loaded via `ServiceLoader` at runtime. Migrate every extension to a compile-time BCE.
-* **No `@ConversationScoped`** — refactor to `@SessionScoped` (// TODO@user: confirm support) or to an explicit application mechanism.
+* **No `@ConversationScoped`** — refactor to `@SessionScoped`, which Vauban supports with `vauban-webcontexts` when Foy serves the requests (xref:usage.adoc#web-contexts[Web contexts]), or to an explicit application mechanism.
 
 [TODO]
 ====
