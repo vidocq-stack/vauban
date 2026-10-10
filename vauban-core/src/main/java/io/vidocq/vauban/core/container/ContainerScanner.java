@@ -194,6 +194,31 @@ final class ContainerScanner {
         }
     }
 
+    /**
+     * The {@code bean-discovery-mode} of a bean archive (CDI 4.1 §"Bean archives"). An empty
+     * {@code beans.xml}, or one without the attribute, is {@link #ANNOTATED} since CDI 4.0.
+     */
+    enum BeanDiscoveryMode {
+        ALL, ANNOTATED, NONE;
+
+        private static final java.util.regex.Pattern COMMENT =
+                java.util.regex.Pattern.compile("<!--.*?-->", java.util.regex.Pattern.DOTALL);
+        private static final java.util.regex.Pattern ATTRIBUTE =
+                java.util.regex.Pattern.compile("bean-discovery-mode\\s*=\\s*([\"'])\\s*([^\"']*?)\\s*\\1");
+
+        static BeanDiscoveryMode of(String beansXml) {
+            var matcher = ATTRIBUTE.matcher(COMMENT.matcher(beansXml).replaceAll(""));
+            if (!matcher.find()) return ANNOTATED;
+            return switch (matcher.group(2)) {
+                case "all" -> ALL;
+                case "annotated" -> ANNOTATED;
+                case "none" -> NONE;
+                default -> throw new IllegalArgumentException(
+                        "invalid bean-discovery-mode \"" + matcher.group(2) + "\" (expected all, annotated or none)");
+            };
+        }
+    }
+
     void scanBeanArchivesFromClasspath() {
         var cl = effectiveClassLoader();
         try {
@@ -201,6 +226,15 @@ final class ContainerScanner {
             while (beansXmlUrls.hasMoreElements()) {
                 var beansXmlUrl = beansXmlUrls.nextElement();
                 var urlStr = beansXmlUrl.toString();
+                BeanDiscoveryMode mode;
+                try (var in = beansXmlUrl.openStream()) {
+                    mode = BeanDiscoveryMode.of(new String(in.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8));
+                } catch (IOException | IllegalArgumentException e) {
+                    throw new jakarta.enterprise.inject.spi.DeploymentException(
+                            "Cannot read the bean discovery mode of " + urlStr + ": " + e.getMessage(), e);
+                }
+                if (mode == BeanDiscoveryMode.NONE) continue;
+                boolean forced = mode == BeanDiscoveryMode.ALL;
                 try {
                     if (urlStr.startsWith("jar:")) {
                         int bangIdx = urlStr.indexOf('!');
@@ -212,14 +246,14 @@ final class ContainerScanner {
                                     : null;
                             if (jarFilePath != null) {
                                 var jarRootUrl = new java.net.URL("jar:file:" + jarFilePath + "!/");
-                                scanJarEntriesForced(jarRootUrl, cl);
+                                scanJarEntries(jarRootUrl, cl, forced);
                             }
                         }
                     } else if (urlStr.startsWith("file:")) {
                         // file:/path/classes/META-INF/beans.xml
                         var beansXmlPath = java.nio.file.Path.of(beansXmlUrl.toURI());
                         var classesRoot = beansXmlPath.getParent().getParent();
-                        scanAllDirectoryForced(classesRoot, cl);
+                        scanDirectory(classesRoot, cl, forced);
                     }
                 } catch (Exception e) { /* skip problematic archives */ }
             }
@@ -228,7 +262,7 @@ final class ContainerScanner {
         }
     }
 
-    private void scanJarEntriesForced(java.net.URL jarRootUrl, ClassLoader cl) throws Exception {
+    private void scanJarEntries(java.net.URL jarRootUrl, ClassLoader cl, boolean forced) throws Exception {
         var connection = (java.net.JarURLConnection) jarRootUrl.openConnection();
         try (var jarFile = connection.getJarFile()) {
             jarFile.entries().asIterator().forEachRemaining(entry -> {
@@ -236,12 +270,12 @@ final class ContainerScanner {
                 if (!name.endsWith(".class")) return;
                 if (name.contains("module-info") || name.contains("package-info")) return;
                 var className = name.replace('/', '.').replace(".class", "");
-                tryAddForcedBeanClass(className, cl);
+                tryAddArchiveClass(className, cl, forced);
             });
         }
     }
 
-    private void scanAllDirectoryForced(java.nio.file.Path rootDir, ClassLoader cl) {
+    private void scanDirectory(java.nio.file.Path rootDir, ClassLoader cl, boolean forced) {
         if (!java.nio.file.Files.isDirectory(rootDir)) return;
         try (var stream = java.nio.file.Files.walk(rootDir)) {
             stream.filter(p -> p.toString().endsWith(".class"))
@@ -251,12 +285,16 @@ final class ContainerScanner {
                                 .replace(java.io.File.separatorChar, '.')
                                 .replace('/', '.')
                                 .replace(".class", "");
-                        tryAddForcedBeanClass(className, cl);
+                        tryAddArchiveClass(className, cl, forced);
                     });
         } catch (Exception e) { /* skip */ }
     }
 
-    private void tryAddForcedBeanClass(String className, ClassLoader cl) {
+    /**
+     * Adds a class of a bean archive. In an {@code all} archive ({@code forced}) every concrete class
+     * is a bean; in an {@code annotated} one, discovery keeps only those with a bean-defining annotation.
+     */
+    private void tryAddArchiveClass(String className, ClassLoader cl, boolean forced) {
         try {
             if (className.contains("_ClientProxy") || className.contains("$Intercepted")
                     || className.contains("$$")) return;
@@ -265,7 +303,7 @@ final class ContainerScanner {
             if (clazz.isAnonymousClass() || clazz.isLocalClass()) return;
             if (java.lang.reflect.Modifier.isAbstract(clazz.getModifiers())) return;
             host.addBeanClass(clazz);
-            host.forcedDiscoveryClasses.add(clazz);
+            if (forced) host.forcedDiscoveryClasses.add(clazz);
         } catch (ClassNotFoundException | NoClassDefFoundError e) {
             // Skip unloadable classes
         }

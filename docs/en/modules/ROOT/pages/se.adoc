@@ -28,6 +28,30 @@ class loader. For beans you compile, and for producers of fully-public third-par
 more is needed: proxies are generated at build time and resolve with zero `opens`
 (xref:internals.adoc#proxy-strategies[client-proxy strategies]).
 
+[#bean-archives]
+=== Default discovery: bean archives [.tag-new]#NEW#
+
+With neither `addBeanClasses` nor `addPackages`, `initialize()` discovers beans in every archive
+(jar or directory) of the class loader that contains a `META-INF/beans.xml`. Its
+`bean-discovery-mode` is honoured:
+
+[cols="1,3"]
+|===
+| Mode | Beans discovered in the archive
+
+| `annotated`
+| Classes with a bean-defining annotation (a scope, a stereotype, `@Interceptor`). This is also the mode of an empty `beans.xml`, or of one without the attribute (CDI 4.0 and later).
+
+| `all`
+| Every concrete class.
+
+| `none`
+| None; the archive is skipped.
+|===
+
+A `beans.xml` that cannot be read, or that names another mode, fails the start with a
+`DeploymentException`. Before `{project-version}`, Vauban read every `beans.xml` as `all`.
+
 == When the boot layer is not enough
 
 A normal-scoped `@Produces` returning a third-party class that has a **package-private or

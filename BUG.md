@@ -2007,3 +2007,29 @@ The same goes for a normal-scoped producer of such a class (`Dollar_Produced$$â€
   - 2026-10-09: verified on Java 25.0.4-tem / Maven 3.9.16: clean Vauban install (981 non-TCK
     tests, zero failures/errors, two existing skips), full CDI Lite 774/774 without new exclusions,
     AtInject runner green, and the actual Mansart `ContainerModuleTest` 4/4 after a clean build.
+
+## BUG-20261010-01 â€” Default SE discovery reads every `beans.xml` as `bean-discovery-mode="all"`
+
+- **Date**: 2026-10-10
+- **Status**: FIXED (branch `fix/beans-xml-discovery-mode`, vauban#141)
+- **Module**: `vauban-core` (`ContainerScanner.scanBeanArchivesFromClasspath`)
+- **Symptom**: `SeContainerInitializer.newInstance().initialize()` with no class or package added
+  makes every concrete class of an archive with a `META-INF/beans.xml` a bean, whatever the file
+  says. An `annotated` or empty `beans.xml` (annotated since CDI 4.0) over-discovers plain helper
+  classes; a `none` archive is not skipped. Found on 2026-10-09 while comparing Vauban with
+  Hypospray, right after `beans.xml` (`annotated`) files were added to five bricks for portability
+  without Vauban (Vidocq/vidocq-workspace#15). No brick and no Vidocq runtime path uses this
+  discovery; only SE applications do.
+- **Minimal reproduction**: an archive with `beans.xml` declaring `bean-discovery-mode="annotated"`,
+  a `@Dependent` class and a class with no annotation; `initialize()` with that archive's class
+  loader resolves both. `BeanArchiveDiscoveryModeTest` covers `all`, `annotated` (directory and
+  jar), `none`, an empty file, a file without the attribute and a commented-out attribute; on
+  `main` six of seven fail (`PlainFixture is a bean ==> expected: <false> but was: <true>`).
+- **Cause**: the scanner never read the file; it forced every class of the archive through
+  discovery (`forcedDiscoveryClasses`).
+- **Fix**: `ContainerScanner.BeanDiscoveryMode` reads the attribute (XML comments stripped; no
+  attribute = `annotated`; another value is a `DeploymentException`). `none` skips the archive,
+  `all` keeps forcing, `annotated` adds the classes unforced so discovery keeps only those with a
+  bean-defining annotation.
+- **Verification**: clean install with `-Ptck`: 1821 tests, 0 failures, 2 existing skips; CDI Lite
+  TCK 774/774; AtInject TCK green.

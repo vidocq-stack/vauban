@@ -86,6 +86,7 @@ What an application built on Vauban `{release-version}` may notice on the `{proj
 * **Interceptors see the inherited declaration.** `InvocationContext.getMethod()` returns the superclass or interface method a call runs, not the `$$super$` bridge, and `getInterceptorBindings()` includes that declaration's bindings.
 * **Default name of a nested bean class.** `@Named` without a value on `Outer.ReportService` names the bean `reportService`, no longer `outer$ReportService`. Update any lookup by the old name. See xref:usage.adoc#qualifiers[Qualifiers].
 * **Disposers.** A producer's disposer runs once, no longer twice, and its qualified parameters resolve on their qualifiers. See xref:usage.adoc#producers-and-disposes[Producers and `@Disposes`].
+* **`beans.xml` discovery mode.** With `SeContainerInitializer` default discovery, an empty `beans.xml`, or one declaring `annotated`, now discovers only classes with a bean-defining annotation; it used to make every concrete class a bean. Declare `bean-discovery-mode="all"` to keep the old behaviour, or annotate the classes. See xref:se.adoc#bean-archives[Default discovery: bean archives].
 * **Injection failures propagate.** A failed field injection reaches the caller instead of leaving the field `null`. See xref:internals.adoc#boot-failures[Failures are reported, not swallowed].
 
 == Recommended strategy

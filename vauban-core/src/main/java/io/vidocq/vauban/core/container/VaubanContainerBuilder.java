@@ -357,9 +357,10 @@ public final class VaubanContainerBuilder {
 
     /**
      * Scan all bean archives accessible from the current ClassLoader.
-     * An archive is a bean archive if it contains {@code META-INF/beans.xml}.
-     * All concrete classes from discovered archives are added and forced through
-     * bean discovery (equivalent to {@code bean-discovery-mode=all}).
+     * An archive is a bean archive if it contains {@code META-INF/beans.xml}, whose
+     * {@code bean-discovery-mode} is honoured: {@code all} forces every concrete class through bean
+     * discovery, {@code annotated} (also an empty {@code beans.xml}) keeps only classes with a
+     * bean-defining annotation, and {@code none} skips the archive.
      * <p>
      * Used by {@link io.vidocq.vauban.core.container.VaubanSeContainerInitializer}
      * when no explicit configuration is provided.
