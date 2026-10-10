@@ -197,3 +197,336 @@ implementation is green.
   apply another overload's metadata or fall back to source annotations.
 
 ---
+
+## TCK-GAP-004 — no test with two extensions: phase order across extensions, and `@Registration` on the bean set `@Enhancement` left
+
+- **Date**: 2026-10-10 — **Status**: DRAFT (not yet reported upstream)
+- **Spec**: CDI 4.1, Build Compatible Extensions (`DISCOVERY_PHASE`, `ENHANCEMENT_PHASE`,
+  `REGISTRATION_PHASE` in `Sections`). Paraphrased:
+  - the phases run in a fixed order: Discovery, Enhancement, Registration, Synthesis, Validation;
+  - `@Registration` is given the beans, observers and interceptors as they exist after `@Enhancement`;
+  - a class that gains a bean-defining annotation in `@Enhancement` (the pattern
+    `CustomStereotypeExtension` uses) is therefore a bean in `@Registration`, for every extension.
+- **Existing coverage that nearly covers it**:
+  - Every test in `org.jboss.cdi.tck.tests.build.compatible.extensions` deploys exactly **one**
+    extension. So nothing checks that the phases run across extensions (phase N of every extension
+    before phase N+1 of any), instead of one extension running all its phases before the next starts.
+  - `RegistrationTest` / `RegistrationExtension` count beans of a type that already has a scope in source.
+  - `CustomStereotypeTest` adds `@ApplicationScoped` to a stereotype in `@Discovery`, then checks the
+    bean at run time. No `@Registration` method observes the result.
+- **Gap**: two failure modes pass the whole suite:
+  - an implementation that runs extension A's `@Registration` before extension B's `@Enhancement`;
+  - an implementation that hands `@Registration` the bean set as discovered, before enhancements apply.
+- **Proposed TCK change**: one deployment with two extensions and an unscoped class `Plain`, with no
+  bean-defining annotation, added through `ScannedClasses.add` in `@Discovery`.
+
+  ```java
+  public class AddScopeExtension implements BuildCompatibleExtension {
+      @Discovery
+      public void discover(ScannedClasses scan) { scan.add(Plain.class.getName()); }
+
+      @Enhancement(types = Plain.class)
+      public void addScope(ClassConfig clazz) { clazz.addAnnotation(Dependent.class); }
+  }
+
+  public class ObserveRegistrationExtension implements BuildCompatibleExtension {
+      static final List<String> seen = new CopyOnWriteArrayList<>();
+
+      @Priority(1) // runs before AddScopeExtension within a phase
+      @Registration(types = Plain.class)
+      public void record(BeanInfo bean) { seen.add(bean.declaringClass().name()); }
+
+      @Validation
+      public void validate(Messages msg) {
+          if (!seen.contains(Plain.class.getName())) {
+              msg.error("@Registration must see the bean created in @Enhancement by another extension");
+          }
+      }
+  }
+
+  public class RegistrationAfterEnhancementTest extends AbstractTest {
+      @Deployment
+      public static WebArchive createTestArchive() {
+          return new WebArchiveBuilder().withTestClassPackage(RegistrationAfterEnhancementTest.class)
+                  .withBuildCompatibleExtension(AddScopeExtension.class)
+                  .withBuildCompatibleExtension(ObserveRegistrationExtension.class)
+                  .build();
+      }
+
+      @Test
+      @SpecAssertion(section = REGISTRATION_PHASE, id = "<new id: registration sees enhanced beans>")
+      public void registrationSeesBeanCreatedByAnotherExtensionsEnhancement() {
+          assertTrue(getContextualReference(Plain.class) != null);
+          assertEquals(ObserveRegistrationExtension.seen, List.of(Plain.class.getName()));
+      }
+  }
+  ```
+
+  Give `ObserveRegistrationExtension` the higher priority on purpose. Then a container that runs each
+  extension through all its phases in turn fails as well.
+- **Exposed by**: Vauban `BUG.md` → `BUG-20261008-03` (vauban#131). Local regression:
+  `BceCompileTimeTest.registrationSeesTheBeansEnhancementCreated` and
+  `VaubanBceScopeInfoTest.scopeOutsideTheIndex`.
+- **Why it matters**: integration extensions are built on this pattern. Foy's `FoyWebExtension`
+  scopes `@WebServlet` classes in `@Enhancement` and indexes them in `@Registration`. When the order
+  breaks, the extension builds an incomplete index, and nothing fails until a request hits the
+  missing servlet.
+
+## TCK-GAP-005 — an annotation added by `@Enhancement` is never checked for its member values
+
+- **Date**: 2026-10-10 — **Status**: DRAFT (not yet reported upstream)
+- **Spec**: CDI 4.1, Build Compatible Extensions, `ENHANCEMENT_PHASE` and `ClassConfig` /
+  `FieldConfig.addAnnotation(Annotation | AnnotationInfo | Class)`. An added annotation is the
+  annotation the container uses from then on, members included. That covers qualifier resolution
+  (§2.3.6, members are binding unless `@Nonbinding`) and the bean name (`@Named` value, §2.6).
+- **Existing coverage that nearly covers it**:
+  - `ChangeBeanQualifierExtension`, `ChangeInjectionPointExtension` and
+    `ChangeObserverQualifierExtension` add `MyQualifier`, which has **no member**.
+  - `ChangeInterceptorBindingExtension` adds `new MyBinding.Literal("foo")`, but `MyBinding.value()`
+    is `@Nonbinding`, so dropping the member changes nothing.
+  - `CustomInterceptorBindingExtension` adds `@Priority(1)` built with `AnnotationBuilder`. No test
+    reads that value back.
+  - No test adds `@Named` to a class or a producer.
+- **Gap**: an implementation can keep only the annotation *type* of an added annotation and still pass:
+  - an added qualifier with a binding member matches any bean of that qualifier type;
+  - an added `@Named("x")` leaves the default name.
+- **Proposed TCK change**: a qualifier `@Channel(String value)` with a binding member, and two beans
+  `AlphaSink` and `BetaSink`, both with no qualifier in source. The extension adds
+  `@Channel("alpha")` to `AlphaSink`, `@Channel("beta")` to `BetaSink`, `@Channel("beta")` to the
+  plain `@Inject Sink sink` field of a `Consumer` bean, and `@Named("renamed")` to a third bean.
+
+  ```java
+  @Enhancement(types = AlphaSink.class)
+  public void alpha(ClassConfig clazz) { clazz.addAnnotation(new Channel.Literal("alpha")); }
+
+  @Enhancement(types = BetaSink.class)
+  public void beta(ClassConfig clazz) {
+      clazz.addAnnotation(AnnotationBuilder.of(Channel.class).value("beta").build());
+  }
+
+  @Enhancement(types = Consumer.class)
+  public void consumer(ClassConfig clazz) {
+      clazz.fields().stream().filter(f -> f.info().name().equals("sink"))
+              .forEach(f -> f.addAnnotation(new Channel.Literal("beta")));
+  }
+
+  @Enhancement(types = Renamed.class)
+  public void rename(ClassConfig clazz) { clazz.addAnnotation(NamedLiteral.of("renamed")); }
+  ```
+
+  Test: `Consumer.sink` is the `BetaSink` (no ambiguity), `select(Sink.class, new Channel.Literal("alpha"))`
+  is the `AlphaSink`, and the bean `Renamed` has name `"renamed"`. Run the assertions twice: in a
+  `@Registration` of a second extension (through `BeanInfo.qualifiers()` and `BeanInfo.name()`), and at run time.
+- **Exposed by**: Vauban `BUG.md` → `BUG-20261008-05` (vauban#135). Local regression:
+  `BceEnhancementMembersTest`. On the unfixed build it fails with
+  `Unsatisfied dependency ... @Channel(value=beta)`.
+- **Why it matters**: an extension that routes beans by a qualifier member (a channel name, a
+  data-source name, a tenant) silently loses that routing. An extension that names beans for EL
+  or for lookup by name gets the default name instead.
+
+## TCK-GAP-006 — `SyntheticBeanBuilder.withParam` / `SyntheticObserverBuilder.withParam` overloads are mostly untested
+
+- **Date**: 2026-10-10 — **Status**: DRAFT (not yet reported upstream)
+- **Spec**: CDI 4.1, Build Compatible Extensions, `SYNTHESIS_PHASE`. `SyntheticBeanBuilder` and
+  `SyntheticObserverBuilder` declare `withParam` overloads for these types:
+  - `boolean`, `int`, `long`, `double`, `String`, `Class<?>`, `Enum<?>`;
+  - their arrays;
+  - `ClassInfo` and `ClassInfo[]`;
+  - `AnnotationInfo`, `Annotation` and their arrays;
+  - `InvokerInfo` and `InvokerInfo[]`.
+
+  The `Parameters` javadoc says how each type reads back: a `ClassInfo` as `Class`, an `AnnotationInfo`
+  as the annotation, an `InvokerInfo` as `Invoker`.
+- **Existing coverage that nearly covers it**:
+  - `SyntheticBeanExtension` / `MyPojoCreator` use `withParam(String, String)` and
+    `withParam(String, AnnotationInfo)` (`"data"`, read back as `MyComplexValue`).
+  - `SyntheticObserverExtension` / `MyObserver` use a `String` only.
+  - No test passes a primitive, `Class`, `Enum`, array, `ClassInfo` or `InvokerInfo`, or a param to a
+    synthetic observer other than `String`.
+- **Gap**: an implementation that records synthetic metadata at build time and replays it at boot,
+  like Quarkus ArC or Vauban, can drop every other overload. The creator then gets `null`, with no
+  build-time error.
+- **Proposed TCK change**: extend `SyntheticBeanExtension` with one param per overload family. Read
+  each one back in `MyPojoCreator` and expose the values on the created POJO:
+
+  ```java
+  syn.addBean(MyPojo.class).type(MyPojo.class)
+          .withParam("flag", true).withParam("count", 42).withParam("big", 1L << 40).withParam("ratio", 0.5)
+          .withParam("type", String.class).withParam("unit", TimeUnit.SECONDS)
+          .withParam("ints", new int[] { 1, 2 }).withParam("types", new Class<?>[] { String.class, Integer.class })
+          .withParam("units", new TimeUnit[] { TimeUnit.SECONDS })
+          .withParam("classInfo", types.of(MyService.class).asClass().declaration())
+          .withParam("anns", new Annotation[] { new MyQualifier.Literal() })
+          .createWith(MyPojoCreator.class);
+  ```
+
+  Assert each value and its read-back type (`Class` for `ClassInfo`, the annotation instance for
+  `AnnotationInfo`). Apply the same to `SyntheticObserverExtension`, and add one `InvokerInfo`
+  param read back as `Invoker` and invoked.
+- **Exposed by**: Vauban `BUG.md` → `BUG-20261008-02` (vauban#130). Local regression:
+  `BceRuntimeParamsTest` (boot from the written metadata) and `SyntheticParamCodecTest`.
+  The TCK runner never hit the bug, because it deploys at run time and the params never leave memory.
+- **Why it matters**: these overloads let a build-time extension hand a creator the classes it
+  found (`Class[]`, `ClassInfo`) or the methods to call (`InvokerInfo`). Foy hit the bug with
+  `Class<?>[]` and had to fall back to a comma-joined `String`.
+
+## TCK-GAP-007 — interception of inherited business methods: `getMethod()`, non-public methods, unproxyable beans
+
+- **Date**: 2026-10-10 — **Status**: DRAFT (not yet reported upstream)
+- **Spec**:
+  - CDI 4.1 §4.2 (`MEMBER_LEVEL_INHERITANCE`): a bean inherits a superclass method, with its
+    method-level interceptor bindings, unless it overrides it.
+  - §7.2 (`BIZ_METHOD`): every non-private, non-static method of a managed bean, inherited or
+    declared, public or not, is a business method.
+  - Jakarta Interceptors 2.2 §2.4 (`INVOCATIONCONTEXT`): `getMethod()` returns the method of the
+    target class for which the interceptor was invoked.
+  - CDI 4.1 §3.10 and §8.3 (`UNPROXYABLE`): an intercepted bean that cannot be proxied is a
+    *deployment* problem, whatever made it intercepted.
+- **Existing coverage that nearly covers it**:
+  - `InterceptorBindingInheritanceTest` (`Herb`/`Thyme`, `Shrub`/`Rosehip`) checks that an inherited
+    **public** method is intercepted, or not, but never inspects `getMethod()`.
+  - `InvocationContextTest.testGetTargetMethod` (`Interceptor3`) checks `getMethod()` only for
+    `SimpleBean.testGetMethod`, which the bean class declares itself.
+  - `FinalClassClassLevelInterceptorTest`, `DependentBeanFinalMethodInterceptorTest` and
+    `NormalScopedBeanFinal*InterceptorTest` expect a `DeploymentException`, but each bean carries its
+    binding in its own source.
+- **Gap**: three failures pass the whole suite:
+  - a subclass-based implementation hands interceptors its generated bridge method for an inherited
+    method, with the wrong declaring class, a synthetic name and no annotations, so the method-level
+    `getInterceptorBindings()` is lost too;
+  - it skips inherited `protected` and package-private business methods;
+  - it reports a final bean bound **only** through an inherited method as a `DefinitionException`.
+- **Proposed TCK change**: in `interceptors/definition/inheritance`, add a superclass `Base` with a
+  `@Traced public String inheritedPublic()`, a `@Traced protected String inheritedProtected()` and
+  a `@Traced String inheritedPackagePrivate()`, plus a `@Dependent Child extends Base` that declares
+  none of them. The interceptor records `ctx.getMethod()`:
+
+  ```java
+  @Test
+  @SpecAssertion(section = INVOCATIONCONTEXT, id = "<getMethod of an inherited method>")
+  @SpecAssertion(section = BIZ_METHOD, id = "<non-public inherited business method>")
+  public void testInheritedMethodsAreInterceptedWithTheirDeclaration(Child child) throws Exception {
+      child.inheritedPublic();
+      child.inheritedProtected();      // same package as the test
+      child.inheritedPackagePrivate();
+      assertEquals(TracedInterceptor.methods(), List.of(
+              Base.class.getDeclaredMethod("inheritedPublic"),
+              Base.class.getDeclaredMethod("inheritedProtected"),
+              Base.class.getDeclaredMethod("inheritedPackagePrivate")));
+  }
+  ```
+
+  Add a broken deployment beside it: a `final` `@Dependent` class whose only binding comes from a
+  `@Traced` method of its superclass, with `@ShouldThrowException(DeploymentException.class)`.
+- **Exposed by**: Vauban `BUG.md`:
+  - `BUG-20261004-01`: `getMethod()` returned the `$$super$` bridge. Local regression:
+    `InheritedInterceptedMethodTest`, `InheritedMethodModulePathTest`.
+  - `BUG-20261004-03`: inherited non-public methods were skipped by the run-time subclass. Local
+    regression: `InheritedInterceptedMethodTest#inheritedProtected`, `#inheritedPackagePrivate`,
+    `#inheritedProtectedFromAnotherPackage`.
+  - `BUG-20261004-07`: `DefinitionException` for an unproxyable bean intercepted only through an
+    inherited method. Local regression: `UnproxyableInterceptedBeanTest`.
+- **Why it matters**: interceptors that name things after `getMethod()` (MicroProfile Telemetry span
+  names and `code.function.name`, Metrics names, Fault Tolerance configuration keys) report wrong
+  names for every inherited method. Base classes with `protected` template methods are common in
+  framework code, and losing their interception silently drops a transaction or a retry.
+
+## TCK-GAP-008 — interface default methods: interception and client-proxy forwarding (spec clarification needed)
+
+- **Date**: 2026-10-10 — **Status**: DRAFT (needs a spec clarification before a TCK change)
+- **Spec**: CDI 4.1 does not mention interface default methods.
+  - §4.2 gives a superclass method's bindings to a bean that does not override it, and never
+    inherits *type-level* metadata from interfaces.
+  - A default method the bean does not override is still a member of the bean class (JLS 8.4.8),
+    like a non-overridden superclass method, and a client proxy must forward every business method
+    to the contextual instance (§5.4).
+  - Weld treats default methods that way: `BackedAnnotatedType` lists them, and
+    `InterceptionModelInitializer` reads their method-level bindings.
+- **Existing coverage that nearly covers it**: none. No fixture in `org.jboss.cdi.tck.tests` or
+  `org.jboss.cdi.tck.interceptors.tests` (outside `full`) declares an interface default method on a
+  bean type.
+- **Gap**: two behaviours go untested:
+  - a client proxy may run a default method's body on the proxy instance itself, bypassing the
+    contextual instance and its interceptors;
+  - an interceptor binding on a default method may be listed by `getInterceptorBindings()` while the
+    interceptor never runs.
+- **Proposed TCK change**:
+  1. Ask the CDI expert group to state that a non-overridden default method is a business method,
+     with its own method-level bindings.
+  2. Then add `interface Greeter { @Marked default String greet(String w) { return "hi " + w; } }`,
+     an `@ApplicationScoped @Traced GreeterBean implements Greeter` that does not override `greet`, and
+     interceptors for `@Marked` and `@Traced`. Assert that `greeter.greet("x")` through the client
+     proxy runs both interceptors, and that the call reaches the contextual instance (it records
+     `this`). Add a control in which the bean overrides `greet` without `@Marked`: only `@Traced` runs.
+- **Exposed by**: Vauban `BUG.md`:
+  - `BUG-20261004-02`: the client proxy did not forward the default method. Local regression:
+    `DefaultMethodInterceptionTest#defaultMethodThroughTheClientProxy`.
+  - `BUG-20261004-04`: the binding on the default method was ignored. Local regression:
+    `DefaultMethodInterceptionTest#defaultMethodBindingApplies`, `#beanBoundOnlyByADefaultMethod`.
+- **Why it matters**: APIs increasingly ship behaviour as default methods (repositories, MicroProfile
+  Rest Client interfaces, handler interfaces). Two certified implementations can disagree on whether
+  a call is intercepted, or even reaches the right instance.
+
+## TCK-GAP-009 — SE default discovery is never checked against `bean-discovery-mode`
+
+- **Date**: 2026-10-10 — **Status**: DRAFT (not yet reported upstream; group `se`)
+- **Spec**: CDI 4.1 §12.1 (`BEAN_ARCHIVE`) and §15.1 (`SE_BOOTSTRAP`).
+  - With no class or package added, `SeContainerInitializer.initialize()` discovers the bean
+    archives of the class loader.
+  - Each archive's `bean-discovery-mode` applies: `annotated` (also an empty `beans.xml`, since CDI
+    4.0) keeps only classes with a bean-defining annotation, and `none` contributes no bean.
+- **Existing coverage that nearly covers it**:
+  - The deployment path is covered: `EmptyBeansXmlDiscoveryTest` (Lite) asserts that
+    `SomeUnannotatedBean` is not a bean, and `full/deployment/discovery/BeanDiscoveryTest` (groups
+    `cdi-full` and `integration`) has `EchoNotABean` and `JulietNotABean`.
+  - The `se` group only checks positives. `ContextSETest`, `CustomRequestContextSETest`,
+    `BootstrapSEContainerTest` and `CustomCDIProviderTest` all use an empty `beans.xml`, but every
+    class in them is annotated or added explicitly. `TrimmedBeanArchiveSETest` covers `<trim/>`, and
+    `ImplicitBeanArchiveSETest` covers an archive without `beans.xml`. No SE test places an
+    unannotated class in an `annotated` or empty archive, or uses `bean-discovery-mode="none"`.
+- **Gap**: an SE bootstrap that treats every `beans.xml` archive as `all` passes the `se` group. The
+  deployment-path tests do not exercise the class-loader scan.
+- **Proposed TCK change**: in `org.jboss.cdi.tck.tests.se.discovery`, add a test with three
+  ShrinkWrap `JavaArchive`s on the SE class path:
+  - an empty `beans.xml` with `Annotated` (`@Dependent`) and `Unannotated`;
+  - `bean-discovery-mode="annotated"` with the same pair, in another package;
+  - `bean-discovery-mode="none"` with an `@ApplicationScoped Skipped`.
+
+  ```java
+  @Test(groups = SE)
+  @SpecAssertion(section = BEAN_ARCHIVE, id = "<annotated / none modes in SE>")
+  @SpecAssertion(section = SE_BOOTSTRAP, id = "<default discovery>")
+  public void testDefaultDiscoveryHonoursBeanDiscoveryMode() {
+      try (SeContainer container = SeContainerInitializer.newInstance().initialize()) {
+          assertTrue(container.select(Annotated.class).isResolvable());
+          assertFalse(container.select(Unannotated.class).isResolvable());
+          assertFalse(container.select(Skipped.class).isResolvable());
+      }
+  }
+  ```
+- **Exposed by**: Vauban `BUG.md` → `BUG-20261010-01` (vauban#141): every `beans.xml` was read as
+  `all`. Local regression: `BeanArchiveDiscoveryModeTest` (7 cases, directory and jar). Vauban does
+  not run the `se` group, but the group would not have caught it either.
+- **Why it matters**: libraries ship `beans.xml` (`annotated`) so that any container discovers their
+  beans. A container that reads it as `all` turns every helper class of the library into a bean,
+  which can cause ambiguous or unsatisfied dependencies in applications that never asked for those
+  classes.
+
+---
+
+## Not TCK gaps: bugs the TCK covers on a path Vauban's runner does not exercise
+
+The bugs below passed the TCK because `vauban-tck-runner` deploys at run time, from a ShrinkWrap
+archive. It never compiles the archive with `vauban-processor` or rewrites it with `vauban:generate`,
+and it excludes the groups `integration,javaee-full,se,cdi-full`. They are Vauban-specific, not spec
+gaps. What they suggest is a second runner mode that builds each test archive through the processor.
+
+- `BUG-20261008-04`: an application stereotype was not bean-defining **at build time**. The processor
+  indexed a fixed list of annotations. Run-time stereotype discovery is covered by
+  `StereotypeDefinitionTest` and `CustomStereotypeTest`, and by `full/deployment/discovery/BeanDiscoveryTest`
+  (`cdi-full`, `integration`).
+- `BUG-20261009-02`: the processor's generated provider could not write a public field that only a
+  run-time extension enhanced. This is code generation, not container behaviour.
+- `BUG-20261009-03`: the frozen enhancement patch dropped member additions at boot. This is
+  Vauban's build-time patch format; the run-time behaviour is the subject of TCK-GAP-002 and
+  TCK-GAP-003.
