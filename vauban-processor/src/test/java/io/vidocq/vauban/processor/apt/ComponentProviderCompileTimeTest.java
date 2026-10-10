@@ -496,6 +496,90 @@ class ComponentProviderCompileTimeTest {
         assertTrue(Files.exists(outputDir.resolve("app/_VaubanComponents.class")));
     }
 
+    @Test
+    @DisplayName("bean methods that declare checked exceptions compile, and the exception reaches the caller as is (vauban#145)")
+    void beanMethodsDeclaringCheckedExceptionsCompile() throws Exception {
+        var result = compile("Probe", """
+                package app;
+
+                @jakarta.enterprise.context.ApplicationScoped
+                public class Probe {
+                    @jakarta.inject.Inject
+                    public Probe(jakarta.enterprise.inject.spi.BeanManager beanManager) throws java.io.IOException {}
+
+                    protected Probe() throws java.io.IOException {}
+
+                    @jakarta.inject.Inject
+                    void init(jakarta.enterprise.inject.spi.BeanManager beanManager) throws java.io.IOException {}
+
+                    void onStart(@jakarta.enterprise.event.Observes
+                                 @jakarta.enterprise.context.Initialized(jakarta.enterprise.context.ApplicationScoped.class)
+                                 Object event) throws Exception {
+                        throw new java.io.IOException("from the observer");
+                    }
+
+                    @jakarta.enterprise.inject.Produces
+                    String name() throws java.io.IOException {
+                        return "probe";
+                    }
+
+                    @jakarta.enterprise.context.Dependent
+                    public static class Failing {
+                        public Failing() throws java.io.IOException {
+                            throw new java.io.IOException("from the constructor");
+                        }
+                    }
+                }
+                """);
+        assertTrue(result.success(), "compilation should succeed. Messages: " + result.messages());
+
+        try (var loader = new java.net.URLClassLoader(new java.net.URL[] {result.outputDir().toUri().toURL()},
+                getClass().getClassLoader())) {
+            var provider = (VaubanComponentProvider)
+                    loader.loadClass("app._VaubanComponents").getDeclaredConstructor().newInstance();
+            var type = loader.loadClass("app.Probe");
+            var constructor = type.getDeclaredConstructor();
+            constructor.setAccessible(true);
+            var probe = constructor.newInstance();
+
+            assertEquals("probe", provider.invoke(probe, "app.Probe", "name()", new Object[0]));
+            var thrown = org.junit.jupiter.api.Assertions.assertThrows(java.io.IOException.class,
+                    () -> provider.invoke(probe, "app.Probe", "onStart(java.lang.Object)", new Object[] {"event"}));
+            assertEquals("from the observer", thrown.getMessage());
+            var fromConstructor = org.junit.jupiter.api.Assertions.assertThrows(java.io.IOException.class,
+                    () -> provider.create("app.Probe$Failing"));
+            assertEquals("from the constructor", fromConstructor.getMessage());
+        }
+    }
+
+    @Test
+    @DisplayName("an intercepted bean whose constructors declare checked exceptions compiles (vauban#145)")
+    void interceptedBeanWithThrowingConstructorsCompiles() throws Exception {
+        var result = compile("GuardedService", """
+                package app;
+
+                @jakarta.interceptor.InterceptorBinding
+                @java.lang.annotation.Retention(java.lang.annotation.RetentionPolicy.RUNTIME)
+                @java.lang.annotation.Target({java.lang.annotation.ElementType.TYPE,
+                        java.lang.annotation.ElementType.METHOD})
+                @interface Guarded {}
+
+                @jakarta.enterprise.context.ApplicationScoped
+                @Guarded
+                public class GuardedService {
+                    protected GuardedService() throws java.io.IOException {}
+
+                    @jakarta.inject.Inject
+                    public GuardedService(jakarta.enterprise.inject.spi.BeanManager beanManager) throws java.io.IOException {}
+
+                    public String run() throws java.io.IOException { return "ok"; }
+                }
+                """);
+        assertTrue(result.success(), "compilation should succeed. Messages: " + result.messages());
+        assertTrue(Files.exists(result.outputDir().resolve("app/GuardedService$$Intercepted.class")),
+                "the generated subclass must compile to a .class. Messages: " + result.messages());
+    }
+
     // ---- minimal in-process compilation harness (with -s for generated sources) ----
 
     private CompilationResult compile(String simpleName, String source) throws IOException {

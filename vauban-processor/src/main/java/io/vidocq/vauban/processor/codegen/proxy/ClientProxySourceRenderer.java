@@ -122,7 +122,10 @@ public final class ClientProxySourceRenderer {
         // (null / 0 / false) — the proxy never uses the super state, it forwards to the delegate.
         // Mirrors the runtime front-end's findSimplestConstructor + the emitter's pushDefault, so
         // beans with only an injected (arg-bearing) constructor are still proxyable in-module.
-        sb.append("    public ").append(proxySimple).append("() { super(")
+        // The super constructor may declare checked exceptions, and a super(...) call cannot sit in a
+        // try (vauban#145): the proxy constructor declares Throwable, and the generated provider's
+        // createClientProxy rethrows whatever it throws as is.
+        sb.append("    public ").append(proxySimple).append("() throws java.lang.Throwable { super(")
                 .append(superDefaultArgs(shape.superCtorParams())).append("); }\n\n");
 
         // Setter.

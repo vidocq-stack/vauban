@@ -61,7 +61,16 @@ public final class BeanFactorySourceRenderer {
         out.append("    public ").append(factorySimple).append("() {\n    }\n\n");
         out.append("    @java.lang.Override\n");
         out.append("    public ").append(beanFqn).append(" create() {\n");
-        out.append("        return new ").append(beanFqn).append("();\n");
+        // The no-arg constructor may declare checked exceptions (vauban#145): rethrown as is.
+        out.append("        try {\n");
+        out.append("            return new ").append(beanFqn).append("();\n");
+        out.append("        } catch (java.lang.Throwable $$t) {\n");
+        out.append("            throw sneaky($$t);\n");
+        out.append("        }\n");
+        out.append("    }\n\n");
+        out.append("    @java.lang.SuppressWarnings(\"unchecked\")\n");
+        out.append("    private static <T extends java.lang.Throwable> java.lang.RuntimeException sneaky(java.lang.Throwable t) throws T {\n");
+        out.append("        throw (T) t;\n");
         out.append("    }\n");
         out.append("}\n");
         return new Generated(factoryFqn, out.toString());

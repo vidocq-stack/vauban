@@ -2075,3 +2075,34 @@ The same goes for a normal-scoped producer of such a class (`Dollar_Produced$$�
   0 failures, 2 existing skips; CDI Lite TCK 774/774; AtInject TCK green. The Fault Tolerance
   application with no `exports` runs its `@Retry` bean under `vidocq:run` and in a jlink image
   (with the scaffold fix of vidocq BUG-20261010-01).
+
+## BUG-20261010-03 — A bean method that declares a checked exception breaks the generated provider
+
+- **Date**: 2026-10-10
+- **Status**: FIXED (branch `fix/145-checked-exceptions`, vauban#145)
+- **Module**: `vauban-processor` (`ComponentProviderGenerator`, `BeanFactorySourceRenderer`,
+  `ClientProxySourceRenderer`, `InterceptedSourceRenderer`)
+- **Symptom**: a bean whose observer declares `throws Exception` does not compile once the
+  processor runs: `_VaubanComponents.java:[21,68] unreported exception java.lang.Exception; must
+  be caught or declared to be thrown`. CDI allows checked exceptions on constructors,
+  initializers, observers, producers and disposers. Found while writing a small Vidocq
+  application for vidocq-workspace#15.
+- **Minimal reproduction**: an `@ApplicationScoped` bean with
+  `void onStart(@Observes @Initialized(ApplicationScoped.class) Object e) throws Exception`,
+  compiled with `vauban-processor` on the processor path.
+- **Cause**: the generated source calls bean methods and constructors directly, from methods
+  that declare no checked exception (`VaubanComponentProvider#create`, `#invoke`,
+  `#createClientProxy`, `BeanFactory#create`), and the client-proxy and intercepted-subclass
+  constructors call a throwing super constructor without declaring it. The Class-File path is
+  not affected: bytecode has no checked exceptions.
+- **Fix**: `_VaubanComponents` and `_Factory` wrap those bodies in
+  `try { … } catch (Throwable t) { throw sneaky(t); }`, a generic helper that rethrows the
+  exception unchanged; the `_ClientProxy` and `$$Intercepted` constructors declare
+  `throws java.lang.Throwable`. The caller sees the exception the bean method threw, unwrapped,
+  as `VaubanComponentProvider#invoke` documents.
+- **Verification**: `ComponentProviderCompileTimeTest#beanMethodsDeclaringCheckedExceptionsCompile`
+  (throwing `@Inject` and no-arg constructors, initializer, observer, producer; the observer's
+  `IOException` and a constructor's `IOException` reach the caller unwrapped) and
+  `#interceptedBeanWithThrowingConstructorsCompiles`: red without the fix, green now. Clean
+  install green; CDI Lite TCK 774/774; AtInject TCK green. The original Vidocq application, with
+  its `throws Exception` observer, compiles and runs under `vidocq:run`.

@@ -66,6 +66,15 @@ sorted), and the generators that read a class by reflection, the run-time `$$Int
 proxy ones that `vauban:generate` also uses, list its methods in a stable order rather than in the
 order `Class#getDeclaredMethods` happens to return, which depends on what the JVM loaded before.
 
+[#checked-exceptions]
+[.tag-new]#NEW# A bean method may declare checked exceptions, as CDI allows for constructors,
+initializers, observers, producers and disposers. The generated source calls those methods
+directly, so it rethrows whatever they throw without declaring it: `_VaubanComponents` and
+`MyBean_Factory` route the call through a small generic `sneaky` helper, and the constructors of
+`MyBean_ClientProxy` and `MyBean$$Intercepted` declare `throws Throwable`. The exception reaches
+the container as thrown, unwrapped, which is what `VaubanComponentProvider#invoke` promises. The
+Class-File path needs nothing of the kind: bytecode has no checked exceptions (vauban#145).
+
 [#intercepted-methods]
 === Which methods the intercepted subclass covers [.tag-new]#NEW#
 

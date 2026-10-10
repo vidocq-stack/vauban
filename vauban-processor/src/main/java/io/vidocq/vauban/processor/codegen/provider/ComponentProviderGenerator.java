@@ -208,6 +208,8 @@ public final class ComponentProviderGenerator {
 
         sb.append("    @Override\n");
         sb.append("    public Object create(String className) {\n");
+        // A constructor may declare checked exceptions (vauban#145): see sneaky() below.
+        sb.append("        try {\n");
         sb.append("        return switch (className) {\n");
         for (var c : noArg) {
             if (bytecodeClasses.contains(c.fqn())) {
@@ -220,6 +222,9 @@ public final class ComponentProviderGenerator {
         }
         sb.append("            default -> null;\n");
         sb.append("        };\n");
+        sb.append("        } catch (Throwable $$t) {\n");
+        sb.append("            throw sneaky($$t);\n");
+        sb.append("        }\n");
         sb.append("    }\n");
 
         if (!withArgs.isEmpty()) {
@@ -227,6 +232,7 @@ public final class ComponentProviderGenerator {
             sb.append("    @SuppressWarnings({\"unchecked\", \"rawtypes\"})\n");
             sb.append("    public Object create(String className, Object[] args) {\n");
             sb.append("        if (args == null || args.length == 0) return create(className);\n");
+            sb.append("        try {\n");
             sb.append("        return switch (className) {\n");
             for (var c : withArgs) {
                 if (bytecodeClasses.contains(c.fqn())) {
@@ -248,6 +254,9 @@ public final class ComponentProviderGenerator {
             }
             sb.append("            default -> null;\n");
             sb.append("        };\n");
+            sb.append("        } catch (Throwable $$t) {\n");
+            sb.append("            throw sneaky($$t);\n");
+            sb.append("        }\n");
             sb.append("    }\n");
         }
 
@@ -290,6 +299,9 @@ public final class ComponentProviderGenerator {
             sb.append("    @Override\n");
             sb.append("    @SuppressWarnings({\"unchecked\", \"rawtypes\"})\n");
             sb.append("    public Object invoke(Object target, String className, String methodId, Object[] args) {\n");
+            // Observers, producers, disposers and initializers may declare checked exceptions
+            // (vauban#145); the SPI says they propagate as is: see sneaky() below.
+            sb.append("        try {\n");
             sb.append("        switch (className) {\n");
             for (var entry : byClass.entrySet()) {
                 var declClass = entry.getKey();
@@ -325,6 +337,9 @@ public final class ComponentProviderGenerator {
             }
             sb.append("            default -> { return ").append(SPI).append(".NOT_INVOKED; }\n");
             sb.append("        }\n");
+            sb.append("        } catch (Throwable $$t) {\n");
+            sb.append("            throw sneaky($$t);\n");
+            sb.append("        }\n");
             sb.append("    }\n");
         }
 
@@ -337,6 +352,8 @@ public final class ComponentProviderGenerator {
             sb.append("    @Override\n");
             sb.append("    @SuppressWarnings({\"unchecked\", \"rawtypes\"})\n");
             sb.append("    public Object createClientProxy(String proxyClassName, java.util.function.Supplier<?> delegate) {\n");
+            // A proxy constructor declares Throwable: its super constructor may throw a checked exception.
+            sb.append("        try {\n");
             sb.append("        switch (proxyClassName) {\n");
             for (var proxyFqn : clientProxyFqns) {
                 if (bytecodeClasses.contains(proxyFqn)) {
@@ -361,6 +378,9 @@ public final class ComponentProviderGenerator {
                 sb.append("            }\n");
             }
             sb.append("            default -> { return null; }\n");
+            sb.append("        }\n");
+            sb.append("        } catch (Throwable $$t) {\n");
+            sb.append("            throw sneaky($$t);\n");
             sb.append("        }\n");
             sb.append("    }\n");
         }
@@ -396,6 +416,13 @@ public final class ComponentProviderGenerator {
         sb.append(annotations.methods());
         sb.append(annotations.literals());
 
+        // Sneaky-throw, as in the intercepted subclasses: T appears only in `throws T`, so by JLS §18.4
+        // it resolves to RuntimeException at every call site — the SPI methods need no throws clause,
+        // yet a constructor's or a bean method's checked exception propagates unwrapped (vauban#145).
+        sb.append("    @SuppressWarnings(\"unchecked\")\n");
+        sb.append("    private static <T extends Throwable> RuntimeException sneaky(Throwable t) throws T {\n");
+        sb.append("        throw (T) t;\n");
+        sb.append("    }\n");
         sb.append("}\n");
         return new Generated(className, sb.toString());
     }

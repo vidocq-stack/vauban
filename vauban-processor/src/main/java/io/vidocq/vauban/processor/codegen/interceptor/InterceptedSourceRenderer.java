@@ -114,8 +114,12 @@ public final class InterceptedSourceRenderer {
         renderDefaultHandles(sb, subSimple, shape.methods());
 
         // Constructors mirroring each non-private super constructor
+        // A super constructor may declare checked exceptions, and super(...) cannot sit in a try
+        // (vauban#145): each mirror declares Throwable; the generated provider, which creates the
+        // subclass, rethrows whatever it throws as is.
         for (CtorShape ctor : shape.constructors()) {
-            sb.append("    public ").append(subSimple).append("(").append(params(ctor.params())).append(") {\n");
+            sb.append("    public ").append(subSimple).append("(").append(params(ctor.params()))
+                    .append(") throws java.lang.Throwable {\n");
             sb.append("        super(").append(args(ctor.params().size())).append(");\n");
             sb.append("    }\n\n");
         }
