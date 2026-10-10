@@ -2033,3 +2033,34 @@ The same goes for a normal-scoped producer of such a class (`Dollar_Produced$$â€
   bean-defining annotation.
 - **Verification**: clean install with `-Ptck`: 1821 tests, 0 failures, 2 existing skips; CDI Lite
   TCK 774/774; AtInject TCK green.
+
+## BUG-20261010-02 â€” An intercepted bean in a non-exported package fails at creation
+
+- **Date**: 2026-10-10
+- **Status**: OPEN
+- **Module**: `vauban-core` (`InterceptorBeanWrapper`, the `create` of the intercepted-subclass
+  bean, around line 845)
+- **Symptom**: in a Vidocq application whose module exports and opens nothing (what
+  `vidocq create -x heisenberg-fault-tolerance` scaffolds), the first use of a bean with a
+  `@Retry` method throws `CreationException: IllegalAccessException: class
+  io.vidocq.vauban.core.container.InterceptorBeanWrapper$2 (in module io.vidocq.vauban.core)
+  cannot access class io.example.ft.only.Flaky$$Intercepted (in module io.example.ft.only)
+  because module io.example.ft.only does not export io.example.ft.only to module
+  io.vidocq.vauban.core`. Adding `exports io.example.ft.only;` makes it work. Any interceptor
+  binding is affected, not only Fault Tolerance. Found on 2026-10-10 while checking heisenberg
+  BUG-005 end to end.
+- **Minimal reproduction**: `vidocq create --name ftonly -g io.example -x heisenberg-fault-tolerance`,
+  an `@ApplicationScoped` bean with a `@Retry` method, `main` calling it through
+  `CDI.current().select(...)` after `start()`; add `requires jakarta.cdi; requires jakarta.inject;
+  requires microprofile.fault.tolerance.api;` and no `exports`; `mvn package vidocq:run`.
+- **Cause**: the subclass instance is created in-module through the generated `_VaubanComponents`
+  (`instantiatePreferProvider`), but its post-construction wiring is then called with
+  `finalInterceptedClass.getMethod(InterceptedShape.INIT_METHOD, ...).invoke(...)`. A reflective
+  call to a public method needs the package to be exported to `io.vidocq.vauban.core`. The tests
+  that cover interception on a module path export their package
+  (`heisenberg-cdi-vauban-module-it`), and the REST scaffold adds an unqualified `opens`, so
+  neither hits it.
+- **Fix candidates**: have the generated `$$Intercepted` implement a Vauban interface carrying
+  `$$init` (an interface call needs no export), or route `$$init` through the generated provider
+  like the constructor; keep the reflective call as the fallback for subclasses generated before.
+  Both generators (APT and Class-File) emit the subclass.
