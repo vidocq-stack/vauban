@@ -26,7 +26,7 @@ CDI 4.1 Lite ships four standard scopes. Vauban supports all of them, plus `@Req
 
 | `@RequestScoped`
 | One instance per request, normal-scope proxy.
-| ✅ with Cassini; not yet with Foy, which activates it through `RequestContextController`, a built-in bean Vauban lacks (link:https://codefloe.com/Vidocq/vauban/issues/147[vauban#147])
+| ✅ with Cassini or Foy active, or activated by your code (xref:usage.adoc#activating-the-request-context[Activating the request context]) [.tag-new]#NEW#
 
 | `@SessionScoped`
 | One instance per HTTP session.
@@ -326,9 +326,33 @@ public class OrderResource {
 }
 ----
 
+[#activating-the-request-context]
+=== Activating the request context [.tag-new]#NEW#
+
+Outside a request served by Cassini or Foy, a batch job, a message listener, a scheduled task, the request context is not active. CDI Lite gives two ways to activate it (CDI 4.1 §6.5.8, §6.5.9), and Vauban provides both:
+
+* **`@ActivateRequestContext`** on a bean class or method: the built-in interceptor, at priority `Interceptor.Priority.PLATFORM_BEFORE + 100`, activates the context around the call when it is not active, and deactivates it after. An active context is left as it is.
+* **`RequestContextController`**, a `@Dependent` built-in bean: `activate()` activates the context on the current thread and returns `true`, or returns `false` when it is already active; `deactivate()` deactivates it only if that controller activated it, and throws `ContextNotActiveException` when it is not active.
+
+[source,java]
+----
+@Inject RequestContextController requestContext;
+
+void runBatch() {
+    boolean activated = requestContext.activate();
+    try {
+        // @RequestScoped beans live until deactivate()
+    } finally {
+        if (activated) requestContext.deactivate();
+    }
+}
+----
+
+The context is activated per thread: two threads each have their own request and their own `@RequestScoped` instances. Activation fires `@Initialized(RequestScoped.class)`; deactivation fires `@BeforeDestroyed`, destroys the instances, then fires `@Destroyed(RequestScoped.class)`.
+
 == Integration with Foy (Jakarta Servlet)
 
-xref:foy::index.adoc[Foy] exposes servlets, filters and listeners as CDI beans, and `@SessionScoped` follows the HTTP session, through the web contexts below. `@RequestScoped` does not work under Foy yet: Foy activates the request context through `RequestContextController`, a CDI Lite built-in bean Vauban does not provide (link:https://codefloe.com/Vidocq/vauban/issues/147[vauban#147]).
+xref:foy::index.adoc[Foy] exposes servlets, filters and listeners as CDI beans, and `@SessionScoped` follows the HTTP session, through the web contexts below. `@RequestScoped` follows the HTTP request: Foy activates the request context around each request through the built-in `RequestContextController`, each request on its own thread with its own instances.
 
 [#web-contexts]
 === Web contexts: `@SessionScoped` [.tag-new]#NEW#

@@ -53,6 +53,8 @@ Interceptors now reach the methods a bean inherits, interface default methods in
 == Web contexts
 
 * **`@SessionScoped` with `vauban-webcontexts`** — a new module provides the session context CDI Lite leaves to the servlet container: one instance per session, kept in the session's attributes, destroyed with the session between `@BeforeDestroyed` and `@Destroyed(SessionScoped.class)`. Foy drives it through `foy-cdi-vauban`; another web container drives it through `WebContexts`. It used to fail with `ContextNotActiveException: No context registered for scope jakarta.enterprise.context.SessionScoped` (Vidocq/foy#21). xref:usage.adoc#web-contexts[Web contexts].
+* **`RequestContextController` and `@ActivateRequestContext`** — the two CDI Lite ways to activate the request context outside a request were missing: the built-in `@Dependent` controller and the built-in interceptor (priority `PLATFORM_BEFORE + 100`). Foy activates the request context through the controller, so under Vauban a `@RequestScoped` bean used from a servlet failed with `ContextNotActiveException: RequestScope is not active`; it now gets one instance per request (vauban#147). xref:usage.adoc#activating-the-request-context[Activating the request context].
+* **The request context is per thread, with its events** — activated outside Cassini's scope, the request context kept its state in a field every thread shared, so two concurrent activations overwrote each other's instances; each thread now has its own. Activating and deactivating it fires `@Initialized`, `@BeforeDestroyed` and `@Destroyed(RequestScoped.class)`, which Vauban never fired, Cassini's requests included (vauban#147). xref:usage.adoc#activating-the-request-context[Activating the request context].
 
 == Extensions
 

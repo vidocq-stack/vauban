@@ -2134,3 +2134,30 @@ The same goes for a normal-scoped producer of such a class (`Dollar_Produced$$�
   when a context is registered) and `FrozenContextsTest` (the lists are read; the container installs
   a frozen context with no extension to run): red without the fix, green now. The Foy test above
   green. Clean install green; CDI Lite TCK 774/774; AtInject TCK green.
+
+## BUG-20261010-05 — No RequestContextController, no @ActivateRequestContext; the imperative request context shared by every thread
+
+- **Date**: 2026-10-10
+- **Status**: FIXED (branch `fix/147-request-context-controller`, vauban#147)
+- **Module**: `vauban-core` (`RequestContext`, `VaubanBeanManager`, `VaubanContainerBuilder`)
+- **Symptom**: a `@RequestScoped` bean used from a servlet under Foy and Vauban fails with
+  `ContextNotActiveException: RequestScope is not active`. Foy activates the request context
+  through the standard `RequestContextController`, which Vauban did not provide, so the lookup
+  found nothing and nothing was activated. `@ActivateRequestContext` had no effect either. Found
+  while working on Vidocq/foy#21.
+- **Minimal reproduction**: inject `RequestContextController` into any bean: unsatisfied
+  dependency. Or a `@RequestScoped` bean injected into a `@WebServlet`, served by `FoyChappeBoot`
+  with Vauban's `BeanManager`.
+- **Cause**: both are CDI Lite (CDI 4.1 §6.5.8, §6.5.9), but the TCK tests them in its `se` group,
+  which the runner does not run, so nothing caught their absence. Separately, `RequestContext`
+  kept the state of an imperative `activate()` in an instance field every thread shared.
+- **Fix**: a `@Dependent` built-in `RequestContextController` bean; a built-in
+  `@ActivateRequestContext` interceptor at `PLATFORM_BEFORE + 100`, registered when a class of the
+  deployment uses the binding; the imperative state per thread; the `@Initialized`,
+  `@BeforeDestroyed` and `@Destroyed(RequestScoped.class)` events, fired only when observed.
+- **Verification**: `RequestContextControllerTest` (7) and `ActivateRequestContextTest` (4), after
+  the TCK's `ActivateRequestContextProgrammaticallyTest` and `ActivateRequestContextByInterceptorTest`,
+  plus one request context per thread: red before, green now. Foy's
+  `FoyWebExtensionTest#requestScopedThroughFoyChappeBoot` (an application compiled with the
+  processor, 8 concurrent requests, one instance each): red before, green now. Clean install
+  green; CDI Lite TCK 774/774; AtInject TCK green.

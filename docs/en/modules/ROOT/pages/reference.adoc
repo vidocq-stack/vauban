@@ -426,6 +426,11 @@ Bean selection:
 | ✅
 | ❌
 
+| `RequestContextController`, `@ActivateRequestContext`
+| ✅
+| ✅
+| ✅ xref:usage.adoc#activating-the-request-context[Activating the request context] [.tag-new]#NEW#
+
 | `@ConversationScoped`
 | ❌
 | ✅
