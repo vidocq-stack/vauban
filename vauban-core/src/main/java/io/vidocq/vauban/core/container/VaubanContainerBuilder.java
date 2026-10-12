@@ -387,6 +387,22 @@ public final class VaubanContainerBuilder {
     }
 
     /**
+     * Scan the bean archives that no Vauban build step processed, as {@link #scanBeanArchivesFromClasspath()}
+     * does, and only those: an archive with a Vauban index ({@code META-INF/vauban-beans.list}), a generated
+     * {@code VaubanComponentProvider} or the {@code META-INF/vauban-bce-processed} marker is left to
+     * {@link #scanClasspath()}, which reads its index, so that no bean is registered twice. For a runtime that
+     * reads the build-time indexes and must still find the beans of a dependency that no build step indexed, as
+     * an IDE build leaves them (Vidocq/vidocq#83).
+     *
+     * @param onArchive receives the root of each archive scanned ({@code jar:file:…!/} or {@code file:…/}), to
+     *                  report them
+     */
+    public VaubanContainerBuilder scanUnprocessedBeanArchives(java.util.function.Consumer<java.net.URL> onArchive) {
+        scanner.scanUnprocessedBeanArchives(onArchive);
+        return this;
+    }
+
+    /**
      * Register a byte source plugin for custom archive formats (e.g., encrypted SJARs).
      */
     public VaubanContainerBuilder addByteSourcePlugin(io.vidocq.vauban.classloader.spi.ByteSourcePlugin plugin) {

@@ -20,6 +20,7 @@
 package io.vidocq.vauban.core.container;
 
 import java.io.IOException;
+import java.util.List;
 
 /**
  * Bean-class discovery on disk: package/directory/JAR scanning, build-time
@@ -220,6 +221,24 @@ final class ContainerScanner {
     }
 
     void scanBeanArchivesFromClasspath() {
+        scanBeanArchives(false, archive -> { });
+    }
+
+    /**
+     * Scans the bean archives that no Vauban build step processed: those without a Vauban index
+     * ({@code META-INF/vauban-beans.list}), a generated component provider or the processed marker. Their
+     * beans are not in {@link #scanClasspath()}'s indexes; a processed archive is left to it, since scanning
+     * it too would register its beans twice. {@code onArchive} receives the root of every archive scanned.
+     */
+    void scanUnprocessedBeanArchives(java.util.function.Consumer<java.net.URL> onArchive) {
+        scanBeanArchives(true, onArchive);
+    }
+
+    /** The entries whose presence means that a Vauban build step indexed the archive. */
+    private static final List<String> PROCESSED_MARKERS = List.of("META-INF/vauban-beans.list",
+            "META-INF/vauban-bce-processed", "META-INF/services/io.vidocq.vauban.api.VaubanComponentProvider");
+
+    private void scanBeanArchives(boolean unprocessedOnly, java.util.function.Consumer<java.net.URL> onArchive) {
         var cl = effectiveClassLoader();
         try {
             var beansXmlUrls = cl.getResources("META-INF/beans.xml");
@@ -246,19 +265,32 @@ final class ContainerScanner {
                                     : null;
                             if (jarFilePath != null) {
                                 var jarRootUrl = new java.net.URL("jar:file:" + jarFilePath + "!/");
+                                if (unprocessedOnly && processedJar(jarRootUrl)) continue;
                                 scanJarEntries(jarRootUrl, cl, forced);
+                                onArchive.accept(jarRootUrl);
                             }
                         }
                     } else if (urlStr.startsWith("file:")) {
                         // file:/path/classes/META-INF/beans.xml
                         var beansXmlPath = java.nio.file.Path.of(beansXmlUrl.toURI());
                         var classesRoot = beansXmlPath.getParent().getParent();
+                        if (unprocessedOnly && PROCESSED_MARKERS.stream()
+                                .anyMatch(marker -> java.nio.file.Files.exists(classesRoot.resolve(marker)))) continue;
                         scanDirectory(classesRoot, cl, forced);
+                        onArchive.accept(classesRoot.toUri().toURL());
                     }
                 } catch (Exception e) { /* skip problematic archives */ }
             }
         } catch (java.io.IOException e) {
             // non-fatal — classpath scan failure
+        }
+    }
+
+    private static boolean processedJar(java.net.URL jarRootUrl) throws IOException {
+        var connection = (java.net.JarURLConnection) jarRootUrl.openConnection();
+        connection.setUseCaches(false);
+        try (var jarFile = connection.getJarFile()) {
+            return PROCESSED_MARKERS.stream().anyMatch(marker -> jarFile.getEntry(marker) != null);
         }
     }
 
