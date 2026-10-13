@@ -27,8 +27,10 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
+import java.util.jar.JarEntry;
 import java.util.jar.JarFile;
 import java.util.stream.Stream;
+import java.util.zip.ZipFile;
 
 /**
  * Built-in {@link ArchiveReader}s for the two archive shapes that need no plugin: plain
@@ -87,14 +89,14 @@ final class BuiltInReaders {
             // Multi-release aware, as the module path reads a jar: the base name resolves to the highest
             // META-INF/versions/N entry the running JDK accepts (vauban#154). No signature verification,
             // as before.
-            this.jar = new JarFile(path.toFile(), false, java.util.zip.ZipFile.OPEN_READ, Runtime.version());
+            this.jar = new JarFile(path.toFile(), false, ZipFile.OPEN_READ, JarFile.runtimeVersion());
         }
 
         @Override
         public List<String> classEntries() {
             return jar.versionedStream()
                     .filter(entry -> !entry.isDirectory() && entry.getName().endsWith(".class"))
-                    .map(java.util.jar.JarEntry::getName)
+                    .map(JarEntry::getName)
                     .toList();
         }
 

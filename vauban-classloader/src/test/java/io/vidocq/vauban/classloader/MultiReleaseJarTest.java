@@ -50,6 +50,7 @@ import static org.junit.jupiter.api.Assertions.*;
 class MultiReleaseJarTest {
 
     private static final String VALUE = "com.example.mr.Value";
+    private static final String RAW_VERSIONED_VALUE = "META-INF.versions.21.com.example.mr.Value";
     private static final String ONLY_VERSIONED = "com.example.mr.OnlyVersioned";
 
     @Test
@@ -74,6 +75,34 @@ class MultiReleaseJarTest {
     void plainJarReadsBaseEntries(@TempDir Path dir) throws Exception {
         var jar = jar(dir.resolve("plain.jar"), false);
         try (var loader = VaubanClassLoader.of(List.of(jar), getClass().getClassLoader(),
+                PluginContext.empty())) {
+            assertEquals("base", Class.forName(VALUE, true, loader).getMethod("value").invoke(null));
+            assertThrows(ClassNotFoundException.class, () -> Class.forName(ONLY_VERSIONED, true, loader));
+            // Unchanged from before multi-release support: the raw META-INF/versions/ entries stay listed under
+            // their raw names, and no class of that raw name is ever defined (the JVM refuses the bytes: wrong name).
+            var raw = RAW_VERSIONED_VALUE;
+            assertTrue(loader.managedClassNames().contains(raw),
+                    "raw entry name stays listed, as before: " + loader.managedClassNames());
+            assertThrows(NoClassDefFoundError.class, () -> Class.forName(raw, true, loader),
+                    "defining the raw name is refused: the bytes name another class");
+        }
+    }
+
+    @Test
+    @DisplayName("an entry under a version above the running JDK is ignored: the base entry wins")
+    void higherVersionIgnored(@TempDir Path dir) throws Exception {
+        var above = Runtime.version().feature() + 1;
+        var file = dir.resolve("above.jar");
+        var manifest = new Manifest();
+        manifest.getMainAttributes().put(Attributes.Name.MANIFEST_VERSION, "1.0");
+        manifest.getMainAttributes().put(Attributes.Name.MULTI_RELEASE, "true");
+        try (OutputStream out = Files.newOutputStream(file); var jar = new JarOutputStream(out, manifest)) {
+            put(jar, "com/example/mr/Value.class", valueClass(VALUE, "base"));
+            put(jar, "META-INF/versions/" + above + "/com/example/mr/Value.class", valueClass(VALUE, "future"));
+            put(jar, "META-INF/versions/" + above + "/com/example/mr/OnlyVersioned.class",
+                    valueClass(ONLY_VERSIONED, "future"));
+        }
+        try (var loader = VaubanClassLoader.of(List.of(file), getClass().getClassLoader(),
                 PluginContext.empty())) {
             assertEquals("base", Class.forName(VALUE, true, loader).getMethod("value").invoke(null));
             assertThrows(ClassNotFoundException.class, () -> Class.forName(ONLY_VERSIONED, true, loader));

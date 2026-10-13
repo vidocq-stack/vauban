@@ -87,6 +87,19 @@ class KeptRootsPolicyTest {
         assertEquals(Set.of("app.main", "rt.core", "rt.lib"), moved);
     }
 
+    @Test
+    @DisplayName("a module in both keptRoots and roots is re-layered: roots wins")
+    void rootsWinOverKeptRoots(@TempDir Path dir) throws Exception {
+        module(dir, "rt.core");
+        module(dir, "app.main", "rt.core");
+        var configuration = resolve(dir, "app.main");
+
+        var moved = names(VaubanLayerFactory.applicationPaths(configuration, List.of(),
+                Set.of("rt.core", "app.main"), Set.of("app.main")));
+
+        assertEquals(Set.of("app.main"), moved);
+    }
+
     private static void module(Path dir, String name, String... requires) throws IOException {
         var root = dir.resolve(name);
         Files.createDirectories(root);

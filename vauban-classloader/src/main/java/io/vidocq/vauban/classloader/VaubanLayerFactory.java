@@ -148,7 +148,8 @@ public final class VaubanLayerFactory {
      * @param configuration the configuration whose modules are candidates, usually the boot layer's
      * @param keptPrefixes  extra module-name prefixes to keep, such as a runtime's own modules
      * @param keptRoots     modules kept whatever their names, with what they read transitively: a runtime's own
-     *                      roots, so that its closure stays in the parent layer (vauban#154)
+     *                      roots, so that its closure stays in the parent layer (vauban#154); a module also named in
+     *                      {@code roots} is not kept, because {@code roots} wins
      * @param roots         the application's own modules, never kept by a name rule
      * @return the locations to hand to {@link #createAppLayer}, in configuration order
      */
