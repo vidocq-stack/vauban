@@ -2185,3 +2185,30 @@ The same goes for a normal-scoped producer of such a class (`Dollar_Produced$$�
   - Left as is: `VaubanContainerBuilder.isClassFromBceProcessedSource` compares the
     `vauban:file:…!/` root of a marker resource with the `file:` code source. It never matches
     for layer classes, as before this fix; making it match is a separate change.
+
+## BUG-20261013-01 — Threads sharing one request can each create a `@RequestScoped` bean
+
+- **Date**: 2026-10-13
+- **Status**: OPEN — read in the code, not reproduced
+- **Module**: `vauban-core` (`RequestContext`)
+- **Surfaced by**: the concurrency review of Tassis M9 (`tassis-cdi-vauban`), 2026-10-10.
+- **Symptom (expected, not observed)**: when several threads work inside the same request, two of
+  them asking for the same `@RequestScoped` bean for the first time can each create an instance.
+  One instance is kept in the context; the other is used by its thread and never destroyed. Two
+  simultaneous writes can also corrupt the map of instances.
+- **When a request is shared**: `runInScope` binds the request state to a `ScopedValue`, and the
+  subtasks forked in a `StructuredTaskScope` inherit that binding, so they all reach the same
+  `RequestContextState`. A request activated imperatively is not concerned: since vauban#147
+  (BUG-20261010-05) its state is per thread.
+- **Minimal reproduction**: none yet. Sketch: inside `runInScope`, fork two subtasks that resolve
+  the same `@RequestScoped` bean, whose creation waits until both subtasks are in `create`;
+  expect one creation, observe two.
+- **Hypothesised cause**: `RequestContext.get(Contextual, CreationalContext)` reads
+  `state.instances`, then creates the instance and puts it, with nothing held between the read
+  and the write; `instances` is a plain `HashMap`. `destroy` and `deactivate` use the same map
+  unguarded.
+- **Investigations**:
+  - 2026-10-13: the code on `main` `56953110` matches the description above. Not run. A lock per
+    request state would have to be reentrant, as creating a bean can resolve another bean of the
+    same scope (which also rules out `ConcurrentHashMap.computeIfAbsent`). `ApplicationContext`
+    was not checked for the same pattern.
