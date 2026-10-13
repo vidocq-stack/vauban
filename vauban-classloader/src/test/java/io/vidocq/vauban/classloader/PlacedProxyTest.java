@@ -63,6 +63,21 @@ class PlacedProxyTest {
     private static final String MANIFEST = "META-INF/vauban/required-opens.list";
     private static final String PLACED = "META-INF/vauban/placed/com/example/lib/Widget_ClientProxy.class";
 
+    /** Vidocq/vauban#153: a placed proxy is defined with the archive of the type it is placed beside. */
+    @Test
+    @DisplayName("a placed proxy reports the produced type's archive as its code source")
+    void placedProxyReportsTheProducedTypesArchive(@TempDir Path dir) throws Exception {
+        var lib = libArchive(dir);
+        var app = appArchive(dir, true, true);
+        try (var loader = VaubanClassLoader.of(List.of(lib, app), getClass().getClassLoader(),
+                PluginContext.empty())) {
+            var source = Class.forName(PROXY, true, loader).getProtectionDomain().getCodeSource();
+
+            assertNotNull(source, "no code source");
+            assertEquals(lib.toUri().toURL(), source.getLocation());
+        }
+    }
+
     @Test
     @DisplayName("the placed proxy lands in the produced type's package and never runs its constructor")
     void placedProxyIsDefinedInPackageWithoutRunningTheBusinessConstructor(@TempDir Path dir)

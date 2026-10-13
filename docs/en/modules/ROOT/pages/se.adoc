@@ -159,6 +159,16 @@ The Vidocq runtime applies the same policy through `Vidocq.run` / `@VidocqMain`,
 kept as well and the caller's module as the root. CDI-agnostic libraries are re-layered there too, so
 their proxies are placed.
 
+[#code-source]
+=== Where a layer class comes from [.tag-new]#NEW#
+
+Every class the layer's loader defines carries its archive as its code source, as a class of the
+module path or of a `URLClassLoader` does: `type.getProtectionDomain().getCodeSource().getLocation()`
+is the jar, or the directory, it was read from. A placed proxy carries the archive of the type it is
+placed beside. Code that locates a class this way keeps working inside the layer, such as a servlet
+container that scans the jar of a `ServletContainerInitializer` for its `@HandlesTypes` classes.
+Before, the location was `null` (vauban#153).
+
 == What the build ships
 
 The annotation processor writes, into your bean archive:

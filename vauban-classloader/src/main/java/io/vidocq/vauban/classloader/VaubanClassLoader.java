@@ -28,12 +28,16 @@ import io.vidocq.vauban.classloader.spi.PluginContext;
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.net.MalformedURLException;
 import java.net.URL;
 import java.net.URLConnection;
 import java.net.URLStreamHandler;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.security.CodeSigner;
+import java.security.CodeSource;
+import java.security.ProtectionDomain;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
@@ -107,11 +111,17 @@ public class VaubanClassLoader extends ClassLoader implements AutoCloseable {
         final Path path;
         final ArchiveReader reader;
         final ArchiveContext context;
+        /**
+         * The domain of every class defined from this archive: its location as the code source, as a
+         * URLClassLoader or the module path gives it (vauban#153).
+         */
+        final ProtectionDomain domain;
         volatile Optional<Set<String>> beansList;
 
         Archive(Path path, ArchiveReader reader) {
             this.path = path;
             this.reader = reader;
+            this.domain = new ProtectionDomain(codeSource(path), null, VaubanClassLoader.this, null);
             this.context = new ArchiveContext() {
                 @Override
                 public Path archivePath() {
@@ -352,7 +362,7 @@ public class VaubanClassLoader extends ClassLoader implements AutoCloseable {
         bytes = applyTransformers(name, bytes, owner);
         LOG.log(System.Logger.Level.DEBUG, () -> "Placed " + name + " into the package of "
                 + produced + " (" + owner.path.getFileName() + ")");
-        return defineClass(name, bytes, 0, bytes.length);
+        return defineClass(name, bytes, 0, bytes.length, owner.domain);
     }
 
     /** Binary names of every class the managed archives contain, in archive order. */
@@ -452,7 +462,7 @@ public class VaubanClassLoader extends ClassLoader implements AutoCloseable {
             throw new ClassNotFoundException(name, e);
         }
         bytes = applyTransformers(name, bytes, archive);
-        return defineClass(name, bytes, 0, bytes.length);
+        return defineClass(name, bytes, 0, bytes.length, archive.domain);
     }
 
     /**
@@ -476,6 +486,15 @@ public class VaubanClassLoader extends ClassLoader implements AutoCloseable {
     @Override
     protected URL findResource(String moduleName, String name) {
         return findResource(name);
+    }
+
+    /** The archive's location as a code source, without signers; {@code null} for a path no URL can name. */
+    private static CodeSource codeSource(Path path) {
+        try {
+            return new CodeSource(path.toUri().toURL(), (CodeSigner[]) null);
+        } catch (MalformedURLException | IllegalArgumentException e) {
+            return null;
+        }
     }
 
     /** Runs the transformer chain; also used by the layer loader (M2). */

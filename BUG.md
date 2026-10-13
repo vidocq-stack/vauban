@@ -2161,3 +2161,27 @@ The same goes for a normal-scoped producer of such a class (`Dollar_Produced$$�
   `FoyWebExtensionTest#requestScopedThroughFoyChappeBoot` (an application compiled with the
   processor, 8 concurrent requests, one instance each): red before, green now. Clean install
   green; CDI Lite TCK 774/774; AtInject TCK green.
+
+## BUG-20261013-01 — VaubanClassLoader defines classes without a code source
+
+- **Date** : 2026-10-13
+- **Statut** : FIXED (branch fix/classloader-code-source, vauban#153)
+- **Module touché** : vauban-classloader / VaubanClassLoader.java
+- **Symptôme** : every class the loader defines, placed proxies included, has a
+  `CodeSource` whose location is `null`. Code that finds where a class comes from fails
+  inside a Vauban layer. Foy skips the jar of a `ServletContainerInitializer` and calls it
+  with no `@HandlesTypes` classes. Vaadin then fails with "ServletContainerInitializer is
+  called but the provided set of classes is 'null'".
+- **Reproduction minimale** : `VaubanClassLoader.of(List.of(dir), parent, PluginContext.empty())`,
+  then `Class.forName(name, true, loader).getProtectionDomain().getCodeSource().getLocation()`
+  returns `null` (`VaubanClassLoaderTest.classesReportTheirArchiveAsCodeSource`,
+  `PlacedProxyTest.placedProxyReportsTheProducedTypesArchive`).
+- **Hypothèse de cause** : `findClass` and `placeClass` call `defineClass(name, bytes, 0, len)`
+  without a `ProtectionDomain`.
+- **Investigations** :
+  - 2026-10-13 : found in the Vaadin-on-Foy spike, with the Vaadin jars moved into the
+    application layer. Fixed with one `ProtectionDomain(CodeSource(archive location))` per
+    archive. A placed proxy takes the domain of the archive that owns its package.
+  - Left as is: `VaubanContainerBuilder.isClassFromBceProcessedSource` compares the
+    `vauban:file:…!/` root of a marker resource with the `file:` code source. It never matches
+    for layer classes, as before this fix; making it match is a separate change.

@@ -148,6 +148,25 @@ class VaubanClassLoaderTest {
         }
     }
 
+    /**
+     * Vidocq/vauban#153: as a URLClassLoader or the module path does, every class carries the location
+     * of its archive. Code that finds where a class comes from, such as Foy's {@code @HandlesTypes}
+     * scan of an initializer's jar, read {@code null} before.
+     */
+    @Test
+    @DisplayName("a class reports its archive as its code source")
+    void classesReportTheirArchiveAsCodeSource(@TempDir Path dir) throws Exception {
+        var app = appArchive(dir, "com.example.lapp.Service", true);
+        try (var loader = VaubanClassLoader.of(List.of(app), getClass().getClassLoader(),
+                PluginContext.empty())) {
+            var domain = Class.forName("com.example.lapp.Service", true, loader).getProtectionDomain();
+
+            assertNotNull(domain.getCodeSource(), "no code source");
+            assertEquals(app.toUri().toURL(), domain.getCodeSource().getLocation());
+            assertSame(loader, domain.getClassLoader());
+        }
+    }
+
     // ---------------------------------------------------------------- fixtures
 
     /**
