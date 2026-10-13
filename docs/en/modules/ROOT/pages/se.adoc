@@ -169,6 +169,14 @@ placed beside. Code that locates a class this way keeps working inside the layer
 container that scans the jar of a `ServletContainerInitializer` for its `@HandlesTypes` classes.
 Before, the location was `null` (vauban#153).
 
+[#multi-release]
+=== Multi-release jars [.tag-new]#NEW#
+
+The layer's loader reads a multi-release jar as the module path does: for a class or a resource, the entry of
+`META-INF/versions/N/` with the highest `N` that the running JDK accepts wins over the base entry, and a class
+that exists only under `META-INF/versions/N/` loads too. Before, the base entries always won (vauban#154).
+Signatures are not verified in the layer, as before.
+
 == What the build ships
 
 The annotation processor writes, into your bean archive:

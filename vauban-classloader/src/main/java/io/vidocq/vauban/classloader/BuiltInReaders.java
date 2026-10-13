@@ -84,20 +84,18 @@ final class BuiltInReaders {
         private final JarFile jar;
 
         JarReader(Path path) throws IOException {
-            this.jar = new JarFile(path.toFile());
+            // Multi-release aware, as the module path reads a jar: the base name resolves to the highest
+            // META-INF/versions/N entry the running JDK accepts (vauban#154). No signature verification,
+            // as before.
+            this.jar = new JarFile(path.toFile(), false, java.util.zip.ZipFile.OPEN_READ, Runtime.version());
         }
 
         @Override
         public List<String> classEntries() {
-            var entries = new ArrayList<String>();
-            var e = jar.entries();
-            while (e.hasMoreElements()) {
-                var entry = e.nextElement();
-                if (!entry.isDirectory() && entry.getName().endsWith(".class")) {
-                    entries.add(entry.getName());
-                }
-            }
-            return entries;
+            return jar.versionedStream()
+                    .filter(entry -> !entry.isDirectory() && entry.getName().endsWith(".class"))
+                    .map(java.util.jar.JarEntry::getName)
+                    .toList();
         }
 
         @Override

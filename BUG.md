@@ -2185,3 +2185,16 @@ The same goes for a normal-scoped producer of such a class (`Dollar_Produced$$�
   - Left as is: `VaubanContainerBuilder.isClassFromBceProcessedSource` compares the
     `vauban:file:…!/` root of a marker resource with the `file:` code source. It never matches
     for layer classes, as before this fix; making it match is a separate change.
+
+## BUG-20261013-02 — The layer loader ignores the versioned entries of a multi-release jar
+
+- **Date** : 2026-10-13
+- **Statut** : FIXED (vauban#154)
+- **Module touché** : vauban-classloader / BuiltInReaders.JarReader
+- **Symptôme** : in a Vauban layer, a multi-release jar defines its base classes and resources, never the
+  `META-INF/versions/N/` ones; a class that exists only there is not found.
+- **Reproduction minimale** : `MultiReleaseJarTest.versionedEntriesWin`.
+- **Hypothèse de cause** : `new JarFile(File)` is not version-aware, and `classEntries()` listed raw names.
+- **Investigations** :
+  - 2026-10-13 : found while designing vidocq#247 (every library in the application layer). Fixed by opening
+    the jar for `Runtime.version()` and listing `versionedStream()`.
