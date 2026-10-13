@@ -2186,29 +2186,46 @@ The same goes for a normal-scoped producer of such a class (`Dollar_Produced$$�
     `vauban:file:…!/` root of a marker resource with the `file:` code source. It never matches
     for layer classes, as before this fix; making it match is a separate change.
 
-## BUG-20261013-01 — Threads sharing one request can each create a `@RequestScoped` bean
+## BUG-20261013-02 — Threads sharing one request each create a `@RequestScoped` bean
 
 - **Date**: 2026-10-13
-- **Status**: OPEN — read in the code, not reproduced
+- **Status**: OPEN — reproduced
 - **Module**: `vauban-core` (`RequestContext`)
 - **Surfaced by**: the concurrency review of Tassis M9 (`tassis-cdi-vauban`), 2026-10-10.
-- **Symptom (expected, not observed)**: when several threads work inside the same request, two of
-  them asking for the same `@RequestScoped` bean for the first time can each create an instance.
-  One instance is kept in the context; the other is used by its thread and never destroyed. Two
-  simultaneous writes can also corrupt the map of instances.
+- **Symptom**: when several threads work inside the same request, two of them using the same
+  `@RequestScoped` bean for the first time each create an instance and each work on their own.
+  One instance is kept in the context and destroyed with the request; the other never gets its
+  `@PreDestroy`. Two simultaneous writes can also corrupt the map of instances (not observed).
 - **When a request is shared**: `runInScope` binds the request state to a `ScopedValue`, and the
   subtasks forked in a `StructuredTaskScope` inherit that binding, so they all reach the same
-  `RequestContextState`. A request activated imperatively is not concerned: since vauban#147
-  (BUG-20261010-05) its state is per thread.
-- **Minimal reproduction**: none yet. Sketch: inside `runInScope`, fork two subtasks that resolve
-  the same `@RequestScoped` bean, whose creation waits until both subtasks are in `create`;
-  expect one creation, observe two.
-- **Hypothesised cause**: `RequestContext.get(Contextual, CreationalContext)` reads
-  `state.instances`, then creates the instance and puts it, with nothing held between the read
-  and the write; `instances` is a plain `HashMap`. `destroy` and `deactivate` use the same map
-  unguarded.
+  `RequestContextState`. `StructuredTaskScope` is a preview API in Java 25: only an application
+  run with `--enable-preview` is concerned. A request activated imperatively is not concerned
+  either: since vauban#147 (BUG-20261010-05) its state is per thread.
+- **Minimal reproduction**: a `@RequestScoped` bean `Slow` counting its `@PostConstruct` and
+  `@PreDestroy` calls, and two subtasks calling it through its client proxy:
+
+  ```java
+  var slow = container.select(Slow.class);
+  container.requestContext().runInScope(() -> {
+      try (var scope = StructuredTaskScope.open()) {
+          var a = scope.fork(slow::id);
+          var b = scope.fork(slow::id);
+          scope.join();
+          // a.get() and b.get() differ; 2 @PostConstruct, 1 @PreDestroy
+      }
+  });
+  ```
+
+  Not added to the test suite: the build does not enable preview features.
+- **Cause**: `RequestContext.get(Contextual, CreationalContext)` reads `state.instances`, then
+  creates the instance and puts it, with nothing held between the read and the write;
+  `instances` is a plain `HashMap`. `destroy` and `deactivate` use the same map unguarded.
 - **Investigations**:
-  - 2026-10-13: the code on `main` `56953110` matches the description above. Not run. A lock per
-    request state would have to be reentrant, as creating a bean can resolve another bean of the
-    same scope (which also rules out `ConcurrentHashMap.computeIfAbsent`). `ApplicationContext`
-    was not checked for the same pattern.
+  - 2026-10-13: the code on `main` `56953110` matches the description above. A lock per request
+    state would have to be reentrant, as creating a bean can resolve another bean of the same
+    scope (which also rules out `ConcurrentHashMap.computeIfAbsent`). `ApplicationContext` was
+    not checked for the same pattern.
+  - 2026-10-13: reproduced on `main` `56953110`, Temurin 25, `--enable-preview`, with a
+    stand-alone class on the class path of `vauban-core`. With `@PostConstruct` holding each
+    thread until both are creating: 2 instances created, 1 destroyed, the two subtasks got
+    different ids. Without any forcing: 1972 rounds out of 2000 created two instances.
