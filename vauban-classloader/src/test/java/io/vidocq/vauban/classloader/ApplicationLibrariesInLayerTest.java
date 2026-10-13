@@ -82,14 +82,30 @@ class ApplicationLibrariesInLayerTest {
         var root = dir.resolve("lib");
         var file = root.resolve("com/example/lib/Plain.class");
         Files.createDirectories(file.getParent());
-        Files.write(file, VaubanClassLoaderTest.simpleClass("com.example.lib.Plain"));
+        Files.write(file, stringConstructorClass("com.example.lib.Plain"));
 
+        // The archive has no beans list and the class has no bean-defining annotation: it is not a bean.
+        // With only a (String) constructor it would need the marker if it were one, so being a bean is the
+        // only gate keeping it unwoven.
         try (var loader = VaubanClassLoader.of(List.of(root), getClass().getClassLoader(),
                 PluginContext.empty())) {
             var plain = Class.forName("com.example.lib.Plain", true, loader);
             var proxyLink = Class.forName("io.vidocq.vauban.api.ProxyLink");
             assertThrows(NoSuchMethodException.class, () -> plain.getDeclaredConstructor(proxyLink));
+            assertNotNull(plain.getDeclaredConstructor(String.class), "the declared constructor is unchanged");
         }
+    }
+
+    /** A public class whose only constructor is {@code (String)}: no usable no-arg constructor. */
+    private static byte[] stringConstructorClass(String name) {
+        return ClassFile.of().build(ClassDesc.of(name), clb -> clb
+                .withFlags(ClassFile.ACC_PUBLIC)
+                .withSuperclass(ConstantDescs.CD_Object)
+                .withMethodBody(ConstantDescs.INIT_NAME, MethodTypeDesc.of(ConstantDescs.CD_void, ConstantDescs.CD_String),
+                        ClassFile.ACC_PUBLIC, cob -> cob
+                                .aload(0)
+                                .invokespecial(ConstantDescs.CD_Object, ConstantDescs.INIT_NAME, ConstantDescs.MTD_void)
+                                .return_()));
     }
 
     /** An automatic module {@code auto.lib}: {@code Finder.find(name)} = its own loader's {@code getResource}. */
