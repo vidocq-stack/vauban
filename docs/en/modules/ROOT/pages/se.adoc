@@ -134,6 +134,14 @@ rather than run it exactly as without the launcher.
 With the bare `<main-class>` form there is no module name to treat as a root, so a keep prefix can
 hold the application back; name the module.
 
+[#kept-roots]
+A runtime that starts the application through this policy can also name its own root modules
+[.tag-new]#NEW#: each of them stays in the parent layer with everything it reads, whatever their names, and
+every other explicit module moves to the application layer. The Vidocq runtime names its core and its
+extensions this way, so that a brick's library stays in the parent layer once, and the application's own
+libraries move (vauban#154). Automatic modules still stay where they are: re-created in the layer, one would
+read its own twin in the parent layer.
+
 The policy is public as `VaubanLayerFactory.applicationPaths(configuration, keptPrefixes, roots)`.
 
 === Why the entry point must run in the layer

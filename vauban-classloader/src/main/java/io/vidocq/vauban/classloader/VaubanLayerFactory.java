@@ -111,6 +111,20 @@ public final class VaubanLayerFactory {
             "io.vidocq.vauban.processor", "io.vidocq.vauban.junit");
 
     /**
+     * The four-argument form with no kept roots.
+     *
+     * @param configuration the configuration whose modules are candidates, usually the boot layer's
+     * @param keptPrefixes  extra module-name prefixes to keep, such as a runtime's own modules
+     * @param roots         the application's own modules, never kept by a name rule
+     * @return the locations to hand to {@link #createAppLayer}, in configuration order
+     * @see #applicationPaths(Configuration, Collection, Set, Set)
+     */
+    public static List<Path> applicationPaths(Configuration configuration,
+            Collection<String> keptPrefixes, Set<String> roots) {
+        return applicationPaths(configuration, keptPrefixes, Set.of(), roots);
+    }
+
+    /**
      * The {@code file:} locations of the modules of {@code configuration} that an application layer
      * should load again under a {@link VaubanClassLoader} — the one re-layer policy of the Java SE
      * launcher ({@link Launch}) and of {@code Vidocq.run}.
@@ -133,15 +147,17 @@ public final class VaubanLayerFactory {
      *
      * @param configuration the configuration whose modules are candidates, usually the boot layer's
      * @param keptPrefixes  extra module-name prefixes to keep, such as a runtime's own modules
+     * @param keptRoots     modules kept whatever their names, with what they read transitively: a runtime's own
+     *                      roots, so that its closure stays in the parent layer (vauban#154)
      * @param roots         the application's own modules, never kept by a name rule
      * @return the locations to hand to {@link #createAppLayer}, in configuration order
      */
     public static List<Path> applicationPaths(Configuration configuration,
-            Collection<String> keptPrefixes, Set<String> roots) {
+            Collection<String> keptPrefixes, Set<String> keptRoots, Set<String> roots) {
         var kept = new LinkedHashSet<ResolvedModule>();
         var queue = new ArrayDeque<ResolvedModule>();
         for (var resolved : configuration.modules()) {
-            if (keptByRule(resolved, keptPrefixes, roots) && kept.add(resolved)) {
+            if (keptByRule(resolved, keptPrefixes, keptRoots, roots) && kept.add(resolved)) {
                 queue.add(resolved);
             }
         }
@@ -168,7 +184,7 @@ public final class VaubanLayerFactory {
     }
 
     private static boolean keptByRule(ResolvedModule resolved, Collection<String> keptPrefixes,
-            Set<String> roots) {
+            Set<String> keptRoots, Set<String> roots) {
         var descriptor = resolved.reference().descriptor();
         if (descriptor.isAutomatic()) return true;
         for (var pkg : descriptor.packages()) {
@@ -176,6 +192,7 @@ public final class VaubanLayerFactory {
         }
         var name = resolved.name();
         if (roots.contains(name)) return false;
+        if (keptRoots.contains(name)) return true;
         if (CONTAINER_MODULES.contains(name)) return true;
         for (var prefix : KEPT_PREFIXES) {
             if (name.startsWith(prefix)) return true;
