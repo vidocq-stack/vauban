@@ -164,6 +164,13 @@ only `META-INF/maven/**`), gets an empty module: no package, no `requires` beyon
 the whole goal (vauban#160). A jar whose classes all sit in the unnamed package still fails, naming the jar: no
 named module can hold them.
 
+[[resource-packages]][.tag-new]#NEW# A directory that holds only resources, such as
+`com/vaadin/flow/server/frontend/dependencies/workbox/package.json` in Vaadin's `flow-server`, is a package of the
+module too: `jlink` counts it, and refuses a descriptor that lists fewer packages than the jar holds. `META-INF` and
+directory names that are no legal package name stay out. A resource directory that another jar of the closure also
+holds stays out as well, since two modules cannot hold one package: the build warns `resource directory <package> is
+also in <jar>`, and `jlink` refuses the module until one jar holds that directory (vauban#163).
+
 ==== `uses` directives, and only legal ones
 
 The descriptor also carries `uses` directives, scanned off the bytecode of the whole dependency

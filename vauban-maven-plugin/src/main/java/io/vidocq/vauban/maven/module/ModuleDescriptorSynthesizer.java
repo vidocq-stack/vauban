@@ -132,8 +132,11 @@ public final class ModuleDescriptorSynthesizer {
         Set<String> referenced;
         Map<String, List<String>> services;
         boolean holdsClasses;
+        Set<String> resourceOnly;
         try (var jar = new JarFile(request.jar().toFile())) {
-            packages = packagesOf(jar);
+            packages = classPackagesOf(jar);
+            resourceOnly = new TreeSet<>(directoriesOf(jar));
+            resourceOnly.removeAll(packages);
             holdsClasses = jar.stream().anyMatch(e -> classEntry(e.getName()) != null);
             referenced = referencedPackages(jar);
             services = servicesOf(jar, packages, notes);
@@ -143,6 +146,26 @@ public final class ModuleDescriptorSynthesizer {
         if (packages.isEmpty() && holdsClasses) {
             throw new IOException("cannot modularize " + request.jar().getFileName()
                     + ": its classes are all in the unnamed package, which no named module can hold");
+        }
+        // jlink counts a directory holding only resources as a package, and refuses a module whose descriptor lists
+        // fewer (vauban#163: flow-server's frontend/dependencies/workbox/package.json). One that another jar of the
+        // closure also holds stays out: two modules holding one package fail at boot, and the JDK itself leaves such
+        // directories out of an automatic module.
+        packages = new TreeSet<>(packages);
+        for (String pkg : resourceOnly) {
+            List<String> sharing = new ArrayList<>();
+            for (Path other : request.closure()) {
+                if (!other.equals(request.jar()) && cachedDirectoriesOf(other).contains(pkg)) {
+                    sharing.add(other.getFileName().toString());
+                }
+            }
+            if (sharing.isEmpty()) {
+                packages.add(pkg);
+            } else {
+                notes.add("WARN " + request.jar().getFileName() + ": resource directory " + pkg + " is also in "
+                        + String.join(", ", sharing) + ", left out of the module descriptor;"
+                        + " jlink refuses this module until one jar holds it");
+            }
         }
 
         var owners = packageOwners(request, notes);
@@ -261,7 +284,8 @@ public final class ModuleDescriptorSynthesizer {
 
     // ---- jar reading ---------------------------------------------------------------------------
 
-    private static Set<String> packagesOf(JarFile jar) {
+    /** The packages holding a class. */
+    private static Set<String> classPackagesOf(JarFile jar) {
         var packages = new TreeSet<String>();
         for (String name : jar.stream().map(JarEntry::getName).toList()) {
             String classFile = classEntry(name);
@@ -271,6 +295,44 @@ public final class ModuleDescriptorSynthesizer {
             int slash = classFile.lastIndexOf('/');
             if (slash > 0) {
                 packages.add(classFile.substring(0, slash).replace('/', '.'));
+            }
+        }
+        return packages;
+    }
+
+    /** {@link #directoriesOf(JarFile)} per jar, read once per build: every jar of the closure asks for the others. */
+    private static final Map<String, Set<String>> DIRECTORIES = new java.util.concurrent.ConcurrentHashMap<>();
+
+    private static Set<String> cachedDirectoriesOf(Path jar) throws IOException {
+        String key = jar.toAbsolutePath() + ":" + Files.size(jar) + ":" + Files.getLastModifiedTime(jar).toMillis();
+        Set<String> cached = DIRECTORIES.get(key);
+        if (cached == null) {
+            try (var in = new JarFile(jar.toFile())) {
+                cached = directoriesOf(in);
+            }
+            DIRECTORIES.put(key, cached);
+        }
+        return cached;
+    }
+
+    /**
+     * Every directory jlink counts as a package: one holding a class or a resource, outside {@code META-INF}, whose
+     * name is a legal package name.
+     */
+    private static Set<String> directoriesOf(JarFile jar) {
+        var packages = new TreeSet<String>(classPackagesOf(jar));
+        for (JarEntry entry : jar.stream().toList()) {
+            String name = entry.getName();
+            if (classEntry(name) != null) {
+                continue;
+            }
+            int slash = name.lastIndexOf('/');
+            if (entry.isDirectory() || slash <= 0 || name.startsWith("META-INF/")) {
+                continue;
+            }
+            String pkg = name.substring(0, slash).replace('/', '.');
+            if (javax.lang.model.SourceVersion.isName(pkg)) {
+                packages.add(pkg);
             }
         }
         return packages;

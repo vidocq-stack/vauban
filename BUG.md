@@ -5,6 +5,32 @@ suspected cause, status. Updated on every investigation.
 
 ---
 
+## VAU-MOD-004 — `vauban:modularize` leaves resource-only directories out of the packages, jlink refuses the module
+- **Date**: 2026-10-14 — **Status**: FIXED (`fix/modularize-resource-packages`, vauban#163), except a directory
+  two jars share (still refused by jlink, reported)
+- **Severity**: medium (a modularized closure cannot be linked)
+- **Surfaced by**: `vidocq:jlink` of the Vaadin 25 spike after vauban#160, #162 and vidocq#254.
+
+### Symptom
+`Module flow.server's descriptor indicates the set of packages is : [...], but module contains packages: [...]`,
+the difference being `com.vaadin.flow.server.frontend`, `...frontend.dependencies.{tailwindcss,vite,workbox}`:
+directories holding resources only.
+
+### Repro
+`ModularizerTest.aResourceOnlyDirectoryIsAPackageOfTheModule`,
+`aResourceDirectorySharedWithAnotherJarStaysOut`.
+
+### Cause
+`ModuleDescriptorSynthesizer` counted a package only where a class sits. jlink counts every directory holding
+a resource with a legal package name; `ModuleFinder` does not check, so only jlink failed.
+
+### Fix
+Resource-only directories are packages, `META-INF` and illegal names aside. One another jar of the closure
+also holds stays out, with a warning: two modules holding one package fail at boot. Vaadin's `flow-server` and
+`flow-react` share `com/vaadin/flow/server/frontend/`, so that pair still blocks jlink.
+
+---
+
 ## VAU-MOD-003 — `vauban:modularize` keeps `provides` the module cannot read
 - **Date**: 2026-10-14 — **Status**: FIXED (`fix/modularize-provides-legality`, vauban#162)
 - **Severity**: high (the whole module graph is rejected at boot)

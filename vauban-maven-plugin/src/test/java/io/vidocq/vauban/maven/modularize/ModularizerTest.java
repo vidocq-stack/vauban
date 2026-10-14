@@ -164,6 +164,54 @@ class ModularizerTest {
         assertTrue(e.getMessage().contains("acme-unnamed-1.0.jar"), e.getMessage());
     }
 
+    /**
+     * jlink counts as a package every directory holding a resource whose name is a legal package name, and refuses a
+     * module whose descriptor lists fewer: Vaadin's {@code flow-server} ships
+     * {@code com/vaadin/flow/server/frontend/dependencies/workbox/package.json} with no class there (vauban#163).
+     * {@code META-INF} and names that are no package ({@code node_modules/@vaadin}) stay out.
+     */
+    @Test
+    void aResourceOnlyDirectoryIsAPackageOfTheModule() throws IOException {
+        Path jar = plainJar("acme-res-1.0.jar", "com.acme.code", "Main", Map.of(
+                "com/acme/res/data.json", "{}\n",
+                "node_modules/@vaadin/a.js", "x\n",
+                "META-INF/resources/b.js", "x\n",
+                "readme.txt", "x\n"));
+
+        Modularizer.Result result = Modularizer.run(List.of(jar), Map.of(jar, "acme-res"),
+                tmp.resolve("target"), defaults(), s -> {});
+
+        ModuleDescriptor md = ModuleFinder.of(result.patched().get(0)).findAll().iterator().next().descriptor();
+        assertEquals(Set.of("com.acme.code", "com.acme.res"), md.packages());
+    }
+
+    /**
+     * Vaadin's {@code flow-server} and {@code flow-react} both ship files under
+     * {@code com/vaadin/flow/server/frontend/}. Declaring that directory a package of both would make two modules hold
+     * one package, which a layer refuses at boot: a resource directory another jar of the closure also holds stays
+     * out, as before, with a warning naming both jars.
+     */
+    @Test
+    void aResourceDirectorySharedWithAnotherJarStaysOut() throws IOException {
+        Path server = plainJar("acme-server-1.0.jar", "com.acme.server", "Server",
+                Map.of("com/acme/frontend/index.html", "x\n"));
+        Path react = plainJar("acme-react-1.0.jar", "com.acme.react", "React",
+                Map.of("com/acme/frontend/Adapter.template", "x\n"));
+        List<String> log = new ArrayList<>();
+
+        Modularizer.Result result = Modularizer.run(List.of(server, react),
+                Map.of(server, "acme-server", react, "acme-react"), tmp.resolve("target"), defaults(), log::add);
+
+        for (Path patched : result.patched()) {
+            ModuleDescriptor md = ModuleFinder.of(patched).findAll().iterator().next().descriptor();
+            assertFalse(md.packages().contains("com.acme.frontend"), md.name() + " " + md.packages());
+        }
+        assertTrue(log.stream().anyMatch(l -> l.startsWith("WARN") && l.contains("com.acme.frontend")
+                && l.contains("acme-react-1.0.jar")), log.toString());
+        ModuleLayer.boot().configuration().resolve(ModuleFinder.of(result.patched().toArray(Path[]::new)),
+                ModuleFinder.of(), List.of("acme.server", "acme.react"));
+    }
+
     @Test
     void derivedModeSkipsAutomaticNamedJars() throws IOException {
         Path classes = tmp.resolve("named-classes");

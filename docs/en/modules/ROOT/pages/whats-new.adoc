@@ -76,6 +76,8 @@ Interceptors now reach the methods a bean inherits, interface default methods in
 
 == Fixes that change behaviour
 
+* [.tag-new]#NEW# **`vauban:modularize` lists resource-only directories as packages** — `jlink` refused a modularized jar holding resources in a directory without classes, such as Vaadin's `flow-server` (_descriptor indicates the set of packages is … but module contains packages …_). Such a directory is now a package of the module, unless another jar of the closure holds it too, which the build reports (vauban#163). xref:reference.adoc#resource-packages[`vauban:modularize` in detail].
+
 * [.tag-new]#NEW# **`vauban:modularize` declares only the `provides` the module can read** — a service file for an optional dependency missing from the closure, such as `reactor-core`'s micrometer `ContextAccessor`, used to become a `provides` that rejected the whole graph at boot (_does not read a module that exports …_). It is now dropped with a warning, and a service type from another jar of the closure adds the `requires` it needs (vauban#162). xref:reference.adoc#provides-legality[`vauban:modularize` in detail].
 
 * [.tag-new]#NEW# **`vauban:modularize` accepts a jar without classes** — a Maven aggregator jar such as `vaadin-core` gets an empty explicit module, which `jlink` accepts, where the goal used to fail with _it holds no class in any package_ (vauban#160). xref:reference.adoc#jar-without-classes[`vauban:modularize` in detail].
