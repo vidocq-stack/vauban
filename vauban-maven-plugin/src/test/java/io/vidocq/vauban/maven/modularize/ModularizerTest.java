@@ -500,6 +500,81 @@ class ModularizerTest {
                 "a Class argument must not also be consumed as the receiver, was " + uses);
     }
 
+    /**
+     * Vaadin's {@code VaadinService} calls {@code lookup.lookupAll(InstantiatorFactory.class)} through the
+     * {@code Lookup} interface, and {@code LookupImpl.lookupAll} forwards the type to {@code ServiceLoader.load}
+     * (vauban#167). A call to a supertype method counts as a lookup when an implementation of it is one.
+     */
+    @Test
+    void emitsUsesWhenTheHelperIsCalledThroughAnInterface() throws IOException {
+        Path classes = tmp.resolve("acme-iface-classes");
+        TestJars.compileClasses(classes, Map.of(
+                "com.acme.iface.Spi", "package com.acme.iface; public interface Spi {}",
+                "com.acme.iface.Lookup", """
+                        package com.acme.iface;
+                        import java.util.Collection;
+                        public interface Lookup { <T> Collection<T> lookupAll(Class<T> type); }
+                        """,
+                "com.acme.iface.LookupImpl", """
+                        package com.acme.iface;
+                        import java.util.*;
+                        public class LookupImpl implements Lookup {
+                            public <T> Collection<T> lookupAll(Class<T> type) {
+                                List<T> all = new ArrayList<>();
+                                ServiceLoader.load(type).forEach(all::add);
+                                return all;
+                            }
+                        }
+                        """,
+                "com.acme.iface.Service", """
+                        package com.acme.iface;
+                        public class Service {
+                            public int count(Lookup lookup) { return lookup.lookupAll(Spi.class).size(); }
+                        }
+                        """));
+        Path jar = TestJars.jar(tmp.resolve("m2/acme-iface-1.0.jar"), classes, Map.of(), Map.of());
+
+        Modularizer.Result result = Modularizer.run(List.of(jar), Map.of(jar, "acme-iface"),
+                tmp.resolve("target"), defaults(), s -> {});
+
+        Set<String> uses = usesOf(result.patched().get(0));
+        assertTrue(uses.contains("com.acme.iface.Spi"),
+                "a lookup reached through an interface method must be declared, was " + uses);
+    }
+
+    /** The same through an abstract superclass method. */
+    @Test
+    void emitsUsesWhenTheHelperIsCalledThroughASuperclass() throws IOException {
+        Path classes = tmp.resolve("acme-abs-classes");
+        TestJars.compileClasses(classes, Map.of(
+                "com.acme.abs.Spi", "package com.acme.abs; public interface Spi {}",
+                "com.acme.abs.Base", """
+                        package com.acme.abs;
+                        public abstract class Base { public abstract <T> T first(Class<T> type); }
+                        """,
+                "com.acme.abs.Impl", """
+                        package com.acme.abs;
+                        import java.util.ServiceLoader;
+                        public class Impl extends Base {
+                            public <T> T first(Class<T> type) { return ServiceLoader.load(type).findFirst().orElse(null); }
+                        }
+                        """,
+                "com.acme.abs.Service", """
+                        package com.acme.abs;
+                        public class Service {
+                            public Object get(Base base) { return base.first(Spi.class); }
+                        }
+                        """));
+        Path jar = TestJars.jar(tmp.resolve("m2/acme-abs-1.0.jar"), classes, Map.of(), Map.of());
+
+        Modularizer.Result result = Modularizer.run(List.of(jar), Map.of(jar, "acme-abs"),
+                tmp.resolve("target"), defaults(), s -> {});
+
+        Set<String> uses = usesOf(result.patched().get(0));
+        assertTrue(uses.contains("com.acme.abs.Spi"),
+                "a lookup reached through a superclass method must be declared, was " + uses);
+    }
+
     /** Every static lookup factory of {@code ServiceLoader} declares its service type. */
     @Test
     void emitsUsesForEveryServiceLoaderFactory() throws IOException {

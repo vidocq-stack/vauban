@@ -36,10 +36,12 @@ import java.lang.constant.ClassDesc;
 import java.lang.constant.MethodTypeDesc;
 import java.nio.file.Path;
 import java.util.ArrayDeque;
+import java.util.ArrayList;
 import java.util.Deque;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
@@ -122,10 +124,17 @@ final class ServiceUsesScanner {
         // affected, and the split-package guard already rejects the case that matters — two
         // automatic jars sharing a package.
         Map<String, Path> jarOfClass = new HashMap<>();
+        // Direct supertypes of each class: a call written against an interface or a superclass method dispatches
+        // to the implementation that reaches ServiceLoader (Vaadin's Lookup.lookupAll → LookupImpl, vauban#167).
+        Map<String, List<String>> supersOf = new HashMap<>();
         for (Path jar : closure) {
             record(unreadable, jar, forEachClass(jar, model -> {
                 String owner = model.thisClass().asInternalName();
                 jarOfClass.put(owner, jar);
+                List<String> supers = new ArrayList<>();
+                model.superclass().ifPresent(sc -> supers.add(sc.asInternalName()));
+                model.interfaces().forEach(i -> supers.add(i.asInternalName()));
+                supersOf.put(owner, supers);
                 for (MethodModel method : model.methods()) {
                     MethodTypeDesc type = method.methodTypeSymbol();
                     // Without a Class parameter a method has no service type to forward; whatever
@@ -145,12 +154,29 @@ final class ServiceUsesScanner {
             }));
         }
 
+        // The same method declared by a supertype → its implementations: calling the former may run the latter.
+        Map<MethodKey, Set<MethodKey>> implementations = new HashMap<>();
+        for (MethodKey key : callees.keySet()) {
+            for (String supertype : supertypes(key.owner(), supersOf)) {
+                implementations.computeIfAbsent(new MethodKey(supertype, key.name(), key.descriptor()),
+                        k -> new HashSet<>()).add(key);
+            }
+        }
+
         // Pass 2: fixed point — a helper calling a helper is the common case
-        // (ServiceHelper.loadFactory → loadFactories → loadFactories(Class, ClassLoader)).
+        // (ServiceHelper.loadFactory → loadFactories → loadFactories(Class, ClassLoader)), and a supertype method
+        // is a lookup when one of its implementations is.
         Set<MethodKey> lookups = new HashSet<>();
         boolean growing = true;
         while (growing) {
             growing = false;
+            for (Map.Entry<MethodKey, Set<MethodKey>> entry : implementations.entrySet()) {
+                if (!lookups.contains(entry.getKey())
+                        && entry.getValue().stream().anyMatch(lookups::contains)) {
+                    lookups.add(entry.getKey());
+                    growing = true;
+                }
+            }
             for (Map.Entry<MethodKey, Set<MethodKey>> entry : callees.entrySet()) {
                 if (lookups.contains(entry.getKey())) {
                     continue;
@@ -169,8 +195,8 @@ final class ServiceUsesScanner {
         Map<Path, Set<String>> servicesByJar = new HashMap<>();
         Map<MethodKey, Set<String>> chainCache = new HashMap<>();
         for (Path jar : closure) {
-            record(unreadable, jar, forEachClass(jar, model -> harvest(model, jar, callees, lookups,
-                    jarOfClass, chainCache, servicesByJar)));
+            record(unreadable, jar, forEachClass(jar, model -> harvest(model, jar, callees, implementations,
+                    lookups, jarOfClass, chainCache, servicesByJar)));
         }
         // Reported once per jar, after both passes: a class the scanner cannot read is a service
         // lookup it cannot see, so a jar whose descriptor is generated from a partial scan may be
@@ -201,7 +227,7 @@ final class ServiceUsesScanner {
 
     /** Harvests the lookups of one class and records them against every jar that needs them. */
     private static void harvest(ClassModel model, Path jar, Map<MethodKey, Set<MethodKey>> callees,
-                                Set<MethodKey> lookups, Map<String, Path> jarOfClass,
+                                Map<MethodKey, Set<MethodKey>> implementations, Set<MethodKey> lookups, Map<String, Path> jarOfClass,
                                 Map<MethodKey, Set<String>> chainCache,
                                 Map<Path, Set<String>> servicesByJar) {
         for (MethodModel method : model.methods()) {
@@ -244,7 +270,7 @@ final class ServiceUsesScanner {
                         // The forwarding chain: those are the modules ServiceLoader will see as
                         // the caller, so those are the ones that would fail without the directive.
                         if (!direct) {
-                            for (String owner : chainOwners(key, callees, lookups, chainCache)) {
+                            for (String owner : chainOwners(key, callees, implementations, lookups, chainCache)) {
                                 Path helperJar = jarOfClass.get(owner);
                                 if (helperJar != null) {
                                     servicesByJar.computeIfAbsent(helperJar, j -> new HashSet<>()).add(service);
@@ -307,6 +333,7 @@ final class ServiceUsesScanner {
      * one of them may be the caller {@code ServiceLoader} sees.
      */
     private static Set<String> chainOwners(MethodKey entry, Map<MethodKey, Set<MethodKey>> callees,
+                                           Map<MethodKey, Set<MethodKey>> implementations,
                                            Set<MethodKey> lookups, Map<MethodKey, Set<String>> cache) {
         Set<String> cached = cache.get(entry);
         if (cached != null) {
@@ -325,9 +352,27 @@ final class ServiceUsesScanner {
                     queue.add(callee);
                 }
             }
+            for (MethodKey implementation : implementations.getOrDefault(current, Set.of())) {
+                if (lookups.contains(implementation) && seen.add(implementation)) {
+                    queue.add(implementation);
+                }
+            }
         }
         cache.put(entry, owners);
         return owners;
+    }
+
+    /** Every supertype of {@code owner} the closure defines, transitively. */
+    private static Set<String> supertypes(String owner, Map<String, List<String>> supersOf) {
+        Set<String> all = new HashSet<>();
+        Deque<String> queue = new ArrayDeque<>(supersOf.getOrDefault(owner, List.of()));
+        while (!queue.isEmpty()) {
+            String type = queue.poll();
+            if (all.add(type)) {
+                queue.addAll(supersOf.getOrDefault(type, List.of()));
+            }
+        }
+        return all;
     }
 
     /** Whether {@code key} is one of the static {@code ServiceLoader} lookup factories. */
