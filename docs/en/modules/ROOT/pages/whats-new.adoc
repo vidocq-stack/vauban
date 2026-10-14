@@ -76,6 +76,8 @@ Interceptors now reach the methods a bean inherits, interface default methods in
 
 == Fixes that change behaviour
 
+* [.tag-new]#NEW# **`vauban:modularize` declares only the `provides` the module can read** — a service file for an optional dependency missing from the closure, such as `reactor-core`'s micrometer `ContextAccessor`, used to become a `provides` that rejected the whole graph at boot (_does not read a module that exports …_). It is now dropped with a warning, and a service type from another jar of the closure adds the `requires` it needs (vauban#162). xref:reference.adoc#provides-legality[`vauban:modularize` in detail].
+
 * [.tag-new]#NEW# **`vauban:modularize` declares `uses` for `load(Spi.class, getClass().getClassLoader())`** — a `ClassLoader` taken from a computed `Class` used to drop the service type from the scan, so the synthesized descriptor missed the `uses` and the jar failed at boot with _does not declare `uses`_. Vaadin's `flow-server` (`FeatureFlagProvider`) was the case (vauban#158). xref:reference.adoc#modularize[`vauban:modularize` in detail].
 
 * **Bean methods that declare checked exceptions compile** — an observer such as `void onStart(@Observes @Initialized(ApplicationScoped.class) Object event) throws Exception`, a producer, an initializer or a constructor that declares a checked exception made the generated `_VaubanComponents` fail to compile with `unreported exception java.lang.Exception`. The generated code now rethrows it, and the exception reaches the container unwrapped (vauban#145). xref:internals.adoc#checked-exceptions[Code generation].

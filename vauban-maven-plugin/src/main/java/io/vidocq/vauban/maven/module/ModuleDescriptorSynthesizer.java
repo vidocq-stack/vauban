@@ -155,6 +155,25 @@ public final class ModuleDescriptorSynthesizer {
                 requires.add(owner);
             }
         }
+        // A `provides` must name a type the module reads, or the whole graph is rejected at resolution. A service of
+        // an optional dependency missing from the closure (reactor-core's micrometer ContextAccessor) is left out,
+        // as the JDK ignores such a service file for an automatic module; one from the closure gets its requires
+        // even when the provider's own bytecode never names it (vauban#162).
+        for (var it = services.entrySet().iterator(); it.hasNext(); ) {
+            String service = it.next().getKey();
+            String pkg = packageOfBinaryName(service);
+            if (packages.contains(pkg)) {
+                continue;
+            }
+            String owner = owners.get(pkg);
+            if (owner == null) {
+                notes.add("WARN dropped provides: " + request.jar().getFileName() + " — " + service
+                        + " (not in closure)");
+                it.remove();
+            } else if (!owner.equals(request.moduleName()) && !"java.base".equals(owner)) {
+                requires.add(owner);
+            }
+        }
 
         byte[] moduleInfo = emit(request, packages, requires, services);
         var descriptor = ModuleDescriptor.read(new java.io.ByteArrayInputStream(moduleInfo));

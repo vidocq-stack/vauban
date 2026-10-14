@@ -5,6 +5,30 @@ suspected cause, status. Updated on every investigation.
 
 ---
 
+## VAU-MOD-003 — `vauban:modularize` keeps `provides` the module cannot read
+- **Date**: 2026-10-14 — **Status**: FIXED (`fix/modularize-provides-legality`, vauban#162)
+- **Severity**: high (the whole module graph is rejected at boot)
+- **Surfaced by**: Vaadin 25 spike fully modularized (vauban#160), under `vidocq.app.layer=classes`.
+
+### Symptom
+`ResolutionException: Module reactor.core provides io.micrometer.context.ContextAccessor but does not
+read a module that exports io.micrometer.context to reactor.core`.
+
+### Repro
+`ModularizerTest.dropsProvidesForAServiceOutsideTheClosure`,
+`requiresTheModuleOfAProvidedServiceInTheClosure`.
+
+### Cause
+`ModuleDescriptorSynthesizer` turned every service file into a `provides` after checking only that the
+provider is in the jar. A service type outside the closure (an optional dependency) cannot be read, and a
+service type from the closure was required only when the provider's bytecode referenced it.
+
+### Fix
+A `provides` whose service package no module of the closure or the JDK owns is dropped with a
+`WARN dropped provides:` line; one owned by another module adds a `requires` on it.
+
+---
+
 ## VAU-MOD-001 — `vauban:modularize` misses `uses` when the ClassLoader comes from a computed `Class`
 - **Date**: 2026-10-14 — **Status**: FIXED (`fix/uses-receiver-not-constant`, vauban#158)
 - **Severity**: high (a modularized jar fails its own service lookup at boot)

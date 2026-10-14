@@ -183,6 +183,13 @@ the closure or of the JDK, *and* the declaring module can read the module export
 listed in `report.txt` and logged as a warning naming the jar, the service and the reason:
 `not in closure`, `<module> cannot read <exporter>`, or `not a class literal`.
 
+[[provides-legality]][.tag-new]#NEW# `provides` follows the same rule. A service file naming a type that no module
+of the closure or of the JDK defines, typically an optional dependency left out (`reactor-core` lists a
+micrometer `ContextAccessor`), gives no `provides`: the build logs `dropped provides: <jar> — <service> (not in
+closure)`, and the provider class stays in the jar, unused, as it was on the class path. A service type from
+another jar of the closure adds a `requires` on that jar's module, even when the provider's bytecode never
+names it (vauban#162).
+
 ==== Why some jars stay automatic
 
 A jar whose own code reaches `ServiceLoader` for a type defined in a jar that depends on it has no

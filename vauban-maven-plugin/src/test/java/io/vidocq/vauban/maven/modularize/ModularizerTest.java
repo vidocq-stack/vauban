@@ -541,6 +541,53 @@ class ModularizerTest {
     }
 
     /**
+     * {@code reactor-core} lists a provider of {@code io.micrometer.context.ContextAccessor}, an optional dependency
+     * missing from the closure. A {@code provides} the module cannot read rejects the whole graph at boot, so it is
+     * left out, with a warning (vauban#162). As an automatic module the JDK ignored the service file the same way.
+     */
+    @Test
+    void dropsProvidesForAServiceOutsideTheClosure() throws IOException {
+        Path jar = plainJar("acme-optional-1.0.jar", "com.acme.optional", "Accessor",
+                Map.of("META-INF/services/org.outside.ContextAccessor", "com.acme.optional.Accessor\n",
+                        "META-INF/services/com.acme.optional.Accessor", "com.acme.optional.Accessor\n"));
+        List<String> log = new ArrayList<>();
+
+        Modularizer.Result result = Modularizer.run(List.of(jar), Map.of(jar, "acme-optional"),
+                tmp.resolve("target"), defaults(), log::add);
+
+        ModuleDescriptor md = ModuleFinder.of(result.patched().get(0)).findAll().iterator().next().descriptor();
+        assertEquals(Set.of("com.acme.optional.Accessor"),
+                md.provides().stream().map(ModuleDescriptor.Provides::service).collect(Collectors.toSet()),
+                "only the service the module can read is provided");
+        assertTrue(log.stream().anyMatch(l -> l.startsWith("WARN") && l.contains("org.outside.ContextAccessor")
+                && l.contains("acme-optional-1.0.jar")), log.toString());
+        java.lang.module.Configuration.resolve(ModuleFinder.of(result.patched().get(0)),
+                List.of(ModuleLayer.boot().configuration()), ModuleFinder.of(),
+                List.of("acme.optional"));
+    }
+
+    /**
+     * A service type from another jar of the closure stays provided, and the module requires the jar that defines
+     * it, whether or not the provider's own bytecode names the type.
+     */
+    @Test
+    void requiresTheModuleOfAProvidedServiceInTheClosure() throws IOException {
+        Path api = plainJar("acme-spi-1.0.jar", "com.acme.spi", "Spi", Map.of());
+        Path impl = plainJar("acme-impl-1.0.jar", "com.acme.impl", "Impl",
+                Map.of("META-INF/services/com.acme.spi.Spi", "com.acme.impl.Impl\n"));
+
+        Modularizer.Result result = Modularizer.run(List.of(api, impl),
+                Map.of(api, "acme-spi", impl, "acme-impl"), tmp.resolve("target"), defaults(), s -> {});
+
+        Path patchedImpl = result.patched().stream()
+                .filter(p -> p.getFileName().toString().startsWith("acme-impl")).findFirst().orElseThrow();
+        ModuleDescriptor md = ModuleFinder.of(patchedImpl).findAll().iterator().next().descriptor();
+        assertEquals(Set.of("com.acme.spi.Spi"),
+                md.provides().stream().map(ModuleDescriptor.Provides::service).collect(Collectors.toSet()));
+        assertTrue(md.requires().stream().anyMatch(r -> r.name().equals("acme.spi")), md.requires().toString());
+    }
+
+    /**
      * The langchain4j wall. A generic helper reaches {@code ServiceLoader} for a type defined in
      * the jar that calls it, so the JVM demands a {@code uses} on the helper's module — which
      * would need a {@code requires} back, and JPMS has no cycles. The helper jar has no legal
