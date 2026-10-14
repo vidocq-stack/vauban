@@ -299,8 +299,9 @@ public final class VaubanLayerFactory {
 
     /**
      * The packages {@code descriptor} reads: its own, and those exported to it by {@code java.base}, by the modules
-     * it requires and, transitively, by what those require transitively. Found in {@code base}, then
-     * {@code parent}, then the system modules.
+     * it requires and, transitively, by what those require transitively. Found in {@code base}, whose modules are
+     * all roots, or in {@code parent}; a JDK module missing from the parent layers cannot be read from a child
+     * layer, so the system modules are not searched, and an unresolved {@code requires static} reads nothing.
      */
     private static Set<String> readablePackages(ModuleDescriptor descriptor, ModuleFinder base, ModuleLayer parent) {
         var readable = new LinkedHashSet<>(descriptor.packages());
@@ -314,8 +315,7 @@ public final class VaubanLayerFactory {
                 continue;
             }
             var required = base.find(name).map(ModuleReference::descriptor)
-                    .or(() -> parent.findModule(name).map(Module::getDescriptor))
-                    .or(() -> ModuleFinder.ofSystem().find(name).map(ModuleReference::descriptor));
+                    .or(() -> parent.findModule(name).map(Module::getDescriptor));
             if (required.isEmpty()) {
                 continue;
             }

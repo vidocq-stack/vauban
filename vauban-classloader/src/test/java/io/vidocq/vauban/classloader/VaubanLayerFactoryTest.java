@@ -136,6 +136,30 @@ class VaubanLayerFactoryTest {
                 module.getDescriptor().provides().toString());
     }
 
+    /** A service type the module reads through a module of the parent layer is still promoted (vauban#162). */
+    @Test
+    @DisplayName("a service read through the parent layer is promoted")
+    void servicesReadThroughTheParentLayerArePromoted(@TempDir Path dir) throws Exception {
+        var root = VaubanClassLoaderTest.appArchive(dir, BEAN, true);
+        Files.write(root.resolve("module-info.class"),
+                ClassFile.of().buildModule(ModuleAttribute.of(ModuleDesc.of(MODULE), mb -> mb
+                        .requires(ModuleDesc.of("java.base"), ClassFile.ACC_MANDATED, null)
+                        .requires(ModuleDesc.of("java.logging"), 0, null)
+                        .exports(java.lang.constant.PackageDesc.of("com.example.layered"), 0))));
+        Files.write(root.resolve("com/example/layered/Handler.class"),
+                serviceInterface("com.example.layered.Handler"));
+        var services = root.resolve("META-INF/services");
+        Files.createDirectories(services);
+        Files.writeString(services.resolve("java.util.logging.Filter"), "com.example.layered.Handler\n");
+
+        var appLayer = VaubanLayerFactory.createAppLayer(List.of(root), ModuleLayer.boot(),
+                getClass().getClassLoader(), PluginContext.empty());
+
+        var provided = appLayer.layer().findModule(MODULE).orElseThrow().getDescriptor().provides().stream()
+                .map(java.lang.module.ModuleDescriptor.Provides::service).toList();
+        assertTrue(provided.contains("java.util.logging.Filter"), provided.toString());
+    }
+
     @Test
     @DisplayName("spike: a child layer may shadow a parent layer's module of the same name (trampoline re-layering)")
     void childLayerShadowsParentModule(@TempDir Path dir) throws Exception {
