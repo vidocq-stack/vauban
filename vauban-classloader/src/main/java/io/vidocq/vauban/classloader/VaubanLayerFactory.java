@@ -75,7 +75,7 @@ public final class VaubanLayerFactory {
      */
     public static AppLayer createAppLayer(List<Path> appPaths, ModuleLayer parentLayer,
             ClassLoader parentLoader, PluginContext pluginContext) throws IOException {
-        var finder = promotingServices(ModuleFinder.of(appPaths.toArray(Path[]::new)));
+        var finder = promotingServices(ModuleFinder.of(appPaths.toArray(Path[]::new)), parentLayer);
         var roots = finder.findAll().stream()
                 .map(ref -> ref.descriptor().name())
                 .collect(Collectors.toCollection(LinkedHashSet::new));
@@ -219,24 +219,31 @@ public final class VaubanLayerFactory {
      * longer lose the Maven plugins' sealing. Automatic modules are returned untouched
      * (the module system already derives their {@code provides} from the services
      * files).
+     *
+     * <p>A services file whose service type the module cannot read is not promoted: the module system rejects a
+     * {@code provides} of such a type for the whole layer. {@code reactor-core} lists a micrometer
+     * {@code ContextAccessor}, an optional dependency often absent (vauban#162); on the class path, or as an
+     * automatic module, that file was ignored the same way.
+     *
+     * @param parent the layer the modules resolve against, where required modules may be found too
      */
-    static ModuleFinder promotingServices(ModuleFinder base) {
+    static ModuleFinder promotingServices(ModuleFinder base, ModuleLayer parent) {
         return new ModuleFinder() {
             @Override
             public Optional<ModuleReference> find(String name) {
-                return base.find(name).map(VaubanLayerFactory::promoteServices);
+                return base.find(name).map(reference -> promoteServices(reference, base, parent));
             }
 
             @Override
             public Set<ModuleReference> findAll() {
                 return base.findAll().stream()
-                        .map(VaubanLayerFactory::promoteServices)
+                        .map(reference -> promoteServices(reference, base, parent))
                         .collect(Collectors.toCollection(LinkedHashSet::new));
             }
         };
     }
 
-    private static ModuleReference promoteServices(ModuleReference reference) {
+    private static ModuleReference promoteServices(ModuleReference reference, ModuleFinder base, ModuleLayer parent) {
         var descriptor = reference.descriptor();
         if (descriptor.isAutomatic()) {
             return reference;
@@ -257,7 +264,16 @@ public final class VaubanLayerFactory {
                     .addAll(provides.providers());
         }
         var changed = false;
+        Set<String> readable = null;
         for (var entry : fromFiles.entrySet()) {
+            if (!merged.containsKey(entry.getKey())) {
+                if (readable == null) {
+                    readable = readablePackages(descriptor, base, parent);
+                }
+                if (!readable.contains(packageOf(entry.getKey()))) {
+                    continue;
+                }
+            }
             var providers = merged.computeIfAbsent(entry.getKey(), s -> new LinkedHashSet<>());
             for (var impl : entry.getValue()) {
                 // A provider must live in this module — services files may also name
@@ -279,6 +295,51 @@ public final class VaubanLayerFactory {
                 return reference.open();
             }
         };
+    }
+
+    /**
+     * The packages {@code descriptor} reads: its own, and those exported to it by {@code java.base}, by the modules
+     * it requires and, transitively, by what those require transitively. Found in {@code base}, then
+     * {@code parent}, then the system modules.
+     */
+    private static Set<String> readablePackages(ModuleDescriptor descriptor, ModuleFinder base, ModuleLayer parent) {
+        var readable = new LinkedHashSet<>(descriptor.packages());
+        var queue = new ArrayDeque<String>();
+        queue.add("java.base");
+        descriptor.requires().forEach(r -> queue.add(r.name()));
+        var seen = new LinkedHashSet<String>();
+        while (!queue.isEmpty()) {
+            var name = queue.poll();
+            if (!seen.add(name)) {
+                continue;
+            }
+            var required = base.find(name).map(ModuleReference::descriptor)
+                    .or(() -> parent.findModule(name).map(Module::getDescriptor))
+                    .or(() -> ModuleFinder.ofSystem().find(name).map(ModuleReference::descriptor));
+            if (required.isEmpty()) {
+                continue;
+            }
+            var module = required.get();
+            if (module.isAutomatic()) {
+                readable.addAll(module.packages()); // an automatic module exports every package
+            }
+            for (var exports : module.exports()) {
+                if (!exports.isQualified() || exports.targets().contains(descriptor.name())) {
+                    readable.add(exports.source());
+                }
+            }
+            for (var requires : module.requires()) {
+                if (requires.modifiers().contains(ModuleDescriptor.Requires.Modifier.TRANSITIVE)) {
+                    queue.add(requires.name());
+                }
+            }
+        }
+        return readable;
+    }
+
+    private static String packageOf(String binaryName) {
+        int dot = binaryName.lastIndexOf('.');
+        return dot < 0 ? "" : binaryName.substring(0, dot);
     }
 
     private static java.util.Map<String, List<String>> readServiceFiles(ModuleReference reference)

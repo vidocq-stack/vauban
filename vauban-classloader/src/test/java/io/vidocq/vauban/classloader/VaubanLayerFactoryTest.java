@@ -112,6 +112,30 @@ class VaubanLayerFactoryTest {
         assertTrue(api.isInstance(instance), "the provider implements the promoted service");
     }
 
+    /**
+     * {@code reactor-core} ships a services file for {@code io.micrometer.context.ContextAccessor}, an optional
+     * dependency the application does not have. Promoting it gave the module a {@code provides} it cannot read, and
+     * the whole layer failed to resolve (vauban#162). A service type the module cannot read is not promoted.
+     */
+    @Test
+    @DisplayName("a services file for a type the module cannot read is not promoted")
+    void servicesFilesForAnUnreadableTypeAreNotPromoted(@TempDir Path dir) throws Exception {
+        var root = modularAppArchive(dir);
+        Files.write(root.resolve("com/example/layered/Accessor.class"),
+                serviceInterface("com.example.layered.Accessor"));
+        var services = root.resolve("META-INF/services/io.micrometer.context.ContextAccessor");
+        Files.createDirectories(services.getParent());
+        Files.writeString(services, "com.example.layered.Accessor\n");
+
+        var appLayer = VaubanLayerFactory.createAppLayer(List.of(root), ModuleLayer.boot(),
+                getClass().getClassLoader(), PluginContext.empty());
+
+        var module = appLayer.layer().findModule(MODULE).orElseThrow();
+        assertTrue(module.getDescriptor().provides().stream()
+                        .noneMatch(p -> p.service().equals("io.micrometer.context.ContextAccessor")),
+                module.getDescriptor().provides().toString());
+    }
+
     @Test
     @DisplayName("spike: a child layer may shadow a parent layer's module of the same name (trampoline re-layering)")
     void childLayerShadowsParentModule(@TempDir Path dir) throws Exception {
