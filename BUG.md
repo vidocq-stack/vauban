@@ -26,7 +26,8 @@ a resource with a legal package name; `ModuleFinder` does not check, so only jli
 
 ### Fix
 Resource-only directories are packages, `META-INF` and illegal names aside. One another jar of the closure
-also holds stays out, with a warning: two modules holding one package fail at boot. Vaadin's `flow-server` and
+also holds stays out (two modules holding one package fail at boot), with one loud warning block per directory
+naming the jars, and a `shared resource directory:` line in `report.txt`. Vaadin's `flow-server` and
 `flow-react` share `com/vaadin/flow/server/frontend/`, so that pair still blocks jlink.
 
 ---

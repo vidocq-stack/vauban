@@ -162,9 +162,9 @@ public final class ModuleDescriptorSynthesizer {
             if (sharing.isEmpty()) {
                 packages.add(pkg);
             } else {
-                notes.add("WARN " + request.jar().getFileName() + ": resource directory " + pkg + " is also in "
-                        + String.join(", ", sharing) + ", left out of the module descriptor;"
-                        + " jlink refuses this module until one jar holds it");
+                // Reported once for the closure by sharedResourceDirectories, where Modularizer warns loudly.
+                notes.add("DEBUG " + request.jar().getFileName() + ": resource directory " + pkg + " is also in "
+                        + String.join(", ", sharing) + ", left out of the module descriptor");
             }
         }
 
@@ -298,6 +298,36 @@ public final class ModuleDescriptorSynthesizer {
             }
         }
         return packages;
+    }
+
+    /**
+     * The resource directories that several jars of {@code closure} hold, at least one of them without classes there:
+     * a split package for the module system, which no descriptor can declare and which jlink refuses (vauban#163).
+     *
+     * @return {@code a/b/} → the file names of the jars holding it, both sorted
+     */
+    public static Map<String, List<String>> sharedResourceDirectories(List<Path> closure) throws IOException {
+        Map<String, Set<String>> holders = new TreeMap<>();
+        Map<String, Integer> withClasses = new java.util.HashMap<>();
+        for (Path jar : closure) {
+            Set<String> classes;
+            try (var in = new JarFile(jar.toFile())) {
+                classes = classPackagesOf(in);
+            }
+            for (String pkg : cachedDirectoriesOf(jar)) {
+                holders.computeIfAbsent(pkg, p -> new TreeSet<>()).add(jar.getFileName().toString());
+                if (classes.contains(pkg)) {
+                    withClasses.merge(pkg, 1, Integer::sum);
+                }
+            }
+        }
+        Map<String, List<String>> shared = new TreeMap<>();
+        holders.forEach((pkg, jars) -> {
+            if (jars.size() > 1 && withClasses.getOrDefault(pkg, 0) < jars.size()) {
+                shared.put(pkg.replace('.', '/') + "/", List.copyOf(jars));
+            }
+        });
+        return shared;
     }
 
     /** {@link #directoriesOf(JarFile)} per jar, read once per build: every jar of the closure asks for the others. */

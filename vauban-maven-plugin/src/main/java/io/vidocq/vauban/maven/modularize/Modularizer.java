@@ -121,6 +121,8 @@ public final class Modularizer {
 
         // 4. split-package guard over the automatic part of the closure
         assertNoSplitPackage(infos);
+        Map<String, List<String>> sharedResources = ModuleDescriptorSynthesizer.sharedResourceDirectories(closure);
+        warnSharedResources(sharedResources, log);
 
         // 5. generate every candidate descriptor, before writing any of them
         Generated generated = generateAll(closure, selection.selected(), artifactIdByJar, options, log);
@@ -130,6 +132,8 @@ public final class Modularizer {
 
         // 7. write the survivors
         StringBuilder report = new StringBuilder("# vauban:modularize report\n");
+        sharedResources.forEach((dir, jars) -> report.append(SHARED_RESOURCE_PREFIX).append(dir).append(" — ")
+                .append(String.join(", ", jars)).append('\n'));
         List<Path> patched = write(legality, generated, closure, options, outDir, report, log);
 
         // 8. account for everything that was left alone, with the reason when there is one
@@ -396,6 +400,26 @@ public final class Modularizer {
      * Two automatic jars sharing a package cannot both become named modules, and the
      * module system would reject them side by side anyway — fail early with the names.
      */
+    /** Prefix of the report line naming a resource directory several jars hold (vauban#163). */
+    static final String SHARED_RESOURCE_PREFIX = "shared resource directory: ";
+
+    /**
+     * One loud block per resource directory several jars hold. The module system cannot give one directory to two
+     * modules, so jlink refuses those jars; the module path and the application layers leave the directory out of the
+     * descriptors and keep working, and only the library itself can fix it.
+     */
+    private static void warnSharedResources(Map<String, List<String>> shared, Consumer<String> log) {
+        shared.forEach((dir, jars) -> {
+            log.accept("WARN ------------------------------------------------------------------------");
+            log.accept("WARN jlink will refuse " + String.join(", ", jars) + ":");
+            log.accept("WARN   they all hold files under " + dir + ", a split package for the module system,");
+            log.accept("WARN   so none of their descriptors can declare it.");
+            log.accept("WARN   Running on the module path is not affected: the directory stays out of the descriptors.");
+            log.accept("WARN   Only the library can fix it: one jar must hold that directory.");
+            log.accept("WARN ------------------------------------------------------------------------");
+        });
+    }
+
     private static void assertNoSplitPackage(List<JarModuleInfo> infos) throws IOException {
         List<ModuleAnalysisResult> analyses = new ArrayList<>();
         for (JarModuleInfo info : infos) {

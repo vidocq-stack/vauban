@@ -168,8 +168,11 @@ named module can hold them.
 `com/vaadin/flow/server/frontend/dependencies/workbox/package.json` in Vaadin's `flow-server`, is a package of the
 module too: `jlink` counts it, and refuses a descriptor that lists fewer packages than the jar holds. `META-INF` and
 directory names that are no legal package name stay out. A resource directory that another jar of the closure also
-holds stays out as well, since two modules cannot hold one package: the build warns `resource directory <package> is
-also in <jar>`, and `jlink` refuses the module until one jar holds that directory (vauban#163).
+holds stays out as well, since two modules cannot hold one package (a split package). The build prints one block of
+warnings per such directory, `jlink will refuse <jars>: they all hold files under <dir>/ …`, and `report.txt` lists it
+as `shared resource directory: <dir>/ — <jars>`. Running on the module path is not affected; `jlink` refuses those
+jars until the library puts that directory in one jar. Vaadin's `flow-server` and `flow-react` share
+`com/vaadin/flow/server/frontend/` (vauban#163).
 
 ==== `uses` directives, and only legal ones
 

@@ -206,8 +206,14 @@ class ModularizerTest {
             ModuleDescriptor md = ModuleFinder.of(patched).findAll().iterator().next().descriptor();
             assertFalse(md.packages().contains("com.acme.frontend"), md.name() + " " + md.packages());
         }
-        assertTrue(log.stream().anyMatch(l -> l.startsWith("WARN") && l.contains("com.acme.frontend")
-                && l.contains("acme-react-1.0.jar")), log.toString());
+        // One loud block per shared directory, naming both jars, the directory and who is affected.
+        assertEquals(1, log.stream().filter(l -> l.contains("jlink will refuse")).count(), log.toString());
+        String block = String.join("\n", log);
+        assertTrue(block.contains("jlink will refuse acme-react-1.0.jar, acme-server-1.0.jar"), block);
+        assertTrue(block.contains("com/acme/frontend/"), block);
+        assertTrue(block.contains("Running on the module path is not affected"), block);
+        assertTrue(result.report().contains("shared resource directory: com/acme/frontend/ — acme-react-1.0.jar, "
+                + "acme-server-1.0.jar"), result.report());
         ModuleLayer.boot().configuration().resolve(ModuleFinder.of(result.patched().toArray(Path[]::new)),
                 ModuleFinder.of(), List.of("acme.server", "acme.react"));
     }
