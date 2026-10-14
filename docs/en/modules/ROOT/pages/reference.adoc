@@ -188,7 +188,8 @@ of the closure or of the JDK defines, typically an optional dependency left out 
 micrometer `ContextAccessor`), gives no `provides`: the build logs `dropped provides: <jar> — <service> (not in
 closure)`, and the provider class stays in the jar, unused, as it was on the class path. A service type from
 another jar of the closure adds a `requires` on that jar's module, even when the provider's bytecode never
-names it (vauban#162).
+names it. The application layer applies the same rule when it promotes services files to `provides`: a service
+type the module cannot read is not promoted (vauban#162).
 
 ==== Why some jars stay automatic
 

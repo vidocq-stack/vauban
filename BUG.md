@@ -25,7 +25,9 @@ service type from the closure was required only when the provider's bytecode ref
 
 ### Fix
 A `provides` whose service package no module of the closure or the JDK owns is dropped with a
-`WARN dropped provides:` line; one owned by another module adds a `requires` on it.
+`WARN dropped provides:` line; one owned by another module adds a `requires` on it. At run time,
+`VaubanLayerFactory` promoted the same services file back to a `provides`: it now promotes only a
+service type the module reads (`VaubanLayerFactoryTest.servicesFilesForAnUnreadableTypeAreNotPromoted`).
 
 ---
 
