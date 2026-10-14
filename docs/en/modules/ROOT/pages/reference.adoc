@@ -169,10 +169,10 @@ as a `Class` parameter are followed across jars, since it is the module reaching
 not the one naming the service — that must declare the directive. A service type passed as a
 variable rather than a class literal cannot be seen by any bytecode scan; declare that one by hand.
 
-[.tag-new]#NEW# Every `ServiceLoader` factory is covered — `load(Class)`, `load(Class, ClassLoader)`,
-`load(ModuleLayer, Class)` and `loadInstalled(Class)` — whatever produces the `ClassLoader`
-argument: a constant (`Util.class.getClassLoader()`), the current class
-(`getClass().getClassLoader()`, as Vaadin's `FeatureFlags` writes it) or a variable (vauban#158).
+Every `ServiceLoader` factory is covered: `load(Class)`, `load(Class, ClassLoader)`,
+`load(ModuleLayer, Class)` and `loadInstalled(Class)`. [.tag-new]#NEW# The `ClassLoader` argument
+can now also come from a computed `Class`, such as `getClass().getClassLoader()` as Vaadin's
+`FeatureFlags` writes it, or a `Class` or `ClassLoader` variable (vauban#158).
 
 Only the directives the module system will accept are emitted. A `uses` is not a hint: the JVM
 rejects the whole graph at resolution time with _Module M uses S but does not read a module that

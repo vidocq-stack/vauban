@@ -28,7 +28,9 @@ receiver is not a constant, so the service type itself was popped and never reco
 
 ### Fix
 The receiver is consumed only when the instruction right before the call pushed a class
-constant.
+constant and the call takes no `Class` argument (`anchor.asSubclass(Other.class)` consumes its
+argument, not a second candidate). Remaining trade-off: a receiver constant separated from its
+call (`Foo.class.getResourceAsStream("x")`) stays pending and may add a superfluous, inert `uses`.
 
 ---
 

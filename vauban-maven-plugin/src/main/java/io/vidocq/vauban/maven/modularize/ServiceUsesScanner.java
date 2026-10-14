@@ -278,7 +278,9 @@ final class ServiceUsesScanner {
      * ({@code Util.class.getClassLoader()}). Vaadin writes
      * {@code ServiceLoader.load(FeatureFlagProvider.class, getClass().getClassLoader())}: there the
      * receiver comes from {@code getClass()}, and popping a candidate for it would drop the
-     * service type (vauban#158).
+     * service type (vauban#158). The price is a receiver constant that stays pending when
+     * something comes between it and the call ({@code Foo.class.getResourceAsStream("x")}): a
+     * superfluous {@code uses Foo} if a lookup follows, inert or dropped by {@code UsesLegality}.
      *
      * @param afterConstant whether the instruction before {@code invoke} pushed a class constant
      */
@@ -290,7 +292,8 @@ final class ServiceUsesScanner {
             }
         }
         // `Util.class.getClassLoader()` / `.getModule()`: the receiver is the constant just pushed.
-        if (afterConstant && invoke.opcode() != Opcode.INVOKESTATIC
+        // With a Class argument (`anchor.asSubclass(Other.class)`), that constant is the argument.
+        if (afterConstant && consumed == 0 && invoke.opcode() != Opcode.INVOKESTATIC
                 && CLASS_INTERNAL.equals(invoke.owner().asInternalName())) {
             consumed++;
         }

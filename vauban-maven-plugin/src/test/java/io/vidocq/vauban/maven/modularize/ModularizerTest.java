@@ -364,6 +364,37 @@ class ModularizerTest {
                 "a Class variable's getClassLoader() must not consume the service type, was " + uses);
     }
 
+    /**
+     * {@code anchor.asSubclass(Other.class)} consumes its argument, the constant just pushed, and
+     * not a second candidate for its receiver: the service type pushed before must survive.
+     */
+    @Test
+    void aClassArgumentIsNotAlsoTakenForTheReceiver() throws IOException {
+        Path classes = tmp.resolve("acme-receiver-classes");
+        TestJars.compileClasses(classes, Map.of(
+                "com.acme.receiver.Spi", "package com.acme.receiver; public interface Spi {}",
+                "com.acme.receiver.Other", "package com.acme.receiver; public class Other {}",
+                "com.acme.receiver.Consumer", """
+                        package com.acme.receiver;
+                        import java.util.ServiceLoader;
+                        public class Consumer {
+                            public Spi first(Class<?> anchor) {
+                                return ServiceLoader.load(Spi.class,
+                                                anchor.asSubclass(Other.class).getClassLoader())
+                                        .findFirst().orElse(null);
+                            }
+                        }
+                        """));
+        Path jar = TestJars.jar(tmp.resolve("m2/acme-receiver-1.0.jar"), classes, Map.of(), Map.of());
+
+        Modularizer.Result result = Modularizer.run(List.of(jar), Map.of(jar, "acme-receiver"),
+                tmp.resolve("target"), defaults(), s -> {});
+
+        Set<String> uses = usesOf(result.patched().get(0));
+        assertTrue(uses.contains("com.acme.receiver.Spi"),
+                "a Class argument must not also be consumed as the receiver, was " + uses);
+    }
+
     /** Every static lookup factory of {@code ServiceLoader} declares its service type. */
     @Test
     void emitsUsesForEveryServiceLoaderFactory() throws IOException {
