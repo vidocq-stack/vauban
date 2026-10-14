@@ -181,7 +181,9 @@ closure. They are not optional: an automatic module may consume any service, an 
 what it declares, so a jar promoted without them fails its own `ServiceLoader.load` with
 _module … does not declare `uses`_. Lookups written through a helper that takes the service type
 as a `Class` parameter are followed across jars, since it is the module reaching `ServiceLoader` —
-not the one naming the service — that must declare the directive. A service type passed as a
+not the one naming the service — that must declare the directive. [.tag-new]#NEW# They are followed
+through an interface or superclass method as well, when an implementation in the closure forwards to
+`ServiceLoader` (vauban#167). A service type passed as a
 variable rather than a class literal cannot be seen by any bytecode scan; declare that one by hand.
 
 Every `ServiceLoader` factory is covered: `load(Class)`, `load(Class, ClassLoader)`,

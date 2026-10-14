@@ -5,6 +5,32 @@ suspected cause, status. Updated on every investigation.
 
 ---
 
+## VAU-MOD-005 — `vauban:modularize` misses `uses` when the helper is called through a supertype method
+- **Date**: 2026-10-15 — **Status**: FIXED (`fix/uses-through-supertype`, vauban#167)
+- **Severity**: high (an explicit module fails its own lookup at boot)
+- **Surfaced by**: the Vaadin 25 jlink image, after Vidocq/foy#50.
+
+### Symptom
+`ServiceConfigurationError: com.vaadin.flow.di.InstantiatorFactory: module flow.server does not declare uses`,
+from `LookupInitializer$LookupImpl.lookupAll`, called by `VaadinService.loadInstantiators`.
+
+### Repro
+`ModularizerTest.emitsUsesWhenTheHelperIsCalledThroughAnInterface`,
+`emitsUsesWhenTheHelperIsCalledThroughASuperclass`.
+
+### Cause
+`ServiceUsesScanner` matched forwarding helpers by exact `owner.name(descriptor)`. `VaadinService` calls
+`Lookup.lookupAll` (the interface), while the method reaching `ServiceLoader` is `LookupImpl.lookupAll`.
+
+### Fix
+A supertype method is a lookup when one of its implementations in the closure is, and the forwarding chain
+reaches the implementations. On Vaadin this shows the helper has no legal explicit form: `collaboration-engine`
+and `flow-lit-template` pass their own types to `Lookup.lookupAll`, so `flow.server` would need a `uses` back
+into modules that require it, a cycle. `flow-server` stays automatic; `vauban.modularize.forceExplicit` patches
+it anyway for an application that never reaches those lookups.
+
+---
+
 ## VAU-MOD-004 — `vauban:modularize` leaves resource-only directories out of the packages, jlink refuses the module
 - **Date**: 2026-10-14 — **Status**: FIXED (`fix/modularize-resource-packages`, vauban#163), except a directory
   two jars share (still refused by jlink, reported)
