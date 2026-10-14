@@ -419,10 +419,11 @@ public class VaubanClassLoader extends ClassLoader implements AutoCloseable {
 
     /**
      * Whether this loader refuses to define the classes of package {@code pkg} (platform and
-     * container prefixes). The launcher keeps a module owning such a package in the boot layer:
-     * re-layered, it would be an empty shell whose classes come back from its boot twin.
+     * container prefixes). A launcher keeps a module owning such a package in its parent layer:
+     * re-layered, it would be an empty shell whose classes come back from its parent twin. Public
+     * so that a build-time split applies the same rule (vauban#154).
      */
-    static boolean excludesPackage(String pkg) {
+    public static boolean excludesPackage(String pkg) {
         return isExcluded(pkg + ".");
     }
 
