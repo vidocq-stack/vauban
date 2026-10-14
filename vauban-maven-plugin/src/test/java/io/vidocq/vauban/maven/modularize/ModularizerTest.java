@@ -325,6 +325,76 @@ class ModularizerTest {
                 "the service type must survive a trailing ClassLoader constant, was " + uses);
     }
 
+    /**
+     * Vaadin's {@code FeatureFlags} loads {@code FeatureFlagProvider} with
+     * {@code ServiceLoader.load(Spi.class, getClass().getClassLoader())} (vauban#158). The
+     * receiver of {@code getClassLoader()} is a computed {@code Class}, not a constant: taking it
+     * for the last constant pushed drops the service type and the jar fails at boot with
+     * {@code ServiceConfigurationError ... does not declare uses}.
+     */
+    @Test
+    void emitsUsesWhenTheClassLoaderComesFromAComputedClass() throws IOException {
+        Path classes = tmp.resolve("acme-computed-classes");
+        TestJars.compileClasses(classes, Map.of(
+                "com.acme.computed.Spi", "package com.acme.computed; public interface Spi {}",
+                "com.acme.computed.Local", "package com.acme.computed; public interface Local {}",
+                "com.acme.computed.Consumer", """
+                        package com.acme.computed;
+                        import java.util.ServiceLoader;
+                        public class Consumer {
+                            public Spi fromGetClass() {
+                                return ServiceLoader.load(Spi.class, getClass().getClassLoader())
+                                        .findFirst().orElse(null);
+                            }
+                            public Local fromVariable(Class<?> anchor) {
+                                return ServiceLoader.load(Local.class, anchor.getClassLoader())
+                                        .findFirst().orElse(null);
+                            }
+                        }
+                        """));
+        Path jar = TestJars.jar(tmp.resolve("m2/acme-computed-1.0.jar"), classes, Map.of(), Map.of());
+
+        Modularizer.Result result = Modularizer.run(List.of(jar), Map.of(jar, "acme-computed"),
+                tmp.resolve("target"), defaults(), s -> {});
+
+        Set<String> uses = usesOf(result.patched().get(0));
+        assertTrue(uses.contains("com.acme.computed.Spi"),
+                "getClass().getClassLoader() must not consume the service type, was " + uses);
+        assertTrue(uses.contains("com.acme.computed.Local"),
+                "a Class variable's getClassLoader() must not consume the service type, was " + uses);
+    }
+
+    /** Every static lookup factory of {@code ServiceLoader} declares its service type. */
+    @Test
+    void emitsUsesForEveryServiceLoaderFactory() throws IOException {
+        Path classes = tmp.resolve("acme-factories-classes");
+        TestJars.compileClasses(classes, Map.of(
+                "com.acme.factories.Plain", "package com.acme.factories; public interface Plain {}",
+                "com.acme.factories.WithLoader", "package com.acme.factories; public interface WithLoader {}",
+                "com.acme.factories.InLayer", "package com.acme.factories; public interface InLayer {}",
+                "com.acme.factories.Installed", "package com.acme.factories; public interface Installed {}",
+                "com.acme.factories.Consumer", """
+                        package com.acme.factories;
+                        import java.util.ServiceLoader;
+                        public class Consumer {
+                            public void all(ClassLoader loader) {
+                                ServiceLoader.load(Plain.class).findFirst();
+                                ServiceLoader.load(WithLoader.class, loader).findFirst();
+                                ServiceLoader.load(ModuleLayer.boot(), InLayer.class).findFirst();
+                                ServiceLoader.loadInstalled(Installed.class).findFirst();
+                            }
+                        }
+                        """));
+        Path jar = TestJars.jar(tmp.resolve("m2/acme-factories-1.0.jar"), classes, Map.of(), Map.of());
+
+        Modularizer.Result result = Modularizer.run(List.of(jar), Map.of(jar, "acme-factories"),
+                tmp.resolve("target"), defaults(), s -> {});
+
+        assertEquals(Set.of("com.acme.factories.Plain", "com.acme.factories.WithLoader",
+                        "com.acme.factories.InLayer", "com.acme.factories.Installed"),
+                usesOf(result.patched().get(0)));
+    }
+
     /** A nested service type must survive the round trip through the generated source. */
     @Test
     void emitsUsesForANestedServiceType() throws IOException {

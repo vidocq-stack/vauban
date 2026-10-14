@@ -5,6 +5,33 @@ suspected cause, status. Updated on every investigation.
 
 ---
 
+## VAU-MOD-001 — `vauban:modularize` misses `uses` when the ClassLoader comes from a computed `Class`
+- **Date**: 2026-10-14 — **Status**: FIXED (`fix/uses-receiver-not-constant`, vauban#158)
+- **Severity**: high (a modularized jar fails its own service lookup at boot)
+- **Surfaced by**: Vaadin 25 on Foy (vidocq#246), packaged through `vauban:modularize`.
+
+### Symptom
+The descriptor synthesized for Vaadin's `flow-server` provides
+`com.vaadin.experimental.FeatureFlagProvider` but has no `uses` for it; boot fails with
+`ServiceConfigurationError: … module flow.server does not declare uses`.
+
+### Repro
+`ModularizerTest.emitsUsesWhenTheClassLoaderComesFromAComputedClass`:
+`ServiceLoader.load(Spi.class, getClass().getClassLoader())` and
+`ServiceLoader.load(Local.class, anchor.getClassLoader())` with `anchor` a `Class<?>` parameter.
+
+### Cause
+`ServiceUsesScanner.consume` removed one candidate class constant for the receiver of any
+instance call on `java.lang.Class`, assuming the receiver was the constant just pushed
+(`Util.class.getClassLoader()`). With `getClass().getClassLoader()` or a `Class` variable the
+receiver is not a constant, so the service type itself was popped and never recorded.
+
+### Fix
+The receiver is consumed only when the instruction right before the call pushed a class
+constant.
+
+---
+
 ## VAU-PROXY-001 — client proxy replays the bean constructor (side effects doubled, NPE on `@Inject` ctor)
 - **Date**: 2026-08-10 — **Status**: FIXED, phases 0+1+2 (`pr/ybl/vauban-24-proxy-link`) — phase 2 weaves the marker automatically at `process-classes` (no app-code change required)
 - **Severity**: high (constructor injection unusable on normal-scoped beans; silent double side effects)

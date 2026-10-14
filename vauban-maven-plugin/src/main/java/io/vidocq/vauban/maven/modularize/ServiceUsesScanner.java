@@ -25,6 +25,7 @@ import java.lang.classfile.ClassFile;
 import java.lang.classfile.ClassModel;
 import java.lang.classfile.CodeElement;
 import java.lang.classfile.CodeModel;
+import java.lang.classfile.Instruction;
 import java.lang.classfile.MethodModel;
 import java.lang.classfile.Opcode;
 import java.lang.classfile.instruction.ConstantInstruction;
@@ -214,14 +215,22 @@ final class ServiceUsesScanner {
             // superfluous directive is dropped by UsesLegality when it is not legal, a missing one
             // is a ServiceConfigurationError.
             Deque<ClassDesc> pending = new ArrayDeque<>();
+            // Whether the instruction just before the current one pushed a class constant: only
+            // then is the top of the operand stack the last candidate (see `consume`).
+            boolean[] constantOnTop = {false};
             eachInstruction(method, element -> {
+                boolean afterConstant = constantOnTop[0];
+                if (element instanceof Instruction) {
+                    constantOnTop[0] = false;
+                }
                 if (element instanceof ConstantInstruction ci && ci.constantValue() instanceof ClassDesc cd) {
                     pending.addLast(cd);
+                    constantOnTop[0] = true;
                 } else if (element instanceof InvokeInstruction invoke) {
                     MethodKey key = keyOf(invoke);
                     boolean direct = isServiceLoaderLookup(key);
                     if (!direct && !lookups.contains(key)) {
-                        consume(pending, invoke);
+                        consume(pending, invoke, afterConstant);
                         return;
                     }
                     for (ClassDesc candidate : pending) {
@@ -254,7 +263,8 @@ final class ServiceUsesScanner {
 
     /**
      * Removes the candidates {@code invoke} consumes: one per {@code Class}-typed parameter, plus
-     * the receiver when the call is an instance method on {@code java.lang.Class}.
+     * the receiver when the call is an instance method on {@code java.lang.Class} invoked right
+     * after a class constant was pushed.
      *
      * <p>This is what keeps an unrelated constant from drifting into a later lookup —
      * {@code LoggerFactory.getLogger(Service.class)} earlier in the method eats its own argument
@@ -263,8 +273,16 @@ final class ServiceUsesScanner {
      * {@code ServiceLoader.load(Foo.class, Thread.currentThread().getContextClassLoader())}, is
      * allowed to leave the candidates alone: clearing on every intervening call would lose
      * {@code Foo}, which is the whole point of the scan.
+     *
+     * <p>The receiver is a candidate only when it is the constant pushed just before the call
+     * ({@code Util.class.getClassLoader()}). Vaadin writes
+     * {@code ServiceLoader.load(FeatureFlagProvider.class, getClass().getClassLoader())}: there the
+     * receiver comes from {@code getClass()}, and popping a candidate for it would drop the
+     * service type (vauban#158).
+     *
+     * @param afterConstant whether the instruction before {@code invoke} pushed a class constant
      */
-    private static void consume(Deque<ClassDesc> pending, InvokeInstruction invoke) {
+    private static void consume(Deque<ClassDesc> pending, InvokeInstruction invoke, boolean afterConstant) {
         int consumed = 0;
         for (ClassDesc parameter : invoke.typeSymbol().parameterList()) {
             if (CLASS.equals(parameter)) {
@@ -272,7 +290,8 @@ final class ServiceUsesScanner {
             }
         }
         // `Util.class.getClassLoader()` / `.getModule()`: the receiver is the constant just pushed.
-        if (invoke.opcode() != Opcode.INVOKESTATIC && CLASS_INTERNAL.equals(invoke.owner().asInternalName())) {
+        if (afterConstant && invoke.opcode() != Opcode.INVOKESTATIC
+                && CLASS_INTERNAL.equals(invoke.owner().asInternalName())) {
             consumed++;
         }
         while (consumed-- > 0 && !pending.isEmpty()) {
