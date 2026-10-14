@@ -100,7 +100,7 @@ public final class Modularizer {
      * @param buildDir        the project {@code target/} directory
      * @param log             receives one line per patched jar, plus what the synthesis reports
      * @throws IllegalStateException if two automatic jars of the closure share a package
-     * @throws IOException           if a jar cannot be read, or holds no class in any package
+     * @throws IOException           if a jar cannot be read, or holds classes in the unnamed package only
      */
     public static Result run(List<Path> closure, Map<Path, String> artifactIdByJar, Path buildDir,
                              Options options, Consumer<String> log) throws IOException {

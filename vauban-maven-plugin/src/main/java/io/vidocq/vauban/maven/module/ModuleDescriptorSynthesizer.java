@@ -131,14 +131,18 @@ public final class ModuleDescriptorSynthesizer {
         Set<String> packages;
         Set<String> referenced;
         Map<String, List<String>> services;
+        boolean holdsClasses;
         try (var jar = new JarFile(request.jar().toFile())) {
             packages = packagesOf(jar);
+            holdsClasses = jar.stream().anyMatch(e -> classEntry(e.getName()) != null);
             referenced = referencedPackages(jar);
             services = servicesOf(jar, packages, notes);
         }
-        if (packages.isEmpty()) {
+        // A jar with no class at all, such as a Maven aggregator (vaadin-core), gets an empty module: legal, and
+        // what jlink needs (vauban#160). Classes that all sit in the unnamed package fit in no named module.
+        if (packages.isEmpty() && holdsClasses) {
             throw new IOException("cannot modularize " + request.jar().getFileName()
-                    + ": it holds no class in any package");
+                    + ": its classes are all in the unnamed package, which no named module can hold");
         }
 
         var owners = packageOwners(request, notes);

@@ -159,6 +159,11 @@ sees them. The Vidocq runtime plugin's `dev`, `jlink` and `package` goals resolv
 through that directory first, so a patched copy replaces the original jar on the module path, in
 the staged image and in the distribution's `lib/`.
 
+[[jar-without-classes]][.tag-new]#NEW# A jar that holds no class, such as a Maven aggregator (`vaadin-core` ships
+only `META-INF/maven/**`), gets an empty module: no package, no `requires` beyond `java.base`. It used to fail
+the whole goal (vauban#160). A jar whose classes all sit in the unnamed package still fails, naming the jar: no
+named module can hold them.
+
 ==== `uses` directives, and only legal ones
 
 The descriptor also carries `uses` directives, scanned off the bytecode of the whole dependency

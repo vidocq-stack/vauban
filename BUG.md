@@ -31,6 +31,28 @@ service type the module reads (`VaubanLayerFactoryTest.servicesFilesForAnUnreada
 
 ---
 
+## VAU-MOD-002 — `vauban:modularize` fails the build on a jar without classes
+- **Date**: 2026-10-14 — **Status**: FIXED (`fix/modularize-jar-without-classes`, vauban#160)
+- **Severity**: medium (a Vaadin closure cannot be modularized, so it cannot be linked with jlink)
+- **Surfaced by**: Vaadin 25 spike, while verifying Vidocq/vidocq#251.
+
+### Symptom
+`vauban:modularize failed: cannot modularize vaadin-core-25.3.2.jar: it holds no class in any package`.
+`vaadin-core` is a Maven aggregator jar: `META-INF/MANIFEST.MF` and `META-INF/maven/**` only.
+
+### Repro
+`ModularizerTest.aJarWithoutClassesGetsAnEmptyExplicitModule`, `synthesizeOneGivesAJarWithoutClassesAnEmptyModule`.
+
+### Cause
+`ModuleDescriptorSynthesizer.synthesize` refused any jar with no package, although a module without
+packages is legal.
+
+### Fix
+A jar with no class gets an empty module. A jar whose classes are all in the unnamed package still
+fails (the JDK already refuses to derive its automatic module, naming the jar).
+
+---
+
 ## VAU-MOD-001 — `vauban:modularize` misses `uses` when the ClassLoader comes from a computed `Class`
 - **Date**: 2026-10-14 — **Status**: FIXED (`fix/uses-receiver-not-constant`, vauban#158)
 - **Severity**: high (a modularized jar fails its own service lookup at boot)

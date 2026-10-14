@@ -113,6 +113,57 @@ class ModularizerTest {
         assertTrue(result.report().contains("acme.provider"));
     }
 
+    /**
+     * A Maven aggregator jar such as {@code vaadin-core} holds no class, only {@code META-INF/maven/**}. It gets an
+     * empty explicit module, which jlink accepts, instead of failing the whole goal (vauban#160).
+     */
+    @Test
+    void aJarWithoutClassesGetsAnEmptyExplicitModule() throws IOException {
+        Path jar = TestJars.jar(tmp.resolve("m2/acme-aggregator-1.0.jar"), null, Map.of(),
+                Map.of("META-INF/maven/com.acme/acme-aggregator/pom.properties", "version=1.0\n"));
+        Path buildDir = tmp.resolve("target");
+
+        Modularizer.Result result = Modularizer.run(List.of(jar), Map.of(jar, "acme-aggregator"),
+                buildDir, defaults(), s -> {});
+
+        Path out = ModularizedJars.root(buildDir).resolve("acme-aggregator-1.0.jar");
+        assertEquals(List.of(out), result.patched());
+        ModuleDescriptor md = ModuleFinder.of(out).findAll().iterator().next().descriptor();
+        assertFalse(md.isAutomatic());
+        assertEquals("acme.aggregator", md.name());
+        assertTrue(md.packages().isEmpty(), md.packages().toString());
+        assertEquals(Set.of("java.base"),
+                md.requires().stream().map(ModuleDescriptor.Requires::name).collect(Collectors.toSet()));
+    }
+
+    /** The single-jar entry point used by {@code vidocq:generate} gives the same empty descriptor. */
+    @Test
+    void synthesizeOneGivesAJarWithoutClassesAnEmptyModule() throws IOException {
+        Path jar = TestJars.jar(tmp.resolve("m2/acme-aggregator-1.0.jar"), null, Map.of(),
+                Map.of("META-INF/maven/com.acme/acme-aggregator/pom.properties", "version=1.0\n"));
+
+        byte[] descriptor = Modularizer.synthesizeOne(jar, List.of(jar), true, s -> {}).orElseThrow();
+
+        ModuleDescriptor md = ModuleDescriptor.read(java.nio.ByteBuffer.wrap(descriptor));
+        assertEquals("acme.aggregator", md.name());
+        assertTrue(md.packages().isEmpty(), md.packages().toString());
+    }
+
+    /**
+     * Classes in the unnamed package fit in no named module: an empty one would silently lose them, so the goal
+     * still fails, naming the jar.
+     */
+    @Test
+    void aJarWithClassesInTheUnnamedPackageOnlyStillFails() throws IOException {
+        Path classes = tmp.resolve("unnamed-classes");
+        TestJars.compileClass(classes, "Lonely", "public class Lonely {}");
+        Path jar = TestJars.jar(tmp.resolve("m2/acme-unnamed-1.0.jar"), classes, Map.of(), Map.of());
+
+        IOException e = assertThrows(IOException.class, () -> Modularizer.run(List.of(jar),
+                Map.of(jar, "acme-unnamed"), tmp.resolve("target"), defaults(), s -> {}));
+        assertTrue(e.getMessage().contains("acme-unnamed-1.0.jar"), e.getMessage());
+    }
+
     @Test
     void derivedModeSkipsAutomaticNamedJars() throws IOException {
         Path classes = tmp.resolve("named-classes");
