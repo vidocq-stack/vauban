@@ -66,6 +66,7 @@ final class ComponentProviders {
         } catch (Throwable _) {
             // misconfigured/absent services — keep the explicit providers, fall back otherwise
         }
+        all = new ArrayList<>(withTestCompanions(all));
         // Trampoline re-layering (Vidocq.run from an IDE launch) resolves the application
         // BOTH in the boot layer and in the Vauban layer: ServiceLoader then yields each
         // generated provider twice — the layer one (woven world) and its boot-layer twin
@@ -85,6 +86,67 @@ final class ComponentProviders {
             all = new ArrayList<>(byName.values());
         }
         return new ComponentProviders(all);
+    }
+
+    private static final String MAIN_PROVIDER = "_VaubanComponents";
+
+    /**
+     * {@code providers}, each {@code _VaubanComponents} followed by the {@code _VaubanComponentsTests} of its
+     * package when there is one (vauban#101). That provider is what a module's test compilation emits; no
+     * {@code provides} clause can name it, since {@code module-info} belongs to the main sources, so it is found by
+     * name through the lookup the main provider grants. Added once, and not when it is already in the list.
+     */
+    static List<VaubanComponentProvider> withTestCompanions(List<VaubanComponentProvider> providers) {
+        var present = new java.util.HashSet<String>();
+        providers.forEach(provider -> present.add(provider.getClass().getName()));
+        var result = new ArrayList<VaubanComponentProvider>(providers.size());
+        for (var provider : providers) {
+            result.add(provider);
+            var type = provider.getClass();
+            if (!type.getSimpleName().equals(MAIN_PROVIDER)) {
+                continue;
+            }
+            var companionName = type.getName() + "Tests";
+            if (!present.add(companionName)) {
+                continue;
+            }
+            var companion = testCompanionOf(provider, companionName);
+            if (companion != null) {
+                result.add(companion);
+            }
+        }
+        return result;
+    }
+
+    /** The {@code companionName} provider, built through {@code provider}'s own lookup; {@code null} when absent. */
+    private static VaubanComponentProvider testCompanionOf(VaubanComponentProvider provider, String companionName) {
+        var received = new java.lang.invoke.MethodHandles.Lookup[1];
+        try {
+            provider.grantModuleLookup(io.vidocq.vauban.api.access.ModuleLookupGrants.newGrant(
+                    lookup -> received[0] = lookup));
+        } catch (RuntimeException | LinkageError misbehaving) {
+            return null;
+        }
+        var lookup = received[0];
+        // Only the provider's own lookup, as ModuleLookups requires: another would build a class elsewhere.
+        if (lookup == null || lookup.lookupClass() != provider.getClass() || !lookup.hasFullPrivilegeAccess()) {
+            return null;
+        }
+        try {
+            var type = lookup.findClass(companionName);
+            if (!VaubanComponentProvider.class.isAssignableFrom(type)) {
+                return null;
+            }
+            var constructor = lookup.findConstructor(type, java.lang.invoke.MethodType.methodType(void.class));
+            return (VaubanComponentProvider) constructor.invoke();
+        } catch (ClassNotFoundException absent) {
+            return null;
+        } catch (Throwable broken) {
+            System.getLogger(ComponentProviders.class.getName()).log(System.Logger.Level.WARNING,
+                    "Cannot build the test provider " + companionName + " (" + broken.getClass().getName()
+                            + "); the beans of the module's test sources are not available.", broken);
+            return null;
+        }
     }
 
     private static ClassLoader layerLoaderOf(ClassLoader cl) {

@@ -831,7 +831,115 @@ public class VaubanProcessor extends AbstractProcessor {
             writeBceProcessedMarker();
         }
 
+        mergeMainRoundIndexes();
+
         return true;
+    }
+
+    /**
+     * The main sources' output, when this compilation is another round over the same module, its tests typically
+     * (vauban#101). From {@code -Avauban.mainOutput}, else from a main {@code _VaubanComponents} found outside this
+     * round's output, else from the build tools' layouts: Maven's {@code test-classes} next to {@code classes},
+     * Gradle's {@code classes/java/test} next to {@code classes/java/main}. {@code null} for a main round.
+     */
+    private java.nio.file.Path mainOutput() {
+        if (mainOutputResolved) {
+            return mainOutput;
+        }
+        mainOutputResolved = true;
+        var option = processingEnv.getOptions().get("vauban.mainOutput");
+        if (option != null && !option.isBlank()) {
+            mainOutput = existingDirectory(java.nio.file.Path.of(option.trim()));
+            return mainOutput;
+        }
+        if (mainOutputFromProvider != null) {
+            mainOutput = mainOutputFromProvider;
+            return mainOutput;
+        }
+        var output = classOutput();
+        if (output == null) {
+            return null;
+        }
+        var name = output.getFileName() == null ? "" : output.getFileName().toString();
+        if (name.equals("test-classes") && output.getParent() != null) {
+            mainOutput = existingDirectory(output.getParent().resolve("classes"));
+        } else if (name.equals("test") && output.getParent() != null && output.getParent().getFileName() != null
+                && output.getParent().getParent() != null
+                && output.getParent().getParent().getFileName() != null
+                && output.getParent().getParent().getFileName().toString().equals("classes")) {
+            mainOutput = existingDirectory(output.getParent().resolve("main"));
+        }
+        return mainOutput;
+    }
+
+    private java.nio.file.Path mainOutput;
+    private boolean mainOutputResolved;
+    /** The main output a main {@code _VaubanComponents} found outside this round's output points to. */
+    private java.nio.file.Path mainOutputFromProvider;
+
+    private static java.nio.file.Path existingDirectory(java.nio.file.Path dir) {
+        return java.nio.file.Files.isDirectory(dir) ? dir.toAbsolutePath().normalize() : null;
+    }
+
+    /** This round's class output directory, or {@code null} when it is no directory. */
+    private java.nio.file.Path classOutput() {
+        try {
+            var probe = processingEnv.getFiler().getResource(StandardLocation.CLASS_OUTPUT, "", "vauban-round-probe");
+            return java.nio.file.Path.of(probe.toUri()).getParent().toAbsolutePath().normalize();
+        } catch (IOException | IllegalArgumentException | java.nio.file.FileSystemNotFoundException e) {
+            return null;
+        }
+    }
+
+    /** The line-based indexes a test round writes that hide the main round's when the tests patch the module. */
+    private static final List<String> MERGED_INDEXES = List.of(BEANS_LIST_PATH, REQUIRED_OPENS_PATH,
+            BCE_RUNTIME_LIST_PATH, io.vidocq.vauban.core.extensions.FrozenContexts.PATH);
+
+    /** The binary indexes, which are not merged: a test round that writes one next to a main one is reported. */
+    private static final List<String> UNMERGED_INDEXES = List.of(
+            io.vidocq.vauban.core.extensions.EnhancementPatchSerializer.PATCH_PATH,
+            SyntheticMetadataSerializer.METADATA_PATH);
+
+    /**
+     * In a test round, adds the main round's lines to each index this round wrote (vauban#101). When the tests run,
+     * the test output patches the module and its {@code META-INF/vauban-beans.list} hides the main one, so the
+     * main beans vanished from discovery. A merged list makes the shadowing harmless.
+     */
+    private void mergeMainRoundIndexes() {
+        var main = mainOutput();
+        var output = classOutput();
+        if (main == null || output == null || main.equals(output)) {
+            return;
+        }
+        for (var path : MERGED_INDEXES) {
+            var own = output.resolve(path);
+            var theirs = main.resolve(path);
+            if (!java.nio.file.Files.isRegularFile(own) || !java.nio.file.Files.isRegularFile(theirs)) {
+                continue;
+            }
+            try {
+                var lines = new ArrayList<>(java.nio.file.Files.readAllLines(own, StandardCharsets.UTF_8));
+                var present = new java.util.HashSet<>(lines);
+                for (var line : java.nio.file.Files.readAllLines(theirs, StandardCharsets.UTF_8)) {
+                    if (!line.isBlank() && !line.startsWith("#") && present.add(line)) {
+                        lines.add(line);
+                    }
+                }
+                java.nio.file.Files.write(own, lines, StandardCharsets.UTF_8);
+            } catch (IOException e) {
+                processingEnv.getMessager().printMessage(Diagnostic.Kind.WARNING,
+                        "[Vauban] Cannot add the main sources' " + path + " to the test compilation's: "
+                                + e.getMessage() + ". When the tests run, the main beans may be missing.");
+            }
+        }
+        for (var path : UNMERGED_INDEXES) {
+            if (java.nio.file.Files.isRegularFile(output.resolve(path))
+                    && java.nio.file.Files.isRegularFile(main.resolve(path))) {
+                processingEnv.getMessager().printMessage(Diagnostic.Kind.WARNING,
+                        "[Vauban] The test compilation wrote " + path + " next to the main sources' one; when the"
+                                + " tests run it hides the main one, which is not merged (vauban#101).");
+            }
+        }
     }
 
     // --- ProxyLink weave plan (javac tier) ---
@@ -1897,7 +2005,10 @@ public class VaubanProcessor extends AbstractProcessor {
             List<String> clientProxyFqns,
             List<ComponentProviderGenerator.ProducerProxy> producerProxies,
             List<ClassInfo> annotationTypes) {
-        var gen = ComponentProviderGenerator.generateFrom(pkg, components, fieldInjects, methodInvokes,
+        boolean testRound = isTestRound(pkg);
+        var gen = ComponentProviderGenerator.generateFrom(pkg,
+                testRound ? ComponentProviderGenerator.TEST_SIMPLE_NAME : ComponentProviderGenerator.SIMPLE_NAME,
+                components, fieldInjects, methodInvokes,
                 clientProxyFqns, producerProxies, AnnotationArtefacts.render(annotationTypes, this::canonicalName), bytecodeClasses);
         try {
             var file = processingEnv.getFiler().createSourceFile(gen.className());
@@ -1907,8 +2018,11 @@ public class VaubanProcessor extends AbstractProcessor {
             processingEnv.getMessager().printMessage(Diagnostic.Kind.NOTE,
                     "[Vauban] Generated " + gen.className() + " (" + components.size() + " component(s), "
                             + fieldInjects.size() + " field(s), " + methodInvokes.size() + " method(s)). "
-                            + "On the module path, add to module-info: provides "
-                            + "io.vidocq.vauban.api.VaubanComponentProvider with " + gen.className() + ";");
+                            + (testRound
+                                    ? "Test compilation: the container finds it through the main sources' "
+                                            + ComponentProviderGenerator.SIMPLE_NAME + "."
+                                    : "On the module path, add to module-info: provides "
+                                            + "io.vidocq.vauban.api.VaubanComponentProvider with " + gen.className() + ";"));
             return gen.className();
         } catch (IOException e) {
             processingEnv.getMessager().printMessage(Diagnostic.Kind.WARNING,
@@ -1932,7 +2046,54 @@ public class VaubanProcessor extends AbstractProcessor {
         return types.stream().sorted(java.util.Comparator.comparing(c -> c.name().value())).toList();
     }
 
+    /**
+     * Whether this compilation is another round over the same module, its test sources typically (vauban#101): the
+     * package already has a {@code _VaubanComponents} class file, and it lies outside this compilation's own
+     * output. One found in the own output is a stale copy from an earlier build of the same sources, not another
+     * round's.
+     */
+    private boolean isTestRound(String pkg) {
+        var name = pkg.isEmpty() ? ComponentProviderGenerator.SIMPLE_NAME : pkg + "." + ComponentProviderGenerator.SIMPLE_NAME;
+        var existing = processingEnv.getElementUtils().getTypeElement(name);
+        if (existing == null) {
+            return false;
+        }
+        var file = processingEnv.getElementUtils().getFileObjectOf(existing);
+        if (file == null || file.getKind() != javax.tools.JavaFileObject.Kind.CLASS) {
+            return false;
+        }
+        try {
+            var probe = processingEnv.getFiler().getResource(StandardLocation.CLASS_OUTPUT, "", "vauban-round-probe");
+            var output = java.nio.file.Path.of(probe.toUri()).getParent().toAbsolutePath().normalize();
+            var found = java.nio.file.Path.of(file.toUri()).toAbsolutePath().normalize();
+            if (found.startsWith(output)) {
+                return false;
+            }
+            // The main output is the class file's directory minus the package path.
+            var root = found.getParent();
+            for (int i = 0; !pkg.isEmpty() && i < pkg.split("\\.").length && root != null; i++) {
+                root = root.getParent();
+            }
+            if (root != null && mainOutputFromProvider == null) {
+                mainOutputFromProvider = root;
+            }
+            return true;
+        } catch (IOException | IllegalArgumentException | java.nio.file.FileSystemNotFoundException e) {
+            // A class file in a jar, or an output that is no directory: not this module's main output.
+            return false;
+        }
+    }
+
     private void writeComponentProviderService(List<String> providerClassNames) {
+        // The test round's provider is found through the main one (vauban#101): listing it here as well would
+        // register it twice on the class path.
+        providerClassNames = providerClassNames.stream()
+                .filter(name -> !name.endsWith("." + ComponentProviderGenerator.TEST_SIMPLE_NAME)
+                        && !name.equals(ComponentProviderGenerator.TEST_SIMPLE_NAME))
+                .toList();
+        if (providerClassNames.isEmpty()) {
+            return;
+        }
         try {
             var resource = processingEnv.getFiler().createResource(
                     StandardLocation.CLASS_OUTPUT, "",

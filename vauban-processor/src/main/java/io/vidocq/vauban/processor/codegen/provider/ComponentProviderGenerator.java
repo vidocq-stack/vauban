@@ -70,6 +70,12 @@ import java.util.stream.Collectors;
 public final class ComponentProviderGenerator {
 
     public static final String SIMPLE_NAME = "_VaubanComponents";
+
+    /**
+     * The provider a module's test compilation emits (vauban#101): a second {@code _VaubanComponents} would shadow
+     * the main sources' one when the tests run. The container finds it through the main provider's lookup.
+     */
+    public static final String TEST_SIMPLE_NAME = "_VaubanComponentsTests";
     private static final String SPI = "io.vidocq.vauban.api.VaubanComponentProvider";
 
     private ComponentProviderGenerator() {}
@@ -190,7 +196,17 @@ public final class ComponentProviderGenerator {
             List<FieldInject> fieldInjects, List<MethodInvoke> methodInvokes,
             List<String> clientProxyFqns, List<ProducerProxy> producerProxies,
             AnnotationArtefacts.Rendered annotations, java.util.Set<String> bytecodeClasses) {
-        var className = packageName.isEmpty() ? SIMPLE_NAME : packageName + "." + SIMPLE_NAME;
+        return generateFrom(packageName, SIMPLE_NAME, components, fieldInjects, methodInvokes, clientProxyFqns,
+                producerProxies, annotations, bytecodeClasses);
+    }
+
+    /** {@link #generateFrom(String, List, List, List, List, List, AnnotationArtefacts.Rendered, java.util.Set)}
+     * under {@code simpleName}: {@link #SIMPLE_NAME}, or {@link #TEST_SIMPLE_NAME} for a test compilation. */
+    public static Generated generateFrom(String packageName, String simpleName, List<Component> components,
+            List<FieldInject> fieldInjects, List<MethodInvoke> methodInvokes,
+            List<String> clientProxyFqns, List<ProducerProxy> producerProxies,
+            AnnotationArtefacts.Rendered annotations, java.util.Set<String> bytecodeClasses) {
+        var className = packageName.isEmpty() ? simpleName : packageName + "." + simpleName;
         var noArg = components.stream().filter(Component::noArg).toList();
         var withArgs = components.stream().filter(c -> !c.noArg()).toList();
 
@@ -203,7 +219,7 @@ public final class ComponentProviderGenerator {
         // @Vetoed: never a CDI bean — so even Weld in bean-discovery-mode=all skips it. Vauban loads
         // it via ServiceLoader, not by scanning, so vetoing it is neutral here.
         sb.append("@jakarta.enterprise.inject.Vetoed\n");
-        sb.append("public final class ").append(SIMPLE_NAME)
+        sb.append("public final class ").append(simpleName)
                 .append(" implements ").append(SPI).append(" {\n");
 
         sb.append("    @Override\n");

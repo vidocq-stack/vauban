@@ -416,3 +416,22 @@ class GreetingServiceTest {
 ----
 
 The extension boots a minimal container per test class. See xref:reference.adoc#junit-extension[the JUnit reference].
+
+[[test-sources-beans]]
+=== Beans in the test sources [.tag-new]#NEW#
+
+A bean can live in `src/test/java`, in the same package as the main beans, and inject them. Maven compiles a
+module twice, the main sources then the tests, and the processor runs on both. The test compilation used to emit a
+second `_VaubanComponents` and a second `META-INF/vauban-beans.list`: when the tests ran, they hid the main ones, and
+the main beans went missing (`Unsatisfied dependency` on a bean that exists). Now (vauban#101):
+
+* the test compilation names its provider `_VaubanComponentsTests`. The container finds it through the main
+  `_VaubanComponents` of the same package, so no `provides` clause is needed, and none could be written: the
+  `module-info` belongs to the main sources;
+* its `vauban-beans.list`, `vauban/required-opens.list`, `vauban-bce-runtime.list` and contexts list also carry the
+  main compilation's lines, so hiding the main ones loses nothing.
+
+The processor recognises a test compilation when the main `_VaubanComponents` it sees lies outside its own output, or
+from the usual layouts (Maven's `target/test-classes`, Gradle's `build/classes/java/test`). Another layout can name
+the main output with `-Avauban.mainOutput=<dir>`. The build-compatible extensions' binary outputs (enhancement patch,
+synthetic beans) are not merged: a test compilation that writes one next to a main one gets a warning.

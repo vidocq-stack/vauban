@@ -30,6 +30,30 @@ with the observer's exception as cause (maintainer's choice: fail rather than lo
 `WARNING` line per event, and `close()` completes. `AnnotationTypes.key` reads `@Initialized`, `@BeforeDestroyed`
 and `@Destroyed` through their `value()`, without reflection.
 
+## VAU-TEST-001 — A bean in the test sources hides the main beans
+- **Date**: 2026-10-18 — **Status**: FIXED (`fix/101-test-component-provider`, vauban#101)
+- **Severity**: medium (any module with a test-only bean next to its own beans)
+
+### Symptom
+A `@ApplicationScoped` bean under `src/test/java`, in the package of the main beans, broke the deployment with
+`Unsatisfied dependency` on a main bean (Vidocq's `vidocq-runtime-mansart-h2-example`: `ProductRepository`).
+
+### Repro
+`TestRoundProviderTest` (vauban-processor), `TestCompanionProviderTest` (vauban-core). End to end: a test bean
+injecting `ProductRepository` in the mansart example fails with `Unsatisfied dependency` before the fix, passes after.
+
+### Cause
+Maven runs the processor on the main sources, then on the tests. The test round emitted a second
+`<package>._VaubanComponents` and a second `META-INF/vauban-beans.list` (and contexts list) from the test sources
+alone; when the tests patch the module, these hide the main ones. The provider alone was not the whole cause: with
+only a renamed provider, the hidden beans list still lost `ProductRepository`.
+
+### Fix
+The test round names its provider `_VaubanComponentsTests` and writes no services entry; `ComponentProviders.load`
+finds it through the lookup the main provider grants. The test round adds the main round's lines to its line-based
+indexes (`vauban-beans.list`, `required-opens.list`, `vauban-bce-runtime.list`, contexts), and warns when it writes a
+binary index next to a main one. Cassini's `$$CassiniAdapter` / `$$CassiniRoutes` are not covered here.
+
 ---
 
 ## VAU-MOD-005 — `vauban:modularize` misses `uses` when the helper is called through a supertype method

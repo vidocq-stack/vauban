@@ -362,6 +362,9 @@ original jars. Bind it to `process-classes` when dev mode must run against the p
 | `-Avauban.validation.scope=all`
 | Default `main`: validation only runs on the principal source set and is skipped automatically when the processor detects a `testCompile` invocation (default output pointing at `target/test-classes`). Set to `all` to enforce validation on test sources too.
 
+| `-Avauban.mainOutput=<dir>` [.tag-new]#NEW#
+| For a test compilation in a layout the processor does not recognise: the main sources' output directory, whose indexes it merges into its own and whose provider its `_VaubanComponentsTests` sits next to. Maven's `target/test-classes` and Gradle's `build/classes/java/test` need nothing (vauban#101). xref:usage.adoc#test-sources-beans[Beans in the test sources].
+
 | `-Avauban.producerProxy=error\|warn\|note` [.tag-new]#NEW#
 | Default `note`. Severity of the diagnostic emitted when a normal-scoped `@Produces` returns a class type that is not build-time proxyable across a module boundary (the runtime then falls back to reflective proxy generation, which needs an `opens`). Set to `error` to enforce zero fallback, `warn` to surface it without failing the build. See xref:internals.adoc#proxy-strategies[Internals — client-proxy strategies].
 |===
