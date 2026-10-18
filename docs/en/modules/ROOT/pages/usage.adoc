@@ -260,6 +260,24 @@ public class OrderListener {
 
 Async observers (`@ObservesAsync`) are dispatched on the `EventDispatcher`'s internal `Executors.newVirtualThreadPerTaskExecutor()`. See xref:internals.adoc#virtual-threads[the threading model].
 
+[[lifecycle-observer-failures]]
+=== When a lifecycle observer throws [.tag-new]#NEW#
+
+The container fires `@Initialized(ApplicationScoped.class)` and `Startup` when it starts, and `Shutdown`,
+`@BeforeDestroyed(ApplicationScoped.class)` and `@Destroyed(ApplicationScoped.class)` when it closes. As CDI 4.1 §9.5
+requires, the first observer of an event that throws stops that event: the observers after it are not notified.
+What Vauban does next (vauban#97):
+
+* **At startup**, the boot fails. `build()` throws a `DeploymentException` that names the observer and the event,
+  with the observer's exception as its cause, and `VaubanContainer.current()` stays `null`: no half-initialized
+  container is left behind. An `Error` thrown by an observer propagates as it is, with the same clean-up.
+* **At shutdown**, `close()` goes on to the end, so the contexts are always destroyed.
+
+In both cases one line is logged at `WARNING` on `io.vidocq.vauban.core.container.VaubanContainer`, with the stack
+trace. It names the event and the observer (`declaring.Class.method`) and says that the remaining observers of the
+event were not notified. Up to now the exception was discarded without a trace, and the application started
+half-initialized.
+
 == Interceptors
 
 [source,java]

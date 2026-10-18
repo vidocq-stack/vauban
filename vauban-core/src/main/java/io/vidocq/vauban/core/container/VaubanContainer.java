@@ -257,14 +257,66 @@ public final class VaubanContainer implements AutoCloseable {
         this.running = true;
         currentInstance = this;
 
-        // CDI lifecycle events: fire @Initialized(ApplicationScoped.class) and @Startup
+        // CDI lifecycle events: fire @Initialized(ApplicationScoped.class) and @Startup. An observer that throws
+        // fails the boot, and no half-built container is left behind (vauban#97).
+        String event = "@Initialized(ApplicationScoped.class)";
         try {
-            eventDispatcher.fire(new Object(),
+            eventDispatcher.fireLifecycle(new Object(),
                     jakarta.enterprise.context.Initialized.Literal.of(jakarta.enterprise.context.ApplicationScoped.class));
-        } catch (Exception e) { /* suppress */ }
+            event = "Startup";
+            eventDispatcher.fireLifecycle(new jakarta.enterprise.event.Startup());
+        } catch (io.vidocq.vauban.core.event.EventDispatcher.LifecycleObserverFailure failure) {
+            logObserverFailure(failure, event, "the container does not start");
+            abortBoot();
+            throw new jakarta.enterprise.inject.spi.DeploymentException("Observer " + failure.observer() + " of "
+                    + event + " threw " + failure.getCause().getClass().getName() + "; the container does not start",
+                    failure.getCause());
+        } catch (RuntimeException | Error e) {
+            abortBoot();
+            throw e;
+        }
+    }
+
+    private static final System.Logger LOG = System.getLogger(VaubanContainer.class.getName());
+
+    /**
+     * One WARNING per exception a lifecycle observer threw, naming the event and the observer, with the stack
+     * trace (vauban#97). CDI 4.1 §9.5: the observers after it were not notified.
+     */
+    private static void logObserverFailure(io.vidocq.vauban.core.event.EventDispatcher.LifecycleObserverFailure failure,
+                                           String event, String consequence) {
+        LOG.log(System.Logger.Level.WARNING, "The lifecycle observer " + failure.observer() + " of " + event
+                + " threw " + failure.getCause().getClass().getName() + ": the remaining observers of that event"
+                + " were not notified, and " + consequence + ".", failure.getCause());
+    }
+
+    /** Undoes what a boot that failed in a lifecycle observer had set up, so that no container is left current. */
+    private void abortBoot() {
+        running = false;
+        if (currentInstance == this) {
+            currentInstance = null;
+        }
         try {
-            eventDispatcher.fire(new jakarta.enterprise.event.Startup());
-        } catch (Exception e) { /* suppress */ }
+            requestContext.deactivate();
+            applicationContext.deactivate();
+        } catch (RuntimeException ignored) {
+            // Best effort: the boot already failed, and its own exception is the one to report.
+        }
+        if (moduleLookups != null) {
+            moduleLookups.close();
+        }
+    }
+
+    /** Fires a lifecycle event at shutdown: an observer that throws is logged, and shutdown goes on (vauban#97). */
+    private void fireAtShutdown(String event, Object payload, java.lang.annotation.Annotation... qualifiers) {
+        try {
+            eventDispatcher.fireLifecycle(payload, qualifiers);
+        } catch (io.vidocq.vauban.core.event.EventDispatcher.LifecycleObserverFailure failure) {
+            logObserverFailure(failure, event, "shutdown goes on");
+        } catch (RuntimeException e) {
+            LOG.log(System.Logger.Level.WARNING, "Firing " + event + " failed in a lifecycle observer ("
+                    + e.getClass().getName() + "); shutdown goes on.", e);
+        }
     }
 
 
@@ -993,13 +1045,9 @@ public final class VaubanContainer implements AutoCloseable {
         interceptorWrapper.clearProxyCache();
 
         // CDI lifecycle events: fire @Shutdown and @BeforeDestroyed/@Destroyed
-        try {
-            eventDispatcher.fire(new jakarta.enterprise.event.Shutdown());
-        } catch (Exception e) { /* suppress */ }
-        try {
-            eventDispatcher.fire(new Object(),
-                    jakarta.enterprise.context.BeforeDestroyed.Literal.of(jakarta.enterprise.context.ApplicationScoped.class));
-        } catch (Exception e) { /* suppress */ }
+        fireAtShutdown("Shutdown", new jakarta.enterprise.event.Shutdown());
+        fireAtShutdown("@BeforeDestroyed(ApplicationScoped.class)", new Object(),
+                jakarta.enterprise.context.BeforeDestroyed.Literal.of(jakarta.enterprise.context.ApplicationScoped.class));
 
         if (currentInstance == this) {
             currentInstance = null;
@@ -1010,10 +1058,8 @@ public final class VaubanContainer implements AutoCloseable {
         requestContext.deactivate();
         applicationContext.deactivate();
 
-        try {
-            eventDispatcher.fire(new Object(),
-                    jakarta.enterprise.context.Destroyed.Literal.of(jakarta.enterprise.context.ApplicationScoped.class));
-        } catch (Exception e) { /* suppress */ }
+        fireAtShutdown("@Destroyed(ApplicationScoped.class)", new Object(),
+                jakarta.enterprise.context.Destroyed.Literal.of(jakarta.enterprise.context.ApplicationScoped.class));
     }
 
     /**

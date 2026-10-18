@@ -5,6 +5,33 @@ suspected cause, status. Updated on every investigation.
 
 ---
 
+## VAU-LIFE-001 — A throwing lifecycle observer is swallowed; with reflection forbidden, the observers are never called
+- **Date**: 2026-10-18 — **Status**: FIXED (`fix/97-lifecycle-observer-failures`, vauban#97)
+- **Severity**: high (an application starts half-initialized with no trace; under `forbid`, lifecycle observers never run)
+
+### Symptom
+`VaubanContainer` fired `@Initialized(ApplicationScoped.class)`, `Startup`, `Shutdown`, `@BeforeDestroyed` and
+`@Destroyed(ApplicationScoped.class)` inside `catch (Exception e) { /* suppress */ }`. An observer that threw stopped
+the event (CDI 4.1 §9.5), the exception was discarded, nothing was logged, and `build()` returned a half-initialized
+container. An `Error` propagated but left `VaubanContainer.current()` on the half-built container.
+
+The same `catch` hid a second defect: with `vauban.annotations.reflection=forbid`, computing the key of the
+`@Initialized(ApplicationScoped.class)` literal needed reflection and threw, so those observers were never notified,
+silently.
+
+### Repro
+`LifecycleObserverFailureTest` (vauban-core): a throwing `@Initialized` observer, an `Error`, a throwing `Shutdown`
+observer, the qualifier keys under `forbid`; `GeneratedAnnotationProviderTest` boots under `forbid`.
+
+### Fix
+`EventDispatcher.fireLifecycle` names the observer that threw (`LifecycleObserverFailure`). At startup: one
+`WARNING` line with the stack trace, the boot undone (`running`, `current()`, contexts), and a `DeploymentException`
+with the observer's exception as cause (maintainer's choice: fail rather than log and go on). At shutdown: one
+`WARNING` line per event, and `close()` completes. `AnnotationTypes.key` reads `@Initialized`, `@BeforeDestroyed`
+and `@Destroyed` through their `value()`, without reflection.
+
+---
+
 ## VAU-MOD-005 — `vauban:modularize` misses `uses` when the helper is called through a supertype method
 - **Date**: 2026-10-15 — **Status**: FIXED (`fix/uses-through-supertype`, vauban#167)
 - **Severity**: high (an explicit module fails its own lookup at boot)

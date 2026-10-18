@@ -133,6 +133,17 @@ public final class AnnotationTypes {
         if (AnnotationKey.ANY.type().value().equals(name)) {
             return AnnotationKey.ANY;
         }
+        // The context lifecycle qualifiers the container fires itself, read through their one member: with
+        // reflection forbidden, @Initialized(ApplicationScoped.class) used to throw here (vauban#97).
+        if (annotation instanceof jakarta.enterprise.context.Initialized scope) {
+            return key(DotName.of(name), Map.of("value", new AnnotationValue.ClassVal(DotName.of(scope.value().getName()))));
+        }
+        if (annotation instanceof jakarta.enterprise.context.BeforeDestroyed scope) {
+            return key(DotName.of(name), Map.of("value", new AnnotationValue.ClassVal(DotName.of(scope.value().getName()))));
+        }
+        if (annotation instanceof jakarta.enterprise.context.Destroyed scope) {
+            return key(DotName.of(name), Map.of("value", new AnnotationValue.ClassVal(DotName.of(scope.value().getName()))));
+        }
         if (annotation instanceof jakarta.inject.Named named) {
             return key(DotName.of(name), Map.of("value", new AnnotationValue.StringVal(named.value())));
         }

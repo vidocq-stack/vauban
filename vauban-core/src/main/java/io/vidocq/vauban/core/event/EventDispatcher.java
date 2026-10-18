@@ -64,6 +64,47 @@ public final class EventDispatcher {
         fire(event, null, qualifiers);
     }
 
+    /**
+     * An observer of a container lifecycle event threw (vauban#97). Carries the observer, as
+     * {@code declaring.class.method}, because the container that fires the event cannot know which one it was.
+     */
+    public static final class LifecycleObserverFailure extends RuntimeException {
+        private final String observer;
+
+        LifecycleObserverFailure(String observer, RuntimeException cause) {
+            super(observer, cause, false, false);
+            this.observer = observer;
+        }
+
+        /** The observer that threw, as {@code declaring.class.method}. */
+        public String observer() {
+            return observer;
+        }
+
+        @Override
+        public synchronized RuntimeException getCause() {
+            return (RuntimeException) super.getCause();
+        }
+    }
+
+    /**
+     * Fires a container lifecycle event as {@link #fire(Object, Annotation...)} does, CDI 4.1 §9.5 included: the
+     * first observer that throws stops the notification. Its exception comes out as a
+     * {@link LifecycleObserverFailure} naming that observer, so the container can say which one failed (vauban#97).
+     * An {@link Error} propagates unchanged.
+     */
+    public void fireLifecycle(Object event, Annotation... qualifiers) {
+        var matching = findMatchingObservers(event.getClass(), false, keysOf(qualifiers));
+        matching.sort(Comparator.comparingInt(ObserverDescriptor::priority));
+        for (var observer : matching) {
+            try {
+                invokeObserver(observer, event, null, null, qualifiers);
+            } catch (RuntimeException e) {
+                throw new LifecycleObserverFailure(observer.declaringClass() + "." + observer.methodName(), e);
+            }
+        }
+    }
+
     public <T> void fire(T event, jakarta.enterprise.inject.spi.InjectionPoint eventInjectionPoint,
             Annotation... qualifiers) {
         fire(event, null, eventInjectionPoint, keysOf(qualifiers), qualifiers);
