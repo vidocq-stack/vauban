@@ -1,3 +1,28 @@
+# CDI 1015 controlled access relay experiments — 2026-10-20
+
+User-approved implementation on `experiment/cdi-1015-access-relay`, in an isolated worktree.
+The experiment starts with the promised private Fault Tolerance fallback comparison and
+also covers package access for proxies and reflective extension delegation where possible.
+
+- [x] Create an isolated branch from current `origin/main`; preserve the existing checkout.
+- [x] Locate the published lookup-donation baseline and identify the real FT access module.
+- [x] Add an isolated, reproducible module-path experiment with a genuine experimental CDI API jar.
+- [x] Compare the same fallback bean using donation and explicitly authorized opens relay.
+- [x] Verify refusal without authorization, wrong recipients and missing package openings in fresh JVMs.
+- [x] Exercise extension reflection and generated class/read-edge behavior with explicit scope.
+- [x] Run the focused experiments on Java 25 and record exact commands and results.
+- [x] Document experimental API/container adaptations, remaining limits and next CDI discussion report.
+
+Review: all 12 scenarios pass on Temurin Java 25 after clean Vauban/Heisenberg builds.
+Relay cases explicitly exclude donated lookups; denied FT/extension cases check access
+failures. Runtime uses no `--add-opens`, `--add-reads`, `--patch-module`, agent or
+Vauban-owned application module layer. Every original CDI/core jar entry, including
+module descriptors, remains byte-identical after adding the experimental helpers.
+The shared-module case confirms persistent openings across container instances.
+Proxy and reflection probes have narrower scope than a CDI Full implementation/TCK;
+the FT case uses the real Vauban/Heisenberg integration. See
+`experiments/cdi-1015/RESULTS.md` and `target/manifest.json` for the recorded evidence.
+
 # BCE-added public field injection — 2026-10-09
 
 - [x] Inspect the shared collector and APT provider generation without changing existing runtime work.
