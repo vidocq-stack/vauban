@@ -8,5 +8,7 @@ module experiment.external.beans {
     requires microprofile.fault.tolerance.api;
 
     exports experiment.external.beans;
+    exports experiment.external.other;
     opens experiment.external.beans to jakarta.cdi;
+    opens experiment.external.other to jakarta.cdi;
 }

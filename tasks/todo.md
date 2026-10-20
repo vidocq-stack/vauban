@@ -1,28 +1,20 @@
-# CDI 1015 SE bootstrap example — 2026-10-20
+# CDI 1015 SE API proposal — 2026-10-20
 
-- [x] Start from the standard SE provider selection and retain that exact initializer.
-- [x] Prepare openings inside the experimental container adapter's initialize method.
-- [x] Add a short SE example, run it with the existing external library, and document its scope.
-- [x] Verify the focused suite and prepare the branch update for publication.
+- [x] Keep the independent standard-API library and remove old provider comparisons.
+- [x] Add broad and package-scoped allowAccessFor methods to an experimental CDI SE API copy.
+- [x] Bind the opener during normal SE provider selection and prepare access inside initialize.
+- [x] Replace application wrappers with the proposed fluent API and cover a second package.
+- [x] Preserve all original jar entries except the two intentionally replaced bootstrap classes.
+- [x] Document exact access semantics and verify the focused suite.
+- [x] Prepare the branch update for publication.
 
-Review: all six checks pass on Java 25. The SE scenario confirms configuration
-does not open the library; initialize performs the relay, read preparation and
-authorized FT delegation. The standalone SeExample main also returns the expected
-private fallback. Original jar entries remain preserved. The adapter explicitly
-requires disabled discovery and registered bean classes.
-
-# CDI 1015 external library relay — 2026-10-20
-
-- [x] Remove generated-provider comparisons and separate bytecode/extension probes.
-- [x] Keep one external library with three access scenarios and two integrity checks.
-- [x] Simplify Maven, launcher comments and documentation to match this scope.
-- [x] Verify the focused Maven suite and prepare the cleaned branch for publication.
-
-Review: clean Maven verification passes all five checks on Java 25. The three
-external-library scenarios cover authorized FT, refused FT and missing library
-consent. Two checks preserve API/container jar entries and the standard-API-only
-library contents. The processor dependency and all old comparison sources are
-removed; no component-provider declaration remains in the experiment.
+Review: six checks pass on Java 25; the standalone SE main prints its private
+fallback result. Broad authorization enables both packages; scoped authorization
+enables the first and refuses the second during FT deployment validation.
+Without library consent, actual CDI access fails and the graph remains unchanged.
+The application no longer depends on Vauban or calls a bootstrap wrapper.
+Only explicit registrations receive access preparation. Authorization relays
+openings; generated-code reads remain the container's responsibility.
 
 # BCE-added public field injection — 2026-10-09
 

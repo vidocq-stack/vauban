@@ -4,7 +4,6 @@
  */
 module experiment.external.app {
     requires jakarta.cdi;
-    requires io.vidocq.vauban.core;
     requires io.vidocq.heisenberg.cdi.vauban;
     requires experiment.external.beans;
 }

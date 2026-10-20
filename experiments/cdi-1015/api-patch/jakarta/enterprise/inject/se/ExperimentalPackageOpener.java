@@ -20,28 +20,24 @@
 package jakarta.enterprise.inject.se;
 
 import java.lang.invoke.MethodHandles;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.Map;
 import java.util.Objects;
-import java.util.ServiceLoader;
+import java.util.Set;
 
 /**
- * An experimental opening relay for the investigation of jakartaee/cdi#1015.
+ * Experimental CDI #1015 relay bound by the API to its selected SE initializer.
  *
- * <p>This class is added to a local copy of the real CDI API jar for the
- * experiment. It is not an API defined by CDI. Its own module must be
- * {@code jakarta.cdi}, so a library's {@code opens ... to jakarta.cdi}
- * declaration authorizes the call to {@link Module#addOpens} made here.</p>
+ * <p>The provider seals the application policy at startup. This relay opens a
+ * consented package only to that provider and returns the additional recipients
+ * authorized by the application. The provider performs those further relays.
+ * No read edge or export is changed here.</p>
  *
- * <p>The factory uses the CDI SE API's provider selection and authenticates
- * the requesting provider module. The caller must use the returned
- * {@linkplain #initializer() initializer} to start the experiment's container.
- * The standard selection rejects multiple available CDI SE implementations;
- * this experiment does not add a selection policy for that case.</p>
- *
- * <p>Authorization is at module granularity. An opening is shared by every
- * container using those same {@link Module} objects and survives container
- * shutdown. This helper neither isolates container instances nor revokes
- * openings. Delegation to an extension requires a separate, explicit
- * application authorization enforced by the container adapter.</p>
+ * <p>Policy belongs to one initializer, while resulting openings belong to
+ * modules: they are shared by containers using the same module objects and are
+ * not revoked at shutdown. This is not a sandbox against code allowed to start
+ * another container and configure its own policy.</p>
  */
 public final class ExperimentalPackageOpener {
     private static final StackWalker CALLERS =
@@ -49,93 +45,90 @@ public final class ExperimentalPackageOpener {
 
     private final SeContainerInitializer initializer;
     private final Module providerModule;
+    private final Set<Module> generalRecipients = new HashSet<>();
+    private final Map<SourcePackage, Set<Module>> packageRecipients = new HashMap<>();
+    private boolean sealed;
 
-    private ExperimentalPackageOpener(SeContainerInitializer initializer) {
-        this.initializer = initializer;
+    // Only code inside the CDI API's package can bind an opener.
+    ExperimentalPackageOpener(SeContainerInitializer initializer) {
+        this.initializer = Objects.requireNonNull(initializer, "initializer");
         this.providerModule = initializer.getClass().getModule();
     }
 
-    /**
-     * Selects the CDI SE provider and creates a relay usable by that module.
-     *
-     * @param providerLookup a full privilege lookup created inside the provider
-     * @return the relay bound to the selected initializer and its actual module
-     * @throws SecurityException if the lookup or immediate caller does not
-     *         belong to the selected provider module
-     * @throws IllegalStateException if CDI SE cannot select one provider
-     */
-    public static ExperimentalPackageOpener forProvider(MethodHandles.Lookup providerLookup) {
-        Objects.requireNonNull(providerLookup, "providerLookup");
-        Module callerModule = CALLERS.getCallerClass().getModule();
-        var selected = SeContainerInitializer.newInstance();
-        Module selectedModule = selected.getClass().getModule();
-        requireProvider(providerLookup, callerModule, selectedModule);
-        return new ExperimentalPackageOpener(selected);
+    synchronized void authorize(Module recipient) {
+        requireUnsealed();
+        generalRecipients.add(Objects.requireNonNull(recipient, "recipient"));
     }
 
-    /**
-     * Binds the relay to an initializer already selected by the application.
-     *
-     * <p>This fixture supports a single constructor-based service provider whose
-     * advertised type is the initializer's exact class. Checking the service
-     * declaration does not instantiate a second initializer.</p>
-     *
-     * @param providerLookup a full privilege lookup created inside the provider
-     * @param initializer the initializer selected by CDI SE
-     * @return the relay bound to that same initializer
-     */
-    public static ExperimentalPackageOpener forProvider(MethodHandles.Lookup providerLookup,
-                                                         SeContainerInitializer initializer) {
-        Objects.requireNonNull(providerLookup, "providerLookup");
-        Objects.requireNonNull(initializer, "initializer");
-        Module callerModule = CALLERS.getCallerClass().getModule();
-        var providers = ServiceLoader.load(SeContainerInitializer.class,
-                SeContainerInitializer.class.getClassLoader()).stream().toList();
-        if (providers.size() != 1) {
-            throw new IllegalStateException("The experiment requires exactly one CDI SE provider");
+    synchronized void authorize(Module recipient, Module source, String... packages) {
+        requireUnsealed();
+        Objects.requireNonNull(recipient, "recipient");
+        Objects.requireNonNull(source, "source");
+        Objects.requireNonNull(packages, "packages");
+        if (packages.length == 0) {
+            throw new IllegalArgumentException("At least one package must be authorized");
         }
-        if (providers.getFirst().type() != initializer.getClass()) {
-            throw new SecurityException("Initializer is not the advertised CDI SE provider");
+        Set<SourcePackage> requested = new HashSet<>();
+        for (String packageName : packages) {
+            Objects.requireNonNull(packageName, "packageName");
+            if (packageName.isEmpty() || !source.getPackages().contains(packageName)) {
+                throw new IllegalArgumentException("Source module does not contain package " + packageName);
+            }
+            requested.add(new SourcePackage(source, packageName));
         }
-        requireProvider(providerLookup, callerModule, initializer.getClass().getModule());
-        return new ExperimentalPackageOpener(initializer);
+        // Validate the entire request before recording any part of it.
+        for (SourcePackage requestedPackage : requested) {
+            packageRecipients.computeIfAbsent(requestedPackage, ignored -> new HashSet<>()).add(recipient);
+        }
+    }
+
+    synchronized void seal(SeContainerInitializer requester) {
+        if (requester != initializer) {
+            throw new SecurityException("Opening policy belongs to a different CDI initializer");
+        }
+        sealed = true;
     }
 
     /**
-     * Returns the exact initializer selected when this relay was created.
+     * Returns the actual module of the initializer selected by CDI.
      *
-     * @return the initializer to configure and initialize
-     */
-    public SeContainerInitializer initializer() {
-        return initializer;
-    }
-
-    /**
-     * Returns the actual selected provider module, rather than a module name.
-     *
-     * @return the module receiving openings
+     * @return the provider module
      */
     public Module providerModule() {
         return providerModule;
     }
 
     /**
-     * Relays an opening available to the CDI API to the selected provider.
+     * Opens a consented package to the provider and returns authorized delegates.
      *
-     * <p>Caller authentication and source validation precede the module graph
-     * mutation. This method grants no access to an extension module and does
-     * not change either module's read edges.</p>
+     * <p>The immediate caller and full privilege lookup must both belong to the
+     * selected provider module. The package must already be open to the actual
+     * {@code jakarta.cdi} module containing this class. Additional recipients
+     * receive no opening until the provider relays it itself.</p>
      *
      * @param providerLookup a full privilege lookup created inside the provider
      * @param source the module containing the bean package
      * @param packageName the exact package to open
-     * @throws SecurityException if the lookup or immediate caller is not from
-     *         the selected provider module, or the package is not open to CDI
-     * @throws IllegalArgumentException if the source does not contain the package
+     * @return an immutable set of application-authorized recipient modules
+     * @throws IllegalStateException if the provider has not sealed the policy
+     * @throws SecurityException if the caller is unauthorized or the source
+     *         package is not open to CDI
+     * @throws IllegalArgumentException if source does not contain the package
+     * @throws NullPointerException if an argument is null
      */
-    public void openPackage(MethodHandles.Lookup providerLookup, Module source, String packageName) {
+    public synchronized Set<Module> openPackage(MethodHandles.Lookup providerLookup, Module source,
+            String packageName) {
+        if (!sealed) {
+            throw new IllegalStateException("The CDI provider must seal its access policy before requesting openings");
+        }
         Objects.requireNonNull(providerLookup, "providerLookup");
-        requireProvider(providerLookup, CALLERS.getCallerClass().getModule(), providerModule);
+        Module callerModule = CALLERS.getCallerClass().getModule();
+        if (!providerModule.isNamed()
+                || !providerLookup.hasFullPrivilegeAccess()
+                || providerLookup.lookupClass().getModule() != providerModule
+                || callerModule != providerModule) {
+            throw new SecurityException("Only the selected CDI provider module may request an opening");
+        }
         Objects.requireNonNull(source, "source");
         Objects.requireNonNull(packageName, "packageName");
         if (!source.getPackages().contains(packageName)) {
@@ -144,15 +137,19 @@ public final class ExperimentalPackageOpener {
         if (!source.isOpen(packageName, ExperimentalPackageOpener.class.getModule())) {
             throw new SecurityException("Source package is not open to jakarta.cdi: " + packageName);
         }
+        Set<Module> recipients = new HashSet<>(generalRecipients);
+        recipients.addAll(packageRecipients.getOrDefault(new SourcePackage(source, packageName), Set.of()));
+        Set<Module> result = Set.copyOf(recipients);
         source.addOpens(packageName, providerModule);
+        return result;
     }
 
-    private static void requireProvider(MethodHandles.Lookup lookup, Module callerModule, Module selectedModule) {
-        if (!selectedModule.isNamed()
-                || !lookup.hasFullPrivilegeAccess()
-                || lookup.lookupClass().getModule() != selectedModule
-                || callerModule != selectedModule) {
-            throw new SecurityException("Only the selected CDI provider module may request an opening");
+    private void requireUnsealed() {
+        if (sealed) {
+            throw new IllegalStateException("Package access policy is sealed after CDI initialization starts");
         }
+    }
+
+    private record SourcePackage(Module module, String name) {
     }
 }

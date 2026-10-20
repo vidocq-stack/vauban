@@ -16,6 +16,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.security.MessageDigest;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.Set;
@@ -29,7 +30,7 @@ import static org.junit.jupiter.api.Assertions.*;
 class ExperimentIT {
     private static final Path TARGET = Path.of(System.getProperty("experiment.directory"), "target");
     private static final List<String> SCENARIOS = List.of(
-            "external-authorized", "external-unauthorized", "external-closed", "external-se");
+            "external-authorized", "external-unauthorized", "external-closed", "external-scoped");
     private static final String CDI_JAR = "jakarta.enterprise.jakarta.enterprise.cdi-api-4.1.0.jar";
     private static final String CDI_SHA256 = "c42c808f17925129a0800f618febe050d966e181a4c7384c8a5e7a0283d68699";
 
@@ -97,11 +98,12 @@ class ExperimentIT {
     }
 
     @Test
-    void experimentalJarsPreserveEveryOriginalEntry() throws Exception {
+    void experimentalJarsReplaceOnlyProposedBootstrapClasses() throws Exception {
         assertEquals(CDI_SHA256, sha256(TARGET.resolve("dependencies").resolve(CDI_JAR)),
                 "The CDI input must be the released 4.1.0 binary");
-        checkEntries(CDI_JAR);
-        checkEntries("io.vidocq.vauban.vauban-core-" + System.getProperty("vauban.version") + ".jar");
+        checkEntries(CDI_JAR, "jakarta/enterprise/inject/se/SeContainerInitializer.class");
+        checkEntries("io.vidocq.vauban.vauban-core-" + System.getProperty("vauban.version") + ".jar",
+                "io/vidocq/vauban/core/container/VaubanSeContainerInitializer.class");
     }
 
     @Test
@@ -114,7 +116,8 @@ class ExperimentIT {
             assertTrue(descriptor.provides().isEmpty(), "External library must not register container services");
             try (var archive = new JarFile(jar.toFile())) {
                 assertEquals(Set.of("module-info.class", "experiment/external/beans/FallbackService.class",
-                                "experiment/external/beans/FallbackState.class"),
+                                "experiment/external/beans/FallbackState.class",
+                                "experiment/external/other/OtherService.class"),
                         archive.stream().map(e -> e.getName()).filter(n -> n.endsWith(".class"))
                                 .collect(java.util.stream.Collectors.toSet()),
                         "No generated provider, proxy or helper belongs in the published library");
@@ -127,16 +130,24 @@ class ExperimentIT {
         }
     }
 
-    private static void checkEntries(String filename) throws IOException {
-        // Helpers may be added; original classes and module descriptors must stay identical.
+    private static void checkEntries(String filename, String replacement) throws IOException {
+        // Only the two SE bootstrap classes change; all other original entries stay identical.
         try (JarFile original = new JarFile(TARGET.resolve("dependencies").resolve(filename).toFile());
              JarFile extended = new JarFile(TARGET.resolve("runtime-deps").resolve(filename).toFile())) {
+            assertNotNull(original.getJarEntry(replacement), "Missing original bootstrap class");
             for (var entry : original.stream().toList()) {
                 var copy = extended.getJarEntry(entry.getName());
                 assertNotNull(copy, () -> filename + " lost " + entry.getName());
                 try (var before = original.getInputStream(entry); var after = extended.getInputStream(copy)) {
-                    assertArrayEquals(before.readAllBytes(), after.readAllBytes(),
-                            () -> filename + " changed " + entry.getName());
+                    byte[] originalBytes = before.readAllBytes();
+                    byte[] runtimeBytes = after.readAllBytes();
+                    if (entry.getName().equals(replacement)) {
+                        assertFalse(Arrays.equals(originalBytes, runtimeBytes),
+                                () -> filename + " did not replace " + replacement);
+                    } else {
+                        assertArrayEquals(originalBytes, runtimeBytes,
+                                () -> filename + " changed " + entry.getName());
+                    }
                 }
             }
             List<String> additions = extended.stream().map(e -> e.getName())

@@ -11,16 +11,18 @@ mvn -f experiments/cdi-1015/pom.xml -U clean verify
 
 | Check | Result | Observation |
 | --- | --- | --- |
-| `external-authorized` | PASS | Runtime proxies, private injection and private/package-private FT fallbacks worked without a component provider or donated lookup. |
-| `external-unauthorized` | PASS | The adapter refused the FT grant; the actual fallback resolver failed with `IllegalAccessException`. |
-| `external-closed` | PASS | Missing library consent was rejected before adding openings or a read to the container. |
-| `external-se` | PASS | Standard SE provider selection followed by the experimental adapter performed openings, read preparation and FT delegation at `initialize()`, then ran the same proxy/injection/fallback checks. |
-| API/container jar integrity | PASS | Every original jar entry was preserved byte for byte; only experimental class files were added to runtime copies. |
-| External-library integrity | PASS | The library was compiled against standard APIs only and contained just its descriptor and two original bean classes. |
+| `external-authorized` | PASS | Broad FT grant: runtime proxies, private injection and fallbacks in both packages worked. |
+| `external-unauthorized` | PASS | Without the FT grant, fallback validation failed at deployment with `IllegalAccessException`. |
+| `external-closed` | PASS | With FT infrastructure omitted, actual CDI access failed without changing the library's openings or reads. |
+| `external-scoped` | PASS | First deployment ran the authorized package; adding the second package in another deployment failed its FT validation, while both packages were open to the container. |
+| API/container jar integrity | PASS | Only the two bootstrap classes replaced; all other original entries preserved byte for byte. |
+| External-library integrity | PASS | Standard API dependencies only; descriptor and three original bean classes. |
 
 Each scenario also checks that the library jar is unchanged.
 The fallback results include injected state and an increasing counter, so a
 successful invocation must reach the same contextual instance through the proxy.
+The standalone `SeExample.main` also completed successfully and printed
+`private fallback for duke:external:1`.
 
 ## What this experiment establishes
 
@@ -29,31 +31,40 @@ It contains no Vauban dependency, annotation processor output or service provide
 The application selects the FT recipient at bootstrap.
 
 Vauban's generated interception subclass needs to read the container module.
-The experimental adapter prepares that read using a helper defined in the opened
+The adapted SE initializer prepares that read using a helper defined in the opened
 library package, before Vauban generates its proxies. This adapts the container
 to the unchanged library jar.
 
 The relay must reach `io.vidocq.heisenberg.core`, where fallback resolution happens.
 Being a CDI interceptor does not itself confer this access.
 
-The SE example binds the opener to the initializer already selected by the
-application. Its configuration leaves the library closed to the container and FT;
-access preparation happens when `initialize()` is called.
+The proposed `SeContainerInitializer.newInstance()` binds the opener to the
+provider it selects. `allowAccessFor` records broad or package-scoped application
+authorization. Configuration leaves the library closed to the container and FT;
+access preparation happens when `initialize()` is called. Further grants are
+rejected after initialization starts.
+
+The API's opener only relays to the provider and returns the authorized additional
+recipients. The provider relays to those recipients. This prototype implements
+package openings; it does not treat them as arbitrary read or export permissions.
 
 ## Boundaries
 
 - The public bean classes are exported and explicitly registered. Automatic
   discovery and other library layouts are outside this experiment.
-- The API relay and container access preparation are experimental additions.
+- The API relay and container access preparation are experimental changes to
+  runtime jar copies, including the two SE bootstrap classes.
   Runtime proxy generation and FT interception use Vauban and Heisenberg.
 - This is neither a CDI Full extension test nor a CDI TCK result.
 - Provider selection uses CDI SE. Multiple implementations and separate module
   layers remain outside the test.
-- The SE adapter requires explicit class registration with discovery disabled.
-  Its opener binding checks a single constructor-based service provider with an
-  advertised type matching the supplied initializer; service factory methods
-  are outside this example.
+- The scenarios use explicit class registration with discovery disabled.
+  Discovered-only classes do not receive the experimental access preparation.
+- Opener authentication uses the selected initializer's module. A provider
+  split across modules would need a further design decision.
 - Module openings persist and do not provide container-instance isolation.
+- Package scope controls which openings are relayed, not a sandbox for code
+  allowed to define classes inside the source module.
 
 ## Reproducing a run
 

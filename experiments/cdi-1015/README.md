@@ -1,8 +1,12 @@
-# CDI #1015: an independent bean library
+# CDI #1015: SE access authorization
 
 An experiment for [jakartaee/cdi#1015](https://github.com/jakartaee/cdi/issues/1015):
-can an external bean library support CDI injection and private Fault Tolerance
-fallbacks by opening its package to `jakarta.cdi`, without depending on a container?
+can CDI SE relay an independent library's `opens ... to jakarta.cdi` to the
+selected container, then to FT with explicit application authorization?
+
+The experiment adds a proposed `allowAccessFor` method to a copy of the CDI SE
+API and integrates it into a copy of Vauban's SE initializer. Released CDI has
+no such method.
 
 ## Run
 
@@ -32,40 +36,26 @@ module experiment.external.beans {
 
     exports experiment.external.beans;
     opens experiment.external.beans to jakarta.cdi;
+
+    exports experiment.external.other;
+    opens experiment.external.other to jakarta.cdi;
 }
 ```
 
 Maven compiles this library against standard API jars only, without annotation
-processing. It contains two beans and its module descriptor: no Vauban dependency,
+processing. It contains three beans and its module descriptor: no Vauban dependency,
 generated classes or `provides` declaration. Its jar remains unchanged at runtime.
 
-## The access flow
-
-1. The library opens its bean package to the CDI API.
-2. The experimental CDI API relays that opening to the selected container.
-3. The container defines a small helper inside the opened package to add the
-   library-to-container read needed by runtime-generated interception code.
-4. The application explicitly authorizes the container to relay access to
-   `io.vidocq.heisenberg.core`, the module that resolves FT fallbacks.
-5. Vauban creates the normal-scope proxy and interception subclass at runtime.
-
-The application registers the public bean classes explicitly. The service has
-private field injection and private/package-private fallback methods; their
-results depend on injected state and a counter in the contextual instance.
-The two negative scenarios remove either the application's FT grant or the
-library's opening to CDI.
-
-## SE startup example
+## Proposed SE API
 
 [`SeExample.java`](fixtures/external-app/src/main/java/experiment/external/app/SeExample.java)
-starts with `SeContainerInitializer.newInstance()`. The experimental adapter
-accepts that initializer and the authorized FT module:
+uses the standard SE bootstrap directly, with a scoped FT authorization:
 
 ```java
-var initializer = ExperimentalSeBootstrap.configure(
-        SeContainerInitializer.newInstance(), Set.of(ft));
-
-try (var container = initializer.disableDiscovery()
+try (var container = SeContainerInitializer.newInstance()
+        .allowAccessFor(ft, FallbackService.class.getModule(),
+                FallbackService.class.getPackageName())
+        .disableDiscovery()
         .addBeanClasses(beanClasses)
         .initialize()) {
     var service = container.select(FallbackService.class).get();
@@ -73,44 +63,89 @@ try (var container = initializer.disableDiscovery()
 }
 ```
 
-Here `beanClasses` contains the library beans and FT implementation classes,
-listed in the example. During `initialize()`, the adapter relays openings for
-registered packages already open to CDI, prepares generated-code access, and
-applies the explicit FT grant. The application makes no `openLibrary` call.
-The same selected initializer starts the real container.
+`ft` is the `io.vidocq.heisenberg.core` module, where fallback resolution happens.
+`beanClasses` contains the library beans and FT implementation classes, listed
+in the example. The application has no Vauban dependency.
 
-Run this scenario with:
+Two overloads express the application's policy:
 
-```sh
-mvn -f experiments/cdi-1015/pom.xml -Dscenario=external-se clean verify
+```java
+allowAccessFor(Module recipient)
+allowAccessFor(Module recipient, Module source, String... packages)
 ```
 
-The explicit adapter models the proposed startup integration without replacing
-Vauban's released initializer. This example requires `disableDiscovery()` and
-`addBeanClasses()`; package and archive discovery are outside its scope.
+The first covers all eligible bean packages processed by this initializer. The
+second covers exact package names in one source module; it does not include
+subpackages. Grants accumulate and cannot bypass the library's opening to CDI.
+Configuration makes no openings; the policy is sealed when initialization starts.
+
+`allowAccessFor` names the authorization, while this prototype implements it
+with package openings. These support reflection, lookups and class definition.
+They do not automatically grant reads or exports for arbitrary compiled code.
+Vauban separately prepares the read needed by its generated interception code.
+Other access kinds would need their own defined semantics.
+
+## The access flow
+
+1. The library opens its bean packages to `jakarta.cdi`.
+2. `newInstance()` selects the SE provider and binds an opener to that initializer.
+3. The application configures any additional recipients with `allowAccessFor`.
+4. During `initialize()`, the provider obtains the opener. The CDI API relays
+   each eligible registered package to that provider.
+5. Vauban prepares the library-to-container read needed by its generated code,
+   then relays the package to recipients authorized for it.
+6. Vauban generates its normal-scope proxies and interception subclasses.
+
+The API checks the requesting module and its lookup against the selected
+provider. Vauban prepares its read by defining a small helper in the opened
+library package. Neither step changes the library jar.
+
+All four scenarios use this SE flow:
+
+| Scenario | Expected behavior |
+| --- | --- |
+| `external-authorized` | Broad FT grant: fallbacks in both packages work. |
+| `external-unauthorized` | CDI works, but FT cannot access the private fallback. |
+| `external-closed` | No opening to CDI: actual container access fails. |
+| `external-scoped` | FT works in the authorized package and fails in the second. |
+
+Fallback results include injected state and a counter in the contextual instance.
+The scoped scenario also confirms that the container can access both packages.
+It first deploys the authorized beans, then adds the second package in another
+deployment. Heisenberg rejects its inaccessible fallback during initialization.
+Run it with `-Dscenario=external-scoped`.
 
 ## Source layout
 
 | Path | Purpose |
 | --- | --- |
 | `fixtures/external-beans/` | Independent library and its closed descriptor variant. |
-| `fixtures/external-app/` | Direct access scenarios, the SE example and assertions. |
-| `api-patch/` | Experimental CDI access relay. |
-| `core-patch/` | Container bootstrap and generated-code access preparation. |
+| `fixtures/external-app/` | SE example and scenario assertions. |
+| `api-patch/` | Proposed CDI SE API and its bound opener. |
+| `core-patch/` | Adapted Vauban SE initializer and generated-code access preparation. |
 | `src/test/` | JUnit launcher and jar integrity checks. |
 
-Maven's Ant plugin compiles the module variants. The extra API and container
-classes are added to jar copies at build time; every original entry, including
-the module descriptors, is preserved. Runtime uses the ordinary module path,
-without access-granting launcher options, agents or a container-owned module layer.
+Maven's Ant plugin compiles the module variants. At build time it replaces only
+`SeContainerInitializer.class` and `VaubanSeContainerInitializer.class` in runtime
+jar copies, and adds the experimental helpers. Integrity checks require every
+other original entry, including module descriptors, to remain byte-identical.
+The library compiles against the original standard APIs.
+
+Runtime uses the ordinary module path, without access-granting launcher options,
+agents or a container-owned module layer.
 
 ## Limits
 
 This tests actual Vauban/Heisenberg integration with public, exported beans
 registered at bootstrap. It does not cover automatic discovery, CDI Full
 extensions, multiple container implementations or every library layout.
-The relay and container adapters are experimental; released CDI has no such API.
+Only explicitly registered classes receive the experimental access preparation;
+package and archive discovery need integration before this could be generalized.
+Provider authentication currently uses the selected initializer's module; more
+complex provider layouts need consideration.
 
 Module openings are persistent permissions on `Module` objects, not permissions
-scoped to a container instance. Snapshot artifacts can change; each run records
+scoped to a container instance. Package scoping controls the relay; it is not a
+security boundary against a recipient able to define classes in the source module.
+Snapshot artifacts can change; each run records
 the resolved jar hashes in `target/dependency-sha256.txt`.

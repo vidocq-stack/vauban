@@ -10,12 +10,9 @@ import io.vidocq.heisenberg.cdi.internal.BulkheadStateRegistryBean;
 import io.vidocq.heisenberg.cdi.internal.FaultToleranceInterceptor;
 import io.vidocq.heisenberg.cdi.internal.HeisenbergExtension;
 import io.vidocq.heisenberg.cdi.internal.StateRegistryBean;
-import io.vidocq.vauban.core.container.ExperimentalSeBootstrap;
 import jakarta.enterprise.inject.se.SeContainerInitializer;
 
-import java.util.Set;
-
-/** Standard SE provider selection with experimental access preparation at startup. */
+/** Proposed SE authorization API; the container prepares access at startup. */
 public final class SeExample {
     public static void main(String[] args) {
         try (var container = initializer().initialize()) {
@@ -26,10 +23,8 @@ public final class SeExample {
 
     static SeContainerInitializer initializer() {
         Module ft = ModuleLayer.boot().findModule("io.vidocq.heisenberg.core").orElseThrow();
-        var initializer = SeContainerInitializer.newInstance();
-
-        // The application authorizes FT; the adapter opens eligible packages at initialize().
-        return ExperimentalSeBootstrap.configure(initializer, Set.of(ft))
+        return SeContainerInitializer.newInstance()
+                .allowAccessFor(ft, FallbackService.class.getModule(), FallbackService.class.getPackageName())
                 .disableDiscovery()
                 .addBeanClasses(
                         FallbackService.class, FallbackState.class,
