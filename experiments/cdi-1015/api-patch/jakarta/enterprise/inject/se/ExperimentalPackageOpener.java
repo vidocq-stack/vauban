@@ -21,6 +21,7 @@ package jakarta.enterprise.inject.se;
 
 import java.lang.invoke.MethodHandles;
 import java.util.Objects;
+import java.util.ServiceLoader;
 
 /**
  * An experimental opening relay for the investigation of jakartaee/cdi#1015.
@@ -70,6 +71,34 @@ public final class ExperimentalPackageOpener {
         Module selectedModule = selected.getClass().getModule();
         requireProvider(providerLookup, callerModule, selectedModule);
         return new ExperimentalPackageOpener(selected);
+    }
+
+    /**
+     * Binds the relay to an initializer already selected by the application.
+     *
+     * <p>This fixture supports a single constructor-based service provider whose
+     * advertised type is the initializer's exact class. Checking the service
+     * declaration does not instantiate a second initializer.</p>
+     *
+     * @param providerLookup a full privilege lookup created inside the provider
+     * @param initializer the initializer selected by CDI SE
+     * @return the relay bound to that same initializer
+     */
+    public static ExperimentalPackageOpener forProvider(MethodHandles.Lookup providerLookup,
+                                                         SeContainerInitializer initializer) {
+        Objects.requireNonNull(providerLookup, "providerLookup");
+        Objects.requireNonNull(initializer, "initializer");
+        Module callerModule = CALLERS.getCallerClass().getModule();
+        var providers = ServiceLoader.load(SeContainerInitializer.class,
+                SeContainerInitializer.class.getClassLoader()).stream().toList();
+        if (providers.size() != 1) {
+            throw new IllegalStateException("The experiment requires exactly one CDI SE provider");
+        }
+        if (providers.getFirst().type() != initializer.getClass()) {
+            throw new SecurityException("Initializer is not the advertised CDI SE provider");
+        }
+        requireProvider(providerLookup, callerModule, initializer.getClass().getModule());
+        return new ExperimentalPackageOpener(initializer);
     }
 
     /**

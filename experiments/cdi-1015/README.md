@@ -17,7 +17,7 @@ The POM downloads Vauban, Heisenberg and Ravel `0.4.0-SNAPSHOT` from the
 Standard APIs and build plugins come from Maven Central. No other tools or
 sibling source builds are needed.
 
-There are three scenarios, each launched in a fresh JVM, and two jar integrity
+There are four scenarios, each launched in a fresh JVM, and two jar integrity
 checks. Add `-Dscenario=external-authorized` to select one scenario. Reports are in
 `target/failsafe-reports/`; commands and output are in `target/logs/`.
 See [results and scope](RESULTS.md).
@@ -55,12 +55,46 @@ results depend on injected state and a counter in the contextual instance.
 The two negative scenarios remove either the application's FT grant or the
 library's opening to CDI.
 
+## SE startup example
+
+[`SeExample.java`](fixtures/external-app/src/main/java/experiment/external/app/SeExample.java)
+starts with `SeContainerInitializer.newInstance()`. The experimental adapter
+accepts that initializer and the authorized FT module:
+
+```java
+var initializer = ExperimentalSeBootstrap.configure(
+        SeContainerInitializer.newInstance(), Set.of(ft));
+
+try (var container = initializer.disableDiscovery()
+        .addBeanClasses(beanClasses)
+        .initialize()) {
+    var service = container.select(FallbackService.class).get();
+    System.out.println(service.callWithPrivateFallback("duke"));
+}
+```
+
+Here `beanClasses` contains the library beans and FT implementation classes,
+listed in the example. During `initialize()`, the adapter relays openings for
+registered packages already open to CDI, prepares generated-code access, and
+applies the explicit FT grant. The application makes no `openLibrary` call.
+The same selected initializer starts the real container.
+
+Run this scenario with:
+
+```sh
+mvn -f experiments/cdi-1015/pom.xml -Dscenario=external-se clean verify
+```
+
+The explicit adapter models the proposed startup integration without replacing
+Vauban's released initializer. This example requires `disableDiscovery()` and
+`addBeanClasses()`; package and archive discovery are outside its scope.
+
 ## Source layout
 
 | Path | Purpose |
 | --- | --- |
 | `fixtures/external-beans/` | Independent library and its closed descriptor variant. |
-| `fixtures/external-app/` | Application bootstrap and scenario assertions. |
+| `fixtures/external-app/` | Direct access scenarios, the SE example and assertions. |
 | `api-patch/` | Experimental CDI access relay. |
 | `core-patch/` | Container bootstrap and generated-code access preparation. |
 | `src/test/` | JUnit launcher and jar integrity checks. |

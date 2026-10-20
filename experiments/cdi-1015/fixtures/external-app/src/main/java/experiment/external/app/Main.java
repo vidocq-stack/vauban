@@ -59,9 +59,24 @@ public final class Main {
             case "external-authorized" -> authorized();
             case "external-unauthorized" -> unauthorized();
             case "external-closed" -> closed();
+            case "external-se" -> seBootstrap();
             default -> throw new IllegalArgumentException("Unknown scenario " + scenario);
         }
         System.out.println("PASS " + scenario);
+    }
+
+    private static void seBootstrap() {
+        var initializer = SeExample.initializer();
+        check(!LIBRARY.isOpen(PACKAGE, CONTAINER), "SE configuration alone must not open the library");
+        check(!LIBRARY.isOpen(PACKAGE, FT), "SE configuration alone must not grant FT access");
+        check(!LIBRARY.canRead(CONTAINER), "Generated-code access is prepared only at startup");
+        try (var container = initializer.initialize()) {
+            check(LIBRARY.isOpen(PACKAGE, CONTAINER), "SE startup relayed the library opening");
+            check(LIBRARY.canRead(CONTAINER), "SE startup prepared the generated-code read");
+            check(LIBRARY.isOpen(PACKAGE, FT), "SE startup applied the explicit FT authorization");
+            check(!LIBRARY.isOpen(PACKAGE, INTERCEPTOR), "Interception alone grants no access");
+            invokeFallbacks(container);
+        }
     }
 
     private static void authorized() {

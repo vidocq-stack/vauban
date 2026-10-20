@@ -1,6 +1,6 @@
 # External-library relay: results and scope
 
-**Five checks passed on 2026-10-20:** three scenarios in separate JVMs and two
+**Six checks passed on 2026-10-20:** four scenarios in separate JVMs and two
 jar integrity checks. No failures, errors or skipped checks.
 
 ```sh
@@ -14,6 +14,7 @@ mvn -f experiments/cdi-1015/pom.xml -U clean verify
 | `external-authorized` | PASS | Runtime proxies, private injection and private/package-private FT fallbacks worked without a component provider or donated lookup. |
 | `external-unauthorized` | PASS | The adapter refused the FT grant; the actual fallback resolver failed with `IllegalAccessException`. |
 | `external-closed` | PASS | Missing library consent was rejected before adding openings or a read to the container. |
+| `external-se` | PASS | Standard SE provider selection followed by the experimental adapter performed openings, read preparation and FT delegation at `initialize()`, then ran the same proxy/injection/fallback checks. |
 | API/container jar integrity | PASS | Every original jar entry was preserved byte for byte; only experimental class files were added to runtime copies. |
 | External-library integrity | PASS | The library was compiled against standard APIs only and contained just its descriptor and two original bean classes. |
 
@@ -35,6 +36,10 @@ to the unchanged library jar.
 The relay must reach `io.vidocq.heisenberg.core`, where fallback resolution happens.
 Being a CDI interceptor does not itself confer this access.
 
+The SE example binds the opener to the initializer already selected by the
+application. Its configuration leaves the library closed to the container and FT;
+access preparation happens when `initialize()` is called.
+
 ## Boundaries
 
 - The public bean classes are exported and explicitly registered. Automatic
@@ -44,6 +49,10 @@ Being a CDI interceptor does not itself confer this access.
 - This is neither a CDI Full extension test nor a CDI TCK result.
 - Provider selection uses CDI SE. Multiple implementations and separate module
   layers remain outside the test.
+- The SE adapter requires explicit class registration with discovery disabled.
+  Its opener binding checks a single constructor-based service provider with an
+  advertised type matching the supplied initializer; service factory methods
+  are outside this example.
 - Module openings persist and do not provide container-instance isolation.
 
 ## Reproducing a run

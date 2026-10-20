@@ -29,7 +29,7 @@ import static org.junit.jupiter.api.Assertions.*;
 class ExperimentIT {
     private static final Path TARGET = Path.of(System.getProperty("experiment.directory"), "target");
     private static final List<String> SCENARIOS = List.of(
-            "external-authorized", "external-unauthorized", "external-closed");
+            "external-authorized", "external-unauthorized", "external-closed", "external-se");
     private static final String CDI_JAR = "jakarta.enterprise.jakarta.enterprise.cdi-api-4.1.0.jar";
     private static final String CDI_SHA256 = "c42c808f17925129a0800f618febe050d966e181a4c7384c8a5e7a0283d68699";
 

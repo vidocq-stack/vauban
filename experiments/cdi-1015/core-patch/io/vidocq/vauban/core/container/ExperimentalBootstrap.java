@@ -7,6 +7,7 @@ package io.vidocq.vauban.core.container;
 import io.vidocq.vauban.core.access.ModuleLookups;
 import jakarta.enterprise.inject.se.ExperimentalPackageOpener;
 import jakarta.enterprise.inject.se.SeContainer;
+import jakarta.enterprise.inject.se.SeContainerInitializer;
 
 import java.lang.invoke.MethodHandles;
 import java.util.Objects;
@@ -23,16 +24,25 @@ public final class ExperimentalBootstrap {
     private final Set<Module> authorizedRecipients;
     private boolean initialized;
 
-    private ExperimentalBootstrap(Set<Module> authorizedRecipients) {
+    private ExperimentalBootstrap(Set<Module> authorizedRecipients, SeContainerInitializer initializer) {
         this.authorizedRecipients = Set.copyOf(authorizedRecipients);
-        this.opener = ExperimentalPackageOpener.forProvider(MethodHandles.lookup());
+        this.opener = initializer == null
+                ? ExperimentalPackageOpener.forProvider(MethodHandles.lookup())
+                : ExperimentalPackageOpener.forProvider(MethodHandles.lookup(), initializer);
         if (opener.providerModule() != ExperimentalBootstrap.class.getModule()) {
             throw new AssertionError("The selected initializer must belong to this provider");
         }
     }
 
     public static ExperimentalBootstrap select(Set<Module> authorizedRecipients) {
-        return new ExperimentalBootstrap(authorizedRecipients);
+        return new ExperimentalBootstrap(authorizedRecipients, null);
+    }
+
+    /** Binds access preparation to an initializer already selected by CDI SE. */
+    public static ExperimentalBootstrap configure(SeContainerInitializer initializer,
+                                                  Set<Module> authorizedRecipients) {
+        return new ExperimentalBootstrap(authorizedRecipients,
+                Objects.requireNonNull(initializer, "initializer"));
     }
 
     /** Relays the library's consent and prepares access needed by generated provider code. */
@@ -60,8 +70,15 @@ public final class ExperimentalBootstrap {
     /** Uses the exact initializer whose module the CDI API authenticated. */
     public SeContainer initialize(Class<?>... beans) {
         requireBeforeInitialization();
+        opener.initializer().disableDiscovery().addBeanClasses(beans);
+        return initializeConfigured();
+    }
+
+    /** Starts the supplied initializer without registering its classes a second time. */
+    SeContainer initializeConfigured() {
+        requireBeforeInitialization();
         initialized = true;
-        return opener.initializer().disableDiscovery().addBeanClasses(beans).initialize();
+        return opener.initializer().initialize();
     }
 
     public static boolean hasDonatedLookup(Class<?> beanClass) {

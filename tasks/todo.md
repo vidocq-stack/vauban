@@ -1,3 +1,16 @@
+# CDI 1015 SE bootstrap example — 2026-10-20
+
+- [x] Start from the standard SE provider selection and retain that exact initializer.
+- [x] Prepare openings inside the experimental container adapter's initialize method.
+- [x] Add a short SE example, run it with the existing external library, and document its scope.
+- [x] Verify the focused suite and prepare the branch update for publication.
+
+Review: all six checks pass on Java 25. The SE scenario confirms configuration
+does not open the library; initialize performs the relay, read preparation and
+authorized FT delegation. The standalone SeExample main also returns the expected
+private fallback. Original jar entries remain preserved. The adapter explicitly
+requires disabled discovery and registered bean classes.
+
 # CDI 1015 external library relay — 2026-10-20
 
 - [x] Remove generated-provider comparisons and separate bytecode/extension probes.
