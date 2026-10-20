@@ -29,9 +29,6 @@ import static org.junit.jupiter.api.Assertions.*;
 class ExperimentIT {
     private static final Path TARGET = Path.of(System.getProperty("experiment.directory"), "target");
     private static final List<String> SCENARIOS = List.of(
-            "donation", "authorized", "unauthorized", "wrong-recipient", "missing-opening",
-            "extension", "unauthorized-extension", "shared-module", "spoofed-provider",
-            "proxy-with-reads", "proxy-without-reads", "proxy-interface-before-reads",
             "external-authorized", "external-unauthorized", "external-closed");
     private static final String CDI_JAR = "jakarta.enterprise.jakarta.enterprise.cdi-api-4.1.0.jar";
     private static final String CDI_SHA256 = "c42c808f17925129a0800f618febe050d966e181a4c7384c8a5e7a0283d68699";
@@ -64,37 +61,16 @@ class ExperimentIT {
     @ParameterizedTest(name = "{0}")
     @MethodSource("scenarios")
     void runScenario(String scenario) throws Exception {
-        Path externalJar = scenario.startsWith("external-")
-                ? TARGET.resolve("libraries/external-"
-                    + (scenario.equals("external-closed") ? "closed" : "relay") + ".jar") : null;
-        String originalLibraryHash = externalJar == null ? null : sha256(externalJar);
+        String variant = scenario.equals("external-closed") ? "closed" : "relay";
+        Path externalJar = TARGET.resolve("libraries/external-" + variant + ".jar");
+        String originalLibraryHash = sha256(externalJar);
         // Openings outlive containers, so each scenario needs a fresh JVM.
-        List<String> command = new ArrayList<>(List.of(
+        // The application loads the independent jar and generates proxies at runtime.
+        List<String> command = List.of(
                 Path.of(System.getProperty("java.home"), "bin", "java").toString(),
-                "-ea", "-XX:+DisableAttachMechanism", "--module-path"));
-        if (scenario.startsWith("proxy-")) {
-            // Minimal bytecode probes run directly inside the provider module.
-            command.add(modulePath("runtime-deps", "modules/proxy-beans"));
-            command.addAll(List.of("--add-modules", "experiment.proxy.beans", "--module",
-                    "io.vidocq.vauban.core/io.vidocq.vauban.core.container.ExperimentalProxyProbe",
-                    scenario.substring("proxy-".length())));
-        } else if (externalJar != null) {
-            // Load the independent library jar, with proxies generated at runtime.
-            command.add(modulePath("runtime-deps", TARGET.relativize(externalJar).toString(),
-                    "modules/external-app"));
-            command.addAll(List.of("--module", "experiment.external.app/experiment.external.app.Main",
-                    scenario));
-        } else {
-            String variant = switch (scenario) {
-                case "donation" -> "donation";
-                case "missing-opening" -> "closed";
-                default -> "relay";
-            };
-            command.add(modulePath("runtime-deps", "modules/beans-" + variant,
-                    "modules/extension", "modules/app"));
-            command.addAll(List.of("--module", "experiment.app/io.vidocq.vauban.experiment.app.Main",
-                    scenario));
-        }
+                "-ea", "-XX:+DisableAttachMechanism", "--module-path",
+                modulePath("runtime-deps", TARGET.relativize(externalJar).toString(), "modules/external-app"),
+                "--module", "experiment.external.app/experiment.external.app.Main", scenario);
 
         Path log = TARGET.resolve("logs/" + scenario + ".log");
         Files.writeString(log, String.join(" ", command) + System.lineSeparator() + System.lineSeparator());
@@ -116,10 +92,8 @@ class ExperimentIT {
         String marker = "PASS " + scenario;
         assertTrue(output.lines().anyMatch(line -> line.equals(marker) || line.startsWith(marker + ":")),
                 () -> "Missing scenario success marker:\n" + output);
-        if (externalJar != null) {
-            // Runtime class generation must leave the library jar untouched.
-            assertEquals(originalLibraryHash, sha256(externalJar), "The external library jar was modified");
-        }
+        // Runtime class generation must leave the library jar untouched.
+        assertEquals(originalLibraryHash, sha256(externalJar), "The external library jar was modified");
     }
 
     @Test

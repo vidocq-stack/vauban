@@ -94,6 +94,7 @@ locally installed development artifacts when published snapshots are available.
 
 An experiment about portable library access needs a library compiled using only
 standard APIs, with no container SPI, annotation processor or generated provider.
-Keep implementation-specific donation comparisons separate. Runtime proxy and
-read-edge adaptation belongs to the container; the library's declared consent
-should name the agreed API module.
+When the requested demonstration is the external library, remove obsolete
+implementation-specific comparisons rather than leaving competing examples.
+Runtime proxy and read-edge adaptation belongs to the container; the library's
+declared consent should name the agreed API module.

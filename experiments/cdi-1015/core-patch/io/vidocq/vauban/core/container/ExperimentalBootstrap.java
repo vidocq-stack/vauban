@@ -4,15 +4,12 @@
  */
 package io.vidocq.vauban.core.container;
 
-import io.vidocq.vauban.api.VaubanComponentProvider;
 import io.vidocq.vauban.core.access.ModuleLookups;
 import jakarta.enterprise.inject.se.ExperimentalPackageOpener;
 import jakarta.enterprise.inject.se.SeContainer;
 
 import java.lang.invoke.MethodHandles;
-import java.util.List;
 import java.util.Objects;
-import java.util.ServiceLoader;
 import java.util.Set;
 
 /**
@@ -69,12 +66,6 @@ public final class ExperimentalBootstrap {
 
     public static boolean hasDonatedLookup(Class<?> beanClass) {
         return ModuleLookups.lookupFor(beanClass).isPresent();
-    }
-
-    public static List<String> providersFor(Class<?> beanClass) {
-        return ServiceLoader.load(VaubanComponentProvider.class).stream()
-                .filter(provider -> provider.type().getModule() == beanClass.getModule())
-                .map(provider -> provider.type().getName()).sorted().toList();
     }
 
     private void requireBeforeInitialization() {

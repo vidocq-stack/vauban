@@ -7,7 +7,7 @@
     <artifactId>cdi-1015</artifactId>
     <version>1.0-SNAPSHOT</version>
     <packaging>pom</packaging>
-    <name>CDI 1015 access experiments</name>
+    <name>CDI 1015 external library access</name>
 
     <!-- Independent of the main Vauban reactor: published snapshots are sufficient. -->
     <properties>
@@ -32,11 +32,6 @@
         <dependency>
             <groupId>io.vidocq.vauban</groupId>
             <artifactId>vauban-core</artifactId>
-            <version>${vauban.version}</version>
-        </dependency>
-        <dependency>
-            <groupId>io.vidocq.vauban</groupId>
-            <artifactId>vauban-processor</artifactId>
             <version>${vauban.version}</version>
         </dependency>
         <dependency>
@@ -145,7 +140,6 @@
                                 <!-- Reset only disposable outputs; originals remain available for integrity checks. -->
                                 <delete dir="${work}/runtime-deps"/>
                                 <delete dir="${work}/modules"/>
-                                <delete dir="${work}/generated"/>
                                 <delete dir="${work}/patch-classes"/>
                                 <delete dir="${work}/libraries"/>
                                 <copy todir="${work}/runtime-deps">
@@ -185,55 +179,7 @@
                                                sources="${project.basedir}/api-patch"/>
                                 <extend-module name="io.vidocq.vauban.core" output="core"
                                                jar="io.vidocq.vauban.vauban-core-${vauban.version}.jar"
-                                               sources="${project.basedir}/core-patch${path.separator}${project.basedir}/proxy-fixtures/core-patch"/>
-
-                                <!-- Same bean sources and processor; only module-info differs.
-                                     Empty sourcepath lets javac use the explicitly supplied descriptor. -->
-                                <macrodef name="compile-beans">
-                                    <attribute name="variant"/>
-                                    <sequential>
-                                        <mkdir dir="${work}/modules/beans-@{variant}"/>
-                                        <mkdir dir="${work}/generated/@{variant}"/>
-                                        <javac srcdir="${fixture}/beans/src/main/java" excludes="module-info.java" sourcepath=""
-                                               destdir="${work}/modules/beans-@{variant}" release="25"
-                                               includeantruntime="false">
-                                            <modulepath refid="runtime.path"/>
-                                            <compilerarg value="--processor-path"/>
-                                            <compilerarg pathref="runtime.path"/>
-                                            <compilerarg value="-processor"/>
-                                            <compilerarg value="io.vidocq.vauban.processor.VaubanProcessor"/>
-                                            <compilerarg value="-Avauban.validation=false"/>
-                                            <compilerarg value="-s"/>
-                                            <compilerarg value="${work}/generated/@{variant}"/>
-                                            <compilerarg value="${fixture}/beans/descriptors/@{variant}/module-info.java"/>
-                                        </javac>
-                                    </sequential>
-                                </macrodef>
-                                <compile-beans variant="donation"/>
-                                <compile-beans variant="relay"/>
-                                <compile-beans variant="closed"/>
-
-                                <mkdir dir="${work}/modules/extension"/>
-                                <javac srcdir="${fixture}/extension/src/main/java"
-                                       destdir="${work}/modules/extension" release="25" includeantruntime="false">
-                                    <compilerarg value="-proc:none"/>
-                                </javac>
-                                <mkdir dir="${work}/modules/app"/>
-                                <javac srcdir="${fixture}/app/src/main/java"
-                                       destdir="${work}/modules/app" release="25" includeantruntime="false">
-                                    <modulepath>
-                                        <path refid="runtime.path"/>
-                                        <pathelement location="${work}/modules/beans-relay"/>
-                                        <pathelement location="${work}/modules/extension"/>
-                                    </modulepath>
-                                    <compilerarg value="-proc:none"/>
-                                </javac>
-                                <mkdir dir="${work}/modules/proxy-beans"/>
-                                <javac srcdir="${project.basedir}/proxy-fixtures/beans"
-                                       destdir="${work}/modules/proxy-beans" release="25" includeantruntime="false">
-                                    <modulepath refid="runtime.path"/>
-                                    <compilerarg value="-proc:none"/>
-                                </javac>
+                                               sources="${project.basedir}/core-patch"/>
 
                                 <!-- The external library sees only released Jakarta/MP APIs.
                                      No Vauban/Heisenberg implementation or processor is on its path. -->

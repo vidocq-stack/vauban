@@ -47,7 +47,6 @@ public final class Main {
                         .noneMatch(requirement -> requirement.name().startsWith("io.vidocq.")),
                 "The library descriptor must not depend on any implementation module");
         check(LIBRARY.getDescriptor().provides().isEmpty(), "The library provides no container service");
-        check(ExperimentalBootstrap.providersFor(BEAN).isEmpty(), "No generated component provider");
         assertNoDonation();
         check(LIBRARY.isOpen(PACKAGE, CDI) == !scenario.equals("external-closed"),
                 "Expected library opening to the CDI API");

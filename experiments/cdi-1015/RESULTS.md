@@ -1,110 +1,58 @@
-# Reference run: 2026-10-20
+# External-library relay: results and scope
 
-**17 Maven integration tests passed:** 15 scenarios, including access
-refusals, plus two jar integrity checks. Each scenario ran in a separate JVM.
-The shared-module scenario deliberately started two containers in one JVM.
-
-## Inputs
-
-- Java: Eclipse Temurin OpenJDK 25, build `25+36-LTS`.
-- Maven: `3.9.16`.
-- Vauban core/processor: published snapshot `0.4.0-20261019.193947-85`.
-- Heisenberg core/CDI: published snapshot `0.4.0-20261012.121738-14`.
-- Ravel core: published snapshot `0.4.0-20261010.163329-12`.
-- CDI API: `jakarta.enterprise:jakarta.enterprise.cdi-api:4.1.0`.
-- External-library compilation: only standard API jars, including
-  `org.eclipse.microprofile.fault-tolerance:microprofile-fault-tolerance-api:4.1`.
-- Original CDI jar SHA-256:
-  `c42c808f17925129a0800f618febe050d966e181a4c7384c8a5e7a0283d68699`.
-
-Dependency resolution was checked using an initially empty Maven repository
-and an empty user settings file. All inputs came from public Maven Central and
-the public snapshots repository; no sibling source builds or locally installed
-Vidocq artifacts were used.
+**Five checks passed on 2026-10-20:** three scenarios in separate JVMs and two
+jar integrity checks. No failures, errors or skipped checks.
 
 ```sh
 mvn -f experiments/cdi-1015/pom.xml -U clean verify
 ```
 
-The integrity checks verify that every original CDI/core jar entry, including
-module descriptors and manifests, is preserved byte for byte. Only experiment
-class files are added to the runtime copies. The external library has only its
-module descriptor and two original bean classes, no generated provider, and no
-implementation dependencies. Its jar hash is unchanged after each scenario.
+## Checks
 
-Maven writes standard reports to `target/failsafe-reports/`. Child JVM commands
-and output are in `target/logs/`; dependency and library jar hashes are recorded in
-`target/dependency-sha256.txt`. Snapshots can change, so later runs may resolve
-newer builds.
-
-## Observations
-
-| Scenario | Result | Observed behavior |
+| Check | Result | Observation |
 | --- | --- | --- |
-| `external-authorized` | PASS | A standard-API-only library used runtime-generated Vauban proxies, private injection and both FT fallbacks, with no provider or donated lookup. |
-| `external-unauthorized` | PASS | The adapter refused the FT grant; the actual resolver failed with the expected `IllegalAccessException`. |
+| `external-authorized` | PASS | Runtime proxies, private injection and private/package-private FT fallbacks worked without a component provider or donated lookup. |
+| `external-unauthorized` | PASS | The adapter refused the FT grant; the actual fallback resolver failed with `IllegalAccessException`. |
 | `external-closed` | PASS | Missing library consent was rejected before adding openings or a read to the container. |
-| `donation` | PASS | Actual FT interception invoked both fallback methods with a donated lookup and no opening to FT. |
-| `authorized` | PASS | Actual FT interception invoked both methods through the opening relay; lookup donation was absent. |
-| `unauthorized` | PASS | The adapter refused the grant, followed by the expected FT `IllegalAccessException`. |
-| `wrong-recipient` | PASS | Opening to the interceptor module did not grant access to the FT core resolver. |
-| `missing-opening` | PASS | The CDI API helper refused the closed library package before changing the module graph. |
-| `extension` | PASS | The explicitly authorized extension invoked the private method through reflection. |
-| `unauthorized-extension` | PASS | FT succeeded; reflection by the separate extension remained denied. |
-| `shared-module` | PASS | The second container could use the first container's opening without receiving a new grant. The opening survived both containers closing. |
-| `spoofed-provider` | PASS | The application module could not obtain a provider opener with its own lookup. |
-| `proxy-with-reads` | PASS | An in-package helper added the read edge; the generated subclass called a package-private bean method and provider code. |
-| `proxy-without-reads` | PASS | Class definition succeeded, but calling provider code failed on the missing read edge. |
-| `proxy-interface-before-reads` | PASS | An unread provider interface caused failure before the class initializer could add the read edge. |
+| API/container jar integrity | PASS | Every original jar entry was preserved byte for byte; only experimental class files were added to runtime copies. |
+| External-library integrity | PASS | The library was compiled against standard APIs only and contained just its descriptor and two original bean classes. |
 
-All three proxy cases also demonstrated that an in-package generated helper can
-obtain a full-privilege lookup and access a private method in a different,
-unopened package of the same bean module. The original cross-module lookup could
-not do that directly.
+Each scenario also checks that the library jar is unchanged.
+The fallback results include injected state and an increasing counter, so a
+successful invocation must reach the same contextual instance through the proxy.
 
-## Implications for the discussion
+## What this experiment establishes
 
-The external-library case first failed with `IllegalAccessError`: its generated
-`FallbackService$$Intercepted` could not access Vauban's `InterceptorManager`
-because the library module did not read Vauban core. Adding the runtime read
-inside the experimental container adapter made the same library jar work.
-No implementation dependency or service declaration was added to the library.
+The library declares its reflective opening as `opens ... to jakarta.cdi`.
+It contains no Vauban dependency, annotation processor output or service provider.
+The application selects the FT recipient at bootstrap.
 
-The proposed application-authorized relay works for the tested FT case. The
-library's opening names only `jakarta.cdi`; the application selects the actual
-FT implementation module. The recipient must be the module performing access,
-which need not be the module containing the CDI interceptor.
+Vauban's generated interception subclass needs to read the container module.
+The experimental adapter prepares that read using a helper defined in the opened
+library package, before Vauban generates its proxies. This adapts the container
+to the unchanged library jar.
 
-Reflective extensions can use the same opening mechanism with an explicit
-recipient grant. No automatic grant follows from being an interceptor.
+The relay must reach `io.vidocq.heisenberg.core`, where fallback resolution happens.
+Being a CDI interceptor does not itself confer this access.
 
-However, application authorization cannot be described as container-instance
-isolation when containers share the same `Module` objects. `Module.addOpens`
-is persistent, and defining arbitrary classes in an opened package gives the
-recipient a route to wider access inside that module.
+## Boundaries
 
-The reverse read edge for generated code is a separate requirement. An
-in-package helper can add it before defining or invoking the subclass.
-Relying solely on the subclass initializer is insufficient when linking a
-container-owned superinterface already requires that read.
+- The public bean classes are exported and explicitly registered. Automatic
+  discovery and other library layouts are outside this experiment.
+- The API relay and container access preparation are experimental additions.
+  Runtime proxy generation and FT interception use Vauban and Heisenberg.
+- This is neither a CDI Full extension test nor a CDI TCK result.
+- Provider selection uses CDI SE. Multiple implementations and separate module
+  layers remain outside the test.
+- Module openings persist and do not provide container-instance isolation.
 
-## Boundaries of this evidence
+## Reproducing a run
 
-- The FT experiment is a real Vauban/Heisenberg integration.
-- The external jar is compiled against standard APIs only. Its public bean classes
-  are exported and explicitly registered at bootstrap; automatic discovery and
-  other library layouts remain untested.
-- The original donation comparison still uses implementation-specific generated
-  providers. The external-library cases use Vauban's actual runtime generation.
-- The extension case is a reflection probe, not a CDI Full extension lifecycle
-  test.
-- The three `proxy-*` cases are minimal bytecode probes. The `external-*` cases
-  exercise production Vauban emitters with experimental access preparation.
-  Neither is a CDI TCK result.
-- Provider authentication is an experimental CDI SE design, using the selected
-  initializer's module. Multiple CDI implementations and separate module layers
-  remain outside this test.
-- No existing CDI API or spec text is proposed as final by this branch.
+Use Java 25 and Maven 3.9. Dependencies come from Maven Central and the public
+snapshots repository declared in the POM. Snapshots may change.
+This verification used a clean build, empty user settings and an offline repeat
+with the dependency cache previously populated from those public repositories.
 
-See the [README](README.md) for commands, source layout and remaining design
-questions.
+`target/dependency-sha256.txt` records resolved jar hashes.
+`target/failsafe-reports/` contains the results; `target/logs/` contains the child
+JVM commands and output. See the [README](README.md) for the access flow and sources.
