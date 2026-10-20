@@ -8,6 +8,8 @@ The experiment adds a proposed `allowAccessFor` method to a copy of the CDI SE
 API and integrates it into a copy of Vauban's SE initializer. Released CDI has
 no such method.
 
+Short guides: [container relay](CONTAINER.md) · [SE bootstrap](SE.md).
+
 ## Run
 
 Use **JDK 25** and **Maven 3.9**. From the Vauban repository root:
