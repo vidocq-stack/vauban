@@ -1,0 +1,260 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+    <groupId>io.vidocq.vauban.experiments</groupId>
+    <artifactId>cdi-1015</artifactId>
+    <version>1.0-SNAPSHOT</version>
+    <packaging>pom</packaging>
+    <name>CDI 1015 access experiments</name>
+
+    <!-- Independent of the main Vauban reactor: published snapshots are sufficient. -->
+    <properties>
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+        <maven.compiler.release>25</maven.compiler.release>
+        <vauban.version>0.4.0-SNAPSHOT</vauban.version>
+        <heisenberg.version>0.4.0-SNAPSHOT</heisenberg.version>
+        <ravel.version>0.4.0-SNAPSHOT</ravel.version>
+        <scenario>all</scenario>
+    </properties>
+
+    <repositories>
+        <repository>
+            <id>central-snapshots</id>
+            <url>https://central.sonatype.com/repository/maven-snapshots/</url>
+            <releases><enabled>false</enabled></releases>
+            <snapshots><enabled>true</enabled></snapshots>
+        </repository>
+    </repositories>
+
+    <dependencies>
+        <dependency>
+            <groupId>io.vidocq.vauban</groupId>
+            <artifactId>vauban-core</artifactId>
+            <version>${vauban.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>io.vidocq.vauban</groupId>
+            <artifactId>vauban-processor</artifactId>
+            <version>${vauban.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>io.vidocq.heisenberg</groupId>
+            <artifactId>heisenberg-cdi-vauban</artifactId>
+            <version>${heisenberg.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>io.vidocq.ravel</groupId>
+            <artifactId>ravel-core</artifactId>
+            <version>${ravel.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>jakarta.enterprise</groupId>
+            <artifactId>jakarta.enterprise.cdi-api</artifactId>
+            <version>4.1.0</version>
+        </dependency>
+        <dependency>
+            <groupId>jakarta.inject</groupId>
+            <artifactId>jakarta.inject-api</artifactId>
+            <version>2.0.1</version>
+        </dependency>
+        <dependency>
+            <groupId>jakarta.interceptor</groupId>
+            <artifactId>jakarta.interceptor-api</artifactId>
+            <version>2.2.0</version>
+        </dependency>
+        <dependency>
+            <groupId>jakarta.annotation</groupId>
+            <artifactId>jakarta.annotation-api</artifactId>
+            <version>3.0.0</version>
+        </dependency>
+        <dependency>
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter</artifactId>
+            <version>6.0.1</version>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <plugins>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-enforcer-plugin</artifactId>
+                <version>3.6.2</version>
+                <executions>
+                    <execution>
+                        <id>require-java-25</id>
+                        <goals><goal>enforce</goal></goals>
+                        <configuration>
+                            <rules>
+                                <requireJavaVersion><version>[25,26)</version></requireJavaVersion>
+                                <requireMavenVersion><version>[3.9,4)</version></requireMavenVersion>
+                            </rules>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-dependency-plugin</artifactId>
+                <version>3.8.1</version>
+                <executions>
+                    <execution>
+                        <id>resolve-experiment-inputs</id>
+                        <phase>generate-test-resources</phase>
+                        <goals><goal>copy-dependencies</goal></goals>
+                        <configuration>
+                            <includeScope>runtime</includeScope>
+                            <includeTypes>jar</includeTypes>
+                            <prependGroupId>true</prependGroupId>
+                            <outputDirectory>${project.build.directory}/dependencies</outputDirectory>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-antrun-plugin</artifactId>
+                <version>3.2.0</version>
+                <executions>
+                    <execution>
+                        <id>compile-module-fixtures</id>
+                        <phase>process-test-resources</phase>
+                        <goals><goal>run</goal></goals>
+                        <configuration>
+                            <target>
+                                <property name="work" location="${project.build.directory}"/>
+                                <property name="fixture" location="${project.basedir}/fixtures"/>
+                                <!-- Reset only disposable outputs; originals remain available for integrity checks. -->
+                                <delete dir="${work}/runtime-deps"/>
+                                <delete dir="${work}/modules"/>
+                                <delete dir="${work}/generated"/>
+                                <delete dir="${work}/patch-classes"/>
+                                <copy todir="${work}/runtime-deps">
+                                    <fileset dir="${work}/dependencies" includes="*.jar"/>
+                                </copy>
+                                <path id="runtime.path">
+                                    <fileset dir="${work}/runtime-deps" includes="*.jar"/>
+                                </path>
+
+                                <!-- Compilation patches the real named modules; runtime uses ordinary jars. -->
+                                <macrodef name="extend-module">
+                                    <attribute name="name"/>
+                                    <attribute name="jar"/>
+                                    <attribute name="sources"/>
+                                    <attribute name="output"/>
+                                    <sequential>
+                                        <mkdir dir="${work}/patch-classes/@{output}"/>
+                                        <javac srcdir="@{sources}" destdir="${work}/patch-classes/@{output}"
+                                               release="25" includeantruntime="false">
+                                            <modulepath refid="runtime.path"/>
+                                            <compilerarg value="-proc:none"/>
+                                            <compilerarg value="--patch-module"/>
+                                            <compilerarg value="@{name}=@{sources}"/>
+                                            <compilerarg value="--add-modules"/>
+                                            <compilerarg value="@{name}"/>
+                                        </javac>
+                                        <exec executable="${java.home}/bin/jar" failonerror="true">
+                                            <arg value="--update"/><arg value="--file"/>
+                                            <arg value="${work}/runtime-deps/@{jar}"/>
+                                            <arg value="-C"/><arg value="${work}/patch-classes/@{output}"/>
+                                            <arg value="."/>
+                                        </exec>
+                                    </sequential>
+                                </macrodef>
+                                <extend-module name="jakarta.cdi" output="api"
+                                               jar="jakarta.enterprise.jakarta.enterprise.cdi-api-4.1.0.jar"
+                                               sources="${project.basedir}/api-patch"/>
+                                <extend-module name="io.vidocq.vauban.core" output="core"
+                                               jar="io.vidocq.vauban.vauban-core-${vauban.version}.jar"
+                                               sources="${project.basedir}/core-patch${path.separator}${project.basedir}/proxy-fixtures/core-patch"/>
+
+                                <!-- Same bean sources and processor; only module-info differs.
+                                     Empty sourcepath lets javac use the explicitly supplied descriptor. -->
+                                <macrodef name="compile-beans">
+                                    <attribute name="variant"/>
+                                    <sequential>
+                                        <mkdir dir="${work}/modules/beans-@{variant}"/>
+                                        <mkdir dir="${work}/generated/@{variant}"/>
+                                        <javac srcdir="${fixture}/beans/src/main/java" excludes="module-info.java" sourcepath=""
+                                               destdir="${work}/modules/beans-@{variant}" release="25"
+                                               includeantruntime="false">
+                                            <modulepath refid="runtime.path"/>
+                                            <compilerarg value="--processor-path"/>
+                                            <compilerarg pathref="runtime.path"/>
+                                            <compilerarg value="-processor"/>
+                                            <compilerarg value="io.vidocq.vauban.processor.VaubanProcessor"/>
+                                            <compilerarg value="-Avauban.validation=false"/>
+                                            <compilerarg value="-s"/>
+                                            <compilerarg value="${work}/generated/@{variant}"/>
+                                            <compilerarg value="${fixture}/beans/descriptors/@{variant}/module-info.java"/>
+                                        </javac>
+                                    </sequential>
+                                </macrodef>
+                                <compile-beans variant="donation"/>
+                                <compile-beans variant="relay"/>
+                                <compile-beans variant="closed"/>
+
+                                <mkdir dir="${work}/modules/extension"/>
+                                <javac srcdir="${fixture}/extension/src/main/java"
+                                       destdir="${work}/modules/extension" release="25" includeantruntime="false">
+                                    <compilerarg value="-proc:none"/>
+                                </javac>
+                                <mkdir dir="${work}/modules/app"/>
+                                <javac srcdir="${fixture}/app/src/main/java"
+                                       destdir="${work}/modules/app" release="25" includeantruntime="false">
+                                    <modulepath>
+                                        <path refid="runtime.path"/>
+                                        <pathelement location="${work}/modules/beans-relay"/>
+                                        <pathelement location="${work}/modules/extension"/>
+                                    </modulepath>
+                                    <compilerarg value="-proc:none"/>
+                                </javac>
+                                <mkdir dir="${work}/modules/proxy-beans"/>
+                                <javac srcdir="${project.basedir}/proxy-fixtures/beans"
+                                       destdir="${work}/modules/proxy-beans" release="25" includeantruntime="false">
+                                    <modulepath refid="runtime.path"/>
+                                    <compilerarg value="-proc:none"/>
+                                </javac>
+                            </target>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-compiler-plugin</artifactId>
+                <version>3.14.1</version>
+                <configuration><proc>none</proc></configuration>
+                <executions>
+                    <execution>
+                        <id>compile-test-runner</id>
+                        <phase>test-compile</phase>
+                        <goals><goal>testCompile</goal></goals>
+                    </execution>
+                </executions>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-failsafe-plugin</artifactId>
+                <version>3.5.4</version>
+                <configuration>
+                    <useModulePath>false</useModulePath>
+                    <failIfNoTests>true</failIfNoTests>
+                    <systemPropertyVariables>
+                        <experiment.directory>${project.basedir}</experiment.directory>
+                        <scenario>${scenario}</scenario>
+                        <vauban.version>${vauban.version}</vauban.version>
+                    </systemPropertyVariables>
+                </configuration>
+                <executions>
+                    <execution>
+                        <goals><goal>integration-test</goal><goal>verify</goal></goals>
+                    </execution>
+                </executions>
+            </plugin>
+        </plugins>
+    </build>
+</project>

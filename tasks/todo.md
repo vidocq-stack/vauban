@@ -1,3 +1,19 @@
+# CDI 1015 Maven build — 2026-10-20
+
+- [x] Confirm the public snapshot repository and published Vauban/Heisenberg access support.
+- [x] Replace the Python runner with a standalone Maven build and standard Java test reports.
+- [x] Resolve published snapshots without requiring sibling source checkouts or installed builds.
+- [x] Keep all 12 scenarios in fresh JVMs and verify the extended jars preserve original entries.
+- [x] Validate from an isolated Maven repository and simplify the documentation.
+
+Review: `mvn -f experiments/cdi-1015/pom.xml clean verify` passes 13 integration
+tests (12 scenarios plus jar integrity), using public snapshots resolved into
+an initially empty Maven repository with empty user settings. The standalone
+POM handles dependencies and fixture compilation; JUnit only launches and checks
+the isolated JVMs. The Python runner and separate dependency POM were removed.
+The documented `-Dscenario=authorized` selection also passes (scenario plus jar
+integrity); a repeat run works with the populated cache in offline mode.
+
 # CDI 1015 controlled access relay experiments — 2026-10-20
 
 User-approved implementation on `experiment/cdi-1015-access-relay`, in an isolated worktree.
@@ -21,7 +37,7 @@ module descriptors, remains byte-identical after adding the experimental helpers
 The shared-module case confirms persistent openings across container instances.
 Proxy and reflection probes have narrower scope than a CDI Full implementation/TCK;
 the FT case uses the real Vauban/Heisenberg integration. See
-`experiments/cdi-1015/RESULTS.md` and `target/manifest.json` for the recorded evidence.
+`experiments/cdi-1015/RESULTS.md` for the recorded evidence.
 
 # BCE-added public field injection — 2026-10-09
 

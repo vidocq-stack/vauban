@@ -82,3 +82,10 @@ ignored the generated provider's lookup grant.
 access/lookup grants to widening module access. Test both runtime enhancement and boot from an
 APT-processed archive; assert that the latter does not replay the extension. Install updated
 API/core/processor artifacts before running downstream module-path tests.
+
+## Shareable Java experiments
+
+Use the project's Java/Maven toolchain for reproducible experiments. Resolve
+published dependencies from the documented repository and provide one standard
+Maven command. Avoid an additional interpreter, required sibling checkouts or
+locally installed development artifacts when published snapshots are available.

@@ -1,165 +1,82 @@
-# CDI #1015: controlled package opening experiments
+# CDI #1015: package opening experiments
 
-This directory implements the experiments discussed in
-[jakartaee/cdi#1015](https://github.com/jakartaee/cdi/issues/1015):
-
-1. Invoke real MicroProfile Fault Tolerance private and package-private fallback
-   methods, comparing Vauban's lookup donation with an explicitly authorized
-   opening relay.
-2. Delegate reflective access to a separate extension module.
-3. Define a subclass in a bean's package and examine the reverse read edge needed
-   when that generated code references container types.
-
-Everything here is experimental. Production sources and published API artifacts
-are unchanged. The runner builds local copies of the genuine CDI 4.1 and Vauban
-core jars with additional experiment classes.
-
-See [recorded results](RESULTS.md) for the reference run and its limitations.
+Experiments for [jakartaee/cdi#1015](https://github.com/jakartaee/cdi/issues/1015):
+private Fault Tolerance fallbacks, reflective extension access and generated
+subclasses on the Java module path.
 
 ## Run
 
-Requirements: Java 25, Maven 3.9, Python 3, and the Vidocq `0.4.0-SNAPSHOT`
-dependencies used by this Vauban checkout, available in your Maven repository.
-These snapshots are development inputs, not artifacts guaranteed to remain
-available from Maven Central.
-
-Use the Heisenberg source revision that contains the original donation experiment:
-`74a98a7515ab84106d958793dc99a9af353250af`.
-Its source repository is [Vidocq/heisenberg](https://codefloe.com/Vidocq/heisenberg).
-The runner can rebuild that checkout and replace the resolved Heisenberg jars.
-Keep that checkout clean so its recorded revision identifies the sources used.
-
-From the Vauban repository root:
+Use **JDK 25** and **Maven 3.9**. From the Vauban repository root:
 
 ```sh
-python3 experiments/cdi-1015/run.py \
-  --java-home /path/to/jdk-25 \
-  --maven /path/to/mvn \
-  --heisenberg-source /path/to/heisenberg-checkout
+mvn -f experiments/cdi-1015/pom.xml -U clean verify
 ```
 
-Add `--offline` when the Maven repository is already populated. Use `--help` for
-single-scenario runs and the Maven repository option. The runner rebuilds this
-checkout's Vauban artifacts, compiles the fixtures, and starts a fresh JVM for
-each scenario. Generated artifacts, dependency hashes, commands and logs are
-written under `target/` in this directory.
+Maven downloads Vauban, Heisenberg and Ravel `0.4.0-SNAPSHOT` from the
+[public snapshots repository](https://central.sonatype.com/repository/maven-snapshots/).
+The POM declares that repository. Maven also downloads CDI 4.1 and build plugins
+from Maven Central. A Java installation and Maven are the only required tools.
 
-The runtime commands use an ordinary module path. They use no runtime
-`--add-opens`, `--add-reads`, `--patch-module`, agent or Vauban-owned application
-module layer. Dynamic agent attachment is disabled. The proxy fixture uses
-`--add-modules` solely to resolve its otherwise unreferenced bean module.
+The build prepares the fixtures, then runs each of the **12 scenarios in a fresh
+JVM**, plus a jar integrity check. Reports are in `target/failsafe-reports/`;
+individual scenario logs are in `target/logs/`. See [recorded results](RESULTS.md).
 
-`javac --patch-module` is used **during compilation only**, to compile the
-experiment helpers as members of the actual CDI and Vauban modules. Their
-classes are then added to copies of the real jars. The original jars and module
-descriptors are retained unchanged; nothing is installed over the official CDI
-artifact.
+To run just one scenario, add `-Dscenario=authorized` (or another name from the
+results table).
 
-## Access flow under test
+Snapshots can change. The dependency versions are properties in the POM, and
+`target/dependency-sha256.txt` records hashes of the jars used for that run.
 
-```text
-bean library                         application bootstrap
-  opens bean.package to jakarta.cdi    selects exact recipient Module objects
-                |                                  |
-                v                                  v
-jakarta.cdi: ExperimentalPackageOpener
-  selects SeContainerInitializer
-  checks provider lookup and immediate caller module
-  relays bean.package to that provider
-                |
-                v
-Vauban: ExperimentalBootstrap
-  uses the exact selected initializer to start the container
-  relays bean.package only to application-authorized recipients
-                |
-                +--> io.vidocq.heisenberg.core (fallback resolver)
-                +--> experiment.extension (optional reflection probe)
-```
+## What is being compared
 
-The FT recipient is **`io.vidocq.heisenberg.core`**. Opening only to
-`io.vidocq.heisenberg.cdi.vauban`, which contains the interceptor, is insufficient.
-The application chooses recipients before container initialization because
-Heisenberg can validate fallback access during bootstrap.
+The same bean has a private fallback method and a package-private fallback method.
+Its module descriptor selects one of three configurations:
 
-Authorization is modeled as an explicit set of actual `Module` objects passed
-to the adapter. This is an experiment policy, not an existing CDI configuration
-property. No access is granted merely because a component is an interceptor.
-Service discovery selects a provider; it does not authorize extension access.
+- **Donation:** the generated provider supplies a lookup; no package is opened.
+- **Relay:** the library opens its bean package to `jakarta.cdi`. The API relays
+  that opening to Vauban, which delegates to recipients explicitly authorized
+  by application bootstrap. Lookup donation is disabled for this variant.
+- **Closed:** neither donation nor opening is available.
 
-## Controls
+The tests cover successful access, missing authorization, a wrong recipient,
+a missing library opening, a separate reflection grant, provider identity,
+shared openings between containers, and read edges for generated subclasses.
 
-| Scenario | Expected observation |
+For Heisenberg, the grant must reach `io.vidocq.heisenberg.core`, where fallback
+resolution happens. Opening only to the module containing the interceptor is
+insufficient.
+
+## Source layout
+
+| Path | Purpose |
 | --- | --- |
-| `donation` | Both fallback methods work with a donated lookup and no package opening. |
-| `authorized` | Both methods work with the API-to-provider-to-FT relay; no donated lookup exists. |
-| `unauthorized` | The adapter refuses the grant; actual FT access fails. |
-| `wrong-recipient` | Granting only the interceptor module leaves the fallback resolver denied. |
-| `missing-opening` | The API refuses a library package that was not opened to it. |
-| `extension` | A separately authorized module can use `Method.invoke` on a private method. |
-| `unauthorized-extension` | FT works while the separate reflection probe remains denied. |
-| `shared-module` | Two containers using the same `Module` objects share the first opening, even without a grant in the second configuration; closing them does not revoke it. |
-| `spoofed-provider` | An application lookup cannot impersonate the selected provider. |
-| `proxy-with-reads` | An in-package helper adds the bean-to-provider read; a generated package-private override calls provider code. |
-| `proxy-without-reads` | Defining the class succeeds, but invoking provider code fails on the missing read. |
-| `proxy-interface-before-reads` | An unread provider interface prevents class definition before a static initializer can repair the read. |
+| `api-patch/` | Experimental relay added to a copy of the real CDI API jar. |
+| `core-patch/` | Bootstrap adapter added to a copy of the real Vauban core jar. |
+| `fixtures/beans/` | One bean and three module descriptors. |
+| `fixtures/app/` | FT and reflection scenario assertions. |
+| `fixtures/extension/` | Reflection performed from a separate module. |
+| `proxy-fixtures/` | Package-private subclass and read-edge probes. |
+| `src/test/` | JUnit launcher and jar integrity checks. |
 
-The bean sources are identical across the donation, relay and closed variants.
-Only their module descriptors differ. In the relay variants, `RelayComponents`
-delegates generated construction, injection and proxy support but deliberately
-does **not** delegate `grantModuleLookup`. Registering the generated donor
-alongside that wrapper would invalidate the comparison.
+The POM resolves dependencies and uses Maven's Ant plugin to compile these
+small module variants. Ant is downloaded as a plugin dependency. JUnit only
+launches the prepared scenarios and checks their results.
 
-Successful relay scenarios assert that no lookup donation is available. Negative
-scenarios check the relevant access exception, not just an arbitrary bootstrap
-failure. Each independent case uses a fresh JVM because opening a package cannot
-be undone.
+The extra API/provider classes are compiled into jar copies **at build time**.
+Every original jar entry, including `module-info.class`, is checked for exact
+preservation. Runtime uses an ordinary module path, with dynamic attachment
+disabled and no access-granting launcher options.
 
-## What these experiments establish — and their limits
+## Limits
 
-- The FT cases use actual Vauban bootstrap, actual Heisenberg interception and
-  actual private/package-private fallback resolution. The container initializer
-  authenticated by the API is the one used to run those cases.
-- The reflection probe exercises the Java access mechanism. It does not test
-  the lifecycle of CDI Full portable extensions; Vauban is a CDI Lite container.
-- The proxy cases are focused bytecode experiments using the real API/provider
-  modules. They do not run Vauban's production proxy emitter or a complete CDI
-  interceptor chain. See [proxy fixture details](proxy-fixtures/README.md).
-- The FT bean module still requires Vauban API and core because its generated
-  factories and interception subclass reference Vauban types. The experiment
-  establishes an implementation-independent **opening target** (`jakarta.cdi`);
-  it does not establish a fully implementation-independent generated library.
-- A cross-module lookup loses `MODULE` access but retains `PACKAGE` access.
-  Defining a helper class in the bean package allows that helper to obtain a
-  full-privilege lookup in the bean module. Package declarations therefore
-  cannot be treated as an effective containment boundary for a recipient
-  permitted to define arbitrary classes. The proxy fixture verifies this by
-  invoking a private method in a second package that remains unopened and
-  unexported.
-- An opening and a read edge are separate. Heisenberg already adds its own
-  read edge to the bean module. Generated code calling container types may
-  additionally need a read in the opposite direction, and the referenced
-  container package must be exported.
-- Grants affect `Module` objects, not container instances. They persist after
-  container shutdown. This adapter is not a sandbox against arbitrary code
-  allowed to bootstrap another container or execute inside the provider module.
-- Provider selection uses the CDI SE mechanism and its one-provider rule. This
-  does not settle provider authentication in an application server, selection
-  among several CDI implementations, or isolation across independently created
-  module layers.
-
-## Questions remaining for the specification
-
-The experiments can inform the choice of an agreed opening target, provider
-authentication and explicit delegation policy. They do not by themselves define
-the final API, a deployment format for extension grants, container-instance
-isolation, or access to a third-party module that never consented to an opening.
-
-They also do not establish that every proxy strategy needs class definition in
-the bean module. The proxy fixture deliberately exercises the package-private
-subclass case raised in the discussion.
-
-Relevant discussion:
-
-- [Proposed experiments](https://github.com/jakartaee/cdi/issues/1015#issuecomment-6180633946)
-- [Bootstrap, FT, reflection and read-edge questions](https://github.com/jakartaee/cdi/issues/1015#issuecomment-6193128179)
-- [Explicit application authorization proposal](https://github.com/jakartaee/cdi/issues/1015#issuecomment-6268158721)
+- The FT case runs actual Vauban/Heisenberg interception. Its generated classes
+  still depend on Vauban; this tests a portable opening target, not portable
+  generated binaries.
+- The reflection and [proxy cases](proxy-fixtures/README.md) are focused probes.
+  They do not establish CDI Full lifecycle or TCK coverage.
+- Openings affect shared `Module` objects and survive container shutdown.
+  They cannot isolate containers sharing those same objects.
+- A generated helper can obtain a full-privilege lookup and reach other,
+  unopened packages of its own module. The proxy fixture verifies this.
+- The API helper uses CDI SE provider selection. Other bootstrap environments
+  and multiple CDI implementations need further design work.

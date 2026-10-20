@@ -1,33 +1,37 @@
 # Reference run: 2026-10-20
 
-**12 scenarios passed**, including the cases that must reject access.
-Each scenario ran in a separate JVM. The shared-module scenario deliberately
-started two containers in one JVM.
+**13 Maven integration tests passed:** the same 12 scenarios, including access
+refusals, plus a jar integrity check. Each scenario ran in a separate JVM.
+The shared-module scenario deliberately started two containers in one JVM.
 
 ## Inputs
 
 - Java: Eclipse Temurin OpenJDK 25, build `25+36-LTS`.
 - Maven: `3.9.16`.
-- Vauban production baseline: `16a84b813762a3aa7b9e63acc916c238f3fc027e`,
-  with the experiment sources in this branch.
-- Heisenberg source baseline: `74a98a7515ab84106d958793dc99a9af353250af`.
+- Vauban core/processor: published snapshot `0.4.0-20261019.193947-85`.
+- Heisenberg core/CDI: published snapshot `0.4.0-20261012.121738-14`.
+- Ravel core: published snapshot `0.4.0-20261010.163329-12`.
 - CDI API: `jakarta.enterprise:jakarta.enterprise.cdi-api:4.1.0`.
 - Original CDI jar SHA-256:
   `c42c808f17925129a0800f618febe050d966e181a4c7384c8a5e7a0283d68699`.
-- Vauban and Heisenberg source artifacts were rebuilt for the experiment.
-  Other dependencies, including Ravel, came from the local Maven repository.
-  The run used Maven offline mode.
 
-Both source builds used `clean package`. The extended CDI jar preserved all
-227 original entries byte for byte and added one helper class; the extended
-Vauban core jar preserved all 291 original entries and added three helper class
-files. Both original module descriptors and manifests were preserved exactly.
+Dependency resolution was checked using an initially empty Maven repository
+and an empty user settings file. All inputs came from public Maven Central and
+the public snapshots repository; no sibling source builds or locally installed
+Vidocq artifacts were used.
 
-The runner records the exact commands, all resolved/runtime dependency hashes,
-source status, source hashes, generated jar hashes and per-scenario results in
-`target/manifest.json`. This directory is ignored by Git because it contains
-machine-specific build output. This report describes observed behavior; it is
-not a claim that unpinned development snapshots are reproducible byte for byte.
+```sh
+mvn -f experiments/cdi-1015/pom.xml -U clean verify
+```
+
+The integrity test verifies that every original CDI/core jar entry, including
+module descriptors and manifests, is preserved byte for byte. Only experiment
+class files are added to the runtime copies.
+
+Maven writes standard reports to `target/failsafe-reports/`. Child JVM commands
+and output are in `target/logs/`; original/runtime jar hashes are recorded in
+`target/dependency-sha256.txt`. Snapshots can change, so later runs may resolve
+newer builds.
 
 ## Observations
 
