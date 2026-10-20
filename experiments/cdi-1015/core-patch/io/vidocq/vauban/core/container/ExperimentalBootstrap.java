@@ -38,10 +38,11 @@ public final class ExperimentalBootstrap {
         return new ExperimentalBootstrap(authorizedRecipients);
     }
 
-    /** Relays only the library's declared consent to the selected CDI provider. */
+    /** Relays the library's consent and prepares access needed by generated provider code. */
     public void openLibrary(Class<?> beanClass) {
         requireBeforeInitialization();
         opener.openPackage(MethodHandles.lookup(), beanClass.getModule(), beanClass.getPackageName());
+        ExperimentalModuleAccess.prepare(beanClass);
     }
 
     /** Additional recipients require the application-supplied grant, checked before mutation. */

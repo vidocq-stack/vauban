@@ -112,6 +112,21 @@
                             <outputDirectory>${project.build.directory}/dependencies</outputDirectory>
                         </configuration>
                     </execution>
+                    <execution>
+                        <id>resolve-standard-library-api</id>
+                        <phase>generate-test-resources</phase>
+                        <goals><goal>copy</goal></goals>
+                        <configuration>
+                            <artifactItems>
+                                <artifactItem>
+                                    <groupId>org.eclipse.microprofile.fault-tolerance</groupId>
+                                    <artifactId>microprofile-fault-tolerance-api</artifactId>
+                                    <version>4.1</version>
+                                    <outputDirectory>${project.build.directory}/library-api</outputDirectory>
+                                </artifactItem>
+                            </artifactItems>
+                        </configuration>
+                    </execution>
                 </executions>
             </plugin>
             <plugin>
@@ -132,6 +147,7 @@
                                 <delete dir="${work}/modules"/>
                                 <delete dir="${work}/generated"/>
                                 <delete dir="${work}/patch-classes"/>
+                                <delete dir="${work}/libraries"/>
                                 <copy todir="${work}/runtime-deps">
                                     <fileset dir="${work}/dependencies" includes="*.jar"/>
                                 </copy>
@@ -216,6 +232,44 @@
                                 <javac srcdir="${project.basedir}/proxy-fixtures/beans"
                                        destdir="${work}/modules/proxy-beans" release="25" includeantruntime="false">
                                     <modulepath refid="runtime.path"/>
+                                    <compilerarg value="-proc:none"/>
+                                </javac>
+
+                                <!-- The external library sees only released Jakarta/MP APIs.
+                                     No Vauban/Heisenberg implementation or processor is on its path. -->
+                                <copy todir="${work}/library-api">
+                                    <fileset dir="${work}/dependencies" includes="jakarta.*.jar"/>
+                                </copy>
+                                <mkdir dir="${work}/libraries"/>
+                                <macrodef name="compile-external-library">
+                                    <attribute name="variant"/>
+                                    <attribute name="descriptor"/>
+                                    <sequential>
+                                        <mkdir dir="${work}/modules/external-@{variant}"/>
+                                        <javac srcdir="${fixture}/external-beans/src/main/java"
+                                               excludes="module-info.java" sourcepath=""
+                                               destdir="${work}/modules/external-@{variant}"
+                                               release="25" includeantruntime="false"
+                                               modulepath="${work}/library-api">
+                                            <compilerarg value="-proc:none"/>
+                                            <compilerarg value="@{descriptor}"/>
+                                        </javac>
+                                        <jar destfile="${work}/libraries/external-@{variant}.jar"
+                                             basedir="${work}/modules/external-@{variant}"/>
+                                    </sequential>
+                                </macrodef>
+                                <compile-external-library variant="relay"
+                                    descriptor="${fixture}/external-beans/src/main/java/module-info.java"/>
+                                <compile-external-library variant="closed"
+                                    descriptor="${fixture}/external-beans/descriptors/closed/module-info.java"/>
+                                <mkdir dir="${work}/modules/external-app"/>
+                                <javac srcdir="${fixture}/external-app/src/main/java"
+                                       destdir="${work}/modules/external-app" release="25"
+                                       includeantruntime="false">
+                                    <modulepath>
+                                        <path refid="runtime.path"/>
+                                        <pathelement location="${work}/libraries/external-relay.jar"/>
+                                    </modulepath>
                                     <compilerarg value="-proc:none"/>
                                 </javac>
                             </target>

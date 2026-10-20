@@ -1,3 +1,25 @@
+# CDI 1015 external library — 2026-10-20
+
+- [x] Compile an external bean jar using only standard API modules, without annotation processing.
+- [x] Exercise actual normal-scope proxying, private injection and FT fallback with no provider/donation.
+- [x] Reproduce any runtime read-edge failure and handle it inside the experimental container adapter.
+- [x] Verify denial when library consent or application delegation is missing.
+- [x] Keep library jar bytes unchanged and document the remaining experimental API requirement.
+- [x] Run the Maven suite and review the branch update for publication.
+- [x] Add and review brief launcher/integrity comments in ExperimentIT for commit amendment.
+
+Review: all 17 Maven integration tests pass on Java 25. The external library
+first failed because its runtime-generated interception subclass could not read
+Vauban core. The experimental container adapter now defines a package-private
+helper after receiving the opening and establishes that read before generation.
+The library remains a standard-API-only jar, unchanged during execution, with no
+provider, processor or donated lookup. Actual normal-scope calls preserve bean
+state and exercise private injection and both FT fallbacks. Missing library
+consent and missing application delegation remain rejected. The fixture uses
+public exported beans registered explicitly at bootstrap.
+Comment-only follow-up: seven short comments explain JVM isolation, fixture
+selection and jar integrity. Diff reviewed; tests were not rerun.
+
 # CDI 1015 Maven build — 2026-10-20
 
 - [x] Confirm the public snapshot repository and published Vauban/Heisenberg access support.
