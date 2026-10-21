@@ -30,6 +30,8 @@
         <maven.javadoc.skip>true</maven.javadoc.skip>
         <maven.source.skip>true</maven.source.skip>
         <gpg.skip>true</gpg.skip>
+        <!-- SonarQube: test vehicle, its main code only exists to be exercised by its tests (Vidocq/vidocq#284). -->
+        <sonar.skip>true</sonar.skip>
     </properties>
 
     <dependencies>
@@ -104,7 +106,8 @@
                 <configuration>
                     <!-- Test-only: ModuleLookupModulePathTest calls ModuleLookups, whose package the
                          container exports to the trusted extension modules alone. -->
-                    <argLine>--add-exports io.vidocq.vauban.core/io.vidocq.vauban.core.access=io.vidocq.vauban.moduleit</argLine>
+                    <!-- @{argLine} keeps the JaCoCo agent of the quality profile (vidocq-parent). -->
+                    <argLine>@{argLine} --add-exports io.vidocq.vauban.core/io.vidocq.vauban.core.access=io.vidocq.vauban.moduleit</argLine>
                     <systemPropertyVariables>
                         <vauban.annotations.reflection>forbid</vauban.annotations.reflection>
                     </systemPropertyVariables>

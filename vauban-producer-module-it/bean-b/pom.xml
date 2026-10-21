@@ -17,6 +17,8 @@
         <maven.javadoc.skip>true</maven.javadoc.skip>
         <maven.source.skip>true</maven.source.skip>
         <gpg.skip>true</gpg.skip>
+        <!-- SonarQube: test vehicle, its main code only exists to be exercised by its tests (Vidocq/vidocq#284). -->
+        <sonar.skip>true</sonar.skip>
     </properties>
     <dependencies>
         <dependency>

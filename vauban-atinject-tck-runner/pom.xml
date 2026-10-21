@@ -27,6 +27,8 @@
         <gpg.skip>true</gpg.skip>
         <!-- The TCK suite runs only under -Ptck (kept out of the default build). -->
         <skipTests>true</skipTests>
+        <!-- SonarQube: TCK harness, not production code (Vidocq/vidocq#284). -->
+        <sonar.skip>true</sonar.skip>
     </properties>
 
     <dependencies>

@@ -90,8 +90,21 @@
         <!-- Quality -->
         <sonar.projectKey>vidocq-vauban</sonar.projectKey>
         <sonar.java.source>25</sonar.java.source>
-        <sonar.coverage.jacoco.xmlReportPaths>${project.build.directory}/site/jacoco/jacoco.xml</sonar.coverage.jacoco.xmlReportPaths>
-        <sonar.exclusions>**/generated/**</sonar.exclusions>
+        <!--
+            SonarQube (Vidocq/vidocq#284): every module reads the aggregated JaCoCo report of
+            vauban-coverage (quality profile), so the tests of vauban-module-it,
+            vauban-producer-it-bean-b and vauban-tck-runner count for the code they exercise in
+            the other modules.
+        -->
+        <sonar.coverage.jacoco.xmlReportPaths>${maven.multiModuleProjectDirectory}/vauban-coverage/target/site/jacoco-aggregate/jacoco.xml</sonar.coverage.jacoco.xmlReportPaths>
+        <!-- Same patterns as vidocq-parent: generated sources are not ours to fix. -->
+        <sonar.exclusions>**/generated-sources/**,**/generated/**</sonar.exclusions>
+        <!-- The examples stay analysed (people copy them), out of the coverage, and may print
+             to the console (java:S106). -->
+        <sonar.coverage.exclusions>**/vauban-examples/**</sonar.coverage.exclusions>
+        <sonar.issue.ignore.multicriteria>examples</sonar.issue.ignore.multicriteria>
+        <sonar.issue.ignore.multicriteria.examples.ruleKey>java:S106</sonar.issue.ignore.multicriteria.examples.ruleKey>
+        <sonar.issue.ignore.multicriteria.examples.resourceKey>**/vauban-examples/**/src/main/java/**</sonar.issue.ignore.multicriteria.examples.resourceKey>
 
         <!--
             The TCK this repository's pull requests are gated on (vauban#85). Read by the shared
@@ -193,4 +206,17 @@
             </plugins>
         </pluginManagement>
     </build>
+
+    <profiles>
+        <!--
+            Quality profile (with the one of vidocq-parent, which runs the JaCoCo agent): adds
+            the aggregated coverage report that SonarQube reads (Vidocq/vidocq#284).
+        -->
+        <profile>
+            <id>quality</id>
+            <modules>
+                <module>vauban-coverage</module>
+            </modules>
+        </profile>
+    </profiles>
 </project>

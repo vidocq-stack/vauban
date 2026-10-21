@@ -55,7 +55,8 @@
                     <!-- vauban-sjar is a test-only dependency (encrypted-archive fixture);
                          it is not in module-info, so the patched test module needs the
                          read edge explicitly. -->
-                    <argLine>--add-reads io.vidocq.vauban.classloader=io.vidocq.vauban.sjar</argLine>
+                    <!-- @{argLine} keeps the JaCoCo agent of the quality profile (vidocq-parent). -->
+                    <argLine>@{argLine} --add-reads io.vidocq.vauban.classloader=io.vidocq.vauban.sjar</argLine>
                 </configuration>
             </plugin>
         </plugins>

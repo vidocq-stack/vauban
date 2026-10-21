@@ -24,6 +24,9 @@
         <maven.javadoc.skip>true</maven.javadoc.skip>
         <maven.source.skip>true</maven.source.skip>
         <gpg.skip>true</gpg.skip>
+        <!-- SonarQube: TCK harness (porting package), not production code; its own tests count
+             through vauban-coverage (Vidocq/vidocq#284). -->
+        <sonar.skip>true</sonar.skip>
     </properties>
 
     <dependencyManagement>
