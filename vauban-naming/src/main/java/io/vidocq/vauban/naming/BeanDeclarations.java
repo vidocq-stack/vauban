@@ -219,10 +219,21 @@ final class BeanDeclarations {
         StringBuilder text = new StringBuilder();
         for (int i = 1; i < literal.length() - 1; i++) {
             char c = literal.charAt(i);
-            if (c == '\\' && i + 1 < literal.length() - 1) {
-                c = literal.charAt(++i);
+            if (c != '\\') {
+                text.append(c);
+                continue;
             }
-            text.append(c);
+            char escaped = ++i < literal.length() - 1 ? literal.charAt(i) : '\\';
+            text.append(switch (escaped) {
+                case 'n' -> '\n';
+                case 't' -> '\t';
+                case 'r' -> '\r';
+                case 'b' -> '\b';
+                case 'f' -> '\f';
+                case '0' -> '\0';
+                case '\\', '"', '\'' -> escaped;
+                default -> throw refused("unknown escape \\" + escaped + " in " + literal);
+            });
         }
         return text.toString();
     }

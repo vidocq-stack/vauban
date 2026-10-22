@@ -136,10 +136,10 @@ com.acme.Orders @com.acme.Region("eu") @com.acme.Tier(level = 2)
 |===
 | Member type | Literal
 | `String` | `"eu"`, with the escapes of Java: `"say \"hi\""`
-| `int`, `long`, `short`, `byte` | `2`, `3_000_000_000L`, `0x1F`
-| `double`, `float` | `0.5`, `1.5f`
+| `int`, `long`, `short`, `byte` | `2`, `-1`, `3_000_000_000L`, `0x1F`, `0b101`, `010` (octal), as Java reads them
+| `double`, `float` | `0.5`, `1e3`, `1.5f`; an integer literal is widened, as in Java
 | `boolean` | `true`, `false`
-| `char` | `'c'`
+| `char` | `'c'`, `'\n'`
 | an enum | `com.acme.Zone.EU`, or `EU`
 | `Class` | `com.acme.Foo.class`
 |===
@@ -169,8 +169,8 @@ point. The start fails, naming each wrong name and the `JndiBindings` class that
 == How a lookup is resolved
 
 *A context holds no container.* Each operation asks `CDI.current()` for the `NamingService` bean of the container
-running at that moment. A context the application kept answers from the new container after a restart, such as a
-`vidocq:dev` reload, with the names that container declares. With no container running, a lookup throws
+running at that moment. A context the application kept answers from the new container after a restart, such as a hot
+reload, with the names that container declares. With no container running, a lookup throws
 `NoInitialContextException`, and the next lookup after the container starts succeeds: a failure is never cached.
 
 *Lazy.* A lookup resolves the bean when it is made and returns the instance that the bean's scope gives: the same

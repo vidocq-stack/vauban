@@ -52,6 +52,8 @@ class DefaultNamingService implements NamingService {
     private final Instance<JndiBindings> bindings;
     private final Instance<JndiNameProvider> providers;
     private volatile NameTable table;
+    /** The thread building the table, so that a lookup it makes while binding fails rather than recursing. */
+    private Thread building;
 
     @Inject
     DefaultNamingService(@Any Instance<JndiBindings> bindings, @Any Instance<JndiNameProvider> providers) {
@@ -66,7 +68,16 @@ class DefaultNamingService implements NamingService {
             synchronized (this) {
                 built = table;
                 if (built == null) {
-                    built = NameTable.of(bindings);
+                    if (building == Thread.currentThread()) {
+                        throw new IllegalStateException("A JndiBindings bean looked a java: name up while binding "
+                                + "its names: no name is declared until every bean has bound its own");
+                    }
+                    building = Thread.currentThread();
+                    try {
+                        built = NameTable.of(bindings);
+                    } finally {
+                        building = null;
+                    }
                     table = built;
                 }
             }
@@ -141,10 +152,12 @@ class DefaultNamingService implements NamingService {
         Set<JndiName> chain = new LinkedHashSet<>(List.of(name));
         JndiTarget target = link;
         while (target instanceof JndiTarget.Link next) {
-            if (!chain.add(next.name())) {
-                chain.add(next.name());
-                return "is a loop of links: " + String.join(" -> ", chain.stream().map(JndiName::toString).toList());
+            if (chain.contains(next.name())) {
+                List<String> loop = new ArrayList<>(chain.stream().map(JndiName::toString).toList());
+                loop.add(next.name().toString());
+                return "is a loop of links: " + String.join(" -> ", loop);
             }
+            chain.add(next.name());
             Optional<JndiTarget> found = declared.target(next.name());
             if (found.isEmpty()) {
                 return "links to " + next.name() + ", which is not declared";

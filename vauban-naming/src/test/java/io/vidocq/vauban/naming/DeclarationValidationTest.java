@@ -95,7 +95,8 @@ class DeclarationValidationTest {
 
     @Test
     void aLoopOfLinksFailsTheStart() {
-        assertMentions(startFails(LoopNames.class), "java:comp/env/a", "java:comp/env/b", "loop");
+        assertMentions(startFails(LoopNames.class), "loop",
+                "java:comp/env/a -> java:comp/env/b -> java:comp/env/a");
     }
 
     @Test
@@ -120,5 +121,15 @@ class DeclarationValidationTest {
     void aDeclaredNamespaceOrEnvironmentFailsTheStart() {
         assertMentions(startFails(OrdersDataSource.class, EnvironmentNames.class), "java:comp/env",
                 "always a context");
+    }
+
+    @Test
+    void aLookupMadeWhileBindingFailsTheStartInsteadOfRecursing() {
+        assertTrue(JavaNaming.installAsDefault(Thread.currentThread().getContextClassLoader()));
+        try {
+            assertMentions(startFails(OrdersDataSource.class, LookingUpNames.class), "while binding");
+        } finally {
+            JavaNaming.uninstall();
+        }
     }
 }

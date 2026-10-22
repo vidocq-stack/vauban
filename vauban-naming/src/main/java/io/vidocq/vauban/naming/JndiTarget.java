@@ -82,9 +82,16 @@ public sealed interface JndiTarget {
      * @return the target
      */
     static JndiTarget bean(Class<?> type, Annotation... qualifiers) {
+        Set<Annotation> distinct = new LinkedHashSet<>();
+        for (Annotation qualifier : qualifiers) {
+            Objects.requireNonNull(qualifier, "a qualifier of " + type.getName() + " is null");
+            if (!distinct.add(qualifier)) {
+                throw new IllegalArgumentException(written(qualifier) + " is given twice for " + type.getName());
+            }
+        }
         String declaration = Stream.concat(Stream.of(type.getName()), Stream.of(qualifiers).map(JndiTarget::written))
                 .collect(Collectors.joining(" "));
-        return new Bean(type, new LinkedHashSet<>(Set.of(qualifiers)), declaration);
+        return new Bean(type, distinct, declaration);
     }
 
     /** A qualifier as a declaration writes it: the three Jakarta ones by their short name. */

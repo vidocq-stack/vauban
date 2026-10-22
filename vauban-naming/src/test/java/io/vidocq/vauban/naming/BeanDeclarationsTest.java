@@ -148,4 +148,21 @@ class BeanDeclarationsTest {
                 JndiTarget.link("java:comp/env/jdbc/orders"));
         assertThrows(IllegalArgumentException.class, () -> JndiTarget.link("jdbc/orders"));
     }
+
+    @Test
+    void aNamedValueTakesTheEscapesOfJava() {
+        assertEquals(Set.of(NamedLiteral.of("a\tb")), bean("java.lang.String @Named(\"a\\tb\")").qualifiers());
+        assertEquals(Set.of(NamedLiteral.of("a\\b")), bean("java.lang.String @Named(\"a\\\\b\")").qualifiers());
+        assertRefused("java.lang.String @Named(\"a\\qb\")", "unknown escape");
+    }
+
+    @Test
+    void aQualifierGivenTwiceOrNullIsRefusedWithAReason() {
+        var twice = assertThrows(IllegalArgumentException.class,
+                () -> JndiTarget.bean(String.class, NamedLiteral.of("x"), NamedLiteral.of("x")));
+        assertTrue(twice.getMessage().contains("twice"), twice.getMessage());
+
+        var none = assertThrows(NullPointerException.class, () -> JndiTarget.bean(String.class, (Annotation) null));
+        assertTrue(none.getMessage().contains("qualifier"), none.getMessage());
+    }
 }
