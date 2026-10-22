@@ -143,15 +143,6 @@ class JavaNamespaceTest {
     }
 
     @Test
-    void aDependentBeanIsRefusedRatherThanLeaked() throws NamingException {
-        start(DependentDataSource.class, ScratchNames.class);
-        var context = new InitialContext();
-
-        var refused = assertThrows(NamingException.class, () -> context.lookup("java:comp/env/jdbc/scratch"));
-        assertTrue(refused.getMessage().contains("@Dependent"), refused.getMessage());
-    }
-
-    @Test
     void aProviderBeanContributesItsNames() throws NamingException {
         start(QueueNames.class);
 

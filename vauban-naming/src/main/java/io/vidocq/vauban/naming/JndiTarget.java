@@ -19,6 +19,9 @@
  */
 package io.vidocq.vauban.naming;
 
+import jakarta.enterprise.inject.Any;
+import jakarta.enterprise.inject.Default;
+import jakarta.inject.Named;
 import java.lang.annotation.Annotation;
 import java.util.Collections;
 import java.util.LinkedHashSet;
@@ -79,9 +82,19 @@ public sealed interface JndiTarget {
      * @return the target
      */
     static JndiTarget bean(Class<?> type, Annotation... qualifiers) {
-        String declaration = Stream.concat(Stream.of(type.getName()), Stream.of(qualifiers).map(Annotation::toString))
+        String declaration = Stream.concat(Stream.of(type.getName()), Stream.of(qualifiers).map(JndiTarget::written))
                 .collect(Collectors.joining(" "));
         return new Bean(type, new LinkedHashSet<>(Set.of(qualifiers)), declaration);
+    }
+
+    /** A qualifier as a declaration writes it: the three Jakarta ones by their short name. */
+    private static String written(Annotation qualifier) {
+        return switch (qualifier) {
+            case Named named -> "@Named(\"" + named.value().replace("\\", "\\\\").replace("\"", "\\\"") + "\")";
+            case Default ignored -> "@Default";
+            case Any ignored -> "@Any";
+            default -> qualifier.toString();
+        };
     }
 
     /**

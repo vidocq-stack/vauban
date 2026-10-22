@@ -21,12 +21,19 @@ package io.vidocq.vauban.naming;
 
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.enterprise.context.Dependent;
+import jakarta.enterprise.event.Observes;
+import jakarta.enterprise.event.Startup;
 import jakarta.enterprise.inject.Any;
 import jakarta.enterprise.inject.Instance;
+import jakarta.enterprise.inject.spi.BeanManager;
 import jakarta.enterprise.inject.spi.CDI;
+import jakarta.enterprise.inject.spi.DeploymentException;
 import jakarta.inject.Inject;
 import java.lang.annotation.Annotation;
+import java.util.ArrayList;
 import java.util.LinkedHashSet;
+import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.function.Predicate;
@@ -65,6 +72,73 @@ class DefaultNamingService implements NamingService {
             }
         }
         return built;
+    }
+
+    /**
+     * Checks every declared name when the container starts, as an injection point is checked: a name declared
+     * twice, a bean target no bean or several beans match, a {@code @Dependent} one, a qualifier that is none, a
+     * link to an undeclared name or a loop of links fails the start, every problem named at once.
+     */
+    void validate(@Observes Startup startup, BeanManager beanManager) {
+        NameTable declared;
+        try {
+            declared = table();
+        } catch (RuntimeException wrong) {
+            throw new DeploymentException("The java: names cannot be declared: " + wrong.getMessage(), wrong);
+        }
+        List<String> problems = new ArrayList<>();
+        for (Map.Entry<JndiName, JndiTarget> entry : declared.targets().entrySet()) {
+            String problem = switch (entry.getValue()) {
+                case JndiTarget.Bean bean -> problem(bean, beanManager);
+                case JndiTarget.Link link -> problem(entry.getKey(), link, declared);
+            };
+            if (problem != null) {
+                problems.add(entry.getKey() + " (declared by " + declared.declaringClass(entry.getKey()).getName()
+                        + ") " + problem);
+            }
+        }
+        if (!problems.isEmpty()) {
+            throw new DeploymentException("Wrong java: names: " + String.join("; ", problems));
+        }
+    }
+
+    private static String problem(JndiTarget.Bean bean, BeanManager beanManager) {
+        for (Annotation qualifier : bean.qualifiers()) {
+            if (!beanManager.isQualifier(qualifier.annotationType())) {
+                return "is bound to " + bean.declaration() + ", but " + qualifier.annotationType().getName()
+                        + " is not a qualifier";
+            }
+        }
+        Instance<?> instance = beanManager.createInstance()
+                .select(bean.type(), bean.qualifiers().toArray(Annotation[]::new));
+        if (instance.isUnsatisfied()) {
+            return "is bound to " + bean.declaration() + ", which no bean matches";
+        }
+        if (instance.isAmbiguous()) {
+            return "is bound to " + bean.declaration() + ", which several beans match";
+        }
+        if (instance.getHandle().getBean().getScope() == Dependent.class) {
+            return "is bound to " + bean.declaration() + ", a @Dependent bean: a lookup would create an instance "
+                    + "that nobody destroys. Give the bean a scope, such as @ApplicationScoped or @Singleton";
+        }
+        return null;
+    }
+
+    private static String problem(JndiName name, JndiTarget.Link link, NameTable declared) {
+        Set<JndiName> chain = new LinkedHashSet<>(List.of(name));
+        JndiTarget target = link;
+        while (target instanceof JndiTarget.Link next) {
+            if (!chain.add(next.name())) {
+                chain.add(next.name());
+                return "is a loop of links: " + String.join(" -> ", chain.stream().map(JndiName::toString).toList());
+            }
+            Optional<JndiTarget> found = declared.target(next.name());
+            if (found.isEmpty()) {
+                return "links to " + next.name() + ", which is not declared";
+            }
+            target = found.get();
+        }
+        return null;
     }
 
     @Override

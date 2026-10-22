@@ -121,7 +121,10 @@ class BeanDeclarationsTest {
 
         assertEquals(String.class, bean.type());
         assertEquals(Set.of(NamedLiteral.of("x")), bean.qualifiers());
-        assertTrue(bean.declaration().startsWith("java.lang.String @"), bean.declaration());
+        assertEquals("java.lang.String @Named(\"x\")", bean.declaration());
+        assertEquals("java.lang.String @Default @Any",
+                ((JndiTarget.Bean) JndiTarget.bean(String.class, Default.Literal.INSTANCE, Any.Literal.INSTANCE))
+                        .declaration());
     }
 
     @Test
