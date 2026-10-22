@@ -403,7 +403,7 @@ WebContexts.destroySession(beanManager, store, session);
 [#jndi]
 == The JNDI `java:` namespace [.tag-new]#NEW#
 
-Code written for an application server looks its resources up by name: `new InitialContext().lookup("java:comp/env/jdbc/orders")`. `vauban-naming` answers those names from the running container, with the `@Named("orders")` `DataSource` bean. Names, installation, restarts and adding names of your own: xref:jndi.adoc[The JNDI java: namespace].
+Code written for an application server looks its resources up by name: `new InitialContext().lookup("java:comp/env/jdbc/orders")`. `vauban-naming` answers those names from the running container, with the bean each name is declared for, such as the `@Named("orders")` `DataSource` bean. Declaring names, the four namespaces, links and what is checked at startup: xref:jndi.adoc[The JNDI java: namespace].
 
 == JUnit tests with `@VaubanTest`
 

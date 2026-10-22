@@ -12,7 +12,7 @@ This page lists every artefact published by Vauban, the Java Modules packages th
 
 | `io.vidocq.vauban:vauban-api:{project-version}`
 | `compile`
-| Version marker (`Vauban.VERSION`) and the generated-code SPI (`ProxyLink`, `VaubanComponentProvider`)
+| Version marker (`Vauban.VERSION`), the generated-code SPI (`ProxyLink`, `VaubanComponentProvider`), and `AnnotationInstanceFactory`, which builds an annotation instance from members written as text (provided by `vauban-core`)
 
 | `io.vidocq.vauban:vauban-core:{project-version}`
 | `runtime`
@@ -44,7 +44,7 @@ This page lists every artefact published by Vauban, the Java Modules packages th
 
 | `io.vidocq.vauban:vauban-naming:{project-version}`
 | `runtime`
-| The JNDI `java:` namespace answered by the running container (`JavaNaming`, `JndiNameProvider`, `NamingService`), see xref:jndi.adoc[The JNDI java: namespace] [.tag-new]#NEW#
+| The JNDI `java:` namespace answered by the running container (`JavaNaming`, `JndiBindings`, `JndiTarget`, `JndiNameProvider`, `NamingService`), see xref:jndi.adoc[The JNDI java: namespace] [.tag-new]#NEW#
 
 | `io.vidocq.vauban:vauban-weaver:{project-version}`
 | `runtime`

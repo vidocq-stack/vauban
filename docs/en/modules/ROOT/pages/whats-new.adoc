@@ -58,7 +58,7 @@ Interceptors now reach the methods a bean inherits, interface default methods in
 
 == Naming
 
-* **The JNDI `java:` namespace with `vauban-naming`** — a new module answers `new InitialContext().lookup("java:comp/env/jdbc/orders")` with the `@Named("orders")` `DataSource` bean of the running container, so code written for an application server finds its resources (Vidocq/vidocq#297). Its contexts hold no container and follow a restart; the namespace is read-only; other libraries add names with `JndiNameProvider` beans. `JavaNaming.installAsDefault` makes it the JVM default unless the application chose a factory, and LDAP or RMI names still go to the JDK. xref:jndi.adoc[The JNDI java: namespace].
+* **The JNDI `java:` namespace with `vauban-naming`** — a new module answers `new InitialContext().lookup("java:comp/env/jdbc/orders")` from the running container, so code written for an application server finds its resources (Vidocq/vidocq#297). `JndiBindings` beans declare each name, bound to a bean (a type and its qualifiers, also written as text: `javax.sql.DataSource @Named("orders")`) or linked to another name, in four distinct namespaces (`java:comp`, `java:module`, `java:app`, `java:global`); the declarations are checked when the container starts. Its contexts hold no container and follow a restart; the namespace is read-only; names not known in advance come from `JndiNameProvider` beans. `JavaNaming.installAsDefault` makes it the JVM default unless the application chose a factory, and LDAP or RMI names still go to the JDK. xref:jndi.adoc[The JNDI java: namespace].
 
 == Web contexts
 
