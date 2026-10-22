@@ -88,6 +88,17 @@ final class NameTable {
         }
     }
 
+    /** One of the four namespaces or one of their environments: a context with or without declarations. */
+    static boolean isAlwaysContext(JndiName name) {
+        return ALWAYS_CONTEXTS.contains(name.toString());
+    }
+
+    /** A declared name under {@code name}, which makes it a context, if there is one. */
+    Optional<JndiName> descendant(JndiName name) {
+        return targets.keySet().stream().filter(declared -> !declared.equals(name) && declared.startsWith(name))
+                .findFirst();
+    }
+
     Optional<JndiTarget> target(JndiName name) {
         return Optional.ofNullable(targets.get(name));
     }
@@ -101,9 +112,12 @@ final class NameTable {
         return declaredBy.get(name);
     }
 
-    /** A namespace, an environment, or a proper prefix of a declared name. */
+    /** A namespace, an environment, or a proper prefix of a declared name; never a name bound to a target. */
     boolean isContext(JndiName name) {
-        if (ALWAYS_CONTEXTS.contains(name.toString())) {
+        if (targets.containsKey(name)) {
+            return false;
+        }
+        if (isAlwaysContext(name)) {
             return true;
         }
         for (JndiName declared : targets.keySet()) {

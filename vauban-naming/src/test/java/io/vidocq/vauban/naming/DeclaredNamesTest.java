@@ -195,4 +195,13 @@ class DeclaredNamesTest {
         assertThrows(NameNotFoundException.class, () -> context.lookup("java:comp/env/a"));
         assertSame(orders(), context.lookup("java:comp/env/b"));
     }
+
+    @Test
+    void aDeclaredNameIsNeverHiddenByAProvidersContext() throws NamingException {
+        start(OrdersDataSource.class, JmsNames.class, CountingQueueNames.class);
+        int asked = CountingQueueNames.asked;
+
+        assertSame(orders(), lookup("java:comp/env/jms"));
+        assertEquals(asked, CountingQueueNames.asked);
+    }
 }

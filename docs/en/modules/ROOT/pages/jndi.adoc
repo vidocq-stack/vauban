@@ -157,6 +157,9 @@ When the container starts, the naming service checks every declared name, as the
 point. The start fails, naming each wrong name and the `JndiBindings` class that declared it, when:
 
 * a name is declared twice, by one bean or by two;
+* a declared name is also a context: one of the four namespaces or their environments, or the parent of another
+  declared name (`java:comp/env/jdbc` next to `java:comp/env/jdbc/orders`). A lookup would return the context and
+  never the bean;
 * no bean, or several beans, match a bean target;
 * the bean of a bean target is `@Dependent`: a JNDI caller never releases what it looks up, so the lookup would
   create an instance that nobody destroys. Give the bean a scope, such as `@ApplicationScoped` or `@Singleton`;

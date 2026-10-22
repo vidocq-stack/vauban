@@ -109,4 +109,16 @@ class DeclarationValidationTest {
         assertMentions(startFails(OrdersNames.class, LoopNames.class), "java:comp/env/jdbc/orders",
                 "java:comp/env/a");
     }
+
+    @Test
+    void aDeclaredNameThatIsTheParentOfAnotherFailsTheStart() {
+        assertMentions(startFails(OrdersDataSource.class, ParentNames.class), "java:comp/env/jdbc",
+                "context of java:comp/env/jdbc/orders");
+    }
+
+    @Test
+    void aDeclaredNamespaceOrEnvironmentFailsTheStart() {
+        assertMentions(startFails(OrdersDataSource.class, EnvironmentNames.class), "java:comp/env",
+                "always a context");
+    }
 }

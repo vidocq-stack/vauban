@@ -88,10 +88,13 @@ class DefaultNamingService implements NamingService {
         }
         List<String> problems = new ArrayList<>();
         for (Map.Entry<JndiName, JndiTarget> entry : declared.targets().entrySet()) {
-            String problem = switch (entry.getValue()) {
-                case JndiTarget.Bean bean -> problem(bean, beanManager);
-                case JndiTarget.Link link -> problem(entry.getKey(), link, declared);
-            };
+            String problem = contextProblem(entry.getKey(), declared);
+            if (problem == null) {
+                problem = switch (entry.getValue()) {
+                    case JndiTarget.Bean bean -> problem(bean, beanManager);
+                    case JndiTarget.Link link -> problem(entry.getKey(), link, declared);
+                };
+            }
             if (problem != null) {
                 problems.add(entry.getKey() + " (declared by " + declared.declaringClass(entry.getKey()).getName()
                         + ") " + problem);
@@ -100,6 +103,16 @@ class DefaultNamingService implements NamingService {
         if (!problems.isEmpty()) {
             throw new DeploymentException("Wrong java: names: " + String.join("; ", problems));
         }
+    }
+
+    /** A name that is also a context would hide one or the other: a lookup returns the context. */
+    private static String contextProblem(JndiName name, NameTable declared) {
+        if (NameTable.isAlwaysContext(name)) {
+            return "is always a context, in which names resolve: it cannot be bound";
+        }
+        return declared.descendant(name)
+                .map(child -> "is also the context of " + child + ": it cannot be bound")
+                .orElse(null);
     }
 
     private static String problem(JndiTarget.Bean bean, BeanManager beanManager) {
@@ -149,7 +162,11 @@ class DefaultNamingService implements NamingService {
         } catch (InvalidNameException invalid) {
             return false;
         }
-        return declared().isContext(parsed) || anyProvider(provider -> provider.isContext(parsed));
+        NameTable table = declared();
+        if (table.target(parsed).isPresent()) {
+            return false;
+        }
+        return table.isContext(parsed) || anyProvider(provider -> provider.isContext(parsed));
     }
 
     @Override
