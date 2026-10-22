@@ -23,50 +23,115 @@ import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.enterprise.context.Dependent;
 import jakarta.enterprise.inject.Any;
 import jakarta.enterprise.inject.Instance;
+import jakarta.enterprise.inject.spi.CDI;
 import jakarta.inject.Inject;
-import java.util.List;
+import java.lang.annotation.Annotation;
+import java.util.LinkedHashSet;
 import java.util.Optional;
 import java.util.Set;
+import java.util.function.Predicate;
+import javax.naming.InvalidNameException;
 import javax.naming.NameNotFoundException;
 import javax.naming.NamingException;
 
 /**
- * The default {@link NamingService}: {@code java:comp/env}, with {@code java:module/env} and
- * {@code java:app/env} as aliases since an application is a single component, answered by the
- * {@link JndiNameProvider} beans. Nothing is copied at startup: each lookup asks the providers.
+ * The default {@link NamingService}: the names the {@link JndiBindings} beans declare, in four distinct namespaces,
+ * then the names the {@link JndiNameProvider} beans answer. The table of declared names is built once per container,
+ * at the first lookup or when the container starts; a bean target is resolved at each lookup.
  */
 @ApplicationScoped
 class DefaultNamingService implements NamingService {
 
-    private static final List<String> ENVIRONMENTS = List.of("java:comp/env", "java:module/env", "java:app/env");
-    private static final Set<String> CONTEXTS = Set.of(
-            "java:comp", "java:module", "java:app", "java:comp/env", "java:module/env", "java:app/env");
-
+    private final Instance<JndiBindings> bindings;
     private final Instance<JndiNameProvider> providers;
+    private volatile NameTable table;
 
     @Inject
-    DefaultNamingService(@Any Instance<JndiNameProvider> providers) {
+    DefaultNamingService(@Any Instance<JndiBindings> bindings, @Any Instance<JndiNameProvider> providers) {
+        this.bindings = bindings;
         this.providers = providers;
+    }
+
+    /** The declared names, built at the first call. */
+    NameTable table() {
+        NameTable built = table;
+        if (built == null) {
+            synchronized (this) {
+                built = table;
+                if (built == null) {
+                    built = NameTable.of(bindings);
+                    table = built;
+                }
+            }
+        }
+        return built;
     }
 
     @Override
     public boolean isContext(String name) {
-        return CONTEXTS.contains(name.endsWith("/") ? name.substring(0, name.length() - 1) : name);
+        JndiName parsed;
+        try {
+            parsed = JndiName.parse(name);
+        } catch (InvalidNameException invalid) {
+            return false;
+        }
+        return declared().isContext(parsed) || anyProvider(provider -> provider.isContext(parsed));
     }
 
     @Override
     public Object lookup(String name) throws NamingException {
-        String relative = relative(name);
+        JndiName parsed;
+        try {
+            parsed = JndiName.parse(name);
+        } catch (InvalidNameException invalid) {
+            var outside = new NameNotFoundException(invalid.getMessage());
+            outside.setRootCause(invalid);
+            throw outside;
+        }
+        return lookup(parsed, new LinkedHashSet<>());
+    }
+
+    private Object lookup(JndiName name, Set<JndiName> followed) throws NamingException {
+        Optional<JndiTarget> target = declaredOrFailure().target(name);
+        if (target.isPresent()) {
+            return switch (target.get()) {
+                case JndiTarget.Bean bean -> bean(name, bean);
+                case JndiTarget.Link link -> {
+                    if (!followed.add(name)) {
+                        throw new NamingException("The links of " + name + " loop: " + followed);
+                    }
+                    yield lookup(link.name(), followed);
+                }
+            };
+        }
+        return provided(name).orElseThrow(
+                () -> new NameNotFoundException(name + " is bound to nothing in the running container"));
+    }
+
+    private static Object bean(JndiName name, JndiTarget.Bean bean) throws NamingException {
+        Instance<?> instance = CDI.current().select(bean.type(), bean.qualifiers().toArray(Annotation[]::new));
+        if (!instance.isResolvable()) {
+            throw new NamingException(name + " is bound to " + bean.declaration() + ", which "
+                    + (instance.isAmbiguous() ? "several beans match" : "no bean matches") + " in the running container");
+        }
+        var handle = instance.getHandle();
+        if (handle.getBean().getScope() == Dependent.class) {
+            throw new NamingException(name + " is bound to " + bean.declaration() + ", a @Dependent bean: a lookup "
+                    + "would create an instance that nobody destroys. Give the bean a scope, such as "
+                    + "@ApplicationScoped or @Singleton");
+        }
+        return handle.get();
+    }
+
+    private Optional<Object> provided(JndiName name) throws NamingException {
         Object found = null;
         Class<?> answering = null;
         for (Instance.Handle<JndiNameProvider> handle : providers.handles()) {
             Optional<Object> value;
             try {
-                value = handle.get().lookup(relative);
+                value = handle.get().lookup(name);
             } finally {
-                if (handle.getBean().getScope() == Dependent.class) {
-                    handle.destroy();
-                }
+                destroyIfDependent(handle);
             }
             if (value.isPresent()) {
                 if (found != null) {
@@ -77,18 +142,45 @@ class DefaultNamingService implements NamingService {
                 answering = handle.getBean().getBeanClass();
             }
         }
-        if (found == null) {
-            throw new NameNotFoundException(name + " is bound to nothing in the running container");
-        }
-        return found;
+        return Optional.ofNullable(found);
     }
 
-    private static String relative(String name) throws NameNotFoundException {
-        for (String environment : ENVIRONMENTS) {
-            if (name.startsWith(environment + "/")) {
-                return name.substring(environment.length() + 1);
+    private boolean anyProvider(Predicate<JndiNameProvider> test) {
+        for (Instance.Handle<JndiNameProvider> handle : providers.handles()) {
+            try {
+                if (test.test(handle.get())) {
+                    return true;
+                }
+            } finally {
+                destroyIfDependent(handle);
             }
         }
-        throw new NameNotFoundException(name + " is outside java:comp/env, the namespace the container serves");
+        return false;
+    }
+
+    private static void destroyIfDependent(Instance.Handle<?> handle) {
+        if (handle.getBean().getScope() == Dependent.class) {
+            handle.destroy();
+        }
+    }
+
+    /** The table for {@link #isContext}: a declaration that cannot be read answers as if nothing were declared. */
+    private NameTable declared() {
+        try {
+            return table();
+        } catch (RuntimeException wrong) {
+            return NameTable.EMPTY;
+        }
+    }
+
+    /** The table for a lookup: a declaration that cannot be read fails the lookup with its reason. */
+    private NameTable declaredOrFailure() throws NamingException {
+        try {
+            return table();
+        } catch (RuntimeException wrong) {
+            var failure = new NamingException("The java: names cannot be declared: " + wrong.getMessage());
+            failure.setRootCause(wrong);
+            throw failure;
+        }
     }
 }

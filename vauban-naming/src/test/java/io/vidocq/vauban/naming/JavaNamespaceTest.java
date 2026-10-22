@@ -70,9 +70,7 @@ class JavaNamespaceTest {
     }
 
     private VaubanContainer start(Class<?>... beans) {
-        var builder = VaubanContainer.builder()
-                .addBeanClass(DefaultNamingService.class)
-                .addBeanClass(DataSourceNames.class);
+        var builder = VaubanContainer.builder().addBeanClass(DefaultNamingService.class);
         for (Class<?> bean : beans) {
             builder.addBeanClass(bean);
         }
@@ -85,24 +83,15 @@ class JavaNamespaceTest {
     }
 
     @Test
-    void aJdbcNameAnswersTheNamedDataSourceBean() throws NamingException {
-        start(OrdersDataSource.class);
+    void aDeclaredJdbcNameAnswersTheNamedDataSourceBean() throws NamingException {
+        start(OrdersDataSource.class, OrdersNames.class);
 
         assertSame(orders(), new InitialContext().lookup("java:comp/env/jdbc/orders"));
     }
 
     @Test
-    void theApplicationAndModuleNamespacesAreAliasesOfTheComponentOne() throws NamingException {
-        start(OrdersDataSource.class);
-        var context = new InitialContext();
-
-        assertSame(orders(), context.lookup("java:app/env/jdbc/orders"));
-        assertSame(orders(), context.lookup("java:module/env/jdbc/orders"));
-    }
-
-    @Test
     void theEnvironmentIsASubcontextThatResolvesRelativeNames() throws NamingException {
-        start(OrdersDataSource.class);
+        start(OrdersDataSource.class, OrdersNames.class);
 
         // The Standard Tag Library's lookup of a data source path.
         var environment = (Context) new InitialContext().lookup("java:comp/env");
@@ -113,12 +102,12 @@ class JavaNamespaceTest {
 
     @Test
     void aContextAnswersTheContainerRunningAtTheTimeOfTheLookup() throws NamingException {
-        start(OrdersDataSource.class);
+        start(OrdersDataSource.class, OrdersNames.class);
         var context = new InitialContext();
         var first = context.lookup("java:comp/env/jdbc/orders");
         container.close();
 
-        start(OrdersDataSource.class);
+        start(OrdersDataSource.class, OrdersNames.class);
         var second = context.lookup("java:comp/env/jdbc/orders");
 
         assertSame(orders(), second);
@@ -138,14 +127,14 @@ class JavaNamespaceTest {
         var early = new InitialContext();
         assertThrows(NoInitialContextException.class, () -> early.lookup("java:comp/env/jdbc/orders"));
 
-        start(OrdersDataSource.class);
+        start(OrdersDataSource.class, OrdersNames.class);
 
         assertSame(orders(), new InitialContext().lookup("java:comp/env/jdbc/orders"));
     }
 
     @Test
     void anUnknownNameIsNotFound() throws NamingException {
-        start(OrdersDataSource.class);
+        start(OrdersDataSource.class, OrdersNames.class);
         var context = new InitialContext();
 
         assertThrows(NameNotFoundException.class, () -> context.lookup("java:comp/env/jdbc/billing"));
@@ -155,7 +144,7 @@ class JavaNamespaceTest {
 
     @Test
     void aDependentBeanIsRefusedRatherThanLeaked() throws NamingException {
-        start(DependentDataSource.class);
+        start(DependentDataSource.class, ScratchNames.class);
         var context = new InitialContext();
 
         var refused = assertThrows(NamingException.class, () -> context.lookup("java:comp/env/jdbc/scratch"));
@@ -181,10 +170,13 @@ class JavaNamespaceTest {
     @Test
     void aDependentProviderIsDestroyedOnceItHasAnswered() throws NamingException {
         start(DependentQueueNames.class);
+        int created = DependentQueueNames.created;
         int destroyed = DependentQueueNames.destroyed;
 
         assertEquals(DependentQueueNames.AUDIT_QUEUE, new InitialContext().lookup("java:comp/env/jms/audit"));
-        assertEquals(destroyed + 1, DependentQueueNames.destroyed);
+        // Asked whether the name is a context, then for the name: each instance created is destroyed.
+        assertTrue(DependentQueueNames.created > created);
+        assertEquals(DependentQueueNames.created - created, DependentQueueNames.destroyed - destroyed);
     }
 
     @Test
@@ -207,7 +199,7 @@ class JavaNamespaceTest {
 
     @Test
     void aTrailingSlashStillNamesTheEnvironmentContext() throws NamingException {
-        start(OrdersDataSource.class);
+        start(OrdersDataSource.class, OrdersNames.class);
 
         var environment = assertInstanceOf(Context.class, new InitialContext().lookup("java:comp/env/"));
         assertSame(orders(), environment.lookup("jdbc/orders"));
@@ -215,7 +207,7 @@ class JavaNamespaceTest {
 
     @Test
     void theNamespaceIsReadOnly() throws NamingException {
-        start(OrdersDataSource.class);
+        start(OrdersDataSource.class, OrdersNames.class);
         var context = new InitialContext();
 
         assertThrows(OperationNotSupportedException.class, () -> context.bind("java:comp/env/jdbc/x", "x"));
@@ -229,7 +221,7 @@ class JavaNamespaceTest {
 
     @Test
     void anExplicitFactoryInTheEnvironmentNeverReachesTheNamespace() {
-        start(OrdersDataSource.class);
+        start(OrdersDataSource.class, OrdersNames.class);
         var environment = new Hashtable<String, Object>();
         environment.put(Context.INITIAL_CONTEXT_FACTORY, RefusingFactory.class.getName());
 
@@ -240,7 +232,7 @@ class JavaNamespaceTest {
 
     @Test
     void anLdapUrlStillGoesToTheJdkLdapProvider() throws NamingException {
-        start(OrdersDataSource.class);
+        start(OrdersDataSource.class, OrdersNames.class);
         var context = new InitialContext();
 
         // Nothing listens on port 1: the JDK's LDAP provider fails to connect. Had the name reached the

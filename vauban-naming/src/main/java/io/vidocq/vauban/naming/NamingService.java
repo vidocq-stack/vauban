@@ -25,8 +25,8 @@ import javax.naming.NamingException;
  * Resolves the names of the {@code java:} namespace: the CDI bean every JNDI operation of
  * {@link CdiInitialContextFactory}'s contexts delegates to, resolved in the running container at each call.
  *
- * <p>The default bean serves {@code java:comp/env} and its aliases {@code java:module/env} and
- * {@code java:app/env} (an application is a single component) from the {@link JndiNameProvider} beans. An
+ * <p>The default bean serves the names the {@link JndiBindings} beans declare, in four distinct namespaces, then
+ * those the {@link JndiNameProvider} beans answer. An
  * application replaces it with an {@code @Alternative @Priority} bean of this type.
  */
 public interface NamingService {

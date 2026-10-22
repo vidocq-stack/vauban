@@ -27,7 +27,7 @@ import java.util.Optional;
 public class RivalQueueNames implements JndiNameProvider {
 
     @Override
-    public Optional<Object> lookup(String name) {
-        return "jms/orders".equals(name) ? Optional.of("another queue") : Optional.empty();
+    public Optional<Object> lookup(JndiName name) {
+        return "java:comp/env/jms/orders".equals(name.toString()) ? Optional.of("another queue") : Optional.empty();
     }
 }

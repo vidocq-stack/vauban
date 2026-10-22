@@ -44,7 +44,7 @@ class CdiContextTest {
 
     private final VaubanContainer container = VaubanContainer.builder()
             .addBeanClass(DefaultNamingService.class)
-            .addBeanClass(DataSourceNames.class)
+            .addBeanClass(OrdersNames.class)
             .addBeanClass(OrdersDataSource.class)
             .build();
 

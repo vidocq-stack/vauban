@@ -19,21 +19,29 @@
  */
 package io.vidocq.vauban.naming;
 
+import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
 import jakarta.enterprise.context.Dependent;
 import java.util.Optional;
 
-/** A {@code @Dependent} provider: the naming service destroys each instance once it has answered. */
+/** A {@code @Dependent} provider: the naming service destroys each instance it creates once it has answered. */
 @Dependent
 public class DependentQueueNames implements JndiNameProvider {
 
     static final String AUDIT_QUEUE = "the audit queue";
 
+    static int created;
+
     static int destroyed;
 
+    @PostConstruct
+    void create() {
+        created++;
+    }
+
     @Override
-    public Optional<Object> lookup(String name) {
-        return "jms/audit".equals(name) ? Optional.of(AUDIT_QUEUE) : Optional.empty();
+    public Optional<Object> lookup(JndiName name) {
+        return "java:comp/env/jms/audit".equals(name.toString()) ? Optional.of(AUDIT_QUEUE) : Optional.empty();
     }
 
     @PreDestroy

@@ -18,15 +18,15 @@
  * SPDX-License-Identifier: EPL-2.0 OR EUPL-1.2 OR GPL-2.0-or-later
  */
 /**
- * A read-only JNDI {@code java:} namespace backed by CDI: {@code java:comp/env/jdbc/orders} answers the
- * {@code @Named("orders")} {@code DataSource} bean of the running container.
+ * A read-only JNDI {@code java:} namespace backed by CDI: the names {@code JndiBindings} beans declare, such as
+ * {@code java:comp/env/jdbc/orders} bound to the {@code @Named("orders")} {@code DataSource} bean, answered from the
+ * running container.
  */
 module io.vidocq.vauban.naming {
     requires transitive java.naming;
     requires transitive jakarta.cdi;
-    // The jdbc/ names resolve DataSource beans.
-    requires java.sql;
-    // The VaubanComponentProvider service type of the generated _VaubanComponents.
+    // The VaubanComponentProvider service type of the generated _VaubanComponents, and the
+    // AnnotationInstanceFactory that builds the qualifiers of a bean written as text.
     requires io.vidocq.vauban.api;
 
     exports io.vidocq.vauban.naming;

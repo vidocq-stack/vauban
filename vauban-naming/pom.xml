@@ -63,6 +63,13 @@
                         <id>default-testCompile</id>
                         <configuration>
                             <proc>none</proc>
+                            <!-- The test beans bind data sources; the module itself names no JDBC type. -->
+                            <compilerArgs>
+                                <arg>--add-modules</arg>
+                                <arg>java.sql</arg>
+                                <arg>--add-reads</arg>
+                                <arg>io.vidocq.vauban.naming=java.sql</arg>
+                            </compilerArgs>
                         </configuration>
                     </execution>
                 </executions>

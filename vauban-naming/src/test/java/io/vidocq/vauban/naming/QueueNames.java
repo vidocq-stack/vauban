@@ -29,7 +29,7 @@ public class QueueNames implements JndiNameProvider {
     static final String ORDERS_QUEUE = "the orders queue";
 
     @Override
-    public Optional<Object> lookup(String name) {
-        return "jms/orders".equals(name) ? Optional.of(ORDERS_QUEUE) : Optional.empty();
+    public Optional<Object> lookup(JndiName name) {
+        return "java:comp/env/jms/orders".equals(name.toString()) ? Optional.of(ORDERS_QUEUE) : Optional.empty();
     }
 }
