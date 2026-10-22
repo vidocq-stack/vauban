@@ -9,9 +9,8 @@ code stays as it is, and so do libraries that look resources up by name, such as
 `@Repository(dataStore = "java:comp/env/jdbc/orders")` or the `sql:` tags of the Standard Tag Library.
 
 Vauban declares no name by itself: whoever assembles the application decides which names exist and what each
-one is bound to. Under Vidocq, the naming extension declares them from `vidocq.properties`; an application or a
-library declares them in code. The module depends on the CDI API, the JDK's `java.naming` module and
-`vauban-api` only.
+one is bound to, in code or from a configuration source of its own. The module depends on the CDI API, the
+JDK's `java.naming` module and `vauban-api` only.
 
 == Getting started
 
@@ -60,9 +59,8 @@ DataSource orders = (DataSource) new InitialContext().lookup("java:comp/env/jdbc
 The module's naming service ships in the jar's build-time index (`META-INF/vauban-beans.list`). A container that
 reads the indexes picks it up: Vidocq does, and so does `VaubanContainer.builder().scanClasspath()`.
 
-TIP: Under Vidocq, add `vidocq-runtime-naming-extension` instead and declare the names in `vidocq.properties`
-(`vidocq.naming.comp/env/jdbc/orders = javax.sql.DataSource @Named("orders")`): the extension installs the
-factory at startup and clears it at shutdown
+TIP: Under Vidocq, add the runtime's naming extension instead: it installs the factory at startup, clears it at
+shutdown, and declares names from the runtime's configuration
 (xref:vidocq::modules/vidocq-runtime-extensions.adoc#naming[Vidocq extensions]).
 
 == Names and namespaces
