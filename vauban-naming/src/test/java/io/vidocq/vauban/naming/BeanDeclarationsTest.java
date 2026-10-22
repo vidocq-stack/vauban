@@ -158,8 +158,8 @@ class BeanDeclarationsTest {
 
     @Test
     void aQualifierGivenTwiceOrNullIsRefusedWithAReason() {
-        var twice = assertThrows(IllegalArgumentException.class,
-                () -> JndiTarget.bean(String.class, NamedLiteral.of("x"), NamedLiteral.of("x")));
+        var x = NamedLiteral.of("x");
+        var twice = assertThrows(IllegalArgumentException.class, () -> JndiTarget.bean(String.class, x, x));
         assertTrue(twice.getMessage().contains("twice"), twice.getMessage());
 
         var none = assertThrows(NullPointerException.class, () -> JndiTarget.bean(String.class, (Annotation) null));

@@ -175,7 +175,7 @@ public final class CoreAnnotationInstanceFactory implements AnnotationInstanceFa
         var negative = digits.startsWith("-");
         var unsigned = negative ? digits.substring(1) : digits;
         int radix = radix(unsigned);
-        var body = unsigned.substring(prefixLength(unsigned, radix));
+        var body = unsigned.substring(prefixLength(radix));
         if (radix == 10) {
             return Integer.parseInt(negative ? "-" + body : body);
         }
@@ -188,7 +188,7 @@ public final class CoreAnnotationInstanceFactory implements AnnotationInstanceFa
         var negative = digits.startsWith("-");
         var unsigned = negative ? digits.substring(1) : digits;
         int radix = radix(unsigned);
-        var body = unsigned.substring(prefixLength(unsigned, radix));
+        var body = unsigned.substring(prefixLength(radix));
         if (radix == 10) {
             return Long.parseLong(negative ? "-" + body : body);
         }
@@ -203,7 +203,7 @@ public final class CoreAnnotationInstanceFactory implements AnnotationInstanceFa
         return 10;
     }
 
-    private static int prefixLength(String unsigned, int radix) {
+    private static int prefixLength(int radix) {
         return switch (radix) {
             case 16, 2 -> 2;
             case 8 -> 1;
@@ -218,16 +218,17 @@ public final class CoreAnnotationInstanceFactory implements AnnotationInstanceFa
 
     private static String unescape(String text) {
         var out = new StringBuilder(text.length());
-        for (int i = 0; i < text.length(); i++) {
-            char c = text.charAt(i);
+        int i = 0;
+        while (i < text.length()) {
+            char c = text.charAt(i++);
             if (c != '\\') {
                 out.append(c);
                 continue;
             }
-            if (++i == text.length()) {
+            if (i == text.length()) {
                 throw new IllegalArgumentException("a backslash ends the literal");
             }
-            char escaped = text.charAt(i);
+            char escaped = text.charAt(i++);
             out.append(switch (escaped) {
                 case 'n' -> '\n';
                 case 't' -> '\t';

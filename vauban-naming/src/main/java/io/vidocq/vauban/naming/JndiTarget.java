@@ -98,8 +98,8 @@ public sealed interface JndiTarget {
     private static String written(Annotation qualifier) {
         return switch (qualifier) {
             case Named named -> "@Named(\"" + named.value().replace("\\", "\\\\").replace("\"", "\\\"") + "\")";
-            case Default ignored -> "@Default";
-            case Any ignored -> "@Any";
+            case Default _ -> "@Default";
+            case Any _ -> "@Any";
             default -> qualifier.toString();
         };
     }

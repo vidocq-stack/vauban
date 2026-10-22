@@ -195,11 +195,14 @@ final class BeanDeclarations {
     /** The index of the = of name = literal, or -1 for a single literal: an = inside quotes does not count. */
     private static int assignment(String part) {
         char quote = 0;
+        boolean escaping = false;
         for (int i = 0; i < part.length(); i++) {
             char c = part.charAt(i);
-            if (quote != 0) {
+            if (escaping) {
+                escaping = false;
+            } else if (quote != 0) {
                 if (c == '\\') {
-                    i++;
+                    escaping = true;
                 } else if (c == quote) {
                     quote = 0;
                 }
@@ -217,13 +220,15 @@ final class BeanDeclarations {
             throw refused("a name is written between double quotes: " + literal);
         }
         StringBuilder text = new StringBuilder();
-        for (int i = 1; i < literal.length() - 1; i++) {
-            char c = literal.charAt(i);
+        int end = literal.length() - 1;
+        int i = 1;
+        while (i < end) {
+            char c = literal.charAt(i++);
             if (c != '\\') {
                 text.append(c);
                 continue;
             }
-            char escaped = ++i < literal.length() - 1 ? literal.charAt(i) : '\\';
+            char escaped = i < end ? literal.charAt(i++) : '\\';
             text.append(switch (escaped) {
                 case 'n' -> '\n';
                 case 't' -> '\t';

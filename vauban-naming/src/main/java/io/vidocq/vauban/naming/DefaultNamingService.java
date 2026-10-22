@@ -36,6 +36,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Predicate;
 import javax.naming.InvalidNameException;
 import javax.naming.NameNotFoundException;
@@ -49,9 +50,11 @@ import javax.naming.NamingException;
 @ApplicationScoped
 class DefaultNamingService implements NamingService {
 
+    private static final String BOUND_TO = "is bound to ";
+
     private final Instance<JndiBindings> bindings;
     private final Instance<JndiNameProvider> providers;
-    private volatile NameTable table;
+    private final AtomicReference<NameTable> table = new AtomicReference<>();
     /** The thread building the table, so that a lookup it makes while binding fails rather than recursing. */
     private Thread building;
 
@@ -63,10 +66,10 @@ class DefaultNamingService implements NamingService {
 
     /** The declared names, built at the first call. */
     NameTable table() {
-        NameTable built = table;
+        NameTable built = table.get();
         if (built == null) {
             synchronized (this) {
-                built = table;
+                built = table.get();
                 if (built == null) {
                     if (building == Thread.currentThread()) {
                         throw new IllegalStateException("A JndiBindings bean looked a java: name up while binding "
@@ -78,7 +81,7 @@ class DefaultNamingService implements NamingService {
                     } finally {
                         building = null;
                     }
-                    table = built;
+                    table.set(built);
                 }
             }
         }
@@ -129,20 +132,20 @@ class DefaultNamingService implements NamingService {
     private static String problem(JndiTarget.Bean bean, BeanManager beanManager) {
         for (Annotation qualifier : bean.qualifiers()) {
             if (!beanManager.isQualifier(qualifier.annotationType())) {
-                return "is bound to " + bean.declaration() + ", but " + qualifier.annotationType().getName()
+                return BOUND_TO + bean.declaration() + ", but " + qualifier.annotationType().getName()
                         + " is not a qualifier";
             }
         }
         Instance<?> instance = beanManager.createInstance()
                 .select(bean.type(), bean.qualifiers().toArray(Annotation[]::new));
         if (instance.isUnsatisfied()) {
-            return "is bound to " + bean.declaration() + ", which no bean matches";
+            return BOUND_TO + bean.declaration() + ", which no bean matches";
         }
         if (instance.isAmbiguous()) {
-            return "is bound to " + bean.declaration() + ", which several beans match";
+            return BOUND_TO + bean.declaration() + ", which several beans match";
         }
         if (instance.getHandle().getBean().getScope() == Dependent.class) {
-            return "is bound to " + bean.declaration() + ", a @Dependent bean: a lookup would create an instance "
+            return BOUND_TO + bean.declaration() + ", a @Dependent bean: a lookup would create an instance "
                     + "that nobody destroys. Give the bean a scope, such as @ApplicationScoped or @Singleton";
         }
         return null;
@@ -151,16 +154,16 @@ class DefaultNamingService implements NamingService {
     private static String problem(JndiName name, JndiTarget.Link link, NameTable declared) {
         Set<JndiName> chain = new LinkedHashSet<>(List.of(name));
         JndiTarget target = link;
-        while (target instanceof JndiTarget.Link next) {
-            if (chain.contains(next.name())) {
+        while (target instanceof JndiTarget.Link(JndiName linked)) {
+            if (chain.contains(linked)) {
                 List<String> loop = new ArrayList<>(chain.stream().map(JndiName::toString).toList());
-                loop.add(next.name().toString());
+                loop.add(linked.toString());
                 return "is a loop of links: " + String.join(" -> ", loop);
             }
-            chain.add(next.name());
-            Optional<JndiTarget> found = declared.target(next.name());
+            chain.add(linked);
+            Optional<JndiTarget> found = declared.target(linked);
             if (found.isEmpty()) {
-                return "links to " + next.name() + ", which is not declared";
+                return "links to " + linked + ", which is not declared";
             }
             target = found.get();
         }
@@ -172,14 +175,14 @@ class DefaultNamingService implements NamingService {
         JndiName parsed;
         try {
             parsed = JndiName.parse(name);
-        } catch (InvalidNameException invalid) {
+        } catch (InvalidNameException _) {
             return false;
         }
-        NameTable table = declared();
-        if (table.target(parsed).isPresent()) {
+        NameTable names = declared();
+        if (names.target(parsed).isPresent()) {
             return false;
         }
-        return table.isContext(parsed) || anyProvider(provider -> provider.isContext(parsed));
+        return names.isContext(parsed) || anyProvider(provider -> provider.isContext(parsed));
     }
 
     @Override
@@ -200,11 +203,11 @@ class DefaultNamingService implements NamingService {
         if (target.isPresent()) {
             return switch (target.get()) {
                 case JndiTarget.Bean bean -> bean(name, bean);
-                case JndiTarget.Link link -> {
+                case JndiTarget.Link(JndiName linked) -> {
                     if (!followed.add(name)) {
                         throw new NamingException("The links of " + name + " loop: " + followed);
                     }
-                    yield lookup(link.name(), followed);
+                    yield lookup(linked, followed);
                 }
             };
         }
@@ -215,12 +218,12 @@ class DefaultNamingService implements NamingService {
     private static Object bean(JndiName name, JndiTarget.Bean bean) throws NamingException {
         Instance<?> instance = CDI.current().select(bean.type(), bean.qualifiers().toArray(Annotation[]::new));
         if (!instance.isResolvable()) {
-            throw new NamingException(name + " is bound to " + bean.declaration() + ", which "
+            throw new NamingException(name + " " + BOUND_TO + bean.declaration() + ", which "
                     + (instance.isAmbiguous() ? "several beans match" : "no bean matches") + " in the running container");
         }
         var handle = instance.getHandle();
         if (handle.getBean().getScope() == Dependent.class) {
-            throw new NamingException(name + " is bound to " + bean.declaration() + ", a @Dependent bean: a lookup "
+            throw new NamingException(name + " " + BOUND_TO + bean.declaration() + ", a @Dependent bean: a lookup "
                     + "would create an instance that nobody destroys. Give the bean a scope, such as "
                     + "@ApplicationScoped or @Singleton");
         }
@@ -272,7 +275,7 @@ class DefaultNamingService implements NamingService {
     private NameTable declared() {
         try {
             return table();
-        } catch (RuntimeException wrong) {
+        } catch (RuntimeException _) {
             return NameTable.EMPTY;
         }
     }

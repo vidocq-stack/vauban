@@ -42,9 +42,13 @@ class DeclarationValidationTest {
         return builder.build();
     }
 
+    private static void startAndClose(Class<?>... beans) {
+        start(beans).close();
+    }
+
     /** Every message of the failure and its causes, joined. */
     private static String startFails(Class<?>... beans) {
-        var failure = assertThrows(RuntimeException.class, () -> start(beans).close());
+        var failure = assertThrows(RuntimeException.class, () -> startAndClose(beans));
         List<String> messages = new ArrayList<>();
         for (Throwable cause = failure; cause != null; cause = cause.getCause()) {
             messages.add(String.valueOf(cause.getMessage()));
