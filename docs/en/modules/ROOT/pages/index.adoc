@@ -21,7 +21,7 @@ Vauban turned defence into a mathematical art: trajectories, sapping, counter-mi
 | Implemented spec | {spec-cdi-4-1}[Jakarta CDI 4.1 — Lite profile]
 | Repo | {repo-vauban}
 | Java | 25 (LTS)
-| Java modules | `io.vidocq.vauban.api`, `io.vidocq.vauban.core`, `io.vidocq.vauban.indexer`, `io.vidocq.vauban.processor`, `io.vidocq.vauban.junit`, `io.vidocq.vauban.classloader.spi`, `io.vidocq.vauban.classloader`, `io.vidocq.vauban.weaver`, `io.vidocq.vauban.sjar`
+| Java modules | `io.vidocq.vauban.api`, `io.vidocq.vauban.core`, `io.vidocq.vauban.indexer`, `io.vidocq.vauban.processor`, `io.vidocq.vauban.junit`, `io.vidocq.vauban.classloader.spi`, `io.vidocq.vauban.classloader`, `io.vidocq.vauban.weaver`, `io.vidocq.vauban.sjar`, `io.vidocq.vauban.naming`
 | Runtime dependencies | Spec APIs only: `jakarta.cdi`, `jakarta.cdi.lang.model` and `jakarta.el` — `vauban-core` also requires the JDK's `jdk.unsupported` module
 | CDI 4.1 Lite TCK | **774/774** — see xref:tck.adoc[detailed status]
 |===
@@ -67,6 +67,7 @@ graph TB
 * xref:getting-started.adoc[Getting started]
 * xref:usage.adoc[Usage patterns]
 * xref:se.adoc[Vauban in Java SE] [.tag-new]#NEW#
+* xref:jndi.adoc[The JNDI java: namespace] [.tag-new]#NEW#
 * xref:concepts.adoc[Concepts]
 * xref:internals.adoc[Internals]
 * xref:tck.adoc[TCK status]

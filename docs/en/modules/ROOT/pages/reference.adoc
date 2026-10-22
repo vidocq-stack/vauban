@@ -44,7 +44,7 @@ This page lists every artefact published by Vauban, the Java Modules packages th
 
 | `io.vidocq.vauban:vauban-naming:{project-version}`
 | `runtime`
-| The JNDI `java:` namespace answered by the running container (`JavaNaming`, `JndiNameProvider`, `NamingService`), see xref:usage.adoc#jndi[The JNDI java: namespace] [.tag-new]#NEW#
+| The JNDI `java:` namespace answered by the running container (`JavaNaming`, `JndiNameProvider`, `NamingService`), see xref:jndi.adoc[The JNDI java: namespace] [.tag-new]#NEW#
 
 | `io.vidocq.vauban:vauban-weaver:{project-version}`
 | `runtime`
