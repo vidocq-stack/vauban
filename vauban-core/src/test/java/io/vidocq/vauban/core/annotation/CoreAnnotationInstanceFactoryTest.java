@@ -75,6 +75,23 @@ class CoreAnnotationInstanceFactoryTest {
     }
 
     @Retention(RetentionPolicy.RUNTIME)
+    public @interface Numbers {
+        int i();
+
+        long l();
+
+        short s();
+
+        byte b();
+
+        double d();
+
+        float f();
+
+        char c();
+    }
+
+    @Retention(RetentionPolicy.RUNTIME)
     public @interface WithDefault {
         String value() default "x";
     }
@@ -199,5 +216,45 @@ class CoreAnnotationInstanceFactoryTest {
 
         assertTrue(found.isPresent());
         assertInstanceOf(CoreAnnotationInstanceFactory.class, found.get());
+    }
+
+    private Numbers numbers(String i, String l, String sh, String b, String d, String f, String c) {
+        return built(Numbers.class, Map.of("i", i, "l", l, "s", sh, "b", b, "d", d, "f", f, "c", c));
+    }
+
+    @Test
+    void integerLiteralsAreReadAsJavaReadsThem() {
+        var hex = numbers("0x1F", "0xFFFFFFFFFFFFFFFFL", "-1", "-128", "0.5", "1.5f", "'A'");
+        assertEquals(31, hex.i());
+        assertEquals(-1L, hex.l());
+        assertEquals((short) -1, hex.s());
+        assertEquals((byte) -128, hex.b());
+        assertEquals(0.5, hex.d());
+        assertEquals(1.5f, hex.f());
+        assertEquals('A', hex.c());
+
+        var edges = numbers("0x80000000", "0b101L", "010", "0x7F", "010", "1e3f", "'\\n'");
+        assertEquals(Integer.MIN_VALUE, edges.i());
+        assertEquals(5L, edges.l());
+        assertEquals((short) 8, edges.s());
+        assertEquals((byte) 127, edges.b());
+        assertEquals(8.0, edges.d(), "010 is an octal int literal, widened to a double");
+        assertEquals(1000f, edges.f());
+        assertEquals('\n', edges.c());
+
+        var more = numbers("-0b11", "-9223372036854775808L", "1_000", "0", "1e3", "0x1p3f", "'\\''");
+        assertEquals(-3, more.i());
+        assertEquals(Long.MIN_VALUE, more.l());
+        assertEquals((short) 1000, more.s());
+        assertEquals(1000.0, more.d());
+        assertEquals(8f, more.f());
+        assertEquals('\'', more.c());
+    }
+
+    @Test
+    void aNumberOutOfTheMembersRangeIsRefused() {
+        Map<String, String> tooBig = Map.of("level", "0x1_0000_0000");
+
+        assertThrows(IllegalArgumentException.class, () -> built(Tier.class, tooBig));
     }
 }

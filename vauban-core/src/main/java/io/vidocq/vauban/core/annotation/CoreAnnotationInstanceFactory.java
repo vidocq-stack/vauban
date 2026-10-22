@@ -142,13 +142,73 @@ public final class CoreAnnotationInstanceFactory implements AnnotationInstanceFa
 
     private static Object number(Class<?> target, String literal) {
         var digits = literal.replace("_", "");
-        if (target == long.class) return Long.decode(withoutSuffix(digits, "lL"));
-        if (target == int.class) return Integer.decode(digits);
-        if (target == short.class) return Short.decode(digits);
-        if (target == byte.class) return Byte.decode(digits);
-        if (target == double.class) return Double.parseDouble(withoutSuffix(digits, "dD"));
-        if (target == float.class) return Float.parseFloat(withoutSuffix(digits, "fF"));
-        throw new IllegalArgumentException("unsupported member type " + target.getName());
+        if (target == double.class || target == float.class) {
+            // An integer literal is widened, as Java does: 010 is the octal 8, so 8.0.
+            boolean integral = isIntegral(digits);
+            if (target == double.class) {
+                return integral ? (double) javaLong(digits) : Double.parseDouble(withoutSuffix(digits, "dD"));
+            }
+            return integral ? (float) javaLong(digits) : Float.parseFloat(withoutSuffix(digits, "fF"));
+        }
+        if (target == long.class) {
+            return javaLong(withoutSuffix(digits, "lL"));
+        }
+        long value = javaInt(digits);
+        if (target == int.class) return (int) value;
+        if (target == short.class && value >= Short.MIN_VALUE && value <= Short.MAX_VALUE) return (short) value;
+        if (target == byte.class && value >= Byte.MIN_VALUE && value <= Byte.MAX_VALUE) return (byte) value;
+        throw new IllegalArgumentException(literal + " is out of the range of " + target.getName());
+    }
+
+    /** Neither a decimal point, an exponent nor a floating suffix: an integer literal, hexadecimal ones included. */
+    private static boolean isIntegral(String digits) {
+        var hex = digits.startsWith("0x") || digits.startsWith("0X") || digits.startsWith("-0x") || digits.startsWith("-0X");
+        if (hex) {
+            return digits.indexOf('p') < 0 && digits.indexOf('P') < 0 && digits.indexOf('.') < 0;
+        }
+        return digits.chars().noneMatch(c -> c == '.' || c == 'e' || c == 'E' || c == 'f' || c == 'F' || c == 'd'
+                || c == 'D');
+    }
+
+    /** An int literal as Java reads it: 0x80000000 is Integer.MIN_VALUE, as a hexadecimal, octal or binary one may be. */
+    private static long javaInt(String digits) {
+        var negative = digits.startsWith("-");
+        var unsigned = negative ? digits.substring(1) : digits;
+        int radix = radix(unsigned);
+        var body = unsigned.substring(prefixLength(unsigned, radix));
+        if (radix == 10) {
+            return Integer.parseInt(negative ? "-" + body : body);
+        }
+        int value = Integer.parseUnsignedInt(body, radix);
+        return negative ? -value : value;
+    }
+
+    /** A long literal as Java reads it, its L suffix removed. */
+    private static long javaLong(String digits) {
+        var negative = digits.startsWith("-");
+        var unsigned = negative ? digits.substring(1) : digits;
+        int radix = radix(unsigned);
+        var body = unsigned.substring(prefixLength(unsigned, radix));
+        if (radix == 10) {
+            return Long.parseLong(negative ? "-" + body : body);
+        }
+        long value = Long.parseUnsignedLong(body, radix);
+        return negative ? -value : value;
+    }
+
+    private static int radix(String unsigned) {
+        if (unsigned.startsWith("0x") || unsigned.startsWith("0X")) return 16;
+        if (unsigned.startsWith("0b") || unsigned.startsWith("0B")) return 2;
+        if (unsigned.length() > 1 && unsigned.startsWith("0")) return 8;
+        return 10;
+    }
+
+    private static int prefixLength(String unsigned, int radix) {
+        return switch (radix) {
+            case 16, 2 -> 2;
+            case 8 -> 1;
+            default -> 0;
+        };
     }
 
     private static String withoutSuffix(String digits, String suffixes) {
