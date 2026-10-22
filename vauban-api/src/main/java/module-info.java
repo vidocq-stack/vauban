@@ -22,6 +22,9 @@ module io.vidocq.vauban.api {
 
     exports io.vidocq.vauban.api;
 
+    // AnnotationInstanceFactory.find(): the container module provides it.
+    uses io.vidocq.vauban.api.AnnotationInstanceFactory;
+
     // Only the container may create a ModuleLookupGrant, i.e. ask a generated provider for its lookup.
     exports io.vidocq.vauban.api.access to io.vidocq.vauban.core;
 }

@@ -85,4 +85,7 @@ module io.vidocq.vauban.core {
 
     provides jakarta.enterprise.inject.build.compatible.spi.BuildServices
             with io.vidocq.vauban.core.extensions.VaubanBuildServices;
+
+    provides io.vidocq.vauban.api.AnnotationInstanceFactory
+            with io.vidocq.vauban.core.annotation.CoreAnnotationInstanceFactory;
 }

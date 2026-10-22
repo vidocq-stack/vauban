@@ -303,7 +303,7 @@ public final class AnnotationInstances {
     }
 
     /** {@code Class.forName} over the loaders that can see the type, as {@code Class#getName} spells it. */
-    private static Class<?> classOf(String name, ClassLoader loader) {
+    static Class<?> classOf(String name, ClassLoader loader) {
         var primitive = PRIMITIVES.get(name);
         if (primitive != null) return primitive;
         for (var candidate : loaders(loader)) {
