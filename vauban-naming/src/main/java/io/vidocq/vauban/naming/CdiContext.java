@@ -20,7 +20,9 @@
 package io.vidocq.vauban.naming;
 
 import jakarta.enterprise.inject.spi.CDI;
+import java.util.HashMap;
 import java.util.Hashtable;
+import java.util.Map;
 import javax.naming.Binding;
 import javax.naming.CompositeName;
 import javax.naming.Context;
@@ -41,11 +43,11 @@ final class CdiContext implements Context {
 
     private static final NameParser PARSER = CompositeName::new;
 
-    private final Hashtable<Object, Object> environment;
+    private final Map<Object, Object> environment;
     private final String base;
 
-    CdiContext(Hashtable<?, ?> environment, String base) {
-        this.environment = environment == null ? new Hashtable<>() : new Hashtable<>(environment);
+    CdiContext(Map<?, ?> environment, String base) {
+        this.environment = environment == null ? new HashMap<>() : new HashMap<>(environment);
         this.base = base;
     }
 
@@ -56,7 +58,13 @@ final class CdiContext implements Context {
         }
         String absolute = base.isEmpty() || name.startsWith("java:") ? name : base + "/" + name;
         NamingService naming = naming();
-        return naming.isContext(absolute) ? new CdiContext(environment, absolute) : naming.lookup(absolute);
+        return naming.isContext(absolute) ? new CdiContext(environment, withoutTrailingSlash(absolute))
+                : naming.lookup(absolute);
+    }
+
+    /** {@code java:comp/env/} names the same context as {@code java:comp/env}: its relative names join on one slash. */
+    private static String withoutTrailingSlash(String name) {
+        return name.endsWith("/") ? name.substring(0, name.length() - 1) : name;
     }
 
     @Override

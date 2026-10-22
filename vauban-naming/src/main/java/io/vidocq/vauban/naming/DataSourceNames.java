@@ -38,9 +38,12 @@ class DataSourceNames implements JndiNameProvider {
 
     private static final String PREFIX = "jdbc/";
 
+    private final Instance<DataSource> dataSources;
+
     @Inject
-    @Any
-    Instance<DataSource> dataSources;
+    DataSourceNames(@Any Instance<DataSource> dataSources) {
+        this.dataSources = dataSources;
+    }
 
     @Override
     public Optional<Object> lookup(String name) throws NamingException {
@@ -51,10 +54,6 @@ class DataSourceNames implements JndiNameProvider {
         Instance<DataSource> named = dataSources.select(NamedLiteral.of(beanName));
         if (named.isUnsatisfied()) {
             return Optional.empty();
-        }
-        if (named.isAmbiguous()) {
-            throw new NamingException("java:comp/env/" + name + " is ambiguous: several DataSource beans are @Named(\""
-                    + beanName + "\")");
         }
         var handle = named.getHandle();
         if (handle.getBean().getScope() == Dependent.class) {

@@ -21,6 +21,7 @@ package io.vidocq.vauban.naming;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -121,19 +122,21 @@ class JavaNamespaceTest {
         var second = context.lookup("java:comp/env/jdbc/orders");
 
         assertSame(orders(), second);
-        assertTrue(!first.equals(second), "a new container, a new data source: " + first + " then " + second);
+        assertNotEquals(first, second, "a new container, a new data source");
     }
 
     @Test
     void withNoContainerRunningALookupFailsAsNoInitialContext() throws NamingException {
         container = null;
+        var context = new InitialContext();
 
-        assertThrows(NoInitialContextException.class, () -> new InitialContext().lookup("java:comp/env/jdbc/orders"));
+        assertThrows(NoInitialContextException.class, () -> context.lookup("java:comp/env/jdbc/orders"));
     }
 
     @Test
     void aLookupBeforeTheContainerStartsDoesNotPreventTheNextOnes() throws NamingException {
-        assertThrows(NoInitialContextException.class, () -> new InitialContext().lookup("java:comp/env/jdbc/orders"));
+        var early = new InitialContext();
+        assertThrows(NoInitialContextException.class, () -> early.lookup("java:comp/env/jdbc/orders"));
 
         start(OrdersDataSource.class);
 
@@ -141,19 +144,21 @@ class JavaNamespaceTest {
     }
 
     @Test
-    void anUnknownNameIsNotFound() {
+    void anUnknownNameIsNotFound() throws NamingException {
         start(OrdersDataSource.class);
+        var context = new InitialContext();
 
-        assertThrows(NameNotFoundException.class, () -> new InitialContext().lookup("java:comp/env/jdbc/billing"));
-        assertThrows(NameNotFoundException.class, () -> new InitialContext().lookup("java:comp/env/mail/orders"));
+        assertThrows(NameNotFoundException.class, () -> context.lookup("java:comp/env/jdbc/billing"));
+        assertThrows(NameNotFoundException.class, () -> context.lookup("java:comp/env/mail/orders"));
+        assertThrows(NameNotFoundException.class, () -> context.lookup("java:global/jdbc/orders"));
     }
 
     @Test
-    void aDependentBeanIsRefusedRatherThanLeaked() {
+    void aDependentBeanIsRefusedRatherThanLeaked() throws NamingException {
         start(DependentDataSource.class);
+        var context = new InitialContext();
 
-        var refused = assertThrows(NamingException.class,
-                () -> new InitialContext().lookup("java:comp/env/jdbc/scratch"));
+        var refused = assertThrows(NamingException.class, () -> context.lookup("java:comp/env/jdbc/scratch"));
         assertTrue(refused.getMessage().contains("@Dependent"), refused.getMessage());
     }
 
@@ -165,12 +170,47 @@ class JavaNamespaceTest {
     }
 
     @Test
-    void twoProvidersAnsweringOneNameMakeItAmbiguous() {
+    void twoProvidersAnsweringOneNameMakeItAmbiguous() throws NamingException {
         start(QueueNames.class, RivalQueueNames.class);
+        var context = new InitialContext();
 
-        var ambiguous = assertThrows(NamingException.class,
-                () -> new InitialContext().lookup("java:comp/env/jms/orders"));
+        var ambiguous = assertThrows(NamingException.class, () -> context.lookup("java:comp/env/jms/orders"));
         assertTrue(ambiguous.getMessage().contains("ambiguous"), ambiguous.getMessage());
+    }
+
+    @Test
+    void aDependentProviderIsDestroyedOnceItHasAnswered() throws NamingException {
+        start(DependentQueueNames.class);
+        int destroyed = DependentQueueNames.destroyed;
+
+        assertEquals(DependentQueueNames.AUDIT_QUEUE, new InitialContext().lookup("java:comp/env/jms/audit"));
+        assertEquals(destroyed + 1, DependentQueueNames.destroyed);
+    }
+
+    @Test
+    void aContainerWithoutTheNamingServiceIsNoInitialContext() throws NamingException {
+        container = VaubanContainer.builder().addBeanClass(OrdersDataSource.class).build();
+        var context = new InitialContext();
+
+        var none = assertThrows(NoInitialContextException.class, () -> context.lookup("java:comp/env/jdbc/orders"));
+        assertTrue(none.getMessage().contains("no "), none.getMessage());
+    }
+
+    @Test
+    void aContainerWithTwoNamingServicesIsNoInitialContext() throws NamingException {
+        start(RivalNamingService.class);
+        var context = new InitialContext();
+
+        var several = assertThrows(NoInitialContextException.class, () -> context.lookup("java:comp/env/jdbc/x"));
+        assertTrue(several.getMessage().contains("several "), several.getMessage());
+    }
+
+    @Test
+    void aTrailingSlashStillNamesTheEnvironmentContext() throws NamingException {
+        start(OrdersDataSource.class);
+
+        var environment = assertInstanceOf(Context.class, new InitialContext().lookup("java:comp/env/"));
+        assertSame(orders(), environment.lookup("jdbc/orders"));
     }
 
     @Test
@@ -193,19 +233,19 @@ class JavaNamespaceTest {
         var environment = new Hashtable<String, Object>();
         environment.put(Context.INITIAL_CONTEXT_FACTORY, RefusingFactory.class.getName());
 
-        var answered = assertThrows(NamingException.class,
-                () -> new InitialContext(environment).lookup("java:comp/env/jdbc/orders"));
+        // InitialContext creates the context of an explicit factory at once, before any lookup.
+        var answered = assertThrows(NamingException.class, () -> new InitialContext(environment));
         assertEquals(RefusingFactory.MESSAGE, answered.getMessage());
     }
 
     @Test
-    void anLdapUrlStillGoesToTheJdkLdapProvider() {
+    void anLdapUrlStillGoesToTheJdkLdapProvider() throws NamingException {
         start(OrdersDataSource.class);
+        var context = new InitialContext();
 
         // Nothing listens on port 1: the JDK's LDAP provider fails to connect. Had the name reached the
         // java: namespace, it would have been NameNotFoundException.
-        var failure = assertThrows(NamingException.class,
-                () -> new InitialContext().lookup("ldap://127.0.0.1:1/cn=orders"));
+        var failure = assertThrows(NamingException.class, () -> context.lookup("ldap://127.0.0.1:1/cn=orders"));
         assertInstanceOf(CommunicationException.class, failure);
     }
 }

@@ -42,9 +42,12 @@ class DefaultNamingService implements NamingService {
     private static final Set<String> CONTEXTS = Set.of(
             "java:comp", "java:module", "java:app", "java:comp/env", "java:module/env", "java:app/env");
 
+    private final Instance<JndiNameProvider> providers;
+
     @Inject
-    @Any
-    Instance<JndiNameProvider> providers;
+    DefaultNamingService(@Any Instance<JndiNameProvider> providers) {
+        this.providers = providers;
+    }
 
     @Override
     public boolean isContext(String name) {

@@ -22,13 +22,18 @@ package io.vidocq.vauban.naming;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.net.URL;
 import java.net.URLClassLoader;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.Collections;
+import java.util.Enumeration;
+import java.util.List;
 import javax.naming.Context;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
@@ -77,6 +82,40 @@ class JavaNamingTest {
         try (var application = new URLClassLoader(new URL[] {resources.toUri().toURL()}, loader)) {
             assertTrue(JavaNaming.installAsDefault(application));
         }
+    }
+
+    @Test
+    void withoutAClassLoaderTheSystemResourcesAreRead() {
+        assertTrue(JavaNaming.installAsDefault(null));
+    }
+
+    @Test
+    void aJndiPropertiesFileOfThePlatformWins(@TempDir Path javaHome) throws IOException {
+        Files.createDirectories(javaHome.resolve("conf"));
+        Files.writeString(javaHome.resolve("conf/jndi.properties"),
+                Context.INITIAL_CONTEXT_FACTORY + "=" + RefusingFactory.class.getName() + "\n");
+        String realHome = System.getProperty("java.home");
+        System.setProperty("java.home", javaHome.toString());
+        try {
+            assertFalse(JavaNaming.installAsDefault(loader));
+        } finally {
+            System.setProperty("java.home", realHome);
+        }
+        assertNull(System.getProperty(Context.INITIAL_CONTEXT_FACTORY));
+    }
+
+    @Test
+    void anUnreadableJndiPropertiesFileFailsTheInstallation(@TempDir Path resources) throws IOException {
+        URL gone = resources.resolve("gone/jndi.properties").toUri().toURL();
+        var application = new ClassLoader(loader) {
+            @Override
+            public Enumeration<URL> getResources(String name) {
+                return Collections.enumeration(List.of(gone));
+            }
+        };
+
+        assertThrows(UncheckedIOException.class, () -> JavaNaming.installAsDefault(application));
+        assertNull(System.getProperty(Context.INITIAL_CONTEXT_FACTORY));
     }
 
     @Test

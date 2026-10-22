@@ -30,8 +30,8 @@ record StubDataSource(String label) implements DataSource {
     @Override public Connection getConnection() { throw new UnsupportedOperationException(label); }
     @Override public Connection getConnection(String user, String password) { throw new UnsupportedOperationException(label); }
     @Override public PrintWriter getLogWriter() { return null; }
-    @Override public void setLogWriter(PrintWriter out) { }
-    @Override public void setLoginTimeout(int seconds) { }
+    @Override public void setLogWriter(PrintWriter out) { /* no log: a stub never connects */ }
+    @Override public void setLoginTimeout(int seconds) { /* no login: a stub never connects */ }
     @Override public int getLoginTimeout() { return 0; }
     @Override public Logger getParentLogger() { return Logger.getGlobal(); }
     @Override public <T> T unwrap(Class<T> iface) { throw new UnsupportedOperationException(label); }
