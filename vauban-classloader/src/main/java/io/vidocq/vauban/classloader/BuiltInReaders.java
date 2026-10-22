@@ -22,7 +22,11 @@ package io.vidocq.vauban.classloader;
 import io.vidocq.vauban.classloader.spi.ArchiveReader;
 
 import java.io.IOException;
+import java.net.URI;
+import java.net.URL;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
+import java.nio.file.InvalidPathException;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
@@ -41,6 +45,16 @@ final class BuiltInReaders {
 
     private BuiltInReaders() {}
 
+    /**
+     * A built-in reader gives its resources the URLs the JDK's own loaders give them: {@code jar:} for
+     * a plain jar, {@code file:} for a directory. A library can then list a resource folder, as
+     * Vaadin's development mode does to copy its frontend files (vauban#177).
+     */
+    interface StandardUrls {
+        /** The URL of the entry {@code name}, file or folder, or {@code null} when the archive has none. */
+        URL resourceUrl(String name) throws IOException;
+    }
+
     static ArchiveReader open(Path archive) throws IOException {
         if (Files.isDirectory(archive)) {
             return new DirReader(archive);
@@ -48,7 +62,7 @@ final class BuiltInReaders {
         return new JarReader(archive);
     }
 
-    static final class DirReader implements ArchiveReader {
+    static final class DirReader implements ArchiveReader, StandardUrls {
         private final Path root;
 
         DirReader(Path root) {
@@ -77,15 +91,29 @@ final class BuiltInReaders {
         }
 
         @Override
+        public URL resourceUrl(String name) throws IOException {
+            try {
+                var base = root.toAbsolutePath().normalize();
+                var file = base.resolve(name).normalize();
+                // As the JDK's loader does, a name never reaches outside the directory
+                return file.startsWith(base) && Files.exists(file) ? file.toUri().toURL() : null;
+            } catch (InvalidPathException e) {
+                return null;
+            }
+        }
+
+        @Override
         public void close() {
             // nothing to release
         }
     }
 
-    static final class JarReader implements ArchiveReader {
+    static final class JarReader implements ArchiveReader, StandardUrls {
         private final JarFile jar;
+        private final String base;
 
         JarReader(Path path) throws IOException {
+            this.base = "jar:" + path.toUri() + "!/";
             // Multi-release aware, as the module path reads a jar: the base name resolves to the highest
             // META-INF/versions/N entry the running JDK accepts (vauban#154). No signature verification,
             // as before.
@@ -119,8 +147,31 @@ final class BuiltInReaders {
         }
 
         @Override
+        public URL resourceUrl(String name) throws IOException {
+            if (jar.getEntry(name) == null) return null;
+            // The JDK marks the URLs of a multi-release jar so that they read the versioned entry
+            var fragment = jar.isMultiRelease() ? "#runtime" : "";
+            return URI.create(base + encodePath(name) + fragment).toURL();
+        }
+
+        @Override
         public void close() throws IOException {
             jar.close();
         }
+    }
+
+    /** Percent-encodes the characters of an entry name that a URI path cannot hold. */
+    static String encodePath(String name) {
+        var out = new StringBuilder(name.length());
+        for (var b : name.getBytes(StandardCharsets.UTF_8)) {
+            int c = b & 0xff;
+            if (c < 0x80 && (Character.isLetterOrDigit(c) || "-._~/!$&'()*+,;=:@".indexOf(c) >= 0)) {
+                out.append((char) c);
+            } else {
+                out.append('%').append(Character.toUpperCase(Character.forDigit(c >> 4, 16)))
+                        .append(Character.toUpperCase(Character.forDigit(c & 0xf, 16)));
+            }
+        }
+        return out.toString();
     }
 }

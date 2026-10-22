@@ -65,6 +65,12 @@ class MultiReleaseJarTest {
                 assertNotNull(in);
                 assertEquals("versioned", new String(in.readAllBytes(), StandardCharsets.UTF_8));
             }
+            // Its jar: URL reads the same versioned entry, as the JDK's loaders do (vauban#177)
+            var connection = loader.getResource("com/example/mr/data.txt").openConnection();
+            connection.setUseCaches(false);
+            try (var in = connection.getInputStream()) {
+                assertEquals("versioned", new String(in.readAllBytes(), StandardCharsets.UTF_8));
+            }
             assertTrue(loader.managedClassNames().stream().noneMatch(n -> n.startsWith("META-INF")),
                     "no class named after a META-INF/versions/ entry: " + loader.managedClassNames());
         }

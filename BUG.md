@@ -5,6 +5,34 @@ suspected cause, status. Updated on every investigation.
 
 ---
 
+## VAU-CL-001 — Resources of plain jars and directories have `vauban:` URLs that libraries cannot read as folders
+- **Date**: 2026-10-22 — **Status**: FIXED (`pr/ybl/standard-resource-urls`, vauban#177)
+- **Severity**: medium (Vaadin's development mode logs errors and pins no npm versions; other libraries that read
+  a resource URL as a jar or a file fail the same way)
+
+### Symptom
+On Vidocq, Vaadin's development mode logged `Unable to read pinned npm versions from 'vauban:file:///…!/…'` from
+`PinnedNpmVersions`, then `Couldn't find any versions file in META-INF/VAADIN/versions/`, and
+`BundleValidationUtil` logged an exception while deciding whether to rebuild the bundle. Found on
+threadlocalrandom/VaadinCreate2026 (Vidocq/vidocq#256).
+
+### Repro
+`StandardResourceUrlsTest` (vauban-classloader): a resource of a plain jar, a jar folder listed through
+`JarURLConnection`, a name with a space, the file and folder of an exploded directory, and an archive read by a
+`ByteSourcePlugin`. `MultiReleaseJarTest` reads a versioned resource through its URL.
+
+### Cause
+`VaubanClassLoader.resourceUrl` gave every resource a `vauban:<archive>!/<name>` URL with a private handler. A
+library can open its stream, but code that turns a resource URL into a `JarFile` or a `Path`, as these Vaadin
+classes do, knows only `jar:` and `file:`. A directory archive found no folder at all, and a name with a space
+threw `IllegalArgumentException`.
+
+### Fix
+Plain jars give the `jar:` URL the JDK's loaders give, with `#runtime` for a multi-release jar; exploded directories
+give a `file:` URL, for a file or a folder, never outside the directory. Archives read by a `ByteSourcePlugin`, such
+as an sjar, keep `vauban:` URLs, now with the name encoded. A jar folder is found only through its directory entry,
+as with the JDK: the enriched copies of `vidocq:generate` had none, fixed by Vidocq BUG-20261022-01.
+
 ## VAU-LIFE-001 — A throwing lifecycle observer is swallowed; with reflection forbidden, the observers are never called
 - **Date**: 2026-10-18 — **Status**: FIXED (`fix/97-lifecycle-observer-failures`, vauban#97)
 - **Severity**: high (an application starts half-initialized with no trace; under `forbid`, lifecycle observers never run)

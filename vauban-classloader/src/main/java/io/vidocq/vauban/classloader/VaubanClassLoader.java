@@ -583,12 +583,17 @@ public class VaubanClassLoader extends ClassLoader implements AutoCloseable {
     }
 
     /**
-     * A {@code vauban:} URL whose connection serves the (decrypted) bytes from the
-     * archive reader — plain-jar entries could use {@code jar:} URLs, but sjar entries
-     * have no standard representation, so one scheme serves both.
+     * The URL of a resource. A plain jar or a directory gives the {@code jar:} or {@code file:}
+     * URL the JDK's own loaders give, which a library can also list as a folder (vauban#177).
+     * An archive read by a {@link ByteSourcePlugin}, such as an sjar, has no standard
+     * representation: its URL is a {@code vauban:} URL whose connection serves the (decrypted)
+     * bytes from the archive reader.
      */
     private URL resourceUrl(Archive archive, String name) {
         try {
+            if (archive.reader instanceof BuiltInReaders.StandardUrls standard) {
+                return standard.resourceUrl(name);
+            }
             var resource = archive.reader.readResource(name);
             if (resource.isEmpty()) return null;
             var bytes = resource.get();
@@ -608,7 +613,8 @@ public class VaubanClassLoader extends ClassLoader implements AutoCloseable {
                     };
                 }
             };
-            return URL.of(java.net.URI.create("vauban:" + archive.path.toUri() + "!/" + name), handler);
+            return URL.of(java.net.URI.create("vauban:" + archive.path.toUri() + "!/"
+                    + BuiltInReaders.encodePath(name)), handler);
         } catch (IOException e) {
             return null;
         }
