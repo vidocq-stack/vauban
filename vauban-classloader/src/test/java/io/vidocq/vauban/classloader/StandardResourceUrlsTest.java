@@ -86,15 +86,51 @@ class StandardResourceUrlsTest {
     }
 
     @Test
-    @DisplayName("a name with a space is encoded in the jar: URL")
-    void plainJarNameWithASpace(@TempDir Path dir) throws Exception {
+    @DisplayName("names with a space, a # or a % are encoded in the jar: URL")
+    void plainJarNamesAreEncoded(@TempDir Path dir) throws Exception {
         var jar = jar(dir.resolve("my lib.jar"));
         try (var loader = VaubanClassLoader.of(List.of(jar), getClass().getClassLoader(),
                 PluginContext.empty())) {
-            var url = loader.getResource("a/with space.txt");
-            assertNotNull(url);
-            assertEquals("space", read(url));
+            assertEquals("space", read(loader.getResource("a/with space.txt")));
+            assertEquals("hash", read(loader.getResource("a/x#1.txt")));
+            assertEquals("percent", read(loader.getResource("a/50%.txt")));
         }
+    }
+
+    @Test
+    @DisplayName("a URL relative to a jar folder reads the entry")
+    void relativeUrlInAJarFolder(@TempDir Path dir) throws Exception {
+        var jar = jar(dir.resolve("lib.jar"));
+        try (var loader = VaubanClassLoader.of(List.of(jar), getClass().getClassLoader(),
+                PluginContext.empty())) {
+            @SuppressWarnings("deprecation")
+            var relative = new URL(loader.getResource("a/b/"), "d.txt");
+            assertEquals("d", read(relative));
+        }
+    }
+
+    @Test
+    @DisplayName("a caching connection shares a jar file that closes with the loader, outside the JDK's cache")
+    void cachingConnectionClosesWithTheLoader(@TempDir Path dir) throws Exception {
+        var jar = jar(dir.resolve("lib.jar"));
+        java.util.jar.JarFile shared;
+        URL url;
+        try (var loader = VaubanClassLoader.of(List.of(jar), getClass().getClassLoader(),
+                PluginContext.empty())) {
+            url = loader.getResource("a/b/c.txt");
+            var connection = (JarURLConnection) url.openConnection();
+            assertTrue(connection.getUseCaches());
+            try (var in = connection.getInputStream()) {
+                assertEquals("c", new String(in.readAllBytes(), StandardCharsets.UTF_8));
+            }
+            assertEquals(1, connection.getContentLengthLong());
+            shared = connection.getJarFile();
+            assertSame(shared, ((JarURLConnection) url.openConnection()).getJarFile());
+            assertNotNull(shared.getEntry("a/b/d.txt"));
+        }
+        assertThrows(IllegalStateException.class, () -> shared.getEntry("a/b/d.txt"),
+                "the shared jar file closes with the loader");
+        assertThrows(java.io.IOException.class, () -> url.openStream(), "the loader is closed");
     }
 
     @Test
@@ -119,6 +155,12 @@ class StandardResourceUrlsTest {
             }
             assertNull(loader.getResource("a/b/missing.txt"));
             assertNull(loader.getResource("../outside.txt"), "a name must not escape the archive");
+            assertNull(loader.getResourceAsStream("../outside.txt"), "nor through a stream");
+            var outside = dir.resolve("outside.txt").toAbsolutePath().toString();
+            assertNull(loader.getResource(outside), "an absolute name is outside too");
+            assertNull(loader.getResourceAsStream(outside));
+            assertTrue(Collections.list(loader.getResources("")).contains(root.toUri().toURL()),
+                    "the empty name is the directory, after the parent's own");
         }
     }
 
@@ -158,7 +200,8 @@ class StandardResourceUrlsTest {
                 out.putNextEntry(new JarEntry(folder));
                 out.closeEntry();
             }
-            for (var entry : Map.of("a/b/c.txt", "c", "a/b/d.txt", "d", "a/with space.txt", "space")
+            for (var entry : Map.of("a/b/c.txt", "c", "a/b/d.txt", "d", "a/with space.txt", "space",
+                            "a/x#1.txt", "hash", "a/50%.txt", "percent")
                     .entrySet().stream().sorted(Map.Entry.comparingByKey()).toList()) {
                 out.putNextEntry(new JarEntry(entry.getKey()));
                 out.write(entry.getValue().getBytes(StandardCharsets.UTF_8));

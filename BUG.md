@@ -28,9 +28,12 @@ classes do, knows only `jar:` and `file:`. A directory archive found no folder a
 threw `IllegalArgumentException`.
 
 ### Fix
-Plain jars give the `jar:` URL the JDK's loaders give, with `#runtime` for a multi-release jar; exploded directories
-give a `file:` URL, for a file or a folder, never outside the directory. Archives read by a `ByteSourcePlugin`, such
-as an sjar, keep `vauban:` URLs, now with the name encoded. A jar folder is found only through its directory entry,
+Plain jars give the `jar:` URL the JDK's loaders give, with `#runtime` for a multi-release jar. Its connection is a
+`JarURLConnection` that reads the loader's own jar file, so that nothing lands in the JDK's global jar cache, which
+would keep the jar open after the loader closes; a caching connection's `getJarFile()` closes with the loader.
+Exploded directories give a `file:` URL, for a file or a folder; a name outside the directory (`../x`, an absolute
+path) finds nothing, through a URL, a stream or a class. Archives read by a `ByteSourcePlugin`, such as an sjar,
+keep `vauban:` URLs, now with the name encoded. A jar folder is found only through its directory entry,
 as with the JDK: the enriched copies of `vidocq:generate` had none, fixed by Vidocq BUG-20261022-01.
 
 ## VAU-LIFE-001 — A throwing lifecycle observer is swallowed; with reflection forbidden, the observers are never called

@@ -21,9 +21,15 @@ package io.vidocq.vauban.classloader;
 
 import io.vidocq.vauban.classloader.spi.ArchiveReader;
 
+import java.io.FileNotFoundException;
 import java.io.IOException;
+import java.io.InputStream;
+import java.net.JarURLConnection;
+import java.net.MalformedURLException;
 import java.net.URI;
 import java.net.URL;
+import java.net.URLConnection;
+import java.net.URLStreamHandler;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.InvalidPathException;
@@ -81,22 +87,33 @@ final class BuiltInReaders {
 
         @Override
         public byte[] readClass(String entryName) throws IOException {
-            return Files.readAllBytes(root.resolve(entryName));
+            var file = inside(entryName);
+            if (file == null) throw new IOException("No such entry: " + entryName);
+            return Files.readAllBytes(file);
         }
 
         @Override
         public Optional<byte[]> readResource(String entryName) throws IOException {
-            var file = root.resolve(entryName);
-            return Files.isRegularFile(file) ? Optional.of(Files.readAllBytes(file)) : Optional.empty();
+            var file = inside(entryName);
+            return file != null && Files.isRegularFile(file) ? Optional.of(Files.readAllBytes(file)) : Optional.empty();
         }
 
         @Override
         public URL resourceUrl(String name) throws IOException {
+            var file = inside(name);
+            return file != null && Files.exists(file) ? file.toUri().toURL() : null;
+        }
+
+        /**
+         * The path of {@code name} in the directory, or {@code null} for a name that reaches outside it, such as
+         * {@code ../x} or an absolute path. As with the JDK's loader, a symbolic link inside the directory is
+         * followed wherever it points.
+         */
+        private Path inside(String name) {
             try {
                 var base = root.toAbsolutePath().normalize();
                 var file = base.resolve(name).normalize();
-                // As the JDK's loader does, a name never reaches outside the directory
-                return file.startsWith(base) && Files.exists(file) ? file.toUri().toURL() : null;
+                return file.startsWith(base) ? file : null;
             } catch (InvalidPathException e) {
                 return null;
             }
@@ -109,15 +126,25 @@ final class BuiltInReaders {
     }
 
     static final class JarReader implements ArchiveReader, StandardUrls {
+        private final Path path;
         private final JarFile jar;
         private final String base;
+        private final URLStreamHandler handler = new URLStreamHandler() {
+            @Override
+            protected URLConnection openConnection(URL url) throws IOException {
+                return new Connection(url);
+            }
+        };
+        /** The jar file a caching connection hands out, opened on first use and closed with the reader. */
+        private JarFile shared;
 
         JarReader(Path path) throws IOException {
+            this.path = path;
             this.base = "jar:" + path.toUri() + "!/";
             // Multi-release aware, as the module path reads a jar: the base name resolves to the highest
             // META-INF/versions/N entry the running JDK accepts (vauban#154). No signature verification,
             // as before.
-            this.jar = new JarFile(path.toFile(), false, ZipFile.OPEN_READ, JarFile.runtimeVersion());
+            this.jar = open(path);
         }
 
         @Override
@@ -146,17 +173,101 @@ final class BuiltInReaders {
             }
         }
 
+        /**
+         * A {@code jar:} URL, the JDK's own form, with a fragment {@code #runtime} for a multi-release jar as the
+         * JDK writes it. Its connection reads this reader's jar file, so that nothing lands in the JDK's global
+         * jar cache, which would keep the jar open after the loader closes.
+         */
         @Override
         public URL resourceUrl(String name) throws IOException {
             if (jar.getEntry(name) == null) return null;
-            // The JDK marks the URLs of a multi-release jar so that they read the versioned entry
             var fragment = jar.isMultiRelease() ? "#runtime" : "";
-            return URI.create(base + encodePath(name) + fragment).toURL();
+            return URL.of(URI.create(base + encodePath(name) + fragment), handler);
+        }
+
+        private synchronized JarFile shared() throws IOException {
+            if (shared == null) {
+                shared = open(path);
+            }
+            return shared;
+        }
+
+        private static JarFile open(Path path) throws IOException {
+            return new JarFile(path.toFile(), false, ZipFile.OPEN_READ, JarFile.runtimeVersion());
         }
 
         @Override
         public void close() throws IOException {
-            jar.close();
+            try {
+                jar.close();
+            } finally {
+                synchronized (this) {
+                    if (shared != null) shared.close();
+                }
+            }
+        }
+
+        /**
+         * Reads the entry from this reader's jar file. {@link #getJarFile()} gives, as the JDK's connection does,
+         * a shared jar file when the connection uses caches, which closes with the reader, and else a new one the
+         * caller closes.
+         */
+        private final class Connection extends JarURLConnection {
+            Connection(URL url) throws MalformedURLException {
+                super(url);
+            }
+
+            @Override
+            public void connect() throws IOException {
+                if (!connected) {
+                    if (getEntryName() != null && entry() == null) {
+                        throw new FileNotFoundException("JAR entry " + getEntryName() + " not found in " + path);
+                    }
+                    connected = true;
+                }
+            }
+
+            @Override
+            public JarFile getJarFile() throws IOException {
+                connect();
+                return getUseCaches() ? shared() : open(path);
+            }
+
+            @Override
+            public JarEntry getJarEntry() throws IOException {
+                connect();
+                return getEntryName() == null ? null : entry();
+            }
+
+            @Override
+            public InputStream getInputStream() throws IOException {
+                connect();
+                if (getEntryName() == null) throw new IOException("no entry name specified");
+                try {
+                    return jar.getInputStream(entry());
+                } catch (IllegalStateException closed) {
+                    throw new IOException("The loader of " + path + " is closed", closed);
+                }
+            }
+
+            @Override
+            public long getContentLengthLong() {
+                try {
+                    connect();
+                    var entry = getEntryName() == null ? null : entry();
+                    return entry == null ? -1 : entry.getSize();
+                } catch (IOException e) {
+                    return -1;
+                }
+            }
+
+            private JarEntry entry() {
+                try {
+                    return jar.getJarEntry(getEntryName());
+                } catch (IllegalStateException closed) {
+                    return null;
+                }
+            }
         }
     }
 
