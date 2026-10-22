@@ -42,6 +42,10 @@ This page lists every artefact published by Vauban, the Java Modules packages th
 | `runtime`
 | The session context for a web container to drive (`WebContexts`, `SessionStore`), see xref:usage.adoc#web-contexts[Web contexts] [.tag-new]#NEW#
 
+| `io.vidocq.vauban:vauban-naming:{project-version}`
+| `runtime`
+| The JNDI `java:` namespace answered by the running container (`JavaNaming`, `JndiNameProvider`, `NamingService`), see xref:usage.adoc#jndi[The JNDI java: namespace] [.tag-new]#NEW#
+
 | `io.vidocq.vauban:vauban-weaver:{project-version}`
 | `runtime`
 | Client-proxy weaving transforms (Class-File API), also packaged as a load-time agent
@@ -92,6 +96,9 @@ This page lists every artefact published by Vauban, the Java Modules packages th
 
 | `io.vidocq.vauban.webcontexts` [.tag-new]#NEW#
 | `io.vidocq.vauban.webcontexts`
+
+| `io.vidocq.vauban.naming` [.tag-new]#NEW#
+| `io.vidocq.vauban.naming`
 
 | `io.vidocq.vauban.sjar`
 | `io.vidocq.vauban.sjar`, `.sjar.cli`

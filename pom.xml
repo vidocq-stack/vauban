@@ -71,6 +71,8 @@
         <module>vauban-webcontexts</module>
         <module>vauban-indexer</module>
         <module>vauban-processor</module>
+        <!-- After vauban-processor: its annotation processor runs on this module, and processor paths are no reactor edge. -->
+        <module>vauban-naming</module>
         <module>vauban-sjar</module>
         <module>vauban-junit</module>
         <module>vauban-maven-plugin</module>

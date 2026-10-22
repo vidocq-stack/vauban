@@ -1,0 +1,83 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+    <parent>
+        <groupId>io.vidocq.vauban</groupId>
+        <artifactId>vauban-parent</artifactId>
+        <version>0.4.0-SNAPSHOT</version>
+    </parent>
+    <artifactId>vauban-naming</artifactId>
+    <name>Vauban :: Naming</name>
+    <description>A read-only JNDI java: namespace backed by CDI: a stateless InitialContextFactory that
+        resolves every name through the running container, so java:comp/env/jdbc/orders answers the
+        @Named("orders") DataSource bean. Other libraries contribute names through JndiNameProvider beans.
+        Depends on the CDI API and the JDK java.naming module only.</description>
+
+    <dependencies>
+        <!-- The CDI API only: every lookup goes through CDI.current(). -->
+        <dependency>
+            <groupId>jakarta.enterprise</groupId>
+            <artifactId>jakarta.enterprise.cdi-api</artifactId>
+        </dependency>
+        <!-- The VaubanComponentProvider service type the processor implements for this module's beans. -->
+        <dependency>
+            <groupId>io.vidocq.vauban</groupId>
+            <artifactId>vauban-api</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.vidocq.vauban</groupId>
+            <artifactId>vauban-core</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter</artifactId>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <plugins>
+            <!--
+                Vauban codegen runs as an annotation processor on this module's own beans: it generates
+                their _ClientProxy, META-INF/vauban-beans.list and the _VaubanComponents provider declared
+                in module-info, so the container needs no `opens` of this module.
+            -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-compiler-plugin</artifactId>
+                <configuration>
+                    <annotationProcessorPaths>
+                        <path>
+                            <groupId>io.vidocq.vauban</groupId>
+                            <artifactId>vauban-processor</artifactId>
+                            <version>${project.version}</version>
+                        </path>
+                    </annotationProcessorPaths>
+                </configuration>
+                <executions>
+                    <!-- No annotation processing on the test sources: the container reaches the test beans reflectively. -->
+                    <execution>
+                        <id>default-testCompile</id>
+                        <configuration>
+                            <proc>none</proc>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+            <!-- The unit tests drive a Vauban container directly (VaubanContainer.builder()), which
+                 the module descriptor does not read: they run on a class path, where the JDK finds the
+                 factory through META-INF/services. The module path is covered by the Vidocq naming
+                 extension's tests. -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <configuration>
+                    <useModulePath>false</useModulePath>
+                </configuration>
+            </plugin>
+        </plugins>
+    </build>
+</project>
