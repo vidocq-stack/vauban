@@ -95,6 +95,13 @@ class ManagedBeanTypeResolutionTest {
         }
 
         @Produces
+        @Typed(Object.class)
+        @SuppressWarnings("unchecked")
+        public <T> T anything() {
+            return (T) "anything";
+        }
+
+        @Produces
         @Typed(List.class)
         public ArrayList<String> typedList() {
             return new ArrayList<>();
@@ -283,6 +290,15 @@ class ManagedBeanTypeResolutionTest {
         var managed = new ManagedBean<>(descriptor, Owner::new, ManagedBeanTypeResolutionTest.class.getClassLoader(), null);
 
         assertEquals(jakarta.enterprise.context.Dependent.class, managed.getScope());
+    }
+
+    @Test
+    @DisplayName("@Typed(Object.class) on a producer of a type variable leaves only Object")
+    void typedTypeVariableProducer() {
+        var types = bean(BeanDescriptor.BeanKind.PRODUCER_METHOD, SubProducer.class.getName() + "#anything", Set.of())
+                .getTypes();
+
+        assertEquals(Set.of(Object.class), types);
     }
 
     @Test

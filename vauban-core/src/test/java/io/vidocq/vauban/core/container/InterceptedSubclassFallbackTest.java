@@ -128,6 +128,26 @@ class InterceptedSubclassFallbackTest {
         }
     }
 
+    @Dependent
+    public static class Part {
+    }
+
+    /** Only an {@code @Inject} constructor: the fallback factory, which needs a no-arg one, cannot create it. */
+    @Logged
+    @Dependent
+    public static class FallbackWithoutNoArgConstructor {
+        private final Part part;
+
+        @jakarta.inject.Inject
+        public FallbackWithoutNoArgConstructor(Part part) {
+            this.part = part;
+        }
+
+        public Part part() {
+            return part;
+        }
+    }
+
     @Logged
     @Dependent
     public static class NeverDefined {
@@ -226,6 +246,17 @@ class InterceptedSubclassFallbackTest {
                     () -> container.select(FallbackCheckedConstructor.class));
 
             assertInstanceOf(IOException.class, thrown.getCause());
+        }
+    }
+
+    @Test
+    @DisplayName("the fallback factory cannot create a bean without a no-arg constructor: a CreationException")
+    void fallbackNeedsNoArgConstructor() {
+        try (var container = boot(Refusal.FIRST_ONLY, Part.class, FallbackWithoutNoArgConstructor.class)) {
+            var thrown = assertThrows(CreationException.class,
+                    () -> container.select(FallbackWithoutNoArgConstructor.class));
+
+            assertInstanceOf(NoSuchMethodException.class, thrown.getCause());
         }
     }
 

@@ -74,6 +74,17 @@ class InheritedObserverDiscoveryTest {
 
     @Dependent
     public static class Listener extends BaseListener {
+        public void onOwn(@Observes List<String> texts) {
+            // observes lists of strings
+        }
+
+        public void onOwn(@Observes List<Integer> numbers, Integer extra) {
+            // same name, more parameters
+        }
+
+        public void onOwn(@Observes Long number) {
+            // same name and arity, another parameter type
+        }
     }
 
     private static List<ObserverDescriptor> observers() {
@@ -110,5 +121,16 @@ class InheritedObserverDiscoveryTest {
         assertTrue(later.async());
         assertEquals(DotName.of(Long.class.getName()),
                 ((io.vidocq.vauban.indexer.model.TypeInfo.ClassType) later.eventType()).name());
+    }
+
+    @Test
+    @DisplayName("an overloaded observer gets the generic type of its own overload")
+    void overloadedObservers() {
+        var own = observers().stream().filter(o -> o.methodName().equals("onOwn")).toList();
+
+        assertEquals(3, own.size(), own::toString);
+        assertTrue(own.stream().anyMatch(o -> o.eventType().equals(new io.vidocq.vauban.indexer.model.TypeInfo
+                .ParameterizedType(DotName.of(List.class.getName()), List.of(new io.vidocq.vauban.indexer.model
+                .TypeInfo.ClassType(DotName.of(String.class.getName())))))), own::toString);
     }
 }

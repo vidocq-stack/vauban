@@ -414,4 +414,49 @@ class BeanDiscoveryReflectionFallbackTest {
     private static BeanDescriptor producerNamed(List<BeanDescriptor> beans, String method) {
         return beans.stream().filter(b -> b.id().value().endsWith("#" + method)).findFirst().orElseThrow();
     }
+
+    @Test
+    @DisplayName("an index entry without methods for a concrete class keeps its implicit constructor")
+    void concreteEntryWithoutMethods() {
+        var concrete = classInfo(TypedHost.class.getName(), List.of(), List.of(), List.of(ann(DEPENDENT)));
+
+        var names = beanClassNames(discovery(concrete).discoverBeans());
+
+        assertEquals(List.of(TypedHost.class.getName()), names);
+    }
+
+    @Test
+    @DisplayName("a container annotation on a producer contributes the qualifiers it repeats, and only those")
+    void repeatedQualifiers() {
+        var container = ann("com.example.Repeated", new AnnotationValue.ArrayVal(List.of(
+                new AnnotationValue.AnnotationVal(ann("jakarta.inject.Named", new AnnotationValue.StringVal("first"))),
+                new AnnotationValue.AnnotationVal(ann("com.example.NotAQualifier")),
+                new AnnotationValue.StringVal("not an annotation"))));
+        var producer = new MethodInfo("make", cls("java.lang.String"), List.of(), List.of(), 0x0001,
+                List.of(ann(PRODUCES), container));
+        var host = classInfo(MISSING_CLASS, List.of(), List.of(constructor(), producer), List.of(ann(DEPENDENT)));
+
+        var made = discovery(host).discoverBeans().stream()
+                .filter(b -> b.kind() == BeanDescriptor.BeanKind.PRODUCER_METHOD).findFirst().orElseThrow();
+
+        var names = made.qualifiers().stream().map(q -> q.annotationName().value()).toList();
+        assertTrue(names.contains("jakarta.inject.Named"), names::toString);
+        assertFalse(names.contains("com.example.NotAQualifier"), names::toString);
+    }
+
+    @Test
+    @DisplayName("a class the thread context class loader cannot see is read through the discovery's own loader")
+    void contextLoaderBlind() {
+        var thread = Thread.currentThread();
+        var previous = thread.getContextClassLoader();
+        var discovery = discovery(scan(InheritingBean.class));
+        thread.setContextClassLoader(new ClassLoader(null) { });
+        try {
+            var bean = discovery.buildManagedBean(scan(InheritingBean.class));
+
+            assertEquals(InheritingBean.class.getName(), bean.beanClass().value());
+        } finally {
+            thread.setContextClassLoader(previous);
+        }
+    }
 }

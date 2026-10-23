@@ -124,6 +124,13 @@ class DisposerInvocationTest {
         }
     }
 
+    /** Not a bean: the container has no instance to call its disposer method on. */
+    public static class Bystander {
+        public void dispose(Widget widget) {
+            RECEIVED.put("bystander", widget);
+        }
+    }
+
     @BeforeEach
     void reset() {
         RECEIVED.clear();
@@ -178,6 +185,28 @@ class DisposerInvocationTest {
         try (var container = boot()) {
             assertNotNull(container.select(Widget.class));
             assertTrue(container.getBeanManager().getBeans(Gadget.class).isEmpty());
+        }
+    }
+
+    private static io.vidocq.vauban.core.bean.model.DisposerDescriptor disposerOf(Class<?> declaring, String method) {
+        return new io.vidocq.vauban.core.bean.model.DisposerDescriptor(
+                io.vidocq.vauban.indexer.model.DotName.of(declaring.getName()), method,
+                new io.vidocq.vauban.indexer.model.TypeInfo.ClassType(
+                        io.vidocq.vauban.indexer.model.DotName.of(Widget.class.getName())),
+                java.util.Set.of(), 0, List.of());
+    }
+
+    @Test
+    @DisplayName("a disposer method that cannot be found, or declared by a class that is no bean, is not called")
+    void disposersCalledDirectly() {
+        try (var container = boot()) {
+            var invoker = new DisposerInvoker(container, container.getVaubanLookup());
+            var widget = new Widget();
+
+            invoker.callDisposer(widget, disposerOf(WidgetFactory.class, "absent"));
+            invoker.callDisposer(widget, disposerOf(Bystander.class, "dispose"));
+
+            assertEquals(java.util.Map.of(), RECEIVED, "neither disposer can be called, and nothing escapes");
         }
     }
 }

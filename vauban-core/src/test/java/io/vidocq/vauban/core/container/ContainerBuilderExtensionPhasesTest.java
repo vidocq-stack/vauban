@@ -322,4 +322,36 @@ class ContainerBuilderExtensionPhasesTest {
             assertEquals("plain", container.select(Plain.class).id());
         }
     }
+
+    @Test
+    @DisplayName("an application layer loader given as the class loader stays the composite's first loader")
+    void layerLoaderFirst() throws IOException {
+        var layer = io.vidocq.vauban.classloader.VaubanClassLoader.of(java.util.List.of(),
+                getClass().getClassLoader(), io.vidocq.vauban.classloader.spi.PluginContext.empty());
+
+        try (var container = VaubanContainer.builder().classLoader(layer).addBeanClass(Plain.class).build()) {
+            assertEquals("plain", container.select(Plain.class).id());
+        }
+    }
+
+    @Test
+    @DisplayName("a bean class of the application layer loader puts that loader first in the composite")
+    void layerLoaderMovedFirst(@TempDir Path dir) throws IOException, ClassNotFoundException {
+        var bytes = java.lang.classfile.ClassFile.of().build(java.lang.constant.ClassDesc.of("gen.LayerOnly"),
+                type -> type.withFlags(java.lang.classfile.ClassFile.ACC_PUBLIC)
+                        .withSuperclass(java.lang.constant.ConstantDescs.CD_Object));
+        Files.createDirectories(dir.resolve("gen"));
+        Files.write(dir.resolve("gen/LayerOnly.class"), bytes);
+        var layer = io.vidocq.vauban.classloader.VaubanClassLoader.of(java.util.List.of(dir),
+                getClass().getClassLoader(), io.vidocq.vauban.classloader.spi.PluginContext.empty());
+        var layerOnly = layer.loadClass("gen.LayerOnly");
+
+        try (var container = VaubanContainer.builder()
+                .addBeanClass(Plain.class)
+                .addBeanClass(layerOnly)
+                .build()) {
+            assertSame(layer, container.classLoader().getParent());
+            assertEquals("plain", container.select(Plain.class).id());
+        }
+    }
 }

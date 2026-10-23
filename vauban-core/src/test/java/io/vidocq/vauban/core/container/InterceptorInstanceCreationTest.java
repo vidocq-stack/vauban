@@ -380,6 +380,24 @@ class InterceptorInstanceCreationTest {
     public static class PlainChild extends PlainBase {
     }
 
+    /** Intercepted by its own {@code @AroundInvoke} method only; says goodbye when destroyed. */
+    @Dependent
+    public static class SelfInterceptedFarewell {
+        public String work() {
+            return "self";
+        }
+
+        @AroundInvoke
+        Object around(InvocationContext context) throws Exception {
+            return context.proceed();
+        }
+
+        @jakarta.annotation.PreDestroy
+        void farewell() {
+            CALLS.add("farewell");
+        }
+    }
+
     /** Intercepted by its own {@code @AroundInvoke} method, in a deployment with no interceptor. */
     @Dependent
     public static class SelfIntercepted {
@@ -568,6 +586,25 @@ class InterceptorInstanceCreationTest {
 
             assertEquals("base", child.base());
             assertEquals(PlainChild.class, child.getClass());
+        }
+    }
+
+    @Test
+    @DisplayName("an intercepted bean with no interceptor binding calls its @PreDestroy directly")
+    void preDestroyWithoutBindings() {
+        try (var container = VaubanContainer.builder()
+                .addBeanClass(PrefixLabel.class)
+                .addBeanClass(Clock.class)
+                .addBeanClass(CountingInterceptor.class)
+                .addBeanClass(SelfInterceptedFarewell.class)
+                .build()) {
+            var instance = container.getBeanManager().createInstance().select(SelfInterceptedFarewell.class);
+            var bean = instance.get();
+
+            assertEquals("self", bean.work());
+            instance.destroy(bean);
+
+            assertEquals(List.of("farewell"), CALLS);
         }
     }
 
