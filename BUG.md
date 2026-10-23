@@ -30,7 +30,7 @@ parameter (disposers).
 ---
 
 ## VAU-CL-002 — Reading a `jar:` resource after its loader is closed throws `NullPointerException`
-- **Date**: 2026-10-23 — **Status**: OPEN
+- **Date**: 2026-10-23 — **Status**: FIXED (`docs/log-coverage-defects`, Vidocq/vidocq#285)
 - **Severity**: low (a connection opened before the loader closed, read after; the caller gets an NPE instead of an
   `IOException`)
 
@@ -47,6 +47,13 @@ loader, then call `getInputStream()`.
 `entry()` catches the `IllegalStateException` of the closed `JarFile` and returns `null`, so
 `jar.getInputStream(null)` throws the NPE and the `catch (IllegalStateException closed)` that builds the intended
 `IOException` never runs.
+
+### Fix
+`getInputStream()` reads the entry from the jar file itself instead of going through `entry()`, inside the `try`
+that catches `IllegalStateException`: a closed jar file now reaches that `catch` and comes out as
+`IOException("The loader of … is closed")`, with the jar file's exception as its cause. `connect()` and
+`getContentLengthLong()` keep using `entry()` (a closed loader is still `-1` for the length). Test:
+`StandardResourceUrlsTest.connectedConnectionReadAfterTheLoaderClosesThrowsIOException` (vauban-classloader).
 
 ---
 

@@ -247,7 +247,12 @@ final class BuiltInReaders {
                 connect();
                 if (getEntryName() == null) throw new IOException("no entry name specified");
                 try {
-                    return jar.getInputStream(entry());
+                    // Not entry(): its null for a closed jar file would reach getInputStream as an NPE (VAU-CL-002).
+                    var entry = jar.getJarEntry(getEntryName());
+                    if (entry == null) {
+                        throw new FileNotFoundException("JAR entry " + getEntryName() + " not found in " + path);
+                    }
+                    return jar.getInputStream(entry);
                 } catch (IllegalStateException closed) {
                     throw new IOException("The loader of " + path + " is closed", closed);
                 }

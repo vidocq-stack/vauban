@@ -29,6 +29,7 @@ import org.junit.jupiter.api.io.TempDir;
 import java.io.IOException;
 import java.net.JarURLConnection;
 import java.net.URL;
+import java.net.URLConnection;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -131,6 +132,22 @@ class StandardResourceUrlsTest {
         assertThrows(IllegalStateException.class, () -> shared.getEntry("a/b/d.txt"),
                 "the shared jar file closes with the loader");
         assertThrows(java.io.IOException.class, url::openStream, "the loader is closed");
+    }
+
+    @Test
+    @DisplayName("a connection connected before the loader closes reports the closed loader as an IOException")
+    void connectedConnectionReadAfterTheLoaderClosesThrowsIOException(@TempDir Path dir) throws Exception {
+        // VAU-CL-002: the closed jar file used to surface as a NullPointerException.
+        var jar = jar(dir.resolve("lib.jar"));
+        URLConnection connection;
+        try (var loader = VaubanClassLoader.of(List.of(jar), getClass().getClassLoader(),
+                PluginContext.empty())) {
+            connection = loader.getResource("a/b/c.txt").openConnection();
+            connection.connect();
+        }
+        var thrown = assertThrows(IOException.class, connection::getInputStream);
+        assertTrue(thrown.getMessage().contains("is closed"), thrown.getMessage());
+        assertEquals(-1, connection.getContentLengthLong(), "a closed loader has no known length");
     }
 
     @Test
