@@ -91,7 +91,7 @@ context, the interceptor instance resolves to `null`. It stays open as VAU-INT-0
 ---
 
 ## VAU-INT-008 — An intercepted bean's factory, called without a creational context, NPEs on an `@AroundConstruct`
-- **Date**: 2026-10-23 — **Status**: OPEN
+- **Date**: 2026-10-23 — **Status**: OPEN (vauban#192)
 - **Severity**: low (only a direct `ManagedBean.factory().create()` with no creational context; the container
   always passes one)
 
@@ -115,7 +115,7 @@ creation of `InterceptorBeanWrapper` (around line 509), which ignores the result
 ---
 
 ## VAU-BCE-006 — An `@Inject` that a build compatible extension adds on a constructor is ignored
-- **Date**: 2026-10-23 — **Status**: OPEN (to check against the CDI Lite specification)
+- **Date**: 2026-10-23 — **Status**: OPEN (vauban#187) (to check against the CDI Lite specification)
 - **Severity**: medium if confirmed (a possible CDI Lite conformance gap; the TCK does not cover it)
 
 ### Symptom
@@ -134,7 +134,7 @@ enhancement phase added (lines 803-807 of the refactored code are never reached)
 ---
 
 ## VAU-OBS-003 — Synthetic observers reject wildcard-parameterized and generic-array event types
-- **Date**: 2026-10-23 — **Status**: OPEN
+- **Date**: 2026-10-23 — **Status**: OPEN (vauban#188)
 - **Severity**: low (a limitation: `@Synthesis` refuses such observers with "Unsupported type for synthetic
   observer")
 
@@ -153,7 +153,7 @@ Not investigated yet. The observer is refused at `@Synthesis`, before it reaches
 ---
 
 ## VAU-MVN-002 — `VaubanGenerator`: a broken extension service file fails the build instead of being skipped
-- **Date**: 2026-10-23 — **Status**: OPEN
+- **Date**: 2026-10-23 — **Status**: OPEN (vauban#189)
 - **Severity**: low (a malformed `META-INF/services` entry for `BuildCompatibleExtension` on the build class path)
 
 ### Symptom
@@ -171,7 +171,7 @@ names a class that does not exist; run the `generate` goal.
 ---
 
 ## VAU-TEST-002 — `VaubanExtension` leaves `@Inject` fields null with `@TestInstance(PER_CLASS)`
-- **Date**: 2026-10-23 — **Status**: OPEN
+- **Date**: 2026-10-23 — **Status**: OPEN (vauban#190)
 - **Severity**: low (a limitation of the JUnit extension; the default per-method lifecycle works)
 
 ### Symptom
@@ -187,7 +187,7 @@ starts the container, so the container is not in the store yet when the fields a
 ---
 
 ## VAU-VAL-001 — `ClassValidator.validateStereotypeName` never runs
-- **Date**: 2026-10-23 — **Status**: OPEN
+- **Date**: 2026-10-23 — **Status**: OPEN (vauban#191)
 - **Severity**: low (the same rule is enforced at run time by `ReflectionValidator`)
 
 ### Symptom
