@@ -193,7 +193,7 @@ class EventDispatcherObserverInvocationTest {
         container.eventDispatcher().invokeObserverDirect(
                 observer(NotABean.class, ON, classType(String.class), "IF_EXISTS"), EVENT);
 
-        assertEquals(List.of(EVENT), RECEIVED);
+        assertEquals(List.of(EVENT), List.copyOf(RECEIVED));
     }
 
     @Test
@@ -205,7 +205,7 @@ class EventDispatcherObserverInvocationTest {
         container.select(Lazy.class).touch();
         dispatcher.invokeObserverDirect(conditional, "second");
 
-        assertEquals(List.of("lazy second"), RECEIVED);
+        assertEquals(List.of("lazy second"), List.copyOf(RECEIVED));
     }
 
     @Test
@@ -213,7 +213,7 @@ class EventDispatcherObserverInvocationTest {
         container.eventDispatcher().invokeObserverDirect(
                 observer(NotABean.class, "injected", classType(String.class), null), EVENT);
 
-        assertEquals(List.of("red,part,part,true,true,true"), RECEIVED);
+        assertEquals(List.of("red,part,part,true,true,true"), List.copyOf(RECEIVED));
     }
 
     @Test
@@ -222,7 +222,7 @@ class EventDispatcherObserverInvocationTest {
                 observer(NotABean.class, "numbers", new TypeInfo.TypeVariable("N", List.of(classType(Number.class))),
                         null), 42);
 
-        assertEquals(List.of(42), RECEIVED);
+        assertEquals(List.of(42), List.copyOf(RECEIVED));
     }
 
     @Test

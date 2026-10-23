@@ -179,10 +179,10 @@ class SyntheticComponentRegistrationTest {
             beanManager.getEvent().select(String.class, MetricLiteral.INSTANCE).fire("now");
 
             assertEquals("gauge", gauge.id());
-            assertEquals(List.of("tick:now"), OBSERVED);
+            assertEquals(List.of("tick:now"), List.copyOf(OBSERVED));
             assertTrue(QUALIFIERS.get("tick").contains(MetricLiteral.INSTANCE), QUALIFIERS::toString);
         }
-        assertEquals(List.of("tick:now"), OBSERVED, "the disposer cannot be created, and that failure is suppressed");
+        assertEquals(List.of("tick:now"), List.copyOf(OBSERVED), "the disposer cannot be created, and that failure is suppressed");
     }
 
     @Test

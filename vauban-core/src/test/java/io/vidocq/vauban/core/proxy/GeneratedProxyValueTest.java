@@ -38,6 +38,7 @@ class GeneratedProxyValueTest {
         assertEquals(new GeneratedProxy(NAME, new byte[] {4, 2}).hashCode(), proxy.hashCode());
         assertNotEquals(new GeneratedProxy(NAME, new byte[] {4}), proxy);
         assertNotEquals(new GeneratedProxy("com.acme.Other_ClientProxy", new byte[] {4, 2}), proxy);
-        assertNotEquals(proxy, NAME);
+        Object aString = NAME;
+        assertNotEquals(proxy, aString);
     }
 }

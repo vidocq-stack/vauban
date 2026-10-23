@@ -37,7 +37,7 @@ import java.util.stream.Stream;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -142,8 +142,8 @@ class AnnotationInstancesConversionTest {
                 new AnnotationInfo(DotName.of(Label.class.getName()), Map.of("value", new AnnotationValue.StringVal(EU))),
                 LOADER);
 
-        assertTrue(built.equals(new UnreadableLabel(true)));
-        assertFalse(built.equals(new UnreadableLabel(false)));
+        assertEquals(built, new UnreadableLabel(true));
+        assertNotEquals(built, new UnreadableLabel(false));
     }
 
     @Test

@@ -38,7 +38,8 @@ class ComponentProviderGeneratedValueTest {
         assertEquals(new Generated(NAME, new byte[] {1, 2, 3}).hashCode(), generated.hashCode());
         assertNotEquals(new Generated(NAME, new byte[] {1, 2}), generated);
         assertNotEquals(new Generated("com.acme.Other", new byte[] {1, 2, 3}), generated);
-        assertNotEquals(generated, NAME);
+        Object aString = NAME;
+        assertNotEquals(generated, aString);
     }
 
     @Test

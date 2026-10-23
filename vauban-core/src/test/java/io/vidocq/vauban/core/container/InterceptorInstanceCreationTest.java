@@ -431,7 +431,7 @@ class InterceptorInstanceCreationTest {
                 .build()) {
 
             assertEquals("worked", container.select(CountedService.class).work());
-            assertEquals(List.of("prefix@now:work"), CALLS);
+            assertEquals(List.of("prefix@now:work"), List.copyOf(CALLS));
         }
     }
 
@@ -447,7 +447,7 @@ class InterceptorInstanceCreationTest {
                 .build()) {
 
             assertEquals("worked", container.select(CountedService.class).work());
-            assertEquals(List.of("prefix@now:work"), CALLS);
+            assertEquals(List.of("prefix@now:work"), List.copyOf(CALLS));
         }
     }
 
@@ -459,7 +459,7 @@ class InterceptorInstanceCreationTest {
                 .addBeanClass(BrokenService.class)
                 .build()) {
 
-            var thrown = assertThrows(RuntimeException.class, () -> container.select(BrokenService.class).work());
+            var thrown = assertThrows(RuntimeException.class, () -> container.select(BrokenService.class));
 
             assertTrue(causeChain(thrown).contains("interceptor cannot be built"), causeChain(thrown));
         }
@@ -516,7 +516,7 @@ class InterceptorInstanceCreationTest {
                 .addBeanClass(CountedService.class)
                 .build()) {
 
-            var thrown = assertThrows(RuntimeException.class, () -> container.select(CountedService.class).work());
+            var thrown = assertThrows(RuntimeException.class, () -> container.select(CountedService.class));
 
             assertTrue(causeChain(thrown).contains("nested interceptor cannot be built"), causeChain(thrown));
         }
@@ -528,7 +528,7 @@ class InterceptorInstanceCreationTest {
         try (var container = VaubanContainer.builder().addBeanClass(SelfIntercepted.class).build()) {
 
             assertEquals("self", container.select(SelfIntercepted.class).work());
-            assertEquals(List.of("self:work"), CALLS);
+            assertEquals(List.of("self:work"), List.copyOf(CALLS));
         }
     }
 
@@ -574,7 +574,7 @@ class InterceptorInstanceCreationTest {
                 .build()) {
 
             assertEquals("now", container.select(TimedService.class).time());
-            assertEquals(List.of("prefix@now:time"), CALLS);
+            assertEquals(List.of("prefix@now:time"), List.copyOf(CALLS));
         }
     }
 
@@ -604,7 +604,7 @@ class InterceptorInstanceCreationTest {
             assertEquals("self", bean.work());
             instance.destroy(bean);
 
-            assertEquals(List.of("farewell"), CALLS);
+            assertEquals(List.of("farewell"), List.copyOf(CALLS));
         }
     }
 

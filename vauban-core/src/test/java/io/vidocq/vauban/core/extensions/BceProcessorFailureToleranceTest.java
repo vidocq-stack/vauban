@@ -31,6 +31,7 @@ import jakarta.enterprise.inject.build.compatible.spi.ScannedClasses;
 import org.junit.jupiter.api.Test;
 
 import java.lang.classfile.ClassFile;
+import java.lang.classfile.CodeBuilder;
 import java.lang.constant.ClassDesc;
 import java.lang.constant.ConstantDescs;
 import java.lang.constant.MethodTypeDesc;
@@ -111,7 +112,7 @@ class BceProcessorFailureToleranceTest {
         var absent = ClassDesc.of("com.acme.Absent");
         byte[] bytes = ClassFile.of().build(ClassDesc.of("gen.bce.NamesAbsent"), clb -> clb
                 .withMethodBody("take", MethodTypeDesc.of(ConstantDescs.CD_void, absent),
-                        ClassFile.ACC_PUBLIC | ClassFile.ACC_STATIC, code -> code.return_()));
+                        ClassFile.ACC_PUBLIC | ClassFile.ACC_STATIC, CodeBuilder::return_));
         var loader = new ClassLoader(getClass().getClassLoader()) {
             Class<?> define() {
                 return defineClass("gen.bce.NamesAbsent", bytes, 0, bytes.length);

@@ -157,7 +157,7 @@ class DisposerInvocationTest {
             widgets.destroy(widget);
 
             assertEquals(widget, RECEIVED.get("widget"));
-            assertEquals(List.of("disposed"), EVENTS, "the Event parameter must reach the observer");
+            assertEquals(List.of("disposed"), List.copyOf(EVENTS), "the Event parameter must reach the observer");
             var helpers = assertInstanceOf(Instance.class, RECEIVED.get("helpers"));
             assertEquals("helped", ((Helper) helpers.get()).help());
             assertInstanceOf(Instance.class, RECEIVED.get("lists"));
@@ -206,7 +206,7 @@ class DisposerInvocationTest {
             invoker.callDisposer(widget, disposerOf(WidgetFactory.class, "absent"));
             invoker.callDisposer(widget, disposerOf(Bystander.class, "dispose"));
 
-            assertEquals(java.util.Map.of(), RECEIVED, "neither disposer can be called, and nothing escapes");
+            assertEquals(java.util.Map.of(), java.util.Map.copyOf(RECEIVED), "neither disposer can be called, and nothing escapes");
         }
     }
 }

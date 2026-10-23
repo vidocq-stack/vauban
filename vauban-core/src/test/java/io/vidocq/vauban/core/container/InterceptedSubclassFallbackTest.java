@@ -211,7 +211,7 @@ class InterceptedSubclassFallbackTest {
             var greeter = container.select(FallbackGreeter.class);
 
             assertEquals("hello", greeter.greet());
-            assertEquals(List.of("logged:greet"), CALLS);
+            assertEquals(List.of("logged:greet"), List.copyOf(CALLS));
             assertTrue(greeter.getClass().getName().endsWith("$$Intercepted"), greeter.getClass().getName());
         }
     }
@@ -223,7 +223,7 @@ class InterceptedSubclassFallbackTest {
             var thrown = assertThrows(CreationException.class, () -> container.select(FallbackBlocked.class));
 
             assertTrue(thrown.getMessage().contains("failed to create an instance"), thrown.getMessage());
-            assertEquals(List.of("blocked"), CALLS);
+            assertEquals(List.of("blocked"), List.copyOf(CALLS));
         }
     }
 

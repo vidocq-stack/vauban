@@ -25,6 +25,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.IOException;
 import java.lang.classfile.ClassFile;
+import java.lang.classfile.CodeBuilder;
 import java.lang.constant.ClassDesc;
 import java.lang.constant.ConstantDescs;
 import java.lang.constant.MethodTypeDesc;
@@ -54,7 +55,7 @@ class ModuleDescriptorSynthesizerEntriesTest {
     private static byte[] classReferencing(String fqn, ClassDesc referenced) {
         return ClassFile.of().build(ClassDesc.of(fqn), clb -> clb.withMethodBody("use",
                 MethodTypeDesc.of(ConstantDescs.CD_void, referenced), ClassFile.ACC_PUBLIC | ClassFile.ACC_STATIC,
-                cob -> cob.return_()));
+                CodeBuilder::return_));
     }
 
     private static Path jar(Path file, Manifest manifest, Map<String, byte[]> entries) throws IOException {

@@ -36,15 +36,19 @@ class ClientProxyShapeIndexConstructorTest {
     @SuppressWarnings("unused")
     public static class Constructors {
         public Constructors(ProxyLink link) {
+            // empty on purpose: only the constructor signature is scanned
         }
 
         public Constructors(String name) {
+            // empty on purpose: only the constructor signature is scanned
         }
 
         public Constructors(int size) {
+            // empty on purpose: only the constructor signature is scanned
         }
 
         public Constructors() {
+            // empty on purpose: only the constructor signature is scanned
         }
     }
 

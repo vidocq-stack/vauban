@@ -50,7 +50,8 @@ class LangModelTypeValueSemanticsTest {
         bounds.add(STRING);
 
         assertEquals(List.of(NUMBER), variable.bounds());
-        assertThrows(NullPointerException.class, () -> new VaubanTypeVariable(null, List.of()));
+        List<Type> noBounds = List.of();
+        assertThrows(NullPointerException.class, () -> new VaubanTypeVariable(null, noBounds));
     }
 
     @Test
@@ -62,7 +63,8 @@ class LangModelTypeValueSemanticsTest {
         assertEquals(new VaubanTypeVariable(NAME_T, List.of(NUMBER)).hashCode(), variable.hashCode());
         assertNotEquals(new VaubanTypeVariable("U", List.of(NUMBER)), variable);
         assertNotEquals(new VaubanTypeVariable(NAME_T, List.of(STRING)), variable);
-        assertNotEquals(variable, NUMBER);
+        Object aType = NUMBER;
+        assertNotEquals(variable, aType);
     }
 
     @Test
@@ -73,7 +75,8 @@ class LangModelTypeValueSemanticsTest {
         assertEquals(new VaubanWildcardType(NUMBER, null), upper);
         assertNotEquals(new VaubanWildcardType(STRING, null), upper);
         assertNotEquals(new VaubanWildcardType(NUMBER, STRING), upper);
-        assertNotEquals(upper, NUMBER);
+        Object aType = NUMBER;
+        assertNotEquals(upper, aType);
         assertEquals(NUMBER, upper.upperBound());
     }
 
@@ -84,7 +87,8 @@ class LangModelTypeValueSemanticsTest {
         assertEquals(array, array);
         assertEquals(new VaubanArrayType(STRING), array);
         assertNotEquals(new VaubanArrayType(NUMBER), array);
-        assertNotEquals(array, STRING);
+        Object aType = STRING;
+        assertNotEquals(array, aType);
     }
 
     @Test

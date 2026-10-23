@@ -21,7 +21,7 @@ package io.vidocq.vauban.maven.enhance;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
-import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -147,7 +147,7 @@ class DependencyEnhancerProxyabilityTest {
         try (var enhanced = new JarFile(result.enhancedJar().toFile());
                 var service = enhanced.getInputStream(enhanced.getEntry(SERVICE_FILE))) {
             assertEquals(provider + "\n", new String(service.readAllBytes(), StandardCharsets.UTF_8));
-            assertTrue(enhanced.getEntry(Open.class.getName().replace('.', '/') + "_ClientProxy.class") != null);
+            assertNotNull(enhanced.getEntry(Open.class.getName().replace('.', '/') + "_ClientProxy.class"));
         }
     }
 }

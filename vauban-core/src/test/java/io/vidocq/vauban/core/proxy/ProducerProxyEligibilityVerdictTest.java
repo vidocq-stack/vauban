@@ -120,6 +120,8 @@ class ProducerProxyEligibilityVerdictTest {
     }
 
     public static class CloneWithParameter {
+        // The unused parameter is the fixture: a clone() overload that is not Object.clone().
+        @SuppressWarnings("java:S1172")
         protected Object clone(int depth) {
             return this;
         }

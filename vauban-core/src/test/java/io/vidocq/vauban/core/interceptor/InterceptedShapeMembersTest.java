@@ -51,13 +51,18 @@ class InterceptedShapeMembersTest {
 
     @SuppressWarnings("unused")
     public static class Bean extends Base {
+        // The unused parameter is the fixture: a private constructor shape the generator must skip.
+        @SuppressWarnings("java:S1172")
         private Bean(int hidden) {
+            // empty on purpose: only the constructor signature is under test
         }
 
         public Bean(ProxyLink link) {
+            // empty on purpose: only the constructor signature is under test
         }
 
         public Bean(String name) {
+            // empty on purpose: only the constructor signature is under test
         }
 
         @Override
@@ -88,6 +93,7 @@ class InterceptedShapeMembersTest {
         assertEquals(new GeneratedInterceptedClass("com.acme.Bean$$Intercepted", new byte[] {1, 2}), generated);
         assertNotEquals(new GeneratedInterceptedClass("com.acme.Other", new byte[] {1, 2}), generated);
         assertNotEquals(new GeneratedInterceptedClass("com.acme.Bean$$Intercepted", new byte[] {3}), generated);
-        assertNotEquals(generated, "com.acme.Bean$$Intercepted");
+        Object aString = "com.acme.Bean$$Intercepted";
+        assertNotEquals(generated, aString);
     }
 }

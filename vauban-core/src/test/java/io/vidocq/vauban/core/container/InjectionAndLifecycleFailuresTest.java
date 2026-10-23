@@ -45,6 +45,7 @@ import java.util.concurrent.CopyOnWriteArrayList;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -170,8 +171,8 @@ class InjectionAndLifecycleFailuresTest {
             var bean = container.select(StaticMembers.class);
 
             assertNull(StaticMembers.sharedClock);
-            assertTrue(bean.clock != null);
-            assertEquals(List.of(), CALLS);
+            assertNotNull(bean.clock);
+            assertEquals(List.of(), List.copyOf(CALLS));
         }
     }
 
@@ -181,7 +182,7 @@ class InjectionAndLifecycleFailuresTest {
         try (var container = VaubanContainer.builder().addBeanClass(Clock.class).addBeanClass(Child.class).build()) {
             container.select(Child.class);
 
-            assertEquals(List.of(), CALLS);
+            assertEquals(List.of(), List.copyOf(CALLS));
         }
     }
 
@@ -219,7 +220,7 @@ class InjectionAndLifecycleFailuresTest {
             tracked.destroy(tracked.get());
             untracked.destroy(untracked.get());
 
-            assertEquals(List.of("pre destroy interceptor", "untracked bye"), CALLS);
+            assertEquals(List.of("pre destroy interceptor", "untracked bye"), List.copyOf(CALLS));
         }
     }
 

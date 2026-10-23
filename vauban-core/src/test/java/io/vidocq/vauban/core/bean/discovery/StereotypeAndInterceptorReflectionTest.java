@@ -131,6 +131,11 @@ class StereotypeAndInterceptorReflectionTest {
     public @interface Watched {
     }
 
+    /** Stands for a binding an extension declares: not a CDI interceptor binding itself. */
+    @Retention(RetentionPolicy.RUNTIME)
+    public @interface ExtensionDeclared {
+    }
+
     public static class BaseInterceptor {
         @AroundInvoke
         public Object inherited(InvocationContext context) throws Exception {
@@ -140,7 +145,7 @@ class StereotypeAndInterceptorReflectionTest {
 
     @Watched
     @Alternative
-    @Deprecated
+    @ExtensionDeclared
     @Interceptor
     @Priority(42)
     public static class WatchInterceptor extends BaseInterceptor {
@@ -221,7 +226,7 @@ class StereotypeAndInterceptorReflectionTest {
                 ClassInfo.ClassKind.CLASS);
         var discovery = discovery(partial);
         discovery.setCustomInterceptorBindings(Set.of(DotName.of(Alternative.class.getName()),
-                DotName.of(Deprecated.class.getName()), DotName.of(Interceptor.class.getName())));
+                DotName.of(ExtensionDeclared.class.getName()), DotName.of(Interceptor.class.getName())));
 
         var interceptors = discovery.discoverInterceptors();
 
@@ -232,7 +237,7 @@ class StereotypeAndInterceptorReflectionTest {
         assertEquals("around", interceptor.aroundInvokeMethod());
         assertNull(interceptor.aroundConstructMethod());
         assertTrue(interceptor.bindings().contains(DotName.of(Watched.class.getName())), interceptor::toString);
-        assertTrue(interceptor.bindings().contains(DotName.of(Deprecated.class.getName())),
+        assertTrue(interceptor.bindings().contains(DotName.of(ExtensionDeclared.class.getName())),
                 "a binding an extension declared is read by reflection");
         assertFalse(interceptor.bindings().contains(DotName.of(Alternative.class.getName())),
                 "a built-in CDI annotation read by reflection is never a binding");
