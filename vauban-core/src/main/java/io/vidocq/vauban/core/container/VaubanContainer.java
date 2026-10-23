@@ -730,187 +730,207 @@ public final class VaubanContainer implements AutoCloseable {
         }
 
         // Has @Inject constructor — create a factory that resolves parameters
-        return new BeanFactory<Object>() {
-            @Override
-            public Object create() {
-                return create((jakarta.enterprise.context.spi.CreationalContext<Object>) null);
+        return new InjectionConstructorFactory(descriptor, ctorParams.size());
+    }
+
+    /**
+     * Creates a managed bean through its {@code @Inject} constructor, or, failing one, the constructor taking as
+     * many parameters as the descriptor records constructor injection points, each argument resolved from the
+     * injection point the descriptor records.
+     */
+    private final class InjectionConstructorFactory implements BeanFactory<Object> {
+
+        private final BeanDescriptor descriptor;
+        private final int ctorParamCount;
+
+        InjectionConstructorFactory(BeanDescriptor descriptor, int ctorParamCount) {
+            this.descriptor = descriptor;
+            this.ctorParamCount = ctorParamCount;
+        }
+
+        @Override
+        public Object create() {
+            return create((jakarta.enterprise.context.spi.CreationalContext<Object>) null);
+        }
+
+        @Override
+        public Object create(jakarta.enterprise.context.spi.CreationalContext<Object> creationalCtx) {
+            return create(null, creationalCtx);
+        }
+
+        @Override
+        public Object create(io.vidocq.vauban.core.interceptor.VaubanInvocationContext constructCtx, CreationalContext<Object> creationalCtx) {
+            try {
+                return construct(creationalCtx);
+            } catch (RuntimeException e) {
+                throw e;
+            } catch (Exception e) {
+                throw new jakarta.enterprise.inject.CreationException(e);
+            }
+        }
+
+        private Object construct(CreationalContext<Object> creationalCtx) throws ClassNotFoundException {
+            var beanClass = loadClass(descriptor.beanClass().value());
+
+            var injectCtor = injectConstructor(beanClass, ctorParamCount);
+            if (injectCtor == null) {
+                throw new ContainerOperationException("No @Inject constructor found for " + descriptor.beanClass());
             }
 
-            @Override
-            public Object create(jakarta.enterprise.context.spi.CreationalContext<Object> creationalCtx) {
-                return create(null, creationalCtx);
-            }
+            var transientCtxs = new java.util.ArrayList<io.vidocq.vauban.core.context.CreationalContextImpl<?>>();
+            var args = constructorArgs(injectCtor, creationalCtx, transientCtxs);
 
-            @Override
-            public Object create(io.vidocq.vauban.core.interceptor.VaubanInvocationContext constructCtx, CreationalContext<Object> creationalCtx) {
-                try {
-                    return constructWithInjectConstructor(descriptor, ctorParams.size(), creationalCtx);
-                } catch (RuntimeException e) {
-                    throw e;
-                } catch (Exception e) {
-                    throw new jakarta.enterprise.inject.CreationException(e);
+            // Provider-first: let the owning module run `new X(args…)` in-module (no
+            // opens); fall back to reflective construction when no provider owns it.
+            Object result = componentProviders.create(descriptor.beanClass().value(), args);
+            if (result == null) {
+                result = vaubanLookup.newInstance(injectCtor, args);
+            }
+            for (var tc : transientCtxs) {
+                tc.release();
+            }
+            return result;
+        }
+
+        /** The constructor {@code @Inject} marks, else the first one taking {@code parameterCount} parameters, or {@code null}. */
+        private static java.lang.reflect.Constructor<?> injectConstructor(Class<?> beanClass, int parameterCount) {
+            for (var ctor : beanClass.getDeclaredConstructors()) {
+                if (ctor.isAnnotationPresent(jakarta.inject.Inject.class)) {
+                    return ctor;
                 }
             }
-        };
-    }
-
-    /**
-     * Creates a managed bean through its {@code @Inject} constructor, or, failing one, the constructor taking
-     * {@code ctorParamCount} parameters, each argument resolved from the injection point the descriptor records.
-     */
-    private Object constructWithInjectConstructor(BeanDescriptor descriptor, int ctorParamCount,
-                                                  CreationalContext<Object> creationalCtx) throws ClassNotFoundException {
-        var beanClass = loadClass(descriptor.beanClass().value());
-
-        var injectCtor = injectConstructor(beanClass, ctorParamCount);
-        if (injectCtor == null) {
-            throw new ContainerOperationException("No @Inject constructor found for " + descriptor.beanClass());
-        }
-
-        var transientCtxs = new java.util.ArrayList<io.vidocq.vauban.core.context.CreationalContextImpl<?>>();
-        var args = injectConstructorArgs(descriptor, injectCtor, creationalCtx, transientCtxs);
-
-        // Provider-first: let the owning module run `new X(args…)` in-module (no
-        // opens); fall back to reflective construction when no provider owns it.
-        Object result = componentProviders.create(descriptor.beanClass().value(), args);
-        if (result == null) {
-            result = vaubanLookup.newInstance(injectCtor, args);
-        }
-        for (var tc : transientCtxs) {
-            tc.release();
-        }
-        return result;
-    }
-
-    /** The constructor {@code @Inject} marks, else the first one taking {@code parameterCount} parameters, or {@code null}. */
-    private static java.lang.reflect.Constructor<?> injectConstructor(Class<?> beanClass, int parameterCount) {
-        for (var ctor : beanClass.getDeclaredConstructors()) {
-            if (ctor.isAnnotationPresent(jakarta.inject.Inject.class)) {
-                return ctor;
+            for (var ctor : beanClass.getDeclaredConstructors()) {
+                if (ctor.getParameterCount() == parameterCount) {
+                    return ctor;
+                }
             }
+            return null;
         }
-        for (var ctor : beanClass.getDeclaredConstructors()) {
-            if (ctor.getParameterCount() == parameterCount) {
-                return ctor;
-            }
-        }
-        return null;
-    }
 
-    /**
-     * The arguments of a bean's injection constructor. A {@code @TransientReference} parameter gets a creational
-     * context of its own, added to {@code transientCtxs} for the caller to release.
-     */
-    private Object[] injectConstructorArgs(BeanDescriptor descriptor, java.lang.reflect.Constructor<?> injectCtor,
-                                           CreationalContext<Object> creationalCtx,
-                                           List<io.vidocq.vauban.core.context.CreationalContextImpl<?>> transientCtxs) {
-        var paramTypes = injectCtor.getParameterTypes();
-        var genericParamTypes = injectCtor.getGenericParameterTypes();
-        var ctorParamsRefl = injectCtor.getParameters();
-        var ctorOwnerBean = beans.get(descriptor.id());
-        var args = new Object[paramTypes.length];
-        for (int i = 0; i < paramTypes.length; i++) {
-            // The descriptor describes every constructor parameter; reading the
-            // parameter back is only for one it does not (vauban#70).
-            var described = QualifierHelper.parameterQualifiers(
-                    descriptor.injectionPoints(), injectCtor, i, qualifierMatcher().types());
-            var pQuals = described != null
-                    ? described : QualifierHelper.extractParamQualifiers(ctorParamsRefl[i]);
-            if (ctorParamsRefl[i].isAnnotationPresent(jakarta.enterprise.inject.TransientReference.class)) {
-                var transientCtx = new io.vidocq.vauban.core.context.CreationalContextImpl<>();
-                args[i] = resolveParameter(paramTypes[i], genericParamTypes[i], transientCtx, pQuals, injectCtor, ctorOwnerBean, ctorParamsRefl[i], i);
-                transientCtxs.add(transientCtx);
-            } else {
-                args[i] = resolveParameter(paramTypes[i], genericParamTypes[i], creationalCtx, pQuals, injectCtor, ctorOwnerBean, ctorParamsRefl[i], i);
+        /**
+         * The arguments of the injection constructor. A {@code @TransientReference} parameter gets a creational
+         * context of its own, added to {@code transientCtxs} for the caller to release.
+         */
+        private Object[] constructorArgs(java.lang.reflect.Constructor<?> injectCtor,
+                                         CreationalContext<Object> creationalCtx,
+                                         List<io.vidocq.vauban.core.context.CreationalContextImpl<?>> transientCtxs) {
+            var paramTypes = injectCtor.getParameterTypes();
+            var genericParamTypes = injectCtor.getGenericParameterTypes();
+            var ctorParamsRefl = injectCtor.getParameters();
+            var ctorOwnerBean = beans.get(descriptor.id());
+            var args = new Object[paramTypes.length];
+            for (int i = 0; i < paramTypes.length; i++) {
+                // The descriptor describes every constructor parameter; reading the
+                // parameter back is only for one it does not (vauban#70).
+                var described = QualifierHelper.parameterQualifiers(
+                        descriptor.injectionPoints(), injectCtor, i, qualifierMatcher().types());
+                var pQuals = described != null
+                        ? described : QualifierHelper.extractParamQualifiers(ctorParamsRefl[i]);
+                if (ctorParamsRefl[i].isAnnotationPresent(jakarta.enterprise.inject.TransientReference.class)) {
+                    var transientCtx = new io.vidocq.vauban.core.context.CreationalContextImpl<>();
+                    args[i] = resolveParameter(paramTypes[i], genericParamTypes[i], transientCtx, pQuals, injectCtor, ctorOwnerBean, ctorParamsRefl[i], i);
+                    transientCtxs.add(transientCtx);
+                } else {
+                    args[i] = resolveParameter(paramTypes[i], genericParamTypes[i], creationalCtx, pQuals, injectCtor, ctorOwnerBean, ctorParamsRefl[i], i);
+                }
             }
+            return args;
         }
-        return args;
     }
 
     private BeanFactory<?> createProducerMethodFactory(BeanDescriptor descriptor) {
-        var methodName = extractProducerMethodName(descriptor.id());
-        return new BeanFactory<Object>() {
-            @Override
-            public Object create() {
-                return create((jakarta.enterprise.context.spi.CreationalContext<Object>) null);
-            }
-
-            @Override
-            public Object create(jakarta.enterprise.context.spi.CreationalContext<Object> ctx) {
-                try {
-                    return invokeProducerMethod(descriptor, methodName, ctx);
-                } catch (RuntimeException e) {
-                    throw e;
-                } catch (Exception e) {
-                    throw new jakarta.enterprise.inject.CreationException(
-                            "Failed to invoke producer method: " + descriptor.id(), e);
-                }
-            }
-        };
+        return new ProducerMethodFactory(descriptor, extractProducerMethodName(descriptor.id()));
     }
 
     /**
-     * Calls the producer method {@code methodName} on an instance of its declaring bean. CDI spec: a
-     * {@code @Dependent} declaring bean is created for the call and destroyed after it.
+     * Calls a producer method on an instance of its declaring bean. CDI spec: a {@code @Dependent} declaring bean
+     * is created for the call and destroyed after it.
      */
-    @SuppressWarnings("unchecked")
-    private Object invokeProducerMethod(BeanDescriptor descriptor, String methodName,
-                                        CreationalContext<Object> ctx) throws ClassNotFoundException {
-        var declaringClass = loadClass(descriptor.beanClass().value());
-        ManagedBean<?> declBean = findManagedBeanByClass(descriptor.beanClass());
-        boolean isDependent = declBean != null
-                && declBean.getScope() == jakarta.enterprise.context.Dependent.class;
-        // For @Dependent declaring beans, track the CreationalContext so dependents
-        // (like @Inject fields) are properly destroyed when the declaring bean is destroyed
-        io.vidocq.vauban.core.context.CreationalContextImpl<Object> declCtx =
-                new io.vidocq.vauban.core.context.CreationalContextImpl<>();
-        Object declaringInstance = isDependent
-                ? ((ManagedBean<Object>) declBean).create(declCtx)
-                : selectByBeanClass(declaringClass);
+    private final class ProducerMethodFactory implements BeanFactory<Object> {
 
-        for (var method : declaringClass.getDeclaredMethods()) {
-            if (method.getName().equals(methodName)) {
-                return invokeProducer(descriptor, method, declaringInstance, ctx, isDependent ? declBean : null, declCtx);
+        private final BeanDescriptor descriptor;
+        private final String methodName;
+
+        ProducerMethodFactory(BeanDescriptor descriptor, String methodName) {
+            this.descriptor = descriptor;
+            this.methodName = methodName;
+        }
+
+        @Override
+        public Object create() {
+            return create((jakarta.enterprise.context.spi.CreationalContext<Object>) null);
+        }
+
+        @Override
+        public Object create(jakarta.enterprise.context.spi.CreationalContext<Object> ctx) {
+            try {
+                return produce(ctx);
+            } catch (RuntimeException e) {
+                throw e;
+            } catch (Exception e) {
+                throw new jakarta.enterprise.inject.CreationException(
+                        "Failed to invoke producer method: " + descriptor.id(), e);
             }
         }
-        throw new ContainerOperationException("Producer method not found: " + methodName + " in " + descriptor.beanClass());
-    }
 
-    /**
-     * Invokes a producer method on {@code declaringInstance}, then destroys that instance when it belongs to a
-     * {@code @Dependent} declaring bean ({@code dependentDeclaringBean} not {@code null}).
-     */
-    @SuppressWarnings("unchecked")
-    private Object invokeProducer(BeanDescriptor descriptor, java.lang.reflect.Method method, Object declaringInstance,
-                                  CreationalContext<Object> ctx, ManagedBean<?> dependentDeclaringBean,
-                                  CreationalContext<Object> declCtx) {
-        var transientCtx = new io.vidocq.vauban.core.context.CreationalContextImpl<>();
-        try {
-            if (method.getParameterCount() == 0) {
-                return vaubanLookup.invokeMethod(declaringInstance, method);
+        @SuppressWarnings("unchecked")
+        private Object produce(CreationalContext<Object> ctx) throws ClassNotFoundException {
+            var declaringClass = loadClass(descriptor.beanClass().value());
+            ManagedBean<?> declBean = findManagedBeanByClass(descriptor.beanClass());
+            boolean isDependent = declBean != null
+                    && declBean.getScope() == jakarta.enterprise.context.Dependent.class;
+            // For @Dependent declaring beans, track the CreationalContext so dependents
+            // (like @Inject fields) are properly destroyed when the declaring bean is destroyed
+            io.vidocq.vauban.core.context.CreationalContextImpl<Object> declCtx =
+                    new io.vidocq.vauban.core.context.CreationalContextImpl<>();
+            Object declaringInstance = isDependent
+                    ? ((ManagedBean<Object>) declBean).create(declCtx)
+                    : selectByBeanClass(declaringClass);
+
+            for (var method : declaringClass.getDeclaredMethods()) {
+                if (method.getName().equals(methodName)) {
+                    return invoke(method, declaringInstance, ctx, isDependent ? declBean : null, declCtx);
+                }
             }
-            var paramTypes = method.getParameterTypes();
-            var genericParamTypes = method.getGenericParameterTypes();
-            var params = method.getParameters();
-            var args = new Object[paramTypes.length];
-            for (int i = 0; i < paramTypes.length; i++) {
-                var described = QualifierHelper.parameterQualifiers(
-                        descriptor.injectionPoints(), method, i, qualifierMatcher().types());
-                var qualifiers = described != null
-                        ? described : QualifierHelper.extractParamQualifiers(params[i]);
-                // A @TransientReference parameter, or any without a creational context, is resolved in the
-                // transient context released after the call.
-                CreationalContext<?> paramCtx =
-                        ctx == null || params[i].isAnnotationPresent(jakarta.enterprise.inject.TransientReference.class)
-                                ? transientCtx : ctx;
-                args[i] = resolveParameter(paramTypes[i], genericParamTypes[i], paramCtx, qualifiers, method);
-            }
-            return vaubanLookup.invokeMethod(declaringInstance, method, args);
-        } finally {
-            transientCtx.release();
-            // CDI spec: destroy @Dependent declaring bean after producer method completes
-            if (dependentDeclaringBean != null && declaringInstance != null) {
-                ((ManagedBean<Object>) dependentDeclaringBean).destroy(declaringInstance, declCtx);
+            throw new ContainerOperationException("Producer method not found: " + methodName + " in " + descriptor.beanClass());
+        }
+
+        /**
+         * Invokes the producer method on {@code declaringInstance}, then destroys that instance when it belongs to
+         * a {@code @Dependent} declaring bean ({@code dependentDeclaringBean} not {@code null}).
+         */
+        @SuppressWarnings("unchecked")
+        private Object invoke(java.lang.reflect.Method method, Object declaringInstance,
+                              CreationalContext<Object> ctx, ManagedBean<?> dependentDeclaringBean,
+                              CreationalContext<Object> declCtx) {
+            var transientCtx = new io.vidocq.vauban.core.context.CreationalContextImpl<>();
+            try {
+                if (method.getParameterCount() == 0) {
+                    return vaubanLookup.invokeMethod(declaringInstance, method);
+                }
+                var paramTypes = method.getParameterTypes();
+                var genericParamTypes = method.getGenericParameterTypes();
+                var params = method.getParameters();
+                var args = new Object[paramTypes.length];
+                for (int i = 0; i < paramTypes.length; i++) {
+                    var described = QualifierHelper.parameterQualifiers(
+                            descriptor.injectionPoints(), method, i, qualifierMatcher().types());
+                    var qualifiers = described != null
+                            ? described : QualifierHelper.extractParamQualifiers(params[i]);
+                    // A @TransientReference parameter, or any without a creational context, is resolved in the
+                    // transient context released after the call.
+                    CreationalContext<?> paramCtx =
+                            ctx == null || params[i].isAnnotationPresent(jakarta.enterprise.inject.TransientReference.class)
+                                    ? transientCtx : ctx;
+                    args[i] = resolveParameter(paramTypes[i], genericParamTypes[i], paramCtx, qualifiers, method);
+                }
+                return vaubanLookup.invokeMethod(declaringInstance, method, args);
+            } finally {
+                transientCtx.release();
+                // CDI spec: destroy @Dependent declaring bean after producer method completes
+                if (dependentDeclaringBean != null && declaringInstance != null) {
+                    ((ManagedBean<Object>) dependentDeclaringBean).destroy(declaringInstance, declCtx);
+                }
             }
         }
     }

@@ -875,16 +875,6 @@ final class InterceptorBeanWrapper {
         }
     }
 
-    /** The first constructor of {@code type} with {@code parameterCount} parameters, or {@code null}. */
-    private static Constructor<?> constructorWithArity(Class<?> type, int parameterCount) {
-        for (var c : type.getDeclaredConstructors()) {
-            if (c.getParameterCount() == parameterCount) {
-                return c;
-            }
-        }
-        return null;
-    }
-
     /**
      * Creates an intercepted bean: resolves the bean's constructor arguments, runs its {@code @AroundConstruct}
      * chain if any, then instantiates its {@code $$Intercepted} subclass and wires it.
@@ -960,6 +950,16 @@ final class InterceptorBeanWrapper {
         @Override
         public Object create(VaubanInvocationContext constructCtx) {
             return create(constructCtx, null);
+        }
+
+        /** The first constructor of {@code type} with {@code parameterCount} parameters, or {@code null}. */
+        private static Constructor<?> constructorWithArity(Class<?> type, int parameterCount) {
+            for (var c : type.getDeclaredConstructors()) {
+                if (c.getParameterCount() == parameterCount) {
+                    return c;
+                }
+            }
+            return null;
         }
 
         /**
