@@ -27,9 +27,9 @@ package io.vidocq.vauban.example.cdi1015.lib;
  */
 public interface AuditLog {
 
-    void record(String event);
+    void append(String event);
 
     default void recordCheckout(String order) {
-        record("checkout:" + order);
+        append("checkout:" + order);
     }
 }
