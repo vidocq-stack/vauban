@@ -49,23 +49,25 @@ public record DotName(String value) implements Comparable<DotName> {
             return new DotName(desc.replace('/', '.'));
         }
         if (desc.length() == 1) {
-            String primitive = switch (desc.charAt(0)) {
-                case 'Z' -> "boolean";
-                case 'B' -> "byte";
-                case 'C' -> "char";
-                case 'S' -> "short";
-                case 'I' -> "int";
-                case 'J' -> "long";
-                case 'F' -> "float";
-                case 'D' -> "double";
-                case 'V' -> "void";
-                default -> null;
-            };
-            if (primitive != null) {
-                return new DotName(primitive);
-            }
+            return new DotName(primitiveName(desc));
         }
         throw new IllegalArgumentException("Invalid class descriptor: " + desc);
+    }
+
+    /** The name of the primitive type (or {@code void}) a one-character descriptor denotes. */
+    private static String primitiveName(String desc) {
+        return switch (desc.charAt(0)) {
+            case 'Z' -> "boolean";
+            case 'B' -> "byte";
+            case 'C' -> "char";
+            case 'S' -> "short";
+            case 'I' -> "int";
+            case 'J' -> "long";
+            case 'F' -> "float";
+            case 'D' -> "double";
+            case 'V' -> "void";
+            default -> throw new IllegalArgumentException("Invalid class descriptor: " + desc);
+        };
     }
 
     public String simpleName() {

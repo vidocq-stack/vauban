@@ -43,8 +43,8 @@ public final class JarScanner {
                     try (var is = jar.getInputStream(entry)) {
                         var bytes = is.readAllBytes();
                         classes.add(ClassFileScanner.scan(bytes));
-                    } catch (Exception | Error e) {
-                        // Skip malformed class files and module-info
+                    } catch (Exception _) {
+                        // Skip malformed class files (module-info is filtered out above)
                     }
                 }
             }
@@ -87,7 +87,7 @@ public final class JarScanner {
                 try {
                     var bytes = reader.readClass(entry);
                     classes.add(ClassFileScanner.scan(bytes));
-                } catch (Exception | Error e) {
+                } catch (Exception _) {
                     // Skip malformed class files
                 }
             }

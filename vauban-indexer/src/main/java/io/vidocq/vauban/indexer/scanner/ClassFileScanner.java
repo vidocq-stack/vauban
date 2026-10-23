@@ -67,7 +67,9 @@ public final class ClassFileScanner {
                 case RuntimeVisibleAnnotationsAttribute rvaa ->
                         rvaa.annotations().forEach(a -> annotations.add(buildAnnotationInfo(a)));
                 case InnerClassesAttribute ica -> simpleName = innerSimpleName(cm, ica);
-                default -> {}
+                default -> {
+                    // other class elements carry nothing the index records
+                }
             }
         }
 

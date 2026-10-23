@@ -109,8 +109,10 @@ public final class VaubanExtension
         // Walk up to class-level store
         var store = context.getStore(NS);
         var container = store.get(CONTAINER_KEY, VaubanContainer.class);
-        if (container == null && context.getParent().isPresent()) {
-            container = context.getParent().get().getStore(NS).get(CONTAINER_KEY, VaubanContainer.class);
+        if (container == null) {
+            container = context.getParent()
+                    .map(parent -> parent.getStore(NS).get(CONTAINER_KEY, VaubanContainer.class))
+                    .orElse(null);
         }
         return container;
     }

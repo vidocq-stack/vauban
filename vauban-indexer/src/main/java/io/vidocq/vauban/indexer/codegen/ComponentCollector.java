@@ -20,7 +20,6 @@
 package io.vidocq.vauban.indexer.codegen;
 
 import io.vidocq.vauban.indexer.model.ClassInfo;
-import io.vidocq.vauban.indexer.model.DotName;
 import io.vidocq.vauban.indexer.model.FieldInfo;
 import io.vidocq.vauban.indexer.model.MethodInfo;
 import io.vidocq.vauban.indexer.model.TypeInfo;
@@ -63,6 +62,7 @@ public final class ComponentCollector {
     private static final String OBSERVES      = "jakarta.enterprise.event.Observes";
     private static final String OBSERVES_ASYNC = "jakarta.enterprise.event.ObservesAsync";
     private static final String DISPOSES      = "jakarta.enterprise.inject.Disposes";
+    private static final String SKIPPING_METHOD = "Skipping method ";
 
     private ComponentCollector() {}
 
@@ -89,18 +89,18 @@ public final class ComponentCollector {
      */
     public static String erasure(TypeInfo t) {
         return switch (t) {
-            case TypeInfo.ClassType c -> c.name().value();
-            case TypeInfo.ParameterizedType p -> p.rawType().value();
-            case TypeInfo.ArrayType a -> {
-                var comp = erasure(a.componentType());
-                yield comp == null ? null : comp + "[]".repeat(a.dimensions());
+            case TypeInfo.ClassType(var name) -> name.value();
+            case TypeInfo.ParameterizedType(var rawType, var _) -> rawType.value();
+            case TypeInfo.ArrayType(var componentType, var dimensions) -> {
+                var comp = erasure(componentType);
+                yield comp == null ? null : comp + "[]".repeat(dimensions);
             }
             case TypeInfo.TypeVariable tv ->
                     tv.bounds().isEmpty() ? "java.lang.Object" : erasure(tv.bounds().getFirst());
             case TypeInfo.WildcardType wt ->
                     wt.upperBound() != null ? erasure(wt.upperBound()) : "java.lang.Object";
-            case TypeInfo.PrimitiveType ignored -> null;
-            case TypeInfo.VoidType ignored -> null;
+            case TypeInfo.PrimitiveType _ -> null;
+            case TypeInfo.VoidType _ -> null;
         };
     }
 
@@ -171,16 +171,16 @@ public final class ComponentCollector {
         for (FieldInfo field : classInfo.fields()) {
             boolean isInject = field.annotations().stream()
                     .anyMatch(a -> INJECT.equals(a.name().value()));
-            if (!isInject) continue;
-            if (field.isStatic()) continue;
+            if (!isInject || field.isStatic()) continue;
             if (field.isPrivate()) {
                 warningsOut.add("Field injection for private field " + beanFqn + "#" + field.name()
                         + " still needs opens to io.vidocq.vauban.core");
-                continue;
+            } else {
+                var erasure = erasure(field.type());
+                if (erasure != null) {
+                    result.add(new FieldInject(beanFqn, field.name(), erasure));
+                }
             }
-            var erasure = erasure(field.type());
-            if (erasure == null) continue;
-            result.add(new FieldInject(beanFqn, field.name(), erasure));
         }
         return result;
     }
@@ -208,57 +208,69 @@ public final class ComponentCollector {
         var beanFqn = classInfo.name().value();
         var result = new ArrayList<MethodInvoke>();
         for (MethodInfo m : classInfo.methods()) {
-            if (m.isConstructor() || m.isStaticInitializer()) continue;
-            if (m.isPrivate() || m.isAbstract()) continue;
-
-            boolean qualifies = m.annotations().stream().anyMatch(a -> {
-                var n = a.name().value();
-                return PRODUCES.equals(n) || POST_CONSTRUCT.equals(n)
-                        || PRE_DESTROY.equals(n) || INJECT.equals(n);
-            });
-            if (!qualifies) {
-                qualifies = m.parameters().stream()
-                        .flatMap(p -> p.annotations().stream())
-                        .anyMatch(a -> {
-                            var n = a.name().value();
-                            return OBSERVES.equals(n) || OBSERVES_ASYNC.equals(n) || DISPOSES.equals(n);
-                        });
+            if (isInvocable(m) && qualifies(m)) {
+                methodInvoke(beanFqn, m, warningsOut).ifPresent(result::add);
             }
-            if (!qualifies) continue;
-
-            var paramErasures = new ArrayList<String>();
-            boolean skip = false;
-            for (var p : m.parameters()) {
-                var erasure = erasure(p.type());
-                if (erasure == null) {
-                    warningsOut.add("Skipping method " + beanFqn + "#" + m.name()
-                            + ": parameter type is a non-nameable/primitive — cannot emit invokevirtual");
-                    skip = true;
-                    break;
-                }
-                if (erasure.contains("$")) {
-                    warningsOut.add("Skipping method " + beanFqn + "#" + m.name()
-                            + ": parameter erasure '" + erasure + "' contains '$' (nested type)"
-                            + " — cast would not compile");
-                    skip = true;
-                    break;
-                }
-                paramErasures.add(erasure);
-            }
-            if (skip) continue;
-
-            boolean isVoid = m.returnType() instanceof TypeInfo.VoidType;
-            if (!isVoid && m.returnType() instanceof TypeInfo.PrimitiveType) {
-                warningsOut.add("Skipping method " + beanFqn + "#" + m.name()
-                        + ": primitive return type — only void or reference returns are supported");
-                continue;
-            }
-            String returnErasure = isVoid ? null : erasure(m.returnType());
-
-            result.add(new MethodInvoke(beanFqn, m.name(), List.copyOf(paramErasures),
-                    m.isStatic(), isVoid, returnErasure));
         }
         return result;
+    }
+
+    /** Whether the generated provider may call {@code m}: not a constructor or initializer, private or abstract. */
+    private static boolean isInvocable(MethodInfo m) {
+        return !m.isConstructor() && !m.isStaticInitializer() && !m.isPrivate() && !m.isAbstract();
+    }
+
+    /** Whether {@code m} or one of its parameters carries an annotation the provider invokes it for. */
+    private static boolean qualifies(MethodInfo m) {
+        boolean annotated = m.annotations().stream().anyMatch(a -> {
+            var n = a.name().value();
+            return PRODUCES.equals(n) || POST_CONSTRUCT.equals(n)
+                    || PRE_DESTROY.equals(n) || INJECT.equals(n);
+        });
+        return annotated || m.parameters().stream()
+                .flatMap(p -> p.annotations().stream())
+                .anyMatch(a -> {
+                    var n = a.name().value();
+                    return OBSERVES.equals(n) || OBSERVES_ASYNC.equals(n) || DISPOSES.equals(n);
+                });
+    }
+
+    /** The invocation descriptor of {@code m}, or empty (with a warning) when no invocation can be emitted. */
+    private static Optional<MethodInvoke> methodInvoke(String beanFqn, MethodInfo m, List<String> warningsOut) {
+        var paramErasures = paramErasures(beanFqn, m, warningsOut).orElse(null);
+        if (paramErasures == null) {
+            return Optional.empty();
+        }
+        boolean isVoid = m.returnType() instanceof TypeInfo.VoidType;
+        if (!isVoid && m.returnType() instanceof TypeInfo.PrimitiveType) {
+            warningsOut.add(SKIPPING_METHOD + beanFqn + "#" + m.name()
+                    + ": primitive return type — only void or reference returns are supported");
+            return Optional.empty();
+        }
+        String returnErasure = isVoid ? null : erasure(m.returnType());
+        return Optional.of(new MethodInvoke(beanFqn, m.name(), List.copyOf(paramErasures),
+                m.isStatic(), isVoid, returnErasure));
+    }
+
+    /** The parameter erasures of {@code m}, or empty (with a warning) when one cannot be cast to. */
+    private static Optional<List<String>> paramErasures(String beanFqn, MethodInfo m, List<String> warningsOut) {
+        var erasures = new ArrayList<String>();
+        for (var p : m.parameters()) {
+            var erasure = erasure(p.type());
+            if (erasure == null) {
+                warningsOut.add(SKIPPING_METHOD + beanFqn + "#" + m.name()
+                        + ": parameter type is a non-nameable/primitive — cannot emit invokevirtual");
+                return Optional.empty();
+            }
+            if (erasure.contains("$")) {
+                warningsOut.add(SKIPPING_METHOD + beanFqn + "#" + m.name()
+                        + ": parameter erasure '" + erasure + "' contains '$' (nested type)"
+                        + " — cast would not compile");
+                return Optional.empty();
+            }
+            erasures.add(erasure);
+        }
+        return Optional.of(erasures);
     }
 
     /**
