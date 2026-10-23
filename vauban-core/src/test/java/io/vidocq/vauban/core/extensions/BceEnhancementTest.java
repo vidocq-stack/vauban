@@ -142,7 +142,7 @@ class BceEnhancementTest {
 
         @Test
         @DisplayName("Object.class without subtypes matches any class (wildcard)")
-        void shouldMatchAnyClassWhenObjectWithoutSubtypes() throws Exception {
+        void shouldMatchAnyClassWhenObjectWithoutSubtypes() {
             assertTrue(invokeMatchesClass(new Class<?>[]{Object.class}, false, Dog.class));
             assertTrue(invokeMatchesClass(new Class<?>[]{Object.class}, false, String.class));
             assertTrue(invokeMatchesClass(new Class<?>[]{Object.class}, false, Integer.class));
@@ -150,7 +150,7 @@ class BceEnhancementTest {
 
         @Test
         @DisplayName("Object.class with subtypes matches any class")
-        void shouldMatchAnyClassWhenObjectWithSubtypes() throws Exception {
+        void shouldMatchAnyClassWhenObjectWithSubtypes() {
             assertTrue(invokeMatchesClass(new Class<?>[]{Object.class}, true, Dog.class));
             assertTrue(invokeMatchesClass(new Class<?>[]{Object.class}, true, String.class));
             assertTrue(invokeMatchesClass(new Class<?>[]{Object.class}, true, Unrelated.class));
@@ -158,7 +158,7 @@ class BceEnhancementTest {
 
         @Test
         @DisplayName("a specific type without subtypes matches only the exact class")
-        void shouldMatchOnlyExactClassWhenNoSubtypes() throws Exception {
+        void shouldMatchOnlyExactClassWhenNoSubtypes() {
             assertTrue(invokeMatchesClass(new Class<?>[]{Animal.class}, false, Animal.class));
             assertFalse(invokeMatchesClass(new Class<?>[]{Animal.class}, false, Dog.class));
             assertFalse(invokeMatchesClass(new Class<?>[]{Animal.class}, false, Unrelated.class));
@@ -166,7 +166,7 @@ class BceEnhancementTest {
 
         @Test
         @DisplayName("a specific type with subtypes matches the subclasses")
-        void shouldMatchSubtypesWhenEnabled() throws Exception {
+        void shouldMatchSubtypesWhenEnabled() {
             assertTrue(invokeMatchesClass(new Class<?>[]{Animal.class}, true, Animal.class));
             assertTrue(invokeMatchesClass(new Class<?>[]{Animal.class}, true, Dog.class));
             assertTrue(invokeMatchesClass(new Class<?>[]{Animal.class}, true, Cat.class));
@@ -175,21 +175,21 @@ class BceEnhancementTest {
 
         @Test
         @DisplayName("an empty array matches no class")
-        void shouldMatchNothingWhenTypesEmpty() throws Exception {
+        void shouldMatchNothingWhenTypesEmpty() {
             assertFalse(invokeMatchesClass(new Class<?>[0], false, Dog.class));
             assertFalse(invokeMatchesClass(new Class<?>[0], true, Dog.class));
         }
 
         @Test
         @DisplayName("multiple types - matches if at least one type matches")
-        void shouldMatchIfAnyTypeMatches() throws Exception {
+        void shouldMatchIfAnyTypeMatches() {
             assertTrue(invokeMatchesClass(new Class<?>[]{String.class, Animal.class}, false, Animal.class));
             assertFalse(invokeMatchesClass(new Class<?>[]{String.class, Integer.class}, false, Animal.class));
         }
 
         @Test
         @DisplayName("Object.class among other types acts as a wildcard")
-        void shouldMatchWhenObjectAmongOtherTypes() throws Exception {
+        void shouldMatchWhenObjectAmongOtherTypes() {
             assertTrue(invokeMatchesClass(new Class<?>[]{String.class, Object.class}, false, Unrelated.class));
         }
     }
