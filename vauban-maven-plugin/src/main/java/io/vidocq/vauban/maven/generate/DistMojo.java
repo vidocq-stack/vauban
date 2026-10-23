@@ -26,6 +26,7 @@ import org.apache.maven.plugins.annotations.Mojo;
 import org.apache.maven.plugins.annotations.Parameter;
 import org.apache.maven.plugins.annotations.ResolutionScope;
 import org.apache.maven.project.MavenProject;
+import org.apache.maven.project.MavenProjectHelper;
 
 import java.io.File;
 import java.io.IOException;
@@ -60,6 +61,12 @@ public class DistMojo extends AbstractMojo {
 
     @Parameter(defaultValue = "${project}", readonly = true, required = true)
     private MavenProject project;
+
+    /**
+     * Attaches the distribution ZIP to the project. Injected by the {@code requirement} the hand-written
+     * {@code META-INF/maven/plugin.xml} declares for this goal (no descriptor is generated from annotations).
+     */
+    private MavenProjectHelper projectHelper;
 
     /**
      * Fully qualified main class name.
@@ -150,12 +157,7 @@ public class DistMojo extends AbstractMojo {
             createZip(distDir, zipPath);
 
             // 5. Attach as Maven artifact
-            var attachedArtifact = new org.apache.maven.artifact.DefaultArtifact(
-                    project.getGroupId(), project.getArtifactId(), project.getVersion(),
-                    "compile", "zip", "dist",
-                    new org.apache.maven.artifact.handler.DefaultArtifactHandler("zip"));
-            attachedArtifact.setFile(zipPath.toFile());
-            project.addAttachedArtifact(attachedArtifact);
+            projectHelper.attachArtifact(project, "zip", "dist", zipPath.toFile());
 
             getLog().info("Vauban: distribution created — " + zipName
                     + " (" + (depCount + 1) + " JARs, scripts: " + scriptName + ".sh/.cmd)");

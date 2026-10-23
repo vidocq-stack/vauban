@@ -226,6 +226,10 @@
                     <role>org.apache.maven.project.MavenProject</role>
                     <field-name>project</field-name>
                 </requirement>
+                <requirement>
+                    <role>org.apache.maven.project.MavenProjectHelper</role>
+                    <field-name>projectHelper</field-name>
+                </requirement>
             </requirements>
         </mojo>
         <!-- vauban:modularize -->
