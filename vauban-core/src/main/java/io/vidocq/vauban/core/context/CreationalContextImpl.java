@@ -95,11 +95,11 @@ public final class CreationalContextImpl<T> implements CreationalContext<T> {
         return dependentInstances;
     }
 
-    public static record DependentInstance(Contextual contextual, Object instance, CreationalContext ctx) {
+    public static record DependentInstance(Contextual<?> contextual, Object instance, CreationalContext<?> ctx) {
         @SuppressWarnings("unchecked")
         void destroy() {
             try {
-                contextual.destroy(instance, ctx);
+                ((Contextual<Object>) contextual).destroy(instance, (CreationalContext<Object>) ctx);
             } catch (Exception e) {
                 System.Logger logger = System.getLogger(DependentInstance.class.getName());
                 logger.log(System.Logger.Level.WARNING, "Exception destroying dependent instance", e);

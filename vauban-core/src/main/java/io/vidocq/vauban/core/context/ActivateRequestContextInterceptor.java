@@ -49,6 +49,7 @@ public final class ActivateRequestContextInterceptor {
 
     /** An interceptor needs a no-arg constructor (CDI 4.1 §3.1.1); the container injects the field. */
     public ActivateRequestContextInterceptor() {
+        // Nothing to set up: the container injects the bean manager after construction.
     }
 
     @AroundInvoke

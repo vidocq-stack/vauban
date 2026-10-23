@@ -83,11 +83,11 @@ public record EnrichmentConfig(List<EnrichmentRule> rules) {
             var annotationFqcn = key.substring(PREFIX.length()).strip();
             var scopeFqcn = props.getProperty(key).strip();
 
-            if (annotationFqcn.isEmpty() || scopeFqcn.isEmpty()) continue;
-
-            var trigger = DotName.of(annotationFqcn);
-            var scope = resolveScope(scopeFqcn);
-            rules.add(new EnrichmentRule(trigger, scope));
+            if (!annotationFqcn.isEmpty() && !scopeFqcn.isEmpty()) {
+                var trigger = DotName.of(annotationFqcn);
+                var scope = resolveScope(scopeFqcn);
+                rules.add(new EnrichmentRule(trigger, scope));
+            }
         }
 
         return new EnrichmentConfig(rules);

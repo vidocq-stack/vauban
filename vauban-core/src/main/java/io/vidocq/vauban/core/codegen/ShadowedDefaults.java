@@ -110,7 +110,7 @@ public final class ShadowedDefaults {
         try {
             return candidate.getMethod(defaultMethod.getName(), defaultMethod.getParameterTypes())
                     .equals(defaultMethod);
-        } catch (NoSuchMethodException notAMember) {
+        } catch (NoSuchMethodException _) {
             return false;
         }
     }

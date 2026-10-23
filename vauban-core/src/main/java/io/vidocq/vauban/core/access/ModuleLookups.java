@@ -134,31 +134,38 @@ public final class ModuleLookups {
                 return Optional.empty();
             }
             for (var provider : providers) {
-                var type = provider.getClass();
-                if (type.getModule() != managedClass.getModule()
-                        || type.getClassLoader() != managedClass.getClassLoader()
-                        || !type.getPackageName().equals(managedClass.getPackageName())) {
-                    continue;
-                }
-                var lookup = granted.computeIfAbsent(provider, Deployment::grantOf);
-                if (lookup == NONE) {
-                    continue;
-                }
-                try {
-                    // Same module as the provider's lookup: needs no read edge and no opens.
-                    return Optional.of(MethodHandles.privateLookupIn(managedClass, lookup));
-                } catch (IllegalAccessException unexpected) {
-                    return Optional.empty();
+                var lookup = sharesPackage(provider.getClass(), managedClass)
+                        ? granted.computeIfAbsent(provider, Deployment::grantOf)
+                        : NONE;
+                if (lookup != NONE) {
+                    return privateLookupIn(managedClass, lookup);
                 }
             }
             return Optional.empty();
+        }
+
+        /** {@code type} lives in the same module, class loader and package as {@code managedClass}. */
+        private static boolean sharesPackage(Class<?> type, Class<?> managedClass) {
+            return type.getModule() == managedClass.getModule()
+                    && type.getClassLoader() == managedClass.getClassLoader()
+                    && type.getPackageName().equals(managedClass.getPackageName());
+        }
+
+        private static Optional<MethodHandles.Lookup> privateLookupIn(
+                Class<?> managedClass, MethodHandles.Lookup lookup) {
+            try {
+                // Same module as the provider's lookup: needs no read edge and no opens.
+                return Optional.of(MethodHandles.privateLookupIn(managedClass, lookup));
+            } catch (IllegalAccessException _) {
+                return Optional.empty();
+            }
         }
 
         private static MethodHandles.Lookup grantOf(VaubanComponentProvider provider) {
             var received = new MethodHandles.Lookup[1];
             try {
                 provider.grantModuleLookup(ModuleLookupGrants.newGrant(lookup -> received[0] = lookup));
-            } catch (RuntimeException | LinkageError misbehaving) {
+            } catch (RuntimeException | LinkageError _) {
                 return NONE;
             }
             var lookup = received[0];
