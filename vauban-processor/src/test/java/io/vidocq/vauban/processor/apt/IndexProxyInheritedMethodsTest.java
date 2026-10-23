@@ -213,7 +213,7 @@ class IndexProxyInheritedMethodsTest {
             try {
                 var loc = clazz.getProtectionDomain().getCodeSource().getLocation();
                 if (loc != null) paths.add(Path.of(loc.toURI()).toString());
-            } catch (Exception ignored) {
+            } catch (Exception _) {
                 // best-effort classpath assembly
             }
         }
@@ -222,7 +222,7 @@ class IndexProxyInheritedMethodsTest {
                     if ("file".equals(uri.getScheme())) {
                         try {
                             paths.add(Path.of(uri).toString());
-                        } catch (Exception ignored) {
+                        } catch (Exception _) {
                             // skip non-file module locations
                         }
                     }

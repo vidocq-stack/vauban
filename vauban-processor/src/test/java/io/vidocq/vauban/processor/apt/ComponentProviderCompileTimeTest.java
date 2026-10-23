@@ -41,6 +41,7 @@ import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -384,9 +385,9 @@ class ComponentProviderCompileTimeTest {
             assertTrue(provider.injectField(bean, "app.EnhancedBean", "unit", "main"));
             assertTrue(provider.injectField(bean, "app.EnhancedBean", "repositories", repositories));
             assertTrue(provider.injectField(bean, "app.EnhancedBean", "alreadyInjected", null));
-            assertTrue(beanType.getField("context").get(bean) == context);
+            assertSame(context, beanType.getField("context").get(bean));
             assertEquals("main", beanType.getField("unit").get(bean));
-            assertTrue(beanType.getField("repositories").get(bean) == repositories);
+            assertSame(repositories, beanType.getField("repositories").get(bean));
             for (var field : List.of("staticField", "finalField", "privateField", "protectedField",
                     "packageField", "primitiveField", "hiddenType", "missing")) {
                 assertFalse(provider.injectField(bean, "app.EnhancedBean", field, null), field);
@@ -633,7 +634,7 @@ class ComponentProviderCompileTimeTest {
             try {
                 var loc = clazz.getProtectionDomain().getCodeSource().getLocation();
                 if (loc != null) paths.add(Path.of(loc.toURI()).toString());
-            } catch (Exception ignored) {
+            } catch (Exception _) {
                 // best-effort classpath assembly
             }
         }
@@ -642,7 +643,7 @@ class ComponentProviderCompileTimeTest {
                     if ("file".equals(uri.getScheme())) {
                         try {
                             paths.add(Path.of(uri).toString());
-                        } catch (Exception ignored) {
+                        } catch (Exception _) {
                             // skip non-file module locations
                         }
                     }

@@ -325,7 +325,7 @@ class BceRuntimeListCompileTimeTest {
                                    jakarta.enterprise.context.spi.CreationalContext<T> cc) { return null; }
         @Override public <T> T get(jakarta.enterprise.context.spi.Contextual<T> c) { return null; }
         @Override public boolean isActive() { return false; }
-        @Override public void destroy(jakarta.enterprise.context.spi.Contextual<?> c) { }
+        @Override public void destroy(jakarta.enterprise.context.spi.Contextual<?> c) { /* no behaviour needed */ }
     }
 
     @Nested
@@ -473,7 +473,9 @@ class BceRuntimeListCompileTimeTest {
                 if (location != null) {
                     paths.add(Path.of(location.toURI()).toString());
                 }
-            } catch (Exception ignored) {}
+            } catch (Exception _) {
+                // best effort: the class path entry is simply left out
+            }
         }
 
         ModuleLayer.boot().configuration().modules().forEach(resolvedModule ->
@@ -482,7 +484,9 @@ class BceRuntimeListCompileTimeTest {
                         if ("file".equals(uri.getScheme())) {
                             paths.add(Path.of(uri).toString());
                         }
-                    } catch (Exception ignored) {}
+                    } catch (Exception _) {
+                        // best effort: the class path entry is simply left out
+                    }
                 }));
 
         return String.join(File.pathSeparator, paths);

@@ -272,7 +272,7 @@ class CrossModuleInjectionTest {
                 if (location != null) {
                     paths.add(Path.of(location.toURI()).toString());
                 }
-            } catch (Exception ignored) {
+            } catch (Exception _) {
                 // A class loaded from the platform layer has no file location — nothing to add.
             }
         }
@@ -283,7 +283,7 @@ class CrossModuleInjectionTest {
                         if ("file".equals(uri.getScheme())) {
                             paths.add(Path.of(uri).toString());
                         }
-                    } catch (Exception ignored) {
+                    } catch (Exception _) {
                         // Non-file module reference (jrt:) — not a classpath entry.
                     }
                 }));

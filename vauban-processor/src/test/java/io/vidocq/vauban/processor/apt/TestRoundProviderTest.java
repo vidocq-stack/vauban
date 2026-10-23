@@ -35,6 +35,7 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -130,7 +131,7 @@ class TestRoundProviderTest {
         String list = Files.readString(test.resolve("META-INF/vauban-beans.list"));
         assertTrue(list.contains("com.acme.app.TestFixture"), list);
         assertTrue(list.contains("com.acme.app.Greeter"), "the main bean must survive the shadowing: " + list);
-        assertTrue(list.lines().filter(l -> l.equals("com.acme.app.Greeter")).count() == 1, list);
+        assertEquals(1L, list.lines().filter(l -> l.equals("com.acme.app.Greeter")).count(), list);
     }
 
     @Test
@@ -160,7 +161,7 @@ class TestRoundProviderTest {
                 if (location != null) {
                     paths.add(Path.of(location.toURI()).toString());
                 }
-            } catch (Exception ignored) {
+            } catch (Exception _) {
                 // A class loaded from the platform layer has no file location — nothing to add.
             }
         }
@@ -170,7 +171,7 @@ class TestRoundProviderTest {
                         if ("file".equals(uri.getScheme())) {
                             paths.add(Path.of(uri).toString());
                         }
-                    } catch (Exception ignored) {
+                    } catch (Exception _) {
                         // Non-file module reference (jrt:) — not a classpath entry.
                     }
                 }));

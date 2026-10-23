@@ -34,7 +34,6 @@ import javax.tools.DiagnosticCollector;
 import javax.tools.JavaFileObject;
 import javax.tools.SimpleJavaFileObject;
 import javax.tools.ToolProvider;
-import java.io.File;
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.util.LinkedHashSet;
@@ -371,6 +370,8 @@ class ClientProxyInheritanceCrossCheckTest {
         assertEquals(expected, colocatedShapeFromElements(PlainTaggedChild.class), "co-located shape");
     }
 
+    private static final String HIDDEN_ARGUMENT = "io.vidocq.vauban.processor.fixture.colocated.HiddenArgument";
+
     private static final Set<String> OBJECT_METHODS =
             Set.of("toString()", "hashCode()", "equals(java.lang.Object)");
 
@@ -556,6 +557,7 @@ class ClientProxyInheritanceCrossCheckTest {
         }
 
         public static class SecretTaker {
+            @SuppressWarnings("java:S1172") // the parameter is the signature under test
             public String take(Secret secret) { return "took"; }
         }
     }
@@ -596,7 +598,7 @@ class ClientProxyInheritanceCrossCheckTest {
         // The source proxy would declare take(HiddenArgument) and give() — "HiddenArgument is not
         // public": the processor learns it beforehand and emits the erased shape as bytecode,
         // which carries the type in descriptors only, and forwards what the source shape does.
-        var hidden = "io.vidocq.vauban.processor.fixture.colocated.HiddenArgument";
+        var hidden = HIDDEN_ARGUMENT;
         assertEquals(List.of("take(" + hidden + ")", "give()"), unnameableForwards(HiddenTakerChild.class, false));
         Set<String> expected = Set.of("own()", "take(" + hidden + ")", "give()");
         assertEquals(expected, runtimeShape(HiddenTakerChild.class), "run-time shape");
@@ -604,6 +606,12 @@ class ClientProxyInheritanceCrossCheckTest {
         // A producer's proxy in another package, the same.
         assertEquals(List.of("take(" + hidden + ")", "give()"), unnameableForwards(HiddenTakerChild.class, true));
         assertEquals(expected, erasedShapeFromElements(HiddenTakerChild.class, true), "erased producer shape");
+    }
+
+    @Test
+    @DisplayName("members whose signature is a private nested type, or a hidden type behind a default: erased shape")
+    void unnameableClassMethodsOfNestedAndDefaultTypes() throws Exception {
+        var hidden = HIDDEN_ARGUMENT;
         // n11b: a private nested type of the proxy's own package.
         var secret = PrivateNestedOuter.class.getCanonicalName() + ".Secret";
         assertEquals(List.of("take(" + secret + ")"), unnameableForwards(SecretTakerChild.class, false));

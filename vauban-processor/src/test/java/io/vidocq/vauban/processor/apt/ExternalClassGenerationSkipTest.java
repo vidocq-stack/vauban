@@ -58,7 +58,7 @@ class ExternalClassGenerationSkipTest {
     @TempDir
     Path tempDir;
 
-    /**
+    /*
      * Test BCE that simulates adding a dependency class via scanned.add().
      * We use VaubanProcessor itself as the "external class" because it is available
      * on the processor classpath — which lets loadClassBytes() find it
@@ -328,7 +328,9 @@ class ExternalClassGenerationSkipTest {
                 if (location != null) {
                     paths.add(Path.of(location.toURI()).toString());
                 }
-            } catch (Exception ignored) {}
+            } catch (Exception _) {
+                // best effort: the class path entry is simply left out
+            }
         }
 
         ModuleLayer.boot().configuration().modules().forEach(resolvedModule ->
@@ -337,7 +339,9 @@ class ExternalClassGenerationSkipTest {
                         if ("file".equals(uri.getScheme())) {
                             paths.add(Path.of(uri).toString());
                         }
-                    } catch (Exception ignored) {}
+                    } catch (Exception _) {
+                        // best effort: the class path entry is simply left out
+                    }
                 }));
 
         return String.join(File.pathSeparator, paths);

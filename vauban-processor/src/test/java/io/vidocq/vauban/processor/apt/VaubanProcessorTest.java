@@ -27,10 +27,8 @@ import org.junit.jupiter.api.io.TempDir;
 
 import javax.tools.*;
 import java.io.*;
-import java.net.URI;
 import java.nio.file.*;
 import java.util.*;
-import java.util.stream.Collectors;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -144,7 +142,7 @@ class VaubanProcessorTest {
                 if (location != null) {
                     paths.add(Path.of(location.toURI()).toString());
                 }
-            } catch (Exception ignored) {
+            } catch (Exception _) {
                 // Some classes may not have a code source
             }
         }
@@ -160,7 +158,8 @@ class VaubanProcessorTest {
                     } else {
                         paths.add(Path.of(uri).toString());
                     }
-                } catch (Exception ignored) {
+                } catch (Exception _) {
+                    // best effort: the class path entry is simply left out
                 }
             });
         });

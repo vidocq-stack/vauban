@@ -21,7 +21,6 @@ package io.vidocq.vauban.processor.codegen.factory;
 
 import io.vidocq.vauban.indexer.model.ClassInfo;
 import io.vidocq.vauban.indexer.scanner.ClassFileScanner;
-import io.vidocq.vauban.processor.codegen.GeneratedClass;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;

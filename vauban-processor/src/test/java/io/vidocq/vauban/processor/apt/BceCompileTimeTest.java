@@ -31,7 +31,6 @@ import org.junit.jupiter.api.io.TempDir;
 import javax.tools.*;
 import java.io.File;
 import java.io.IOException;
-import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.*;
 import java.util.*;
@@ -169,10 +168,11 @@ class BceCompileTimeTest {
         var outputDir = tempDir.resolve("classes");
         Files.createDirectories(outputDir);
 
-        var classpath = resolveCompilationClasspath();
+        var classpathBuilder = new StringBuilder(resolveCompilationClasspath());
         for (var entry : extraClasspath) {
-            classpath = entry + File.pathSeparator + classpath;
+            classpathBuilder.insert(0, entry + File.pathSeparator);
         }
+        var classpath = classpathBuilder.toString();
 
         var options = List.of(
                 "-d", outputDir.toString(),
@@ -695,8 +695,8 @@ class BceCompileTimeTest {
         );
 
         assertTrue(result.success(), "Compilation should succeed. Messages: " + result.messages());
-        assertEquals(Map.of("discovery", true, "registration", true, "synthesis", true, "validation", true),
-                PhaseRecordingBce.SEEN);
+        assertEquals(PhaseRecordingBce.SEEN,
+                Map.of("discovery", true, "registration", true, "synthesis", true, "validation", true));
     }
 
     /**
@@ -804,7 +804,7 @@ class BceCompileTimeTest {
 
         assertTrue(result.success(), "Compilation should succeed. Messages: " + result.messages());
         assertTrue(result.readBeansList().contains("Unscoped"), "Precondition: Enhancement made it a bean");
-        assertEquals(List.of("Unscoped@jakarta.enterprise.context.Dependent"), RecordingRegistrationBce.SEEN);
+        assertEquals(RecordingRegistrationBce.SEEN, List.of("Unscoped@jakarta.enterprise.context.Dependent"));
     }
 
     // ---- Utility methods (same as VaubanProcessorTest) ----
@@ -845,7 +845,9 @@ class BceCompileTimeTest {
                 if (location != null) {
                     paths.add(Path.of(location.toURI()).toString());
                 }
-            } catch (Exception ignored) {}
+            } catch (Exception _) {
+                // best effort: the class path entry is simply left out
+            }
         }
 
         ModuleLayer.boot().configuration().modules().forEach(resolvedModule ->
@@ -854,7 +856,9 @@ class BceCompileTimeTest {
                         if ("file".equals(uri.getScheme())) {
                             paths.add(Path.of(uri).toString());
                         }
-                    } catch (Exception ignored) {}
+                    } catch (Exception _) {
+                        // best effort: the class path entry is simply left out
+                    }
                 }));
 
         return String.join(File.pathSeparator, paths);

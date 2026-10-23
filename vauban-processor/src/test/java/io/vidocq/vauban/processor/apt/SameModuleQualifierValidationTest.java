@@ -195,7 +195,7 @@ class SameModuleQualifierValidationTest {
                 if (location != null) {
                     paths.add(Path.of(location.toURI()).toString());
                 }
-            } catch (Exception ignored) {
+            } catch (Exception _) {
                 // best-effort classpath assembly
             }
         }

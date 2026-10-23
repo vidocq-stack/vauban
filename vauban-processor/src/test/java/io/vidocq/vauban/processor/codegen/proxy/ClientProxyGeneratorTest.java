@@ -21,7 +21,6 @@ package io.vidocq.vauban.processor.codegen.proxy;
 
 import io.vidocq.vauban.indexer.model.ClassInfo;
 import io.vidocq.vauban.indexer.scanner.ClassFileScanner;
-import io.vidocq.vauban.processor.codegen.GeneratedClass;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
@@ -37,13 +36,13 @@ class ClientProxyGeneratorTest {
 
     // Test bean with public methods
     public static class GreetingService {
-        public GreetingService() {}
+        public GreetingService() { /* nothing to initialise */ }
 
         public String greet(String name) { return "Hello, " + name + "!"; }
 
         public int add(int a, int b) { return a + b; }
 
-        public void doNothing() {}
+        public void doNothing() { /* no behaviour needed */ }
     }
 
     static ClassInfo scanClass(Class<?> clazz) throws IOException {
@@ -133,7 +132,7 @@ class ClientProxyGeneratorTest {
             proxyClass.getMethod("$$setDelegate", Supplier.class)
                     .invoke(proxy, (Supplier<GreetingService>) () -> realInstance);
 
-            assertDoesNotThrow(() -> proxy.doNothing());
+            assertDoesNotThrow(proxy::doNothing);
         }
     }
 }

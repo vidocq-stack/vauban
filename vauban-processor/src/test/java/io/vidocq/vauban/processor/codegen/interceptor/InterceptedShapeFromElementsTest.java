@@ -26,7 +26,6 @@ import io.vidocq.vauban.core.interceptor.TypeRef;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
-import javax.annotation.processing.ProcessingEnvironment;
 import javax.lang.model.SourceVersion;
 import javax.lang.model.element.TypeElement;
 import javax.lang.model.util.Elements;
@@ -77,12 +76,13 @@ class InterceptedShapeFromElementsTest {
      */
     public static class FixtureBean extends FixtureSuper {
 
-        public void voidNoArg() {}
+        public void voidNoArg() { /* no behaviour needed */ }
 
-        public void primitiveParams(boolean b, byte by, char c, short s, int i, long l, float f, double d) {}
+        public void primitiveParams(boolean b, byte by, char c, short s, int i, long l, float f, double d) { /* no behaviour needed */ }
 
         public int intReturn(int x) { return x; }
 
+        @SuppressWarnings("java:S1172") // the parameter is the signature under test
         public String arrayParam(String[] values) { return ""; }
 
         @Override
@@ -94,7 +94,7 @@ class InterceptedShapeFromElementsTest {
         }
 
         @jakarta.inject.Inject
-        public void injectInitializer(Object dep) {}
+        public void injectInitializer(Object dep) { /* no behaviour needed */ }
     }
 
     // ---- Test ----
@@ -109,6 +109,7 @@ class InterceptedShapeFromElementsTest {
     public static class NonPublicBase extends io.vidocq.vauban.processor.fixture.colocated.ForeignInterceptedBase {
         protected String inheritedProtected() { return "prot"; }
         String inheritedPackagePrivate() { return "pp"; }
+        @SuppressWarnings("java:S1144") // never called: it proves a private method is not intercepted
         private String inheritedPrivate() { return "private"; }
         protected String overriddenProtected() { return "base"; }
     }
@@ -443,6 +444,7 @@ class InterceptedShapeFromElementsTest {
         }
 
         public static class SecretTaker {
+            @SuppressWarnings("java:S1172") // the parameter is the signature under test
             public String take(Secret secret) { return "took"; }
         }
     }
@@ -702,7 +704,7 @@ class InterceptedShapeFromElementsTest {
             try {
                 var loc = clazz.getProtectionDomain().getCodeSource().getLocation();
                 if (loc != null) paths.add(new File(loc.toURI()).getPath());
-            } catch (Exception ignored) {
+            } catch (Exception _) {
                 // best-effort
             }
         }
@@ -710,7 +712,9 @@ class InterceptedShapeFromElementsTest {
                 rm.reference().location().ifPresent(uri -> {
                     if ("file".equals(uri.getScheme())) {
                         try { paths.add(new File(uri).getPath()); }
-                        catch (Exception ignored) {}
+                        catch (Exception _) {
+                            // best effort: the class path entry is simply left out
+                        }
                     }
                 }));
         return String.join(File.pathSeparator, paths);
