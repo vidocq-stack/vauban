@@ -24,7 +24,9 @@ import io.vidocq.vauban.sjar.SjarKeyProvider;
 
 import javax.crypto.SecretKey;
 import javax.crypto.spec.SecretKeySpec;
+import java.io.IOException;
 import java.nio.file.Path;
+import java.security.GeneralSecurityException;
 import java.util.HexFormat;
 
 /**
@@ -58,18 +60,21 @@ public final class SjarTool {
     }
 
     @SuppressWarnings("java:S106")
-    private static void encrypt(String[] args) throws Exception {
+    private static void encrypt(String[] args) throws IOException, GeneralSecurityException {
         String input = null;
         String output = null;
         String keyAlias = "default";
 
-        for (int i = 1; i < args.length; i++) {
-            switch (args[i]) {
-                case "--input", "-i" -> input = args[++i];
-                case "--output", "-o" -> output = args[++i];
-                case "--key-alias", "-k" -> keyAlias = args[++i];
-                default -> System.err.println("Unknown option: " + args[i]);
+        int i = 1;
+        while (i < args.length) {
+            var option = args[i];
+            switch (option) {
+                case "--input", "-i" -> input = args[i + 1];
+                case "--output", "-o" -> output = args[i + 1];
+                case "--key-alias", "-k" -> keyAlias = args[i + 1];
+                default -> System.err.println("Unknown option: " + option);
             }
+            i += isOptionWithValue(option) ? 2 : 1;
         }
 
         if (input == null) {
@@ -90,6 +95,13 @@ public final class SjarTool {
         SecretKey key = new SecretKeySpec(HexFormat.of().parseHex(envKey.strip()), "AES");
         SjarEncryptor.encrypt(Path.of(input), Path.of(output), key, keyAlias);
         System.out.println("Encrypted: " + input + " -> " + output);
+    }
+
+    private static boolean isOptionWithValue(String option) {
+        return switch (option) {
+            case "--input", "-i", "--output", "-o", "--key-alias", "-k" -> true;
+            default -> false;
+        };
     }
 
     @SuppressWarnings("java:S106")

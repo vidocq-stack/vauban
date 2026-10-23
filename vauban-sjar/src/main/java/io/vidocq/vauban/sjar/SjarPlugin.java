@@ -47,7 +47,7 @@ public final class SjarPlugin implements ByteSourcePlugin {
         // Check for the encryption marker inside the JAR
         try (var jar = new JarFile(archivePath.toFile())) {
             return jar.getEntry(SjarHeader.HEADER_ENTRY) != null;
-        } catch (IOException e) {
+        } catch (IOException _) {
             return false;
         }
     }

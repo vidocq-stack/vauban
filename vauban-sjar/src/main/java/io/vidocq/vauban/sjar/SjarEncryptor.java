@@ -33,6 +33,7 @@ import java.security.GeneralSecurityException;
 import java.security.SecureRandom;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
+import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 import java.util.jar.JarEntry;
@@ -88,7 +89,8 @@ public final class SjarEncryptor {
         }
 
         // 2. Build the opaque JAR into a temp file
-        var tempJar = Files.createTempFile("vauban-enc-", ".jar");
+        // Next to the JAR, not in the shared temporary directory, so the final move stays on one file system
+        var tempJar = Files.createTempFile(jarPath.toAbsolutePath().getParent(), "vauban-enc-", ".jar");
         var indexEntries = new LinkedHashMap<String, SjarMetadata.EntryMetadata>();
 
         try (var src = new JarFile(jarPath.toFile());
@@ -96,45 +98,7 @@ public final class SjarEncryptor {
 
             var srcEntries = src.entries();
             while (srcEntries.hasMoreElements()) {
-                var entry = srcEntries.nextElement();
-                var name = entry.getName();
-
-                if (entry.isDirectory()) {
-                    // Skip internal-package directories so they leave no trace;
-                    // keep META-INF/ and exported-package dirs as-is.
-                    if (isInternalDirectory(name, clearPackages)) continue;
-                    out.putNextEntry(new JarEntry(name));
-                    out.closeEntry();
-                    continue;
-                }
-
-                // Drop any stale v1 marker if re-encrypting
-                if (name.equals(SjarHeader.HEADER_ENTRY) || name.equals(SjarMetadata.INDEX_ENTRY)
-                        || name.startsWith(SjarMetadata.BLOB_DIR)) {
-                    continue;
-                }
-
-                try (var is = src.getInputStream(entry)) {
-                    var bytes = is.readAllBytes();
-
-                    if (shouldEncrypt(name, clearPackages)) {
-                        var uuid = UUID.randomUUID().toString();
-                        var iv = generateIv();
-                        var encrypted = encryptBytes(bytes, key, iv);
-                        var kind = name.endsWith(".class") ? "class" : "resource";
-
-                        indexEntries.put(name,
-                                new SjarMetadata.EntryMetadata(uuid, iv, bytes.length, kind));
-
-                        out.putNextEntry(new ZipEntry(SjarMetadata.BLOB_DIR + uuid));
-                        out.write(encrypted);
-                        out.closeEntry();
-                    } else {
-                        out.putNextEntry(new ZipEntry(name));
-                        out.write(bytes);
-                        out.closeEntry();
-                    }
-                }
+                copyEntry(src, srcEntries.nextElement(), out, clearPackages, key, indexEntries);
             }
 
             // 3. Write the encrypted index (self-describing [IV][ct+tag] blob)
@@ -154,10 +118,57 @@ public final class SjarEncryptor {
             out.putNextEntry(new ZipEntry(SjarHeader.HEADER_ENTRY));
             out.write(headerBytes.toByteArray());
             out.closeEntry();
+        } catch (IOException | GeneralSecurityException | RuntimeException e) {
+            // A half-written copy must not stay next to the JAR
+            Files.deleteIfExists(tempJar);
+            throw e;
         }
 
         // 5. Replace original JAR
         Files.move(tempJar, jarPath, StandardCopyOption.REPLACE_EXISTING);
+    }
+
+    /**
+     * Copies one entry of the source JAR: a clear entry as is, an entry of an internal package as an
+     * encrypted blob recorded in {@code indexEntries}.
+     */
+    private static void copyEntry(JarFile src, JarEntry entry, JarOutputStream out, Set<String> clearPackages,
+            SecretKey key, Map<String, SjarMetadata.EntryMetadata> indexEntries)
+            throws IOException, GeneralSecurityException {
+        var name = entry.getName();
+        if (entry.isDirectory()) {
+            // The directories of internal packages are skipped so they leave no trace. META-INF/ and
+            // the directories of exported packages are kept as they are.
+            if (!isInternalDirectory(name, clearPackages)) {
+                out.putNextEntry(new JarEntry(name));
+                out.closeEntry();
+            }
+            return;
+        }
+        // Drop any stale v1 marker if re-encrypting
+        if (name.equals(SjarHeader.HEADER_ENTRY) || name.equals(SjarMetadata.INDEX_ENTRY)
+                || name.startsWith(SjarMetadata.BLOB_DIR)) {
+            return;
+        }
+        try (var is = src.getInputStream(entry)) {
+            var bytes = is.readAllBytes();
+            if (shouldEncrypt(name, clearPackages)) {
+                var uuid = UUID.randomUUID().toString();
+                var iv = generateIv();
+                var encrypted = encryptBytes(bytes, key, iv);
+                var kind = name.endsWith(".class") ? "class" : "resource";
+
+                indexEntries.put(name, new SjarMetadata.EntryMetadata(uuid, iv, bytes.length, kind));
+
+                out.putNextEntry(new ZipEntry(SjarMetadata.BLOB_DIR + uuid));
+                out.write(encrypted);
+                out.closeEntry();
+            } else {
+                out.putNextEntry(new ZipEntry(name));
+                out.write(bytes);
+                out.closeEntry();
+            }
+        }
     }
 
     private static boolean isInternalDirectory(String dirName, Set<String> clearPackages) {

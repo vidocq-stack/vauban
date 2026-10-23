@@ -23,10 +23,12 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
+import java.util.Arrays;
 import java.util.Base64;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 
 /**
@@ -38,7 +40,7 @@ import java.util.Set;
  * and kind. The mapping only ever exists inside the encrypted index, never in
  * clear text.
  */
-public final class SjarMetadata {
+public record SjarMetadata(Map<String, EntryMetadata> entries, Set<String> clearPackages, String moduleName) {
 
     /** Encrypted index blob entry name. */
     public static final String INDEX_ENTRY = "META-INF/vauban.index";
@@ -51,20 +53,10 @@ public final class SjarMetadata {
     static final int IV_LENGTH = 12;
     static final int TAG_LENGTH = 128;
 
-    private final Map<String, EntryMetadata> entries;
-    private final Set<String> clearPackages;
-    private final String moduleName;
-
-    public SjarMetadata(Map<String, EntryMetadata> entries,
-                        Set<String> clearPackages, String moduleName) {
-        this.entries = Map.copyOf(entries);
-        this.clearPackages = Set.copyOf(clearPackages);
-        this.moduleName = moduleName;
+    public SjarMetadata {
+        entries = Map.copyOf(entries);
+        clearPackages = Set.copyOf(clearPackages);
     }
-
-    public Map<String, EntryMetadata> entries() { return entries; }
-    public Set<String> clearPackages() { return clearPackages; }
-    public String moduleName() { return moduleName; }
 
     /**
      * @param uuid         blob file name under {@link #BLOB_DIR}
@@ -75,6 +67,26 @@ public final class SjarMetadata {
     public record EntryMetadata(String uuid, byte[] iv, int originalSize, String kind) {
         public String ivBase64() {
             return Base64.getEncoder().encodeToString(iv);
+        }
+
+        @Override
+        public boolean equals(Object other) {
+            return other instanceof EntryMetadata(var otherUuid, var otherIv, var otherSize, var otherKind)
+                    && originalSize == otherSize
+                    && Objects.equals(uuid, otherUuid)
+                    && Arrays.equals(iv, otherIv)
+                    && Objects.equals(kind, otherKind);
+        }
+
+        @Override
+        public int hashCode() {
+            return Objects.hash(uuid, Arrays.hashCode(iv), originalSize, kind);
+        }
+
+        @Override
+        public String toString() {
+            return "EntryMetadata[uuid=" + uuid + ", iv=" + Arrays.toString(iv)
+                    + ", originalSize=" + originalSize + ", kind=" + kind + "]";
         }
     }
 

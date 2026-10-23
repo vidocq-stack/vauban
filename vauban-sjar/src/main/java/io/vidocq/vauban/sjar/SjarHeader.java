@@ -31,17 +31,10 @@ import java.nio.charset.StandardCharsets;
  * format version, algorithm, and the logical {@code keyAlias}. It never
  * contains a class or package name.
  */
-public final class SjarHeader {
+public record SjarHeader(String keyAlias) {
 
     public static final String HEADER_ENTRY = "META-INF/vauban.header";
 
-    private final String keyAlias;
-
-    public SjarHeader(String keyAlias) {
-        this.keyAlias = keyAlias;
-    }
-
-    public String keyAlias() { return keyAlias; }
     public int version() { return SjarMetadata.VERSION; }
 
     public void writeTo(OutputStream out) throws IOException {

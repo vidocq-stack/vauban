@@ -123,33 +123,42 @@ public final class SjarArchiveReader implements ArchiveReader {
         try {
             return cache.computeIfAbsent(entryName, name -> {
                 try {
-                    // Clear entry?
-                    var entry = jarFile.getEntry(name);
-                    if (entry != null) {
-                        try (var is = jarFile.getInputStream(entry)) {
-                            return is.readAllBytes();
-                        }
-                    }
-                    // Encrypted via index?
-                    var meta = index.entries().get(name);
-                    if (meta != null) {
-                        var blob = jarFile.getEntry(SjarMetadata.BLOB_DIR + meta.uuid());
-                        if (blob == null) {
-                            throw new IOException("Missing blob for " + name + " (uuid " + meta.uuid() + ")");
-                        }
-                        try (var is = jarFile.getInputStream(blob)) {
-                            return SjarEncryptor.decryptBytes(is.readAllBytes(), key);
-                        } catch (GeneralSecurityException e) {
-                            throw new IOException("Failed to decrypt " + name, e);
-                        }
-                    }
-                    throw new IOException("Entry not found: " + name);
+                    return loadEntry(name);
                 } catch (IOException e) {
                     throw new UncheckedIOException(e);
                 }
             });
         } catch (UncheckedIOException e) {
             throw e.getCause();
+        }
+    }
+
+    /** The bytes of {@code name}: a clear entry as is, an encrypted one decrypted from its blob. */
+    private byte[] loadEntry(String name) throws IOException {
+        // Clear entry?
+        var entry = jarFile.getEntry(name);
+        if (entry != null) {
+            try (var is = jarFile.getInputStream(entry)) {
+                return is.readAllBytes();
+            }
+        }
+        // Encrypted via index?
+        var meta = index.entries().get(name);
+        if (meta != null) {
+            var blob = jarFile.getEntry(SjarMetadata.BLOB_DIR + meta.uuid());
+            if (blob == null) {
+                throw new IOException("Missing blob for " + name + " (uuid " + meta.uuid() + ")");
+            }
+            return decryptBlob(name, blob);
+        }
+        throw new IOException("Entry not found: " + name);
+    }
+
+    private byte[] decryptBlob(String name, java.util.zip.ZipEntry blob) throws IOException {
+        try (var is = jarFile.getInputStream(blob)) {
+            return SjarEncryptor.decryptBytes(is.readAllBytes(), key);
+        } catch (GeneralSecurityException e) {
+            throw new IOException("Failed to decrypt " + name, e);
         }
     }
 

@@ -32,6 +32,8 @@ import java.util.concurrent.ConcurrentHashMap;
  */
 public final class SjarClassLoader extends ClassLoader {
 
+    private static final String CLASS_SUFFIX = ".class";
+
     private final ArchiveReader reader;
     private final ConcurrentHashMap<String, byte[]> classBytes = new ConcurrentHashMap<>();
     private volatile boolean initialized;
@@ -49,7 +51,7 @@ public final class SjarClassLoader extends ClassLoader {
         synchronized (this) {
             if (initialized) return;
             for (var entry : reader.classEntries()) {
-                var className = entry.replace('/', '.').replace(".class", "");
+                var className = entry.replace('/', '.').replace(CLASS_SUFFIX, "");
                 classBytes.put(className, reader.readClass(entry));
             }
             initialized = true;
@@ -61,7 +63,7 @@ public final class SjarClassLoader extends ClassLoader {
         var bytes = classBytes.get(name);
         if (bytes == null) {
             // Try lazy load
-            var entryName = name.replace('.', '/') + ".class";
+            var entryName = name.replace('.', '/') + CLASS_SUFFIX;
             try {
                 bytes = reader.readClass(entryName);
                 classBytes.put(name, bytes);
@@ -78,8 +80,8 @@ public final class SjarClassLoader extends ClassLoader {
     @Override
     public InputStream getResourceAsStream(String name) {
         // For .class resources, return decrypted bytes
-        if (name.endsWith(".class")) {
-            var className = name.replace('/', '.').replace(".class", "");
+        if (name.endsWith(CLASS_SUFFIX)) {
+            var className = name.replace('/', '.').replace(CLASS_SUFFIX, "");
             var bytes = classBytes.get(className);
             if (bytes != null) {
                 return new ByteArrayInputStream(bytes);
@@ -88,7 +90,7 @@ public final class SjarClassLoader extends ClassLoader {
             try {
                 var classFileBytes = reader.readClass(name);
                 return new ByteArrayInputStream(classFileBytes);
-            } catch (IOException e) {
+            } catch (IOException _) {
                 // fall through to parent
             }
         }
@@ -98,7 +100,7 @@ public final class SjarClassLoader extends ClassLoader {
             if (resource.isPresent()) {
                 return new ByteArrayInputStream(resource.get());
             }
-        } catch (IOException e) {
+        } catch (IOException _) {
             // fall through to parent
         }
         return super.getResourceAsStream(name);
@@ -109,11 +111,11 @@ public final class SjarClassLoader extends ClassLoader {
      */
     public boolean hasClass(String className) {
         if (classBytes.containsKey(className)) return true;
-        var entryName = className.replace('.', '/') + ".class";
+        var entryName = className.replace('.', '/') + CLASS_SUFFIX;
         try {
             reader.readClass(entryName);
             return true;
-        } catch (IOException e) {
+        } catch (IOException _) {
             return false;
         }
     }
