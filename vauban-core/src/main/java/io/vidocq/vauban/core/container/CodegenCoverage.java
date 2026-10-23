@@ -109,6 +109,11 @@ public final class CodegenCoverage {
 
     private record Declared(VaubanComponentProvider provider, GeneratedCoverage coverage) {}
 
+    /** Whether a method observes an event, and whether it is the event looked for. */
+    private enum Observation { MATCHING, OTHER_EVENT, NONE }
+
+    private static final String CONSTRUCTOR = "constructor";
+
     private final VaubanContainer container;
     private final List<Declared> declared;
 
@@ -152,7 +157,7 @@ public final class CodegenCoverage {
             return List.of();
         }
         var ops = new ArrayList<Operation>();
-        ops.add(new Operation(Kind.INSTANTIATE, type.getName(), "constructor", type));
+        ops.add(new Operation(Kind.INSTANTIATE, type.getName(), CONSTRUCTOR, type));
         // An interceptor is created as a bean, so performInjection runs its fields and initializers alike.
         for (Member member : BeanInjector.injectionOrder(type)) {
             ops.add(member instanceof Field field ? field(field) : invoke((Method) member, "initializer"));
@@ -181,7 +186,7 @@ public final class CodegenCoverage {
     private Class<?> load(String name) {
         try {
             return Class.forName(name, false, container.classLoader());
-        } catch (ClassNotFoundException | LinkageError e) {
+        } catch (ClassNotFoundException | LinkageError _) {
             return null;
         }
     }
@@ -197,26 +202,39 @@ public final class CodegenCoverage {
         for (Class<?> type = declaring; type != null && type != Object.class; type = type.getSuperclass()) {
             for (Method method : type.getDeclaredMethods()) {
                 if (!method.getName().equals(observer.methodName())) continue;
-                for (var parameter : method.getParameters()) {
-                    if (parameter.isAnnotationPresent(Observes.class)
-                            || parameter.isAnnotationPresent(ObservesAsync.class)) {
-                        if (event == null || parameter.getType().getName().equals(event)) {
-                            return method;
-                        }
-                        if (byName == null) {
-                            byName = method;
-                        }
-                    }
+                var observation = observation(method, event);
+                if (observation == Observation.MATCHING) {
+                    return method;
+                }
+                if (observation == Observation.OTHER_EVENT && byName == null) {
+                    byName = method;
                 }
             }
         }
         return byName;
     }
 
+    /**
+     * Whether {@code method} has an {@code @Observes} or {@code @ObservesAsync} parameter of the {@code event} type
+     * (any type when {@code event} is {@code null}), only of other types, or none.
+     */
+    private static Observation observation(Method method, String event) {
+        var result = Observation.NONE;
+        for (var parameter : method.getParameters()) {
+            if (parameter.isAnnotationPresent(Observes.class) || parameter.isAnnotationPresent(ObservesAsync.class)) {
+                if (event == null || parameter.getType().getName().equals(event)) {
+                    return Observation.MATCHING;
+                }
+                result = Observation.OTHER_EVENT;
+            }
+        }
+        return result;
+    }
+
     private static String rawName(TypeInfo type) {
         return switch (type) {
-            case TypeInfo.ClassType classType -> classType.name().value();
-            case TypeInfo.ParameterizedType parameterized -> parameterized.rawType().value();
+            case TypeInfo.ClassType(var name) -> name.value();
+            case TypeInfo.ParameterizedType(var rawType, var _) -> rawType.value();
             case null, default -> null;
         };
     }
@@ -256,10 +274,10 @@ public final class CodegenCoverage {
         var ops = new ArrayList<Operation>();
         Boolean preGenerated = container.interceptedSubclassPreGenerated(bean.descriptor().id());
         if (preGenerated == null) {
-            ops.add(new Operation(Kind.INSTANTIATE, beanClass.getName(), "constructor", beanClass));
+            ops.add(new Operation(Kind.INSTANTIATE, beanClass.getName(), CONSTRUCTOR, beanClass));
         } else {
             String subclass = beanClass.getName() + InterceptedShape.SUBCLASS_SUFFIX;
-            ops.add(new Operation(Kind.INSTANTIATE, subclass, "constructor", beanClass));
+            ops.add(new Operation(Kind.INSTANTIATE, subclass, CONSTRUCTOR, beanClass));
             ops.add(new Operation(preGenerated ? Kind.PRE_GENERATED : Kind.NONE, subclass, "intercepted subclass",
                     beanClass));
         }
@@ -365,28 +383,44 @@ public final class CodegenCoverage {
             switch (op.kind()) {
                 case PRE_GENERATED -> anyCovered = true;
                 case NONE -> uncovered.add(op.label());
-                default -> {
-                    GeneratedCoverage.Generator generator = generatorOf(op);
-                    if (generator != null) {
-                        generators.add(generator);
-                        anyCovered = true;
-                    } else if (servedByUndeclaredProvider(op.owner())) {
-                        unknown.add(op.label());
-                    } else {
-                        uncovered.add(op.label());
-                    }
-                }
+                default -> anyCovered |= sortProviderOperation(op, generators, uncovered, unknown);
             }
         }
         if (!unknown.isEmpty()) {
             return new Coverage(Verdict.UNKNOWN, unknown);
         }
         if (uncovered.isEmpty() && !generators.isEmpty()) {
-            return new Coverage(generators.size() == 2 ? Verdict.APT_AND_CLASS_FILE
-                    : generators.contains(GeneratedCoverage.Generator.APT) ? Verdict.APT : Verdict.CLASS_FILE,
-                    List.of());
+            return new Coverage(generatedVerdict(generators), List.of());
         }
         return new Coverage(anyCovered ? Verdict.PARTIAL : Verdict.REFLECTION, uncovered);
+    }
+
+    /**
+     * Records the generator that covers {@code op}, a provider operation, or files its label as uncovered or unknown.
+     *
+     * @return whether a generator covers it
+     */
+    private boolean sortProviderOperation(Operation op, Set<GeneratedCoverage.Generator> generators,
+            List<String> uncovered, List<String> unknown) {
+        GeneratedCoverage.Generator generator = generatorOf(op);
+        if (generator != null) {
+            generators.add(generator);
+            return true;
+        }
+        if (servedByUndeclaredProvider(op.owner())) {
+            unknown.add(op.label());
+        } else {
+            uncovered.add(op.label());
+        }
+        return false;
+    }
+
+    /** The verdict of rows whose every operation runs generated code, from {@code generators}. */
+    private static Verdict generatedVerdict(Set<GeneratedCoverage.Generator> generators) {
+        if (generators.size() == 2) {
+            return Verdict.APT_AND_CLASS_FILE;
+        }
+        return generators.contains(GeneratedCoverage.Generator.APT) ? Verdict.APT : Verdict.CLASS_FILE;
     }
 
     /** The generator of the first provider that declares {@code op}: the container asks providers in this order. */

@@ -23,7 +23,9 @@ import io.vidocq.vauban.api.VaubanComponentProvider;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.ServiceConfigurationError;
 import java.util.ServiceLoader;
+import java.util.Set;
 
 /**
  * Resolves component instances through the module-supplied {@link VaubanComponentProvider}s
@@ -35,17 +37,16 @@ import java.util.ServiceLoader;
  * compatibility (class path, unnamed modules, jars not yet APT-processed) while removing the
  * need for a qualified {@code opens} whenever a generated provider is present.
  */
-final class ComponentProviders {
+record ComponentProviders(List<VaubanComponentProvider> providers) {
 
-    private final List<VaubanComponentProvider> providers;
-
-    /** The providers this deployment loaded, for the parts of the container that consult them directly. */
-    List<VaubanComponentProvider> providers() {
-        return providers;
-    }
-
-    ComponentProviders(List<VaubanComponentProvider> providers) {
-        this.providers = List.copyOf(providers);
+    /**
+     * Keeps an immutable copy of {@code providers}.
+     *
+     * @param providers the providers this deployment loaded, for the parts of the container that consult them
+     *                  directly
+     */
+    ComponentProviders {
+        providers = List.copyOf(providers);
     }
 
     /**
@@ -63,15 +64,15 @@ final class ComponentProviders {
                     .stream()
                     .map(ServiceLoader.Provider::get)
                     .forEach(all::add);
-        } catch (Throwable _) {
+        } catch (ServiceConfigurationError | LinkageError | RuntimeException _) {
             // misconfigured/absent services — keep the explicit providers, fall back otherwise
         }
         all = new ArrayList<>(withTestCompanions(all));
-        // Trampoline re-layering (Vidocq.run from an IDE launch) resolves the application
-        // BOTH in the boot layer and in the Vauban layer: ServiceLoader then yields each
-        // generated provider twice — the layer one (woven world) and its boot-layer twin
-        // (un-woven world). Deduplicate by class name, preferring the layer's copy;
-        // providers that exist only once (runtime extensions, explicit ones) are kept.
+        // A trampoline re-layering, as when an IDE launches the application through Vidocq,
+        // resolves the application BOTH in the boot layer and in the Vauban layer: ServiceLoader
+        // then yields each generated provider twice, the layer one (woven world) and its
+        // boot-layer twin (un-woven world). Deduplicate by class name, preferring the layer's
+        // copy; providers that exist only once (runtime extensions, explicit ones) are kept.
         var layerLoader = layerLoaderOf(cl);
         if (layerLoader != null) {
             var byName = new java.util.LinkedHashMap<String, VaubanComponentProvider>();
@@ -103,19 +104,23 @@ final class ComponentProviders {
         for (var provider : providers) {
             result.add(provider);
             var type = provider.getClass();
-            if (!type.getSimpleName().equals(MAIN_PROVIDER)) {
-                continue;
-            }
-            var companionName = type.getName() + "Tests";
-            if (!present.add(companionName)) {
-                continue;
-            }
-            var companion = testCompanionOf(provider, companionName);
-            if (companion != null) {
-                result.add(companion);
+            if (type.getSimpleName().equals(MAIN_PROVIDER)) {
+                addTestCompanion(provider, type.getName() + "Tests", present, result);
             }
         }
         return result;
+    }
+
+    /** Adds the {@code companionName} provider to {@code result} once, when it exists and is not already present. */
+    private static void addTestCompanion(VaubanComponentProvider provider, String companionName,
+            Set<String> present, List<VaubanComponentProvider> result) {
+        if (!present.add(companionName)) {
+            return;
+        }
+        var companion = testCompanionOf(provider, companionName);
+        if (companion != null) {
+            result.add(companion);
+        }
     }
 
     /** The {@code companionName} provider, built through {@code provider}'s own lookup; {@code null} when absent. */
@@ -124,7 +129,7 @@ final class ComponentProviders {
         try {
             provider.grantModuleLookup(io.vidocq.vauban.api.access.ModuleLookupGrants.newGrant(
                     lookup -> received[0] = lookup));
-        } catch (RuntimeException | LinkageError misbehaving) {
+        } catch (RuntimeException | LinkageError _) {
             return null;
         }
         var lookup = received[0];
@@ -139,7 +144,7 @@ final class ComponentProviders {
             }
             var constructor = lookup.findConstructor(type, java.lang.invoke.MethodType.methodType(void.class));
             return (VaubanComponentProvider) constructor.invoke();
-        } catch (ClassNotFoundException absent) {
+        } catch (ClassNotFoundException _) {
             return null;
         } catch (Throwable broken) {
             System.getLogger(ComponentProviders.class.getName()).log(System.Logger.Level.WARNING,

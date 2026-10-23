@@ -34,6 +34,8 @@ import java.util.Set;
 
 final class BeanLifecycle {
 
+    private static final String INTERCEPTED_SUFFIX = "$$Intercepted";
+
     private final InterceptorManager interceptorManager;
     private final VaubanLookup vaubanLookup;
 
@@ -44,73 +46,96 @@ final class BeanLifecycle {
 
     void callPostConstruct(Object instance, BeanDescriptor descriptor, CreationalContext<?> ctx) {
         if (instance.getClass().isAnnotationPresent(jakarta.interceptor.Interceptor.class)) {
-            Method pc = null;
-            for (var m : instance.getClass().getDeclaredMethods()) {
-                if (m.isAnnotationPresent(jakarta.annotation.PostConstruct.class) && m.getParameterCount() == 0) {
-                    pc = m;
-                    break;
-                }
-            }
-            if (pc != null) {
-                try {
-                    vaubanLookup.invokeMethod(instance, pc);
-                } catch (Exception e) {
-                    throw new RuntimeException("@PostConstruct on interceptor instance failed: " + pc, e);
-                }
-            }
+            callInterceptorPostConstruct(instance);
             return;
         }
 
         var postConstructMethods = collectLifecycleMethodsInHierarchy(
                 instance.getClass(), jakarta.annotation.PostConstruct.class);
 
-        Set<DotName> beanBindings = (descriptor != null)
-                ? descriptor.interceptorBindings() : findInterceptorBindings(instance);
-        if ((beanBindings == null || beanBindings.isEmpty()) && interceptorManager.hasInterceptors()) {
-            beanBindings = findInterceptorBindings(instance);
-        }
-        if (beanBindings != null && !beanBindings.isEmpty() && interceptorManager.hasInterceptors()) {
-            interceptorManager.setClassLoader(instance.getClass().getClassLoader());
-            var bindingAnns = (descriptor != null && !descriptor.interceptorBindingAnnotations().isEmpty())
-                    ? new ArrayList<Annotation>(descriptor.interceptorBindingAnnotations())
-                    : new ArrayList<Annotation>(collectBindingAnnotations(instance));
-            var lifecycleChain = interceptorManager.resolveLifecycleChain(
-                    beanBindings, jakarta.annotation.PostConstruct.class, bindingAnns, ctx);
-            if (!lifecycleChain.isEmpty()) {
-                var bindingAnnotations = new LinkedHashSet<Annotation>(bindingAnns);
-                final var pcMethods = postConstructMethods;
-                var invocationCtx = new io.vidocq.vauban.core.interceptor.VaubanInvocationContext(
-                        instance, null, new Object[0], lifecycleChain,
-                        (target, params) -> {
-                            for (var m : pcMethods) {
-                                vaubanLookup.invokeMethod(target, m);
-                            }
-                            return null;
-                        });
-                invocationCtx.setInterceptorBindings(bindingAnnotations);
-                try {
-                    invocationCtx.proceed();
-                } catch (Throwable e) {
-                    if (e instanceof RuntimeException re) throw re;
-                    if (e instanceof Error err) throw err;
-                    throw new RuntimeException("Lifecycle interceptor failed", e);
-                }
-                return;
-            }
+        if (callInterceptedPostConstruct(instance, descriptor, ctx, postConstructMethods)) {
+            return;
         }
 
         for (var pcMethod : postConstructMethods) {
             try {
                 vaubanLookup.invokeMethod(instance, pcMethod);
             } catch (Exception e) {
-                throw new RuntimeException("@PostConstruct failed: " + pcMethod, e);
+                throw new LifecycleCallbackException("@PostConstruct failed: " + pcMethod, e);
             }
         }
     }
 
+    /**
+     * Calls the first no-argument {@code @PostConstruct} method declared by an interceptor instance, if any.
+     */
+    private void callInterceptorPostConstruct(Object instance) {
+        Method pc = null;
+        for (var m : instance.getClass().getDeclaredMethods()) {
+            if (m.isAnnotationPresent(jakarta.annotation.PostConstruct.class) && m.getParameterCount() == 0) {
+                pc = m;
+                break;
+            }
+        }
+        if (pc == null) {
+            return;
+        }
+        try {
+            vaubanLookup.invokeMethod(instance, pc);
+        } catch (Exception e) {
+            throw new LifecycleCallbackException("@PostConstruct on interceptor instance failed: " + pc, e);
+        }
+    }
+
+    /**
+     * Runs the {@code @PostConstruct} methods through the lifecycle interceptor chain bound to the bean.
+     *
+     * @return {@code true} when a non-empty chain ran the callbacks, {@code false} when the caller must call them
+     */
+    private boolean callInterceptedPostConstruct(Object instance, BeanDescriptor descriptor,
+            CreationalContext<?> ctx, List<Method> postConstructMethods) {
+        if (!interceptorManager.hasInterceptors()) {
+            return false;
+        }
+        Set<DotName> beanBindings = (descriptor != null)
+                ? descriptor.interceptorBindings() : findInterceptorBindings(instance);
+        if (beanBindings == null || beanBindings.isEmpty()) {
+            beanBindings = findInterceptorBindings(instance);
+        }
+        if (beanBindings.isEmpty()) {
+            return false;
+        }
+        interceptorManager.setClassLoader(instance.getClass().getClassLoader());
+        var bindingAnns = (descriptor != null && !descriptor.interceptorBindingAnnotations().isEmpty())
+                ? new ArrayList<Annotation>(descriptor.interceptorBindingAnnotations())
+                : new ArrayList<Annotation>(collectBindingAnnotations(instance));
+        var lifecycleChain = interceptorManager.resolveLifecycleChain(
+                beanBindings, jakarta.annotation.PostConstruct.class, bindingAnns, ctx);
+        if (lifecycleChain.isEmpty()) {
+            return false;
+        }
+        var invocationCtx = new io.vidocq.vauban.core.interceptor.VaubanInvocationContext(
+                instance, null, new Object[0], lifecycleChain,
+                (target, params) -> {
+                    for (var m : postConstructMethods) {
+                        vaubanLookup.invokeMethod(target, m);
+                    }
+                    return null;
+                });
+        invocationCtx.setInterceptorBindings(new LinkedHashSet<>(bindingAnns));
+        try {
+            invocationCtx.proceed();
+        } catch (RuntimeException re) {
+            throw re;
+        } catch (Exception e) {
+            throw new LifecycleCallbackException("Lifecycle interceptor failed", e);
+        }
+        return true;
+    }
+
     static List<Method> collectLifecycleMethodsInHierarchy(
             Class<?> clazz, Class<? extends Annotation> annotation) {
-        if (clazz.getName().contains("$$Intercepted") || clazz.getName().contains("$$Proxy")) {
+        if (clazz.getName().contains(INTERCEPTED_SUFFIX) || clazz.getName().contains("$$Proxy")) {
             clazz = clazz.getSuperclass();
         }
         var result = new ArrayList<Method>();
@@ -159,7 +184,7 @@ final class BeanLifecycle {
     Set<DotName> findInterceptorBindings(Object instance) {
         var bindings = new LinkedHashSet<DotName>();
         var clazz = instance.getClass();
-        if (clazz.getName().contains("$$Intercepted")) {
+        if (clazz.getName().contains(INTERCEPTED_SUFFIX)) {
             clazz = clazz.getSuperclass();
         }
         var annotations = new LinkedHashSet<Annotation>();
@@ -177,7 +202,7 @@ final class BeanLifecycle {
 
     Set<Annotation> collectBindingAnnotations(Object instance) {
         var clazz = instance.getClass();
-        if (clazz.getName().contains("$$Intercepted") || clazz.getName().contains("$$Proxy")) {
+        if (clazz.getName().contains(INTERCEPTED_SUFFIX) || clazz.getName().contains("$$Proxy")) {
             clazz = clazz.getSuperclass();
         }
         var annotations = new LinkedHashSet<Annotation>();

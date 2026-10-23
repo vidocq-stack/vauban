@@ -20,7 +20,6 @@
 package io.vidocq.vauban.core.container;
 
 import io.vidocq.vauban.core.bean.model.InterceptorDescriptor;
-import io.vidocq.vauban.indexer.model.DotName;
 import jakarta.enterprise.context.Dependent;
 import jakarta.enterprise.context.spi.CreationalContext;
 import jakarta.enterprise.inject.spi.InjectionPoint;
@@ -64,8 +63,8 @@ public final class VaubanInterceptor<T> implements Interceptor<T> {
                 if (ann != null) {
                     result.add(ann);
                 }
-            } catch (ClassNotFoundException e) {
-                // skip
+            } catch (ClassNotFoundException _) {
+                // a binding type the interceptor's class loader cannot see is not one of its bindings
             }
         }
         return result;
