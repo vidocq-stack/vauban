@@ -86,13 +86,13 @@ public final class InterceptorSubclassGenerator {
         // constructors only (Vidocq/vauban#24).
         var ctors = new ArrayList<CtorShape>();
         for (var constructor : beanClass.getDeclaredConstructors()) {
-            if (Modifier.isPrivate(constructor.getModifiers())) continue;
-            if (io.vidocq.vauban.core.proxy.ClientProxyShape.isProxyLinkConstructor(constructor)) continue;
-            var params = new ArrayList<TypeRef>();
-            for (Class<?> p : constructor.getParameterTypes()) {
-                params.add(TypeRef.fromClass(p));
+            if (isMirrored(constructor)) {
+                var params = new ArrayList<TypeRef>();
+                for (Class<?> p : constructor.getParameterTypes()) {
+                    params.add(TypeRef.fromClass(p));
+                }
+                ctors.add(new CtorShape(params));
             }
-            ctors.add(new CtorShape(params));
         }
 
         // Methods (declared first, then inherited — preserving original order/dedup)
@@ -108,27 +108,15 @@ public final class InterceptorSubclassGenerator {
         }
         // Also intercept inherited public methods (from superclasses)
         for (var method : BeanMembers.inStableOrder(beanClass.getMethods())) {
-            if (method.getDeclaringClass() == beanClass) continue; // already handled
-            if (method.getDeclaringClass() == Object.class) continue;
-            var key = method.getName() + Arrays.toString(method.getParameterTypes());
-            if (seen.contains(key)) continue; // already intercepted
-            if (shouldIntercept(method)) {
-                var shape = methodShapeOf(beanClass, method);
-                if (shape == null) {
+            // Declared ones are already handled; Object's are never intercepted.
+            if (method.getDeclaringClass() != beanClass && method.getDeclaringClass() != Object.class) {
+                var key = method.getName() + Arrays.toString(method.getParameterTypes());
+                // A key already seen is already intercepted.
+                if (!seen.contains(key) && shouldIntercept(method)) {
+                    var shape = inheritedShapeOf(beanClass, method);
+                    if (shape != null) methods.add(shape);
                     seen.add(key);
-                    continue;
                 }
-                if (ShadowedDefaults.isShadowed(beanClass, method)) {
-                    // super.<name>() would resolve to the shadowing declaration: the bridge reaches
-                    // the default through an interface the subclass lists (BUG-20261004-08), or,
-                    // when no interface it may list carries it, the method is left alone.
-                    var owner = ShadowedDefaults.accessibleOwner(beanClass, method, true);
-                    seen.add(key);
-                    if (owner == null) continue;
-                    shape = shape.withDefaultOwner(TypeRef.fromClass(owner));
-                }
-                methods.add(shape);
-                seen.add(key);
             }
         }
         // And the inherited protected and package-private ones, which getMethods() leaves out:
@@ -177,6 +165,25 @@ public final class InterceptorSubclassGenerator {
      * which the emitter handles without resolving it (BUG-20261004-09). The processor's front-end
      * decides alike ({@code InterceptedShapeFromElements#resolvableFrom}).
      */
+    /** Neither private nor the client proxy's {@code ProxyLink} entry constructor (Vidocq/vauban#24). */
+    private static boolean isMirrored(java.lang.reflect.Constructor<?> constructor) {
+        return !Modifier.isPrivate(constructor.getModifiers())
+                && !io.vidocq.vauban.core.proxy.ClientProxyShape.isProxyLinkConstructor(constructor);
+    }
+
+    /** The shape of a method the bean inherits, or {@code null} when the subclass leaves it alone. */
+    private static MethodShape inheritedShapeOf(Class<?> beanClass, Method method) {
+        var shape = methodShapeOf(beanClass, method);
+        if (shape == null || !ShadowedDefaults.isShadowed(beanClass, method)) {
+            return shape;
+        }
+        // super.<name>() would resolve to the shadowing declaration: the bridge reaches
+        // the default through an interface the subclass lists (BUG-20261004-08), or,
+        // when no interface it may list carries it, the method is left alone.
+        var owner = ShadowedDefaults.accessibleOwner(beanClass, method, true);
+        return owner == null ? null : shape.withDefaultOwner(TypeRef.fromClass(owner));
+    }
+
     private static MethodShape methodShapeOf(Class<?> beanClass, Method method) {
         if (!accessibleFrom(method.getReturnType(), beanClass)) return null;
         TypeRef returnType = TypeRef.fromClass(method.getReturnType());
@@ -226,9 +233,9 @@ public final class InterceptorSubclassGenerator {
 
     public record GeneratedInterceptedClass(String className, byte[] bytecode) {
         @Override public boolean equals(Object o) {
-            return o instanceof GeneratedInterceptedClass g
-                    && className.equals(g.className)
-                    && java.util.Arrays.equals(bytecode, g.bytecode);
+            return o instanceof GeneratedInterceptedClass(var otherName, var otherBytecode)
+                    && className.equals(otherName)
+                    && java.util.Arrays.equals(bytecode, otherBytecode);
         }
         @Override public int hashCode() {
             return className.hashCode() ^ java.util.Arrays.hashCode(bytecode);

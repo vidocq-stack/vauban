@@ -23,6 +23,7 @@ import io.vidocq.vauban.core.codegen.BeanMembers;
 
 import java.lang.reflect.Method;
 import java.util.Map;
+import java.util.Objects;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
@@ -97,6 +98,7 @@ final class BusinessMethods {
      * for it.
      */
     static Method declarationOf(Class<?> beanClass, Method method) {
+        Objects.requireNonNull(beanClass, "beanClass");
         var name = businessName(method);
         var parameterTypes = method.getParameterTypes();
         for (Class<?> c = beanClass; c != null; c = c.getSuperclass()) {
@@ -105,7 +107,7 @@ final class BusinessMethods {
                 if (isBusinessMethodOf(beanClass, declared)) {
                     return declared;
                 }
-            } catch (NoSuchMethodException declaredHigherUp) {
+            } catch (NoSuchMethodException _) {
                 // keep walking
             }
         }
@@ -113,7 +115,7 @@ final class BusinessMethods {
             // No class declares it: the most specific interface method the bean inherits, which for
             // a concrete bean class is a default method.
             return beanClass.getMethod(name, parameterTypes);
-        } catch (NoSuchMethodException noSuchMethod) {
+        } catch (NoSuchMethodException _) {
             return null;
         }
     }

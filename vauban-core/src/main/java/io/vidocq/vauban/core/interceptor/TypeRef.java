@@ -218,9 +218,12 @@ public final class TypeRef {
      * with each {@code '$'} turned into {@code '.'}, which is right for a nested type only.
      */
     public String sourceName() {
-        String base = primitive != null
-                ? primitive.name().toLowerCase(java.util.Locale.ROOT)
-                : canonicalName != null ? canonicalName : binaryName.replace('$', '.');
+        String base;
+        if (primitive != null) {
+            base = primitive.name().toLowerCase(java.util.Locale.ROOT);
+        } else {
+            base = canonicalName != null ? canonicalName : binaryName.replace('$', '.');
+        }
         return base + "[]".repeat(dims);
     }
 
@@ -283,7 +286,7 @@ public final class TypeRef {
     public static TypeRef fromTypeInfo(io.vidocq.vauban.indexer.model.TypeInfo typeInfo) {
         return switch (typeInfo) {
             case io.vidocq.vauban.indexer.model.TypeInfo.VoidType _ -> ofVoid();
-            case io.vidocq.vauban.indexer.model.TypeInfo.PrimitiveType p -> ofPrimitive(switch (p.kind()) {
+            case io.vidocq.vauban.indexer.model.TypeInfo.PrimitiveType(var kind) -> ofPrimitive(switch (kind) {
                 case BOOLEAN -> Primitive.BOOLEAN;
                 case BYTE -> Primitive.BYTE;
                 case CHAR -> Primitive.CHAR;
@@ -293,15 +296,16 @@ public final class TypeRef {
                 case FLOAT -> Primitive.FLOAT;
                 case DOUBLE -> Primitive.DOUBLE;
             }, 0);
-            case io.vidocq.vauban.indexer.model.TypeInfo.ClassType c -> ofReference(c.name().value());
-            case io.vidocq.vauban.indexer.model.TypeInfo.ArrayType a -> {
-                TypeRef component = fromTypeInfo(a.componentType());
+            case io.vidocq.vauban.indexer.model.TypeInfo.ClassType(io.vidocq.vauban.indexer.model.DotName(var name)) ->
+                    ofReference(name);
+            case io.vidocq.vauban.indexer.model.TypeInfo.ArrayType(var componentType, var dimensions) -> {
+                TypeRef component = fromTypeInfo(componentType);
                 yield component.isPrimitiveOrVoid()
-                        ? new TypeRef(component.primitive, null, component.dims + a.dimensions())
-                        : new TypeRef(null, component.binaryName, component.dims + a.dimensions());
+                        ? new TypeRef(component.primitive, null, component.dims + dimensions)
+                        : new TypeRef(null, component.binaryName, component.dims + dimensions);
             }
-            case io.vidocq.vauban.indexer.model.TypeInfo.ParameterizedType p ->
-                    ofReference(p.rawType().value());
+            case io.vidocq.vauban.indexer.model.TypeInfo.ParameterizedType(io.vidocq.vauban.indexer.model.DotName(var rawName), _) ->
+                    ofReference(rawName);
             case io.vidocq.vauban.indexer.model.TypeInfo.TypeVariable _ ->
                     ofReference("java.lang.Object");
             case io.vidocq.vauban.indexer.model.TypeInfo.WildcardType _ ->

@@ -381,7 +381,7 @@ public final class InterceptorManager {
                     : Class.forName(name.value());
             return clazz.isAnnotationPresent(jakarta.interceptor.InterceptorBinding.class)
                     || io.vidocq.vauban.core.container.VaubanBeanManager.isCustomInterceptorBinding(clazz);
-        } catch (Exception e) {
+        } catch (Exception _) {
             return false;
         }
     }
@@ -464,8 +464,12 @@ public final class InterceptorManager {
         var owner = declaration.getDeclaringClass();
         var params = java.util.Arrays.stream(declaration.getParameterTypes()).map(Class::getName)
                 .collect(java.util.stream.Collectors.joining(", "));
-        var where = owner == beanClass ? "a method it declares"
-                : owner.isInterface() ? "an interface default method it inherits" : "a method it inherits";
+        String where;
+        if (owner == beanClass) {
+            where = "a method it declares";
+        } else {
+            where = owner.isInterface() ? "an interface default method it inherits" : "a method it inherits";
+        }
         return "the method-level interceptor binding " + names + " of " + owner.getName() + "."
                 + declaration.getName() + "(" + params + "), " + where;
     }
@@ -667,7 +671,7 @@ public final class InterceptorManager {
                 var va = method.invoke(a);
                 var vb = method.invoke(b);
                 if (!java.util.Objects.deepEquals(va, vb)) return false;
-            } catch (Exception e) {
+            } catch (Exception _) {
                 return false;
             }
         }
@@ -755,10 +759,9 @@ public final class InterceptorManager {
         for (var descriptor : interceptors) {
             if (!descriptor.enabled()) continue;
 
-            if (bindings.containsAll(descriptor.bindings()) && !descriptor.bindings().isEmpty()) {
-                if (bindingMembersMatchWherePresent(descriptor.bindingAnnotations(), beanAnnotations)) {
-                    result.add(descriptor);
-                }
+            if (bindings.containsAll(descriptor.bindings()) && !descriptor.bindings().isEmpty()
+                    && bindingMembersMatchWherePresent(descriptor.bindingAnnotations(), beanAnnotations)) {
+                result.add(descriptor);
             }
         }
         return result;
@@ -774,12 +777,11 @@ public final class InterceptorManager {
         while (current != null && current != Object.class) {
             for (var ann : current.getDeclaredAnnotations()) {
                 var annName = DotName.of(ann.annotationType().getName());
-                if (isBinding.test(annName)) {
-                    if (onBeanClass
-                            || ann.annotationType().isAnnotationPresent(java.lang.annotation.Inherited.class)
-                            || isInterceptorBindingViaStereotype(ann)) {
-                        bindings.add(annName);
-                    }
+                if (isBinding.test(annName)
+                        && (onBeanClass
+                                || ann.annotationType().isAnnotationPresent(java.lang.annotation.Inherited.class)
+                                || isInterceptorBindingViaStereotype(ann))) {
+                    bindings.add(annName);
                 }
             }
             onBeanClass = false;

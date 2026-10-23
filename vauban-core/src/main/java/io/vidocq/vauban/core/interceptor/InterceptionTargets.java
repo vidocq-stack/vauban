@@ -90,20 +90,33 @@ public final class InterceptionTargets {
      */
     public static Cause causeOf(Class<?> beanClass, Bindings bindings) {
         if (bindings.onClass()) return new ClassLevel();
-        for (var c = beanClass; c != null && c != Object.class; c = c.getSuperclass()) {
-            for (var m : c.getDeclaredMethods()) {
-                if (bindings.onMethod(m)) return new BoundMethod(m);
-            }
-        }
-        for (var m : beanClass.getMethods()) {
-            if (m.isDefault() && bindings.onMethod(m)) return new BoundMethod(m);
-        }
+        var boundMethod = boundMethodOf(beanClass, bindings);
+        if (boundMethod != null) return new BoundMethod(boundMethod);
         for (var ctor : beanClass.getDeclaredConstructors()) {
             if (bindings.onConstructor(ctor)) return new BoundConstructor(ctor);
         }
+        var aroundInvoke = targetAroundInvokeOf(beanClass);
+        return aroundInvoke != null ? new TargetAroundInvoke(aroundInvoke) : null;
+    }
+
+    /** The first method with a binding: declared up the superclass chain, else a default method the bean inherits. */
+    private static Method boundMethodOf(Class<?> beanClass, Bindings bindings) {
         for (var c = beanClass; c != null && c != Object.class; c = c.getSuperclass()) {
             for (var m : c.getDeclaredMethods()) {
-                if (m.isAnnotationPresent(jakarta.interceptor.AroundInvoke.class)) return new TargetAroundInvoke(m);
+                if (bindings.onMethod(m)) return m;
+            }
+        }
+        for (var m : beanClass.getMethods()) {
+            if (m.isDefault() && bindings.onMethod(m)) return m;
+        }
+        return null;
+    }
+
+    /** The first {@code @AroundInvoke} method up the superclass chain of the bean class. */
+    private static Method targetAroundInvokeOf(Class<?> beanClass) {
+        for (var c = beanClass; c != null && c != Object.class; c = c.getSuperclass()) {
+            for (var m : c.getDeclaredMethods()) {
+                if (m.isAnnotationPresent(jakarta.interceptor.AroundInvoke.class)) return m;
             }
         }
         return null;

@@ -220,15 +220,12 @@ public final class VaubanInvocationContext implements InvocationContext {
             // the chain (BusinessMethods), inherited and interface default methods included.
             var resolvedMethod = getMethod();
             if (resolvedMethod != null) {
-                var methodBindingTypes = new java.util.HashSet<Class<? extends java.lang.annotation.Annotation>>();
+                // A method-level binding replaces the class-level binding of the same type.
                 for (var ann : resolvedMethod.getAnnotations()) {
                     if (isInterceptorBinding(ann)) {
-                        methodBindingTypes.add(ann.annotationType());
                         bindingsByType.put(ann.annotationType(), ann);
                     }
                 }
-                // Remove class-level bindings that are overridden by method-level of same type
-                // (already handled by put above — method replaces class)
             }
             // Include enhanced bindings added via BCE Enhancement
             var mgr = InterceptorManager.currentInstance();
