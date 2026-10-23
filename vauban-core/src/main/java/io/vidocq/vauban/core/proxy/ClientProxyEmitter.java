@@ -117,7 +117,7 @@ public final class ClientProxyEmitter {
                         cob.return_();
                     });
 
-            // Setter: public void $$setDelegate(Supplier d) { this.$$delegate = d; }
+            // The $$setDelegate setter stores the supplier of the contextual instance in $$delegate.
             clb.withMethodBody(
                     ClientProxyShape.SET_DELEGATE_METHOD,
                     MethodTypeDesc.of(ConstantDescs.CD_void, CD_Supplier),
@@ -247,7 +247,7 @@ public final class ClientProxyEmitter {
     private static void emitMethodHandleLookup(CodeBuilder cob, ClassDesc proxyCD,
                                                ClassDesc beanCD, ProxyMethodShape method,
                                                String mhField) {
-        // Lookup lookup = MethodHandles.privateLookupIn(beanClass, MethodHandles.lookup());
+        // A private lookup in the bean class, obtained from the proxy's own lookup.
         cob.ldc(beanCD);
         cob.invokestatic(CD_MethodHandles, "lookup",
                 MethodTypeDesc.of(CD_MethodHandlesLookup));

@@ -71,8 +71,9 @@ public record ClientProxyShape(
         return method.isConstructor()
                 && method.parameters().size() == 1
                 && method.parameters().getFirst().type()
-                        instanceof io.vidocq.vauban.indexer.model.TypeInfo.ClassType ct
-                && PROXY_LINK_CLASS.equals(ct.name().value());
+                        instanceof io.vidocq.vauban.indexer.model.TypeInfo.ClassType(
+                                io.vidocq.vauban.indexer.model.DotName(var typeName))
+                && PROXY_LINK_CLASS.equals(typeName);
     }
 
     public ClientProxyShape {

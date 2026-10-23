@@ -100,53 +100,10 @@ public final class RuntimeClientProxyGenerator {
         String proxyPackage = packageOf(beanClass.getName());
         var proxiedSeen = new java.util.HashSet<String>();
         var methods = new ArrayList<ProxyMethodShape>();
-        var current = beanClass;
-        while (current != null) {
-            for (var method : BeanMembers.inStableOrder(current.getDeclaredMethods())) {
-                var key = method.getName() + java.util.Arrays.toString(method.getParameterTypes());
-                if (!proxiedSeen.add(key) || !shouldProxy(method)) continue;
-                // A package-private method of a superclass in another runtime package is not a
-                // member of the bean (JLS 8.4.8), as the processor's shapes and the subclass
-                // generator already decide: forwarding it would reach a method the bean does not
-                // have, and an interface default with its descriptor — the bean's member — is
-                // shadowed by it, and forwarded through its interface below.
-                if (current != beanClass && !BeanMembers.isBusinessMethodOf(beanClass, method)) continue;
-                methods.add(new ProxyMethodShape(
-                        method.getName(),
-                        TypeRef.fromClass(method.getReturnType()),
-                        typeRefs(method.getParameterTypes()),
-                        typeRefs(method.getExceptionTypes()),
-                        needsMethodHandleDispatch(method, proxyPackage)));
-            }
-            current = current.getSuperclass();
+        for (var current = beanClass; current != null; current = current.getSuperclass()) {
+            addDeclaredMethods(beanClass, current, proxyPackage, proxiedSeen, methods);
         }
-        // The interface default methods no class above overrides: left out, a call on the proxy
-        // would run the default body on the proxy itself, bypassing the contextual instance and its
-        // interceptors (BUG-20261004-02). getMethods() lists the most specific default of each.
-        for (var method : BeanMembers.inStableOrder(beanClass.getMethods())) {
-            if (!method.isDefault() || !shouldProxy(method)) continue;
-            var key = method.getName() + java.util.Arrays.toString(method.getParameterTypes());
-            TypeRef interfaceOwner = null;
-            if (ShadowedDefaults.isShadowed(beanClass, method)) {
-                // A declaration the bean does not inherit (a private superclass method, or a
-                // package-private one of another package) holds the key, and a call typed by the
-                // bean class would resolve to it and be refused: forward through an interface
-                // instead (BUG-20261004-08), or not at all when none qualifies.
-                var owner = ShadowedDefaults.accessibleOwner(beanClass, method, colocated);
-                proxiedSeen.add(key);
-                if (owner == null) continue;
-                interfaceOwner = TypeRef.fromClass(owner);
-            } else if (!proxiedSeen.add(key)) {
-                continue;
-            }
-            methods.add(new ProxyMethodShape(
-                    method.getName(),
-                    TypeRef.fromClass(method.getReturnType()),
-                    typeRefs(method.getParameterTypes()),
-                    typeRefs(method.getExceptionTypes()),
-                    false, // interface methods are public
-                    interfaceOwner));
-        }
+        addInterfaceDefaults(beanClass, colocated, proxiedSeen, methods);
 
         // CDI 4.1: beans with only @Inject constructors (no no-arg) must still be proxyable —
         // the proxy's no-arg constructor calls the simplest super ctor with default values.
@@ -155,6 +112,70 @@ public final class RuntimeClientProxyGenerator {
                 beanClass.getName(),
                 typeRefs(superCtor.getParameterTypes()),
                 methods);
+    }
+
+    /** The methods {@code current}, the bean class or one of its superclasses, declares that the proxy forwards. */
+    private static void addDeclaredMethods(Class<?> beanClass, Class<?> current, String proxyPackage,
+                                           java.util.Set<String> proxiedSeen, List<ProxyMethodShape> methods) {
+        for (var method : BeanMembers.inStableOrder(current.getDeclaredMethods())) {
+            var key = method.getName() + java.util.Arrays.toString(method.getParameterTypes());
+            // A package-private method of a superclass in another runtime package is not a
+            // member of the bean (JLS 8.4.8), as the processor's shapes and the subclass
+            // generator already decide: forwarding it would reach a method the bean does not
+            // have, and an interface default with its descriptor — the bean's member — is
+            // shadowed by it, and forwarded through its interface below.
+            if (proxiedSeen.add(key) && shouldProxy(method)
+                    && (current == beanClass || BeanMembers.isBusinessMethodOf(beanClass, method))) {
+                methods.add(new ProxyMethodShape(
+                        method.getName(),
+                        TypeRef.fromClass(method.getReturnType()),
+                        typeRefs(method.getParameterTypes()),
+                        typeRefs(method.getExceptionTypes()),
+                        needsMethodHandleDispatch(method, proxyPackage)));
+            }
+        }
+    }
+
+    /**
+     * The interface default methods no class above overrides: left out, a call on the proxy
+     * would run the default body on the proxy itself, bypassing the contextual instance and its
+     * interceptors (BUG-20261004-02). getMethods() lists the most specific default of each.
+     */
+    private static void addInterfaceDefaults(Class<?> beanClass, boolean colocated,
+                                             java.util.Set<String> proxiedSeen, List<ProxyMethodShape> methods) {
+        for (var method : BeanMembers.inStableOrder(beanClass.getMethods())) {
+            if (method.isDefault() && shouldProxy(method)) {
+                defaultMethodShape(beanClass, method, colocated, proxiedSeen).ifPresent(methods::add);
+            }
+        }
+    }
+
+    private static java.util.Optional<ProxyMethodShape> defaultMethodShape(Class<?> beanClass, Method method,
+                                                                           boolean colocated,
+                                                                           java.util.Set<String> proxiedSeen) {
+        var key = method.getName() + java.util.Arrays.toString(method.getParameterTypes());
+        TypeRef interfaceOwner = null;
+        if (ShadowedDefaults.isShadowed(beanClass, method)) {
+            // A declaration the bean does not inherit (a private superclass method, or a
+            // package-private one of another package) holds the key, and a call typed by the
+            // bean class would resolve to it and be refused: forward through an interface
+            // instead (BUG-20261004-08), or not at all when none qualifies.
+            var owner = ShadowedDefaults.accessibleOwner(beanClass, method, colocated);
+            proxiedSeen.add(key);
+            if (owner == null) {
+                return java.util.Optional.empty();
+            }
+            interfaceOwner = TypeRef.fromClass(owner);
+        } else if (!proxiedSeen.add(key)) {
+            return java.util.Optional.empty();
+        }
+        return java.util.Optional.of(new ProxyMethodShape(
+                method.getName(),
+                TypeRef.fromClass(method.getReturnType()),
+                typeRefs(method.getParameterTypes()),
+                typeRefs(method.getExceptionTypes()),
+                false, // interface methods are public
+                interfaceOwner));
     }
 
     private static List<TypeRef> typeRefs(Class<?>[] types) {
@@ -216,9 +237,9 @@ public final class RuntimeClientProxyGenerator {
 
     public record GeneratedProxy(String className, byte[] bytecode) {
         @Override public boolean equals(Object o) {
-            return o instanceof GeneratedProxy g
-                    && className.equals(g.className)
-                    && java.util.Arrays.equals(bytecode, g.bytecode);
+            return o instanceof GeneratedProxy(var otherName, var otherBytecode)
+                    && className.equals(otherName)
+                    && java.util.Arrays.equals(bytecode, otherBytecode);
         }
         @Override public int hashCode() {
             return className.hashCode() ^ java.util.Arrays.hashCode(bytecode);

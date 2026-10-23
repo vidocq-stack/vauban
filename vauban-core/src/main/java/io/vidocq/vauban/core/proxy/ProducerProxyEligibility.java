@@ -71,6 +71,19 @@ public final class ProducerProxyEligibility {
 
     /** The verdict for {@code type}. */
     public static Reason of(Class<?> type) {
+        var verdict = declarationVerdict(type);
+        if (!verdict.eligible()) {
+            return verdict;
+        }
+        verdict = constructorVerdict(type);
+        if (!verdict.eligible()) {
+            return verdict;
+        }
+        return methodsVerdict(type);
+    }
+
+    /** What the declaration of {@code type} alone says: its kind, its modifiers, its nesting. */
+    private static Reason declarationVerdict(Class<?> type) {
         if (type.isInterface() || type.isEnum() || type.isAnnotation()
                 || type.isArray() || type.isPrimitive() || type.isRecord()) {
             return Reason.NOT_A_CLASS;
@@ -91,61 +104,81 @@ public final class ProducerProxyEligibility {
         if (type.getEnclosingClass() != null && !Modifier.isStatic(mods)) {
             return Reason.INACCESSIBLE_NESTED;
         }
+        return Reason.ELIGIBLE;
+    }
 
-        // The constructor the shape chains super() to must be reachable from another package —
-        // public or protected. Mirror RuntimeClientProxyGenerator.findSimplestConstructor:
-        // (ProxyLink) first, else fewest params, among non-private constructors.
-        Constructor<?> chosen = null;
-        for (Constructor<?> c : type.getDeclaredConstructors()) {
-            if (Modifier.isPrivate(c.getModifiers())) {
-                continue;
-            }
-            if (ClientProxyShape.isProxyLinkConstructor(c)) {
-                chosen = c;
-                break;
-            }
-            if (chosen == null || c.getParameterCount() < chosen.getParameterCount()) {
-                chosen = c;
-            }
-        }
+    /**
+     * The constructor the shape chains super() to must be reachable from another package — public
+     * or protected.
+     */
+    private static Reason constructorVerdict(Class<?> type) {
+        var chosen = simplestConstructor(type);
         if (chosen == null) {
             return Reason.NO_ACCESSIBLE_CTOR;
         }
         int cm = chosen.getModifiers();
-        if (!Modifier.isPublic(cm) && !Modifier.isProtected(cm)) {
-            return Reason.NO_ACCESSIBLE_CTOR;
-        }
+        return !Modifier.isPublic(cm) && !Modifier.isProtected(cm) ? Reason.NO_ACCESSIBLE_CTOR : Reason.ELIGIBLE;
+    }
 
-        // Every overridable method the proxy would forward (walking the hierarchy, as the bytecode
-        // shape does) must be public; a non-static final method makes the type unproxyable (§3.10).
+    /**
+     * Mirrors {@code RuntimeClientProxyGenerator.findSimplestConstructor}: the (ProxyLink)
+     * constructor first, else the one with the fewest parameters, among non-private constructors;
+     * {@code null} when there is none.
+     */
+    private static Constructor<?> simplestConstructor(Class<?> type) {
+        Constructor<?> chosen = null;
+        for (Constructor<?> c : type.getDeclaredConstructors()) {
+            if (!Modifier.isPrivate(c.getModifiers())) {
+                if (ClientProxyShape.isProxyLinkConstructor(c)) {
+                    return c;
+                }
+                if (chosen == null || c.getParameterCount() < chosen.getParameterCount()) {
+                    chosen = c;
+                }
+            }
+        }
+        return chosen;
+    }
+
+    /**
+     * Every overridable method the proxy would forward (walking the hierarchy, as the bytecode
+     * shape does) must be public; a non-static final method makes the type unproxyable (§3.10).
+     */
+    private static Reason methodsVerdict(Class<?> type) {
         for (Class<?> c = type; c != null && c != Object.class; c = c.getSuperclass()) {
             for (Method m : c.getDeclaredMethods()) {
-                int mm = m.getModifiers();
-                if (Modifier.isStatic(mm) || Modifier.isPrivate(mm)) {
-                    continue;
-                }
-                if (m.isSynthetic() || m.isBridge()) {
-                    continue;
-                }
-                var name = m.getName();
-                if (name.startsWith("$$")
-                        || (name.equals("finalize") && m.getParameterCount() == 0)
-                        || (name.equals("clone") && m.getParameterCount() == 0)) {
-                    continue;
-                }
-                if (Modifier.isFinal(mm)) {
-                    return Reason.FINAL_VIRTUALS;
-                }
-                if (Modifier.isAbstract(mm)) {
-                    continue;
-                }
-                if (!Modifier.isPublic(mm)) {
-                    return Modifier.isProtected(mm)
-                            ? Reason.PROTECTED_VIRTUALS
-                            : Reason.PACKAGE_PRIVATE_VIRTUALS;
+                var verdict = methodVerdict(m);
+                if (!verdict.eligible()) {
+                    return verdict;
                 }
             }
         }
         return Reason.ELIGIBLE;
+    }
+
+    private static Reason methodVerdict(Method m) {
+        if (!isForwarded(m)) {
+            return Reason.ELIGIBLE;
+        }
+        int mm = m.getModifiers();
+        if (Modifier.isFinal(mm)) {
+            return Reason.FINAL_VIRTUALS;
+        }
+        if (Modifier.isAbstract(mm) || Modifier.isPublic(mm)) {
+            return Reason.ELIGIBLE;
+        }
+        return Modifier.isProtected(mm) ? Reason.PROTECTED_VIRTUALS : Reason.PACKAGE_PRIVATE_VIRTUALS;
+    }
+
+    /** Whether a proxy forwards {@code m}: an overridable method that is neither generated nor a finalizer or clone. */
+    private static boolean isForwarded(Method m) {
+        int mm = m.getModifiers();
+        if (Modifier.isStatic(mm) || Modifier.isPrivate(mm) || m.isSynthetic() || m.isBridge()) {
+            return false;
+        }
+        var name = m.getName();
+        return !(name.startsWith("$$")
+                || (name.equals("finalize") && m.getParameterCount() == 0)
+                || (name.equals("clone") && m.getParameterCount() == 0));
     }
 }

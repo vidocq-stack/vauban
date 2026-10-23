@@ -26,7 +26,9 @@ import io.vidocq.vauban.indexer.codegen.MethodInvoke;
 import java.lang.classfile.Annotation;
 import io.vidocq.vauban.core.codegen.GeneratedClassFile;
 
+import java.lang.classfile.ClassBuilder;
 import java.lang.classfile.ClassFile;
+import java.lang.classfile.CodeBuilder;
 import java.lang.classfile.Label;
 import java.lang.classfile.attribute.RuntimeVisibleAnnotationsAttribute;
 import java.lang.constant.ClassDesc;
@@ -87,6 +89,11 @@ public final class ComponentProviderClassGenerator {
             MethodTypeDesc.of(ConstantDescs.CD_void, ConstantDescs.CD_MethodHandles_Lookup);
     private static final MethodTypeDesc MTD_coverageOf = MethodTypeDesc.of(CD_Coverage, CD_Generator,
             CD_String.arrayType(), CD_String.arrayType(), CD_String.arrayType(), CD_String.arrayType());
+    /** {@code invoke(Object target, String className, String methodId, Object[] args)}. */
+    private static final MethodTypeDesc MTD_invoke =
+            MethodTypeDesc.of(CD_Object, CD_Object, CD_String, CD_String, CD_Object.arrayType());
+    private static final String EQUALS = "equals";
+    private static final String CREATE = "create";
 
     /**
      * The most keys one {@code coverage()} method holds: each costs 8 bytes of bytecode ({@code dup}, index,
@@ -107,7 +114,25 @@ public final class ComponentProviderClassGenerator {
     public record ProducerProxy(String key, String proxyFqn) {}
 
     /** A generated class: its fully-qualified name and its bytecode. */
-    public record Generated(String className, byte[] bytecode) {}
+    public record Generated(String className, byte[] bytecode) {
+
+        /** Equal to a generated class of the same name and the same bytes. */
+        @Override
+        public boolean equals(Object other) {
+            return other instanceof Generated(var otherName, var otherBytecode)
+                    && className.equals(otherName) && java.util.Arrays.equals(bytecode, otherBytecode);
+        }
+
+        @Override
+        public int hashCode() {
+            return 31 * className.hashCode() + java.util.Arrays.hashCode(bytecode);
+        }
+
+        @Override
+        public String toString() {
+            return "Generated[className=" + className + ", bytecode=" + bytecode.length + " bytes]";
+        }
+    }
 
     /**
      * @param providerClassName fully-qualified name of the provider to generate (in a package of
@@ -193,308 +218,284 @@ public final class ComponentProviderClassGenerator {
             // absent at runtime. Neutral for Vauban, which loads it via ServiceLoader, not scanning.
             clb.with(RuntimeVisibleAnnotationsAttribute.of(Annotation.of(CD_Vetoed)));
 
-            // public no-arg constructor (required so ServiceLoader can instantiate the provider)
-            clb.withMethodBody(ConstantDescs.INIT_NAME, MTD_void, ClassFile.ACC_PUBLIC, cob -> {
-                cob.aload(0);
-                cob.invokespecial(CD_Object, ConstantDescs.INIT_NAME, MTD_void);
-                cob.return_();
-            });
-
-            // public Object create(String className) {
-            //     if (className.equals("a.B")) return new a.B();
-            //     ...
-            //     return null;
-            // }
-            clb.withMethodBody("create", MTD_create, ClassFile.ACC_PUBLIC, cob -> {
-                for (var c : noArg) {
-                    var beanCD = ClassDesc.of(c.fqn());
-                    var next = cob.newLabel();
-                    cob.aload(1);
-                    cob.ldc(c.fqn());
-                    cob.invokevirtual(CD_String, "equals", MTD_String_equals);
-                    cob.ifeq(next);
-                    cob.new_(beanCD);
-                    cob.dup();
-                    cob.invokespecial(beanCD, ConstantDescs.INIT_NAME, MTD_void);
-                    cob.areturn();
-                    cob.labelBinding(next);
-                }
-                cob.aconst_null();
-                cob.areturn();
-            });
-
-            // Emit create(String, Object[]) only when there are injected-constructor beans, so the
-            // SPI default (which delegates to create(String)) stays in force otherwise.
-            //
-            // public Object create(String className, Object[] args) {
-            //     if (args == null || args.length == 0) return create(className);
-            //     if (className.equals("a.Svc")) return new a.Svc((Dep) args[0], …);
-            //     ...
-            //     return null;
-            // }
-            // slots: 0=this, 1=className, 2=args
+            emitConstructor(clb);
+            emitCreate(clb, noArg);
+            // Only when there are injected-constructor beans, so the SPI default (which delegates
+            // to create(String)) stays in force otherwise.
             if (!withArgs.isEmpty()) {
-                clb.withMethodBody("create", MTD_create2, ClassFile.ACC_PUBLIC, cob -> {
-                    var delegate = cob.newLabel();
-                    // if (args == null || args.length == 0) return create(className);
-                    cob.aload(2);
-                    cob.ifnull(delegate);
-                    cob.aload(2);
-                    cob.arraylength();
-                    cob.ifeq(delegate);
-                    for (var c : withArgs) {
-                        var beanCD = ClassDesc.of(c.fqn());
-                        var next = cob.newLabel();
-                        cob.aload(1);
-                        cob.ldc(c.fqn());
-                        cob.invokevirtual(CD_String, "equals", MTD_String_equals);
-                        cob.ifeq(next);
-                        cob.new_(beanCD);
-                        cob.dup();
-                        var params = c.ctorParamTypes();
-                        var paramDescs = new ClassDesc[params.size()];
-                        for (int i = 0; i < params.size(); i++) {
-                            cob.aload(2);
-                            loadIntConstant(cob, i);
-                            cob.aaload();
-                            var paramCD = resolveFieldTypeDesc(params.get(i));
-                            paramDescs[i] = paramCD;
-                            if (!paramCD.equals(CD_Object)) {
-                                cob.checkcast(paramCD);
-                            }
-                        }
-                        cob.invokespecial(beanCD, ConstantDescs.INIT_NAME,
-                                MethodTypeDesc.of(ConstantDescs.CD_void, paramDescs));
-                        cob.areturn();
-                        cob.labelBinding(next);
-                    }
-                    cob.aconst_null();
-                    cob.areturn();
-                    // delegate: return create(className);
-                    cob.labelBinding(delegate);
-                    cob.aload(0);
-                    cob.aload(1);
-                    cob.invokevirtual(providerCD, "create", MTD_create);
-                    cob.areturn();
-                });
+                emitCreateWithArgs(clb, withArgs, providerCD);
             }
-
-            // public boolean injectField(Object bean, String className, String fieldName, Object value) {
-            //     if (className.equals("a.B") && fieldName.equals("f")) {
-            //         ((a.B) bean).f = (FieldType) value;
-            //         return true;
-            //     }
-            //     ...
-            //     return false;
-            // }
-            clb.withMethodBody("injectField", MTD_injectField, ClassFile.ACC_PUBLIC, cob -> {
-                for (var fi : fieldInjects) {
-                    var declCD = ClassDesc.of(fi.declaringClassFqn());
-                    var fieldTypeCD = resolveFieldTypeDesc(fi.fieldTypeErasure());
-                    Label next = cob.newLabel();
-                    // if (!className.equals(declFqn)) goto next
-                    cob.aload(2);
-                    cob.ldc(fi.declaringClassFqn());
-                    cob.invokevirtual(CD_String, "equals", MTD_String_equals);
-                    cob.ifeq(next);
-                    // if (!fieldName.equals(thatField)) goto next
-                    cob.aload(3);
-                    cob.ldc(fi.fieldName());
-                    cob.invokevirtual(CD_String, "equals", MTD_String_equals);
-                    cob.ifeq(next);
-                    // ((Decl) bean).field = (FieldType) value
-                    cob.aload(1);
-                    cob.checkcast(declCD);
-                    cob.aload(4);
-                    if (!fieldTypeCD.equals(CD_Object)) {
-                        cob.checkcast(fieldTypeCD);
-                    }
-                    cob.putfield(declCD, fi.fieldName(), fieldTypeCD);
-                    cob.iconst_1();
-                    cob.ireturn();
-                    cob.labelBinding(next);
-                }
-                cob.iconst_0();
-                cob.ireturn();
-            });
-
-            // Emit invoke() only when there are methods to dispatch, to keep the class minimal.
-            //
-            // public Object invoke(Object target, String className, String methodId, Object[] args) {
-            //     if (className.equals("a.B")) {
-            //         if (methodId.equals("m(java.lang.String)")) {
-            //             ((a.B) target).m((String) args[0]);
-            //             return null;           // void method — invoked, not NOT_INVOKED
-            //         }
-            //         if (methodId.equals("produce()")) {
-            //             return ((a.B) target).produce();
-            //         }
-            //     }
-            //     return VaubanComponentProvider.NOT_INVOKED;  // sentinel: not owned
-            // }
+            emitInjectField(clb, fieldInjects);
+            // Only when there are methods to dispatch, to keep the class minimal.
             if (!methodInvokes.isEmpty()) {
-                // Signature: (Object, String, String, Object[]) -> Object
-                // slots: 0=this, 1=target, 2=className, 3=methodId, 4=args
-                var MTD_invoke = MethodTypeDesc.of(CD_Object, CD_Object, CD_String, CD_String, CD_Object.arrayType());
-                clb.withMethodBody("invoke", MTD_invoke, ClassFile.ACC_PUBLIC, cob -> {
-                    // Group by declaring class for a two-level if-chain.
-                    // Build an ordered list of distinct declaring classes (preserving first-seen order).
-                    var classOrder = new ArrayList<String>();
-                    for (var mi : methodInvokes) {
-                        if (!classOrder.contains(mi.declaringClassFqn())) {
-                            classOrder.add(mi.declaringClassFqn());
-                        }
-                    }
-
-                    for (var declFqn : classOrder) {
-                        var declCD = ClassDesc.of(declFqn);
-                        var nextClass = cob.newLabel();
-                        // if (!className.equals(declFqn)) goto nextClass
-                        cob.aload(2);
-                        cob.ldc(declFqn);
-                        cob.invokevirtual(CD_String, "equals", MTD_String_equals);
-                        cob.ifeq(nextClass);
-
-                        for (var mi : methodInvokes) {
-                            if (!mi.declaringClassFqn().equals(declFqn)) continue;
-                            var nextMethod = cob.newLabel();
-                            var key = mi.methodId();
-                            // if (!methodId.equals(key)) goto nextMethod
-                            cob.aload(3);
-                            cob.ldc(key);
-                            cob.invokevirtual(CD_String, "equals", MTD_String_equals);
-                            cob.ifeq(nextMethod);
-
-                            // Receiver for instance methods
-                            if (!mi.isStatic()) {
-                                cob.aload(1);
-                                cob.checkcast(declCD);
-                            }
-                            // Load and cast each argument from the args array (slot 4)
-                            var params = mi.paramErasures();
-                            for (int i = 0; i < params.size(); i++) {
-                                cob.aload(4);
-                                loadIntConstant(cob, i);
-                                cob.aaload();
-                                var paramCD = resolveFieldTypeDesc(params.get(i));
-                                if (!paramCD.equals(CD_Object)) {
-                                    cob.checkcast(paramCD);
-                                }
-                            }
-                            // Build the method descriptor: (P0,P1,...) -> ReturnType
-                            var paramDescs = params.stream()
-                                    .map(ComponentProviderClassGenerator::resolveFieldTypeDesc)
-                                    .toArray(ClassDesc[]::new);
-                            ClassDesc retCD = mi.isVoid() ? ConstantDescs.CD_void
-                                    : (mi.returnErasure() == null ? CD_Object
-                                            : resolveFieldTypeDesc(mi.returnErasure()));
-                            var mtdMethod = MethodTypeDesc.of(retCD, paramDescs);
-
-                            if (mi.isStatic()) {
-                                cob.invokestatic(declCD, mi.methodName(), mtdMethod);
-                            } else {
-                                cob.invokevirtual(declCD, mi.methodName(), mtdMethod);
-                            }
-
-                            if (mi.isVoid()) {
-                                // void method: successfully invoked — return null (not NOT_INVOKED)
-                                cob.aconst_null();
-                            }
-                            cob.areturn();
-                            cob.labelBinding(nextMethod);
-                        }
-                        cob.labelBinding(nextClass);
-                    }
-                    // No className/methodId matched — return the NOT_INVOKED sentinel
-                    cob.getstatic(CD_Provider, "NOT_INVOKED", CD_Object);
-                    cob.areturn();
-                });
+                emitInvoke(clb, methodInvokes);
             }
-
-            // public Object createClientProxy(String proxyClassName, Supplier delegate) {
-            //     if (proxyClassName.equals("a.B_ClientProxy")) {
-            //         var p = new a.B_ClientProxy(); p.$$setDelegate(delegate); return p;
-            //     }
-            //     ...
-            //     return null;
-            // }
-            // The bytecode references the (bytecode) <Bean>_ClientProxy by binary name — no javac
-            // wall here, so the plugin path needs no source proxy (unlike the APT). slots: 0=this,
-            // 1=proxyClassName, 2=delegate.
             if (!clientProxyFqns.isEmpty() || !producerProxies.isEmpty()) {
-                clb.withMethodBody("createClientProxy", MTD_createClientProxy, ClassFile.ACC_PUBLIC, cob -> {
-                    for (var proxyFqn : clientProxyFqns) {
-                        var proxyCD = ClassDesc.of(proxyFqn);
-                        var next = cob.newLabel();
-                        cob.aload(1);
-                        cob.ldc(proxyFqn);
-                        cob.invokevirtual(CD_String, "equals", MTD_String_equals);
-                        cob.ifeq(next);
-                        cob.new_(proxyCD);
-                        cob.dup();
-                        cob.invokespecial(proxyCD, ConstantDescs.INIT_NAME, MTD_void); // new proxy()
-                        cob.dup();
-                        cob.aload(2);                                                  // delegate
-                        cob.invokevirtual(proxyCD, "$$setDelegate", MTD_setDelegate);
-                        cob.areturn();
-                        cob.labelBinding(next);
-                    }
-                    // Producer proxies (issue #42): the equals-key is the produced type, the
-                    // instantiated class is the proxy in the producer's package.
-                    for (var pp : producerProxies) {
-                        var proxyCD = ClassDesc.of(pp.proxyFqn());
-                        var next = cob.newLabel();
-                        cob.aload(1);
-                        cob.ldc(pp.key());
-                        cob.invokevirtual(CD_String, "equals", MTD_String_equals);
-                        cob.ifeq(next);
-                        cob.new_(proxyCD);
-                        cob.dup();
-                        cob.invokespecial(proxyCD, ConstantDescs.INIT_NAME, MTD_void);
-                        cob.dup();
-                        cob.aload(2);
-                        cob.invokevirtual(proxyCD, "$$setDelegate", MTD_setDelegate);
-                        cob.areturn();
-                        cob.labelBinding(next);
-                    }
-                    cob.aconst_null();
-                    cob.areturn();
-                });
+                emitCreateClientProxy(clb, clientProxyFqns, producerProxies);
             }
-
-            // public void grantModuleLookup(ModuleLookupGrant grant) {
-            //     grant.accept(MethodHandles.lookup());
-            // }
-            // The provider's own lookup — this class is written into the completed package, so it carries
-            // that package's module access — handed to the container for its managed classes (ModuleLookups).
-            clb.withMethodBody("grantModuleLookup", MTD_grantModuleLookup, ClassFile.ACC_PUBLIC, cob -> {
-                cob.aload(1);
-                cob.invokestatic(ConstantDescs.CD_MethodHandles, "lookup", MTD_lookup);
-                cob.invokevirtual(CD_Grant, "accept", MTD_accept);
-                cob.return_();
-            });
-
-            // public GeneratedCoverage coverage() {
-            //     return GeneratedCoverage.of(Generator.CLASS_FILE, new String[] {…}, …);
-            // }
-            // From the same lists as the switches above, so the declaration cannot diverge from the dispatch.
+            emitGrantModuleLookup(clb);
+            // From the same lists as the dispatch methods, so the declaration cannot diverge from it.
             if (declaresCoverage) {
-                clb.withMethodBody("coverage", MTD_coverage, ClassFile.ACC_PUBLIC, cob -> {
-                    cob.getstatic(CD_Generator, "CLASS_FILE", CD_Generator);
-                    pushStringArray(cob, instantiatedKeys);
-                    pushStringArray(cob, fieldKeys);
-                    pushStringArray(cob, methodKeys);
-                    pushStringArray(cob, proxyKeys);
-                    cob.invokestatic(CD_Coverage, "of", MTD_coverageOf);
-                    cob.areturn();
-                });
+                emitCoverage(clb, List.of(instantiatedKeys, fieldKeys, methodKeys, proxyKeys));
             }
         });
         return new Generated(providerClassName, bytecode);
     }
 
+    /** The public no-arg constructor, required so that {@code ServiceLoader} can instantiate the provider. */
+    private static void emitConstructor(ClassBuilder clb) {
+        clb.withMethodBody(ConstantDescs.INIT_NAME, MTD_void, ClassFile.ACC_PUBLIC, cob -> {
+            cob.aload(0);
+            cob.invokespecial(CD_Object, ConstantDescs.INIT_NAME, MTD_void);
+            cob.return_();
+        });
+    }
+
+    /**
+     * {@code create(String className)}: a chain of {@code className.equals("a.B")} tests, each
+     * returning {@code new a.B()}, then {@code null}.
+     */
+    private static void emitCreate(ClassBuilder clb, List<Component> noArg) {
+        clb.withMethodBody(CREATE, MTD_create, ClassFile.ACC_PUBLIC, cob -> {
+            for (var c : noArg) {
+                var beanCD = ClassDesc.of(c.fqn());
+                var next = cob.newLabel();
+                emitEqualsTest(cob, 1, c.fqn(), next);
+                cob.new_(beanCD);
+                cob.dup();
+                cob.invokespecial(beanCD, ConstantDescs.INIT_NAME, MTD_void);
+                cob.areturn();
+                cob.labelBinding(next);
+            }
+            cob.aconst_null();
+            cob.areturn();
+        });
+    }
+
+    /**
+     * {@code create(String className, Object[] args)}: delegates to {@code create(className)} when
+     * {@code args} is {@code null} or empty; otherwise a chain of {@code className.equals("a.Svc")}
+     * tests, each returning {@code new a.Svc((Dep) args[0], …)}, then {@code null}. Slots: 0 this,
+     * 1 className, 2 args.
+     */
+    private static void emitCreateWithArgs(ClassBuilder clb, List<Component> withArgs, ClassDesc providerCD) {
+        clb.withMethodBody(CREATE, MTD_create2, ClassFile.ACC_PUBLIC, cob -> {
+            var delegate = cob.newLabel();
+            cob.aload(2);
+            cob.ifnull(delegate);
+            cob.aload(2);
+            cob.arraylength();
+            cob.ifeq(delegate);
+            for (var c : withArgs) {
+                var beanCD = ClassDesc.of(c.fqn());
+                var next = cob.newLabel();
+                emitEqualsTest(cob, 1, c.fqn(), next);
+                cob.new_(beanCD);
+                cob.dup();
+                var paramDescs = emitArguments(cob, 2, c.ctorParamTypes());
+                cob.invokespecial(beanCD, ConstantDescs.INIT_NAME,
+                        MethodTypeDesc.of(ConstantDescs.CD_void, paramDescs));
+                cob.areturn();
+                cob.labelBinding(next);
+            }
+            cob.aconst_null();
+            cob.areturn();
+            cob.labelBinding(delegate);
+            cob.aload(0);
+            cob.aload(1);
+            cob.invokevirtual(providerCD, CREATE, MTD_create);
+            cob.areturn();
+        });
+    }
+
+    /**
+     * {@code injectField(Object bean, String className, String fieldName, Object value)}: for each
+     * field, when both names match, {@code ((a.B) bean).f = (FieldType) value} and {@code true};
+     * {@code false} when none does.
+     */
+    private static void emitInjectField(ClassBuilder clb, List<FieldInject> fieldInjects) {
+        clb.withMethodBody("injectField", MTD_injectField, ClassFile.ACC_PUBLIC, cob -> {
+            for (var fi : fieldInjects) {
+                var declCD = ClassDesc.of(fi.declaringClassFqn());
+                var fieldTypeCD = resolveFieldTypeDesc(fi.fieldTypeErasure());
+                Label next = cob.newLabel();
+                emitEqualsTest(cob, 2, fi.declaringClassFqn(), next);
+                emitEqualsTest(cob, 3, fi.fieldName(), next);
+                cob.aload(1);
+                cob.checkcast(declCD);
+                cob.aload(4);
+                if (!fieldTypeCD.equals(CD_Object)) {
+                    cob.checkcast(fieldTypeCD);
+                }
+                cob.putfield(declCD, fi.fieldName(), fieldTypeCD);
+                cob.iconst_1();
+                cob.ireturn();
+                cob.labelBinding(next);
+            }
+            cob.iconst_0();
+            cob.ireturn();
+        });
+    }
+
+    /**
+     * {@code invoke(Object target, String className, String methodId, Object[] args)}: a two-level
+     * chain, first on the declaring class, then on the method id. A matching method is called on
+     * {@code (a.B) target} with its arguments cast from {@code args}; a void one returns
+     * {@code null} — invoked — and anything unmatched returns
+     * {@code VaubanComponentProvider.NOT_INVOKED}, the sentinel for "not owned". Slots: 0 this,
+     * 1 target, 2 className, 3 methodId, 4 args.
+     */
+    private static void emitInvoke(ClassBuilder clb, List<MethodInvoke> methodInvokes) {
+        clb.withMethodBody("invoke", MTD_invoke, ClassFile.ACC_PUBLIC, cob -> {
+            // The distinct declaring classes, in first-seen order.
+            var classOrder = new ArrayList<String>();
+            for (var mi : methodInvokes) {
+                if (!classOrder.contains(mi.declaringClassFqn())) {
+                    classOrder.add(mi.declaringClassFqn());
+                }
+            }
+            for (var declFqn : classOrder) {
+                var declCD = ClassDesc.of(declFqn);
+                var nextClass = cob.newLabel();
+                emitEqualsTest(cob, 2, declFqn, nextClass);
+                for (var mi : methodInvokes) {
+                    if (mi.declaringClassFqn().equals(declFqn)) {
+                        emitInvokeCase(cob, declCD, mi);
+                    }
+                }
+                cob.labelBinding(nextClass);
+            }
+            cob.getstatic(CD_Provider, "NOT_INVOKED", CD_Object);
+            cob.areturn();
+        });
+    }
+
+    /** One method of {@link #emitInvoke}: the test on its id, the call, and its result. */
+    private static void emitInvokeCase(CodeBuilder cob, ClassDesc declCD, MethodInvoke mi) {
+        var nextMethod = cob.newLabel();
+        emitEqualsTest(cob, 3, mi.methodId(), nextMethod);
+        // Receiver for instance methods
+        if (!mi.isStatic()) {
+            cob.aload(1);
+            cob.checkcast(declCD);
+        }
+        var paramDescs = emitArguments(cob, 4, mi.paramErasures());
+        var mtdMethod = MethodTypeDesc.of(returnDesc(mi), paramDescs);
+        if (mi.isStatic()) {
+            cob.invokestatic(declCD, mi.methodName(), mtdMethod);
+        } else {
+            cob.invokevirtual(declCD, mi.methodName(), mtdMethod);
+        }
+        if (mi.isVoid()) {
+            // void method: successfully invoked — return null (not NOT_INVOKED)
+            cob.aconst_null();
+        }
+        cob.areturn();
+        cob.labelBinding(nextMethod);
+    }
+
+    /** The return type of a dispatched method: {@code void}, its erasure, or {@code Object} when none is known. */
+    private static ClassDesc returnDesc(MethodInvoke mi) {
+        if (mi.isVoid()) {
+            return ConstantDescs.CD_void;
+        }
+        return mi.returnErasure() == null ? CD_Object : resolveFieldTypeDesc(mi.returnErasure());
+    }
+
+    /**
+     * {@code createClientProxy(String proxyClassName, Supplier delegate)}: for each proxy, when the
+     * name matches, a new proxy whose {@code $$setDelegate(delegate)} was called; {@code null} when
+     * none does. The bytecode references the (bytecode) {@code <Bean>_ClientProxy} by binary name —
+     * no javac wall here, so the plugin path needs no source proxy (unlike the APT). Slots: 0 this,
+     * 1 proxyClassName, 2 delegate.
+     */
+    private static void emitCreateClientProxy(ClassBuilder clb, List<String> clientProxyFqns,
+            List<ProducerProxy> producerProxies) {
+        clb.withMethodBody("createClientProxy", MTD_createClientProxy, ClassFile.ACC_PUBLIC, cob -> {
+            for (var proxyFqn : clientProxyFqns) {
+                emitProxyCase(cob, proxyFqn, proxyFqn);
+            }
+            // Producer proxies (issue #42): the equals-key is the produced type, the
+            // instantiated class is the proxy in the producer's package.
+            for (var pp : producerProxies) {
+                emitProxyCase(cob, pp.key(), pp.proxyFqn());
+            }
+            cob.aconst_null();
+            cob.areturn();
+        });
+    }
+
+    /** One proxy of {@link #emitCreateClientProxy}: matched on {@code key}, an instance of {@code proxyFqn}. */
+    private static void emitProxyCase(CodeBuilder cob, String key, String proxyFqn) {
+        var proxyCD = ClassDesc.of(proxyFqn);
+        var next = cob.newLabel();
+        emitEqualsTest(cob, 1, key, next);
+        cob.new_(proxyCD);
+        cob.dup();
+        cob.invokespecial(proxyCD, ConstantDescs.INIT_NAME, MTD_void); // new proxy()
+        cob.dup();
+        cob.aload(2);                                                  // delegate
+        cob.invokevirtual(proxyCD, "$$setDelegate", MTD_setDelegate);
+        cob.areturn();
+        cob.labelBinding(next);
+    }
+
+    /**
+     * {@code grantModuleLookup(ModuleLookupGrant grant)}: {@code grant.accept(MethodHandles.lookup())}.
+     * The provider's own lookup — this class is written into the completed package, so it carries
+     * that package's module access — handed to the container for its managed classes (ModuleLookups).
+     */
+    private static void emitGrantModuleLookup(ClassBuilder clb) {
+        clb.withMethodBody("grantModuleLookup", MTD_grantModuleLookup, ClassFile.ACC_PUBLIC, cob -> {
+            cob.aload(1);
+            cob.invokestatic(ConstantDescs.CD_MethodHandles, "lookup", MTD_lookup);
+            cob.invokevirtual(CD_Grant, "accept", MTD_accept);
+            cob.return_();
+        });
+    }
+
+    /**
+     * {@code coverage()}: {@code GeneratedCoverage.of(Generator.CLASS_FILE, …)} with one string array
+     * per list of {@code keys} — instantiated classes, fields, methods and proxies, in that order.
+     */
+    private static void emitCoverage(ClassBuilder clb, List<List<String>> keys) {
+        clb.withMethodBody("coverage", MTD_coverage, ClassFile.ACC_PUBLIC, cob -> {
+            cob.getstatic(CD_Generator, "CLASS_FILE", CD_Generator);
+            keys.forEach(values -> pushStringArray(cob, values));
+            cob.invokestatic(CD_Coverage, "of", MTD_coverageOf);
+            cob.areturn();
+        });
+    }
+
+    /** {@code if (!<local slot>.equals(value)) goto next}, the local being a {@code String}. */
+    private static void emitEqualsTest(CodeBuilder cob, int slot, String value, Label next) {
+        cob.aload(slot);
+        cob.ldc(value);
+        cob.invokevirtual(CD_String, EQUALS, MTD_String_equals);
+        cob.ifeq(next);
+    }
+
+    /**
+     * Pushes each element of the {@code Object[]} in local {@code argsSlot}, cast to its parameter
+     * type unless that is {@code Object}, and returns those types.
+     */
+    private static ClassDesc[] emitArguments(CodeBuilder cob, int argsSlot, List<String> params) {
+        var paramDescs = new ClassDesc[params.size()];
+        for (int i = 0; i < params.size(); i++) {
+            cob.aload(argsSlot);
+            loadIntConstant(cob, i);
+            cob.aaload();
+            var paramCD = resolveFieldTypeDesc(params.get(i));
+            paramDescs[i] = paramCD;
+            if (!paramCD.equals(CD_Object)) {
+                cob.checkcast(paramCD);
+            }
+        }
+        return paramDescs;
+    }
+
     /** Pushes {@code new String[] {values…}} on the stack. */
-    private static void pushStringArray(java.lang.classfile.CodeBuilder cob, List<String> values) {
+    private static void pushStringArray(CodeBuilder cob, List<String> values) {
         loadIntConstant(cob, values.size());
         cob.anewarray(CD_String);
         for (int i = 0; i < values.size(); i++) {
@@ -509,7 +510,7 @@ public final class ComponentProviderClassGenerator {
      * Emits the most compact bytecode instruction to push a small non-negative integer.
      * Uses {@code iconst_N} for 0–5, {@code bipush} for 6–127, {@code sipush} for 128–32767.
      */
-    private static void loadIntConstant(java.lang.classfile.CodeBuilder cob, int value) {
+    private static void loadIntConstant(CodeBuilder cob, int value) {
         switch (value) {
             case 0 -> cob.iconst_0();
             case 1 -> cob.iconst_1();
