@@ -22,12 +22,22 @@ package io.vidocq.vauban.maven.generate.produceronly;
 import io.vidocq.vauban.maven.generate.paths.Gadget;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.enterprise.context.Dependent;
+import jakarta.enterprise.context.RequestScoped;
 import jakarta.enterprise.inject.Produces;
 
 /** Not a bean itself: its package holds a producer and no top-level component. */
 public final class Outlet {
 
     private Outlet() {
+    }
+
+    /** A nested normal-scoped bean: the plugin weaves no entry constructor into it, it keeps the runtime path. */
+    @RequestScoped
+    public static class Socket {
+
+        public String plug() {
+            return "plug";
+        }
     }
 
     /** A nested producer holder: its package gets a provider for the produced proxy alone. */
