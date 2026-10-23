@@ -196,19 +196,30 @@ public final class ComponentProviderGenerator {
             List<FieldInject> fieldInjects, List<MethodInvoke> methodInvokes,
             List<String> clientProxyFqns, List<ProducerProxy> producerProxies,
             AnnotationArtefacts.Rendered annotations, java.util.Set<String> bytecodeClasses) {
-        return generateFrom(packageName, SIMPLE_NAME, components, fieldInjects, methodInvokes, clientProxyFqns,
-                producerProxies, annotations, bytecodeClasses);
+        return generateFrom(packageName, SIMPLE_NAME, new Contents(components, fieldInjects, methodInvokes,
+                clientProxyFqns, producerProxies, annotations, bytecodeClasses));
     }
+
+    /**
+     * What a provider covers, beside its package and name.
+     *
+     * @param components      components to instantiate, no-arg and/or injected-constructor
+     * @param fieldInjects    assignable fields in the provider's own package
+     * @param methodInvokes   methods in the provider's own package the provider can call directly
+     * @param clientProxyFqns the {@code <Bean>_ClientProxy} classes the provider instantiates in-module
+     * @param producerProxies the build-time proxies of normal-scoped producers (issue #42)
+     * @param annotations     what this package's own annotation types declare (vauban#70)
+     * @param bytecodeClasses the binary names of the classes the processor emitted as bytecode
+     */
+    public record Contents(List<Component> components, List<FieldInject> fieldInjects,
+            List<MethodInvoke> methodInvokes, List<String> clientProxyFqns, List<ProducerProxy> producerProxies,
+            AnnotationArtefacts.Rendered annotations, java.util.Set<String> bytecodeClasses) {}
 
     /** {@link #generateFrom(String, List, List, List, List, List, AnnotationArtefacts.Rendered, java.util.Set)}
      * under {@code simpleName}: {@link #SIMPLE_NAME}, or {@link #TEST_SIMPLE_NAME} for a test compilation. */
-    public static Generated generateFrom(String packageName, String simpleName, List<Component> components,
-            List<FieldInject> fieldInjects, List<MethodInvoke> methodInvokes,
-            List<String> clientProxyFqns, List<ProducerProxy> producerProxies,
-            AnnotationArtefacts.Rendered annotations, java.util.Set<String> bytecodeClasses) {
+    public static Generated generateFrom(String packageName, String simpleName, Contents contents) {
         var className = packageName.isEmpty() ? simpleName : packageName + "." + simpleName;
-        var noArg = components.stream().filter(Component::noArg).toList();
-        var withArgs = components.stream().filter(c -> !c.noArg()).toList();
+        var components = contents.components();
 
         var sb = new StringBuilder();
         if (!packageName.isEmpty()) {
@@ -222,215 +233,36 @@ public final class ComponentProviderGenerator {
         sb.append("public final class ").append(simpleName)
                 .append(" implements ").append(SPI).append(" {\n");
 
-        sb.append("    @Override\n");
-        sb.append("    public Object create(String className) {\n");
-        // A constructor may declare checked exceptions (vauban#145): see sneaky() below.
-        sb.append("        try {\n");
-        sb.append("        return switch (className) {\n");
-        for (var c : noArg) {
-            if (bytecodeClasses.contains(c.fqn())) {
-                sb.append("            case \"").append(c.fqn()).append("\" -> ").append(CONSTRUCT)
-                        .append("(\"").append(c.fqn()).append("\", new Class<?>[0], new Object[0]);\n");
-                continue;
-            }
-            sb.append("            case \"").append(c.fqn()).append("\" -> new ")
-                    .append(c.sourceFqn()).append("();\n");
-        }
-        sb.append("            default -> null;\n");
-        sb.append("        };\n");
-        sb.append("        } catch (Throwable $$t) {\n");
-        sb.append("            throw sneaky($$t);\n");
-        sb.append("        }\n");
-        sb.append("    }\n");
-
+        appendCreate(sb, components.stream().filter(Component::noArg).toList(), contents.bytecodeClasses());
+        var withArgs = components.stream().filter(c -> !c.noArg()).toList();
         if (!withArgs.isEmpty()) {
-            sb.append("    @Override\n");
-            sb.append("    @SuppressWarnings({\"unchecked\", \"rawtypes\"})\n");
-            sb.append("    public Object create(String className, Object[] args) {\n");
-            sb.append("        if (args == null || args.length == 0) return create(className);\n");
-            sb.append("        try {\n");
-            sb.append("        return switch (className) {\n");
-            for (var c : withArgs) {
-                if (bytecodeClasses.contains(c.fqn())) {
-                    sb.append("            case \"").append(c.fqn()).append("\" -> ").append(CONSTRUCT)
-                            .append("(\"").append(c.fqn()).append("\", new Class<?>[] {")
-                            .append(c.ctorParamTypes().stream().map(t -> t + ".class")
-                                    .collect(Collectors.joining(", ")))
-                            .append("}, args);\n");
-                    continue;
-                }
-                sb.append("            case \"").append(c.fqn()).append("\" -> new ")
-                        .append(c.sourceFqn()).append("(");
-                var params = c.ctorParamTypes();
-                for (int i = 0; i < params.size(); i++) {
-                    if (i > 0) sb.append(", ");
-                    sb.append("(").append(params.get(i)).append(") args[").append(i).append("]");
-                }
-                sb.append(");\n");
-            }
-            sb.append("            default -> null;\n");
-            sb.append("        };\n");
-            sb.append("        } catch (Throwable $$t) {\n");
-            sb.append("            throw sneaky($$t);\n");
-            sb.append("        }\n");
-            sb.append("    }\n");
+            appendCreateWithArgs(sb, withArgs, contents.bytecodeClasses());
         }
-
-        if (!fieldInjects.isEmpty()) {
-            // Group field injections by declaring class for the outer switch.
-            Map<String, List<FieldInject>> byClass = fieldInjects.stream()
-                    .collect(Collectors.groupingBy(FieldInject::declaringClassFqn,
-                            java.util.LinkedHashMap::new, Collectors.toList()));
-
-            sb.append("    @Override\n");
-            sb.append("    @SuppressWarnings({\"unchecked\", \"rawtypes\"})\n");
-            sb.append("    public boolean injectField(Object bean, String className, String fieldName, Object value) {\n");
-            sb.append("        switch (className) {\n");
-            for (var entry : byClass.entrySet()) {
-                sb.append("            case \"").append(entry.getKey()).append("\" -> {\n");
-                var ownerSourceName = components.stream().filter(c -> c.fqn().equals(entry.getKey()))
-                        .map(Component::sourceFqn).findFirst().orElse(entry.getKey());
-                sb.append("                var b = (").append(ownerSourceName).append(") bean;\n");
-                sb.append("                switch (fieldName) {\n");
-                for (var fi : entry.getValue()) {
-                    sb.append("                    case \"").append(fi.fieldName()).append("\" -> { ")
-                            .append("b.").append(fi.fieldName())
-                            .append(" = (").append(fi.fieldTypeErasure()).append(") value; return true; }\n");
-                }
-                sb.append("                    default -> { return false; }\n");
-                sb.append("                }\n");
-                sb.append("            }\n");
-            }
-            sb.append("            default -> { return false; }\n");
-            sb.append("        }\n");
-            sb.append("    }\n");
+        if (!contents.fieldInjects().isEmpty()) {
+            appendInjectField(sb, components, contents.fieldInjects());
         }
-
-        if (!methodInvokes.isEmpty()) {
-            // Group method invocations by declaring class, preserving insertion order.
-            Map<String, List<MethodInvoke>> byClass = methodInvokes.stream()
-                    .collect(Collectors.groupingBy(MethodInvoke::declaringClassFqn,
-                            java.util.LinkedHashMap::new, Collectors.toList()));
-
-            sb.append("    @Override\n");
-            sb.append("    @SuppressWarnings({\"unchecked\", \"rawtypes\"})\n");
-            sb.append("    public Object invoke(Object target, String className, String methodId, Object[] args) {\n");
-            // Observers, producers, disposers and initializers may declare checked exceptions
-            // (vauban#145); the SPI says they propagate as is: see sneaky() below.
-            sb.append("        try {\n");
-            sb.append("        switch (className) {\n");
-            for (var entry : byClass.entrySet()) {
-                var declClass = entry.getKey();
-                sb.append("            case \"").append(declClass).append("\" -> {\n");
-                sb.append("                switch (methodId) {\n");
-                for (var mi : entry.getValue()) {
-                    sb.append("                    case \"").append(mi.methodId()).append("\" -> {\n");
-                    // Build the actual call expression
-                    var call = new StringBuilder();
-                    if (mi.isStatic()) {
-                        call.append(declClass).append(".").append(mi.methodName()).append("(");
-                    } else {
-                        call.append("((").append(declClass).append(") target).").append(mi.methodName()).append("(");
-                    }
-                    var erasures = mi.paramErasures();
-                    for (int i = 0; i < erasures.size(); i++) {
-                        if (i > 0) call.append(", ");
-                        call.append("(").append(erasures.get(i)).append(") args[").append(i).append("]");
-                    }
-                    call.append(")");
-
-                    if (mi.isVoid()) {
-                        sb.append("                        ").append(call).append(";\n");
-                        sb.append("                        return null;\n");
-                    } else {
-                        sb.append("                        return ").append(call).append(";\n");
-                    }
-                    sb.append("                    }\n");
-                }
-                sb.append("                    default -> { return ").append(SPI).append(".NOT_INVOKED; }\n");
-                sb.append("                }\n");
-                sb.append("            }\n");
-            }
-            sb.append("            default -> { return ").append(SPI).append(".NOT_INVOKED; }\n");
-            sb.append("        }\n");
-            sb.append("        } catch (Throwable $$t) {\n");
-            sb.append("            throw sneaky($$t);\n");
-            sb.append("        }\n");
-            sb.append("    }\n");
+        if (!contents.methodInvokes().isEmpty()) {
+            appendInvoke(sb, contents.methodInvokes());
         }
-
-        if (!clientProxyFqns.isEmpty() || !producerProxies.isEmpty()) {
-            // In-module client-proxy instantiation for this package's normal-scoped beans:
-            // `new <Bean>_ClientProxy()` + `$$setDelegate(delegate)` (both in-package, the proxy being
-            // a sibling generated source), so the container creates the proxy without reflection and
-            // the bean package needs no `opens`/`exports`. Producer proxies (issue #42) are keyed by
-            // the produced type but instantiated from this (the producer's) package.
-            sb.append("    @Override\n");
-            sb.append("    @SuppressWarnings({\"unchecked\", \"rawtypes\"})\n");
-            sb.append("    public Object createClientProxy(String proxyClassName, java.util.function.Supplier<?> delegate) {\n");
-            // A proxy constructor declares Throwable: its super constructor may throw a checked exception.
-            sb.append("        try {\n");
-            sb.append("        switch (proxyClassName) {\n");
-            for (var proxyFqn : clientProxyFqns) {
-                if (bytecodeClasses.contains(proxyFqn)) {
-                    appendBytecodeProxyCase(sb, proxyFqn, proxyFqn);
-                    continue;
-                }
-                sb.append("            case \"").append(proxyFqn).append("\" -> {\n");
-                sb.append("                var p = new ").append(proxyFqn).append("();\n");
-                sb.append("                p.$$setDelegate(delegate);\n");
-                sb.append("                return p;\n");
-                sb.append("            }\n");
-            }
-            for (var pp : producerProxies) {
-                if (bytecodeClasses.contains(pp.proxyFqn())) {
-                    appendBytecodeProxyCase(sb, pp.key(), pp.proxyFqn());
-                    continue;
-                }
-                sb.append("            case \"").append(pp.key()).append("\" -> {\n");
-                sb.append("                var p = new ").append(pp.proxyFqn()).append("();\n");
-                sb.append("                p.$$setDelegate(delegate);\n");
-                sb.append("                return p;\n");
-                sb.append("            }\n");
-            }
-            sb.append("            default -> { return null; }\n");
-            sb.append("        }\n");
-            sb.append("        } catch (Throwable $$t) {\n");
-            sb.append("            throw sneaky($$t);\n");
-            sb.append("        }\n");
-            sb.append("    }\n");
+        if (!contents.clientProxyFqns().isEmpty() || !contents.producerProxies().isEmpty()) {
+            appendCreateClientProxy(sb, contents);
         }
 
         // grantModuleLookup(): the provider's own lookup, handed to the container through a grant only the
         // container can create; it passes it on for this package's managed classes (ModuleLookups).
-        sb.append("    @Override\n");
+        sb.append(OVERRIDE);
         sb.append("    public void grantModuleLookup(io.vidocq.vauban.api.ModuleLookupGrant grant) {\n");
         sb.append("        grant.accept(java.lang.invoke.MethodHandles.lookup());\n");
-        sb.append("    }\n");
+        sb.append(CLOSE_4);
 
-        // coverage(): what this provider runs in-module, from the same lists as the switches above, so the
-        // declaration cannot diverge from the dispatch. Diagnostics only (Vidocq dev console).
-        var proxyKeys = new java.util.ArrayList<>(clientProxyFqns);
-        producerProxies.forEach(pp -> proxyKeys.add(pp.key()));
-        sb.append("    @Override\n");
-        sb.append("    public io.vidocq.vauban.api.GeneratedCoverage coverage() {\n");
-        sb.append("        return io.vidocq.vauban.api.GeneratedCoverage.of(")
-                .append("io.vidocq.vauban.api.GeneratedCoverage.Generator.APT,\n");
-        sb.append("                ").append(stringArray(components.stream().map(Component::fqn).toList()))
-                .append(",\n");
-        sb.append("                ").append(stringArray(fieldInjects.stream()
-                .map(fi -> fi.declaringClassFqn() + "#" + fi.fieldName()).toList())).append(",\n");
-        sb.append("                ").append(stringArray(methodInvokes.stream()
-                .map(mi -> mi.declaringClassFqn() + "#" + mi.methodId()).toList())).append(",\n");
-        sb.append("                ").append(stringArray(proxyKeys)).append(");\n");
-        sb.append("    }\n");
+        appendCoverage(sb, contents);
 
-        if (!bytecodeClasses.isEmpty()) {
+        if (!contents.bytecodeClasses().isEmpty()) {
             appendBytecodeInstantiation(sb);
         }
 
-        sb.append(annotations.methods());
-        sb.append(annotations.literals());
+        sb.append(contents.annotations().methods());
+        sb.append(contents.annotations().literals());
 
         // Sneaky-throw, as in the intercepted subclasses: T appears only in `throws T`, so by JLS §18.4
         // it resolves to RuntimeException at every call site — the SPI methods need no throws clause,
@@ -438,9 +270,229 @@ public final class ComponentProviderGenerator {
         sb.append("    @SuppressWarnings(\"unchecked\")\n");
         sb.append("    private static <T extends Throwable> RuntimeException sneaky(Throwable t) throws T {\n");
         sb.append("        throw (T) t;\n");
-        sb.append("    }\n");
+        sb.append(CLOSE_4);
         sb.append("}\n");
         return new Generated(className, sb.toString());
+    }
+
+    private static final String OVERRIDE = "    @Override\n";
+    private static final String SUPPRESS_RAW = "    @SuppressWarnings({\"unchecked\", \"rawtypes\"})\n";
+    private static final String TRY_OPEN = "        try {\n";
+    private static final String CATCH_SNEAKY = "        } catch (Throwable $$t) {\n"
+            + "            throw sneaky($$t);\n"
+            + "        }\n";
+    private static final String CASE_OPEN = "            case \"";
+    private static final String CASE_BLOCK = "\" -> {\n";
+    private static final String DEFAULT_NULL = "            default -> null;\n";
+    private static final String SWITCH_EXPRESSION_END = "        };\n";
+    private static final String NO_ARG_CALL = "();\n";
+    private static final String CLOSE_4 = "    }\n";
+    private static final String CLOSE_8 = "        }\n";
+    private static final String CLOSE_12 = "            }\n";
+    private static final String CLOSE_16 = "                }\n";
+    private static final String COVERAGE_INDENT = "                ";
+    private static final String COVERAGE_SEPARATOR = ",\n";
+
+    /** {@code create(String)}: the no-arg components. */
+    private static void appendCreate(StringBuilder sb, List<Component> noArg, java.util.Set<String> bytecodeClasses) {
+        sb.append(OVERRIDE);
+        sb.append("    public Object create(String className) {\n");
+        // A constructor may declare checked exceptions (vauban#145): see sneaky() below.
+        sb.append(TRY_OPEN);
+        sb.append("        return switch (className) {\n");
+        for (var c : noArg) {
+            if (bytecodeClasses.contains(c.fqn())) {
+                sb.append(CASE_OPEN).append(c.fqn()).append("\" -> ").append(CONSTRUCT)
+                        .append("(\"").append(c.fqn()).append("\", new Class<?>[0], new Object[0]);\n");
+            } else {
+                sb.append(CASE_OPEN).append(c.fqn()).append("\" -> new ")
+                        .append(c.sourceFqn()).append(NO_ARG_CALL);
+            }
+        }
+        sb.append(DEFAULT_NULL);
+        sb.append(SWITCH_EXPRESSION_END);
+        sb.append(CATCH_SNEAKY);
+        sb.append(CLOSE_4);
+    }
+
+    /** {@code create(String, Object[])}: the components with an injected constructor. */
+    private static void appendCreateWithArgs(StringBuilder sb, List<Component> withArgs,
+            java.util.Set<String> bytecodeClasses) {
+        sb.append(OVERRIDE);
+        sb.append(SUPPRESS_RAW);
+        sb.append("    public Object create(String className, Object[] args) {\n");
+        sb.append("        if (args == null || args.length == 0) return create(className);\n");
+        sb.append(TRY_OPEN);
+        sb.append("        return switch (className) {\n");
+        for (var c : withArgs) {
+            if (bytecodeClasses.contains(c.fqn())) {
+                sb.append(CASE_OPEN).append(c.fqn()).append("\" -> ").append(CONSTRUCT)
+                        .append("(\"").append(c.fqn()).append("\", new Class<?>[] {")
+                        .append(c.ctorParamTypes().stream().map(t -> t + ".class")
+                                .collect(Collectors.joining(", ")))
+                        .append("}, args);\n");
+            } else {
+                sb.append(CASE_OPEN).append(c.fqn()).append("\" -> new ")
+                        .append(c.sourceFqn()).append("(").append(castArgs(c.ctorParamTypes())).append(");\n");
+            }
+        }
+        sb.append(DEFAULT_NULL);
+        sb.append(SWITCH_EXPRESSION_END);
+        sb.append(CATCH_SNEAKY);
+        sb.append(CLOSE_4);
+    }
+
+    /** {@code (T0) args[0], (T1) args[1], …}: each argument cast to its parameter type. */
+    private static String castArgs(List<String> parameterTypes) {
+        var sb = new StringBuilder();
+        for (int i = 0; i < parameterTypes.size(); i++) {
+            if (i > 0) sb.append(", ");
+            sb.append("(").append(parameterTypes.get(i)).append(") args[").append(i).append("]");
+        }
+        return sb.toString();
+    }
+
+    /** {@code injectField(...)}: the assignable fields, grouped by declaring class for the outer switch. */
+    private static void appendInjectField(StringBuilder sb, List<Component> components,
+            List<FieldInject> fieldInjects) {
+        Map<String, List<FieldInject>> byClass = fieldInjects.stream()
+                .collect(Collectors.groupingBy(FieldInject::declaringClassFqn,
+                        java.util.LinkedHashMap::new, Collectors.toList()));
+
+        sb.append(OVERRIDE);
+        sb.append(SUPPRESS_RAW);
+        sb.append("    public boolean injectField(Object bean, String className, String fieldName, Object value) {\n");
+        sb.append("        switch (className) {\n");
+        for (var entry : byClass.entrySet()) {
+            sb.append(CASE_OPEN).append(entry.getKey()).append(CASE_BLOCK);
+            var ownerSourceName = components.stream().filter(c -> c.fqn().equals(entry.getKey()))
+                    .map(Component::sourceFqn).findFirst().orElse(entry.getKey());
+            sb.append("                var b = (").append(ownerSourceName).append(") bean;\n");
+            sb.append("                switch (fieldName) {\n");
+            for (var fi : entry.getValue()) {
+                sb.append("                    case \"").append(fi.fieldName()).append("\" -> { ")
+                        .append("b.").append(fi.fieldName())
+                        .append(" = (").append(fi.fieldTypeErasure()).append(") value; return true; }\n");
+            }
+            sb.append("                    default -> { return false; }\n");
+            sb.append(CLOSE_16);
+            sb.append(CLOSE_12);
+        }
+        sb.append("            default -> { return false; }\n");
+        sb.append(CLOSE_8);
+        sb.append(CLOSE_4);
+    }
+
+    /** {@code invoke(...)}: the methods the provider calls directly, grouped by declaring class in order. */
+    private static void appendInvoke(StringBuilder sb, List<MethodInvoke> methodInvokes) {
+        Map<String, List<MethodInvoke>> byClass = methodInvokes.stream()
+                .collect(Collectors.groupingBy(MethodInvoke::declaringClassFqn,
+                        java.util.LinkedHashMap::new, Collectors.toList()));
+
+        sb.append(OVERRIDE);
+        sb.append(SUPPRESS_RAW);
+        sb.append("    public Object invoke(Object target, String className, String methodId, Object[] args) {\n");
+        // Observers, producers, disposers and initializers may declare checked exceptions
+        // (vauban#145); the SPI says they propagate as is: see sneaky() below.
+        sb.append(TRY_OPEN);
+        sb.append("        switch (className) {\n");
+        for (var entry : byClass.entrySet()) {
+            var declClass = entry.getKey();
+            sb.append(CASE_OPEN).append(declClass).append(CASE_BLOCK);
+            sb.append("                switch (methodId) {\n");
+            for (var mi : entry.getValue()) {
+                appendInvokeCase(sb, declClass, mi);
+            }
+            sb.append("                    default -> { return ").append(SPI).append(".NOT_INVOKED; }\n");
+            sb.append(CLOSE_16);
+            sb.append(CLOSE_12);
+        }
+        sb.append("            default -> { return ").append(SPI).append(".NOT_INVOKED; }\n");
+        sb.append(CLOSE_8);
+        sb.append(CATCH_SNEAKY);
+        sb.append(CLOSE_4);
+    }
+
+    /** One {@code case "<methodId>" -> { … }} of {@code invoke}: the direct call and its result. */
+    private static void appendInvokeCase(StringBuilder sb, String declClass, MethodInvoke mi) {
+        sb.append("                    case \"").append(mi.methodId()).append(CASE_BLOCK);
+        var call = new StringBuilder();
+        if (mi.isStatic()) {
+            call.append(declClass).append(".").append(mi.methodName()).append("(");
+        } else {
+            call.append("((").append(declClass).append(") target).").append(mi.methodName()).append("(");
+        }
+        call.append(castArgs(mi.paramErasures())).append(")");
+
+        if (mi.isVoid()) {
+            sb.append("                        ").append(call).append(";\n");
+            sb.append("                        return null;\n");
+        } else {
+            sb.append("                        return ").append(call).append(";\n");
+        }
+        sb.append("                    }\n");
+    }
+
+    /**
+     * {@code createClientProxy(...)}: in-module client-proxy instantiation for this package's
+     * normal-scoped beans — {@code new <Bean>_ClientProxy()} + {@code $$setDelegate(delegate)}, both
+     * in-package, the proxy being a sibling generated source — so the container creates the proxy
+     * without reflection and the bean package needs no {@code opens}/{@code exports}. Producer
+     * proxies (issue #42) are keyed by the produced type but instantiated from this (the producer's)
+     * package.
+     */
+    private static void appendCreateClientProxy(StringBuilder sb, Contents contents) {
+        sb.append(OVERRIDE);
+        sb.append(SUPPRESS_RAW);
+        sb.append("    public Object createClientProxy(String proxyClassName, java.util.function.Supplier<?> delegate) {\n");
+        // A proxy constructor declares Throwable: its super constructor may throw a checked exception.
+        sb.append(TRY_OPEN);
+        sb.append("        switch (proxyClassName) {\n");
+        for (var proxyFqn : contents.clientProxyFqns()) {
+            appendProxyCase(sb, proxyFqn, proxyFqn, contents.bytecodeClasses());
+        }
+        for (var pp : contents.producerProxies()) {
+            appendProxyCase(sb, pp.key(), pp.proxyFqn(), contents.bytecodeClasses());
+        }
+        sb.append("            default -> { return null; }\n");
+        sb.append(CLOSE_8);
+        sb.append(CATCH_SNEAKY);
+        sb.append(CLOSE_4);
+    }
+
+    /** One {@code case "<key>" -> { … }} of {@code createClientProxy}. */
+    private static void appendProxyCase(StringBuilder sb, String key, String proxyFqn,
+            java.util.Set<String> bytecodeClasses) {
+        if (bytecodeClasses.contains(proxyFqn)) {
+            appendBytecodeProxyCase(sb, key, proxyFqn);
+            return;
+        }
+        sb.append(CASE_OPEN).append(key).append(CASE_BLOCK);
+        sb.append("                var p = new ").append(proxyFqn).append(NO_ARG_CALL);
+        sb.append("                p.$$setDelegate(delegate);\n");
+        sb.append("                return p;\n");
+        sb.append(CLOSE_12);
+    }
+
+    /**
+     * {@code coverage()}: what this provider runs in-module, from the same lists as the switches, so
+     * the declaration cannot diverge from the dispatch. Diagnostics only (Vidocq dev console).
+     */
+    private static void appendCoverage(StringBuilder sb, Contents contents) {
+        var proxyKeys = new java.util.ArrayList<>(contents.clientProxyFqns());
+        contents.producerProxies().forEach(pp -> proxyKeys.add(pp.key()));
+        sb.append(OVERRIDE);
+        sb.append("    public io.vidocq.vauban.api.GeneratedCoverage coverage() {\n");
+        sb.append("        return io.vidocq.vauban.api.GeneratedCoverage.of(")
+                .append("io.vidocq.vauban.api.GeneratedCoverage.Generator.APT,\n");
+        sb.append(COVERAGE_INDENT).append(stringArray(contents.components().stream().map(Component::fqn).toList()))
+                .append(COVERAGE_SEPARATOR);
+        sb.append(COVERAGE_INDENT).append(stringArray(contents.fieldInjects().stream()
+                .map(fi -> fi.declaringClassFqn() + "#" + fi.fieldName()).toList())).append(COVERAGE_SEPARATOR);
+        sb.append(COVERAGE_INDENT).append(stringArray(contents.methodInvokes().stream()
+                .map(mi -> mi.declaringClassFqn() + "#" + mi.methodId()).toList())).append(COVERAGE_SEPARATOR);
+        sb.append(COVERAGE_INDENT).append(stringArray(proxyKeys)).append(");\n");
+        sb.append(CLOSE_4);
     }
 
     /** The provider's helper instantiating a class emitted as bytecode, by its binary name. */
@@ -448,9 +500,9 @@ public final class ComponentProviderGenerator {
 
     /** {@code case "<key>" -> return $$proxy("<binary name>", delegate);}: a proxy emitted as bytecode. */
     private static void appendBytecodeProxyCase(StringBuilder sb, String key, String proxyBinaryName) {
-        sb.append("            case \"").append(key).append("\" -> {\n");
+        sb.append(CASE_OPEN).append(key).append(CASE_BLOCK);
         sb.append("                return $$proxy(\"").append(proxyBinaryName).append("\", delegate);\n");
-        sb.append("            }\n");
+        sb.append(CLOSE_12);
     }
 
     /**

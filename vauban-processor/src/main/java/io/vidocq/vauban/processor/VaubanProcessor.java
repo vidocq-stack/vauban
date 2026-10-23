@@ -34,7 +34,6 @@ import io.vidocq.vauban.processor.codegen.interceptor.InterceptedShapeFromElemen
 import io.vidocq.vauban.processor.codegen.interceptor.InterceptedSourceRenderer;
 import io.vidocq.vauban.core.bean.discovery.BeanDiscovery;
 import io.vidocq.vauban.core.bean.model.BeanDescriptor;
-import io.vidocq.vauban.core.bean.model.ScopeInfo;
 import io.vidocq.vauban.core.bean.resolution.BeanResolver;
 import io.vidocq.vauban.core.bean.validation.DeploymentValidator;
 import io.vidocq.vauban.core.extensions.BceProcessor;
@@ -123,6 +122,11 @@ public class VaubanProcessor extends AbstractProcessor {
     /** Where the co-located proxy bytes of a listed produced type are shipped (#42 Stage 4). */
     private static final String PLACED_PREFIX = "META-INF/vauban/placed/";
     private static final String BCE_RUNTIME_LIST_PATH = "META-INF/vauban-bce-runtime.list";
+    private static final String LOG_PREFIX = "[Vauban] ";
+    private static final String BCE_PREFIX = "[Vauban BCE] ";
+    private static final String FAILED_TO_WRITE = "[Vauban] Failed to write ";
+    private static final String CLIENT_PROXY_SUFFIX = "_ClientProxy";
+    private static final String JAVA_LANG_OBJECT = "java.lang.Object";
 
     // Beans accumulate across APT rounds: companion processors (e.g. mansart-data-processor)
     // emit their classes in round N which then surface to roundEnv.getElementsAnnotatedWith
@@ -232,33 +236,13 @@ public class VaubanProcessor extends AbstractProcessor {
     public boolean process(Set<? extends TypeElement> annotations, RoundEnvironment roundEnv) {
         if (finalized) return false;
 
-        // Remember which module(s) this compilation is building: reading the module *directives*
-        // of a module still being compiled (as unloadableBcesOnCompilePath does for dependency
-        // modules) completes it prematurely and freezes `provides` resolution errors before the
-        // last-round generated classes exist. getModuleOf only walks ownership — no completion.
-        for (var root : roundEnv.getRootElements()) {
-            var module = processingEnv.getElementUtils().getModuleOf(root);
-            if (module != null && !module.isUnnamed()) {
-                compiledModuleNames.add(module.getQualifiedName().toString());
-            }
-        }
+        recordCompiledModules(roundEnv);
 
         // Accumulate types annotated this round into the cross-round index.
         var scanner = new ElementScanner(processingEnv.getElementUtils(), processingEnv.getTypeUtils());
         for (var annotation : annotations) {
-            if (!isIndexTrigger(annotation)) continue;
-            for (var element : roundEnv.getElementsAnnotatedWith(annotation)) {
-                if (element instanceof TypeElement typeElement) {
-                    var name = DotName.of(typeElement.getQualifiedName().toString());
-                    if (!accumulatedIndex.contains(name)) {
-                        accumulatedIndex.add(scanner.scan(typeElement));
-                    }
-                } else if (element.getEnclosingElement() instanceof TypeElement enclosing) {
-                    var name = DotName.of(enclosing.getQualifiedName().toString());
-                    if (!accumulatedIndex.contains(name)) {
-                        accumulatedIndex.add(scanner.scan(enclosing));
-                    }
-                }
+            if (isIndexTrigger(annotation)) {
+                indexAnnotatedTypes(roundEnv.getElementsAnnotatedWith(annotation), scanner);
             }
         }
 
@@ -267,7 +251,49 @@ public class VaubanProcessor extends AbstractProcessor {
         // only in later rounds would be invisible to the deployment validator.
         if (!roundEnv.processingOver()) return false;
         finalized = true;
+        return processDeployment(scanner);
+    }
 
+    /**
+     * Remembers which module(s) this compilation is building: reading the module <em>directives</em>
+     * of a module still being compiled (as unloadableBcesOnCompilePath does for dependency
+     * modules) completes it prematurely and freezes {@code provides} resolution errors before the
+     * last-round generated classes exist. getModuleOf only walks ownership — no completion.
+     */
+    private void recordCompiledModules(RoundEnvironment roundEnv) {
+        for (var root : roundEnv.getRootElements()) {
+            var module = processingEnv.getElementUtils().getModuleOf(root);
+            if (module != null && !module.isUnnamed()) {
+                compiledModuleNames.add(module.getQualifiedName().toString());
+            }
+        }
+    }
+
+    /** Adds to the cross-round index each annotated type, or the type enclosing an annotated member. */
+    private void indexAnnotatedTypes(Set<? extends Element> annotated, ElementScanner scanner) {
+        for (var element : annotated) {
+            if (element instanceof TypeElement typeElement) {
+                indexOnce(typeElement, scanner);
+            } else if (element.getEnclosingElement() instanceof TypeElement enclosing) {
+                indexOnce(enclosing, scanner);
+            }
+        }
+    }
+
+    private void indexOnce(TypeElement typeElement, ElementScanner scanner) {
+        var name = DotName.of(typeElement.getQualifiedName().toString());
+        if (!accumulatedIndex.contains(name)) {
+            accumulatedIndex.add(scanner.scan(typeElement));
+        }
+    }
+
+    /**
+     * The pipeline run once, in the final round: the BCE phases, the deployment validation, the
+     * generation of every artefact and the indexes written beside them.
+     *
+     * @return what {@link #process} returns
+     */
+    private boolean processDeployment(ElementScanner scanner) {
         var indexBuilder = accumulatedIndex;
         // The annotation types the indexed classes name — a qualifier, a stereotype or an interceptor
         // binding this compilation declares is on no class path yet, so discovery cannot fall back on
@@ -282,27 +308,7 @@ public class VaubanProcessor extends AbstractProcessor {
         BceProcessor.DiscoveryResult discoveryResult = null;
 
         if (!bceClasses.isEmpty()) {
-            // --- @Discovery phase ---
-            var lookup = new IndexLookup(index);
-            discoveryResult = ExtensionPhase.atBuildTime(() -> BceProcessor.processDiscovery(bceClasses, lookup));
-            // The contexts the extensions registered are runtime objects: write them down, since
-            // the container skips the extensions of an application compiled here (vauban-webcontexts).
-            writeFrozenContexts(discoveryResult.metaAnnotations().getCustomContexts());
-
-            // Add scanned classes to the index.
-            // These classes come from dependency jars (added via ScannedClasses.add()), not from
-            // the module being compiled — track them as external so we skip factory/proxy generation.
-            for (var className : discoveryResult.scannedClasses().getAddedClasses()) {
-                var bytes = loadClassBytes(className, aptClassLoader);
-                if (bytes != null) {
-                    try {
-                        indexBuilder.add(ClassFileScanner.scan(bytes));
-                        externalClassNames.add(DotName.of(className));
-                    } catch (Exception e) {
-                        // Class scan failed — skip
-                    }
-                }
-            }
+            discoveryResult = runDiscoveryPhase(bceClasses, index, indexBuilder, aptClassLoader);
             index = indexBuilder.build();
         }
 
@@ -319,68 +325,10 @@ public class VaubanProcessor extends AbstractProcessor {
         if (beans.isEmpty() && bceClasses.isEmpty()) return false;
 
         // --- BCE: remaining phases (@Enhancement → @Validation) ---
-        boolean bceProcessed = false;
-        if (!bceClasses.isEmpty()) {
-            var archiveClasses = loadArchiveClasses(index, aptClassLoader);
-            var observers = discovery.discoverObservers();
-            var interceptors = discovery.discoverInterceptors();
-
-            var bceIndex = index;
-            var bceInstances = discoveryResult.bceInstances();
-            var bceResult = ExtensionPhase.atBuildTime(() -> BceProcessor.process(bceClasses, beans,
-                    observers, interceptors,
-                    bceIndex, aptClassLoader,
-                    bceInstances, archiveClasses,
-                    name -> bceIndex.getClassByName(name).map(discovery::buildManagedBean).orElse(null)));
-
-            // Report BCE errors as compilation errors
-            boolean hasErrors = false;
-            for (var err : bceResult.definitionErrors()) {
-                processingEnv.getMessager().printMessage(Diagnostic.Kind.ERROR,
-                        "[Vauban BCE] " + err);
-                hasErrors = true;
-            }
-            for (var err : bceResult.deploymentErrors()) {
-                processingEnv.getMessager().printMessage(Diagnostic.Kind.ERROR,
-                        "[Vauban BCE] " + err);
-                hasErrors = true;
-            }
-
-            if (hasErrors) return true;
-
-            // Apply enhancement modifications
-            if (!bceResult.enhancementModifications().isEmpty()) {
-                // Modified beans, plus the non-beans that gained a scope via Enhancement
-                var modified = BceProcessor.beansAfterEnhancement(beans, bceResult.enhancementModifications(),
-                        name -> bceIndex.getClassByName(name).map(discovery::buildManagedBean).orElse(null));
-                beans.clear();
-                beans.addAll(modified);
-
-                // Freeze the enhancement *result* (target -> added annotation FQNs) so the
-                // runtime applies it WITHOUT re-instantiating the BCE on the module path.
-                // This is what lets application modules drop `opens ... to io.vidocq.vauban.core`.
-                writeEnhancementsPatch(bceResult.enhancementModifications());
-
-                // Legacy fallback: the (BCE, target) replay list, used by the runtime only
-                // when no frozen patch is present for a target (bug #7).
-                writeBceRuntimeList(bceResult.enhancementModifications());
-            }
-
-            // Serialize synthetic beans/observers for runtime
-            if (!bceResult.syntheticBeans().isEmpty() || !bceResult.syntheticObservers().isEmpty()) {
-                writeSyntheticMetadata(bceResult.syntheticBeans(), bceResult.syntheticObservers());
-            }
-
-            // Make BCE-declared synthetic beans visible to the deployment validator below so user
-            // code can @Inject them directly without an Instance<> workaround. Without this,
-            // every BCE-supplied bean would force the consuming class to use Instance<T> just to
-            // bypass the static check — surprising and opaque.
-            int slot = beans.size();
-            for (var synBean : bceResult.syntheticBeans()) {
-                beans.add(BceProcessor.toBeanDescriptor(synBean, slot++));
-            }
-
-            bceProcessed = true;
+        boolean bceProcessed = !bceClasses.isEmpty();
+        if (bceProcessed && !runRemainingBcePhases(bceClasses, beans, discovery,
+                Objects.requireNonNull(discoveryResult), index, aptClassLoader)) {
+            return true;
         }
 
         // Injection points may target beans that live in a dependency. Such a type is absent from
@@ -391,436 +339,19 @@ public class VaubanProcessor extends AbstractProcessor {
             index = indexBuilder.build();
         }
 
-        // Validate deployment — unless explicitly skipped (cf. APT options on the class javadoc).
-        // The runtime container always re-validates on container start; this only silences the
-        // compile-time check for projects whose beans depend on BCE-produced injections that
-        // aren't visible to the static analyser (typical pattern with @ConfigProperty / @Claim /
-        // @RegisterRestClient used in test code without the producing BCE on the APT classpath).
         warnUnloadableBces();
 
-        var errors = java.util.Collections.<DeploymentValidator.ValidationError>emptyList();
-        if (validationEnabled()) {
-            var assignability = new AssignabilityRules(index);
-            // Matching reads what each qualifier type declares from the index, the only source at
-            // compile time: a member default counts as a written value and a @Nonbinding member takes
-            // no part, exactly as when the container validates the same deployment again at boot.
-            var annotationTypes = new io.vidocq.vauban.core.annotation.AnnotationTypes(
-                    index, List.of(), nonbindingMembers(discoveryResult));
-            var resolver = new BeanResolver(beans, List.of(), assignability,
-                    new io.vidocq.vauban.core.bean.resolution.QualifierMatcher(annotationTypes));
-            var validator = new DeploymentValidator(beans, resolver, index);
-            errors = validator.validate();
-        } else {
-            processingEnv.getMessager().printMessage(Diagnostic.Kind.NOTE,
-                    "[Vauban] Static deployment validation skipped (vauban.validation=false). "
-                            + "Runtime container will still validate on start.");
+        if (reportValidationErrors(validateDeployment(beans, index, discoveryResult), dependencyTypes)) {
+            return true;
         }
 
-        boolean fatal = false;
-        for (var error : errors) {
-            // An unsatisfied point whose required type comes from a dependency is deferred to the
-            // container, not rejected here: this compilation cannot see that module's producers,
-            // and the runtime — which merges the vauban-beans.list of every archive — can.
-            if (dependencyTypes.isDeferred(error)) {
-                processingEnv.getMessager().printMessage(Diagnostic.Kind.WARNING,
-                        "[Vauban] " + error.message()
-                                + " — the required type is not declared by this compilation unit; "
-                                + "resolution deferred to the runtime container.");
-                continue;
-            }
-            // A missing proxy-entry constructor is fixable without touching the source: the
-            // vauban-maven-plugin weaves a synthetic (ProxyLink) constructor at process-classes
-            // (Vidocq/vauban#24 phase 2). Warn here; a deployment that skips the plugin still
-            // fails at container start. Final classes/methods stay fatal — weaving cannot fix them.
-            if (error.kind() == DeploymentValidator.ValidationError.Kind.UNPROXYABLE_BEAN) {
-                processingEnv.getMessager().printMessage(Diagnostic.Kind.WARNING,
-                        "[Vauban] " + error.message()
-                                + " — the vauban-maven-plugin weaves this constructor at "
-                                + "process-classes; without the plugin this fails at container start.");
-                continue;
-            }
-            fatal = true;
-            var hint = "";
-            if (error.kind() == DeploymentValidator.ValidationError.Kind.UNSATISFIED_DEPENDENCY) {
-                var unloadable = unloadableBcesOnCompilePath();
-                if (!unloadable.isEmpty()) {
-                    hint = " Hint: Build Compatible Extension(s) " + unloadable
-                            + " found on the compile/module path cannot run (not on the"
-                            + " annotation-processor path) and may contribute the missing bean —"
-                            + " add their artifact(s) to <annotationProcessorPaths>.";
-                }
-            }
-            processingEnv.getMessager().printMessage(Diagnostic.Kind.ERROR,
-                "[Vauban] " + error.message() + hint);
-        }
-
-        if (fatal) return true;
-
-        // Generate code for each bean; also accumulate eligible managed classes for the
-        // per-package _VaubanComponents provider.
-        var providedClasses = new java.util.ArrayList<ProvidedClass>();
-        // <Bean>_ClientProxy names emitted as SOURCE (top-level normal-scoped beans with an accessible
-        // no-arg ctor): the per-package provider instantiates them in-module via createClientProxy, so
-        // the bean package needs no opens/exports for proxy creation.
-        var clientProxyFqns = new java.util.LinkedHashSet<String>();
-        // Produced-type proxies for normal-scoped producers of fully-public external classes
-        // (issue #42), grouped by the producer's package — registered in that package's provider,
-        // keyed by the produced type, so the runtime's provider-first lookup wins with zero opens.
-        var producerProxiesByPackage =
-                new java.util.LinkedHashMap<String, java.util.List<ComponentProviderGenerator.ProducerProxy>>();
-        // Produced class types that fall to runtime proxy generation (Stage 3b): the boot-time
-        // OpensApplier opens their package to io.vidocq.vauban.core via the agent, but only if the
-        // type turns out to be in a NAMED module at runtime (classpath types need nothing).
-        var requiredOpens = new java.util.LinkedHashSet<String>();
-        for (var bean : beans) {
-            if (bean.kind() == BeanDescriptor.BeanKind.MANAGED) {
-                var classInfo = index.getClassByName(bean.beanClass()).orElse(null);
-                if (classInfo == null) continue;
-
-                // Skip factory/proxy generation for classes that originate from dependency jars
-                // (added via ScannedClasses.add() during @Discovery). Generating artifacts in
-                // the user module for such classes would create a Java Modules split-package violation
-                // because the package is already exported by the source jar.
-                // The class remains in vauban-beans.list for injection resolution.
-                if (externalClassNames.contains(bean.beanClass())) {
-                    processingEnv.getMessager().printMessage(Diagnostic.Kind.NOTE,
-                            "[Vauban] Skipping factory/proxy generation for external class "
-                                    + bean.beanClass().value()
-                                    + " (factory expected to be provided by the source jar)");
-                    continue;
-                }
-
-                // SOURCE factory when possible (APT-first rule, CG-02): javac emits the
-                // erasure bridge itself and the artifact is readable/debuggable. Source is
-                // only viable when (a) the generated code can resolve BeanFactory at the
-                // user module's compile time (bytecode references resolve at load time
-                // instead — some consumers run this APT without a vauban-core compile
-                // dependency), and (b) the bean is top-level with an accessible no-arg
-                // constructor. Everything else keeps the bytecode fallback.
-                var factoryBeanFqn = bean.beanClass().value();
-                var factoryTypeElement = isTopLevelType(factoryBeanFqn)
-                        ? processingEnv.getElementUtils().getTypeElement(factoryBeanFqn) : null;
-                boolean beanFactoryResolvable = processingEnv.getElementUtils()
-                        .getTypeElement("io.vidocq.vauban.core.BeanFactory") != null;
-                if (factoryTypeElement != null && beanFactoryResolvable
-                        && hasNonPrivateNoArgCtor(factoryTypeElement)) {
-                    var factoryGen = io.vidocq.vauban.processor.codegen.factory.BeanFactorySourceRenderer
-                            .render(factoryTypeElement);
-                    writeSourceFile(factoryGen.className(), factoryGen.source());
-                } else {
-                    generateClass(BeanFactoryGenerator.generate(classInfo));
-                }
-
-                if (bean.scope().isNormal()) {
-                    var proxyBeanFqn = bean.beanClass().value();
-                    // The index carries the binary name: a nested bean is app.Outer$Inner, and a
-                    // top-level class may have a '$' in its own name (BUG-20261004-11).
-                    var proxyTypeElement = typeElementByBinaryName(processingEnv.getElementUtils(), proxyBeanFqn);
-                    if (proxyTypeElement != null && hasNonPrivateCtor(proxyTypeElement)) {
-                        // SOURCE proxy: the sibling _VaubanComponents provider does
-                        // `new <Bean>_ClientProxy()` in-module (createClientProxy), so the bean package
-                        // needs no opens/exports for proxy creation. Source (not bytecode) so the
-                        // provider source can reference it by name (resolved in a later APT round).
-                        // The proxy ctor calls the simplest non-private super ctor with default values,
-                        // so beans with only an injected (arg-bearing) constructor are covered too.
-                        //
-                        // A nested bean takes this route too. Its proxy keeps the binary name —
-                        // Outer$Inner_ClientProxy — which is a perfectly legal top-level class name
-                        // in source ('$' is an identifier character), so the file compiles and the
-                        // provider can name it. What it must NOT be is a member of Outer: nothing
-                        // can add one to a class that already exists.
-                        var proxyPackage = processingEnv.getElementUtils().getPackageOf(proxyTypeElement);
-                        var unnameable = ClientProxyShapeFromElements.unnameableForwards(proxyTypeElement,
-                                proxyPackage, processingEnv.getElementUtils(), processingEnv.getTypeUtils());
-                        if (unnameable.isEmpty()) {
-                            var proxyShape = ClientProxyShapeFromElements.from(proxyTypeElement, proxyPackage,
-                                    processingEnv.getElementUtils(), processingEnv.getTypeUtils(),
-                                    omitted -> warnOmitted(omitted, proxyTypeElement));
-                            var gen = ClientProxySourceRenderer.render(proxyShape,
-                                    proxyTypeElement.getQualifiedName().toString());
-                            writeSourceFile(gen.className(), gen.source());
-                        } else {
-                            // An inherited method's signature names a type this package cannot
-                            // (BUG-20261004-09): no source override can declare it. The bytecode
-                            // proxy carries that type in a descriptor only; the source provider
-                            // instantiates it through its own lookup (noteBytecode records it).
-                            var proxyShape = ClientProxyShapeFromElements.fromErased(proxyTypeElement, proxyPackage,
-                                    processingEnv.getElementUtils(), processingEnv.getTypeUtils(),
-                                    omitted -> warnOmitted(omitted, proxyTypeElement));
-                            generateClass(new GeneratedClass(proxyShape.proxyClassName(),
-                                    io.vidocq.vauban.core.proxy.ClientProxyEmitter.emit(proxyShape)));
-                            noteBytecode(proxyShape.proxyClassName(), unnameable, proxyTypeElement);
-                        }
-                        clientProxyFqns.add(proxyBeanFqn + "_ClientProxy");
-                    } else if (proxyTypeElement != null) {
-                        // Private constructors only: no source can call one, so the proxy is
-                        // bytecode, chaining to the (ProxyLink) constructor the weaver adds (vauban#24);
-                        // the runtime instantiates it reflectively (its package must stay
-                        // opened/exported as before). It sits in the bean's package, so its shape is
-                        // the co-located one: the inherited members and the interface default methods
-                        // are forwarded too, not only the declared ones (BUG-20261004-11).
-                        var shape = ClientProxyShapeFromElements.fromColocated(proxyTypeElement,
-                                processingEnv.getElementUtils(), processingEnv.getTypeUtils());
-                        generateClass(new io.vidocq.vauban.processor.codegen.GeneratedClass(
-                                shape.proxyClassName(), io.vidocq.vauban.core.proxy.ClientProxyEmitter.emit(shape)));
-                    } else {
-                        // A type the compiler cannot resolve here: the bytecode proxy built from the
-                        // index, which forwards the declared methods only.
-                        generateClass(ClientProxyGenerator.generate(classInfo));
-                    }
-                }
-
-                var fqn = bean.beanClass().value();
-
-                // Pre-generate the <bean>$$Intercepted subclass for intercepted targets, so the
-                // runtime needs no reflective class definition (hence no `opens … to
-                // io.vidocq.vauban.core`) on the strict module path. Mirrors the Maven plugin but
-                // builds the shape from javac Elements instead of a loaded Class. Top-level,
-                // non-final targets only; anything else falls back to runtime generation.
-                boolean interceptedGenerated = false;
-                if (isTopLevelType(fqn)) {
-                    var typeElement = processingEnv.getElementUtils().getTypeElement(fqn);
-                    if (typeElement != null && isInterceptedTarget(typeElement)) {
-                        try {
-                            var unnameable = new java.util.ArrayList<String>();
-                            var shape = InterceptedShapeFromElements.from(typeElement,
-                                    processingEnv.getElementUtils(), processingEnv.getTypeUtils(),
-                                    omitted -> warnOmitted(omitted, typeElement), unnameable::add);
-                            if (unnameable.isEmpty()) {
-                                // Emit the subclass as readable Java source (not bytecode). The bytecode
-                                // emitter is kept for the runtime classpath fallback, the Maven plugin,
-                                // and the subclass Java source cannot write (below).
-                                var gen = InterceptedSourceRenderer.render(shape,
-                                        typeElement.getQualifiedName().toString());
-                                writeSourceFile(gen.className(), gen.source());
-                            } else {
-                                // An inherited method's signature names a type this package cannot
-                                // (BUG-20261004-09): no source override can declare it. The bytecode
-                                // subclass overrides by descriptor; the source provider instantiates
-                                // it through its own lookup (noteBytecode records it).
-                                generateClass(new GeneratedClass(shape.subclassName(),
-                                        io.vidocq.vauban.core.interceptor.InterceptedEmitter.emit(shape)));
-                                noteBytecode(shape.subclassName(), unnameable, typeElement);
-                            }
-                            interceptedGenerated = true;
-                        } catch (Exception e) {
-                            processingEnv.getMessager().printMessage(Diagnostic.Kind.NOTE,
-                                    "[Vauban] Could not pre-generate " + fqn + "$$Intercepted"
-                                            + " (the runtime will generate it): " + e.getMessage());
-                        }
-                    }
-                }
-
-                // Accumulate for the provider: only top-level types get an in-module entry. The
-                // instantiable flag lets ComponentCollector attempt constructor-param extraction;
-                // the intercepted flag makes it also emit a component for the $$Intercepted subclass
-                // generated just above (instantiated in-module by the bytecode provider, no opens).
-                // The key stays the binary name — that is what the container looks a component
-                // up by — while the provider instantiates it by its canonical name, the only one
-                // that can be written in source for a nested type.
-                var beanElement = typeElementByBinaryName(processingEnv.getElementUtils(), fqn);
-                var sourceFqn = beanElement != null
-                        ? beanElement.getQualifiedName().toString() : fqn;
-                providedClasses.add(new ProvidedClass(
-                        fqn, sourceFqn, classInfo, true, interceptedGenerated));
-            } else if (bean.kind() == BeanDescriptor.BeanKind.PRODUCER_METHOD
-                    || bean.kind() == BeanDescriptor.BeanKind.PRODUCER_FIELD) {
-                // Build-time proxy for a normal-scoped producer whose produced type is a fully-public
-                // class from another module (issue #42, cdi#1015). The proxy is placed in the
-                // producer's OWN package (never the produced type's — that would be a split package)
-                // and registered under the produced-type key the container looks up before its
-                // reflective fallback, so the module path needs no `opens` and no runtime defineClass.
-                if (!bean.scope().isNormal()) {
-                    continue;
-                }
-                var producedType = resolveProducedTypeElement(bean);
-                if (producedType == null) {
-                    // The produced type is an interface (or unresolvable). For a public interface,
-                    // emit a build-time static proxy `implements <Iface>` in the producer's package
-                    // (issue #42) — no runtime java.lang.reflect.Proxy, no reflection.
-                    var producedIface = resolveProducedInterfaceElement(bean);
-                    if (producedIface != null) {
-                        var producerPkg = packageOfFqn(bean.beanClass().value());
-                        var ifaceFqn = processingEnv.getElementUtils()
-                                .getBinaryName(producedIface).toString();
-                        var ifaceSimple = ifaceFqn.substring(ifaceFqn.lastIndexOf('.') + 1)
-                                .replace('$', '_');
-                        var proxyBinaryName = (producerPkg.isEmpty() ? "" : producerPkg + ".")
-                                + ifaceSimple + "$$"
-                                + Integer.toHexString(ifaceFqn.hashCode()) + "_ClientProxy";
-                        var gen = InterfaceProxySourceRenderer.render(producedIface, proxyBinaryName,
-                                processingEnv.getElementUtils(), processingEnv.getTypeUtils());
-                        writeSourceFile(gen.className(), gen.source());
-                        var key = ifaceFqn + "_ClientProxy";
-                        producerProxiesByPackage
-                                .computeIfAbsent(producerPkg, k -> new java.util.ArrayList<>())
-                                .add(new ComponentProviderGenerator.ProducerProxy(key, proxyBinaryName));
-                        processingEnv.getMessager().printMessage(Diagnostic.Kind.NOTE,
-                                "[Vauban] Generated build-time interface proxy " + proxyBinaryName
-                                        + " for " + ifaceFqn + " (key " + key + ") — no reflect.Proxy.");
-                    }
-                    continue;
-                }
-                var producedFqn =
-                        processingEnv.getElementUtils().getBinaryName(producedType).toString();
-                var verdict = ProducerProxyEligibility.of(producedType);
-                if (!verdict.eligible()) {
-                    // The produced type's proxy must live in the type's own package. Record it in
-                    // the placement manifest (META-INF/vauban/required-opens.list): in a Vauban
-                    // layer the class loader that owns that package places the proxy there (#42
-                    // Stage 4); elsewhere the boot-time OpensApplier may open the package for the
-                    // reflective fallback (Stage 3b, opt-in).
-                    requiredOpens.add(producedFqn);
-                    var placed = isPlaceable(verdict) && writePlacedProxy(producedType, producedFqn);
-                    // Severity is configurable via -Avauban.producerProxy (error|warn|note,
-                    // default note) so a project can enforce zero-fallback.
-                    processingEnv.getMessager().printMessage(
-                            producerProxyDiagnosticKind(),
-                            "[Vauban] Producer of " + producedFqn + " needs its client proxy inside "
-                                    + packageOfFqn(producedFqn) + " (" + verdict + "). "
-                                    + (placed
-                                            ? "Its co-located proxy is shipped under "
-                                                    + PLACED_PREFIX + " and the Vauban class loader "
-                                                    + "defines it there when the application runs in a "
-                                                    + "Vauban layer — zero opens, no agent: start through "
-                                                    + "io.vidocq.vauban.classloader.Launch (or Vidocq.run). "
-                                            : "")
-                                    + "On a bare module path the runtime generates it reflectively, "
-                                    + "which needs `opens " + packageOfFqn(producedFqn)
-                                    + " to io.vidocq.vauban.core;`. To keep zero opens there: produce an "
-                                    + "interface type, make the produced type fully public (public "
-                                    + "non-final class, public overridable methods, a public/protected "
-                                    + "constructor), add the (ProxyLink) constructor upstream, run "
-                                    + "vauban:enhance-dependencies, or open the package.");
-                    continue;
-                }
-                var producerPkg = packageOfFqn(bean.beanClass().value());
-                // Rendered in the producer's package: an interface the proxy forwards a shadowed
-                // default method through must be nameable from there (BUG-20261004-08).
-                var producerElement = typeElementByBinaryName(processingEnv.getElementUtils(),
-                        bean.beanClass().value());
-                // Unknown package (null): only an interface nameable from anywhere qualifies.
-                var proxyPackage = producerElement != null
-                        ? processingEnv.getElementUtils().getPackageOf(producerElement)
-                        : processingEnv.getElementUtils().getPackageElement(producerPkg);
-                // A method the proxy leaves out is reported on the producer method, which the user
-                // wrote: the produced type is often a class of a dependency, with no source.
-                var producerSite = producerElement != null ? producerSite(bean, producerElement) : producedType;
-                var producedSimple = producedFqn.substring(producedFqn.lastIndexOf('.') + 1)
-                        .replace('$', '_');
-                var proxyBinaryName = (producerPkg.isEmpty() ? "" : producerPkg + ".")
-                        + producedSimple + "$$"
-                        + Integer.toHexString(producedFqn.hashCode()) + "_ClientProxy";
-                var unnameable = ClientProxyShapeFromElements.unnameableForwards(producedType, proxyPackage,
-                        processingEnv.getElementUtils(), processingEnv.getTypeUtils());
-                if (unnameable.isEmpty()) {
-                    var shape = ClientProxyShapeFromElements.fromProduced(producedType, proxyPackage,
-                            processingEnv.getElementUtils(), processingEnv.getTypeUtils(),
-                            omitted -> warnOmitted(omitted, producerSite));
-                    // Named by its canonical name: a '$' may be part of its own name (BUG-20261007-01).
-                    var gen = ClientProxySourceRenderer.renderAt(shape, proxyBinaryName,
-                            producedType.getQualifiedName().toString());
-                    writeSourceFile(gen.className(), gen.source());
-                } else {
-                    // As for a bean's proxy: a signature the producer's package cannot write in
-                    // source is carried by a bytecode descriptor instead (BUG-20261004-09).
-                    var shape = ClientProxyShapeFromElements.fromProducedErased(producedType, proxyPackage,
-                            processingEnv.getElementUtils(), processingEnv.getTypeUtils(),
-                            omitted -> warnOmitted(omitted, producerSite));
-                    generateClass(new GeneratedClass(proxyBinaryName,
-                            io.vidocq.vauban.core.proxy.ClientProxyEmitter.emitAt(shape, proxyBinaryName)));
-                    noteBytecode(proxyBinaryName, unnameable, producerSite);
-                }
-                var key = producedFqn + "_ClientProxy";
-                producerProxiesByPackage
-                        .computeIfAbsent(producerPkg, k -> new java.util.ArrayList<>())
-                        .add(new ComponentProviderGenerator.ProducerProxy(key, proxyBinaryName));
-                processingEnv.getMessager().printMessage(Diagnostic.Kind.NOTE,
-                        "[Vauban] Generated build-time producer proxy " + proxyBinaryName + " for "
-                                + producedFqn + " (key " + key + ") — zero opens, zero runtime defineClass.");
-            }
-        }
-
-        // Delegate extraction + per-package grouping to ComponentCollector.
-        // It performs instantiableCtorParams, collectFields, collectMethods and groups by package.
-        var collectorWarnings = new java.util.ArrayList<String>();
-        var packages = ComponentCollector.collect(providedClasses, collectorWarnings);
-        for (var w : collectorWarnings) {
-            processingEnv.getMessager().printMessage(Diagnostic.Kind.NOTE, "[Vauban] " + w);
-        }
-
-        // Emit ONE _VaubanComponents per package that has beans (co-located so each can reach its
-        // own package's package-private members with a plain new/putfield/invoke), and list them all
-        // in the class-path service file. A single common-package provider could not reach
-        // package-private members in other packages.
-        var providerClassNames = new java.util.ArrayList<String>();
-        var emittedProviderPackages = new java.util.HashSet<String>();
-        // What this compilation's own annotation types declare, rendered into their own package so a
-        // package-private qualifier is covered like any other (vauban#70).
-        var annotationsByPackage = declaredAnnotationTypes(index);
-        for (var pkg : packages) {
-            var fields = new ArrayList<>(pkg.fields());
-            for (var provided : providedClasses.stream()
-                    .sorted(Comparator.comparing(ProvidedClass::fqn)).toList()) {
-                var owner = typeElementByBinaryName(processingEnv.getElementUtils(), provided.fqn());
-                if (owner == null || !processingEnv.getElementUtils().getPackageOf(owner)
-                        .getQualifiedName().contentEquals(pkg.packageName())) continue;
-                // Nested owners need a canonical source name in the provider's component table.
-                if (!provided.fqn().equals(provided.sourceFqn())
-                        && pkg.components().stream().noneMatch(c -> c.fqn().equals(provided.fqn()))) continue;
-                for (var field : javax.lang.model.util.ElementFilter.fieldsIn(owner.getEnclosedElements())) {
-                    var modifiers = field.getModifiers();
-                    if (!modifiers.contains(Modifier.PUBLIC) || modifiers.contains(Modifier.STATIC)
-                            || modifiers.contains(Modifier.FINAL) || field.asType().getKind().isPrimitive()) continue;
-                    var erasure = processingEnv.getTypeUtils().erasure(field.asType());
-                    // The field's own declaration names this type, so javac has already checked that
-                    // the module reads it. Re-checking readability would complete the module being
-                    // compiled and resolve its `provides` before this provider exists.
-                    if (!InterceptedShapeFromElements.nameableFrom(erasure,
-                            processingEnv.getElementUtils().getPackageOf(owner),
-                            processingEnv.getElementUtils(), false)) continue;
-                    var name = field.getSimpleName().toString();
-                    if (fields.stream().anyMatch(f -> f.declaringClassFqn().equals(provided.fqn())
-                            && f.fieldName().equals(name))) continue;
-                    // This is write capability, not injection metadata: runtime BCE may add @Inject.
-                    fields.add(new FieldInject(provided.fqn(), name, erasure.toString()));
-                }
-            }
-            // Proxies of this package's beans (their FQN package equals the provider's package).
-            // Every input in a stable order: the beans, so their proxies, come in index order, which
-            // changes from one JVM run to the next (BUG-20261007-04).
-            var pkgProxies = clientProxyFqns.stream()
-                    .filter(p -> packageOfFqn(p).equals(pkg.packageName()))
-                    .sorted()
-                    .toList();
-            var pkgProducerProxies = inStableOrder(
-                    producerProxiesByPackage.getOrDefault(pkg.packageName(), List.of()));
-            var className = writeComponentProvider(
-                    pkg.packageName(), pkg.components(), fields, pkg.methods(),
-                    pkgProxies, pkgProducerProxies,
-                    annotationTypesInStableOrder(annotationsByPackage.getOrDefault(pkg.packageName(), List.of())));
-            if (className != null) providerClassNames.add(className);
-            emittedProviderPackages.add(pkg.packageName());
-        }
-        // A package with no in-module component of its own still needs a provider when it holds a
-        // produced-type proxy (issue #42) or declares an annotation type (vauban#70).
-        var remainingPackages = new java.util.TreeSet<>(producerProxiesByPackage.keySet());
-        remainingPackages.addAll(annotationsByPackage.keySet());
-        for (var pkg : remainingPackages) {
-            if (!emittedProviderPackages.add(pkg)) continue;
-            var className = writeComponentProvider(pkg, List.of(), List.of(), List.of(), List.of(),
-                    inStableOrder(producerProxiesByPackage.getOrDefault(pkg, List.of())),
-                    annotationTypesInStableOrder(annotationsByPackage.getOrDefault(pkg, List.of())));
-            if (className != null) providerClassNames.add(className);
-        }
-        if (!providerClassNames.isEmpty()) {
-            writeComponentProviderService(providerClassNames);
-        }
+        var generated = generateArtefacts(beans, index);
+        writeComponentProviders(generated, index);
 
         // Write META-INF/vauban-beans.list
         writeBeansList(beans);
 
-        writeRequiredOpens(requiredOpens);
+        writeRequiredOpens(generated.requiredOpens);
 
         // Publish the (ProxyLink) weave plan for the auto-started javac plugin — see
         // io.vidocq.vauban.processor.weave (Vidocq/vauban#24, javac tier of the weaving).
@@ -834,6 +365,667 @@ public class VaubanProcessor extends AbstractProcessor {
         mergeMainRoundIndexes();
 
         return true;
+    }
+
+    /**
+     * The {@code @Discovery} phase: runs it, writes down the contexts the extensions registered,
+     * and adds the classes they scanned to {@code indexBuilder}.
+     */
+    private BceProcessor.DiscoveryResult runDiscoveryPhase(List<Class<?>> bceClasses,
+            io.vidocq.vauban.indexer.VaubanIndex index, IndexBuilder indexBuilder, ClassLoader aptClassLoader) {
+        var lookup = new IndexLookup(index);
+        var discoveryResult = ExtensionPhase.atBuildTime(() -> BceProcessor.processDiscovery(bceClasses, lookup));
+        // The contexts the extensions registered are runtime objects: write them down, since
+        // the container skips the extensions of an application compiled here (vauban-webcontexts).
+        writeFrozenContexts(discoveryResult.metaAnnotations().getCustomContexts());
+
+        // Add scanned classes to the index.
+        // These classes come from dependency jars (added via ScannedClasses.add()), not from
+        // the module being compiled — track them as external so we skip factory/proxy generation.
+        for (var className : discoveryResult.scannedClasses().getAddedClasses()) {
+            var bytes = loadClassBytes(className, aptClassLoader);
+            if (bytes.length > 0) {
+                indexScannedClass(indexBuilder, className, bytes);
+            }
+        }
+        return discoveryResult;
+    }
+
+    private void indexScannedClass(IndexBuilder indexBuilder, String className, byte[] bytes) {
+        try {
+            indexBuilder.add(ClassFileScanner.scan(bytes));
+            externalClassNames.add(DotName.of(className));
+        } catch (Exception _) {
+            // Class scan failed — skip
+        }
+    }
+
+    /**
+     * The BCE phases after {@code @Discovery} ({@code @Enhancement} to {@code @Validation}), their
+     * results applied to {@code beans} and written down for the runtime.
+     *
+     * @return {@code false} when an extension reported a definition or deployment error
+     */
+    private boolean runRemainingBcePhases(List<Class<?>> bceClasses, List<BeanDescriptor> beans,
+            BeanDiscovery discovery, BceProcessor.DiscoveryResult discoveryResult,
+            io.vidocq.vauban.indexer.VaubanIndex index, ClassLoader aptClassLoader) {
+        var archiveClasses = loadArchiveClasses(index, aptClassLoader);
+        var observers = discovery.discoverObservers();
+        var interceptors = discovery.discoverInterceptors();
+
+        var bceInstances = discoveryResult.bceInstances();
+        var bceResult = ExtensionPhase.atBuildTime(() -> BceProcessor.process(bceClasses, beans,
+                observers, interceptors,
+                index, aptClassLoader,
+                bceInstances, archiveClasses,
+                name -> index.getClassByName(name).map(discovery::buildManagedBean).orElse(null)));
+
+        // Report BCE errors as compilation errors
+        boolean hasErrors = false;
+        for (var err : bceResult.definitionErrors()) {
+            processingEnv.getMessager().printMessage(Diagnostic.Kind.ERROR,
+                    BCE_PREFIX + err);
+            hasErrors = true;
+        }
+        for (var err : bceResult.deploymentErrors()) {
+            processingEnv.getMessager().printMessage(Diagnostic.Kind.ERROR,
+                    BCE_PREFIX + err);
+            hasErrors = true;
+        }
+
+        if (hasErrors) return false;
+
+        // Apply enhancement modifications
+        if (!bceResult.enhancementModifications().isEmpty()) {
+            // Modified beans, plus the non-beans that gained a scope via Enhancement
+            var modified = BceProcessor.beansAfterEnhancement(beans, bceResult.enhancementModifications(),
+                    name -> index.getClassByName(name).map(discovery::buildManagedBean).orElse(null));
+            beans.clear();
+            beans.addAll(modified);
+
+            // Freeze the enhancement *result* (target -> added annotation FQNs) so the
+            // runtime applies it WITHOUT re-instantiating the BCE on the module path.
+            // This is what lets application modules drop `opens ... to io.vidocq.vauban.core`.
+            writeEnhancementsPatch(bceResult.enhancementModifications());
+
+            // Legacy fallback: the (BCE, target) replay list, used by the runtime only
+            // when no frozen patch is present for a target (bug #7).
+            writeBceRuntimeList(bceResult.enhancementModifications());
+        }
+
+        // Serialize synthetic beans/observers for runtime
+        if (!bceResult.syntheticBeans().isEmpty() || !bceResult.syntheticObservers().isEmpty()) {
+            writeSyntheticMetadata(bceResult.syntheticBeans(), bceResult.syntheticObservers());
+        }
+
+        // Make BCE-declared synthetic beans visible to the deployment validator below so user
+        // code can @Inject them directly without an Instance<> workaround. Without this,
+        // every BCE-supplied bean would force the consuming class to use Instance<T> just to
+        // bypass the static check — surprising and opaque.
+        int slot = beans.size();
+        for (var synBean : bceResult.syntheticBeans()) {
+            beans.add(BceProcessor.toBeanDescriptor(synBean, slot++));
+        }
+        return true;
+    }
+
+    /**
+     * Validates the deployment — unless explicitly skipped (cf. APT options on the class javadoc).
+     * The runtime container always re-validates on container start; this only silences the
+     * compile-time check for projects whose beans depend on BCE-produced injections that
+     * aren't visible to the static analyser (typical pattern with {@code @ConfigProperty},
+     * {@code @Claim} or {@code @RegisterRestClient} used in test code without the producing BCE on
+     * the APT classpath).
+     */
+    private List<DeploymentValidator.ValidationError> validateDeployment(List<BeanDescriptor> beans,
+            io.vidocq.vauban.indexer.VaubanIndex index, BceProcessor.DiscoveryResult discoveryResult) {
+        if (!validationEnabled()) {
+            processingEnv.getMessager().printMessage(Diagnostic.Kind.NOTE,
+                    "[Vauban] Static deployment validation skipped (vauban.validation=false). "
+                            + "Runtime container will still validate on start.");
+            return List.of();
+        }
+        var assignability = new AssignabilityRules(index);
+        // Matching reads what each qualifier type declares from the index, the only source at
+        // compile time: a member default counts as a written value and a @Nonbinding member takes
+        // no part, exactly as when the container validates the same deployment again at boot.
+        var annotationTypes = new io.vidocq.vauban.core.annotation.AnnotationTypes(
+                index, List.of(), nonbindingMembers(discoveryResult));
+        var resolver = new BeanResolver(beans, List.of(), assignability,
+                new io.vidocq.vauban.core.bean.resolution.QualifierMatcher(annotationTypes));
+        var validator = new DeploymentValidator(beans, resolver, index);
+        return validator.validate();
+    }
+
+    /**
+     * Reports each validation error, as an error or, when the container may still resolve it, as
+     * a warning.
+     *
+     * @return {@code true} when at least one error is fatal to the build
+     */
+    private boolean reportValidationErrors(List<DeploymentValidator.ValidationError> errors,
+            DependencyTypes dependencyTypes) {
+        boolean fatal = false;
+        for (var error : errors) {
+            if (reportValidationError(error, dependencyTypes)) {
+                fatal = true;
+            }
+        }
+        return fatal;
+    }
+
+    /** Reports one validation error; returns {@code true} when it is fatal to the build. */
+    private boolean reportValidationError(DeploymentValidator.ValidationError error, DependencyTypes dependencyTypes) {
+        // An unsatisfied point whose required type comes from a dependency is deferred to the
+        // container, not rejected here: this compilation cannot see that module's producers,
+        // and the runtime — which merges the vauban-beans.list of every archive — can.
+        if (dependencyTypes.isDeferred(error)) {
+            processingEnv.getMessager().printMessage(Diagnostic.Kind.WARNING,
+                    LOG_PREFIX + error.message()
+                            + " — the required type is not declared by this compilation unit; "
+                            + "resolution deferred to the runtime container.");
+            return false;
+        }
+        // A missing proxy-entry constructor is fixable without touching the source: the
+        // vauban-maven-plugin weaves a synthetic (ProxyLink) constructor at process-classes
+        // (Vidocq/vauban#24 phase 2). Warn here; a deployment that skips the plugin still
+        // fails at container start. Final classes/methods stay fatal — weaving cannot fix them.
+        if (error.kind() == DeploymentValidator.ValidationError.Kind.UNPROXYABLE_BEAN) {
+            processingEnv.getMessager().printMessage(Diagnostic.Kind.WARNING,
+                    LOG_PREFIX + error.message()
+                            + " — the vauban-maven-plugin weaves this constructor at "
+                            + "process-classes; without the plugin this fails at container start.");
+            return false;
+        }
+        processingEnv.getMessager().printMessage(Diagnostic.Kind.ERROR,
+            LOG_PREFIX + error.message() + unsatisfiedDependencyHint(error));
+        return true;
+    }
+
+    /** For an unsatisfied dependency, the extensions that may contribute the bean but cannot run; else empty. */
+    private String unsatisfiedDependencyHint(DeploymentValidator.ValidationError error) {
+        if (error.kind() != DeploymentValidator.ValidationError.Kind.UNSATISFIED_DEPENDENCY) {
+            return "";
+        }
+        var unloadable = unloadableBcesOnCompilePath();
+        if (unloadable.isEmpty()) {
+            return "";
+        }
+        return " Hint: Build Compatible Extension(s) " + unloadable
+                + " found on the compile/module path cannot run (not on the"
+                + " annotation-processor path) and may contribute the missing bean —"
+                + " add their artifact(s) to <annotationProcessorPaths>.";
+    }
+
+    /** What the generation of the beans' artefacts hands to the providers and the indexes. */
+    private static final class Generation {
+        /** The managed classes the per-package {@code _VaubanComponents} providers cover. */
+        final List<ProvidedClass> providedClasses = new ArrayList<>();
+        /**
+         * {@code <Bean>_ClientProxy} names emitted as SOURCE (top-level normal-scoped beans with an
+         * accessible no-arg ctor): the per-package provider instantiates them in-module via
+         * createClientProxy, so the bean package needs no opens/exports for proxy creation.
+         */
+        final Set<String> clientProxyFqns = new LinkedHashSet<>();
+        /**
+         * Produced-type proxies for normal-scoped producers of fully-public external classes
+         * (issue #42), grouped by the producer's package — registered in that package's provider,
+         * keyed by the produced type, so the runtime's provider-first lookup wins with zero opens.
+         */
+        final Map<String, List<ComponentProviderGenerator.ProducerProxy>> producerProxiesByPackage =
+                new LinkedHashMap<>();
+        /**
+         * Produced class types that fall to runtime proxy generation (Stage 3b): the boot-time
+         * OpensApplier opens their package to io.vidocq.vauban.core via the agent, but only if the
+         * type turns out to be in a NAMED module at runtime (classpath types need nothing).
+         */
+        final Set<String> requiredOpens = new LinkedHashSet<>();
+
+        void addProducerProxy(String producerPackage, String key, String proxyBinaryName) {
+            producerProxiesByPackage.computeIfAbsent(producerPackage, k -> new ArrayList<>())
+                    .add(new ComponentProviderGenerator.ProducerProxy(key, proxyBinaryName));
+        }
+    }
+
+    /**
+     * Generates code for each bean; also accumulates the eligible managed classes for the
+     * per-package {@code _VaubanComponents} provider.
+     */
+    private Generation generateArtefacts(List<BeanDescriptor> beans, io.vidocq.vauban.indexer.VaubanIndex index) {
+        var generation = new Generation();
+        for (var bean : beans) {
+            if (bean.kind() == BeanDescriptor.BeanKind.MANAGED) {
+                generateManagedBeanArtefacts(bean, index, generation);
+            } else if ((bean.kind() == BeanDescriptor.BeanKind.PRODUCER_METHOD
+                    || bean.kind() == BeanDescriptor.BeanKind.PRODUCER_FIELD) && bean.scope().isNormal()) {
+                // Build-time proxy for a normal-scoped producer whose produced type is a fully-public
+                // class from another module (issue #42, cdi#1015). The proxy is placed in the
+                // producer's OWN package (never the produced type's — that would be a split package)
+                // and registered under the produced-type key the container looks up before its
+                // reflective fallback, so the module path needs no `opens` and no runtime defineClass.
+                generateProducerProxy(bean, generation);
+            }
+        }
+        return generation;
+    }
+
+    /** The factory, the client proxy and the intercepted subclass of a managed bean, as it needs them. */
+    private void generateManagedBeanArtefacts(BeanDescriptor bean, io.vidocq.vauban.indexer.VaubanIndex index,
+            Generation generation) {
+        var classInfo = index.getClassByName(bean.beanClass()).orElse(null);
+        if (classInfo == null) return;
+
+        // Skip factory/proxy generation for classes that originate from dependency jars
+        // (added via ScannedClasses.add() during @Discovery). Generating artifacts in
+        // the user module for such classes would create a Java Modules split-package violation
+        // because the package is already exported by the source jar.
+        // The class remains in vauban-beans.list for injection resolution.
+        if (externalClassNames.contains(bean.beanClass())) {
+            processingEnv.getMessager().printMessage(Diagnostic.Kind.NOTE,
+                    "[Vauban] Skipping factory/proxy generation for external class "
+                            + bean.beanClass().value()
+                            + " (factory expected to be provided by the source jar)");
+            return;
+        }
+
+        generateFactory(bean.beanClass().value(), classInfo);
+
+        if (bean.scope().isNormal()) {
+            generateClientProxy(bean.beanClass().value(), classInfo, generation);
+        }
+
+        var fqn = bean.beanClass().value();
+        boolean interceptedGenerated = generateInterceptedSubclass(fqn);
+
+        // Accumulate for the provider: only top-level types get an in-module entry. The
+        // instantiable flag lets ComponentCollector attempt constructor-param extraction, and
+        // the intercepted flag makes it also emit a component for the $$Intercepted subclass
+        // generated just above, which the bytecode provider instantiates in-module with no opens.
+        // The key stays the binary name — that is what the container looks a component
+        // up by — while the provider instantiates it by its canonical name, the only one
+        // that can be written in source for a nested type.
+        var beanElement = typeElementByBinaryName(processingEnv.getElementUtils(), fqn);
+        var sourceFqn = beanElement != null
+                ? beanElement.getQualifiedName().toString() : fqn;
+        generation.providedClasses.add(new ProvidedClass(
+                fqn, sourceFqn, classInfo, true, interceptedGenerated));
+    }
+
+    /**
+     * SOURCE factory when possible (APT-first rule, CG-02): javac emits the
+     * erasure bridge itself and the artifact is readable/debuggable. Source is
+     * only viable when (a) the generated code can resolve BeanFactory at the
+     * user module's compile time (bytecode references resolve at load time
+     * instead — some consumers run this APT without a vauban-core compile
+     * dependency), and (b) the bean is top-level with an accessible no-arg
+     * constructor. Everything else keeps the bytecode fallback.
+     */
+    private void generateFactory(String factoryBeanFqn, ClassInfo classInfo) {
+        var factoryTypeElement = isTopLevelType(factoryBeanFqn)
+                ? processingEnv.getElementUtils().getTypeElement(factoryBeanFqn) : null;
+        boolean beanFactoryResolvable = processingEnv.getElementUtils()
+                .getTypeElement("io.vidocq.vauban.core.BeanFactory") != null;
+        if (factoryTypeElement != null && beanFactoryResolvable
+                && hasNonPrivateNoArgCtor(factoryTypeElement)) {
+            var factoryGen = io.vidocq.vauban.processor.codegen.factory.BeanFactorySourceRenderer
+                    .render(factoryTypeElement);
+            writeSourceFile(factoryGen.className(), factoryGen.source());
+        } else {
+            generateClass(BeanFactoryGenerator.generate(classInfo));
+        }
+    }
+
+    /** The client proxy of a normal-scoped managed bean. */
+    private void generateClientProxy(String proxyBeanFqn, ClassInfo classInfo, Generation generation) {
+        // The index carries the binary name: a nested bean is app.Outer$Inner, and a
+        // top-level class may have a '$' in its own name (BUG-20261004-11).
+        var proxyTypeElement = typeElementByBinaryName(processingEnv.getElementUtils(), proxyBeanFqn);
+        if (proxyTypeElement != null && hasNonPrivateCtor(proxyTypeElement)) {
+            generateSubclassingClientProxy(proxyTypeElement);
+            generation.clientProxyFqns.add(proxyBeanFqn + CLIENT_PROXY_SUFFIX);
+        } else if (proxyTypeElement != null) {
+            // Private constructors only: no source can call one, so the proxy is bytecode, chaining
+            // to the (ProxyLink) constructor the weaver adds (vauban#24). The runtime instantiates it
+            // reflectively, its package staying opened or exported as before. It sits in the bean's
+            // package, so its shape is the co-located one: the inherited members and the interface
+            // default methods are forwarded too, not only the declared ones (BUG-20261004-11).
+            var shape = ClientProxyShapeFromElements.fromColocated(proxyTypeElement,
+                    processingEnv.getElementUtils(), processingEnv.getTypeUtils());
+            generateClass(new GeneratedClass(
+                    shape.proxyClassName(), io.vidocq.vauban.core.proxy.ClientProxyEmitter.emit(shape)));
+        } else {
+            // A type the compiler cannot resolve here: the bytecode proxy built from the
+            // index, which forwards the declared methods only.
+            generateClass(ClientProxyGenerator.generate(classInfo));
+        }
+    }
+
+    /**
+     * SOURCE proxy: the sibling _VaubanComponents provider does
+     * {@code new <Bean>_ClientProxy()} in-module (createClientProxy), so the bean package
+     * needs no opens/exports for proxy creation. Source (not bytecode) so the
+     * provider source can reference it by name (resolved in a later APT round).
+     * The proxy ctor calls the simplest non-private super ctor with default values,
+     * so beans with only an injected (arg-bearing) constructor are covered too.
+     *
+     * <p>A nested bean takes this route too. Its proxy keeps the binary name —
+     * Outer$Inner_ClientProxy — which is a perfectly legal top-level class name
+     * in source ('$' is an identifier character), so the file compiles and the
+     * provider can name it. What it must NOT be is a member of Outer: nothing
+     * can add one to a class that already exists.
+     */
+    private void generateSubclassingClientProxy(TypeElement proxyTypeElement) {
+        var proxyPackage = processingEnv.getElementUtils().getPackageOf(proxyTypeElement);
+        var unnameable = ClientProxyShapeFromElements.unnameableForwards(proxyTypeElement,
+                proxyPackage, processingEnv.getElementUtils(), processingEnv.getTypeUtils());
+        if (unnameable.isEmpty()) {
+            var proxyShape = ClientProxyShapeFromElements.from(proxyTypeElement, proxyPackage,
+                    processingEnv.getElementUtils(), processingEnv.getTypeUtils(),
+                    omitted -> warnOmitted(omitted, proxyTypeElement));
+            var gen = ClientProxySourceRenderer.render(proxyShape,
+                    proxyTypeElement.getQualifiedName().toString());
+            writeSourceFile(gen.className(), gen.source());
+        } else {
+            // An inherited method's signature names a type this package cannot
+            // (BUG-20261004-09): no source override can declare it. The bytecode
+            // proxy carries that type in a descriptor only; the source provider
+            // instantiates it through its own lookup (noteBytecode records it).
+            var proxyShape = ClientProxyShapeFromElements.fromErased(proxyTypeElement, proxyPackage,
+                    processingEnv.getElementUtils(), processingEnv.getTypeUtils(),
+                    omitted -> warnOmitted(omitted, proxyTypeElement));
+            generateClass(new GeneratedClass(proxyShape.proxyClassName(),
+                    io.vidocq.vauban.core.proxy.ClientProxyEmitter.emit(proxyShape)));
+            noteBytecode(proxyShape.proxyClassName(), unnameable, proxyTypeElement);
+        }
+    }
+
+    /**
+     * Pre-generates the {@code <bean>$$Intercepted} subclass for intercepted targets, so the
+     * runtime needs no reflective class definition (hence no {@code opens … to
+     * io.vidocq.vauban.core}) on the strict module path. Mirrors the Maven plugin but
+     * builds the shape from javac Elements instead of a loaded Class. Top-level,
+     * non-final targets only; anything else falls back to runtime generation.
+     *
+     * @return whether the subclass was generated
+     */
+    private boolean generateInterceptedSubclass(String fqn) {
+        if (!isTopLevelType(fqn)) {
+            return false;
+        }
+        var typeElement = processingEnv.getElementUtils().getTypeElement(fqn);
+        if (typeElement == null || !isInterceptedTarget(typeElement)) {
+            return false;
+        }
+        try {
+            var unnameable = new ArrayList<String>();
+            var shape = InterceptedShapeFromElements.from(typeElement,
+                    processingEnv.getElementUtils(), processingEnv.getTypeUtils(),
+                    omitted -> warnOmitted(omitted, typeElement), unnameable::add);
+            if (unnameable.isEmpty()) {
+                // Emit the subclass as readable Java source (not bytecode). The bytecode
+                // emitter is kept for the runtime classpath fallback, the Maven plugin,
+                // and the subclass Java source cannot write (below).
+                var gen = InterceptedSourceRenderer.render(shape,
+                        typeElement.getQualifiedName().toString());
+                writeSourceFile(gen.className(), gen.source());
+            } else {
+                // An inherited method's signature names a type this package cannot
+                // (BUG-20261004-09): no source override can declare it. The bytecode
+                // subclass overrides by descriptor; the source provider instantiates
+                // it through its own lookup (noteBytecode records it).
+                generateClass(new GeneratedClass(shape.subclassName(),
+                        io.vidocq.vauban.core.interceptor.InterceptedEmitter.emit(shape)));
+                noteBytecode(shape.subclassName(), unnameable, typeElement);
+            }
+            return true;
+        } catch (Exception e) {
+            processingEnv.getMessager().printMessage(Diagnostic.Kind.NOTE,
+                    "[Vauban] Could not pre-generate " + fqn + "$$Intercepted"
+                            + " (the runtime will generate it): " + e.getMessage());
+            return false;
+        }
+    }
+
+    /** The build-time client proxy of a normal-scoped producer, or the report of why it has none. */
+    private void generateProducerProxy(BeanDescriptor bean, Generation generation) {
+        var producedType = resolveProducedTypeElement(bean);
+        if (producedType == null) {
+            // The produced type is an interface (or unresolvable). For a public interface,
+            // emit a build-time static proxy `implements <Iface>` in the producer's package
+            // (issue #42) — no runtime java.lang.reflect.Proxy, no reflection.
+            var producedIface = resolveProducedInterfaceElement(bean);
+            if (producedIface != null) {
+                generateInterfaceProducerProxy(bean, producedIface, generation);
+            }
+            return;
+        }
+        var producedFqn =
+                processingEnv.getElementUtils().getBinaryName(producedType).toString();
+        var verdict = ProducerProxyEligibility.of(producedType);
+        if (verdict.eligible()) {
+            generateClassProducerProxy(bean, producedType, producedFqn, generation);
+        } else {
+            reportIneligibleProducedType(producedType, producedFqn, verdict, generation);
+        }
+    }
+
+    /** The static proxy {@code implements <Iface>} of a producer of a public interface (issue #42). */
+    private void generateInterfaceProducerProxy(BeanDescriptor bean, TypeElement producedIface,
+            Generation generation) {
+        var producerPkg = packageOfFqn(bean.beanClass().value());
+        var ifaceFqn = processingEnv.getElementUtils()
+                .getBinaryName(producedIface).toString();
+        var ifaceSimple = ifaceFqn.substring(ifaceFqn.lastIndexOf('.') + 1)
+                .replace('$', '_');
+        var proxyBinaryName = producerProxyName(producerPkg, ifaceSimple, ifaceFqn);
+        var gen = InterfaceProxySourceRenderer.render(producedIface, proxyBinaryName,
+                processingEnv.getElementUtils(), processingEnv.getTypeUtils());
+        writeSourceFile(gen.className(), gen.source());
+        var key = ifaceFqn + CLIENT_PROXY_SUFFIX;
+        generation.addProducerProxy(producerPkg, key, proxyBinaryName);
+        processingEnv.getMessager().printMessage(Diagnostic.Kind.NOTE,
+                "[Vauban] Generated build-time interface proxy " + proxyBinaryName
+                        + " for " + ifaceFqn + " (key " + key + ") — no reflect.Proxy.");
+    }
+
+    /** {@code <producer package>.<simple name>$$<hash of the produced type>_ClientProxy}. */
+    private static String producerProxyName(String producerPkg, String producedSimple, String producedFqn) {
+        return (producerPkg.isEmpty() ? "" : producerPkg + ".")
+                + producedSimple + "$$"
+                + Integer.toHexString(producedFqn.hashCode()) + CLIENT_PROXY_SUFFIX;
+    }
+
+    /**
+     * The produced type's proxy must live in the type's own package. Record it in
+     * the placement manifest (META-INF/vauban/required-opens.list): in a Vauban
+     * layer the class loader that owns that package places the proxy there (#42
+     * Stage 4); elsewhere the boot-time OpensApplier may open the package for the
+     * reflective fallback (Stage 3b, opt-in).
+     */
+    private void reportIneligibleProducedType(TypeElement producedType, String producedFqn,
+            ProducerProxyEligibility.Reason verdict, Generation generation) {
+        generation.requiredOpens.add(producedFqn);
+        var placed = isPlaceable(verdict) && writePlacedProxy(producedType, producedFqn);
+        // Severity is configurable via -Avauban.producerProxy (error|warn|note,
+        // default note) so a project can enforce zero-fallback.
+        processingEnv.getMessager().printMessage(
+                producerProxyDiagnosticKind(),
+                "[Vauban] Producer of " + producedFqn + " needs its client proxy inside "
+                        + packageOfFqn(producedFqn) + " (" + verdict + "). "
+                        + (placed
+                                ? "Its co-located proxy is shipped under "
+                                        + PLACED_PREFIX + " and the Vauban class loader "
+                                        + "defines it there when the application runs in a "
+                                        + "Vauban layer — zero opens, no agent: start through "
+                                        + "io.vidocq.vauban.classloader.Launch (or Vidocq.run). "
+                                : "")
+                        + "On a bare module path the runtime generates it reflectively, "
+                        + "which needs `opens " + packageOfFqn(producedFqn)
+                        + " to io.vidocq.vauban.core;`. To keep zero opens there: produce an "
+                        + "interface type, make the produced type fully public (public "
+                        + "non-final class, public overridable methods, a public/protected "
+                        + "constructor), add the (ProxyLink) constructor upstream, run "
+                        + "vauban:enhance-dependencies, or open the package.");
+    }
+
+    /** The build-time proxy, in the producer's package, of a fully-public produced class (issue #42). */
+    private void generateClassProducerProxy(BeanDescriptor bean, TypeElement producedType, String producedFqn,
+            Generation generation) {
+        var producerPkg = packageOfFqn(bean.beanClass().value());
+        // Rendered in the producer's package: an interface the proxy forwards a shadowed
+        // default method through must be nameable from there (BUG-20261004-08).
+        var producerElement = typeElementByBinaryName(processingEnv.getElementUtils(),
+                bean.beanClass().value());
+        // Unknown package (null): only an interface nameable from anywhere qualifies.
+        var proxyPackage = producerElement != null
+                ? processingEnv.getElementUtils().getPackageOf(producerElement)
+                : processingEnv.getElementUtils().getPackageElement(producerPkg);
+        // A method the proxy leaves out is reported on the producer method, which the user
+        // wrote: the produced type is often a class of a dependency, with no source.
+        var producerSite = producerElement != null ? producerSite(bean, producerElement) : producedType;
+        var producedSimple = producedFqn.substring(producedFqn.lastIndexOf('.') + 1)
+                .replace('$', '_');
+        var proxyBinaryName = producerProxyName(producerPkg, producedSimple, producedFqn);
+        var unnameable = ClientProxyShapeFromElements.unnameableForwards(producedType, proxyPackage,
+                processingEnv.getElementUtils(), processingEnv.getTypeUtils());
+        if (unnameable.isEmpty()) {
+            var shape = ClientProxyShapeFromElements.fromProduced(producedType, proxyPackage,
+                    processingEnv.getElementUtils(), processingEnv.getTypeUtils(),
+                    omitted -> warnOmitted(omitted, producerSite));
+            // Named by its canonical name: a '$' may be part of its own name (BUG-20261007-01).
+            var gen = ClientProxySourceRenderer.renderAt(shape, proxyBinaryName,
+                    producedType.getQualifiedName().toString());
+            writeSourceFile(gen.className(), gen.source());
+        } else {
+            // As for a bean's proxy: a signature the producer's package cannot write in
+            // source is carried by a bytecode descriptor instead (BUG-20261004-09).
+            var shape = ClientProxyShapeFromElements.fromProducedErased(producedType, proxyPackage,
+                    processingEnv.getElementUtils(), processingEnv.getTypeUtils(),
+                    omitted -> warnOmitted(omitted, producerSite));
+            generateClass(new GeneratedClass(proxyBinaryName,
+                    io.vidocq.vauban.core.proxy.ClientProxyEmitter.emitAt(shape, proxyBinaryName)));
+            noteBytecode(proxyBinaryName, unnameable, producerSite);
+        }
+        var key = producedFqn + CLIENT_PROXY_SUFFIX;
+        generation.addProducerProxy(producerPkg, key, proxyBinaryName);
+        processingEnv.getMessager().printMessage(Diagnostic.Kind.NOTE,
+                "[Vauban] Generated build-time producer proxy " + proxyBinaryName + " for "
+                        + producedFqn + " (key " + key + ") — zero opens, zero runtime defineClass.");
+    }
+
+    /**
+     * Emits ONE _VaubanComponents per package that has beans (co-located so each can reach its
+     * own package's package-private members with a plain new/putfield/invoke), and lists them all
+     * in the class-path service file. A single common-package provider could not reach
+     * package-private members in other packages.
+     */
+    private void writeComponentProviders(Generation generation, io.vidocq.vauban.indexer.VaubanIndex index) {
+        // Delegate extraction + per-package grouping to ComponentCollector.
+        // It performs instantiableCtorParams, collectFields, collectMethods and groups by package.
+        var collectorWarnings = new ArrayList<String>();
+        var packages = ComponentCollector.collect(generation.providedClasses, collectorWarnings);
+        for (var w : collectorWarnings) {
+            processingEnv.getMessager().printMessage(Diagnostic.Kind.NOTE, LOG_PREFIX + w);
+        }
+
+        var providerClassNames = new ArrayList<String>();
+        var emittedProviderPackages = new HashSet<String>();
+        // What this compilation's own annotation types declare, rendered into their own package so a
+        // package-private qualifier is covered like any other (vauban#70).
+        var annotationsByPackage = declaredAnnotationTypes(index);
+        var producerProxiesByPackage = generation.producerProxiesByPackage;
+        for (var pkg : packages) {
+            var fields = fieldsWithPublicMutables(pkg, generation.providedClasses);
+            // Proxies of this package's beans (their FQN package equals the provider's package).
+            // Every input in a stable order: the beans, so their proxies, come in index order, which
+            // changes from one JVM run to the next (BUG-20261007-04).
+            var pkgProxies = generation.clientProxyFqns.stream()
+                    .filter(p -> packageOfFqn(p).equals(pkg.packageName()))
+                    .sorted()
+                    .toList();
+            var pkgProducerProxies = inStableOrder(
+                    producerProxiesByPackage.getOrDefault(pkg.packageName(), List.of()));
+            var className = writeComponentProvider(
+                    pkg.packageName(), new ComponentProviderGenerator.Contents(pkg.components(), fields,
+                            pkg.methods(), pkgProxies, pkgProducerProxies,
+                            renderAnnotations(annotationsByPackage.getOrDefault(pkg.packageName(), List.of())),
+                            bytecodeClasses));
+            if (className != null) providerClassNames.add(className);
+            emittedProviderPackages.add(pkg.packageName());
+        }
+        // A package with no in-module component of its own still needs a provider when it holds a
+        // produced-type proxy (issue #42) or declares an annotation type (vauban#70).
+        var remainingPackages = new TreeSet<>(producerProxiesByPackage.keySet());
+        remainingPackages.addAll(annotationsByPackage.keySet());
+        remainingPackages.removeAll(emittedProviderPackages);
+        for (var pkg : remainingPackages) {
+            var className = writeComponentProvider(pkg, new ComponentProviderGenerator.Contents(
+                    List.of(), List.of(), List.of(), List.of(),
+                    inStableOrder(producerProxiesByPackage.getOrDefault(pkg, List.of())),
+                    renderAnnotations(annotationsByPackage.getOrDefault(pkg, List.of())),
+                    bytecodeClasses));
+            if (className != null) providerClassNames.add(className);
+        }
+        if (!providerClassNames.isEmpty()) {
+            writeComponentProviderService(providerClassNames);
+        }
+    }
+
+    /** What {@code types} declare, rendered for a provider, in a stable order. */
+    private AnnotationArtefacts.Rendered renderAnnotations(List<ClassInfo> types) {
+        return AnnotationArtefacts.render(annotationTypesInStableOrder(types), this::canonicalName);
+    }
+
+    /**
+     * The fields the provider of {@code pkg} assigns: those the collector found, plus the public
+     * mutable reference fields of the package's provided classes. This is write capability, not
+     * injection metadata: a runtime BCE may add {@code @Inject}.
+     */
+    private List<FieldInject> fieldsWithPublicMutables(io.vidocq.vauban.indexer.codegen.PackageProvider pkg,
+            List<ProvidedClass> providedClasses) {
+        var fields = new ArrayList<>(pkg.fields());
+        for (var provided : providedClasses.stream()
+                .sorted(Comparator.comparing(ProvidedClass::fqn)).toList()) {
+            var owner = typeElementByBinaryName(processingEnv.getElementUtils(), provided.fqn());
+            if (coveredByProvider(owner, provided, pkg)) {
+                addPublicMutableFields(owner, provided, fields);
+            }
+        }
+        return fields;
+    }
+
+    /** Whether {@code owner}, the type of {@code provided}, belongs to the provider of {@code pkg}. */
+    private boolean coveredByProvider(TypeElement owner, ProvidedClass provided,
+            io.vidocq.vauban.indexer.codegen.PackageProvider pkg) {
+        if (owner == null || !processingEnv.getElementUtils().getPackageOf(owner)
+                .getQualifiedName().contentEquals(pkg.packageName())) {
+            return false;
+        }
+        // Nested owners need a canonical source name in the provider's component table.
+        return provided.fqn().equals(provided.sourceFqn())
+                || pkg.components().stream().anyMatch(c -> c.fqn().equals(provided.fqn()));
+    }
+
+    /** Adds the public, non-static, non-final reference fields of {@code owner} that {@code fields} lacks. */
+    private void addPublicMutableFields(TypeElement owner, ProvidedClass provided, List<FieldInject> fields) {
+        for (var field : javax.lang.model.util.ElementFilter.fieldsIn(owner.getEnclosedElements())) {
+            var modifiers = field.getModifiers();
+            if (modifiers.contains(Modifier.PUBLIC) && !modifiers.contains(Modifier.STATIC)
+                    && !modifiers.contains(Modifier.FINAL) && !field.asType().getKind().isPrimitive()) {
+                var erasure = processingEnv.getTypeUtils().erasure(field.asType());
+                var name = field.getSimpleName().toString();
+                // The field's own declaration names this type, so javac has already checked that
+                // the module reads it. Re-checking readability would complete the module being
+                // compiled and resolve its `provides` before this provider exists.
+                if (InterceptedShapeFromElements.nameableFrom(erasure,
+                        processingEnv.getElementUtils().getPackageOf(owner),
+                        processingEnv.getElementUtils(), false)
+                        && fields.stream().noneMatch(f -> f.declaringClassFqn().equals(provided.fqn())
+                                && f.fieldName().equals(name))) {
+                    fields.add(new FieldInject(provided.fqn(), name, erasure.toString()));
+                }
+            }
+        }
     }
 
     /**
@@ -886,7 +1078,7 @@ public class VaubanProcessor extends AbstractProcessor {
         try {
             var probe = processingEnv.getFiler().getResource(StandardLocation.CLASS_OUTPUT, "", "vauban-round-probe");
             return java.nio.file.Path.of(probe.toUri()).getParent().toAbsolutePath().normalize();
-        } catch (IOException | IllegalArgumentException | java.nio.file.FileSystemNotFoundException e) {
+        } catch (IOException | IllegalArgumentException | java.nio.file.FileSystemNotFoundException _) {
             return null;
         }
     }
@@ -914,22 +1106,8 @@ public class VaubanProcessor extends AbstractProcessor {
         for (var path : MERGED_INDEXES) {
             var own = output.resolve(path);
             var theirs = main.resolve(path);
-            if (!java.nio.file.Files.isRegularFile(own) || !java.nio.file.Files.isRegularFile(theirs)) {
-                continue;
-            }
-            try {
-                var lines = new ArrayList<>(java.nio.file.Files.readAllLines(own, StandardCharsets.UTF_8));
-                var present = new java.util.HashSet<>(lines);
-                for (var line : java.nio.file.Files.readAllLines(theirs, StandardCharsets.UTF_8)) {
-                    if (!line.isBlank() && !line.startsWith("#") && present.add(line)) {
-                        lines.add(line);
-                    }
-                }
-                java.nio.file.Files.write(own, lines, StandardCharsets.UTF_8);
-            } catch (IOException e) {
-                processingEnv.getMessager().printMessage(Diagnostic.Kind.WARNING,
-                        "[Vauban] Cannot add the main sources' " + path + " to the test compilation's: "
-                                + e.getMessage() + ". When the tests run, the main beans may be missing.");
+            if (java.nio.file.Files.isRegularFile(own) && java.nio.file.Files.isRegularFile(theirs)) {
+                mergeIndex(path, own, theirs);
             }
         }
         for (var path : UNMERGED_INDEXES) {
@@ -939,6 +1117,24 @@ public class VaubanProcessor extends AbstractProcessor {
                         "[Vauban] The test compilation wrote " + path + " next to the main sources' one; when the"
                                 + " tests run it hides the main one, which is not merged (vauban#101).");
             }
+        }
+    }
+
+    /** Adds to the index file {@code own} the entries of {@code theirs} it lacks, comments and blanks left out. */
+    private void mergeIndex(String path, java.nio.file.Path own, java.nio.file.Path theirs) {
+        try {
+            var lines = new ArrayList<>(java.nio.file.Files.readAllLines(own, StandardCharsets.UTF_8));
+            var present = new java.util.HashSet<>(lines);
+            for (var line : java.nio.file.Files.readAllLines(theirs, StandardCharsets.UTF_8)) {
+                if (!line.isBlank() && !line.startsWith("#") && present.add(line)) {
+                    lines.add(line);
+                }
+            }
+            java.nio.file.Files.write(own, lines, StandardCharsets.UTF_8);
+        } catch (IOException e) {
+            processingEnv.getMessager().printMessage(Diagnostic.Kind.WARNING,
+                    "[Vauban] Cannot add the main sources' " + path + " to the test compilation's: "
+                            + e.getMessage() + ". When the tests run, the main beans may be missing.");
         }
     }
 
@@ -960,11 +1156,9 @@ public class VaubanProcessor extends AbstractProcessor {
         var lines = new java.util.ArrayList<io.vidocq.vauban.processor.weave.WeavePlan.Line>();
         var planned = new java.util.LinkedHashSet<String>();
         for (var bean : beans) {
-            if (bean.kind() != BeanDescriptor.BeanKind.MANAGED || !bean.scope().isNormal()) continue;
-            var fqn = bean.beanClass().value();
-            if (!isTopLevelType(fqn) || externalClassNames.contains(bean.beanClass())) continue;
-            if (planBeanWeaving(fqn, index, planned, lines)) {
-                lines.add(io.vidocq.vauban.processor.weave.WeavePlan.Line.proxy(fqn + "_ClientProxy"));
+            if (isWeavingCandidate(bean) && planBeanWeaving(bean.beanClass().value(), index, planned, lines)) {
+                lines.add(io.vidocq.vauban.processor.weave.WeavePlan.Line.proxy(
+                        bean.beanClass().value() + CLIENT_PROXY_SUFFIX));
             }
         }
         if (lines.isEmpty()) return;
@@ -975,6 +1169,12 @@ public class VaubanProcessor extends AbstractProcessor {
             processingEnv.getMessager().printMessage(Diagnostic.Kind.WARNING,
                     "[Vauban] could not publish the ProxyLink weave plan: " + e.getMessage());
         }
+    }
+
+    /** A top-level normal-scoped managed bean of this compilation, whose generated proxy may need the marker. */
+    private boolean isWeavingCandidate(BeanDescriptor bean) {
+        return bean.kind() == BeanDescriptor.BeanKind.MANAGED && bean.scope().isNormal()
+                && isTopLevelType(bean.beanClass().value()) && !externalClassNames.contains(bean.beanClass());
     }
 
     /**
@@ -1015,7 +1215,7 @@ public class VaubanProcessor extends AbstractProcessor {
             return null;
         }
         var superFqn = superType.getQualifiedName().toString();
-        if ("java.lang.Object".equals(superFqn)) {
+        if (JAVA_LANG_OBJECT.equals(superFqn)) {
             return io.vidocq.vauban.weaver.ProxyLinkWeaver.SuperChain.NO_ARG;
         }
         var superCtors = javax.lang.model.util.ElementFilter
@@ -1065,7 +1265,7 @@ public class VaubanProcessor extends AbstractProcessor {
                     .getResource(javax.tools.StandardLocation.CLASS_OUTPUT, "", "vauban-probe.tmp")
                     .toUri().toString();
             return !out.contains("/test-classes/");
-        } catch (Exception e) {
+        } catch (Exception _) {
             // Filer probe failed — default to running validation (safest).
             return true;
         }
@@ -1095,19 +1295,12 @@ public class VaubanProcessor extends AbstractProcessor {
         // `provides` resolution errors before the last-round generated classes exist.
         try {
             for (var module : processingEnv.getElementUtils().getAllModuleElements()) {
-                if (module.isUnnamed()
-                        || compiledModuleNames.contains(module.getQualifiedName().toString())) {
-                    continue;
-                }
-                for (var directive : module.getDirectives()) {
-                    if (directive.getKind() != ModuleElement.DirectiveKind.PROVIDES) continue;
-                    var provides = (ModuleElement.ProvidesDirective) directive;
-                    if (!bceFqn.contentEquals(provides.getService().getQualifiedName())) continue;
-                    provides.getImplementations()
-                            .forEach(impl -> declared.add(impl.getQualifiedName().toString()));
+                if (!module.isUnnamed()
+                        && !compiledModuleNames.contains(module.getQualifiedName().toString())) {
+                    collectProvidedBces(module, bceFqn, declared);
                 }
             }
-        } catch (Exception e) {
+        } catch (Exception _) {
             // Module elements unavailable in this javac configuration — classpath probe still runs.
         }
 
@@ -1122,13 +1315,25 @@ public class VaubanProcessor extends AbstractProcessor {
                         .filter(line -> !line.isEmpty())
                         .forEach(declared::add);
             }
-        } catch (Exception e) {
+        } catch (Exception _) {
             // No such resource on the classpath — the normal case.
         }
 
         discoveredBceClasses.forEach(loaded -> declared.remove(loaded.getName()));
         unloadableBcesCache = declared;
         return declared;
+    }
+
+    /** Adds to {@code declared} the implementations {@code module} provides for the service {@code bceFqn}. */
+    private static void collectProvidedBces(ModuleElement module, String bceFqn, Set<String> declared) {
+        for (var directive : module.getDirectives()) {
+            if (directive.getKind() == ModuleElement.DirectiveKind.PROVIDES
+                    && directive instanceof ModuleElement.ProvidesDirective provides
+                    && bceFqn.contentEquals(provides.getService().getQualifiedName())) {
+                provides.getImplementations()
+                        .forEach(impl -> declared.add(impl.getQualifiedName().toString()));
+            }
+        }
     }
 
     /** One-shot warning naming the BCEs of {@link #unloadableBcesOnCompilePath()}. */
@@ -1138,7 +1343,7 @@ public class VaubanProcessor extends AbstractProcessor {
         var unloadable = unloadableBcesOnCompilePath();
         if (unloadable.isEmpty()) return;
         processingEnv.getMessager().printMessage(Diagnostic.Kind.WARNING,
-                "[Vauban] " + unloadable.size() + " Build Compatible Extension(s) present on the"
+                LOG_PREFIX + unloadable.size() + " Build Compatible Extension(s) present on the"
                         + " compile/module path are NOT on the annotation-processor path and will"
                         + " not run: " + unloadable + ". Maven's <annotationProcessorPaths> narrows"
                         + " javac's -processorpath to its entries — add the artifact(s) shipping"
@@ -1184,29 +1389,6 @@ public class VaubanProcessor extends AbstractProcessor {
     }
 
     /**
-     * Brings the beans an injection point needs from a <strong>dependency</strong> into the index.
-     *
-     * <p>The processor only indexes the types of the current compilation, so
-     * {@code @Inject Greeter} where {@code Greeter} is an {@code @ApplicationScoped} bean of another
-     * Maven module used to fail the build — while the very same injection point resolved at
-     * runtime, where the container merges the {@code vauban-beans.list} of every archive. That
-     * false negative was viral at each module boundary: it forced {@code Instance<T>} everywhere,
-     * losing the compile-time checking that is the point of build-time CDI, and it had no answer at
-     * all for a third-party module's beans (Vidocq/vauban#23).
-     *
-     * <p>No jar scanning is needed to fix it: {@code Elements} already sees the whole compile
-     * classpath, so a missing required type is looked up there, scanned into the index, and bean
-     * discovery is replayed to obtain its descriptor. Such a type is recorded in
-     * {@link #externalClassNames} so no {@code _Factory} / {@code _ClientProxy} is emitted for it
-     * here — its own module already ships those, and emitting them again would split the package.
-     *
-     * @param beans           the discovered beans; grown in place with the dependency beans found
-     * @param indexBuilder    the accumulated index, enriched in place
-     * @param scanner         element scanner used to turn a {@code TypeElement} into a ClassInfo
-     * @param discoveryResult BCE discovery result to replay on the second discovery pass, or null
-     * @return what was resolved, and what has to be deferred to the runtime container
-     */
-    /**
      * Adds to the index every annotation type the indexed classes name, and then the types those name
      * in turn — the meta-annotations that say what a type is ({@code @Qualifier}, {@code @Stereotype},
      * {@code @InterceptorBinding}) and what its members mean ({@code @Nonbinding}, their defaults).
@@ -1225,16 +1407,13 @@ public class VaubanProcessor extends AbstractProcessor {
         }
         while (!pending.isEmpty()) {
             var name = pending.poll();
-            if (!seen.add(name) || indexBuilder.contains(name)) {
-                continue;
+            var element = seen.add(name) && !indexBuilder.contains(name)
+                    ? annotationTypeElement(elements, name) : null;
+            if (element != null) {
+                var scanned = scanner.scan(element);
+                indexBuilder.add(scanned);
+                collectAnnotationNames(scanned, pending);
             }
-            var element = annotationTypeElement(elements, name);
-            if (element == null) {
-                continue;
-            }
-            var scanned = scanner.scan(element);
-            indexBuilder.add(scanned);
-            collectAnnotationNames(scanned, pending);
         }
     }
 
@@ -1270,36 +1449,54 @@ public class VaubanProcessor extends AbstractProcessor {
         var fromDependencies = new java.util.LinkedHashMap<DotName, ClassInfo>();
 
         for (var classInfo : index.getKnownClasses()) {
-            if (!classInfo.isAnnotation()) continue;
-            var element = annotationTypeElement(elements, classInfo.name());
-            if (element == null) continue;
-            if (compiledHere(elements, element)) {
+            var element = classInfo.isAnnotation() ? annotationTypeElement(elements, classInfo.name()) : null;
+            if (element != null && compiledHere(elements, element)) {
                 byPackage.computeIfAbsent(classInfo.name().packageName(),
                         pkg -> new java.util.LinkedHashMap<>()).put(classInfo.name(), classInfo);
-            } else if (coverableFromAConsumer(classInfo, element)) {
+            } else if (element != null && coverableFromAConsumer(classInfo, element)) {
                 fromDependencies.put(classInfo.name(), classInfo);
             }
         }
 
         if (!fromDependencies.isEmpty()) {
-            for (var classInfo : index.getKnownClasses()) {
-                if (classInfo.isAnnotation()) continue;
-                var element = elements.getTypeElement(classInfo.name().value().replace('$', '.'));
-                if (element == null || !compiledHere(elements, element)) continue;
-                var used = new java.util.ArrayList<DotName>();
-                collectAnnotationNames(classInfo, used);
-                for (var name : used) {
-                    var type = fromDependencies.get(name);
-                    if (type == null) continue;
-                    byPackage.computeIfAbsent(classInfo.name().packageName(),
-                            pkg -> new java.util.LinkedHashMap<>()).put(name, type);
-                }
-            }
+            addUsedDependencyAnnotationTypes(index, elements, fromDependencies, byPackage);
         }
 
         var result = new java.util.LinkedHashMap<String, List<ClassInfo>>();
         byPackage.forEach((pkg, types) -> result.put(pkg, List.copyOf(types.values())));
         return result;
+    }
+
+    /** Whether the class {@code classInfo} names comes from a source file of this compilation. */
+    private static boolean compiledHere(Elements elements, ClassInfo classInfo) {
+        var element = elements.getTypeElement(classInfo.name().value().replace('$', '.'));
+        return element != null && compiledHere(elements, element);
+    }
+
+    /** Adds to the package of each class compiled here the dependency annotation types it uses. */
+    private static void addUsedDependencyAnnotationTypes(io.vidocq.vauban.indexer.VaubanIndex index,
+            Elements elements, Map<DotName, ClassInfo> fromDependencies,
+            Map<String, java.util.LinkedHashMap<DotName, ClassInfo>> byPackage) {
+        for (var classInfo : index.getKnownClasses()) {
+            if (!classInfo.isAnnotation() && compiledHere(elements, classInfo)) {
+                addUsedDependencyAnnotationTypesOf(classInfo, fromDependencies, byPackage);
+            }
+        }
+    }
+
+    /** Adds to the package of {@code classInfo} the dependency annotation types it uses. */
+    private static void addUsedDependencyAnnotationTypesOf(ClassInfo classInfo,
+            Map<DotName, ClassInfo> fromDependencies,
+            Map<String, java.util.LinkedHashMap<DotName, ClassInfo>> byPackage) {
+        var used = new java.util.ArrayList<DotName>();
+        collectAnnotationNames(classInfo, used);
+        for (var name : used) {
+            var type = fromDependencies.get(name);
+            if (type != null) {
+                byPackage.computeIfAbsent(classInfo.name().packageName(),
+                        pkg -> new java.util.LinkedHashMap<>()).put(name, type);
+            }
+        }
     }
 
     /**
@@ -1353,14 +1550,38 @@ public class VaubanProcessor extends AbstractProcessor {
 
     private static void collectAnnotationNames(AnnotationValue value, Collection<DotName> into) {
         switch (value) {
-            case AnnotationValue.AnnotationVal nested -> collectAnnotationNames(nested.annotation(), into);
-            case AnnotationValue.ArrayVal array -> array.values().forEach(item -> collectAnnotationNames(item, into));
+            case AnnotationValue.AnnotationVal(AnnotationInfo nested) -> collectAnnotationNames(nested, into);
+            case AnnotationValue.ArrayVal(List<AnnotationValue> values) ->
+                    values.forEach(item -> collectAnnotationNames(item, into));
             default -> {
                 // No annotation type to reach through any other member kind.
             }
         }
     }
 
+    /**
+     * Brings the beans an injection point needs from a <strong>dependency</strong> into the index.
+     *
+     * <p>The processor only indexes the types of the current compilation, so
+     * {@code @Inject Greeter} where {@code Greeter} is an {@code @ApplicationScoped} bean of another
+     * Maven module used to fail the build — while the very same injection point resolved at
+     * runtime, where the container merges the {@code vauban-beans.list} of every archive. That
+     * false negative was viral at each module boundary: it forced {@code Instance<T>} everywhere,
+     * losing the compile-time checking that is the point of build-time CDI, and it had no answer at
+     * all for a third-party module's beans (Vidocq/vauban#23).
+     *
+     * <p>No jar scanning is needed to fix it: {@code Elements} already sees the whole compile
+     * classpath, so a missing required type is looked up there, scanned into the index, and bean
+     * discovery is replayed to obtain its descriptor. Such a type is recorded in
+     * {@link #externalClassNames} so no {@code _Factory} / {@code _ClientProxy} is emitted for it
+     * here — its own module already ships those, and emitting them again would split the package.
+     *
+     * @param beans           the discovered beans; grown in place with the dependency beans found
+     * @param indexBuilder    the accumulated index, enriched in place
+     * @param scanner         element scanner used to turn a {@code TypeElement} into a ClassInfo
+     * @param discoveryResult BCE discovery result to replay on the second discovery pass, or null
+     * @return what was resolved, and what has to be deferred to the runtime container
+     */
     private DependencyTypes resolveDependencyBeans(List<BeanDescriptor> beans,
                                                    IndexBuilder indexBuilder,
                                                    ElementScanner scanner,
@@ -1376,24 +1597,38 @@ public class VaubanProcessor extends AbstractProcessor {
         Set<DotName> added = new LinkedHashSet<>();
         Set<String> deferred = new LinkedHashSet<>();
         for (var name : required) {
-            if (indexBuilder.contains(name)) {
-                continue;
+            // A type absent from the compile classpath too is a genuine mistake, left to the validator.
+            var typeElement = indexBuilder.contains(name) ? null : elements.getTypeElement(name.value());
+            if (typeElement != null) {
+                indexBuilder.add(scanner.scan(typeElement));
+                added.add(name);
             }
-            var typeElement = elements.getTypeElement(name.value());
-            if (typeElement == null) {
-                // Not on the compile classpath either: a genuine mistake, left to the validator.
-                continue;
-            }
-            indexBuilder.add(scanner.scan(typeElement));
-            added.add(name);
         }
 
         if (added.isEmpty()) {
             return new DependencyTypes(false, Set.of());
         }
 
-        var enrichedIndex = indexBuilder.build();
-        var discovery = new BeanDiscovery(enrichedIndex);
+        Set<DotName> becameBeans = addDependencyBeans(beans, added, indexBuilder, discoveryResult);
+
+        for (var name : added) {
+            if (!becameBeans.contains(name) && mayBeSatisfiedElsewhere(elements.getTypeElement(name.value()))) {
+                deferred.add(name.value());
+            }
+        }
+        return new DependencyTypes(true, deferred);
+    }
+
+    /**
+     * Replays bean discovery over the enriched index and adds to {@code beans} those whose class is
+     * one of the dependency types {@code added}; they are external, since their own module ships
+     * their generated artefacts.
+     *
+     * @return the dependency types that became beans
+     */
+    private Set<DotName> addDependencyBeans(List<BeanDescriptor> beans, Set<DotName> added,
+            IndexBuilder indexBuilder, BceProcessor.DiscoveryResult discoveryResult) {
+        var discovery = new BeanDiscovery(indexBuilder.build());
         if (discoveryResult != null) {
             applyDiscoveryResult(discovery, discoveryResult);
         }
@@ -1410,13 +1645,7 @@ public class VaubanProcessor extends AbstractProcessor {
                                 + " from a dependency (injection point of this module)");
             }
         }
-
-        for (var name : added) {
-            if (!becameBeans.contains(name) && mayBeSatisfiedElsewhere(elements.getTypeElement(name.value()))) {
-                deferred.add(name.value());
-            }
-        }
-        return new DependencyTypes(true, deferred);
+        return becameBeans;
     }
 
     /**
@@ -1451,12 +1680,12 @@ public class VaubanProcessor extends AbstractProcessor {
     /** Collects the class names a required type refers to (raw type and type arguments alike). */
     private static void collectClassNames(TypeInfo type, Set<DotName> out) {
         switch (type) {
-            case TypeInfo.ClassType ct -> out.add(ct.name());
-            case TypeInfo.ParameterizedType pt -> {
-                out.add(pt.rawType());
-                pt.typeArguments().forEach(arg -> collectClassNames(arg, out));
+            case TypeInfo.ClassType(DotName name) -> out.add(name);
+            case TypeInfo.ParameterizedType(DotName rawType, List<TypeInfo> typeArguments) -> {
+                out.add(rawType);
+                typeArguments.forEach(arg -> collectClassNames(arg, out));
             }
-            case TypeInfo.ArrayType at -> collectClassNames(at.componentType(), out);
+            case TypeInfo.ArrayType(TypeInfo componentType, int _) -> collectClassNames(componentType, out);
             default -> { /* primitives, void, type variables and wildcards name no bean */ }
         }
     }
@@ -1498,30 +1727,25 @@ public class VaubanProcessor extends AbstractProcessor {
         for (var classInfo : index.getKnownClasses()) {
             try {
                 classes.add(Class.forName(classInfo.name().value(), false, cl));
-            } catch (ClassNotFoundException ignored) {
+            } catch (ClassNotFoundException _) {
                 // Class not on processor classpath — skip
             }
         }
         return classes;
     }
 
+    /** The class file of {@code className} on {@code cl}; empty when it cannot be read there. */
     private byte[] loadClassBytes(String className, ClassLoader cl) {
         var resourceName = className.replace('.', '/') + ".class";
         try (var is = cl.getResourceAsStream(resourceName)) {
-            return is != null ? is.readAllBytes() : null;
-        } catch (IOException e) {
-            return null;
+            return is != null ? is.readAllBytes() : new byte[0];
+        } catch (IOException _) {
+            return new byte[0];
         }
     }
 
     // --- File writing ---
 
-    /**
-     * Write {@code META-INF/vauban/required-opens.list} (issue #42, Stage 3b): the produced class
-     * types whose proxy falls to runtime generation. At boot the OpensApplier loads each, and — only
-     * if it is in a named module — opens its package to {@code io.vidocq.vauban.core} via the agent,
-     * so the runtime fallback needs no hand-written {@code --add-opens}.
-     */
     /**
      * Whether a produced type with this verdict can be proxied at all once the proxy sits in the
      * type's own package: a non-public overridable member and an inaccessible constructor are
@@ -1582,6 +1806,12 @@ public class VaubanProcessor extends AbstractProcessor {
         }
     }
 
+    /**
+     * Write {@code META-INF/vauban/required-opens.list} (issue #42, Stage 3b): the produced class
+     * types whose proxy falls to runtime generation. At boot the OpensApplier loads each, and — only
+     * if it is in a named module — opens its package to {@code io.vidocq.vauban.core} via the agent,
+     * so the runtime fallback needs no hand-written {@code --add-opens}.
+     */
     private void writeRequiredOpens(java.util.Set<String> producedTypeFqns) {
         if (producedTypeFqns.isEmpty()) return;
         try {
@@ -1595,7 +1825,7 @@ public class VaubanProcessor extends AbstractProcessor {
             }
         } catch (IOException e) {
             processingEnv.getMessager().printMessage(Diagnostic.Kind.WARNING,
-                    "[Vauban] Failed to write " + REQUIRED_OPENS_PATH + ": " + e.getMessage());
+                    FAILED_TO_WRITE + REQUIRED_OPENS_PATH + ": " + e.getMessage());
         }
     }
 
@@ -1623,7 +1853,7 @@ public class VaubanProcessor extends AbstractProcessor {
             }
         } catch (IOException e) {
             processingEnv.getMessager().printMessage(Diagnostic.Kind.WARNING,
-                    "[Vauban] Failed to write " + BEANS_LIST_PATH + ": " + e.getMessage());
+                    FAILED_TO_WRITE + BEANS_LIST_PATH + ": " + e.getMessage());
         }
     }
 
@@ -1632,10 +1862,10 @@ public class VaubanProcessor extends AbstractProcessor {
         for (var entry : modifications.entrySet()) {
             var targetFqn = entry.getKey().value();
             for (var config : entry.getValue()) {
-                if (!config.isModified()) continue;
-                var bce = config.getSourceBce();
-                if (bce == null) continue;
-                entries.add(bce.getName() + ";" + targetFqn);
+                var bce = config.isModified() ? config.getSourceBce() : null;
+                if (bce != null) {
+                    entries.add(bce.getName() + ";" + targetFqn);
+                }
             }
         }
         if (entries.isEmpty()) return;
@@ -1651,7 +1881,7 @@ public class VaubanProcessor extends AbstractProcessor {
             }
         } catch (IOException e) {
             processingEnv.getMessager().printMessage(Diagnostic.Kind.WARNING,
-                    "[Vauban] Failed to write " + BCE_RUNTIME_LIST_PATH + ": " + e.getMessage());
+                    FAILED_TO_WRITE + BCE_RUNTIME_LIST_PATH + ": " + e.getMessage());
         }
     }
 
@@ -1717,7 +1947,7 @@ public class VaubanProcessor extends AbstractProcessor {
             }
         } catch (IOException e) {
             processingEnv.getMessager().printMessage(Diagnostic.Kind.WARNING,
-                    "[Vauban] Failed to write " + path + ": " + e.getMessage());
+                    FAILED_TO_WRITE + path + ": " + e.getMessage());
         }
     }
 
@@ -1748,28 +1978,42 @@ public class VaubanProcessor extends AbstractProcessor {
      * module path it cannot define the subclass itself.
      */
     private boolean isInterceptedTarget(TypeElement beanElement) {
-        if (beanElement.getModifiers().contains(Modifier.FINAL)) return false;
-        // An @Interceptor class carries the interceptor binding to associate itself with its targets,
-        // but it is never itself an interception target — do not generate a $$Intercepted for it.
-        for (var am : beanElement.getAnnotationMirrors()) {
-            if (am.getAnnotationType().toString().equals("jakarta.interceptor.Interceptor")) return false;
-        }
+        if (beanElement.getModifiers().contains(Modifier.FINAL) || isInterceptorClass(beanElement)) return false;
         for (var am : processingEnv.getElementUtils().getAllAnnotationMirrors(beanElement)) {
             if (isInterceptorBinding(am)) return true;
         }
         for (var enclosed : beanElement.getEnclosedElements()) {
-            if (enclosed.getKind() != ElementKind.METHOD) continue;
-            if (hasMethodLevelBinding((ExecutableElement) enclosed)) return true;
+            if (enclosed.getKind() == ElementKind.METHOD && hasMethodLevelBinding((ExecutableElement) enclosed)) {
+                return true;
+            }
         }
+        return hasInheritedMethodLevelBinding(beanElement);
+    }
+
+    /**
+     * An {@code @Interceptor} class carries the interceptor binding to associate itself with its targets,
+     * but it is never itself an interception target — no {@code $$Intercepted} is generated for it.
+     */
+    private static boolean isInterceptorClass(TypeElement beanElement) {
+        for (var am : beanElement.getAnnotationMirrors()) {
+            if (am.getAnnotationType().toString().equals("jakarta.interceptor.Interceptor")) return true;
+        }
+        return false;
+    }
+
+    /**
+     * Whether a method the bean inherits, as getAllMembers lists them, carries an interceptor binding:
+     * overridden ones are left out, so the binding of a method a class of the bean overrides does not
+     * count. The bean's own methods and those of {@code java.lang.Object} are not looked at.
+     */
+    private boolean hasInheritedMethodLevelBinding(TypeElement beanElement) {
         try {
-            // The methods it inherits, as getAllMembers lists them: overridden ones are left out,
-            // so the binding of a method a class of the bean overrides does not count.
             for (var inherited : javax.lang.model.util.ElementFilter.methodsIn(
                     processingEnv.getElementUtils().getAllMembers(beanElement))) {
-                if (inherited.getEnclosingElement().equals(beanElement)) continue; // done above
-                if (inherited.getEnclosingElement() instanceof TypeElement owner
-                        && owner.getQualifiedName().contentEquals("java.lang.Object")) continue;
-                if (hasMethodLevelBinding(inherited)) return true;
+                var owner = inherited.getEnclosingElement();
+                boolean examined = !owner.equals(beanElement)
+                        && !(owner instanceof TypeElement type && type.getQualifiedName().contentEquals(JAVA_LANG_OBJECT));
+                if (examined && hasMethodLevelBinding(inherited)) return true;
             }
         } catch (RuntimeException incomplete) {
             // A binary supertype or annotation the compiler cannot complete: leave the bean to the
@@ -1871,13 +2115,6 @@ public class VaubanProcessor extends AbstractProcessor {
     }
 
     /**
-     * {@code true} when {@code te} has a non-private constructor the proxy can call via {@code super}
-     * (a subclass cannot reach a private super ctor): either no explicit constructor (implicit no-arg)
-     * or at least one non-private declared ctor. Gates SOURCE client-proxy generation — the proxy
-     * calls the simplest non-private super ctor with default values; an all-private-ctor bean is
-     * unproxyable by subclassing and keeps the bytecode proxy + runtime fallback.
-     */
-    /**
      * True if the type has an accessible (non-private) no-arg constructor — explicit or
      * implicit. Gates SOURCE factory generation: the rendered {@code new Bean()} must
      * compile, whereas the bytecode factory defers resolution to load time.
@@ -1896,6 +2133,13 @@ public class VaubanProcessor extends AbstractProcessor {
         return false;
     }
 
+    /**
+     * {@code true} when {@code te} has a non-private constructor the proxy can call via {@code super}
+     * (a subclass cannot reach a private super ctor): either no explicit constructor (implicit no-arg)
+     * or at least one non-private declared ctor. Gates SOURCE client-proxy generation — the proxy
+     * calls the simplest non-private super ctor with default values; an all-private-ctor bean is
+     * unproxyable by subclassing and keeps the bytecode proxy + runtime fallback.
+     */
     private static boolean hasNonPrivateCtor(javax.lang.model.element.TypeElement te) {
         var ctors = javax.lang.model.util.ElementFilter.constructorsIn(te.getEnclosedElements());
         if (ctors.isEmpty()) {
@@ -1916,19 +2160,6 @@ public class VaubanProcessor extends AbstractProcessor {
     }
 
     /**
-     * Generates the {@code <pkg>._VaubanComponents} provider for one package's beans (in-module
-     * instantiation, field injection and method invocation) and returns its fully-qualified name so
-     * the caller can list it (with the others) in the single class-path service file. The fields and
-     * methods passed in already belong to {@code pkg} (the caller groups by package), so no filtering
-     * is needed — a co-located provider can reach its own package's package-private members.
-     *
-     * <p>Always emitted as readable Java <strong>source</strong>. A package with an intercepted bean
-     * has a {@code <bean>$$Intercepted} component; because that subclass is now itself generated as
-     * source (by {@link InterceptedSourceRenderer}), the provider source can reference it by name —
-     * javac resolves both in a later round. (Previously the provider had to be bytecode for such
-     * packages, since a generated source could not see a Filer-emitted {@code $$Intercepted}.)
-     */
-    /**
      * The produced concrete class type of a producer bean as a {@link TypeElement}, or {@code null}
      * when the produced type is an interface (handled at runtime by {@code java.lang.reflect.Proxy},
      * which needs only {@code exports}) or is not resolvable at APT time. Mirrors the runtime
@@ -1938,15 +2169,9 @@ public class VaubanProcessor extends AbstractProcessor {
     private TypeElement resolveProducedTypeElement(BeanDescriptor bean) {
         var elements = processingEnv.getElementUtils();
         for (var t : bean.types()) {
-            if (!(t instanceof io.vidocq.vauban.indexer.model.TypeInfo.ClassType ct)) {
-                continue;
-            }
-            var fqn = ct.name().value();
-            if ("java.lang.Object".equals(fqn)) {
-                continue;
-            }
             // By binary name: a nested produced type is app.Outer$Inner here (BUG-20261007-01).
-            var te = typeElementByBinaryName(elements, fqn);
+            var te = t instanceof TypeInfo.ClassType(DotName name) && !JAVA_LANG_OBJECT.equals(name.value())
+                    ? typeElementByBinaryName(elements, name.value()) : null;
             if (te != null && te.getKind() == ElementKind.CLASS) {
                 return te;
             }
@@ -1963,15 +2188,9 @@ public class VaubanProcessor extends AbstractProcessor {
     private TypeElement resolveProducedInterfaceElement(BeanDescriptor bean) {
         var elements = processingEnv.getElementUtils();
         for (var t : bean.types()) {
-            if (!(t instanceof io.vidocq.vauban.indexer.model.TypeInfo.ClassType ct)) {
-                continue;
-            }
-            var fqn = ct.name().value();
-            if ("java.lang.Object".equals(fqn)) {
-                continue;
-            }
             // By binary name: a nested produced type is app.Outer$Inner here (BUG-20261007-01).
-            var te = typeElementByBinaryName(elements, fqn);
+            var te = t instanceof TypeInfo.ClassType(DotName name) && !JAVA_LANG_OBJECT.equals(name.value())
+                    ? typeElementByBinaryName(elements, name.value()) : null;
             if (te != null && te.getKind() == ElementKind.INTERFACE
                     && te.getModifiers().contains(Modifier.PUBLIC)) {
                 return te;
@@ -1998,26 +2217,33 @@ public class VaubanProcessor extends AbstractProcessor {
         };
     }
 
-    private String writeComponentProvider(String pkg,
-            List<io.vidocq.vauban.indexer.codegen.Component> components,
-            List<io.vidocq.vauban.indexer.codegen.FieldInject> fieldInjects,
-            List<io.vidocq.vauban.indexer.codegen.MethodInvoke> methodInvokes,
-            List<String> clientProxyFqns,
-            List<ComponentProviderGenerator.ProducerProxy> producerProxies,
-            List<ClassInfo> annotationTypes) {
+    /**
+     * Generates the {@code <pkg>._VaubanComponents} provider for one package's beans (in-module
+     * instantiation, field injection and method invocation) and returns its fully-qualified name so
+     * the caller can list it (with the others) in the single class-path service file. The fields and
+     * methods passed in already belong to {@code pkg} (the caller groups by package), so no filtering
+     * is needed — a co-located provider can reach its own package's package-private members.
+     *
+     * <p>Always emitted as readable Java <strong>source</strong>. A package with an intercepted bean
+     * has a {@code <bean>$$Intercepted} component; because that subclass is now itself generated as
+     * source (by {@link InterceptedSourceRenderer}), the provider source can reference it by name —
+     * javac resolves both in a later round. (Previously the provider had to be bytecode for such
+     * packages, since a generated source could not see a Filer-emitted {@code $$Intercepted}.)
+     */
+    private String writeComponentProvider(String pkg, ComponentProviderGenerator.Contents contents) {
         boolean testRound = isTestRound(pkg);
         var gen = ComponentProviderGenerator.generateFrom(pkg,
                 testRound ? ComponentProviderGenerator.TEST_SIMPLE_NAME : ComponentProviderGenerator.SIMPLE_NAME,
-                components, fieldInjects, methodInvokes,
-                clientProxyFqns, producerProxies, AnnotationArtefacts.render(annotationTypes, this::canonicalName), bytecodeClasses);
+                contents);
         try {
             var file = processingEnv.getFiler().createSourceFile(gen.className());
             try (var w = file.openWriter()) {
                 w.write(gen.source());
             }
             processingEnv.getMessager().printMessage(Diagnostic.Kind.NOTE,
-                    "[Vauban] Generated " + gen.className() + " (" + components.size() + " component(s), "
-                            + fieldInjects.size() + " field(s), " + methodInvokes.size() + " method(s)). "
+                    "[Vauban] Generated " + gen.className() + " (" + contents.components().size() + " component(s), "
+                            + contents.fieldInjects().size() + " field(s), " + contents.methodInvokes().size()
+                            + " method(s)). "
                             + (testRound
                                     ? "Test compilation: the container finds it through the main sources' "
                                             + ComponentProviderGenerator.SIMPLE_NAME + "."
@@ -2031,7 +2257,6 @@ public class VaubanProcessor extends AbstractProcessor {
         }
     }
 
-    /** Class-path fallback registration (ignored for named modules, which use {@code provides}). */
     /** {@code proxies} by produced-type key, then proxy name (BUG-20261007-04). */
     private static List<ComponentProviderGenerator.ProducerProxy> inStableOrder(
             List<ComponentProviderGenerator.ProducerProxy> proxies) {
@@ -2078,12 +2303,13 @@ public class VaubanProcessor extends AbstractProcessor {
                 mainOutputFromProvider = root;
             }
             return true;
-        } catch (IOException | IllegalArgumentException | java.nio.file.FileSystemNotFoundException e) {
+        } catch (IOException | IllegalArgumentException | java.nio.file.FileSystemNotFoundException _) {
             // A class file in a jar, or an output that is no directory: not this module's main output.
             return false;
         }
     }
 
+    /** Class-path fallback registration (ignored for named modules, which use {@code provides}). */
     private void writeComponentProviderService(List<String> providerClassNames) {
         // The test round's provider is found through the main one (vauban#101): listing it here as well would
         // register it twice on the class path.
@@ -2138,7 +2364,7 @@ public class VaubanProcessor extends AbstractProcessor {
      * producer method or field for a producer's proxy.
      */
     private void warnOmitted(String omitted, javax.lang.model.element.Element site) {
-        processingEnv.getMessager().printMessage(Diagnostic.Kind.WARNING, "[Vauban] " + omitted, site);
+        processingEnv.getMessager().printMessage(Diagnostic.Kind.WARNING, LOG_PREFIX + omitted, site);
     }
 
     /**
