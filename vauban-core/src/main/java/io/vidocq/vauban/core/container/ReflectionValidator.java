@@ -21,12 +21,15 @@ package io.vidocq.vauban.core.container;
 
 import java.lang.annotation.Annotation;
 import java.lang.reflect.GenericArrayType;
+import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
+import java.lang.reflect.Parameter;
 import java.lang.reflect.ParameterizedType;
 import java.lang.reflect.Type;
 import java.lang.reflect.TypeVariable;
 import java.lang.reflect.WildcardType;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashSet;
@@ -35,6 +38,12 @@ import java.util.Map;
 import java.util.Set;
 
 final class ReflectionValidator {
+
+    private static final String TYPED_VALUE = "@Typed value ";
+    private static final String NOT_A_LEGAL_BEAN_TYPE = " is not a legal bean type";
+    private static final String PRODUCER = "Producer ";
+    private static final String PRODUCER_METHOD = "Producer method ";
+    private static final String BEAN = "Bean ";
 
     private ReflectionValidator() {}
 
@@ -64,7 +73,7 @@ final class ReflectionValidator {
                 validateStereotypePriorities(clazz, errors);
                 validateStereotypeScopes(clazz, errors);
                 validateInterceptorBindings(clazz, errors);
-            } catch (LinkageError ignored) {
+            } catch (LinkageError _) {
                 // Uninspectable in this context — skip this class.
             }
         }
@@ -103,62 +112,83 @@ final class ReflectionValidator {
 
     private static void validateNamedOnParameters(Class<?> clazz, List<String> errors) {
         if (hasBeanDefiningAnnotation(clazz)) {
-            for (var method : clazz.getDeclaredMethods()) {
-                if (method.isAnnotationPresent(jakarta.inject.Inject.class)) {
-                    for (var param : method.getParameters()) {
-                        var named = param.getAnnotation(jakarta.inject.Named.class);
-                        if (named != null && named.value().isEmpty()) {
-                            errors.add("@Named without value on initializer parameter: "
-                                    + clazz.getName() + "." + method.getName());
-                        }
-                    }
-                }
-            }
-            for (var ctor : clazz.getDeclaredConstructors()) {
-                if (ctor.isAnnotationPresent(jakarta.inject.Inject.class)) {
-                    for (var param : ctor.getParameters()) {
-                        var named = param.getAnnotation(jakarta.inject.Named.class);
-                        if (named != null && named.value().isEmpty()) {
-                            errors.add("@Named without value on constructor parameter: "
-                                    + clazz.getName());
-                        }
-                    }
-                }
-            }
+            validateNamedOnInitializerParameters(clazz, errors);
+            validateNamedOnConstructorParameters(clazz, errors);
         }
-
         for (var method : clazz.getDeclaredMethods()) {
-            if (method.isAnnotationPresent(jakarta.enterprise.inject.Produces.class)) {
+            validateNamedOnProducerParameters(clazz, method, errors);
+            validateNamedOnObserverOrDisposerParameters(clazz, method, errors);
+        }
+    }
+
+    private static void validateNamedOnInitializerParameters(Class<?> clazz, List<String> errors) {
+        for (var method : clazz.getDeclaredMethods()) {
+            if (method.isAnnotationPresent(jakarta.inject.Inject.class)) {
                 for (var param : method.getParameters()) {
-                    var named = param.getAnnotation(jakarta.inject.Named.class);
-                    if (named != null && named.value().isEmpty()) {
-                        errors.add("@Named without value on producer method parameter: "
-                                + clazz.getName() + "." + method.getName());
-                    }
-                }
-            }
-            boolean hasObservesOrDisposes = false;
-            for (var param : method.getParameters()) {
-                if (param.isAnnotationPresent(jakarta.enterprise.event.Observes.class)
-                        || param.isAnnotationPresent(jakarta.enterprise.event.ObservesAsync.class)
-                        || param.isAnnotationPresent(jakarta.enterprise.inject.Disposes.class)) {
-                    hasObservesOrDisposes = true;
-                    break;
-                }
-            }
-            if (hasObservesOrDisposes) {
-                for (var param : method.getParameters()) {
-                    if (param.isAnnotationPresent(jakarta.enterprise.event.Observes.class)
-                            || param.isAnnotationPresent(jakarta.enterprise.event.ObservesAsync.class)
-                            || param.isAnnotationPresent(jakarta.enterprise.inject.Disposes.class)) continue;
-                    var named = param.getAnnotation(jakarta.inject.Named.class);
-                    if (named != null && named.value().isEmpty()) {
-                        errors.add("@Named without value on observer/disposer method parameter: "
+                    if (isNamedWithoutValue(param)) {
+                        errors.add("@Named without value on initializer parameter: "
                                 + clazz.getName() + "." + method.getName());
                     }
                 }
             }
         }
+    }
+
+    private static void validateNamedOnConstructorParameters(Class<?> clazz, List<String> errors) {
+        for (var ctor : clazz.getDeclaredConstructors()) {
+            if (ctor.isAnnotationPresent(jakarta.inject.Inject.class)) {
+                for (var param : ctor.getParameters()) {
+                    if (isNamedWithoutValue(param)) {
+                        errors.add("@Named without value on constructor parameter: "
+                                + clazz.getName());
+                    }
+                }
+            }
+        }
+    }
+
+    private static void validateNamedOnProducerParameters(Class<?> clazz, Method method, List<String> errors) {
+        if (!method.isAnnotationPresent(jakarta.enterprise.inject.Produces.class)) {
+            return;
+        }
+        for (var param : method.getParameters()) {
+            if (isNamedWithoutValue(param)) {
+                errors.add("@Named without value on producer method parameter: "
+                        + clazz.getName() + "." + method.getName());
+            }
+        }
+    }
+
+    private static void validateNamedOnObserverOrDisposerParameters(Class<?> clazz, Method method,
+            List<String> errors) {
+        var params = method.getParameters();
+        if (Arrays.stream(params).noneMatch(ReflectionValidator::isObservesOrDisposes)) {
+            return;
+        }
+        for (var param : params) {
+            if (!isObservesOrDisposes(param) && isNamedWithoutValue(param)) {
+                errors.add("@Named without value on observer/disposer method parameter: "
+                        + clazz.getName() + "." + method.getName());
+            }
+        }
+    }
+
+    private static boolean isNamedWithoutValue(Parameter param) {
+        var named = param.getAnnotation(jakarta.inject.Named.class);
+        return named != null && named.value().isEmpty();
+    }
+
+    private static boolean isObserves(Parameter param) {
+        return param.isAnnotationPresent(jakarta.enterprise.event.Observes.class)
+                || param.isAnnotationPresent(jakarta.enterprise.event.ObservesAsync.class);
+    }
+
+    private static boolean isDisposes(Parameter param) {
+        return param.isAnnotationPresent(jakarta.enterprise.inject.Disposes.class);
+    }
+
+    private static boolean isObservesOrDisposes(Parameter param) {
+        return isObserves(param) || isDisposes(param);
     }
 
     private static void validateNormalScopedPublicFields(Class<?> clazz, List<String> errors) {
@@ -185,12 +215,12 @@ final class ReflectionValidator {
     }
 
     private static void validateTypedValues(Class<?> clazz, List<String> errors) {
-        if (clazz.isAnnotationPresent(jakarta.enterprise.inject.Typed.class)) {
-            var typed = clazz.getAnnotation(jakarta.enterprise.inject.Typed.class);
-            for (var t : typed.value()) {
+        var classTyped = clazz.getAnnotation(jakarta.enterprise.inject.Typed.class);
+        if (classTyped != null) {
+            for (var t : classTyped.value()) {
                 if (!t.isAssignableFrom(clazz)) {
-                    errors.add("@Typed value " + t.getName() + " on " + clazz.getName()
-                            + " is not a legal bean type (not a supertype)");
+                    errors.add(TYPED_VALUE + t.getName() + " on " + clazz.getName()
+                            + NOT_A_LEGAL_BEAN_TYPE + " (not a supertype)");
                 }
             }
         }
@@ -198,29 +228,26 @@ final class ReflectionValidator {
         for (var method : clazz.getDeclaredMethods()) {
             if (method.isAnnotationPresent(jakarta.enterprise.inject.Produces.class)
                     && method.isAnnotationPresent(jakarta.enterprise.inject.Typed.class)) {
-                var typed = method.getAnnotation(jakarta.enterprise.inject.Typed.class);
-                var returnType = method.getReturnType();
-                for (var t : typed.value()) {
-                    if (!t.isAssignableFrom(returnType) && t != Object.class) {
-                        errors.add("@Typed value " + t.getName() + " on producer method "
-                                + clazz.getName() + "." + method.getName()
-                                + " is not a legal bean type");
-                    }
-                }
+                validateTypedProducer(method.getAnnotation(jakarta.enterprise.inject.Typed.class),
+                        method.getReturnType(), "producer method " + clazz.getName() + "." + method.getName(),
+                        errors);
             }
         }
         for (var field : clazz.getDeclaredFields()) {
             if (field.isAnnotationPresent(jakarta.enterprise.inject.Produces.class)
                     && field.isAnnotationPresent(jakarta.enterprise.inject.Typed.class)) {
-                var typed = field.getAnnotation(jakarta.enterprise.inject.Typed.class);
-                var fieldType = field.getType();
-                for (var t : typed.value()) {
-                    if (!t.isAssignableFrom(fieldType) && t != Object.class) {
-                        errors.add("@Typed value " + t.getName() + " on producer field "
-                                + clazz.getName() + "." + field.getName()
-                                + " is not a legal bean type");
-                    }
-                }
+                validateTypedProducer(field.getAnnotation(jakarta.enterprise.inject.Typed.class),
+                        field.getType(), "producer field " + clazz.getName() + "." + field.getName(), errors);
+            }
+        }
+    }
+
+    /** Reports each {@code @Typed} value of a producer that is neither {@code Object} nor a supertype of its type. */
+    private static void validateTypedProducer(jakarta.enterprise.inject.Typed typed, Class<?> producedType,
+            String producer, List<String> errors) {
+        for (var t : typed.value()) {
+            if (!t.isAssignableFrom(producedType) && t != Object.class) {
+                errors.add(TYPED_VALUE + t.getName() + " on " + producer + NOT_A_LEGAL_BEAN_TYPE);
             }
         }
     }
@@ -235,126 +262,110 @@ final class ReflectionValidator {
 
     private static void validateMethods(Class<?> clazz, List<String> errors) {
         for (var method : clazz.getDeclaredMethods()) {
-            if (method.isAnnotationPresent(jakarta.enterprise.inject.Produces.class)) {
-                validateProducerReturnType(method.getGenericReturnType(),
-                        clazz.getName() + "." + method.getName(), errors);
-                validateNoMultipleScopes(method.getAnnotations(),
-                        "Producer method " + clazz.getName() + "." + method.getName(), errors);
-
-                var genRetType = method.getGenericReturnType();
-                if (containsTypeVariable(genRetType)) {
-                    boolean isDependent = true;
-                    for (var mAnn : method.getAnnotations()) {
-                        if (mAnn.annotationType().isAnnotationPresent(jakarta.enterprise.context.NormalScope.class)
-                                || (mAnn.annotationType().isAnnotationPresent(jakarta.inject.Scope.class)
-                                    && mAnn.annotationType() != jakarta.enterprise.context.Dependent.class)) {
-                            isDependent = false;
-                            break;
-                        }
-                    }
-                    if (!isDependent) {
-                        errors.add("Producer method " + clazz.getName() + "." + method.getName()
-                                + " has TypeVariable return type and non-@Dependent scope");
-                    }
-                }
-
-                if (containsWildcard(genRetType)) {
-                    errors.add("Producer method " + clazz.getName() + "." + method.getName()
-                            + " has wildcard type parameter in return type");
-                }
+            boolean producer = method.isAnnotationPresent(jakarta.enterprise.inject.Produces.class);
+            if (producer) {
+                validateProducerMethod(clazz, method, errors);
             }
-
-            if (method.isAnnotationPresent(jakarta.inject.Inject.class)
-                    && method.getTypeParameters().length > 0
-                    && !method.getName().equals("<init>")) {
-                errors.add("Initializer method " + clazz.getName() + "." + method.getName()
-                        + " cannot declare type parameters");
-            }
-
             if (method.isAnnotationPresent(jakarta.inject.Inject.class)) {
-                var paramTypes = method.getGenericParameterTypes();
-                var rawTypes = method.getParameterTypes();
-                for (int i = 0; i < paramTypes.length; i++) {
-                    validateNoRawParameterized(paramTypes[i], rawTypes[i],
-                            clazz.getName() + "." + method.getName() + " param " + i, errors);
-                }
+                validateInitializerMethod(clazz, method, errors);
             }
-
             var params = method.getParameters();
-            boolean hasObserves = false;
-            for (var p : params) {
-                if (p.isAnnotationPresent(jakarta.enterprise.event.Observes.class)
-                        || p.isAnnotationPresent(jakarta.enterprise.event.ObservesAsync.class)) {
-                    hasObserves = true;
-                    break;
-                }
+            if (Arrays.stream(params).anyMatch(ReflectionValidator::isObserves)) {
+                validateObserverParameters(clazz, method, params, errors);
             }
-            if (hasObserves) {
-                var paramTypes = method.getGenericParameterTypes();
-                var rawTypes = method.getParameterTypes();
-                for (int i = 0; i < params.length; i++) {
-                    if (!params[i].isAnnotationPresent(jakarta.enterprise.event.Observes.class)
-                            && !params[i].isAnnotationPresent(jakarta.enterprise.event.ObservesAsync.class)) {
-                        validateNoRawParameterized(paramTypes[i], rawTypes[i],
-                                clazz.getName() + "." + method.getName() + " observer param", errors);
-                    }
-                }
+            if (Arrays.stream(params).anyMatch(ReflectionValidator::isDisposes)) {
+                validateDisposerParameters(clazz, method, params, errors);
             }
-
-            boolean hasDisposes = false;
-            for (var p : params) {
-                if (p.isAnnotationPresent(jakarta.enterprise.inject.Disposes.class)) {
-                    hasDisposes = true;
-                    break;
-                }
-            }
-            if (hasDisposes) {
-                var paramTypes = method.getGenericParameterTypes();
-                var rawTypes = method.getParameterTypes();
-                for (int i = 0; i < params.length; i++) {
-                    if (!params[i].isAnnotationPresent(jakarta.enterprise.inject.Disposes.class)) {
-                        validateNoRawParameterized(paramTypes[i], rawTypes[i],
-                                clazz.getName() + "." + method.getName() + " disposer param", errors);
-                    }
-                    if (rawTypes[i] == jakarta.enterprise.inject.spi.InjectionPoint.class) {
-                        errors.add("Disposer method " + clazz.getName() + "." + method.getName()
-                                + " must not have InjectionPoint parameter");
-                    }
-                }
-            }
-
-            if (method.isAnnotationPresent(jakarta.enterprise.inject.Produces.class)) {
-                var paramTypes = method.getGenericParameterTypes();
-                var rawTypes = method.getParameterTypes();
-                for (int i = 0; i < paramTypes.length; i++) {
-                    validateNoRawParameterized(paramTypes[i], rawTypes[i],
-                            clazz.getName() + "." + method.getName() + " producer param", errors);
-                }
+            if (producer) {
+                validateAllParameters(method, clazz.getName() + "." + method.getName() + " producer param", errors);
             }
         }
+    }
+
+    private static void validateProducerMethod(Class<?> clazz, Method method, List<String> errors) {
+        String location = clazz.getName() + "." + method.getName();
+        validateProducerReturnType(method.getGenericReturnType(), location, errors);
+        validateNoMultipleScopes(method.getAnnotations(), PRODUCER_METHOD + location, errors);
+
+        var genRetType = method.getGenericReturnType();
+        if (containsTypeVariable(genRetType) && hasNonDependentScope(method.getAnnotations())) {
+            errors.add(PRODUCER_METHOD + location + " has TypeVariable return type and non-@Dependent scope");
+        }
+        if (containsWildcard(genRetType)) {
+            errors.add(PRODUCER_METHOD + location + " has wildcard type parameter in return type");
+        }
+    }
+
+    private static void validateInitializerMethod(Class<?> clazz, Method method, List<String> errors) {
+        if (method.getTypeParameters().length > 0 && !method.getName().equals("<init>")) {
+            errors.add("Initializer method " + clazz.getName() + "." + method.getName()
+                    + " cannot declare type parameters");
+        }
+        var paramTypes = method.getGenericParameterTypes();
+        var rawTypes = method.getParameterTypes();
+        for (int i = 0; i < paramTypes.length; i++) {
+            validateNoRawParameterized(paramTypes[i], rawTypes[i],
+                    clazz.getName() + "." + method.getName() + " param " + i, errors);
+        }
+    }
+
+    private static void validateObserverParameters(Class<?> clazz, Method method, Parameter[] params,
+            List<String> errors) {
+        var paramTypes = method.getGenericParameterTypes();
+        var rawTypes = method.getParameterTypes();
+        for (int i = 0; i < params.length; i++) {
+            if (!isObserves(params[i])) {
+                validateNoRawParameterized(paramTypes[i], rawTypes[i],
+                        clazz.getName() + "." + method.getName() + " observer param", errors);
+            }
+        }
+    }
+
+    private static void validateDisposerParameters(Class<?> clazz, Method method, Parameter[] params,
+            List<String> errors) {
+        var paramTypes = method.getGenericParameterTypes();
+        var rawTypes = method.getParameterTypes();
+        for (int i = 0; i < params.length; i++) {
+            if (!isDisposes(params[i])) {
+                validateNoRawParameterized(paramTypes[i], rawTypes[i],
+                        clazz.getName() + "." + method.getName() + " disposer param", errors);
+            }
+            if (rawTypes[i] == jakarta.enterprise.inject.spi.InjectionPoint.class) {
+                errors.add("Disposer method " + clazz.getName() + "." + method.getName()
+                        + " must not have InjectionPoint parameter");
+            }
+        }
+    }
+
+    private static void validateAllParameters(Method method, String location, List<String> errors) {
+        var paramTypes = method.getGenericParameterTypes();
+        var rawTypes = method.getParameterTypes();
+        for (int i = 0; i < paramTypes.length; i++) {
+            validateNoRawParameterized(paramTypes[i], rawTypes[i], location, errors);
+        }
+    }
+
+    /** Whether one of {@code annotations} is a normal scope, or a pseudo-scope other than {@code @Dependent}. */
+    private static boolean hasNonDependentScope(Annotation[] annotations) {
+        for (var ann : annotations) {
+            var annType = ann.annotationType();
+            if (annType.isAnnotationPresent(jakarta.enterprise.context.NormalScope.class)
+                    || (annType.isAnnotationPresent(jakarta.inject.Scope.class)
+                        && annType != jakarta.enterprise.context.Dependent.class)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private static void validateProducerFields(Class<?> clazz, List<String> errors) {
         for (var field : clazz.getDeclaredFields()) {
             if (!field.isAnnotationPresent(jakarta.enterprise.inject.Produces.class)) continue;
-            validateProducerReturnType(field.getGenericType(),
-                    clazz.getName() + "." + field.getName(), errors);
-            validateNoMultipleScopes(field.getAnnotations(),
-                    "Producer field " + clazz.getName() + "." + field.getName(), errors);
-            if (containsTypeVariable(field.getGenericType())) {
-                boolean isDependent = true;
-                for (var fAnn : field.getAnnotations()) {
-                    if (fAnn.annotationType().isAnnotationPresent(jakarta.enterprise.context.NormalScope.class)
-                            || (fAnn.annotationType().isAnnotationPresent(jakarta.inject.Scope.class)
-                                && fAnn.annotationType() != jakarta.enterprise.context.Dependent.class)) {
-                        isDependent = false;
-                        break;
-                    }
-                }
-                if (!isDependent) {
-                    errors.add("Producer field " + clazz.getName() + "." + field.getName()
-                            + " has TypeVariable type and non-@Dependent scope");
-                }
+            String location = clazz.getName() + "." + field.getName();
+            validateProducerReturnType(field.getGenericType(), location, errors);
+            validateNoMultipleScopes(field.getAnnotations(), "Producer field " + location, errors);
+            if (containsTypeVariable(field.getGenericType()) && hasNonDependentScope(field.getAnnotations())) {
+                errors.add("Producer field " + location + " has TypeVariable type and non-@Dependent scope");
             }
         }
     }
@@ -377,7 +388,7 @@ final class ReflectionValidator {
         var priorities = new LinkedHashSet<Integer>();
         collectStereotypePriorities(clazz, priorities, new HashSet<>());
         if (priorities.size() > 1) {
-            errors.add("Bean " + clazz.getName()
+            errors.add(BEAN + clazz.getName()
                     + " has conflicting stereotype priorities: " + priorities);
         }
     }
@@ -387,7 +398,7 @@ final class ReflectionValidator {
         var scopes = new LinkedHashSet<Class<?>>();
         collectStereotypeScopes(clazz, scopes, new HashSet<>());
         if (scopes.size() > 1) {
-            errors.add("Bean " + clazz.getName()
+            errors.add(BEAN + clazz.getName()
                     + " has conflicting stereotype scopes: " + scopes);
         }
     }
@@ -405,26 +416,35 @@ final class ReflectionValidator {
             List<String> errors, String beanName, Set<Class<?>> visited) {
         for (var ann : annotations) {
             var annType = ann.annotationType();
-            if (annType.isAnnotationPresent(jakarta.enterprise.inject.Stereotype.class)
-                    || annType.isAnnotationPresent(jakarta.interceptor.InterceptorBinding.class)
-                    || VaubanBeanManager.isCustomInterceptorBinding(annType)) {
-                if (!visited.add(annType)) continue;
-                for (var metaAnn : annType.getAnnotations()) {
-                    var mt = metaAnn.annotationType();
-                    if (mt.isAnnotationPresent(jakarta.interceptor.InterceptorBinding.class)
-                            || VaubanBeanManager.isCustomInterceptorBinding(mt)) {
-                        var prev = bindingsByType.put(metaAnn.annotationType(), metaAnn);
-                        if (prev != null && !prev.equals(metaAnn)) {
-                            errors.add("Bean " + beanName
-                                    + " has conflicting interceptor binding values for "
-                                    + metaAnn.annotationType().getSimpleName());
-                        }
-                    }
-                }
+            boolean stereotypeOrBinding = annType.isAnnotationPresent(jakarta.enterprise.inject.Stereotype.class)
+                    || isInterceptorBinding(annType);
+            if (stereotypeOrBinding && visited.add(annType)) {
+                recordMetaBindings(annType, bindingsByType, errors, beanName);
                 collectTransitiveInterceptorBindings(annType.getAnnotations(), bindingsByType,
                         errors, beanName, visited);
             }
         }
+    }
+
+    /** Records the interceptor bindings {@code annType} is annotated with, reporting a value that conflicts. */
+    private static void recordMetaBindings(Class<? extends Annotation> annType,
+            Map<Class<?>, Annotation> bindingsByType, List<String> errors, String beanName) {
+        for (var metaAnn : annType.getAnnotations()) {
+            var mt = metaAnn.annotationType();
+            if (isInterceptorBinding(mt)) {
+                var prev = bindingsByType.put(mt, metaAnn);
+                if (prev != null && !prev.equals(metaAnn)) {
+                    errors.add(BEAN + beanName
+                            + " has conflicting interceptor binding values for "
+                            + mt.getSimpleName());
+                }
+            }
+        }
+    }
+
+    private static boolean isInterceptorBinding(Class<? extends Annotation> annType) {
+        return annType.isAnnotationPresent(jakarta.interceptor.InterceptorBinding.class)
+                || VaubanBeanManager.isCustomInterceptorBinding(annType);
     }
 
     private static void collectStereotypePriorities(Class<?> clazz,
@@ -485,36 +505,33 @@ final class ReflectionValidator {
     private static void validateProducerReturnType(Type type, String location,
             List<String> errors) {
         if (type instanceof TypeVariable<?>) {
-            errors.add("Producer " + location + " has type variable return type");
+            errors.add(PRODUCER + location + " has type variable return type");
         }
         if (type instanceof WildcardType) {
-            errors.add("Producer " + location + " has wildcard return type");
+            errors.add(PRODUCER + location + " has wildcard return type");
         }
-        if (type instanceof ParameterizedType pt) {
-            for (var arg : pt.getActualTypeArguments()) {
-                if (arg instanceof WildcardType) {
-                    errors.add("Producer " + location + " has parameterized type with wildcard argument");
-                    break;
-                }
-            }
+        if (type instanceof ParameterizedType pt && hasWildcardArgument(pt)) {
+            errors.add(PRODUCER + location + " has parameterized type with wildcard argument");
         }
         if (type instanceof GenericArrayType gat) {
-            var componentType = gat.getGenericComponentType();
-            if (componentType instanceof TypeVariable<?>) {
-                errors.add("Producer " + location + " has array type with type variable component");
-            }
-            if (componentType instanceof WildcardType) {
-                errors.add("Producer " + location + " has array type with wildcard component");
-            }
-            if (componentType instanceof ParameterizedType cpt) {
-                for (var arg : cpt.getActualTypeArguments()) {
-                    if (arg instanceof WildcardType) {
-                        errors.add("Producer " + location + " has array of parameterized type with wildcard");
-                        break;
-                    }
-                }
-            }
+            validateProducerArrayComponent(gat.getGenericComponentType(), location, errors);
         }
+    }
+
+    private static void validateProducerArrayComponent(Type componentType, String location, List<String> errors) {
+        if (componentType instanceof TypeVariable<?>) {
+            errors.add(PRODUCER + location + " has array type with type variable component");
+        }
+        if (componentType instanceof WildcardType) {
+            errors.add(PRODUCER + location + " has array type with wildcard component");
+        }
+        if (componentType instanceof ParameterizedType cpt && hasWildcardArgument(cpt)) {
+            errors.add(PRODUCER + location + " has array of parameterized type with wildcard");
+        }
+    }
+
+    private static boolean hasWildcardArgument(ParameterizedType type) {
+        return Arrays.stream(type.getActualTypeArguments()).anyMatch(WildcardType.class::isInstance);
     }
 
     private static void validateNoMultipleScopes(Annotation[] annotations,
@@ -546,22 +563,19 @@ final class ReflectionValidator {
     }
 
     private static boolean containsTypeVariable(Type type) {
-        if (type instanceof TypeVariable<?>) return true;
-        if (type instanceof ParameterizedType pt) {
-            for (var arg : pt.getActualTypeArguments()) {
-                if (containsTypeVariable(arg)) return true;
-            }
-        }
-        if (type instanceof GenericArrayType gat) {
-            return containsTypeVariable(gat.getGenericComponentType());
-        }
-        if (type instanceof WildcardType wt) {
-            for (var bound : wt.getUpperBounds()) {
-                if (containsTypeVariable(bound)) return true;
-            }
-            for (var bound : wt.getLowerBounds()) {
-                if (containsTypeVariable(bound)) return true;
-            }
+        return switch (type) {
+            case TypeVariable<?> _ -> true;
+            case ParameterizedType pt -> anyContainsTypeVariable(pt.getActualTypeArguments());
+            case GenericArrayType gat -> containsTypeVariable(gat.getGenericComponentType());
+            case WildcardType wt -> anyContainsTypeVariable(wt.getUpperBounds())
+                    || anyContainsTypeVariable(wt.getLowerBounds());
+            case null, default -> false;
+        };
+    }
+
+    private static boolean anyContainsTypeVariable(Type[] types) {
+        for (var type : types) {
+            if (containsTypeVariable(type)) return true;
         }
         return false;
     }
