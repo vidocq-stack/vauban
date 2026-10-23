@@ -87,7 +87,7 @@ final class DisposerInvoker {
             try {
                 var cl = Thread.currentThread().getContextClassLoader();
                 var clazz = Class.forName(disposer.declaringClass().value(), false, cl);
-                var method = firstMethodNamed(clazz, disposer.methodName());
+                var method = disposerMethodNamed(clazz, disposer.methodName());
                 if (method != null) {
                     validateDisposerMethodParameters(disposer, method, tempResolver);
                 }
@@ -100,9 +100,15 @@ final class DisposerInvoker {
         }
     }
 
-    private static Method firstMethodNamed(Class<?> clazz, String name) {
+    /**
+     * The method {@code name} of {@code clazz} that disposes a bean, or {@code null}: an overload of the same name
+     * without a {@code @Disposes} parameter is not the disposer (VAU-OBS-004), and {@code getDeclaredMethods()} has no
+     * fixed order.
+     */
+    private static Method disposerMethodNamed(Class<?> clazz, String name) {
         for (var method : clazz.getDeclaredMethods()) {
-            if (method.getName().equals(name)) {
+            if (method.getName().equals(name)
+                    && VaubanContainer.hasParameterAnnotated(method, jakarta.enterprise.inject.Disposes.class)) {
                 return method;
             }
         }

@@ -465,7 +465,7 @@ public final class VaubanContainer implements AutoCloseable {
         try {
             var cl = Thread.currentThread().getContextClassLoader();
             var clazz = Class.forName(observer.declaringClass().value(), false, cl);
-            var method = firstMethodNamed(clazz, observer.methodName());
+            var method = observerMethodNamed(clazz, observer.methodName());
             if (method == null) return;
             for (var param : method.getParameters()) {
                 if (needsResolution(param)) {
@@ -479,13 +479,31 @@ public final class VaubanContainer implements AutoCloseable {
         }
     }
 
-    private static java.lang.reflect.Method firstMethodNamed(Class<?> clazz, String name) {
+    /**
+     * The method {@code name} of {@code clazz} that observes an event, or {@code null}: an overload of the same name
+     * that observes nothing is not the observer (VAU-OBS-004), and {@code getDeclaredMethods()} has no fixed order.
+     */
+    private static java.lang.reflect.Method observerMethodNamed(Class<?> clazz, String name) {
         for (var method : clazz.getDeclaredMethods()) {
-            if (method.getName().equals(name)) {
+            if (method.getName().equals(name) && hasParameterAnnotated(method,
+                    jakarta.enterprise.event.Observes.class, jakarta.enterprise.event.ObservesAsync.class)) {
                 return method;
             }
         }
         return null;
+    }
+
+    @SafeVarargs
+    static boolean hasParameterAnnotated(java.lang.reflect.Method method,
+                                         Class<? extends java.lang.annotation.Annotation>... annotations) {
+        for (var param : method.getParameters()) {
+            for (var annotation : annotations) {
+                if (param.isAnnotationPresent(annotation)) {
+                    return true;
+                }
+            }
+        }
+        return false;
     }
 
     /**

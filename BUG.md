@@ -5,6 +5,28 @@ suspected cause, status. Updated on every investigation.
 
 ---
 
+## VAU-OBS-004 — An observer or disposer method with overloads can fail deployment, depending on method order
+- **Date**: 2026-10-23 — **Status**: FIXED (`test/coverage`, vauban#185, Vidocq/vidocq#285)
+- **Severity**: medium (a valid application fails to deploy, or deploys, depending on the JVM's method order)
+
+### Symptom
+A bean whose observer method shares its name with an overload that observes nothing (`on(@Observes String)` next to
+`on(int)`) could fail deployment with `DeploymentException: Observer method …on(): unsatisfied dependency for
+parameter arg0 of type int`. The same held for a disposer method next to an overload without `@Disposes`. It passed
+on one machine and failed on another: found when a new coverage test passed locally and failed in CI.
+
+### Repro
+`ObserverOverloadValidationTest` (vauban-core): beans declaring their overloads in different orders, so that a
+first-match lookup hits a non-observing overload whatever the order; both tests failed before the fix.
+
+### Cause
+The deployment validation of observer and disposer parameters looked the method up by name only and took the first
+match of `getDeclaredMethods()`, whose order is unspecified, then checked the parameters of that overload.
+
+### Fix
+The lookup keeps only the overload that has an `@Observes`/`@ObservesAsync` parameter (observers) or a `@Disposes`
+parameter (disposers).
+
 ## VAU-CL-002 — Reading a `jar:` resource after its loader is closed throws `NullPointerException`
 - **Date**: 2026-10-23 — **Status**: OPEN
 - **Severity**: low (a connection opened before the loader closed, read after; the caller gets an NPE instead of an
