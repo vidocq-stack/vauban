@@ -422,6 +422,78 @@ class BceCompileTimeTest {
         assertTrue(metadata.contains("=java.util.List<? extends java.lang.Number>"), metadata);
     }
 
+    /**
+     * Test BCE that observes a class the compilation is still producing, alone and as a type argument: its
+     * {@code ClassInfo} comes from {@code @Registration}, as an extension gets it.
+     */
+    public static class SameBuildObserversBce implements BuildCompatibleExtension {
+        static final String PING = "Ping";
+        static jakarta.enterprise.lang.model.declarations.ClassInfo observed;
+
+        @Registration(types = Object.class)
+        public void registration(BeanInfo bean) {
+            if (bean.declaringClass().simpleName().equals(PING)) {
+                observed = bean.declaringClass();
+            }
+        }
+
+        @Synthesis
+        public void addObservers(SyntheticComponents components, Types types) {
+            components.addObserver(types.ofClass(observed))
+                    .observeWith(ShapeObserver.class).withParam(SHAPE, PING);
+            components.addObserver(types.parameterized(types.of(List.class).asClass(), types.ofClass(observed)))
+                    .observeWith(ShapeObserver.class).withParam(SHAPE, "List<Ping>");
+        }
+    }
+
+    @Test
+    @DisplayName("a synthetic observer of a class compiled in the same build is recorded and receives its events (VAU-APT-003)")
+    void syntheticObserverOfAClassOfTheSameBuild() throws Exception {
+        ShapeObserver.OBSERVED.clear();
+        SameBuildObserversBce.observed = null;
+        var result = compileWithBce(
+                List.of(SameBuildObserversBce.class),
+                """
+                import jakarta.enterprise.context.Dependent;
+
+                @Dependent
+                public class Ping {
+                    @Override
+                    public String toString() { return "ping"; }
+                }
+                """,
+                """
+                import jakarta.enterprise.context.Dependent;
+                import jakarta.enterprise.event.Event;
+                import jakarta.inject.Inject;
+                import java.util.List;
+
+                @Dependent
+                public class Pinger {
+                    @Inject
+                    Event<List<Ping>> pings;
+
+                    public void fire() { pings.fire(List.of(new Ping())); }
+                }
+                """
+        );
+        assertTrue(result.success(), () -> "compilation failed: " + result.messages());
+
+        try (var loader = new java.net.URLClassLoader(
+                new java.net.URL[] {result.outputDir().toUri().toURL()}, getClass().getClassLoader());
+             var container = io.vidocq.vauban.core.container.VaubanContainer.builder()
+                     .classLoader(loader).scanClasspath().build()) {
+            var ping = loader.loadClass(SameBuildObserversBce.PING).getDeclaredConstructor().newInstance();
+            container.getBeanManager().getEvent().fire(ping);
+            var pinger = loader.loadClass("Pinger");
+            pinger.getMethod("fire").invoke(container.select(pinger));
+        }
+
+        assertEquals(List.of("Ping got ping", "List<Ping> got [ping]"), List.copyOf(ShapeObserver.OBSERVED));
+        var metadata = result.readFile(SyntheticMetadataSerializer.METADATA_PATH);
+        assertTrue(metadata.contains("=java.util.List<Ping>"), metadata);
+    }
+
     @Test
     @DisplayName("without a BCE, no vauban-bce-processed marker")
     void shouldNotWriteMarkerWhenNoBce() throws IOException {

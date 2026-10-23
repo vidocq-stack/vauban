@@ -126,6 +126,39 @@ and the provider, and the extensions after it still run. The same error twice in
 `vauban:generate` and the processor's warning for build compatible extensions it cannot load (vauban#29); CDI 4.1
 §12.1 only defines a build compatible extension as a service provider declared in `META-INF/services`. Test:
 `BceCompileTimeTest.aBrokenExtensionServiceEntryIsSkippedWithAWarningAndTheOthersStillRun` (vauban-processor).
+## VAU-APT-003 — A processor-run extension cannot add a synthetic observer of a class compiled in the same build
+- **Date**: 2026-10-24 — **Status**: FIXED (fix/vauban-tickets, vauban#210, Vidocq/vidocq#285)
+- **Severity**: medium (a valid extension fails the build; the container runs it fine)
+
+### Symptom
+When the annotation processor runs a build compatible extension that adds, in `@Synthesis`, a synthetic observer of a
+class compiled in the same build (`addObserver(types.ofClass(info))`, the `ClassInfo` taken in `@Registration`, or
+that class as a type argument), the build fails with `[Vauban BCE] @Synthesis error: Cannot resolve type: <class>`.
+Found while fixing vauban#206.
+
+### Repro
+`BceCompileTimeTest.syntheticObserverOfAClassOfTheSameBuild` (vauban-processor): an extension observes `Ping` and
+`List<Ping>`, both compiled with it; the compilation failed
+(`compilation failed: [ERROR: [Vauban BCE] @Synthesis error: Cannot resolve type: Ping]`).
+
+### Cause
+`VaubanSyntheticObserverBuilder(Type)` built the reflective form of the observed type up front, and loaded each class
+it names with `Class.forName`. In the processor, a class the compilation is still producing has no class file yet, so
+no class loader can load it. The processor never uses that reflective form: since VAU-OBS-005 it records the index
+form, and the boot loads its classes by name.
+
+### Fix
+At build time (`ExtensionPhase.isBuildTime()`, which the processor sets around the extensions it runs), the builder
+keeps the reflective form by name only, in the notation of the metadata, as the boot already does for a recorded
+generic type (VAU-OBS-005); the index form is unchanged, so the metadata the processor writes is the same as before.
+When the container runs the extension, the observed type is still loaded in the builder, and a type it cannot load
+still fails the `@Synthesis` method with "Cannot resolve type". Tests:
+`BceCompileTimeTest.syntheticObserverOfAClassOfTheSameBuild` (vauban-processor: compiled with the processor, booted,
+`Ping` and `List<Ping>` events received) and `SyntheticObserverBuildTimeTypeTest` (vauban-core: by name at build
+time, "Cannot resolve type" at container start).
+
+---
+
 ## VAU-OBS-005 — On the processor path, a synthetic observer of a parameterized type is silently skipped at boot
 - **Date**: 2026-10-24 — **Status**: FIXED (fix/vauban-tickets, vauban#206, Vidocq/vidocq#285)
 - **Severity**: medium (the build succeeds, and the observer never receives an event, without a word)

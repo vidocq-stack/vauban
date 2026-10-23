@@ -19,6 +19,7 @@
  */
 package io.vidocq.vauban.core.extensions;
 
+import io.vidocq.vauban.api.ExtensionPhase;
 import io.vidocq.vauban.indexer.model.DotName;
 import io.vidocq.vauban.indexer.model.TypeInfo;
 import jakarta.enterprise.inject.build.compatible.spi.InvokerInfo;
@@ -56,10 +57,17 @@ public final class VaubanSyntheticObserverBuilder<T> implements SyntheticObserve
      * An observer of any type the lang model can express: the index form keeps every shape the observer
      * resolution needs, wildcard arguments and arrays included (VAU-OBS-003), as the bean types of a
      * synthetic bean do (VAU-BCE-001).
+     *
+     * <p>At build time the reflective form only names the type, as the boot does with the metadata (VAU-OBS-005): the
+     * processor records the index form, and the observed class may be one the compilation is still producing, which
+     * no class loader can load yet (VAU-APT-003). When the container runs the extension, the observed type is loaded
+     * here, and a type it cannot load fails the {@code @Synthesis} method.
      */
     public VaubanSyntheticObserverBuilder(Type eventType) {
-        this.eventType = toReflectType(eventType);
         this.eventTypeInfo = LangModelTypeMapper.toIndexType(eventType);
+        this.eventType = ExtensionPhase.isBuildTime()
+                ? new NamedType(ObservedTypeNotation.write(eventTypeInfo))
+                : toReflectType(eventType);
     }
 
     /**
@@ -249,7 +257,8 @@ public final class VaubanSyntheticObserverBuilder<T> implements SyntheticObserve
 
     /**
      * A type the reflective form knows by name only: a type variable, whose bounds are in the index form and whose
-     * declaration the lang model type does not give, or a type the boot read from the synthetic metadata.
+     * declaration the lang model type does not give, a type the boot read from the synthetic metadata, or any observed
+     * type at build time.
      */
     private record NamedType(String name) implements java.lang.reflect.Type {
         @Override public String getTypeName() { return name; }
