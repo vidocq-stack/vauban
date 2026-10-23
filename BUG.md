@@ -5,6 +5,136 @@ suspected cause, status. Updated on every investigation.
 
 ---
 
+## VAU-CL-002 — Reading a `jar:` resource after its loader is closed throws `NullPointerException`
+- **Date**: 2026-10-23 — **Status**: OPEN
+- **Severity**: low (a connection opened before the loader closed, read after; the caller gets an NPE instead of an
+  `IOException`)
+
+### Symptom
+`BuiltInReaders.JarReader.Connection.getInputStream()` is meant to report a closed loader as
+`IOException("The loader of … is closed")`. When the connection was already connected before the loader closed, it
+throws `NullPointerException` instead. Found while covering the code refactored by vauban#182.
+
+### Repro
+Get a resource URL of a plain jar from a `VaubanClassLoader`, open its connection and call `connect()`, close the
+loader, then call `getInputStream()`.
+
+### Cause
+`entry()` catches the `IllegalStateException` of the closed `JarFile` and returns `null`, so
+`jar.getInputStream(null)` throws the NPE and the `catch (IllegalStateException closed)` that builds the intended
+`IOException` never runs.
+
+---
+
+## VAU-INT-007 — Fallback intercepted factory: an `@AroundConstruct` that calls `proceed()` fails with an NPE
+- **Date**: 2026-10-23 — **Status**: OPEN
+- **Severity**: medium (only on the runtime fallback, when the pre-generated `$$Intercepted` subclass cannot be
+  defined; the bean cannot be created)
+
+### Symptom
+Creating a bean bound to an `@AroundConstruct` interceptor that calls `proceed()` fails with a
+`NullPointerException` in `InterceptorManager.resolveChainAroundConstruct` when the container uses the fallback
+intercepted factory. `factory().create()` with no creational context fails the same way.
+
+### Repro
+A bean with an `@AroundConstruct` interceptor that calls `proceed()`, and a `classDefiner` that refuses the first
+definition of the `$$Intercepted` class, so that `InterceptorBeanWrapper` takes its fallback path.
+
+### Cause
+`InterceptorBeanWrapper.FallbackInterceptedFactory` does not override `create(VaubanInvocationContext,
+CreationalContext)`. Its `createThroughAroundConstruct` lambda calls it; the default delegates to `create()`, then
+`create(null)`, which resolves the construct chain again with a null context.
+
+---
+
+## VAU-BCE-006 — An `@Inject` that a build compatible extension adds on a constructor is ignored
+- **Date**: 2026-10-23 — **Status**: OPEN (to check against the CDI Lite specification)
+- **Severity**: medium if confirmed (a possible CDI Lite conformance gap; the TCK does not cover it)
+
+### Symptom
+A bean with a no-arg constructor and a one-argument constructor that an `@Enhancement` makes `@Inject`: the
+container still instantiates it through the no-arg constructor, and what the injected constructor would set stays
+null.
+
+### Repro
+`@Enhancement(types = Bean.class)` adding `@Inject` to the one-argument constructor of a bean that also declares a
+no-arg constructor; look the bean up and check the value the injected constructor sets.
+
+### Cause
+Not investigated yet. The constructor selection in `VaubanContainer` does not seem to read the annotations the
+enhancement phase added (lines 803-807 of the refactored code are never reached).
+
+---
+
+## VAU-OBS-003 — Synthetic observers reject wildcard-parameterized and generic-array event types
+- **Date**: 2026-10-23 — **Status**: OPEN
+- **Severity**: low (a limitation: `@Synthesis` refuses such observers with "Unsupported type for synthetic
+  observer")
+
+### Symptom
+Registering a synthetic observer for an event type such as `List<? extends Number>` or `T[]` at `@Synthesis` fails
+with "Unsupported type for synthetic observer", while CDI allows such observed types.
+
+### Repro
+A build compatible extension that registers, in `@Synthesis`, a synthetic observer whose observed type is a
+wildcard-parameterized type or a generic array type.
+
+### Cause
+Not investigated yet. The observer is refused at `@Synthesis`, before it reaches
+`SyntheticComponentRegistrar.eventTypeInfo`, whose branches for these shapes are therefore dead in practice.
+
+---
+
+## VAU-MVN-002 — `VaubanGenerator`: a broken extension service file fails the build instead of being skipped
+- **Date**: 2026-10-23 — **Status**: OPEN
+- **Severity**: low (a malformed `META-INF/services` entry for `BuildCompatibleExtension` on the build class path)
+
+### Symptom
+The comment around the discovery of build compatible extensions in `VaubanGenerator` says a provider that fails to
+load is ignored, but a broken service file fails the generation with a `ServiceConfigurationError`.
+
+### Repro
+A jar on the generator's class path whose `META-INF/services/jakarta.enterprise.inject.build.compatible.spi.BuildCompatibleExtension`
+names a class that does not exist; run the `generate` goal.
+
+### Cause
+`ServiceLoader` reports a broken provider with `ServiceConfigurationError`, an `Error`, and the surrounding
+`catch (Exception)` does not catch it.
+
+---
+
+## VAU-TEST-002 — `VaubanExtension` leaves `@Inject` fields null with `@TestInstance(PER_CLASS)`
+- **Date**: 2026-10-23 — **Status**: OPEN
+- **Severity**: low (a limitation of the JUnit extension; the default per-method lifecycle works)
+
+### Symptom
+In a test class annotated `@TestInstance(TestInstance.Lifecycle.PER_CLASS)`, the `@Inject` fields stay null.
+
+### Repro
+A `@VaubanTest` class with `@TestInstance(PER_CLASS)` and an `@Inject` field; any test reads it as null.
+
+### Cause
+With the per-class lifecycle, JUnit post-processes the test instance before `beforeAll`, where `VaubanExtension`
+starts the container, so the container is not in the store yet when the fields are injected.
+
+---
+
+## VAU-VAL-001 — `ClassValidator.validateStereotypeName` never runs
+- **Date**: 2026-10-23 — **Status**: OPEN
+- **Severity**: low (the same rule is enforced at run time by `ReflectionValidator`)
+
+### Symptom
+The build-time check that a stereotype does not declare `@Named` with a value never reports anything.
+
+### Repro
+A stereotype annotated `@Named("x")`: `ClassValidator` does not report it (the run-time validation does).
+
+### Cause
+`validateClass` returns early for annotation types, so the `@Stereotype` branch that calls
+`validateStereotypeName` is unreachable.
+
+---
+
 ## VAU-Q5-001 — `InterceptorManager.$$callIntercepted` wraps an `Error` in a `RuntimeException`
 - **Date**: 2026-10-23 — **Status**: FIXED (`refactor/zero-issues-5`, Vidocq/vidocq#285)
 - **Severity**: low (no caller in Vauban or the ecosystem today; the method is public in an exported package)
