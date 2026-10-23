@@ -26,7 +26,6 @@ import io.vidocq.vauban.core.event.EventDispatcher;
 import io.vidocq.vauban.core.event.EventImpl;
 import io.vidocq.vauban.core.event.VaubanObserverMethod;
 import io.vidocq.vauban.core.interceptor.InterceptorManager;
-import io.vidocq.vauban.indexer.model.DotName;
 import jakarta.el.ELResolver;
 import jakarta.el.ExpressionFactory;
 import jakarta.enterprise.context.spi.Context;
@@ -114,10 +113,10 @@ public final class VaubanBeanManager implements BeanManager {
                     () -> this),
                 new BuiltInBean<>(Event.class,
                     Set.of(Event.class, Object.class),
-                    () -> getEvent()),
+                    this::getEvent),
                 new BuiltInBean<>(Instance.class,
                     Set.of(Instance.class),
-                    () -> createInstance()),
+                    this::createInstance),
                 new BuiltInBean<>(InjectionPoint.class,
                     Set.of(InjectionPoint.class),
                     VaubanContainer::getCurrentInjectionPoint),
@@ -369,7 +368,7 @@ public final class VaubanBeanManager implements BeanManager {
     @Override
     public Context getContext(Class<? extends Annotation> scopeType) {
         var list = findContexts(scopeType);
-        if (list == null || list.isEmpty()) {
+        if (list.isEmpty()) {
             throw new jakarta.enterprise.context.ContextNotActiveException(
                     "No context for scope: " + scopeType.getName());
         }
@@ -382,25 +381,25 @@ public final class VaubanBeanManager implements BeanManager {
 
     @Override
     public Collection<Context> getContexts(Class<? extends Annotation> scopeType) {
-        var list = findContexts(scopeType);
-        return list != null ? List.copyOf(list) : List.of();
+        return List.copyOf(findContexts(scopeType));
     }
 
+    /** The contexts registered for {@code scopeType}, matched by name across class loaders; empty when none. */
     private List<Context> findContexts(Class<? extends Annotation> scopeType) {
         var list = contexts.get(scopeType);
         if (list != null && !list.isEmpty()) return list;
         var scopeName = scopeType.getName();
         for (var entry : contexts.entrySet()) {
             if (entry.getKey().getName().equals(scopeName)) {
-                return entry.getValue();
+                return java.util.Objects.requireNonNullElse(entry.getValue(), List.of());
             }
         }
-        return null;
+        return List.of();
     }
 
     private Context getFirstContext(Class<? extends Annotation> scopeType) {
         var list = findContexts(scopeType);
-        return (list != null && !list.isEmpty()) ? list.getFirst() : null;
+        return list.isEmpty() ? null : list.getFirst();
     }
 
     @Override
@@ -467,7 +466,7 @@ public final class VaubanBeanManager implements BeanManager {
         } catch (RuntimeException e) {
             throw e;
         } catch (Exception e) {
-            throw new RuntimeException(e);
+            throw new jakarta.enterprise.inject.CreationException(e);
         }
     }
 
@@ -569,11 +568,6 @@ public final class VaubanBeanManager implements BeanManager {
                 throw new IllegalArgumentException(
                     "Duplicate interceptor binding: " + binding.annotationType().getName());
             }
-        }
-
-        var bindingNames = new LinkedHashSet<DotName>();
-        for (var binding : interceptorBindings) {
-            bindingNames.add(DotName.of(binding.annotationType().getName()));
         }
 
         var descriptors = interceptorManager.resolveInterceptors(java.util.Arrays.asList(interceptorBindings));
@@ -694,7 +688,7 @@ public final class VaubanBeanManager implements BeanManager {
                     try {
                         container.getVaubanLookup().invokeMethod(instance, m);
                     } catch (Exception e) {
-                        throw new RuntimeException("@PreDestroy failed: " + m, e);
+                        throw new LifecycleCallbackException("@PreDestroy failed: " + m, e);
                     }
                 }
             }
@@ -948,24 +942,29 @@ public final class VaubanBeanManager implements BeanManager {
             dimensions++;
             component = inner.getGenericComponentType();
         }
-        Class<?> rawComponent;
-        if (component instanceof java.lang.reflect.ParameterizedType pt
-                && pt.getRawType() instanceof Class<?> raw) {
-            for (Type argument : pt.getActualTypeArguments()) {
-                boolean unbounded = argument instanceof java.lang.reflect.WildcardType w
-                        && w.getLowerBounds().length == 0
-                        && (w.getUpperBounds().length == 0 || w.getUpperBounds()[0] == Object.class);
-                if (!unbounded && argument != Object.class) {
-                    return null;
-                }
-            }
-            rawComponent = raw;
-        } else if (component instanceof Class<?> c) {
-            rawComponent = c;
-        } else {
+        Class<?> rawComponent = switch (component) {
+            case java.lang.reflect.ParameterizedType pt when pt.getRawType() instanceof Class<?> raw
+                    && hasOnlyUnboundedArguments(pt) -> raw;
+            case Class<?> c -> c;
+            case null, default -> null;
+        };
+        if (rawComponent == null) {
             return null;
         }
         return java.lang.reflect.Array.newInstance(rawComponent, new int[dimensions]).getClass();
+    }
+
+    /** Whether every type argument of {@code type} is {@code Object} or an unbounded wildcard. */
+    private static boolean hasOnlyUnboundedArguments(java.lang.reflect.ParameterizedType type) {
+        for (Type argument : type.getActualTypeArguments()) {
+            boolean unbounded = argument instanceof java.lang.reflect.WildcardType w
+                    && w.getLowerBounds().length == 0
+                    && (w.getUpperBounds().length == 0 || w.getUpperBounds()[0] == Object.class);
+            if (!unbounded && argument != Object.class) {
+                return false;
+            }
+        }
+        return true;
     }
 
     private static boolean typesMatch(Type beanType, Type requiredType) {
