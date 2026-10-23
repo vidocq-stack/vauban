@@ -230,7 +230,7 @@ public final class VaubanContainer implements AutoCloseable {
         this.interceptorManager.setInstanceFactory((descriptor, ctx) -> interceptorWrapper.getOrCreateInterceptorInstance(descriptor, ctx));
 
         // Wrap intercepted beans with generated subclasses
-        interceptorWrapper.wrapInterceptedBeans(descriptors, factories);
+        interceptorWrapper.wrapInterceptedBeans(descriptors);
 
 
         // Wire up field injection on each bean (includes PostConstruct in injectFields)
