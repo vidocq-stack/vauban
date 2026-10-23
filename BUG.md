@@ -286,21 +286,39 @@ back on the parameter count, and `ManagedBean.getInjectionPoints()` reports that
 ---
 
 ## VAU-OBS-003 — Synthetic observers reject wildcard-parameterized and generic-array event types
-- **Date**: 2026-10-23 — **Status**: OPEN (vauban#188)
+- **Date**: 2026-10-23 — **Status**: FIXED (fix/vauban-tickets, vauban#188, Vidocq/vidocq#285)
 - **Severity**: low (a limitation: `@Synthesis` refuses such observers with "Unsupported type for synthetic
   observer")
 
 ### Symptom
 Registering a synthetic observer for an event type such as `List<? extends Number>` or `T[]` at `@Synthesis` fails
-with "Unsupported type for synthetic observer", while CDI allows such observed types.
+with "Unsupported type for synthetic observer", while CDI allows such observed types (CDI 4.1, section 10.1: any Java
+type may be an observed event type; section 10.3.1 for wildcards and type variables).
 
 ### Repro
 A build compatible extension that registers, in `@Synthesis`, a synthetic observer whose observed type is a
 wildcard-parameterized type or a generic array type.
 
 ### Cause
-Not investigated yet. The observer is refused at `@Synthesis`, before it reaches
-`SyntheticComponentRegistrar.eventTypeInfo`, whose branches for these shapes are therefore dead in practice.
+`VaubanSyntheticObserverBuilder(Type)` turned the lang model type into a reflective type and knew only class types and
+parameterized types: a wildcard argument, any array (even `String[]`), a primitive component or a type variable threw
+"Unsupported type for synthetic observer", and the `@Synthesis` method failed. Behind it,
+`SyntheticComponentRegistrar.eventTypeInfo` turned the reflective type into the index form the observer resolution
+matches events against, and lost every argument that was not a class (`List<? extends Number>` would have observed
+`List<Object>`, and never received a `List<Integer>`).
+
+### Fix
+The builder keeps the index form of the observed type, converted from the lang model type with
+`LangModelTypeMapper.toIndexType`, as the bean types of a synthetic bean already were (VAU-BCE-001), and the registrar
+uses it instead of rebuilding it from the reflective type. The reflective form now covers wildcards, arrays (generic
+or not), primitive components and type variables (by name). An observer added with a `Class` keeps the same index form
+as before. When the processor runs the extension, the metadata names the observed type and the boot loads it by that
+name, which a wildcard, a generic array or a type variable cannot survive: `SyntheticMetadataSerializer` refuses such
+an observed type, and the build fails with "Cannot record a synthetic component: synthetic observer of …", as for a
+param the build cannot record (BUG-20261008-02), instead of an observer silently lost at boot. Tests:
+`SyntheticObserverEventShapesTest` (vauban-core: `List<? extends Number>`, `List<String>[]`, `String[]`, `N[]` with
+`N extends Number`), `SyntheticMetadataWriteTest.anObservedTypeWithAWildcardAGenericArrayOrATypeVariableFailsTheBuild`
+and `BceCompileTimeTest.wildcardSyntheticObserverFailsTheBuild` (vauban-processor).
 
 ---
 

@@ -132,6 +132,23 @@ class BceCompileTimeTest {
         }
     }
 
+    /** Test BCE that adds an observer of {@code List<? extends Number>}, a type the metadata cannot carry. */
+    public static class WildcardObserverBce implements BuildCompatibleExtension {
+        @Synthesis
+        public void addObserver(SyntheticComponents components, Types types) {
+            components.addObserver(types.parameterized(List.class, types.wildcardWithUpperBound(types.of(Number.class))))
+                    .observeWith(NumbersObserver.class);
+        }
+    }
+
+    /** SyntheticObserver for test — observes nothing in particular. */
+    public static class NumbersObserver implements SyntheticObserver<Object> {
+        @Override
+        public void observe(jakarta.enterprise.inject.spi.EventContext<Object> event, Parameters params) {
+            // The build fails before any event can reach it.
+        }
+    }
+
     // ---- Helper: compile with the processor and an injected BCE ----
 
     private CompilationResult compileWithBce(List<Class<?>> bceClasses, String... sources) throws IOException {
@@ -361,6 +378,27 @@ class BceCompileTimeTest {
         assertTrue(result.success(), "Compilation should succeed");
         assertTrue(result.hasFile(SyntheticMetadataSerializer.BCE_PROCESSED_MARKER),
                 "BCE processed marker should be written when BCEs are executed");
+    }
+
+    @Test
+    @DisplayName("a synthetic observer of a wildcard-parameterized type fails the build, naming the type (VAU-OBS-003)")
+    void wildcardSyntheticObserverFailsTheBuild() throws IOException {
+        var result = compileWithBce(
+                List.of(WildcardObserverBce.class),
+                """
+                import jakarta.enterprise.context.ApplicationScoped;
+
+                @ApplicationScoped
+                public class SimpleBean {
+                }
+                """
+        );
+
+        assertFalse(result.success(), () -> "compilation should fail: " + result.messages());
+        assertTrue(result.messages().stream().anyMatch(message -> message.startsWith(
+                        "ERROR: [Vauban] Cannot record a synthetic component: synthetic observer of"
+                                + " java.util.List<? extends java.lang.Number>")),
+                result.messages()::toString);
     }
 
     @Test

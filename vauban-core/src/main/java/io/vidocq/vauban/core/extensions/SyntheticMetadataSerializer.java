@@ -125,6 +125,13 @@ public final class SyntheticMetadataSerializer {
     private static void writeObserverBuilder(Properties props, String prefix,
                                               VaubanSyntheticObserverBuilder<?> builder) {
         var eventType = builder.getEventType();
+        if (!rebuildableFromItsName(eventType)) {
+            // The boot loads the observed type by its name: these shapes would be lost there, and the
+            // observer with them, so the build fails instead (as for a param, BUG-20261008-02).
+            throw new IllegalArgumentException("synthetic observer of " + eventType.getTypeName()
+                    + ": an observed type with a wildcard, a generic array or a type variable cannot be recorded"
+                    + " at build time (VAU-OBS-003)");
+        }
         if (eventType instanceof Class<?> cls) {
             props.setProperty(prefix + EVENT_TYPE, cls.getName());
         } else {
@@ -147,6 +154,16 @@ public final class SyntheticMetadataSerializer {
         props.setProperty(prefix + ".async", String.valueOf(builder.isAsync()));
 
         writeParams(props, prefix, "synthetic observer of " + builder.getEventType().getTypeName(), builder.getParams());
+    }
+
+    /** Whether the observed type is a class, or a parameterized type whose arguments are such types. */
+    private static boolean rebuildableFromItsName(java.lang.reflect.Type type) {
+        return switch (type) {
+            case Class<?> _ -> true;
+            case java.lang.reflect.ParameterizedType pt -> Arrays.stream(pt.getActualTypeArguments())
+                    .allMatch(SyntheticMetadataSerializer::rebuildableFromItsName);
+            default -> false;
+        };
     }
 
     /**

@@ -21,7 +21,9 @@ package io.vidocq.vauban.core.extensions;
 
 import io.vidocq.vauban.core.langmodel.types.VaubanClassType;
 import io.vidocq.vauban.core.langmodel.types.VaubanParameterizedType;
+import io.vidocq.vauban.core.langmodel.types.VaubanTypeVariable;
 import io.vidocq.vauban.indexer.model.DotName;
+import jakarta.enterprise.lang.model.types.PrimitiveType;
 import jakarta.inject.Qualifier;
 import org.junit.jupiter.api.Test;
 
@@ -30,14 +32,17 @@ import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Properties;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 
 /**
  * What {@link SyntheticMetadataSerializer} writes for builders given lang model types: class types by name, once,
- * a parameterized observed type by its type name, and the qualifiers of an observer.
+ * a parameterized observed type by its type name, an array of a class by its class name, and the qualifiers of an
+ * observer; an observed type the boot could not rebuild from its name fails the build.
  */
 class SyntheticMetadataWriteTest {
 
@@ -84,5 +89,44 @@ class SyntheticMetadataWriteTest {
 
         assertEquals("java.util.List<java.lang.String>", props.getProperty("observer.0.eventType"));
         assertEquals(Tagged.class.getName(), props.getProperty("observer.0.qualifiers"));
+    }
+
+    @Test
+    void anObservedTypeWithAWildcardAGenericArrayOrATypeVariableFailsTheBuild() {
+        var types = new VaubanTypes(null);
+        var number = types.of(Number.class);
+        var observedTypes = List.of(
+                types.parameterized(List.class, types.wildcardWithUpperBound(number)),
+                types.parameterized(Comparable.class, types.wildcardWithLowerBound(types.of(Integer.class))),
+                types.parameterized(List.class, types.wildcardUnbounded()),
+                types.ofArray(types.parameterized(List.class, String.class), 2),
+                types.ofArray(new VaubanTypeVariable("N", List.of(number)), 1));
+
+        var messages = new ArrayList<String>();
+        for (var observedType : observedTypes) {
+            List<VaubanSyntheticObserverBuilder<?>> observers = List.of(new VaubanSyntheticObserverBuilder<>(observedType));
+            messages.add(assertThrows(IllegalArgumentException.class, () -> written(List.of(), observers)).getMessage());
+        }
+
+        assertEquals(List.of("java.util.List<? extends java.lang.Number>",
+                        "java.lang.Comparable<? super java.lang.Integer>",
+                        "java.util.List<?>",
+                        "java.util.List<java.lang.String>[][]",
+                        "N[]"),
+                messages.stream().map(message -> message.substring("synthetic observer of ".length(),
+                        message.indexOf(": "))).toList());
+    }
+
+    @Test
+    void anArrayOfAClassOrOfAPrimitiveIsWrittenByItsClassName() throws IOException {
+        var types = new VaubanTypes(null);
+        var observers = List.<VaubanSyntheticObserverBuilder<?>>of(
+                new VaubanSyntheticObserverBuilder<>(types.ofArray(types.of(String.class), 1)),
+                new VaubanSyntheticObserverBuilder<>(types.ofArray(types.ofPrimitive(PrimitiveType.PrimitiveKind.INT), 1)));
+
+        var props = written(List.of(), observers);
+
+        assertEquals(List.of("[Ljava.lang.String;", "[I"),
+                List.of(props.getProperty("observer.0.eventType"), props.getProperty("observer.1.eventType")));
     }
 }

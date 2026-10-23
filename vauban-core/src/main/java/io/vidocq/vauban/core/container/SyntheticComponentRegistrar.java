@@ -24,7 +24,6 @@ import io.vidocq.vauban.core.bean.model.BeanDescriptor;
 import io.vidocq.vauban.core.bean.model.ObserverDescriptor;
 import io.vidocq.vauban.core.bean.model.QualifierInstance;
 import io.vidocq.vauban.indexer.model.DotName;
-import io.vidocq.vauban.indexer.model.TypeInfo;
 import jakarta.enterprise.context.spi.CreationalContext;
 
 import java.lang.annotation.Annotation;
@@ -40,8 +39,6 @@ import java.util.Map;
  * the mutable target collections in).
  */
 final class SyntheticComponentRegistrar {
-
-    private static final String OBJECT_CLASS_NAME = "java.lang.Object";
 
     private SyntheticComponentRegistrar() {
     }
@@ -174,8 +171,6 @@ final class SyntheticComponentRegistrar {
 
     static ObserverDescriptor buildSyntheticObserver(
             io.vidocq.vauban.core.extensions.VaubanSyntheticObserverBuilder<?> synObs) {
-        var eventTypeInfo = eventTypeInfo(synObs.getEventType());
-
         // With their member values: a synthetic observer qualified @Channel("alpha") observes that
         // event and no other (BUG-20260914-15).
         var qualifiers = new java.util.ArrayList<QualifierInstance>();
@@ -188,7 +183,7 @@ final class SyntheticComponentRegistrar {
         return new ObserverDescriptor(
                 DotName.of(observerClass.getName()),
                 "observe",
-                eventTypeInfo,
+                synObs.getEventTypeInfo(),
                 qualifiers,
                 synObs.isAsync(),
                 synObs.getPriority(),
@@ -196,25 +191,6 @@ final class SyntheticComponentRegistrar {
                 "IN_PROGRESS",
                 syntheticObserverInvoker(observerClass, synObs.getParams())
         );
-    }
-
-    /**
-     * The index form of a synthetic observer's event type: a class, a parameterized type whose
-     * arguments are kept when they are classes, and {@code java.lang.Object} for anything else.
-     */
-    private static TypeInfo eventTypeInfo(java.lang.reflect.Type eventReflectType) {
-        return switch (eventReflectType) {
-            case Class<?> cls -> new TypeInfo.ClassType(DotName.of(cls.getName()));
-            case java.lang.reflect.ParameterizedType pt when pt.getRawType() instanceof Class<?> rawCls -> {
-                var typeArgs = new java.util.ArrayList<TypeInfo>();
-                for (var arg : pt.getActualTypeArguments()) {
-                    var argName = arg instanceof Class<?> argCls ? argCls.getName() : OBJECT_CLASS_NAME;
-                    typeArgs.add(new TypeInfo.ClassType(DotName.of(argName)));
-                }
-                yield new TypeInfo.ParameterizedType(DotName.of(rawCls.getName()), typeArgs);
-            }
-            case null, default -> new TypeInfo.ClassType(DotName.of(OBJECT_CLASS_NAME));
-        };
     }
 
     /**

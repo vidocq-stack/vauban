@@ -19,12 +19,20 @@
  */
 package io.vidocq.vauban.core.extensions;
 
+import io.vidocq.vauban.indexer.model.DotName;
+import io.vidocq.vauban.indexer.model.TypeInfo;
 import jakarta.enterprise.inject.build.compatible.spi.InvokerInfo;
 import jakarta.enterprise.inject.build.compatible.spi.SyntheticObserver;
 import jakarta.enterprise.inject.build.compatible.spi.SyntheticObserverBuilder;
 import jakarta.enterprise.lang.model.AnnotationInfo;
 import jakarta.enterprise.lang.model.declarations.ClassInfo;
+import jakarta.enterprise.lang.model.types.ArrayType;
+import jakarta.enterprise.lang.model.types.ClassType;
+import jakarta.enterprise.lang.model.types.ParameterizedType;
+import jakarta.enterprise.lang.model.types.PrimitiveType;
 import jakarta.enterprise.lang.model.types.Type;
+import jakarta.enterprise.lang.model.types.TypeVariable;
+import jakarta.enterprise.lang.model.types.WildcardType;
 
 import java.lang.annotation.Annotation;
 import java.util.*;
@@ -32,6 +40,7 @@ import java.util.*;
 public final class VaubanSyntheticObserverBuilder<T> implements SyntheticObserverBuilder<T> {
 
     private final java.lang.reflect.Type eventType;
+    private final TypeInfo eventTypeInfo;
     private final Set<Annotation> qualifiers = new LinkedHashSet<>();
     private int priority = jakarta.interceptor.Interceptor.Priority.APPLICATION;
     private boolean async;
@@ -40,37 +49,51 @@ public final class VaubanSyntheticObserverBuilder<T> implements SyntheticObserve
 
     public VaubanSyntheticObserverBuilder(Class<T> eventType) {
         this.eventType = eventType;
+        this.eventTypeInfo = new TypeInfo.ClassType(DotName.of(eventType.getName()));
     }
 
+    /**
+     * An observer of any type the lang model can express: the index form keeps every shape the observer
+     * resolution needs, wildcard arguments and arrays included (VAU-OBS-003), as the bean types of a
+     * synthetic bean do (VAU-BCE-001).
+     */
     public VaubanSyntheticObserverBuilder(Type eventType) {
         this.eventType = toReflectType(eventType);
+        this.eventTypeInfo = LangModelTypeMapper.toIndexType(eventType);
     }
 
     private static java.lang.reflect.Type toReflectType(Type type) {
-        if (type instanceof jakarta.enterprise.lang.model.types.ClassType ct) {
-            var name = extractClassName(ct);
-            try {
-                return Class.forName(name);
-            } catch (ClassNotFoundException e) {
-                throw new IllegalArgumentException("Cannot resolve type: " + name, e);
-            }
-        }
-        if (type instanceof jakarta.enterprise.lang.model.types.ParameterizedType pt) {
-            var rawName = extractClassName(pt.genericClass());
-            try {
-                var rawClass = Class.forName(rawName);
-                var typeArgs = pt.typeArguments().stream()
-                        .map(VaubanSyntheticObserverBuilder::toReflectType)
-                        .toArray(java.lang.reflect.Type[]::new);
-                return new SimpleParameterizedType(rawClass, typeArgs);
-            } catch (ClassNotFoundException e) {
-                throw new IllegalArgumentException("Cannot resolve type: " + rawName, e);
-            }
-        }
-        throw new IllegalArgumentException("Unsupported type for synthetic observer: " + type);
+        return switch (type) {
+            case ClassType ct -> loadClass(extractClassName(ct));
+            case ParameterizedType pt -> new SimpleParameterizedType(loadClass(extractClassName(pt.genericClass())),
+                    pt.typeArguments().stream()
+                            .map(VaubanSyntheticObserverBuilder::toReflectType)
+                            .toArray(java.lang.reflect.Type[]::new));
+            case ArrayType at -> arrayOf(toReflectType(at.componentType()));
+            case WildcardType wt -> new SimpleWildcardType(
+                    wt.upperBound() != null ? toReflectType(wt.upperBound()) : Object.class,
+                    wt.lowerBound() != null ? toReflectType(wt.lowerBound()) : null);
+            case PrimitiveType pt -> Class.forPrimitiveName(pt.primitiveKind().name().toLowerCase(Locale.ROOT));
+            case TypeVariable tv -> new TypeVariableName(tv.name());
+            default -> throw new IllegalArgumentException("Unsupported type for synthetic observer: " + type);
+        };
     }
 
-    private static String extractClassName(jakarta.enterprise.lang.model.types.ClassType ct) {
+    private static java.lang.reflect.Type arrayOf(java.lang.reflect.Type componentType) {
+        return componentType instanceof Class<?> componentClass
+                ? componentClass.arrayType()
+                : new SimpleGenericArrayType(componentType);
+    }
+
+    private static Class<?> loadClass(String name) {
+        try {
+            return Class.forName(name);
+        } catch (ClassNotFoundException e) {
+            throw new IllegalArgumentException("Cannot resolve type: " + name, e);
+        }
+    }
+
+    private static String extractClassName(ClassType ct) {
         if (ct instanceof io.vidocq.vauban.core.langmodel.types.VaubanClassType vct) {
             return vct.dotName().value();
         }
@@ -159,6 +182,8 @@ public final class VaubanSyntheticObserverBuilder<T> implements SyntheticObserve
 
     // --- Accessors ---
     public java.lang.reflect.Type getEventType() { return eventType; }
+    /** The observed event type in the form of the index, the one the observer resolution matches events against. */
+    public TypeInfo getEventTypeInfo() { return eventTypeInfo; }
     public Set<Annotation> getQualifiers() { return qualifiers; }
     public int getPriority() { return priority; }
     public boolean isAsync() { return async; }
@@ -190,5 +215,33 @@ public final class VaubanSyntheticObserverBuilder<T> implements SyntheticObserve
             }
             return sb.append('>').toString();
         }
+    }
+
+    /** A generic array type, {@code List<String>[]}: an array whose component is no class. */
+    private record SimpleGenericArrayType(java.lang.reflect.Type componentType)
+            implements java.lang.reflect.GenericArrayType {
+        @Override public java.lang.reflect.Type getGenericComponentType() { return componentType; }
+        @Override public String toString() { return componentType.getTypeName() + "[]"; }
+    }
+
+    /** A wildcard type argument; {@code lowerBound} is {@code null} for a wildcard with no lower bound. */
+    private record SimpleWildcardType(java.lang.reflect.Type upperBound, java.lang.reflect.Type lowerBound)
+            implements java.lang.reflect.WildcardType {
+        @Override public java.lang.reflect.Type[] getUpperBounds() { return new java.lang.reflect.Type[]{upperBound}; }
+        @Override public java.lang.reflect.Type[] getLowerBounds() {
+            return lowerBound == null ? new java.lang.reflect.Type[0] : new java.lang.reflect.Type[]{lowerBound};
+        }
+        @Override public String toString() {
+            if (lowerBound != null) return "? super " + lowerBound.getTypeName();
+            return upperBound == Object.class ? "?" : "? extends " + upperBound.getTypeName();
+        }
+    }
+
+    /**
+     * The name of a type variable, the only part of it the reflective form carries: its bounds are in the
+     * index form, and its declaration is not known to the lang model type.
+     */
+    private record TypeVariableName(String name) implements java.lang.reflect.Type {
+        @Override public String getTypeName() { return name; }
     }
 }
