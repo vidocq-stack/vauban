@@ -20,6 +20,9 @@
 package io.vidocq.vauban.core.container;
 
 import io.vidocq.vauban.core.extensions.SyntheticMetadataSerializer;
+import io.vidocq.vauban.core.extensions.VaubanSyntheticObserverBuilder;
+import io.vidocq.vauban.core.extensions.VaubanTypes;
+import io.vidocq.vauban.core.langmodel.types.VaubanTypeVariable;
 import jakarta.enterprise.inject.Instance;
 import jakarta.enterprise.inject.build.compatible.spi.BuildCompatibleExtension;
 import jakarta.enterprise.inject.build.compatible.spi.Parameters;
@@ -38,6 +41,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.lang.annotation.Annotation;
 import java.lang.annotation.ElementType;
@@ -47,6 +51,7 @@ import java.lang.annotation.Target;
 import java.net.URL;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.Enumeration;
 import java.util.List;
@@ -56,17 +61,19 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * Synthetic beans and observers: those a build step recorded in the synthetic metadata resource (with a disposer, a
- * scope and qualifiers, some of which the deployment cannot load), and an observer an extension adds for a
- * parameterized event type.
+ * scope and qualifiers, some of which the deployment cannot load), observers recorded for generic and array event
+ * types (VAU-OBS-005), and observers an extension adds for a parameterized or an array event type.
  */
 @DisplayName("SyntheticComponentRegistrar: recorded synthetic components and parameterized synthetic observers")
 class SyntheticComponentRegistrationTest {
 
     static final List<String> OBSERVED = new CopyOnWriteArrayList<>();
+    private static final String SHAPE = "shape";
     static final Map<String, Set<Annotation>> QUALIFIERS = new ConcurrentHashMap<>();
 
     @Qualifier
@@ -115,6 +122,30 @@ class SyntheticComponentRegistrationTest {
         @Override
         public void observe(EventContext<Object> event, Parameters params) {
             OBSERVED.add("list:" + event.getEvent());
+        }
+    }
+
+    /** Records the {@code shape} param it was given, and the event. */
+    public static class ShapeObserver implements SyntheticObserver<Object> {
+        @Override
+        public void observe(EventContext<Object> event, Parameters params) {
+            var payload = event.getEvent();
+            OBSERVED.add(params.get(SHAPE, String.class) + ":"
+                    + (payload instanceof Object[] array ? Arrays.toString(array) : payload));
+        }
+    }
+
+    public static class StringArrayObserver implements SyntheticObserver<String[]> {
+        @Override
+        public void observe(EventContext<String[]> event, Parameters params) {
+            OBSERVED.add(params.get(SHAPE, String.class) + ":" + Arrays.toString(event.getEvent()));
+        }
+    }
+
+    public static class ClassArrayObservers implements BuildCompatibleExtension {
+        @Synthesis
+        public void synthesize(SyntheticComponents components) {
+            components.addObserver(String[].class).observeWith(StringArrayObserver.class).withParam(SHAPE, "class-array");
         }
     }
 
@@ -193,5 +224,101 @@ class SyntheticComponentRegistrationTest {
 
             assertTrue(OBSERVED.contains("list:[a]"), OBSERVED::toString);
         }
+    }
+
+    private static MetadataLoader metadataLoader(Path dir, String metadata) throws IOException {
+        var marker = Files.write(dir.resolve("vauban-bce-processed"), new byte[0]);
+        var resource = Files.writeString(dir.resolve("vauban-synthetic-metadata.properties"), metadata);
+        return new MetadataLoader(marker.toUri().toURL(), resource.toUri().toURL());
+    }
+
+    @Test
+    @DisplayName("an observer the processor recorded for List<String> receives a List<String> at boot (VAU-OBS-005)")
+    void recordedParameterizedObserver(@TempDir Path dir) throws IOException {
+        // As the processor writes it, and as the previous version wrote it.
+        var loader = metadataLoader(dir, String.join("\n",
+                "observer.count=1",
+                "observer.0.eventType=java.util.List<java.lang.String>",
+                "observer.0.observer=" + ListObserver.class.getName()));
+
+        try (var container = VaubanContainer.builder().classLoader(loader).scanClasspath().build()) {
+            var event = container.getBeanManager().getEvent();
+            event.select(new TypeLiteral<List<String>>() { }).fire(List.of("a"));
+            event.select(new TypeLiteral<List<Integer>>() { }).fire(List.of(1));
+
+            assertEquals(List.of("list:[a]"), List.copyOf(OBSERVED));
+        }
+    }
+
+    @Test
+    @DisplayName("observers recorded for wildcard, generic array, type variable and class array types receive their events")
+    void recordedObserversOfEveryShape(@TempDir Path dir) throws IOException {
+        var types = new VaubanTypes(null);
+        var number = types.of(Number.class);
+        var observers = List.<VaubanSyntheticObserverBuilder<?>>of(
+                shapeObserver(new VaubanSyntheticObserverBuilder<>(
+                        types.parameterized(List.class, types.wildcardWithUpperBound(number))), "wildcard"),
+                shapeObserver(new VaubanSyntheticObserverBuilder<>(
+                        types.ofArray(types.parameterized(List.class, String.class), 1)), "generic-array"),
+                shapeObserver(new VaubanSyntheticObserverBuilder<>(
+                        types.ofArray(new VaubanTypeVariable("N", List.of(number)), 1)), "type-variable-array"),
+                shapeObserver(new VaubanSyntheticObserverBuilder<>(String[].class), "class-array"));
+        var metadata = new ByteArrayOutputStream();
+        SyntheticMetadataSerializer.write(List.of(), observers, metadata);
+        var loader = metadataLoader(dir, metadata.toString(java.nio.charset.StandardCharsets.UTF_8));
+
+        try (var container = VaubanContainer.builder().classLoader(loader).scanClasspath().build()) {
+            var event = container.getBeanManager().getEvent();
+            event.select(new TypeLiteral<List<Integer>>() { }).fire(List.of(1));
+            event.select(new TypeLiteral<List<String>>() { }).fire(List.of("a"));
+            @SuppressWarnings("unchecked")
+            List<String>[] lists = new List[]{List.of("b")};
+            event.select(new TypeLiteral<List<String>[]>() { }).fire(lists);
+            event.select(Integer[].class).fire(new Integer[]{2});
+            event.select(String[].class).fire(new String[]{"c"});
+
+            assertEquals(List.of("class-array:[c]", "generic-array:[[b]]", "type-variable-array:[2]", "wildcard:[1]"),
+                    OBSERVED.stream().sorted().toList());
+        }
+    }
+
+    @SuppressWarnings({"unchecked", "rawtypes"})
+    private static VaubanSyntheticObserverBuilder<?> shapeObserver(VaubanSyntheticObserverBuilder builder,
+            String shape) {
+        builder.observeWith(ShapeObserver.class).withParam(SHAPE, shape);
+        return builder;
+    }
+
+    @Test
+    @DisplayName("an observed type the boot cannot read fails the deployment, naming it (VAU-OBS-005)")
+    void unreadableRecordedObservedTypeFailsTheDeployment(@TempDir Path dir) throws IOException {
+        var loader = metadataLoader(dir, String.join("\n",
+                "observer.count=1",
+                "observer.0.eventType=java.util.List<java.lang.String",
+                "observer.0.observer=" + ListObserver.class.getName()));
+        var builder = VaubanContainer.builder().classLoader(loader).scanClasspath();
+
+        var failure = assertThrows(jakarta.enterprise.inject.spi.DeploymentException.class, builder::build);
+
+        assertTrue(failure.getMessage().startsWith("synthetic observer of java.util.List<java.lang.String:"),
+                failure::getMessage);
+    }
+
+    @Test
+    @DisplayName("an observer an extension adds for String[].class receives a String[], also once recorded")
+    void classArrayObserver(@TempDir Path dir) throws IOException {
+        try (var container = VaubanContainer.builder().addBeanClass(ClassArrayObservers.class).build()) {
+            container.getBeanManager().getEvent().select(String[].class).fire(new String[]{"a", "b"});
+        }
+        var loader = metadataLoader(dir, String.join("\n",
+                "observer.count=1",
+                "observer.0.eventType=[Ljava.lang.String;",
+                "observer.0.observer=" + ShapeObserver.class.getName(),
+                "observer.0.param.shape=S:recorded-class-array"));
+        try (var container = VaubanContainer.builder().classLoader(loader).scanClasspath().build()) {
+            container.getBeanManager().getEvent().select(String[].class).fire(new String[]{"c"});
+        }
+
+        assertEquals(List.of("class-array:[a, b]", "recorded-class-array:[c]"), List.copyOf(OBSERVED));
     }
 }

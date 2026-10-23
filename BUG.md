@@ -126,6 +126,41 @@ and the provider, and the extensions after it still run. The same error twice in
 `vauban:generate` and the processor's warning for build compatible extensions it cannot load (vauban#29); CDI 4.1
 §12.1 only defines a build compatible extension as a service provider declared in `META-INF/services`. Test:
 `BceCompileTimeTest.aBrokenExtensionServiceEntryIsSkippedWithAWarningAndTheOthersStillRun` (vauban-processor).
+## VAU-OBS-005 — On the processor path, a synthetic observer of a parameterized type is silently skipped at boot
+- **Date**: 2026-10-24 — **Status**: FIXED (fix/vauban-tickets, vauban#206, Vidocq/vidocq#285)
+- **Severity**: medium (the build succeeds, and the observer never receives an event, without a word)
+
+### Symptom
+When the annotation processor runs a build compatible extension that adds, in `@Synthesis`, a synthetic observer of
+a parameterized type such as `List<String>`, the application boots, and the observer never receives a `List<String>`
+event. Nothing is logged. Since VAU-OBS-003, an observer of a type with a wildcard, a generic array or a type variable
+fails the build instead (the metadata could not carry it). Found while fixing vauban#188.
+
+### Repro
+`SyntheticComponentRegistrationTest.recordedParameterizedObserver` (vauban-core): metadata recording
+`observer.0.eventType=java.util.List<java.lang.String>`, as the processor writes it; a `List<String>` event fired at
+boot reached no observer (`expected: <[list:[a]]> but was: <[]>`).
+
+### Cause
+`SyntheticMetadataSerializer` wrote the observed type by its type name (`java.util.List<java.lang.String>`), and
+`SyntheticComponentRegistrar.registerAptObserver` loaded that name with `Class.forName`. Loading a type name fails, and
+the `ClassNotFoundException` is the one that skips an observer whose class is missing, without a word.
+
+### Fix
+The metadata writes the index form of the observed type (`ObservedTypeNotation`) in a notation the boot reads back:
+a class by its name, as before; a parameterized type as before (`java.util.List<java.lang.String>`); wildcards
+(`?`, `? extends U`, `? super L`); arrays (`java.lang.String[]`, `int[]`); a type variable with its bounds
+(`(N extends java.lang.Number)[]`). A class and a parameterized type of classes are written as the previous version
+wrote them, so its metadata reads the same. At boot, a class is loaded as before; any other type is registered with
+its index form, whose classes the observer resolution loads by name; a value the boot cannot read fails the
+deployment (`synthetic observer of …: not an observed type…`). The refusal VAU-OBS-003 added to the serializer is
+lifted: every shape is recorded. `addObserver(String[].class)` already received `String[]` events on both paths (the
+class name `[Ljava.lang.String;` is loaded at boot); tests now pin it. Tests:
+`SyntheticComponentRegistrationTest` (`recordedParameterizedObserver`, `recordedObserversOfEveryShape`,
+`unreadableRecordedObservedTypeFailsTheDeployment`, `classArrayObserver`), `SyntheticMetadataWriteTest`
+(`everyShapeOfObservedTypeIsWrittenAndReadBack`, `anObservedTypeWrittenByThePreviousVersionReadsTheSame`,
+`aMalformedObservedTypeIsRefused`) and `BceCompileTimeTest.recordedGenericSyntheticObserversReceiveTheirEvents`
+(vauban-processor: compiled with the processor, booted, events received).
 
 ---
 
@@ -318,7 +353,8 @@ an observed type, and the build fails with "Cannot record a synthetic component:
 param the build cannot record (BUG-20261008-02), instead of an observer silently lost at boot. Tests:
 `SyntheticObserverEventShapesTest` (vauban-core: `List<? extends Number>`, `List<String>[]`, `String[]`, `N[]` with
 `N extends Number`), `SyntheticMetadataWriteTest.anObservedTypeWithAWildcardAGenericArrayOrATypeVariableFailsTheBuild`
-and `BceCompileTimeTest.wildcardSyntheticObserverFailsTheBuild` (vauban-processor).
+and `BceCompileTimeTest.wildcardSyntheticObserverFailsTheBuild` (vauban-processor). The build-time refusal was lifted
+by VAU-OBS-005, which records every shape in the metadata (those two tests were replaced).
 
 ---
 

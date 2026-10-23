@@ -62,6 +62,16 @@ public final class VaubanSyntheticObserverBuilder<T> implements SyntheticObserve
         this.eventTypeInfo = LangModelTypeMapper.toIndexType(eventType);
     }
 
+    /**
+     * An observer the boot rebuilds from the synthetic metadata the processor wrote, for a generic or an array type
+     * (VAU-OBS-005): the observer resolution uses the index form, and resolves its classes by name; the reflective form
+     * only names the type.
+     */
+    public VaubanSyntheticObserverBuilder(TypeInfo eventTypeInfo) {
+        this.eventType = new NamedType(ObservedTypeNotation.write(eventTypeInfo));
+        this.eventTypeInfo = eventTypeInfo;
+    }
+
     private static java.lang.reflect.Type toReflectType(Type type) {
         return switch (type) {
             case ClassType ct -> loadClass(extractClassName(ct));
@@ -74,7 +84,7 @@ public final class VaubanSyntheticObserverBuilder<T> implements SyntheticObserve
                     wt.upperBound() != null ? toReflectType(wt.upperBound()) : Object.class,
                     wt.lowerBound() != null ? toReflectType(wt.lowerBound()) : null);
             case PrimitiveType pt -> Class.forPrimitiveName(pt.primitiveKind().name().toLowerCase(Locale.ROOT));
-            case TypeVariable tv -> new TypeVariableName(tv.name());
+            case TypeVariable tv -> new NamedType(tv.name());
             default -> throw new IllegalArgumentException("Unsupported type for synthetic observer: " + type);
         };
     }
@@ -238,10 +248,10 @@ public final class VaubanSyntheticObserverBuilder<T> implements SyntheticObserve
     }
 
     /**
-     * The name of a type variable, the only part of it the reflective form carries: its bounds are in the
-     * index form, and its declaration is not known to the lang model type.
+     * A type the reflective form knows by name only: a type variable, whose bounds are in the index form and whose
+     * declaration the lang model type does not give, or a type the boot read from the synthetic metadata.
      */
-    private record TypeVariableName(String name) implements java.lang.reflect.Type {
+    private record NamedType(String name) implements java.lang.reflect.Type {
         @Override public String getTypeName() { return name; }
     }
 }

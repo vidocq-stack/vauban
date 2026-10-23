@@ -24,6 +24,7 @@ import io.vidocq.vauban.core.bean.model.BeanDescriptor;
 import io.vidocq.vauban.core.bean.model.ObserverDescriptor;
 import io.vidocq.vauban.core.bean.model.QualifierInstance;
 import io.vidocq.vauban.indexer.model.DotName;
+import io.vidocq.vauban.indexer.model.TypeInfo;
 import jakarta.enterprise.context.spi.CreationalContext;
 
 import java.lang.annotation.Annotation;
@@ -124,8 +125,7 @@ final class SyntheticComponentRegistrar {
                                             ClassLoader cl,
                                             List<io.vidocq.vauban.core.bean.model.ObserverDescriptor> observers) {
         try {
-            var eventClass = Class.forName(synDesc.eventTypeName(), false, cl);
-            var builder = new io.vidocq.vauban.core.extensions.VaubanSyntheticObserverBuilder(eventClass);
+            var builder = observerBuilder(synDesc, cl);
             if (synDesc.observerClassName() != null) {
                 builder.observeWith(Class.forName(synDesc.observerClassName(), false, cl));
             }
@@ -141,6 +141,31 @@ final class SyntheticComponentRegistrar {
         } catch (ClassNotFoundException _) {
             // Synthetic observer class not found — skip
         }
+    }
+
+    /**
+     * A builder for the observed type the metadata records: a class, loaded as before, or a generic or array type in
+     * the notation the build writes, whose classes the observer resolution loads by name (VAU-OBS-005). A type the
+     * boot cannot read fails the deployment, rather than losing the observer without a word.
+     *
+     * @throws ClassNotFoundException when the observed class is not there
+     */
+    @SuppressWarnings("rawtypes")
+    private static io.vidocq.vauban.core.extensions.VaubanSyntheticObserverBuilder observerBuilder(
+            io.vidocq.vauban.core.extensions.SyntheticObserverDescriptor synDesc, ClassLoader cl)
+            throws ClassNotFoundException {
+        TypeInfo eventType;
+        try {
+            eventType = synDesc.eventTypeInfo();
+        } catch (IllegalArgumentException e) {
+            throw new jakarta.enterprise.inject.spi.DeploymentException(
+                    "synthetic observer of " + synDesc.eventTypeName() + ": " + e.getMessage(), e);
+        }
+        if (eventType instanceof TypeInfo.ClassType) {
+            return new io.vidocq.vauban.core.extensions.VaubanSyntheticObserverBuilder<>(
+                    Class.forName(synDesc.eventTypeName(), false, cl));
+        }
+        return new io.vidocq.vauban.core.extensions.VaubanSyntheticObserverBuilder<>(eventType);
     }
 
     private static void resolveOptionalClass(String fqn, ClassLoader cl, java.util.function.Consumer<Class<?>> sink) {

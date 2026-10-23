@@ -19,6 +19,8 @@
  */
 package io.vidocq.vauban.core.extensions;
 
+import io.vidocq.vauban.indexer.model.TypeInfo;
+
 import java.util.List;
 import java.util.Map;
 
@@ -36,5 +38,15 @@ public record SyntheticObserverDescriptor(
     public SyntheticObserverDescriptor {
         qualifiers = qualifiers != null ? List.copyOf(qualifiers) : List.of();
         params = params != null ? Map.copyOf(params) : Map.of();
+    }
+
+    /**
+     * The observed type, read from {@link #eventTypeName()}: a class name, or a generic or array type in the notation
+     * the build writes (VAU-OBS-005).
+     *
+     * @throws IllegalArgumentException when the name is in no such form
+     */
+    public TypeInfo eventTypeInfo() {
+        return ObservedTypeNotation.read(eventTypeName);
     }
 }

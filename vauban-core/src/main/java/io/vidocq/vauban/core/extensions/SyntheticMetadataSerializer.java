@@ -37,7 +37,10 @@ import java.util.*;
  * bean.0.param.key=S:hello
  * observer.0.eventType=com.example.MyEvent
  * observer.0.observer=com.example.MyObserver
+ * observer.1.eventType=java.util.List&lt;? extends java.lang.Number&gt;
  * </pre>
+ *
+ * <p>An observed type is written in the notation of {@code ObservedTypeNotation}.</p>
  *
  * <h2>Param encoding</h2>
  * See {@link SyntheticParamCodec}.
@@ -124,19 +127,9 @@ public final class SyntheticMetadataSerializer {
 
     private static void writeObserverBuilder(Properties props, String prefix,
                                               VaubanSyntheticObserverBuilder<?> builder) {
-        var eventType = builder.getEventType();
-        if (!rebuildableFromItsName(eventType)) {
-            // The boot loads the observed type by its name: these shapes would be lost there, and the
-            // observer with them, so the build fails instead (as for a param, BUG-20261008-02).
-            throw new IllegalArgumentException("synthetic observer of " + eventType.getTypeName()
-                    + ": an observed type with a wildcard, a generic array or a type variable cannot be recorded"
-                    + " at build time (VAU-OBS-003)");
-        }
-        if (eventType instanceof Class<?> cls) {
-            props.setProperty(prefix + EVENT_TYPE, cls.getName());
-        } else {
-            props.setProperty(prefix + EVENT_TYPE, eventType.getTypeName());
-        }
+        // In the notation the boot reads back, every shape the index form has: a class as before, a parameterized
+        // type, a wildcard, an array, a type variable (VAU-OBS-005).
+        props.setProperty(prefix + EVENT_TYPE, ObservedTypeNotation.write(builder.getEventTypeInfo()));
 
         if (builder.getObserverClass() != null) {
             props.setProperty(prefix + ".observer", builder.getObserverClass().getName());
@@ -154,16 +147,6 @@ public final class SyntheticMetadataSerializer {
         props.setProperty(prefix + ".async", String.valueOf(builder.isAsync()));
 
         writeParams(props, prefix, "synthetic observer of " + builder.getEventType().getTypeName(), builder.getParams());
-    }
-
-    /** Whether the observed type is a class, or a parameterized type whose arguments are such types. */
-    private static boolean rebuildableFromItsName(java.lang.reflect.Type type) {
-        return switch (type) {
-            case Class<?> _ -> true;
-            case java.lang.reflect.ParameterizedType pt -> Arrays.stream(pt.getActualTypeArguments())
-                    .allMatch(SyntheticMetadataSerializer::rebuildableFromItsName);
-            default -> false;
-        };
     }
 
     /**

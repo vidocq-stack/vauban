@@ -132,22 +132,32 @@ class BceCompileTimeTest {
         }
     }
 
-    /** Test BCE that adds an observer of {@code List<? extends Number>}, a type the metadata cannot carry. */
-    public static class WildcardObserverBce implements BuildCompatibleExtension {
+    /** Test BCE that adds observers of a parameterized, a wildcard-parameterized and an array type. */
+    public static class GenericObserversBce implements BuildCompatibleExtension {
         @Synthesis
-        public void addObserver(SyntheticComponents components, Types types) {
+        public void addObservers(SyntheticComponents components, Types types) {
+            components.addObserver(types.parameterized(List.class, String.class))
+                    .observeWith(ShapeObserver.class).withParam(SHAPE, "List<String>");
             components.addObserver(types.parameterized(List.class, types.wildcardWithUpperBound(types.of(Number.class))))
-                    .observeWith(NumbersObserver.class);
+                    .observeWith(ShapeObserver.class).withParam(SHAPE, "List<? extends Number>");
+            components.addObserver(types.ofArray(types.of(String.class), 1))
+                    .observeWith(ShapeObserver.class).withParam(SHAPE, "String[]");
         }
     }
 
-    /** SyntheticObserver for test — observes nothing in particular. */
-    public static class NumbersObserver implements SyntheticObserver<Object> {
+    /** Records the {@code shape} param it was given, and the event. */
+    public static class ShapeObserver implements SyntheticObserver<Object> {
+        static final List<String> OBSERVED = new java.util.concurrent.CopyOnWriteArrayList<>();
+
         @Override
         public void observe(jakarta.enterprise.inject.spi.EventContext<Object> event, Parameters params) {
-            // The build fails before any event can reach it.
+            var payload = event.getEvent();
+            OBSERVED.add(params.get(SHAPE, String.class) + " got "
+                    + (payload instanceof Object[] array ? Arrays.toString(array) : payload));
         }
     }
+
+    private static final String SHAPE = "shape";
 
     // ---- Helper: compile with the processor and an injected BCE ----
 
@@ -381,10 +391,11 @@ class BceCompileTimeTest {
     }
 
     @Test
-    @DisplayName("a synthetic observer of a wildcard-parameterized type fails the build, naming the type (VAU-OBS-003)")
-    void wildcardSyntheticObserverFailsTheBuild() throws IOException {
+    @DisplayName("synthetic observers of generic and array types the processor recorded receive their events at boot (VAU-OBS-005)")
+    void recordedGenericSyntheticObserversReceiveTheirEvents() throws IOException {
+        ShapeObserver.OBSERVED.clear();
         var result = compileWithBce(
-                List.of(WildcardObserverBce.class),
+                List.of(GenericObserversBce.class),
                 """
                 import jakarta.enterprise.context.ApplicationScoped;
 
@@ -393,12 +404,22 @@ class BceCompileTimeTest {
                 }
                 """
         );
+        assertTrue(result.success(), () -> "compilation failed: " + result.messages());
 
-        assertFalse(result.success(), () -> "compilation should fail: " + result.messages());
-        assertTrue(result.messages().stream().anyMatch(message -> message.startsWith(
-                        "ERROR: [Vauban] Cannot record a synthetic component: synthetic observer of"
-                                + " java.util.List<? extends java.lang.Number>")),
-                result.messages()::toString);
+        try (var loader = new java.net.URLClassLoader(
+                new java.net.URL[] {result.outputDir().toUri().toURL()}, getClass().getClassLoader());
+             var container = io.vidocq.vauban.core.container.VaubanContainer.builder()
+                     .classLoader(loader).scanClasspath().build()) {
+            var event = container.getBeanManager().getEvent();
+            event.select(new jakarta.enterprise.util.TypeLiteral<List<String>>() { }).fire(List.of("a"));
+            event.select(new jakarta.enterprise.util.TypeLiteral<List<Integer>>() { }).fire(List.of(1));
+            event.select(String[].class).fire(new String[] {"b"});
+        }
+
+        assertEquals(List.of("List<String> got [a]", "List<? extends Number> got [1]", "String[] got [b]"),
+                List.copyOf(ShapeObserver.OBSERVED));
+        var metadata = result.readFile(SyntheticMetadataSerializer.METADATA_PATH);
+        assertTrue(metadata.contains("=java.util.List<? extends java.lang.Number>"), metadata);
     }
 
     @Test
