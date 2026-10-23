@@ -203,7 +203,7 @@ Not investigated yet. The observer is refused at `@Synthesis`, before it reaches
 ---
 
 ## VAU-MVN-002 — `VaubanGenerator`: a broken extension service file fails the build instead of being skipped
-- **Date**: 2026-10-23 — **Status**: OPEN (vauban#189)
+- **Date**: 2026-10-23 — **Status**: FIXED (fix/vauban-tickets, vauban#189, Vidocq/vidocq#285)
 - **Severity**: low (a malformed `META-INF/services` entry for `BuildCompatibleExtension` on the build class path)
 
 ### Symptom
@@ -217,6 +217,14 @@ names a class that does not exist; run the `generate` goal.
 ### Cause
 `ServiceLoader` reports a broken provider with `ServiceConfigurationError`, an `Error`, and the surrounding
 `catch (Exception)` does not catch it.
+
+### Fix
+The discovery walks the `ServiceLoader` iterator itself: a provider that fails with `ServiceConfigurationError` or a
+`LinkageError` is skipped with a generation warning naming the service file and the provider, and the extensions after
+it still run. Skipping with a warning matches the rest of `vauban:generate` (a dependency or a class it cannot read is
+a warning) and the processor's warning for build compatible extensions it cannot load (vauban#29); CDI 4.1 §12.1 only
+defines a build compatible extension as a service provider declared in `META-INF/services`. Test:
+`GeneratorInputScanningTest.aBrokenExtensionServiceEntryIsSkippedWithAWarningAndTheOthersStillRun` (vauban-maven-plugin).
 
 ---
 

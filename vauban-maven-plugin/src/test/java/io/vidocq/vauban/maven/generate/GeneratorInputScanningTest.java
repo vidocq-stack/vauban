@@ -58,6 +58,7 @@ class GeneratorInputScanningTest {
     private static final String LISTED = "com.listed.Known";
     private static final String BEANS_LIST = VaubanGenerator.BEANS_LIST_PATH;
     private static final String SCAN_CLASS = "com/scan/Service.class";
+    private static final String EXTENSION_SERVICE = "META-INF/services/" + BuildCompatibleExtension.class.getName();
 
     @TempDir
     Path tmp;
@@ -169,8 +170,7 @@ class GeneratorInputScanningTest {
     void anExtensionThatEnhancesNothingLeavesTheIndexAsItIs() throws IOException {
         var services = tmp.resolve("services");
         Files.createDirectories(services.resolve("META-INF/services"));
-        Files.writeString(services.resolve("META-INF/services/" + BuildCompatibleExtension.class.getName()),
-                IdleExtension.class.getName());
+        Files.writeString(services.resolve(EXTENSION_SERVICE), IdleExtension.class.getName());
         var lib = jar(tmp.resolve("lib.jar"), Map.of(SCAN_CLASS, beanClass(BEAN, DEPENDENT)));
         var output = tmp.resolve("output");
 
@@ -181,6 +181,28 @@ class GeneratorInputScanningTest {
 
         assertEquals(List.of(BEAN), result.discoveredBeanClasses());
         assertFalse(Files.exists(output.resolve(
+                io.vidocq.vauban.core.extensions.EnhancementPatchSerializer.PATCH_PATH)));
+    }
+
+    @Test
+    void aBrokenExtensionServiceEntryIsSkippedWithAWarningAndTheOthersStillRun() throws IOException {
+        var services = tmp.resolve("services");
+        Files.createDirectories(services.resolve("META-INF/services"));
+        Files.writeString(services.resolve(EXTENSION_SERVICE),
+                "com.missing.AbsentExtension\n" + NamingExtension.class.getName() + "\n");
+        var lib = jar(tmp.resolve("deps.jar"), Map.of("io/vidocq/vauban/maven/generate/deps/Tally.class",
+                compiled(Tally.class)));
+        var output = tmp.resolve("output");
+
+        GenerationResult result;
+        try (var loader = new URLClassLoader(new URL[] {services.toUri().toURL()}, getClass().getClassLoader())) {
+            result = VaubanGenerator.generate(new VaubanGenerator.Config(List.of(lib), null, output, loader));
+        }
+
+        assertTrue(result.warnings().stream().anyMatch(warning -> warning.contains(EXTENSION_SERVICE)
+                && warning.contains("com.missing.AbsentExtension")), result.warnings().toString());
+        assertEquals(List.of(Tally.class.getName()), result.discoveredBeanClasses());
+        assertTrue(Files.exists(output.resolve(
                 io.vidocq.vauban.core.extensions.EnhancementPatchSerializer.PATCH_PATH)));
     }
 
@@ -222,6 +244,15 @@ class GeneratorInputScanningTest {
         var created = names(output.resolve(depsProvider.replace('.', '/') + ".class"));
         assertTrue(created.contains(Counter.class.getName()), created.toString());
         assertFalse(created.contains(Counter.class.getName() + "_ClientProxy"), created.toString());
+    }
+
+    /** An extension that names every {@link Tally}. */
+    public static class NamingExtension implements BuildCompatibleExtension {
+
+        @Enhancement(types = Tally.class)
+        public void enhance(ClassConfig clazz) {
+            clazz.addAnnotation(jakarta.inject.Named.class);
+        }
     }
 
     /** An extension whose enhancement matches no class of the archive. */
