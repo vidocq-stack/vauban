@@ -35,3 +35,8 @@ jobs:
           sonar-token: ${{ secrets.SONAR_TOKEN }}
           host-url: ${{ vars.SONAR_HOST_URL }}
           bot-token: ${{ secrets.VIDOCQ_BOT_TOKEN }}
+          # The CDI Lite and AtInject TCKs (tck profile) run under the JaCoCo agent too:
+          # vauban-coverage aggregates the TCK runner's data, so the coverage SonarQube
+          # reads counts the 774 conformance tests that exercise the container, not only
+          # the unit tests.
+          maven-args: '-B -ntp -Pquality,tck -Dmaven.test.failure.ignore=true install'
