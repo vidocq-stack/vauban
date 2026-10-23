@@ -107,90 +107,117 @@ public final class VaubanInvoker implements Invoker<Object, Object>, InvokerInfo
         List<Runnable> cleanups = new ArrayList<>();
 
         try {
-            if (instanceLookup) {
-                var inst = cdi.select(beanClass);
-                var instanceHandle = inst.getHandle();
-                instance = instanceHandle.get();
-                if (instanceHandle.getBean() != null && instanceHandle.getBean().getScope() == Dependent.class) {
-                    cleanups.add(instanceHandle::destroy);
-                }
-            }
+            var target = instanceLookup ? lookupBean(cdi, beanClass, cleanups) : instance;
+            var callArguments = trimToParameterCount(lookupArguments(cdi, arguments, cleanups));
 
-            if (!argumentLookups.isEmpty() && arguments != null) {
-                var paramTypes = method.getParameterTypes();
-                var genParamTypes = method.getGenericParameterTypes();
-                arguments = arguments.clone();
-                for (int idx : argumentLookups) {
-                    var paramType = paramTypes[idx];
-                    var genType = genParamTypes[idx];
-
-                    if (jakarta.enterprise.inject.Instance.class.isAssignableFrom(paramType)) {
-                        var resolved = resolveInstance(cdi, genType);
-                        arguments[idx] = resolved;
-                        if (resolved instanceof InstanceImpl<?> instanceImpl) {
-                            cleanups.add(instanceImpl::releaseAllDependents);
-                        }
-                    } else if (jakarta.enterprise.event.Event.class.isAssignableFrom(paramType)) {
-                        arguments[idx] = resolveEvent(cdi, genType);
-                    } else if (BeanManager.class.isAssignableFrom(paramType)) {
-                        arguments[idx] = cdi.getBeanManager();
-                    } else {
-                        var inst = cdi.select(paramType);
-                        var argumentHandle = inst.getHandle();
-                        arguments[idx] = argumentHandle.get();
-                        if (argumentHandle.getBean() != null && argumentHandle.getBean().getScope() == Dependent.class) {
-                            cleanups.add(argumentHandle::destroy);
-                        }
-                    }
-                }
-            }
-
-            var paramCount = method.getParameterCount();
-            if (arguments != null && arguments.length > paramCount) {
-                var trimmed = new Object[paramCount];
-                System.arraycopy(arguments, 0, trimmed, 0, paramCount);
-                arguments = trimmed;
-            }
-
-            if (!isStatic && instance == null) {
+            if (!isStatic && target == null) {
                 throw new RuntimeException("Cannot invoke instance method " + method.getName()
                         + " with null instance");
             }
             if (handle != null) {
-                var callArgs = new ArrayList<Object>();
-                if (!isStatic) {
-                    callArgs.add(instance);
-                }
-                if (arguments != null) {
-                    java.util.Collections.addAll(callArgs, arguments);
-                }
-                try {
-                    return handle.invokeWithArguments(callArgs);
-                } catch (Exception | Error direct) {
-                    // A handle throws the target's exception as-is, with no wrapper to unpack.
-                    throw direct;
-                } catch (Throwable t) {
-                    throw new RuntimeException(t);
-                }
+                return invokeHandle(target, callArguments);
             }
-            try {
-                if (isStatic) {
-                    return method.invoke(null, arguments);
-                }
-                return method.invoke(instance, arguments);
-            } catch (InvocationTargetException e) {
-                var cause = e.getCause();
-                if (cause instanceof Exception ex) throw ex;
-                if (cause instanceof Error err) throw err;
-                throw e;
-            }
+            return invokeReflectively(target, callArguments);
         } finally {
-            for (var cleanup : cleanups) {
-                try {
-                    cleanup.run();
-                } catch (Exception _) {
-                    // intentionally empty
-                }
+            runCleanups(cleanups);
+        }
+    }
+
+    /** A contextual reference of {@code type}; a {@code @Dependent} instance is destroyed once the call is over. */
+    private static Object lookupBean(CDI<Object> cdi, Class<?> type, List<Runnable> cleanups) {
+        var beanHandle = cdi.select(type).getHandle();
+        var value = beanHandle.get();
+        if (beanHandle.getBean() != null && beanHandle.getBean().getScope() == Dependent.class) {
+            cleanups.add(beanHandle::destroy);
+        }
+        return value;
+    }
+
+    /** A copy of {@code arguments} with the looked-up positions filled, or {@code arguments} when none is. */
+    private Object[] lookupArguments(CDI<Object> cdi, Object[] arguments, List<Runnable> cleanups) {
+        if (argumentLookups.isEmpty() || arguments == null) {
+            return arguments;
+        }
+        var paramTypes = method.getParameterTypes();
+        var genParamTypes = method.getGenericParameterTypes();
+        var lookedUp = arguments.clone();
+        for (int idx : argumentLookups) {
+            lookedUp[idx] = lookupArgument(cdi, paramTypes[idx], genParamTypes[idx], cleanups);
+        }
+        return lookedUp;
+    }
+
+    /** The value of a looked-up argument: a built-in {@code Instance}, {@code Event} or {@code BeanManager}, or a bean. */
+    private Object lookupArgument(CDI<Object> cdi, Class<?> paramType, java.lang.reflect.Type genType,
+                                  List<Runnable> cleanups) {
+        if (jakarta.enterprise.inject.Instance.class.isAssignableFrom(paramType)) {
+            var resolved = resolveInstance(cdi, genType);
+            if (resolved instanceof InstanceImpl<?> instanceImpl) {
+                cleanups.add(instanceImpl::releaseAllDependents);
+            }
+            return resolved;
+        }
+        if (jakarta.enterprise.event.Event.class.isAssignableFrom(paramType)) {
+            return resolveEvent(cdi, genType);
+        }
+        if (BeanManager.class.isAssignableFrom(paramType)) {
+            return cdi.getBeanManager();
+        }
+        return lookupBean(cdi, paramType, cleanups);
+    }
+
+    /** {@code arguments} without the trailing values the method has no parameter for. */
+    private Object[] trimToParameterCount(Object[] arguments) {
+        var paramCount = method.getParameterCount();
+        if (arguments == null || arguments.length <= paramCount) {
+            return arguments;
+        }
+        var trimmed = new Object[paramCount];
+        System.arraycopy(arguments, 0, trimmed, 0, paramCount);
+        return trimmed;
+    }
+
+    @SuppressWarnings("java:S112") // a Throwable that is neither an Exception nor an Error has no better type
+    private Object invokeHandle(Object target, Object[] arguments) throws Exception {
+        var callArgs = new ArrayList<Object>();
+        if (!isStatic) {
+            callArgs.add(target);
+        }
+        if (arguments != null) {
+            java.util.Collections.addAll(callArgs, arguments);
+        }
+        try {
+            return handle.invokeWithArguments(callArgs);
+        } catch (Exception | Error direct) {
+            // A handle throws the target's exception as-is, with no wrapper to unpack.
+            throw direct;
+        } catch (Throwable t) {
+            throw new RuntimeException(t);
+        }
+    }
+
+    /** The reflective path, when no method handle could be obtained; the target's exception is unwrapped. */
+    private Object invokeReflectively(Object target, Object[] arguments) throws Exception {
+        try {
+            if (isStatic) {
+                return method.invoke(null, arguments);
+            }
+            return method.invoke(target, arguments);
+        } catch (InvocationTargetException e) {
+            var cause = e.getCause();
+            if (cause instanceof Exception ex) throw ex;
+            if (cause instanceof Error err) throw err;
+            throw e;
+        }
+    }
+
+    /** Runs every cleanup; one that fails does not keep the others from running. */
+    private static void runCleanups(List<Runnable> cleanups) {
+        for (var cleanup : cleanups) {
+            try {
+                cleanup.run();
+            } catch (Exception _) {
+                // intentionally empty
             }
         }
     }

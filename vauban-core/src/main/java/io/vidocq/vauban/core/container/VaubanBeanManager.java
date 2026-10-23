@@ -976,85 +976,110 @@ public final class VaubanBeanManager implements BeanManager {
             return true;
         }
 
-        // Array injection points with a generic component (Class<?>[] is a
-        // GenericArrayType) match a bean's erased array class when every type
-        // argument of the component is an unbounded wildcard — CDI 4.1 §5.2.4
-        // raw ↔ parameterized equivalence applied to array element types.
-        // Cf. VAU-BCE-004.
-        if (requiredType instanceof java.lang.reflect.GenericArrayType reqGat) {
-            Class<?> reqErased = erasedArrayClassIfUnbounded(reqGat);
-            if (reqErased != null && beanType instanceof Class<?> btClass && btClass.isArray()) {
-                return reqErased == btClass || reqErased.getName().equals(btClass.getName());
-            }
-            if (beanType instanceof java.lang.reflect.GenericArrayType btGat) {
-                return btGat.getTypeName().equals(reqGat.getTypeName());
-            }
-            return false;
-        }
+        return switch (requiredType) {
+            case java.lang.reflect.GenericArrayType reqGat -> genericArrayTypeMatches(beanType, reqGat);
+            case Class<?> reqClass -> rawRequiredTypeMatches(beanType, reqClass);
+            case java.lang.reflect.ParameterizedType reqPt -> parameterizedRequiredTypeMatches(beanType, reqPt);
+            case null, default -> false;
+        };
+    }
 
-        // CDI 4.1 Section 5.2.5: raw types must be identical
-        // Use name comparison to handle cross-classloader scenarios
-        if (requiredType instanceof Class<?> reqClass) {
-            if (beanType instanceof Class<?> btClass) {
-                return reqClass == btClass || reqClass.getName().equals(btClass.getName());
-            }
-            // CDI 5.2.4: parameterized bean type matches raw required type only if
-            // raw types are identical AND all type params are unbounded TVs or Object
-            if (beanType instanceof java.lang.reflect.ParameterizedType pt) {
-                if (reqClass != pt.getRawType()
-                        && !reqClass.getName().equals(((Class<?>) pt.getRawType()).getName())) return false;
-                for (Type arg : pt.getActualTypeArguments()) {
-                    if (arg instanceof java.lang.reflect.TypeVariable<?> tv) {
-                        for (Type bound : tv.getBounds()) {
-                            if (bound != Object.class) return false;
-                        }
-                    } else if (arg != Object.class) {
-                        return false;
-                    }
-                }
-                return true;
-            }
+    /**
+     * Array injection points with a generic component ({@code Class<?>[]} is a
+     * {@code GenericArrayType}) match a bean's erased array class when every type
+     * argument of the component is an unbounded wildcard — CDI 4.1 §5.2.4
+     * raw ↔ parameterized equivalence applied to array element types.
+     * Cf. VAU-BCE-004.
+     */
+    private static boolean genericArrayTypeMatches(Type beanType, java.lang.reflect.GenericArrayType reqGat) {
+        Class<?> reqErased = erasedArrayClassIfUnbounded(reqGat);
+        if (reqErased != null && beanType instanceof Class<?> btClass && btClass.isArray()) {
+            return reqErased == btClass || reqErased.getName().equals(btClass.getName());
         }
+        return beanType instanceof java.lang.reflect.GenericArrayType btGat
+                && btGat.getTypeName().equals(reqGat.getTypeName());
+    }
 
-        if (requiredType instanceof java.lang.reflect.ParameterizedType reqPt) {
-            if (beanType instanceof java.lang.reflect.ParameterizedType beanPt) {
-                // Raw types must be identical (compare by name for cross-classloader)
-                if (beanPt.getRawType() != reqPt.getRawType()
-                        && (!(beanPt.getRawType() instanceof Class<?> bc && reqPt.getRawType() instanceof Class<?> rc)
-                            || !bc.getName().equals(rc.getName()))) return false;
-                // Type arguments must match exactly (invariant)
-                var reqArgs = reqPt.getActualTypeArguments();
-                var beanArgs = beanPt.getActualTypeArguments();
-                if (reqArgs.length != beanArgs.length) return false;
-                for (int i = 0; i < reqArgs.length; i++) {
-                    if (!typeArgumentsMatch(beanArgs[i], reqArgs[i])) return false;
-                }
-                return true;
-            }
-            // Raw bean type matches parameterized required type only if raw types identical
-            if (beanType instanceof Class<?> btClass) {
-                if (btClass != reqPt.getRawType()) return false;
-                for (Type arg : reqPt.getActualTypeArguments()) {
-                    if (arg instanceof java.lang.reflect.TypeVariable<?> tv) {
-                        for (Type bound : resolvedBounds(tv)) {
-                            if (bound != Object.class) return false;
-                        }
-                    } else if (arg instanceof java.lang.reflect.WildcardType wt) {
-                        for (Type ub : wt.getUpperBounds()) {
-                            if (ub != Object.class) return false;
-                        }
-                        for (Type lb : wt.getLowerBounds()) {
-                            if (lb != Object.class && lb != null) return false; // wait, lower bounds shouldn't exist for it to be treated as unbounded
-                        }
-                    } else if (arg != Object.class) {
-                        return false;
-                    }
-                }
-                return true;
-            }
+    /**
+     * CDI 4.1 Section 5.2.5: raw types must be identical, compared by name as well to handle
+     * cross-classloader scenarios.
+     */
+    private static boolean rawRequiredTypeMatches(Type beanType, Class<?> reqClass) {
+        if (beanType instanceof Class<?> btClass) {
+            return reqClass == btClass || reqClass.getName().equals(btClass.getName());
         }
+        return beanType instanceof java.lang.reflect.ParameterizedType pt
+                && parameterizedBeanTypeMatchesRaw(pt, reqClass);
+    }
 
-        return false;
+    /**
+     * CDI 5.2.4: a parameterized bean type matches a raw required type only if the raw types are
+     * identical AND all type params are unbounded type variables or Object.
+     */
+    private static boolean parameterizedBeanTypeMatchesRaw(java.lang.reflect.ParameterizedType pt, Class<?> reqClass) {
+        if (reqClass != pt.getRawType()
+                && !reqClass.getName().equals(((Class<?>) pt.getRawType()).getName())) return false;
+        for (Type arg : pt.getActualTypeArguments()) {
+            boolean unbounded = arg instanceof java.lang.reflect.TypeVariable<?> tv
+                    ? allObject(tv.getBounds())
+                    : arg == Object.class;
+            if (!unbounded) return false;
+        }
+        return true;
+    }
+
+    private static boolean parameterizedRequiredTypeMatches(Type beanType, java.lang.reflect.ParameterizedType reqPt) {
+        if (beanType instanceof java.lang.reflect.ParameterizedType beanPt) {
+            return parameterizedTypesMatch(beanPt, reqPt);
+        }
+        // Raw bean type matches parameterized required type only if raw types identical
+        return beanType instanceof Class<?> btClass && rawBeanTypeMatchesParameterized(btClass, reqPt);
+    }
+
+    /** Raw types identical (compared by name for cross-classloader) and type arguments matching exactly (invariant). */
+    private static boolean parameterizedTypesMatch(java.lang.reflect.ParameterizedType beanPt,
+                                                   java.lang.reflect.ParameterizedType reqPt) {
+        if (!sameRawType(beanPt.getRawType(), reqPt.getRawType())) return false;
+        var reqArgs = reqPt.getActualTypeArguments();
+        var beanArgs = beanPt.getActualTypeArguments();
+        if (reqArgs.length != beanArgs.length) return false;
+        for (int i = 0; i < reqArgs.length; i++) {
+            if (!typeArgumentsMatch(beanArgs[i], reqArgs[i])) return false;
+        }
+        return true;
+    }
+
+    /** The same raw type, or two classes of the same name loaded by different class loaders. */
+    private static boolean sameRawType(Type beanRaw, Type requiredRaw) {
+        return beanRaw == requiredRaw
+                || (beanRaw instanceof Class<?> bc && requiredRaw instanceof Class<?> rc
+                    && bc.getName().equals(rc.getName()));
+    }
+
+    private static boolean rawBeanTypeMatchesParameterized(Class<?> btClass, java.lang.reflect.ParameterizedType reqPt) {
+        if (btClass != reqPt.getRawType()) return false;
+        for (Type arg : reqPt.getActualTypeArguments()) {
+            if (!isUnboundedArgument(arg)) return false;
+        }
+        return true;
+    }
+
+    /** Object, a type variable bounded by Object only, or a wildcard with no bound other than Object. */
+    private static boolean isUnboundedArgument(Type arg) {
+        if (arg instanceof java.lang.reflect.TypeVariable<?> tv) {
+            return allObject(resolvedBounds(tv));
+        }
+        if (arg instanceof java.lang.reflect.WildcardType wt) {
+            // A lower bound other than Object makes the wildcard bounded.
+            return allObject(wt.getUpperBounds())
+                    && Arrays.stream(wt.getLowerBounds()).allMatch(lb -> lb == Object.class || lb == null);
+        }
+        return arg == Object.class;
+    }
+
+    /** Whether every one of {@code types} is {@code Object}. */
+    private static boolean allObject(Type[] types) {
+        return Arrays.stream(types).allMatch(t -> t == Object.class);
     }
 
     private static boolean typeArgumentsMatch(Type beanArg, Type requiredArg) {

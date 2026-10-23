@@ -149,97 +149,12 @@ final class BeanInjector {
                 .filter(Field.class::isInstance).map(Field.class::cast).toList();
     }
 
-    @SuppressWarnings({"java:S3776", "java:S1181"})
+    @SuppressWarnings("java:S1181")
     private void injectSingleField(Object instance, Field field, BeanDescriptor descriptor,
                                    CreationalContext<?> parentCtx,
                                    Map<java.lang.reflect.TypeVariable<?>, java.lang.reflect.Type> typeMapping) {
         try {
-            if (field.getType() == InjectionPoint.class) {
-                writeField(instance, field, VaubanContainer.getCurrentInjectionPoint());
-                return;
-            }
-
-            // What the bean's descriptor records for this field, or null for a field it does not
-            // describe — an interceptor's, injected without one (vauban#70).
-            var describedQualifiers = QualifierHelper.fieldQualifiers(
-                    descriptor == null ? null : descriptor.injectionPoints(), field,
-                    container.qualifierMatcher().types());
-            var describedSet = describedQualifiers == null ? null
-                    : new java.util.LinkedHashSet<>(java.util.List.of(describedQualifiers));
-
-            if (field.getType() == Instance.class
-                    || field.getType() == jakarta.inject.Provider.class) {
-                Class<?> instanceType = Object.class;
-                java.lang.reflect.Type instanceLookupType = Object.class;
-                var genericType = ManagedBean.resolveType(field.getGenericType(), typeMapping);
-                if (genericType instanceof ParameterizedType pt) {
-                    var typeArg = pt.getActualTypeArguments()[0];
-                    if (typeArg instanceof Class<?> c) {
-                        instanceType = c;
-                        instanceLookupType = c;
-                    } else if (typeArg instanceof ParameterizedType nestedPt) {
-                        // e.g. Provider<Optional<String>>, Provider<Set<String>> — preserve the
-                        // full parameterized type so getBeans() can match synthetic beans exactly.
-                        instanceType = (nestedPt.getRawType() instanceof Class<?> raw) ? raw : Object.class;
-                        instanceLookupType = nestedPt;
-                    }
-                }
-                var fieldQualifiers = describedQualifiers != null
-                        ? describedQualifiers : QualifierHelper.extractFieldQualifiers(field);
-                var ownerBean = container.findBeanForInstance(instance);
-                var ip = new VaubanInjectionPoint(field, ownerBean, describedSet);
-                writeField(instance, field, new InstanceImpl<>(container, instanceType, instanceLookupType, fieldQualifiers, ip, null));
-                return;
-            }
-
-            if (BeanManager.class.isAssignableFrom(field.getType())
-                    || field.getType() == jakarta.enterprise.inject.spi.BeanContainer.class) {
-                writeField(instance, field, container.getBeanManager());
-                return;
-            }
-
-            if (field.getType() == Event.class) {
-                var eventQualifiers = describedQualifiers != null
-                        ? QualifierHelper.eventQualifiers(describedQualifiers)
-                        : QualifierHelper.collectEventQualifiers(field.getAnnotations());
-                var ownerBean = container.findBeanForInstance(instance);
-                var eventIp = new VaubanInjectionPoint(field, ownerBean, describedSet);
-                writeField(instance, field, new EventImpl<>(container.eventDispatcher(), eventQualifiers, eventIp));
-                return;
-            }
-
-            var ownerBean = container.findBeanForInstance(instance);
-            VaubanContainer.withInjectionPoint(new VaubanInjectionPoint(field, ownerBean, describedSet), () -> {
-                var fieldKeys = fieldQualifierKeys(field, descriptor);
-                Object value;
-                var bm = container.getBeanManager();
-                var fieldType = ManagedBean.resolveType(field.getGenericType(), typeMapping);
-                var resolvedBeans = bm.getBeans(fieldType, fieldKeys);
-                if (resolvedBeans.isEmpty()) {
-                    value = container.select(field.getType());
-                } else {
-                    var resolved = bm.resolve(resolvedBeans);
-                    boolean needsFreshCtx = resolved instanceof ManagedBean<?> mb
-                            && resolved.getScope() == jakarta.enterprise.context.Dependent.class
-                            && mb.descriptor().kind() == BeanDescriptor.BeanKind.MANAGED
-                            && container.interceptorManager() != null && container.interceptorManager().hasInterceptors()
-                            && container.hasMethodOrClassInterceptors(mb);
-                    var ctx = (parentCtx != null
-                            && resolved.getScope() == jakarta.enterprise.context.Dependent.class
-                            && !needsFreshCtx)
-                            ? parentCtx
-                            : bm.createCreationalContext(resolved);
-                    value = bm.getReference(resolved, fieldType, ctx);
-                    if (needsFreshCtx
-                            && parentCtx instanceof CreationalContextImpl<?> parentVCtx
-                            && value != null) {
-                        parentVCtx.addDependentInstance(resolved, value, ctx);
-                    }
-                }
-                if (value != null || !field.getType().isPrimitive()) {
-                    writeField(instance, field, value);
-                }
-            });
+            injectFieldValue(instance, field, descriptor, parentCtx, typeMapping);
         } catch (RuntimeException e) {
             // An injection that fails must say so. Logging it and leaving the field null hands out a
             // bean that looks built, and the failure comes back later as a NullPointerException in
@@ -253,6 +168,136 @@ final class BeanInjector {
                     + field.getDeclaringClass().getName() + "." + field.getName()
                     + " on " + instance.getClass().getName(), e);
         }
+    }
+
+    /** Injects one field: a built-in bean ({@code InjectionPoint}, {@code Instance}, {@code BeanManager}, {@code Event}) or a resolved one. */
+    private void injectFieldValue(Object instance, Field field, BeanDescriptor descriptor,
+                                  CreationalContext<?> parentCtx,
+                                  Map<java.lang.reflect.TypeVariable<?>, java.lang.reflect.Type> typeMapping) {
+        var rawType = field.getType();
+        if (rawType == InjectionPoint.class) {
+            writeField(instance, field, VaubanContainer.getCurrentInjectionPoint());
+            return;
+        }
+
+        // What the bean's descriptor records for this field, or null for a field it does not
+        // describe — an interceptor's, injected without one (vauban#70).
+        var describedQualifiers = QualifierHelper.fieldQualifiers(
+                descriptor == null ? null : descriptor.injectionPoints(), field,
+                container.qualifierMatcher().types());
+        var describedSet = describedQualifiers == null ? null
+                : new java.util.LinkedHashSet<>(java.util.List.of(describedQualifiers));
+
+        if (rawType == Instance.class || rawType == jakarta.inject.Provider.class) {
+            injectInstanceField(instance, field, typeMapping, describedQualifiers, describedSet);
+        } else if (BeanManager.class.isAssignableFrom(rawType)
+                || rawType == jakarta.enterprise.inject.spi.BeanContainer.class) {
+            writeField(instance, field, container.getBeanManager());
+        } else if (rawType == Event.class) {
+            injectEventField(instance, field, describedQualifiers, describedSet);
+        } else {
+            var ownerBean = container.findBeanForInstance(instance);
+            VaubanContainer.withInjectionPoint(new VaubanInjectionPoint(field, ownerBean, describedSet),
+                    () -> injectBeanField(instance, field, descriptor, parentCtx, typeMapping));
+        }
+    }
+
+    /** An {@code Instance<T>} or {@code Provider<T>} field: a handle on the beans of {@code T}, resolved lazily. */
+    private void injectInstanceField(Object instance, Field field,
+                                     Map<java.lang.reflect.TypeVariable<?>, java.lang.reflect.Type> typeMapping,
+                                     java.lang.annotation.Annotation[] describedQualifiers,
+                                     java.util.Set<java.lang.annotation.Annotation> describedSet) {
+        var target = instanceTarget(ManagedBean.resolveType(field.getGenericType(), typeMapping));
+        var fieldQualifiers = describedQualifiers != null
+                ? describedQualifiers : QualifierHelper.extractFieldQualifiers(field);
+        var ownerBean = container.findBeanForInstance(instance);
+        var ip = new VaubanInjectionPoint(field, ownerBean, describedSet);
+        writeField(instance, field, new InstanceImpl<>(container, target.rawType(), target.lookupType(),
+                fieldQualifiers, ip, null));
+    }
+
+    /**
+     * The type an {@code Instance<T>} field looks beans up by: {@code T} when it is a class or a
+     * parameterized type, {@code Object} otherwise.
+     */
+    private static InstanceTarget instanceTarget(java.lang.reflect.Type genericType) {
+        if (genericType instanceof ParameterizedType pt) {
+            var typeArg = pt.getActualTypeArguments()[0];
+            if (typeArg instanceof Class<?> c) {
+                return new InstanceTarget(c, c);
+            }
+            if (typeArg instanceof ParameterizedType nestedPt) {
+                // e.g. Provider<Optional<String>>, Provider<Set<String>> — preserve the
+                // full parameterized type so getBeans() can match synthetic beans exactly.
+                Class<?> raw = (nestedPt.getRawType() instanceof Class<?> c) ? c : Object.class;
+                return new InstanceTarget(raw, nestedPt);
+            }
+        }
+        return new InstanceTarget(Object.class, Object.class);
+    }
+
+    /** The raw type and the full lookup type of an {@code Instance<T>} field. */
+    private record InstanceTarget(Class<?> rawType, java.lang.reflect.Type lookupType) {
+    }
+
+    /** An {@code Event<T>} field, with the qualifiers its injection point describes or, without one, its own. */
+    private void injectEventField(Object instance, Field field,
+                                  java.lang.annotation.Annotation[] describedQualifiers,
+                                  java.util.Set<java.lang.annotation.Annotation> describedSet) {
+        var eventQualifiers = describedQualifiers != null
+                ? QualifierHelper.eventQualifiers(describedQualifiers)
+                : QualifierHelper.collectEventQualifiers(field.getAnnotations());
+        var ownerBean = container.findBeanForInstance(instance);
+        var eventIp = new VaubanInjectionPoint(field, ownerBean, describedSet);
+        writeField(instance, field, new EventImpl<>(container.eventDispatcher(), eventQualifiers, eventIp));
+    }
+
+    /** A field of a bean type, resolved by type and qualifiers; a primitive field left unresolved keeps its default. */
+    private void injectBeanField(Object instance, Field field, BeanDescriptor descriptor,
+                                 CreationalContext<?> parentCtx,
+                                 Map<java.lang.reflect.TypeVariable<?>, java.lang.reflect.Type> typeMapping) {
+        var fieldKeys = fieldQualifierKeys(field, descriptor);
+        var bm = container.getBeanManager();
+        var fieldType = ManagedBean.resolveType(field.getGenericType(), typeMapping);
+        var resolvedBeans = bm.getBeans(fieldType, fieldKeys);
+        Object value;
+        if (resolvedBeans.isEmpty()) {
+            value = container.select(field.getType());
+        } else {
+            value = beanReference(bm, bm.resolve(resolvedBeans), fieldType, parentCtx);
+        }
+        if (value != null || !field.getType().isPrimitive()) {
+            writeField(instance, field, value);
+        }
+    }
+
+    /**
+     * A reference to the resolved bean of a field. A {@code @Dependent} bean shares the parent's
+     * creational context, except an intercepted managed bean: that one gets its own, registered as a
+     * dependent instance of the parent.
+     */
+    private Object beanReference(VaubanBeanManager bm, jakarta.enterprise.inject.spi.Bean<?> resolved,
+                                 java.lang.reflect.Type fieldType, CreationalContext<?> parentCtx) {
+        boolean dependent = resolved.getScope() == jakarta.enterprise.context.Dependent.class;
+        boolean needsFreshCtx = dependent && isInterceptedManagedBean(resolved);
+        var ctx = (parentCtx != null && dependent && !needsFreshCtx)
+                ? parentCtx
+                : bm.createCreationalContext(resolved);
+        var value = bm.getReference(resolved, fieldType, ctx);
+        if (needsFreshCtx
+                && parentCtx instanceof CreationalContextImpl<?> parentVCtx
+                && value != null) {
+            parentVCtx.addDependentInstance(resolved, value, ctx);
+        }
+        return value;
+    }
+
+    /** A managed bean with method or class interceptors, while interceptors are enabled. */
+    private boolean isInterceptedManagedBean(jakarta.enterprise.inject.spi.Bean<?> resolved) {
+        return resolved instanceof ManagedBean<?> mb
+                && mb.descriptor().kind() == BeanDescriptor.BeanKind.MANAGED
+                && container.interceptorManager() != null && container.interceptorManager().hasInterceptors()
+                && container.hasMethodOrClassInterceptors(mb);
     }
 
     /**
