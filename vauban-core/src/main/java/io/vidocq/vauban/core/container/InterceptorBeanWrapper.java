@@ -996,7 +996,8 @@ final class InterceptorBeanWrapper {
                 } catch (Exception e) {
                     if (e instanceof jakarta.enterprise.inject.spi.DeploymentException de) throw de;
                     if (e instanceof jakarta.enterprise.inject.spi.DefinitionException de) throw de;
-                    e.printStackTrace();
+                    LOG.log(System.Logger.Level.ERROR, "Could not wrap the intercepted bean "
+                            + descriptor.beanClass().value() + "; it runs without its interceptors", e);
                 }
 
         }
