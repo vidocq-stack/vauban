@@ -44,7 +44,7 @@ public final class Ledgers {
 
         private final List<String> entries = new ArrayList<>();
 
-        public String record(String entry) {
+        public String append(String entry) {
             entries.add(entry);
             return entry + "#" + entries.size();
         }

@@ -102,8 +102,8 @@ class Cdi1015ExampleTest {
             assertFalse(java.lang.reflect.Proxy.isProxyClass(ledger.getClass()),
                     "a build-time proxy, like every other bean here");
 
-            assertEquals("first#1", ledger.record("first"));
-            assertEquals("second#2", ledger.record("second"),
+            assertEquals("first#1", ledger.append("first"));
+            assertEquals("second#2", ledger.append("second"),
                     "both calls must land on the same contextual instance");
             assertEquals(2, container.select(Ledgers.Ledger.class).get().size(),
                     "a second lookup sees the same state: the proxy forwards, it keeps nothing");
