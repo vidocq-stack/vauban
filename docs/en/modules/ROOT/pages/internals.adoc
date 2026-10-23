@@ -734,6 +734,14 @@ The `ApplicationContext` is built in memory, without opening any package.
   when the deployment has one loader: under `vidocq:dev`, where the application's classes and its
   libraries are defined by two loaders, CDI 4.1 invokers fell back to reflection for every
   application bean. The run-time `@Enhancement` pass resolves classes the same way.
+* A stereotype that declares `@Named` with a value, such as `@Named("custom")`, is a definition
+  error whether or not a bean carries it (CDI 4.1, 2.8.1.3). The class-level validation of the index
+  now reports it for every stereotype the container indexes, one handed to `addBeanClasses` or added
+  by an extension through `ScannedClasses`, with a `DefinitionException`
+  (`Stereotype com.acme.Custom has @Named with non-empty value 'custom'`). That check skipped every
+  annotation type and never ran: the error came only from the reflective check of the bean classes,
+  through a bean that carried the stereotype, which still reports it for a stereotype the container
+  does not index.
 
 [#virtual-threads]
 == Threading model

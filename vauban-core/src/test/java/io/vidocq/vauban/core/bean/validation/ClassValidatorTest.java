@@ -321,6 +321,40 @@ class ClassValidatorTest {
         }
     }
 
+    @Nested
+    @DisplayName("Stereotype declaring @Named (CDI 4.1, 2.8.1.3)")
+    class StereotypeNamed {
+
+        private static final DotName STEREOTYPE = DotName.of("jakarta.enterprise.inject.Stereotype");
+        private static final DotName NAMED = DotName.of("jakarta.inject.Named");
+
+        private static ClassInfo stereotype(String name, AnnotationInfo named) {
+            return new ClassInfo(DotName.of(name), DotName.of("java.lang.Object"),
+                    List.of(DotName.of("java.lang.annotation.Annotation")), 0x2601, List.of(), List.of(),
+                    List.of(ann(STEREOTYPE), named), ClassKind.ANNOTATION);
+        }
+
+        @Test
+        @DisplayName("should reject a stereotype declaring a non-empty @Named")
+        void rejectsNonEmptyNamed() {
+            var classInfo = stereotype("com.example.NamedStereotype",
+                    new AnnotationInfo(NAMED, Map.of("value", new AnnotationValue.StringVal("custom"))));
+
+            var errors = ClassValidator.validate(buildIndex(classInfo));
+            assertEquals(List.of("Stereotype com.example.NamedStereotype has @Named with non-empty value 'custom'"),
+                    errors);
+        }
+
+        @Test
+        @DisplayName("should accept a stereotype declaring an empty @Named")
+        void acceptsEmptyNamed() {
+            var classInfo = stereotype("com.example.DefaultNamedStereotype", ann(NAMED));
+
+            var errors = ClassValidator.validate(buildIndex(classInfo));
+            assertTrue(errors.isEmpty(), errors::toString);
+        }
+    }
+
     @Test
     @DisplayName("should accept a valid CDI bean with no issues")
     void acceptsValidBean() {

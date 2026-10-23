@@ -78,9 +78,13 @@ public final class ClassValidator {
     }
 
     private static void validateClass(ClassInfo classInfo, VaubanIndex index, List<String> errors) {
-        if (classInfo.isAnnotation() || classInfo.isEnum()) return;
-
         var className = classInfo.name().toString();
+        if (classInfo.isAnnotation()) {
+            validateAnnotationType(classInfo, className, errors);
+            return;
+        }
+        if (classInfo.isEnum()) return;
+
         boolean isBean = hasBeanDefiningAnnotation(classInfo, index);
 
         // Multiple @Inject constructors
@@ -100,11 +104,6 @@ public final class ClassValidator {
 
             // Normal-scoped bean with non-private non-static public field
             // Deferred: too many false positives with test beans
-        }
-
-        // Stereotype validations
-        if (classInfo.hasAnnotation(STEREOTYPE) && classInfo.isAnnotation()) {
-            validateStereotypeName(classInfo, className, errors);
         }
 
         // Interceptor validations
@@ -169,16 +168,23 @@ public final class ClassValidator {
         }
     }
 
+    /** The rules of an annotation type: only a stereotype has some, the bean rules do not apply to it. */
+    private static void validateAnnotationType(ClassInfo classInfo, String className, List<String> errors) {
+        if (classInfo.hasAnnotation(STEREOTYPE)) {
+            validateStereotypeName(classInfo, className, errors);
+        }
+    }
+
     /**
-     * {@code @Stereotype} with {@code @Named} must have an empty value. Conflicting {@code @Priority}
-     * values from several stereotypes are checked at bean level.
+     * {@code @Stereotype} with {@code @Named} must have an empty value (CDI 4.1, 2.8.1.3), whether or not a bean
+     * uses the stereotype. Conflicting {@code @Priority} values from several stereotypes are checked at bean level.
      */
     private static void validateStereotypeName(ClassInfo classInfo, String className, List<String> errors) {
         for (var ann : classInfo.annotations()) {
             if (ann.name().equals(NAMED)
                     && ann.member(MEMBER_VALUE) instanceof AnnotationValue.StringVal(var name)
                     && !name.isEmpty()) {
-                errors.add("Stereotype " + className + " has @Named with non-empty value");
+                errors.add("Stereotype " + className + " has @Named with non-empty value '" + name + "'");
             }
         }
     }

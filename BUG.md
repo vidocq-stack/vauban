@@ -193,7 +193,7 @@ keyed by the test class, so whichever runs first starts it and the class keeps a
 ---
 
 ## VAU-VAL-001 — `ClassValidator.validateStereotypeName` never runs
-- **Date**: 2026-10-23 — **Status**: OPEN (vauban#191)
+- **Date**: 2026-10-23 — **Status**: FIXED (`fix/vauban-tickets`, vauban#191, Vidocq/vidocq#285)
 - **Severity**: low (the same rule is enforced at run time by `ReflectionValidator`)
 
 ### Symptom
@@ -201,10 +201,21 @@ The build-time check that a stereotype does not declare `@Named` with a value ne
 
 ### Repro
 A stereotype annotated `@Named("x")`: `ClassValidator` does not report it (the run-time validation does).
+`ClassValidatorTest.StereotypeNamed.rejectsNonEmptyNamed` (vauban-core).
 
 ### Cause
 `validateClass` returns early for annotation types, so the `@Stereotype` branch that calls
 `validateStereotypeName` is unreachable.
+
+### Fix
+The check is made reachable rather than removed: CDI 4.1, 2.8.1.3 makes a stereotype that declares a non-empty
+`@Named` a definition error on its own, while `ReflectionValidator` sees it only through a bean that carries the
+stereotype. `validateClass` now hands an annotation type to `validateAnnotationType`, which runs
+`validateStereotypeName` for a stereotype and none of the bean rules, and the unreachable branch is gone. The
+message names the value, as the run-time one does: `Stereotype X has @Named with non-empty value 'x'`. A stereotype
+the container indexes (passed to `addBeanClasses`, added by an extension) now fails the boot with a
+`DefinitionException` even when no bean carries it. Tests: `ClassValidatorTest.StereotypeNamed`
+(`rejectsNonEmptyNamed`, `acceptsEmptyNamed`).
 
 ---
 
