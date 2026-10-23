@@ -630,7 +630,7 @@ public final class EventDispatcher {
     }
 
     public void invokeObserverDirect(ObserverDescriptor observer, Object event) {
-        invokeObserver(observer, event, new Annotation[0]);
+        invokeObserver(observer, event);
     }
 
     private void invokeObserver(ObserverDescriptor observer, Object event, Annotation... eventQualifiers) {

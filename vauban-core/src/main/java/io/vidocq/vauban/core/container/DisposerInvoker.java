@@ -271,7 +271,7 @@ final class DisposerInvoker {
     private static String rawClassName(TypeInfo type) {
         return switch (type) {
             case TypeInfo.ClassType(var name) -> name.value();
-            case TypeInfo.ParameterizedType(var rawType, var _) -> rawType.value();
+            case TypeInfo.ParameterizedType(var rawType, _) -> rawType.value();
             case null, default -> null;
         };
     }

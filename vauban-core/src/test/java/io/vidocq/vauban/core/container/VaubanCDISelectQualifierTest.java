@@ -97,7 +97,7 @@ class VaubanCDISelectQualifierTest {
     @Test
     @DisplayName("programmatic lookup exposes a synthetic InjectionPoint with the selected type and qualifiers")
     void programmaticLookupExposesSyntheticInjectionPoint() {
-        try (VaubanContainer _ = VaubanContainer.builder()
+        try (var _ = VaubanContainer.builder()
                 .addBeanClass(EchoBce.class)
                 .build()) {
 
@@ -112,7 +112,7 @@ class VaubanCDISelectQualifierTest {
     @Test
     @DisplayName("select(Class, qualifier) resolves the qualified bean, not @Default")
     void selectWithQualifierResolvesQualifiedBean() {
-        try (VaubanContainer _ = VaubanContainer.builder()
+        try (var _ = VaubanContainer.builder()
                 .addBeanClass(PlainDish.class)
                 .addBeanClass(SpicyDish.class)
                 .build()) {

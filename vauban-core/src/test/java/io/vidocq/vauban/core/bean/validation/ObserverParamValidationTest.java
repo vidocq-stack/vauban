@@ -73,7 +73,7 @@ class ObserverParamValidationTest {
     void unsatisfiedObserverParamFailsDeployment() {
         var builder = VaubanContainer.builder().addBeanClass(BrokenObserver.class);
         DeploymentException failure = assertThrows(DeploymentException.class, () -> {
-            try (VaubanContainer _ = builder.build()) {
+            try (var _ = builder.build()) {
                 // deployment must not succeed
             }
         });
@@ -85,7 +85,7 @@ class ObserverParamValidationTest {
     @DisplayName("a satisfiable observer parameter still deploys and injects")
     void satisfiedObserverParamDeploysAndInjects() {
         HealthyObserver.seen = null;
-        try (VaubanContainer _ = VaubanContainer.builder()
+        try (var _ = VaubanContainer.builder()
                 .addBeanClass(HealthyObserver.class)
                 .addBeanClass(SatisfiedDep.class)
                 .build()) {

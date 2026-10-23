@@ -1689,7 +1689,7 @@ public class VaubanProcessor extends AbstractProcessor {
                 out.add(rawType);
                 typeArguments.forEach(arg -> collectClassNames(arg, out));
             }
-            case TypeInfo.ArrayType(TypeInfo componentType, int _) -> collectClassNames(componentType, out);
+            case TypeInfo.ArrayType(TypeInfo componentType, _) -> collectClassNames(componentType, out);
             default -> { /* primitives, void, type variables and wildcards name no bean */ }
         }
     }

@@ -90,7 +90,7 @@ public final class ComponentCollector {
     public static String erasure(TypeInfo t) {
         return switch (t) {
             case TypeInfo.ClassType(var name) -> name.value();
-            case TypeInfo.ParameterizedType(var rawType, var _) -> rawType.value();
+            case TypeInfo.ParameterizedType(var rawType, _) -> rawType.value();
             case TypeInfo.ArrayType(var componentType, var dimensions) -> {
                 var comp = erasure(componentType);
                 yield comp == null ? null : comp + "[]".repeat(dimensions);

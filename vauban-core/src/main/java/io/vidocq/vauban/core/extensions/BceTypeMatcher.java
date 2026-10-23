@@ -72,10 +72,12 @@ final class BceTypeMatcher {
     /** Whether {@code typeName} is a superclass of {@code classInfo}, as far as the index knows, or one of its interfaces. */
     private static boolean isSubtypeByIndex(DotName typeName, io.vidocq.vauban.indexer.model.ClassInfo classInfo,
                                             IndexLookup lookup) {
-        var current = classInfo;
-        while (current != null && current.superName() != null) {
-            if (typeName.equals(current.superName())) return true;
-            current = lookup.getClass(current.superName()).orElse(null);
+        var superName = classInfo.superName();
+        while (superName != null) {
+            if (typeName.equals(superName)) return true;
+            superName = lookup.getClass(superName)
+                    .map(io.vidocq.vauban.indexer.model.ClassInfo::superName)
+                    .orElse(null);
         }
         return classInfo.interfaces().contains(typeName);
     }

@@ -266,9 +266,11 @@ public final class ComponentProviderGenerator {
     private static final String OVERRIDE = "    @Override\n";
     private static final String SUPPRESS_RAW = "    @SuppressWarnings({\"unchecked\", \"rawtypes\"})\n";
     private static final String TRY_OPEN = "        try {\n";
-    private static final String CATCH_SNEAKY = "        } catch (Throwable $$t) {\n"
-            + "            throw sneaky($$t);\n"
-            + "        }\n";
+    private static final String CATCH_SNEAKY = """
+                } catch (Throwable $$t) {
+                    throw sneaky($$t);
+                }
+        """;
     private static final String CASE_OPEN = "            case \"";
     private static final String CASE_BLOCK = "\" -> {\n";
     private static final String DEFAULT_NULL = "            default -> null;\n";

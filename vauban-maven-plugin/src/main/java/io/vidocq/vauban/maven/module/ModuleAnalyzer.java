@@ -152,8 +152,13 @@ public final class ModuleAnalyzer {
         name = name.replaceAll("[^A-Za-z0-9]", ".");
         // Collapse consecutive dots
         name = name.replaceAll("\\.{2,}", ".");
-        // Remove leading/trailing dots
-        name = name.replaceAll("(?:^\\.)|(?:\\.$)", "");
+        // Remove the leading and the trailing dot (at most one each once collapsed)
+        if (name.startsWith(".")) {
+            name = name.substring(1);
+        }
+        if (name.endsWith(".")) {
+            name = name.substring(0, name.length() - 1);
+        }
         return name;
     }
 

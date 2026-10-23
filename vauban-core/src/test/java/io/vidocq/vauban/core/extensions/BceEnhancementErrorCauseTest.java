@@ -70,7 +70,7 @@ class BceEnhancementErrorCauseTest {
                 .addBeanClass(RejectingBce.class)
                 .addBeanClass(SomeBean.class);
         DeploymentException failure = assertThrows(DeploymentException.class, () -> {
-            try (VaubanContainer _ = builder.build()) {
+            try (var _ = builder.build()) {
                 // deployment must fail before the container is usable
             }
         });

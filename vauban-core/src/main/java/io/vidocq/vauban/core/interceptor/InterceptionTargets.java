@@ -25,6 +25,7 @@ import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
+import java.util.Objects;
 
 /**
  * Whether, and why, the container wraps a managed bean in its {@code $$Intercepted} subclass. One
@@ -101,6 +102,7 @@ public final class InterceptionTargets {
 
     /** The first method with a binding: declared up the superclass chain, else a default method the bean inherits. */
     private static Method boundMethodOf(Class<?> beanClass, Bindings bindings) {
+        Objects.requireNonNull(beanClass, "beanClass");
         for (var c = beanClass; c != null && c != Object.class; c = c.getSuperclass()) {
             for (var m : c.getDeclaredMethods()) {
                 if (bindings.onMethod(m)) return m;

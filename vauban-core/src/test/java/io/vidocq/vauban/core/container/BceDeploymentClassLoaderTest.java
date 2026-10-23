@@ -203,7 +203,7 @@ class BceDeploymentClassLoaderTest {
             assertEquals(libraryLoader, libraryBean.getClassLoader());
             assertEquals(applicationLoader, applicationBean.getClassLoader());
 
-            try (VaubanContainer _ = VaubanContainer.builder()
+            try (var _ = VaubanContainer.builder()
                     .addBeanClass(libraryBean) // first in the list — its loader was the one handed to the BCE phase
                     .addBeanClass(applicationBean)
                     .addBeanClass(InvokerProbeBce.class)

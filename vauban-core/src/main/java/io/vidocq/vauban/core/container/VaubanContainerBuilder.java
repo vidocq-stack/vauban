@@ -636,9 +636,9 @@ public final class VaubanContainerBuilder {
         extensionAddedClasses.forEach(moduleLookups::addManagedClass);
 
         try (var scope = new BuildScope(previousCl, moduleLookups)) {
-            // Validate class-level CDI rules (before bean discovery).
-            // Reflection-based validation covers generic signatures not in the bytecode index;
-            // BCE classes are excluded from it (they are not beans).
+            // Validate the class-level CDI rules before bean discovery. The validation reads
+            // generic signatures by reflection, as the bytecode index does not hold them, and it
+            // leaves out the build compatible extensions, which are not beans.
             var nonBceClasses = beanClasses.stream()
                     .filter(c -> !ReflectionValidator.isBuildCompatibleExtension(c))
                     .toList();
@@ -987,7 +987,7 @@ public final class VaubanContainerBuilder {
         }
     }
 
-    private static Set<DotName> dotNames(java.util.Collection<? extends Class<?>> classes) {
+    private static <T> Set<DotName> dotNames(java.util.Collection<Class<? extends T>> classes) {
         return classes.stream()
                 .map(c -> DotName.of(c.getName()))
                 .collect(java.util.stream.Collectors.toSet());
@@ -1142,9 +1142,7 @@ public final class VaubanContainerBuilder {
         }
         for (var frozen : io.vidocq.vauban.core.extensions.FrozenContexts.read(discoveryClassLoader)) {
             var key = frozen.scope() + ";" + frozen.contextClass();
-            if (!contextRegistrations.containsKey(key)) {
-                contextRegistrations.put(key, loadFrozenContext(frozen, discoveryClassLoader));
-            }
+            contextRegistrations.computeIfAbsent(key, _ -> loadFrozenContext(frozen, discoveryClassLoader));
         }
         return contextRegistrations;
     }

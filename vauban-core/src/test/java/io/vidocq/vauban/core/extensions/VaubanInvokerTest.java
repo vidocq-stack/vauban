@@ -71,7 +71,7 @@ class VaubanInvokerTest {
     @Test
     @DisplayName("an instance method runs with its arguments and returns its value")
     void instanceMethod() throws Exception {
-        try (VaubanContainer _ = VaubanContainer.builder()
+        try (var _ = VaubanContainer.builder()
                 .addBeanClass(Calculator.class)
                 .build()) {
             assertEquals(7, invokerFor("add", int.class, int.class)
@@ -82,7 +82,7 @@ class VaubanInvokerTest {
     @Test
     @DisplayName("a static method runs without an instance")
     void staticMethod() throws Exception {
-        try (VaubanContainer _ = VaubanContainer.builder()
+        try (var _ = VaubanContainer.builder()
                 .addBeanClass(Calculator.class)
                 .build()) {
             assertEquals("hello world", invokerFor("greet", String.class)
@@ -93,7 +93,7 @@ class VaubanInvokerTest {
     @Test
     @DisplayName("a varargs method receives the caller's array as its trailing argument, not wrapped in another")
     void varargsMethod() throws Exception {
-        try (VaubanContainer _ = VaubanContainer.builder()
+        try (var _ = VaubanContainer.builder()
                 .addBeanClass(Calculator.class)
                 .build()) {
             var invoker = invokerFor("join", String.class, String[].class);
@@ -105,7 +105,7 @@ class VaubanInvokerTest {
     @Test
     @DisplayName("an exception from the target reaches the caller as itself")
     void targetExceptionIsNotWrapped() throws Exception {
-        try (VaubanContainer _ = VaubanContainer.builder()
+        try (var _ = VaubanContainer.builder()
                 .addBeanClass(Calculator.class)
                 .build()) {
             var invoker = invokerFor("boom");
@@ -120,7 +120,7 @@ class VaubanInvokerTest {
     @Test
     @DisplayName("calling an instance method with no instance is refused, not NPE'd")
     void instanceMethodWithoutInstance() throws Exception {
-        try (VaubanContainer _ = VaubanContainer.builder()
+        try (var _ = VaubanContainer.builder()
                 .addBeanClass(Calculator.class)
                 .build()) {
             var invoker = invokerFor("add", int.class, int.class);

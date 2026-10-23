@@ -190,17 +190,20 @@ final class InterceptorDiscovery {
     private void collectBindings(ClassInfo classInfo, Set<DotName> bindings) {
         var visited = new java.util.HashSet<DotName>();
         var current = classInfo;
-        while (current != null) {
+        do {
             collectBindingsRecursively(current, bindings, visited);
-            // Check superclass from index
-            var superName = current.superName();
-            if (superName != null && !superName.value().equals(BeanDiscovery.JAVA_LANG_OBJECT)) {
-                current = host.index.getClassByName(superName).orElse(null);
-            } else {
-                current = null;
-            }
-        }
+            current = indexedSuperclassOf(current);
+        } while (current != null);
         collectReflectedBindings(classInfo, bindings);
+    }
+
+    /** The superclass of {@code classInfo} as the index knows it, or {@code null} at {@code Object} or past the index. */
+    private ClassInfo indexedSuperclassOf(ClassInfo classInfo) {
+        var superName = classInfo.superName();
+        if (superName == null || superName.value().equals(BeanDiscovery.JAVA_LANG_OBJECT)) {
+            return null;
+        }
+        return host.index.getClassByName(superName).orElse(null);
     }
 
     /**

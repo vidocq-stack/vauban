@@ -156,15 +156,6 @@ public final class InterceptorSubclassGenerator {
 
     // ---- helpers ----
 
-    /**
-     * {@code method}'s shape in the subclass of {@code beanClass}; {@code null} — not intercepted —
-     * when its return type is a class the subclass may not access: the value an interceptor chain
-     * returns is an {@code Object}, and no instruction of a class outside that class's package can
-     * type it so (the {@code checkcast} throws {@code IllegalAccessError}, and so does a method
-     * handle call whose descriptor names that class). Flagged when a parameter is such a class,
-     * which the emitter handles without resolving it (BUG-20261004-09). The processor's front-end
-     * decides alike ({@code InterceptedShapeFromElements#resolvableFrom}).
-     */
     /** Neither private nor the client proxy's {@code ProxyLink} entry constructor (Vidocq/vauban#24). */
     private static boolean isMirrored(java.lang.reflect.Constructor<?> constructor) {
         return !Modifier.isPrivate(constructor.getModifiers())
@@ -184,6 +175,15 @@ public final class InterceptorSubclassGenerator {
         return owner == null ? null : shape.withDefaultOwner(TypeRef.fromClass(owner));
     }
 
+    /**
+     * {@code method}'s shape in the subclass of {@code beanClass}; {@code null} — not intercepted —
+     * when its return type is a class the subclass may not access: the value an interceptor chain
+     * returns is an {@code Object}, and no instruction of a class outside that class's package can
+     * type it so (the {@code checkcast} throws {@code IllegalAccessError}, and so does a method
+     * handle call whose descriptor names that class). Flagged when a parameter is such a class,
+     * which the emitter handles without resolving it (BUG-20261004-09). The processor's front-end
+     * decides alike ({@code InterceptedShapeFromElements#resolvableFrom}).
+     */
     private static MethodShape methodShapeOf(Class<?> beanClass, Method method) {
         if (!accessibleFrom(method.getReturnType(), beanClass)) return null;
         TypeRef returnType = TypeRef.fromClass(method.getReturnType());

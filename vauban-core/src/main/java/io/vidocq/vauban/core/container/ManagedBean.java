@@ -728,7 +728,7 @@ public final class ManagedBean<T> implements Bean<T> {
                     };
             // A parameterized component (Class<?>[] from the lang-model side)
             // erases to its raw array class for the runtime bean-type set.
-            case io.vidocq.vauban.indexer.model.TypeInfo.ParameterizedType(var rawType, var _) ->
+            case io.vidocq.vauban.indexer.model.TypeInfo.ParameterizedType(var rawType, _) ->
                     "[".repeat(at.dimensions()) + "L" + rawType.value() + ";";
             default -> null;
         };

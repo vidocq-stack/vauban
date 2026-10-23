@@ -84,6 +84,14 @@ class ModuleAnalyzerTest {
             assertEquals("simple", ModuleAnalyzer.deriveAutomaticModuleName("simple.jar"));
             assertEquals("my.lib", ModuleAnalyzer.deriveAutomaticModuleName("my_lib.jar"));
         }
+
+        @Test
+        @DisplayName("strips one leading and one trailing dot after collapsing")
+        void shouldStripLeadingAndTrailingDots() {
+            assertEquals("lib", ModuleAnalyzer.deriveAutomaticModuleName("_lib_.jar"));
+            assertEquals("a.b", ModuleAnalyzer.deriveAutomaticModuleName("__a__b__.jar"));
+            assertEquals("", ModuleAnalyzer.deriveAutomaticModuleName("_.jar"));
+        }
     }
 
     @Nested

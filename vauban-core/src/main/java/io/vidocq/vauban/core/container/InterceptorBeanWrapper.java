@@ -606,19 +606,24 @@ final class InterceptorBeanWrapper {
      */
     void wrapInterceptedBeans(List<BeanDescriptor> descriptors) {
         for (var descriptor : descriptors) {
-            var beanClass = interceptionCandidate(descriptor);
-            if (beanClass == null) continue;
-            var bindings = declaredBindings(descriptor, beanClass);
-            if (bindings.isEmpty() && !interceptorManager.hasInterceptors() && !hasTargetAroundInvoke(beanClass)) {
-                continue;
-            }
-            try {
-                wrapInterceptedBean(descriptor, beanClass, bindings);
-            } catch (Exception e) {
-                rethrowDeploymentProblem(e);
-                LOG.log(System.Logger.Level.ERROR, "Could not wrap the intercepted bean "
-                        + descriptor.beanClass().value() + "; it runs without its interceptors", e);
-            }
+            wrapIfIntercepted(descriptor);
+        }
+    }
+
+    /** Wraps the bean of {@code descriptor} when it is an interception candidate that something may intercept. */
+    private void wrapIfIntercepted(BeanDescriptor descriptor) {
+        var beanClass = interceptionCandidate(descriptor);
+        if (beanClass == null) return;
+        var bindings = declaredBindings(descriptor, beanClass);
+        if (bindings.isEmpty() && !interceptorManager.hasInterceptors() && !hasTargetAroundInvoke(beanClass)) {
+            return;
+        }
+        try {
+            wrapInterceptedBean(descriptor, beanClass, bindings);
+        } catch (Exception e) {
+            rethrowDeploymentProblem(e);
+            LOG.log(System.Logger.Level.ERROR, "Could not wrap the intercepted bean "
+                    + descriptor.beanClass().value() + "; it runs without its interceptors", e);
         }
     }
 
