@@ -29,10 +29,14 @@ import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
+import java.io.InterruptedIOException;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.FileSystems;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
+import java.nio.file.attribute.FileAttribute;
+import java.nio.file.attribute.PosixFilePermissions;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
@@ -79,6 +83,10 @@ public final class LoadTimeWeaving {
 
     private static final String BEANS_LIST_RESOURCE = "META-INF/vauban-beans.list";
     private static final String EMBEDDED_AGENT = "/io/vidocq/vauban/core/weaving/vauban-weaver-agent.jar";
+
+    /** Read and write for the owner only: the permissions of a POSIX temporary file. */
+    private static final FileAttribute<?> OWNER_ONLY =
+            PosixFilePermissions.asFileAttribute(PosixFilePermissions.fromString("rw-------"));
 
     /** Classes already handed to the agent in this JVM — repeated boots must not re-attach. */
     private static final Set<String> plannedSoFar = new LinkedHashSet<>();
@@ -130,44 +138,7 @@ public final class LoadTimeWeaving {
         }
 
         BeanWeavingAnalysis.ByteResolver resolver = name -> classBytes(loader, name);
-        var scopeCache = new HashMap<String, Boolean>();
-        var candidates = new LinkedHashSet<String>();
-        var bytesByName = new HashMap<String, byte[]>();
-        for (var name : declared) {
-            if (name.endsWith("_ClientProxy") || name.contains("$$")) continue;
-            var bytes = classBytes(loader, name);
-            if (bytes == null) continue;
-            try {
-                if (BeanWeavingAnalysis.isNormalScopedBeanClass(bytes, resolver, scopeCache)) {
-                    candidates.add(name);
-                    bytesByName.put(name, bytes);
-                }
-            } catch (IllegalArgumentException unparseable) {
-                // e.g. an encrypted sjar entry — resource bytes are not class-file bytes;
-                // such classes are handled by their defining loader plugin, not here
-            }
-        }
-
-        var beans = new LinkedHashMap<String, ProxyLinkWeaver.SuperChain>();
-        for (var name : candidates) {
-            var bytes = bytesByName.get(name);
-            try {
-                if (!BeanWeavingAnalysis.needsMarker(bytes)) {
-                    continue;
-                }
-                var chain = BeanWeavingAnalysis.superChain(bytes,
-                        n -> bytesByName.containsKey(n) ? bytesByName.get(n) : resolver.bytesOf(n),
-                        candidates, beans);
-                if (chain == null) {
-                    LOG.log(System.Logger.Level.DEBUG, () -> "Load-time weaving cannot chain "
-                            + name + " to its superclass — leaving it to deployment validation");
-                    continue;
-                }
-                beans.put(name, chain);
-            } catch (IllegalArgumentException unparseable) {
-                // unparseable superclass bytes (encrypted sjar entry) — cannot weave safely
-            }
-        }
+        var beans = unwovenBeans(normalScopedBeanClasses(loader, declared, resolver), resolver);
         if (beans.isEmpty()) {
             return Result.NONE;
         }
@@ -175,14 +146,95 @@ public final class LoadTimeWeaving {
         // Universal-loader mode: when a VaubanClassLoader defines the application classes,
         // the cdi-proxifier transformer weaves them at definition — no agent needed. The
         // planned set is still reported so deployment validation stands down.
-        for (var l = loader; l != null; l = l.getParent()) {
-            if (l instanceof io.vidocq.vauban.classloader.VaubanClassLoader) {
-                LOG.log(System.Logger.Level.INFO, () -> "Unwoven normal-scoped bean(s) "
-                        + beans.keySet() + " will be woven by the Vauban class loader");
-                return new Result(beans.keySet(), null);
+        if (definedByVaubanClassLoader(loader)) {
+            LOG.log(System.Logger.Level.INFO, () -> "Unwoven normal-scoped bean(s) "
+                    + beans.keySet() + " will be woven by the Vauban class loader");
+            return new Result(beans.keySet(), null);
+        }
+        return attachAgentFor(beans);
+    }
+
+    /** The declared classes that are normal-scoped beans, with their bytes, in declaration order. */
+    private static Map<String, byte[]> normalScopedBeanClasses(ClassLoader loader, Set<String> declared,
+            BeanWeavingAnalysis.ByteResolver resolver) {
+        var scopeCache = new HashMap<String, Boolean>();
+        var bytesByName = new LinkedHashMap<String, byte[]>();
+        for (var name : declared) {
+            var bytes = isGenerated(name) ? null : classBytes(loader, name);
+            if (bytes != null && isNormalScopedBeanClass(bytes, resolver, scopeCache)) {
+                bytesByName.put(name, bytes);
             }
         }
+        return bytesByName;
+    }
 
+    /** A client proxy or another class Vauban generates: never woven. */
+    private static boolean isGenerated(String name) {
+        return name.endsWith("_ClientProxy") || name.contains("$$");
+    }
+
+    private static boolean isNormalScopedBeanClass(byte[] bytes, BeanWeavingAnalysis.ByteResolver resolver,
+            Map<String, Boolean> scopeCache) {
+        try {
+            return BeanWeavingAnalysis.isNormalScopedBeanClass(bytes, resolver, scopeCache);
+        } catch (IllegalArgumentException _) {
+            // An encrypted sjar entry, for one: its resource bytes are not class-file bytes. Its
+            // defining loader plugin handles such a class, not this tier.
+            return false;
+        }
+    }
+
+    /**
+     * The candidates that still lack the marker constructor, each with the chain to its superclass's
+     * constructor; superclasses that are candidates themselves join the map as the chains resolve.
+     */
+    private static Map<String, ProxyLinkWeaver.SuperChain> unwovenBeans(Map<String, byte[]> bytesByName,
+            BeanWeavingAnalysis.ByteResolver resolver) {
+        var candidates = bytesByName.keySet();
+        BeanWeavingAnalysis.ByteResolver known =
+                n -> bytesByName.containsKey(n) ? bytesByName.get(n) : resolver.bytesOf(n);
+        var beans = new LinkedHashMap<String, ProxyLinkWeaver.SuperChain>();
+        for (var candidate : bytesByName.entrySet()) {
+            var name = candidate.getKey();
+            var chain = superChainIfUnwoven(name, candidate.getValue(), known, candidates, beans);
+            if (chain != null) {
+                beans.put(name, chain);
+            }
+        }
+        return beans;
+    }
+
+    /** The chain to the superclass's constructor of a bean that needs the marker, else {@code null}. */
+    private static ProxyLinkWeaver.SuperChain superChainIfUnwoven(String name, byte[] bytes,
+            BeanWeavingAnalysis.ByteResolver resolver, Set<String> candidates,
+            Map<String, ProxyLinkWeaver.SuperChain> beans) {
+        try {
+            if (!BeanWeavingAnalysis.needsMarker(bytes)) {
+                return null;
+            }
+            var chain = BeanWeavingAnalysis.superChain(bytes, resolver, candidates, beans);
+            if (chain == null) {
+                LOG.log(System.Logger.Level.DEBUG, () -> "Load-time weaving cannot chain "
+                        + name + " to its superclass — leaving it to deployment validation");
+            }
+            return chain;
+        } catch (IllegalArgumentException _) {
+            // Unparseable superclass bytes (an encrypted sjar entry): the bean cannot be woven safely.
+            return null;
+        }
+    }
+
+    private static boolean definedByVaubanClassLoader(ClassLoader loader) {
+        for (var l = loader; l != null; l = l.getParent()) {
+            if (l instanceof io.vidocq.vauban.classloader.VaubanClassLoader) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /** Attaches the agent for the beans no earlier call of this JVM planned. */
+    private static Result attachAgentFor(Map<String, ProxyLinkWeaver.SuperChain> beans) {
         var newBeans = new LinkedHashMap<String, ProxyLinkWeaver.SuperChain>();
         beans.forEach((name, chain) -> {
             if (!plannedSoFar.contains(name)) newBeans.put(name, chain);
@@ -240,7 +292,7 @@ public final class LoadTimeWeaving {
         var resource = binaryName.replace('.', '/') + ".class";
         try (InputStream in = loader.getResourceAsStream(resource)) {
             return in == null ? null : in.readAllBytes();
-        } catch (IOException e) {
+        } catch (IOException _) {
             return null;
         }
     }
@@ -269,8 +321,8 @@ public final class LoadTimeWeaving {
         return io.vidocq.vauban.weaver.AgentAccess.available();
     }
 
-    private static void attach(WeavingPlan plan) throws Exception {
-        var planFile = Files.createTempFile("vauban-weave-plan-", ".txt");
+    private static void attach(WeavingPlan plan) throws IOException {
+        var planFile = ownerOnlyTempFile("vauban-weave-plan-", ".txt");
         plan.writeTo(planFile);
         var agentJar = agentJar();
 
@@ -281,7 +333,7 @@ public final class LoadTimeWeaving {
                 .redirectErrorStream(true)
                 .start();
         String output = new String(child.getInputStream().readAllBytes());
-        if (!child.waitFor(30, TimeUnit.SECONDS)) {
+        if (!exitsInTime(child)) {
             child.destroyForcibly();
             throw new IllegalStateException("attach helper timed out");
         }
@@ -294,6 +346,30 @@ public final class LoadTimeWeaving {
         }
     }
 
+    /** Waits for the attach helper; an interrupt keeps the thread's interrupt status. */
+    private static boolean exitsInTime(Process child) throws IOException {
+        try {
+            return child.waitFor(30, TimeUnit.SECONDS);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            var interrupted = new InterruptedIOException("interrupted while waiting for the attach helper");
+            interrupted.initCause(e);
+            throw interrupted;
+        }
+    }
+
+    /**
+     * A new temporary file only its owner can read and write, as {@code Files.createTempFile} makes it by
+     * default on a POSIX file system, said explicitly: the plan and the agent jar the attach helper reads must
+     * not be readable or replaceable by another user. Elsewhere the default temporary directory is the user's.
+     */
+    private static Path ownerOnlyTempFile(String prefix, String suffix) throws IOException {
+        FileAttribute<?>[] attributes = FileSystems.getDefault().supportedFileAttributeViews().contains("posix")
+                ? new FileAttribute<?>[] {OWNER_ONLY}
+                : new FileAttribute<?>[0];
+        return Files.createTempFile(prefix, suffix, attributes);
+    }
+
     /**
      * The agent jar: the copy embedded in vauban-core (extracted to a temp file), or — when
      * running from exploded build output where the embedded resource may be absent — the
@@ -302,7 +378,7 @@ public final class LoadTimeWeaving {
     private static Path agentJar() throws IOException {
         try (InputStream in = LoadTimeWeaving.class.getResourceAsStream(EMBEDDED_AGENT)) {
             if (in != null) {
-                var jar = Files.createTempFile("vauban-weaver-agent-", ".jar");
+                var jar = ownerOnlyTempFile("vauban-weaver-agent-", ".jar");
                 Files.copy(in, jar, StandardCopyOption.REPLACE_EXISTING);
                 return jar;
             }
