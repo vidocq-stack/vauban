@@ -21,9 +21,11 @@ package io.vidocq.vauban.core.bean.validation;
 
 import io.vidocq.vauban.indexer.VaubanIndex;
 import io.vidocq.vauban.indexer.model.AnnotationInfo;
+import io.vidocq.vauban.indexer.model.AnnotationValue;
 import io.vidocq.vauban.indexer.model.ClassInfo;
 import io.vidocq.vauban.indexer.model.DotName;
 import io.vidocq.vauban.indexer.model.MethodInfo;
+import io.vidocq.vauban.indexer.model.ParameterInfo;
 import io.vidocq.vauban.indexer.model.TypeInfo;
 
 import java.util.ArrayList;
@@ -80,7 +82,6 @@ public final class ClassValidator {
 
         var className = classInfo.name().toString();
         boolean isBean = hasBeanDefiningAnnotation(classInfo, index);
-        boolean isInterceptor = classInfo.hasAnnotation(INTERCEPTOR);
 
         // Multiple @Inject constructors
         long injectCtorCount = classInfo.methods().stream()
@@ -91,33 +92,7 @@ public final class ClassValidator {
         }
 
         if (isBean) {
-            // Multiple scopes
-            var scopes = classInfo.annotations().stream()
-                    .filter(a -> isScopeAnnotation(a.name(), index))
-                    .toList();
-            // Also count scopes from stereotypes
-            var stereotypeScopes = new ArrayList<DotName>();
-            for (var ann : classInfo.annotations()) {
-                if (isStereotype(ann.name(), index)) {
-                    var stereoClass = index.getClassByName(ann.name());
-                    if (stereoClass.isPresent()) {
-                        for (var sa : stereoClass.get().annotations()) {
-                            if (isScopeAnnotation(sa.name(), index)) {
-                                stereotypeScopes.add(sa.name());
-                            }
-                        }
-                    }
-                }
-            }
-            // Direct scopes
-            if (scopes.size() > 1) {
-                errors.add(PREFIX_BEAN + className + " has multiple scope annotations");
-            }
-            // Stereotype scope conflicts (multiple different scopes from stereotypes, no direct scope)
-            if (scopes.isEmpty() && stereotypeScopes.stream().distinct().count() > 1) {
-                errors.add(PREFIX_BEAN + className + " has conflicting scope stereotypes");
-            }
-
+            validateScopes(classInfo, index, className, errors);
             // Normal-scoped bean + final / intercepted bean + final
             // These are DeploymentExceptions, not DefinitionExceptions — validated in DeploymentValidator
 
@@ -129,62 +104,12 @@ public final class ClassValidator {
 
         // Stereotype validations
         if (classInfo.hasAnnotation(STEREOTYPE) && classInfo.isAnnotation()) {
-            // @Stereotype with @Named must have empty value
-            for (var ann : classInfo.annotations()) {
-                if (ann.name().equals(NAMED)) {
-                    var nameValue = ann.member(MEMBER_VALUE);
-                    if (nameValue instanceof io.vidocq.vauban.indexer.model.AnnotationValue.StringVal sv
-                            && !sv.value().isEmpty()) {
-                        errors.add("Stereotype " + className + " has @Named with non-empty value");
-                    }
-                }
-            }
-            // Check for conflicting @Priority from multiple stereotypes
-            // (handled at bean level below)
+            validateStereotypeName(classInfo, className, errors);
         }
 
         // Interceptor validations
-        if (isInterceptor) {
-            // Interceptor must be @Dependent
-            boolean hasDependentScope = classInfo.hasAnnotation(DEPENDENT);
-            boolean hasAnyScope = classInfo.annotations().stream()
-                    .anyMatch(a -> isScopeAnnotation(a.name(), index));
-            if (hasAnyScope && !hasDependentScope) {
-                errors.add(PREFIX_INTERCEPTOR + className + " must be @Dependent");
-            }
-
-            // Interceptor cannot have observer methods
-            for (var method : classInfo.methods()) {
-                for (var param : method.parameters()) {
-                    if (hasAnn(param.annotations(), OBSERVES)) {
-                        errors.add(PREFIX_INTERCEPTOR + className + " cannot have observer method: " + method.name());
-                    }
-                    if (hasAnn(param.annotations(), OBSERVES_ASYNC)) {
-                        errors.add(PREFIX_INTERCEPTOR + className + " cannot have async observer method: " + method.name());
-                    }
-                }
-            }
-
-            // Interceptor cannot have producer methods/fields
-            for (var method : classInfo.methods()) {
-                if (hasAnn(method.annotations(), PRODUCES)) {
-                    errors.add(PREFIX_INTERCEPTOR + className + " cannot have producer method: " + method.name());
-                }
-            }
-            for (var field : classInfo.fields()) {
-                if (hasAnn(field.annotations(), PRODUCES)) {
-                    errors.add(PREFIX_INTERCEPTOR + className + " cannot have producer field: " + field.name());
-                }
-            }
-
-            // Interceptor cannot have disposer methods
-            for (var method : classInfo.methods()) {
-                for (var param : method.parameters()) {
-                    if (hasAnn(param.annotations(), DISPOSES)) {
-                        errors.add(PREFIX_INTERCEPTOR + className + " cannot have disposer method: " + method.name());
-                    }
-                }
-            }
+        if (classInfo.hasAnnotation(INTERCEPTOR)) {
+            validateInterceptor(classInfo, index, className, errors);
         }
 
         // Check for conflicting @Priority from stereotypes
@@ -192,45 +117,14 @@ public final class ClassValidator {
             validateStereotypePriorityConflicts(classInfo, index, className, errors);
         }
 
-        // Conditional observer on @Dependent bean
-        for (var method : classInfo.methods()) {
-            for (var param : method.parameters()) {
-                if (hasAnn(param.annotations(), OBSERVES)) {
-                    var observesAnn = param.annotations().stream()
-                            .filter(a -> a.name().equals(OBSERVES)).findFirst();
-                    if (observesAnn.isPresent()) {
-                        var reception = observesAnn.get().member("notifyObserver");
-                        if (reception instanceof io.vidocq.vauban.indexer.model.AnnotationValue.EnumVal ev
-                                && "IF_EXISTS".equals(ev.constantName())) {
-                            boolean isDependent = classInfo.hasAnnotation(DEPENDENT)
-                                    || !hasBeanDefiningAnnotation(classInfo, index);
-                            if (isDependent) {
-                                errors.add("Conditional observer on @Dependent bean " + className);
-                            }
-                        }
-                    }
-                }
-            }
-        }
+        validateConditionalObservers(classInfo, index, className, errors);
 
         // Validate each method
         for (var method : classInfo.methods()) {
             validateMethod(method, className, errors);
         }
 
-        // Field validations
-        for (var field : classInfo.fields()) {
-            if (hasAnn(field.annotations(), PRODUCES) && hasAnn(field.annotations(), INJECT)) {
-                errors.add("Field " + className + "." + field.name()
-                        + " cannot be both @Produces and @Inject");
-            }
-            if (hasAnn(field.annotations(), INJECT) && field.isFinal()) {
-                errors.add("@Inject field " + className + "." + field.name()
-                        + " cannot be final");
-            }
-            // Raw Event/Instance injection — deferred until scanner supports generic signatures
-            // Producer field type validation — done via reflection in VaubanContainer.Builder
-        }
+        validateFields(classInfo, className, errors);
 
         // Static observer/disposer methods — CDI 4.1 Lite allows static observers/disposers
 
@@ -243,10 +137,181 @@ public final class ClassValidator {
         }
     }
 
+    /** Multiple scopes, declared directly or contributed by conflicting stereotypes. */
+    private static void validateScopes(ClassInfo classInfo, VaubanIndex index, String className,
+            List<String> errors) {
+        var scopes = classInfo.annotations().stream()
+                .filter(a -> isScopeAnnotation(a.name(), index))
+                .toList();
+        // Also count scopes from stereotypes
+        var stereotypeScopes = new ArrayList<DotName>();
+        for (var ann : classInfo.annotations()) {
+            if (isStereotype(ann.name(), index)) {
+                index.getClassByName(ann.name())
+                        .ifPresent(stereoClass -> addScopes(stereoClass, index, stereotypeScopes));
+            }
+        }
+        // Direct scopes
+        if (scopes.size() > 1) {
+            errors.add(PREFIX_BEAN + className + " has multiple scope annotations");
+        }
+        // Stereotype scope conflicts (multiple different scopes from stereotypes, no direct scope)
+        if (scopes.isEmpty() && stereotypeScopes.stream().distinct().count() > 1) {
+            errors.add(PREFIX_BEAN + className + " has conflicting scope stereotypes");
+        }
+    }
+
+    private static void addScopes(ClassInfo stereoClass, VaubanIndex index, List<DotName> scopes) {
+        for (var sa : stereoClass.annotations()) {
+            if (isScopeAnnotation(sa.name(), index)) {
+                scopes.add(sa.name());
+            }
+        }
+    }
+
+    /**
+     * {@code @Stereotype} with {@code @Named} must have an empty value. Conflicting {@code @Priority}
+     * values from several stereotypes are checked at bean level.
+     */
+    private static void validateStereotypeName(ClassInfo classInfo, String className, List<String> errors) {
+        for (var ann : classInfo.annotations()) {
+            if (ann.name().equals(NAMED)
+                    && ann.member(MEMBER_VALUE) instanceof AnnotationValue.StringVal(var name)
+                    && !name.isEmpty()) {
+                errors.add("Stereotype " + className + " has @Named with non-empty value");
+            }
+        }
+    }
+
+    private static void validateInterceptor(ClassInfo classInfo, VaubanIndex index, String className,
+            List<String> errors) {
+        // Interceptor must be @Dependent
+        boolean hasDependentScope = classInfo.hasAnnotation(DEPENDENT);
+        boolean hasAnyScope = classInfo.annotations().stream()
+                .anyMatch(a -> isScopeAnnotation(a.name(), index));
+        if (hasAnyScope && !hasDependentScope) {
+            errors.add(PREFIX_INTERCEPTOR + className + " must be @Dependent");
+        }
+
+        // Interceptor cannot have observer methods
+        for (var method : classInfo.methods()) {
+            for (var param : method.parameters()) {
+                if (hasAnn(param.annotations(), OBSERVES)) {
+                    errors.add(PREFIX_INTERCEPTOR + className + " cannot have observer method: " + method.name());
+                }
+                if (hasAnn(param.annotations(), OBSERVES_ASYNC)) {
+                    errors.add(PREFIX_INTERCEPTOR + className + " cannot have async observer method: " + method.name());
+                }
+            }
+        }
+
+        // Interceptor cannot have producer methods/fields
+        for (var method : classInfo.methods()) {
+            if (hasAnn(method.annotations(), PRODUCES)) {
+                errors.add(PREFIX_INTERCEPTOR + className + " cannot have producer method: " + method.name());
+            }
+        }
+        for (var field : classInfo.fields()) {
+            if (hasAnn(field.annotations(), PRODUCES)) {
+                errors.add(PREFIX_INTERCEPTOR + className + " cannot have producer field: " + field.name());
+            }
+        }
+
+        // Interceptor cannot have disposer methods
+        for (var method : classInfo.methods()) {
+            for (var param : method.parameters()) {
+                if (hasAnn(param.annotations(), DISPOSES)) {
+                    errors.add(PREFIX_INTERCEPTOR + className + " cannot have disposer method: " + method.name());
+                }
+            }
+        }
+    }
+
+    /** Conditional observer on @Dependent bean. */
+    private static void validateConditionalObservers(ClassInfo classInfo, VaubanIndex index,
+            String className, List<String> errors) {
+        for (var method : classInfo.methods()) {
+            for (var param : method.parameters()) {
+                if (isConditionalObserver(param.annotations())
+                        && (classInfo.hasAnnotation(DEPENDENT) || !hasBeanDefiningAnnotation(classInfo, index))) {
+                    errors.add("Conditional observer on @Dependent bean " + className);
+                }
+            }
+        }
+    }
+
+    /** An {@code @Observes(notifyObserver = IF_EXISTS)} parameter. */
+    private static boolean isConditionalObserver(List<AnnotationInfo> parameterAnnotations) {
+        var observesAnn = parameterAnnotations.stream()
+                .filter(a -> a.name().equals(OBSERVES)).findFirst();
+        return observesAnn.isPresent()
+                && observesAnn.get().member("notifyObserver") instanceof AnnotationValue.EnumVal ev
+                && "IF_EXISTS".equals(ev.constantName());
+    }
+
+    private static void validateFields(ClassInfo classInfo, String className, List<String> errors) {
+        for (var field : classInfo.fields()) {
+            if (hasAnn(field.annotations(), PRODUCES) && hasAnn(field.annotations(), INJECT)) {
+                errors.add("Field " + className + "." + field.name()
+                        + " cannot be both @Produces and @Inject");
+            }
+            if (hasAnn(field.annotations(), INJECT) && field.isFinal()) {
+                errors.add("@Inject field " + className + "." + field.name()
+                        + " cannot be final");
+            }
+            // Raw Event/Instance injection — deferred until scanner supports generic signatures
+            // Producer field type validation — done via reflection in VaubanContainer.Builder
+        }
+    }
+
     private static void validateMethod(MethodInfo method,
             String className, List<String> errors) {
         var params = method.parameters();
+        var location = className + "." + method.name();
 
+        // Constructor with @Observes, @ObservesAsync, or @Disposes parameter
+        if (method.isConstructor()) {
+            validateConstructorParameters(params, className, errors);
+            // Raw Event/Instance in constructor — deferred until scanner supports generic signatures
+        }
+
+        validateMethodRoles(method, location, errors);
+
+        // Per-parameter checks
+        for (var param : params) {
+            validateParameter(param, location, errors);
+        }
+
+        // Producer method return type validation — done via reflection in VaubanContainer.Builder
+
+        // Disposer method that is also @Inject (initializer)
+        boolean hasDisposes = params.stream().anyMatch(p -> hasAnn(p.annotations(), DISPOSES));
+        if (hasDisposes && hasAnn(method.annotations(), INJECT)) {
+            errors.add("Disposer method " + location + " cannot also be an initializer method");
+        }
+
+        // Generic initializer method — deferred until MethodInfo has typeParameters support
+
+        // Raw Event/Instance injection — deferred until scanner supports generic signatures
+
+        validateInjectionParameters(method, location, errors);
+    }
+
+    private static void validateConstructorParameters(List<ParameterInfo> params, String className,
+            List<String> errors) {
+        for (var param : params) {
+            if (hasAnn(param.annotations(), OBSERVES) || hasAnn(param.annotations(), OBSERVES_ASYNC)) {
+                errors.add("Constructor of " + className + " cannot have @Observes parameter");
+            }
+            if (hasAnn(param.annotations(), DISPOSES)) {
+                errors.add("Constructor of " + className + " cannot have @Disposes parameter");
+            }
+        }
+    }
+
+    /** A method is at most one of an observer, a producer and a disposer, each with one such parameter. */
+    private static void validateMethodRoles(MethodInfo method, String location, List<String> errors) {
+        var params = method.parameters();
         long observesCount = params.stream()
                 .filter(p -> hasAnn(p.annotations(), OBSERVES))
                 .count();
@@ -256,145 +321,95 @@ public final class ClassValidator {
         long totalObservesCount = observesCount + asyncObservesCount;
         boolean hasObserves = totalObservesCount > 0;
         boolean hasProduces = hasAnn(method.annotations(), PRODUCES);
-        boolean hasDisposes = params.stream()
-                .anyMatch(p -> hasAnn(p.annotations(), DISPOSES));
         long disposesCount = params.stream()
                 .filter(p -> hasAnn(p.annotations(), DISPOSES))
                 .count();
-
-        // Constructor with @Observes, @ObservesAsync, or @Disposes parameter
-        if (method.isConstructor()) {
-            for (var param : params) {
-                if (hasAnn(param.annotations(), OBSERVES) || hasAnn(param.annotations(), OBSERVES_ASYNC)) {
-                    errors.add("Constructor of " + className + " cannot have @Observes parameter");
-                }
-                if (hasAnn(param.annotations(), DISPOSES)) {
-                    errors.add("Constructor of " + className + " cannot have @Disposes parameter");
-                }
-            }
-            // Raw Event/Instance in constructor — deferred until scanner supports generic signatures
-        }
+        boolean hasDisposes = disposesCount > 0;
 
         // @Observes + @Produces
         if (hasObserves && hasProduces) {
-            errors.add(PREFIX_METHOD + className + "." + method.name()
-                    + " cannot be both an observer and a producer");
+            errors.add(PREFIX_METHOD + location + " cannot be both an observer and a producer");
         }
 
         // @Observes + @Disposes
         if (hasObserves && hasDisposes) {
-            errors.add(PREFIX_METHOD + className + "." + method.name()
-                    + " cannot be both an observer and a disposer");
+            errors.add(PREFIX_METHOD + location + " cannot be both an observer and a disposer");
         }
 
         // @Produces + @Disposes
         if (hasProduces && hasDisposes) {
-            errors.add(PREFIX_METHOD + className + "." + method.name()
-                    + " cannot be both a producer and a disposer");
+            errors.add(PREFIX_METHOD + location + " cannot be both a producer and a disposer");
         }
 
         // Multiple @Observes parameters
         if (totalObservesCount > 1) {
-            errors.add(PREFIX_METHOD + className + "." + method.name()
-                    + " cannot have multiple observer parameters");
+            errors.add(PREFIX_METHOD + location + " cannot have multiple observer parameters");
         }
 
         // @Observes and @ObservesAsync in the same method
         if (observesCount > 0 && asyncObservesCount > 0) {
-            errors.add(PREFIX_METHOD + className + "." + method.name()
-                    + " cannot have both @Observes and @ObservesAsync parameters");
+            errors.add(PREFIX_METHOD + location + " cannot have both @Observes and @ObservesAsync parameters");
         }
 
         // Multiple @Disposes parameters
         if (disposesCount > 1) {
-            errors.add(PREFIX_METHOD + className + "." + method.name()
-                    + " has multiple @Disposes parameters");
+            errors.add(PREFIX_METHOD + location + " has multiple @Disposes parameters");
+        }
+    }
+
+    private static void validateParameter(ParameterInfo param, String location, List<String> errors) {
+        boolean isObserver = hasAnn(param.annotations(), OBSERVES)
+                || hasAnn(param.annotations(), OBSERVES_ASYNC);
+        boolean isDisposer = hasAnn(param.annotations(), DISPOSES);
+        boolean isInject = hasAnn(param.annotations(), INJECT);
+
+        if (isObserver && isInject) {
+            errors.add("Parameter in " + location + " cannot be both @Observes and @Inject");
         }
 
-        // Per-parameter checks
+        if (isObserver && isDisposer) {
+            errors.add("Parameter in " + location + " cannot be both @Observes and @Disposes");
+        }
+
+        if (isDisposer) {
+            validateTypeNotTypeVariableOrWildcard(param.type(), "Disposer parameter in", location, errors);
+        }
+    }
+
+    /** {@code @Named} without a value and type variables on the parameters of an {@code @Inject} method. */
+    private static void validateInjectionParameters(MethodInfo method, String location, List<String> errors) {
+        if (!hasAnn(method.annotations(), INJECT)) {
+            return;
+        }
+        var params = method.parameters();
+        // @Named on non-field injection point: on an initializer method parameter it is invalid
+        // unless the value is specified, and so it is on a constructor parameter
+        var namedMessage = method.isConstructor()
+                ? "@Named without value on constructor parameter: "
+                : "@Named without value on non-field injection point: ";
         for (var param : params) {
-            boolean isObserver = hasAnn(param.annotations(), OBSERVES)
-                    || hasAnn(param.annotations(), OBSERVES_ASYNC);
-            boolean isDisposer = hasAnn(param.annotations(), DISPOSES);
-            boolean isInject = hasAnn(param.annotations(), INJECT);
-
-            if (isObserver && isInject) {
-                errors.add("Parameter in " + className + "." + method.name()
-                        + " cannot be both @Observes and @Inject");
-            }
-
-            if (isObserver && isDisposer) {
-                errors.add("Parameter in " + className + "." + method.name()
-                        + " cannot be both @Observes and @Disposes");
-            }
-
-            if (isDisposer) {
-                validateTypeNotTypeVariableOrWildcard(param.type(), "Disposer parameter in",
-                        className + "." + method.name(), errors);
-            }
-        }
-
-        // Producer method return type validation
-        if (hasProduces) {
-            // Producer return type validation — done via reflection in VaubanContainer.Builder
-        }
-
-        // Disposer method that is also @Inject (initializer)
-        if (hasDisposes && hasAnn(method.annotations(), INJECT)) {
-            errors.add("Disposer method " + className + "." + method.name()
-                    + " cannot also be an initializer method");
-        }
-
-        // Generic initializer method — deferred until MethodInfo has typeParameters support
-
-        // Raw Event/Instance injection — deferred until scanner supports generic signatures
-
-        // @Named on non-field injection point (method parameter @Inject)
-        if (hasAnn(method.annotations(), INJECT) && !method.isConstructor()) {
-            for (var param : params) {
-                if (hasAnn(param.annotations(), NAMED)) {
-                    // @Named on initializer method parameter is invalid unless the value is specified
-                    var namedAnn = param.annotations().stream()
-                            .filter(a -> a.name().equals(NAMED)).findFirst();
-                    if (namedAnn.isPresent()) {
-                        var nameValue = namedAnn.get().member(MEMBER_VALUE);
-                        if (nameValue == null || (nameValue instanceof io.vidocq.vauban.indexer.model.AnnotationValue.StringVal sv
-                                && sv.value().isEmpty())) {
-                            errors.add("@Named without value on non-field injection point: "
-                                    + className + "." + method.name());
-                        }
-                    }
-                }
-            }
-        }
-
-        // @Named on constructor parameter
-        if (method.isConstructor() && hasAnn(method.annotations(), INJECT)) {
-            for (var param : params) {
-                if (hasAnn(param.annotations(), NAMED)) {
-                    var namedAnn = param.annotations().stream()
-                            .filter(a -> a.name().equals(NAMED)).findFirst();
-                    if (namedAnn.isPresent()) {
-                        var nameValue = namedAnn.get().member(MEMBER_VALUE);
-                        if (nameValue == null || (nameValue instanceof io.vidocq.vauban.indexer.model.AnnotationValue.StringVal sv
-                                && sv.value().isEmpty())) {
-                            errors.add("@Named without value on constructor parameter: "
-                                    + className + "." + method.name());
-                        }
-                    }
-                }
+            if (hasNamedWithoutValue(param)) {
+                errors.add(namedMessage + location);
             }
         }
 
         // Type variable injection point
-        if (hasAnn(method.annotations(), INJECT)) {
-            for (var param : params) {
-                if (param.type() instanceof TypeInfo.TypeVariable) {
-                    errors.add("Injection point has type variable type: "
-                            + className + "." + method.name());
-                }
+        for (var param : params) {
+            if (param.type() instanceof TypeInfo.TypeVariable) {
+                errors.add("Injection point has type variable type: " + location);
             }
         }
+    }
+
+    private static boolean hasNamedWithoutValue(ParameterInfo param) {
+        var namedAnn = param.annotations().stream()
+                .filter(a -> a.name().equals(NAMED)).findFirst();
+        if (namedAnn.isEmpty()) {
+            return false;
+        }
+        var nameValue = namedAnn.get().member(MEMBER_VALUE);
+        return nameValue == null
+                || (nameValue instanceof AnnotationValue.StringVal(var name) && name.isEmpty());
     }
 
     private static void validateTypeNotTypeVariableOrWildcard(TypeInfo type, String kind, String location, List<String> errors) {
@@ -424,6 +439,7 @@ public final class ClassValidator {
         }
     }
 
+
     /**
      * Validates that stereotype @Priority values don't conflict.
      */
@@ -442,8 +458,8 @@ public final class ClassValidator {
                     for (var sa : stereoClass.get().annotations()) {
                         if (sa.name().equals(PRIORITY)) {
                             var value = sa.member(MEMBER_VALUE);
-                            if (value instanceof io.vidocq.vauban.indexer.model.AnnotationValue.IntVal iv) {
-                                priorityValues.add(iv.value());
+                            if (value instanceof AnnotationValue.IntVal(var priority)) {
+                                priorityValues.add(priority);
                                 stereotypesWithPriority.add(ann.name().value());
                             }
                         }

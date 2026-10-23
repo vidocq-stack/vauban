@@ -40,6 +40,8 @@ import java.util.Set;
 public final class DeploymentValidator {
 
     private static final String MSG_OF_TYPE = " of type ";
+    private static final String MSG_HAS_FINAL_METHOD = " has final method ";
+    private static final String JAVA_LANG_OBJECT = "java.lang.Object";
     private static final String PREFIX_NORMAL_SCOPED = "Normal-scoped bean ";
     private static final String BEAN_TYPE_NAME = "jakarta.enterprise.inject.spi.Bean";
     private static final String MSG_UNPROXYABLE_CTOR =
@@ -80,7 +82,6 @@ public final class DeploymentValidator {
         return this;
     }
 
-    @SuppressWarnings("java:S135")
     public List<ValidationError> validate() {
         var errors = new ArrayList<ValidationError>();
 
@@ -88,129 +89,166 @@ public final class DeploymentValidator {
         validateNames(errors);
 
         for (var bean : beans) {
-            boolean isInterceptor = false;
-            if (bean.kind() == BeanDescriptor.BeanKind.MANAGED) {
-                try {
-                    var clazz = Class.forName(bean.beanClass().value(), false, Thread.currentThread().getContextClassLoader());
-                    isInterceptor = clazz.isAnnotationPresent(jakarta.interceptor.Interceptor.class);
-                } catch (Exception e) { /* ignore */ }
-            }
-
-            if (!isInterceptor) {
-                // Validate interceptor bindings (interceptors themselves are not intercepted)
-                var bindings = bean.interceptorBindingAnnotations();
-                if (!bindings.isEmpty()) {
-                    var matching = resolver.resolveInterceptors(bindings);
-                    if (matching.isEmpty()) {
-                        // TCK HACK: Be lenient about missing enabled interceptors
-                    }
-                }
-            }
-
-            // Always validate injection points (including for interceptors)
-            for (var ip : bean.injectionPoints()) {
-                // Check for illegal metadata injection (Bean<T>, Interceptor<T> with TypeVariable)
-                if (isIllegalMetadataInjection(ip, bean, isInterceptor)) {
-                    errors.add(new ValidationError(
-                            ValidationError.Kind.DEFINITION_ERROR,
-                            "Illegal injection of built-in metadata type with type variable or raw type: "
-                                    + ip.description() + MSG_OF_TYPE + ip.requiredType(),
-                            bean));
-                    continue;
-                }
-                if (isBuiltInType(ip)) continue;
-
-                var result = resolver.resolveInjectionPoint(ip);
-                switch (result.status()) {
-                    case UNSATISFIED -> errors.add(new ValidationError(
-                            ValidationError.Kind.UNSATISFIED_DEPENDENCY,
-                            "Unsatisfied dependency: " + ip.description() +
-                                    MSG_OF_TYPE + ip.requiredType() +
-                                    " with qualifiers " + ip.qualifiers(),
-                            bean));
-                    case AMBIGUOUS -> errors.add(new ValidationError(
-                            ValidationError.Kind.AMBIGUOUS_DEPENDENCY,
-                            "Ambiguous dependency: " + ip.description() +
-                                    MSG_OF_TYPE + ip.requiredType() +
-                                    ". Matching beans: " + result.beans().stream()
-                                    .map(b -> b.beanClass().value()).toList(),
-                            bean));
-                    case RESOLVED -> {
-                        // CDI Spec: Check if a normal-scoped bean is being injected into
-                        // a point that doesn't support proxies (primitives, arrays, etc.)
-                        var resolvedBean = result.bean();
-                        if (resolvedBean.scope().isNormal()) {
-                            validateProxyableType(ip.requiredType(), resolvedBean, errors, bean);
-                        }
-                    }
-                }
-            }
+            validateInjectionPoints(bean, errors);
         }
 
         // Unproxyable beans with normal scope
         for (var bean : beans) {
-            // Validate that producer beans with primitive/array return types cannot be normal-scoped
-            if (bean.scope().isNormal()
-                    && (bean.kind() == BeanDescriptor.BeanKind.PRODUCER_METHOD
-                        || bean.kind() == BeanDescriptor.BeanKind.PRODUCER_FIELD)) {
-                for (var type : bean.types()) {
-                    boolean isPrimitive = type instanceof TypeInfo.PrimitiveType
-                            || (type instanceof TypeInfo.ClassType ct && PRIMITIVE_NAMES.contains(ct.name().value()));
-                    if (isPrimitive) {
-                        errors.add(new ValidationError(
-                                ValidationError.Kind.DEPLOYMENT_ERROR,
-                                "Normal-scoped producer " + bean.id() + " has primitive return type " + type,
-                                bean));
-                        break;
-                    }
-                }
-            }
+            validateNormalScopedProducer(bean, errors);
+            validateInterceptedBeanClass(bean, errors);
+        }
 
-            // CDI spec: Intercepted beans (any scope) cannot be final or have final methods
-            // because interception is implemented via subclassing
-            if ((!bean.interceptorBindingAnnotations().isEmpty() || !bean.interceptorBindings().isEmpty())
-                    && bean.kind() == BeanDescriptor.BeanKind.MANAGED && !bean.scope().isNormal()) {
-                // Normal-scoped beans are already checked above; only check non-normal-scoped here
-                try {
-                    var clazz = Class.forName(bean.beanClass().value(), false, Thread.currentThread().getContextClassLoader());
-                    if (clazz.isAnnotationPresent(jakarta.interceptor.Interceptor.class)) {
-                        // Interceptors themselves are not intercepted
-                    } else {
-                        if (java.lang.reflect.Modifier.isFinal(clazz.getModifiers())) {
-                            errors.add(new ValidationError(
-                                    ValidationError.Kind.DEPLOYMENT_ERROR,
-                                    "Intercepted bean " + bean.beanClass()
-                                            + " cannot be final (interception requires subclassing)",
-                                    bean));
-                        } else {
-                            Class<?> checkClass = clazz;
-                            boolean foundFinalMethod = false;
-                            while (checkClass != null && checkClass != Object.class && !foundFinalMethod) {
-                                for (var method : checkClass.getDeclaredMethods()) {
-                                    if (java.lang.reflect.Modifier.isFinal(method.getModifiers())
-                                            && !java.lang.reflect.Modifier.isPrivate(method.getModifiers())
-                                            && !java.lang.reflect.Modifier.isStatic(method.getModifiers())) {
-                                        errors.add(new ValidationError(
-                                                ValidationError.Kind.DEPLOYMENT_ERROR,
-                                                "Intercepted bean " + bean.beanClass()
-                                                        + " has final method " + method.getName()
-                                                        + " (interception requires subclassing)",
-                                                bean));
-                                        foundFinalMethod = true;
-                                        break;
-                                    }
-                                }
-                                checkClass = checkClass.getSuperclass();
-                            }
-                        }
-                    }
-                } catch (ClassNotFoundException e) {
-                    // skip
+        validateDuplicateNames(errors);
+        validateNamePrefixes(errors);
+        validateInterceptorConstructors(errors);
+
+        return List.copyOf(errors);
+    }
+
+    /** Whether a managed bean's class, loaded from the deployment, is an interceptor. */
+    private static boolean isInterceptorBean(BeanDescriptor bean) {
+        if (bean.kind() != BeanDescriptor.BeanKind.MANAGED) {
+            return false;
+        }
+        try {
+            var clazz = Class.forName(bean.beanClass().value(), false, Thread.currentThread().getContextClassLoader());
+            return clazz.isAnnotationPresent(jakarta.interceptor.Interceptor.class);
+        } catch (Exception _) {
+            return false;
+        }
+    }
+
+    private void validateInjectionPoints(BeanDescriptor bean, List<ValidationError> errors) {
+        boolean isInterceptor = isInterceptorBean(bean);
+
+        if (!isInterceptor) {
+            // Validate interceptor bindings (interceptors themselves are not intercepted)
+            var bindings = bean.interceptorBindingAnnotations();
+            if (!bindings.isEmpty()) {
+                var matching = resolver.resolveInterceptors(bindings);
+                if (matching.isEmpty()) {
+                    // TCK HACK: Be lenient about missing enabled interceptors
                 }
             }
         }
 
-        // CDI spec: Duplicate bean names (two non-alternative beans with the same EL name)
+        // Always validate injection points (including for interceptors)
+        for (var ip : bean.injectionPoints()) {
+            // Check for illegal metadata injection (Bean<T>, Interceptor<T> with TypeVariable)
+            if (isIllegalMetadataInjection(ip, bean, isInterceptor)) {
+                errors.add(new ValidationError(
+                        ValidationError.Kind.DEFINITION_ERROR,
+                        "Illegal injection of built-in metadata type with type variable or raw type: "
+                                + ip.description() + MSG_OF_TYPE + ip.requiredType(),
+                        bean));
+            } else if (!isBuiltInType(ip)) {
+                validateResolution(ip, bean, errors);
+            }
+        }
+    }
+
+    private void validateResolution(InjectionPointInfo ip, BeanDescriptor bean, List<ValidationError> errors) {
+        var result = resolver.resolveInjectionPoint(ip);
+        switch (result.status()) {
+            case UNSATISFIED -> errors.add(new ValidationError(
+                    ValidationError.Kind.UNSATISFIED_DEPENDENCY,
+                    "Unsatisfied dependency: " + ip.description() +
+                            MSG_OF_TYPE + ip.requiredType() +
+                            " with qualifiers " + ip.qualifiers(),
+                    bean));
+            case AMBIGUOUS -> errors.add(new ValidationError(
+                    ValidationError.Kind.AMBIGUOUS_DEPENDENCY,
+                    "Ambiguous dependency: " + ip.description() +
+                            MSG_OF_TYPE + ip.requiredType() +
+                            ". Matching beans: " + result.beans().stream()
+                            .map(b -> b.beanClass().value()).toList(),
+                    bean));
+            case RESOLVED -> {
+                // CDI Spec: Check if a normal-scoped bean is being injected into
+                // a point that doesn't support proxies (primitives, arrays, etc.)
+                var resolvedBean = result.bean();
+                if (resolvedBean.scope().isNormal()) {
+                    validateProxyableType(ip.requiredType(), resolvedBean, errors, bean);
+                }
+            }
+        }
+    }
+
+    /** Producer beans with primitive return types cannot be normal-scoped. */
+    private static void validateNormalScopedProducer(BeanDescriptor bean, List<ValidationError> errors) {
+        if (!bean.scope().isNormal()
+                || (bean.kind() != BeanDescriptor.BeanKind.PRODUCER_METHOD
+                    && bean.kind() != BeanDescriptor.BeanKind.PRODUCER_FIELD)) {
+            return;
+        }
+        bean.types().stream()
+                .filter(type -> type instanceof TypeInfo.PrimitiveType
+                        || (type instanceof TypeInfo.ClassType(var name) && PRIMITIVE_NAMES.contains(name.value())))
+                .findFirst()
+                .ifPresent(type -> errors.add(new ValidationError(
+                        ValidationError.Kind.DEPLOYMENT_ERROR,
+                        "Normal-scoped producer " + bean.id() + " has primitive return type " + type,
+                        bean)));
+    }
+
+    /**
+     * CDI spec: Intercepted beans (any scope) cannot be final or have final methods because
+     * interception is implemented via subclassing. Normal-scoped beans are already checked as
+     * proxyable types; only the others are checked here, and interceptors are not intercepted.
+     */
+    private static void validateInterceptedBeanClass(BeanDescriptor bean, List<ValidationError> errors) {
+        if ((bean.interceptorBindingAnnotations().isEmpty() && bean.interceptorBindings().isEmpty())
+                || bean.kind() != BeanDescriptor.BeanKind.MANAGED || bean.scope().isNormal()) {
+            return;
+        }
+        try {
+            var clazz = Class.forName(bean.beanClass().value(), false, Thread.currentThread().getContextClassLoader());
+            if (clazz.isAnnotationPresent(jakarta.interceptor.Interceptor.class)) {
+                return;
+            }
+            if (java.lang.reflect.Modifier.isFinal(clazz.getModifiers())) {
+                errors.add(new ValidationError(
+                        ValidationError.Kind.DEPLOYMENT_ERROR,
+                        "Intercepted bean " + bean.beanClass()
+                                + " cannot be final (interception requires subclassing)",
+                        bean));
+                return;
+            }
+            var finalMethod = firstOverridableFinalMethod(clazz);
+            if (finalMethod != null) {
+                errors.add(new ValidationError(
+                        ValidationError.Kind.DEPLOYMENT_ERROR,
+                        "Intercepted bean " + bean.beanClass()
+                                + MSG_HAS_FINAL_METHOD + finalMethod.getName()
+                                + " (interception requires subclassing)",
+                        bean));
+            }
+        } catch (ClassNotFoundException _) {
+            // Not loadable here; the runtime container re-validates
+        }
+    }
+
+    /**
+     * The first final method a subclass would have to override, walking up from {@code clazz}:
+     * neither private nor static. {@code null} when there is none.
+     */
+    private static java.lang.reflect.Method firstOverridableFinalMethod(Class<?> clazz) {
+        for (Class<?> checkClass = clazz; checkClass != null && checkClass != Object.class;
+                checkClass = checkClass.getSuperclass()) {
+            for (var method : checkClass.getDeclaredMethods()) {
+                int modifiers = method.getModifiers();
+                if (java.lang.reflect.Modifier.isFinal(modifiers)
+                        && !java.lang.reflect.Modifier.isPrivate(modifiers)
+                        && !java.lang.reflect.Modifier.isStatic(modifiers)) {
+                    return method;
+                }
+            }
+        }
+        return null;
+    }
+
+    /** CDI spec: Duplicate bean names (two non-alternative beans with the same EL name). */
+    private void validateDuplicateNames(List<ValidationError> errors) {
         var nameMap = new java.util.HashMap<String, List<BeanDescriptor>>();
         for (var bean : beans) {
             if (bean.name() != null) {
@@ -218,29 +256,27 @@ public final class DeploymentValidator {
             }
         }
         for (var entry : nameMap.entrySet()) {
-            var beansWithName = entry.getValue();
-            if (beansWithName.size() > 1) {
-                // CDI spec: ambiguous EL name is only an error if there are non-alternative beans
-                // or multiple enabled alternatives with the same priority
-                var nonAlternatives = beansWithName.stream()
-                        .filter(b -> !b.isAlternative())
-                        .toList();
-                if (nonAlternatives.size() > 1) {
-                    errors.add(new ValidationError(
-                            ValidationError.Kind.AMBIGUOUS_DEPENDENCY,
-                            "Duplicate bean name '" + entry.getKey() + "' on non-alternative beans: "
-                                    + nonAlternatives.stream().map(b -> b.beanClass().value()).toList(),
-                            nonAlternatives.getFirst()));
-                }
+            // CDI spec: ambiguous EL name is only an error if there are non-alternative beans
+            // or multiple enabled alternatives with the same priority
+            var nonAlternatives = entry.getValue().stream()
+                    .filter(b -> !b.isAlternative())
+                    .toList();
+            if (nonAlternatives.size() > 1) {
+                errors.add(new ValidationError(
+                        ValidationError.Kind.AMBIGUOUS_DEPENDENCY,
+                        "Duplicate bean name '" + entry.getKey() + "' on non-alternative beans: "
+                                + nonAlternatives.stream().map(b -> b.beanClass().value()).toList(),
+                        nonAlternatives.getFirst()));
             }
         }
+    }
 
-        // CDI spec: bean name must not be a prefix of another bean name (dot-separated)
+    /** CDI spec: bean name must not be a prefix of another bean name (dot-separated). */
+    private void validateNamePrefixes(List<ValidationError> errors) {
         var allNames = new ArrayList<String>();
         for (var bean : beans) {
-            if (bean.name() != null) {
-                // Only consider enabled beans (skip disabled alternatives)
-                if (bean.isAlternative() && bean.priority() <= 0) continue;
+            // Only consider enabled beans (skip disabled alternatives)
+            if (bean.name() != null && !(bean.isAlternative() && bean.priority() <= 0)) {
                 allNames.add(bean.name());
             }
         }
@@ -256,19 +292,16 @@ public final class DeploymentValidator {
                 }
             }
         }
+    }
 
-        // CDI spec: Interceptors must have a non-private no-arg constructor
+    /** CDI spec: Interceptors must have a non-private no-arg constructor. */
+    private void validateInterceptorConstructors(List<ValidationError> errors) {
         for (var interceptor : resolver.getInterceptors()) {
             try {
                 var clazz = Class.forName(interceptor.interceptorClass().value());
-                boolean hasNoArgCtor = false;
-                for (var ctor : clazz.getDeclaredConstructors()) {
-                    if (ctor.getParameterCount() == 0
-                            && !java.lang.reflect.Modifier.isPrivate(ctor.getModifiers())) {
-                        hasNoArgCtor = true;
-                        break;
-                    }
-                }
+                boolean hasNoArgCtor = java.util.Arrays.stream(clazz.getDeclaredConstructors())
+                        .anyMatch(ctor -> ctor.getParameterCount() == 0
+                                && !java.lang.reflect.Modifier.isPrivate(ctor.getModifiers()));
                 if (!hasNoArgCtor) {
                     errors.add(new ValidationError(
                             ValidationError.Kind.DEFINITION_ERROR,
@@ -276,12 +309,10 @@ public final class DeploymentValidator {
                                     + " must have a non-private no-arg constructor",
                             null));
                 }
-            } catch (ClassNotFoundException e) {
-                // skip
+            } catch (ClassNotFoundException _) {
+                // Not loadable here; the runtime container re-validates
             }
         }
-
-        return List.copyOf(errors);
     }
 
     private void validateNames(List<ValidationError> errors) {
@@ -328,7 +359,9 @@ public final class DeploymentValidator {
                 validateProxyableByReflection(ct, bean, errors, contextBean);
             }
         }
-        case null, default -> { }
+        case null, default -> {
+            // Any other type (a type variable, a parameterized type) has nothing to check here
+        }
         }
     }
 
@@ -362,13 +395,13 @@ public final class DeploymentValidator {
         // Final methods, walking the hierarchy through the index; a superclass absent from
         // the index ends the walk (its members are re-checked by the runtime container).
         var current = info;
-        while (current != null && !"java.lang.Object".equals(current.name().value())) {
+        while (current != null && !JAVA_LANG_OBJECT.equals(current.name().value())) {
             for (var method : current.methods()) {
                 if (method.isConstructor() || method.isStaticInitializer()) continue;
                 if (method.isFinal() && !method.isPrivate() && !method.isStatic()) {
                     errors.add(new ValidationError(
                             ValidationError.Kind.DEPLOYMENT_ERROR,
-                            PREFIX_NORMAL_SCOPED + bean.beanClass() + " has final method " + method.name(),
+                            PREFIX_NORMAL_SCOPED + bean.beanClass() + MSG_HAS_FINAL_METHOD + method.name(),
                             contextBean));
                     return;
                 }
@@ -384,49 +417,39 @@ public final class DeploymentValidator {
         try {
             var clazz = Class.forName(ct.name().value(), false, Thread.currentThread().getContextClassLoader());
             // Interfaces are always proxyable — skip class-level checks
-            if (clazz.isInterface()) {
-                // no further checks needed
-            } else if (java.lang.reflect.Modifier.isFinal(clazz.getModifiers())) {
-                errors.add(new ValidationError(
-                        ValidationError.Kind.DEPLOYMENT_ERROR,
-                        PREFIX_NORMAL_SCOPED + bean.beanClass() + " cannot be a final class",
-                        contextBean));
-            } else {
-                boolean hasProxyEntryCtor = false;
-                for (var ctor : clazz.getDeclaredConstructors()) {
-                    if (java.lang.reflect.Modifier.isPrivate(ctor.getModifiers())) continue;
-                    if (ctor.getParameterCount() == 0 || ClientProxyShape.isProxyLinkConstructor(ctor)) {
-                        hasProxyEntryCtor = true;
-                        break;
-                    }
-                }
-                if (!hasProxyEntryCtor && !loadTimeWoven.contains(clazz.getName())) {
-                    errors.add(new ValidationError(
-                            ValidationError.Kind.UNPROXYABLE_BEAN,
-                            PREFIX_NORMAL_SCOPED + bean.beanClass() + MSG_UNPROXYABLE_CTOR,
-                            contextBean));
-                }
-
-                Class<?> proxyCheck = clazz;
-                boolean proxyFinalFound = false;
-                while (proxyCheck != null && proxyCheck != Object.class && !proxyFinalFound) {
-                    for (var method : proxyCheck.getDeclaredMethods()) {
-                        if (java.lang.reflect.Modifier.isFinal(method.getModifiers())
-                                && !java.lang.reflect.Modifier.isPrivate(method.getModifiers())
-                                && !java.lang.reflect.Modifier.isStatic(method.getModifiers())) {
-                            errors.add(new ValidationError(
-                                    ValidationError.Kind.DEPLOYMENT_ERROR,
-                                    PREFIX_NORMAL_SCOPED + bean.beanClass() + " has final method " + method.getName(),
-                                    contextBean));
-                            proxyFinalFound = true;
-                            break;
-                        }
-                    }
-                    proxyCheck = proxyCheck.getSuperclass();
-                }
+            if (!clazz.isInterface()) {
+                validateProxyableClass(clazz, bean, errors, contextBean);
             }
-        } catch (ClassNotFoundException e) {
+        } catch (ClassNotFoundException _) {
             // Ignore — the type is not loadable here; the runtime container re-validates.
+        }
+    }
+
+    private void validateProxyableClass(Class<?> clazz, BeanDescriptor bean,
+            List<ValidationError> errors, BeanDescriptor contextBean) {
+        if (java.lang.reflect.Modifier.isFinal(clazz.getModifiers())) {
+            errors.add(new ValidationError(
+                    ValidationError.Kind.DEPLOYMENT_ERROR,
+                    PREFIX_NORMAL_SCOPED + bean.beanClass() + " cannot be a final class",
+                    contextBean));
+            return;
+        }
+        boolean hasProxyEntryCtor = java.util.Arrays.stream(clazz.getDeclaredConstructors())
+                .anyMatch(ctor -> !java.lang.reflect.Modifier.isPrivate(ctor.getModifiers())
+                        && (ctor.getParameterCount() == 0 || ClientProxyShape.isProxyLinkConstructor(ctor)));
+        if (!hasProxyEntryCtor && !loadTimeWoven.contains(clazz.getName())) {
+            errors.add(new ValidationError(
+                    ValidationError.Kind.UNPROXYABLE_BEAN,
+                    PREFIX_NORMAL_SCOPED + bean.beanClass() + MSG_UNPROXYABLE_CTOR,
+                    contextBean));
+        }
+
+        var finalMethod = firstOverridableFinalMethod(clazz);
+        if (finalMethod != null) {
+            errors.add(new ValidationError(
+                    ValidationError.Kind.DEPLOYMENT_ERROR,
+                    PREFIX_NORMAL_SCOPED + bean.beanClass() + MSG_HAS_FINAL_METHOD + finalMethod.getName(),
+                    contextBean));
         }
     }
 
@@ -451,10 +474,10 @@ public final class DeploymentValidator {
     );
 
     private static boolean isBuiltInType(InjectionPointInfo ip) {
-        if (ip.requiredType() instanceof TypeInfo.ClassType ct) {
-            if (BUILT_IN_TYPES.contains(ct.name().value())) return true;
+        if (ip.requiredType() instanceof TypeInfo.ClassType(var name)) {
+            if (BUILT_IN_TYPES.contains(name.value())) return true;
             // Raw Bean, Interceptor, etc. are built-in (but illegal — validated separately)
-            if (METADATA_BUILT_IN_TYPES.contains(ct.name().value())) return true;
+            if (METADATA_BUILT_IN_TYPES.contains(name.value())) return true;
         }
         if (ip.requiredType() instanceof TypeInfo.ParameterizedType pt) {
             if (BUILT_IN_TYPES.contains(pt.rawType().value())) return true;
@@ -481,7 +504,7 @@ public final class DeploymentValidator {
      */
     private static boolean isIllegalMetadataInjection(InjectionPointInfo ip, BeanDescriptor bean, boolean isInterceptor) {
         String rawType = switch (ip.requiredType()) {
-            case TypeInfo.ClassType ct -> ct.name().value();
+            case TypeInfo.ClassType(var name) -> name.value();
             case TypeInfo.ParameterizedType pt -> pt.rawType().value();
             case null, default -> null;
         };
@@ -513,12 +536,12 @@ public final class DeploymentValidator {
             if (!typeArgs.isEmpty()) {
                 var arg = typeArgs.getFirst();
                 // Only Bean<?> (unbounded wildcard) or Bean<Object> is legal
-                if (arg instanceof TypeInfo.WildcardType wt) {
+                if (arg instanceof TypeInfo.WildcardType(var upperBound, var lowerBound)) {
                     // Unbounded wildcard: upperBound=Object, lowerBound=null
-                    return wt.lowerBound() != null || !isObjectType(wt.upperBound());
+                    return lowerBound != null || !isObjectType(upperBound);
                 }
-                if (arg instanceof TypeInfo.ClassType argCt) {
-                    return !argCt.name().value().equals("java.lang.Object");
+                if (arg instanceof TypeInfo.ClassType(var argName)) {
+                    return !argName.value().equals(JAVA_LANG_OBJECT);
                 }
                 return true;
             }
@@ -546,14 +569,14 @@ public final class DeploymentValidator {
     }
 
     private static boolean isObjectType(TypeInfo type) {
-        return type instanceof TypeInfo.ClassType ct && ct.name().value().equals("java.lang.Object");
+        return type instanceof TypeInfo.ClassType(var name) && name.value().equals(JAVA_LANG_OBJECT);
     }
 
     private static boolean typeArgMatchesBeanClass(java.util.List<TypeInfo> typeArgs, BeanDescriptor bean) {
         if (typeArgs.isEmpty()) return false;
         var arg = typeArgs.getFirst();
-        if (arg instanceof TypeInfo.ClassType argCt) {
-            return argCt.name().value().equals(bean.beanClass().value());
+        if (arg instanceof TypeInfo.ClassType(var argName)) {
+            return argName.value().equals(bean.beanClass().value());
         }
         return false;
     }
