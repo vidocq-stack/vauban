@@ -124,40 +124,45 @@ final class ExtensionMethodValidator {
                                        ClassLoader classLoader,
                                        List<String> errors) {
         for (var builder : factory.getBuilders()) {
-            var argLookups = builder.getArgumentLookups();
-            if (argLookups.isEmpty()) continue;
-
             var reflectMethod = builder.getMethod();
-            var paramTypes = reflectMethod.getParameterTypes();
-
-            for (int idx : argLookups) {
-                var paramType = paramTypes[idx];
-
-                if (SPECIAL_LOOKUP_TYPES.stream().anyMatch(t -> t.isAssignableFrom(paramType))) {
-                    continue;
-                }
-
-                int matchCount = 0;
-                for (var bean : allBeans) {
-                    try {
-                        var beanClass = classLoader.loadClass(bean.beanClass().value());
-                        if (paramType.isAssignableFrom(beanClass)) {
-                            matchCount++;
-                        }
-                    } catch (ClassNotFoundException ignored) { // intentionally empty
-                    }
-                }
-
-                if (matchCount == 0) {
-                    errors.add("Invoker argument lookup unsatisfied: no bean found for parameter type "
-                            + paramType.getName() + " at position " + idx
-                            + " of method " + reflectMethod.getDeclaringClass().getName() + "." + reflectMethod.getName());
-                } else if (matchCount > 1) {
-                    errors.add("Invoker argument lookup ambiguous: " + matchCount + " beans found for parameter type "
-                            + paramType.getName() + " at position " + idx
-                            + " of method " + reflectMethod.getDeclaringClass().getName() + "." + reflectMethod.getName());
-                }
+            for (int idx : builder.getArgumentLookups()) {
+                validateArgumentLookup(reflectMethod, idx, allBeans, classLoader, errors);
             }
         }
+    }
+
+    /** The argument {@code idx} of an invoker looked up as a bean: exactly one bean must match its type. */
+    private static void validateArgumentLookup(Method reflectMethod, int idx, List<BeanDescriptor> allBeans,
+                                               ClassLoader classLoader, List<String> errors) {
+        var paramType = reflectMethod.getParameterTypes()[idx];
+        if (SPECIAL_LOOKUP_TYPES.stream().anyMatch(t -> t.isAssignableFrom(paramType))) {
+            return;
+        }
+        int matchCount = countBeansOfType(paramType, allBeans, classLoader);
+        if (matchCount == 0) {
+            errors.add("Invoker argument lookup unsatisfied: no bean found for parameter type "
+                    + paramType.getName() + " at position " + idx
+                    + " of method " + reflectMethod.getDeclaringClass().getName() + "." + reflectMethod.getName());
+        } else if (matchCount > 1) {
+            errors.add("Invoker argument lookup ambiguous: " + matchCount + " beans found for parameter type "
+                    + paramType.getName() + " at position " + idx
+                    + " of method " + reflectMethod.getDeclaringClass().getName() + "." + reflectMethod.getName());
+        }
+    }
+
+    /** How many beans have a class assignable to {@code type}; a class the loader cannot find counts for none. */
+    private static int countBeansOfType(Class<?> type, List<BeanDescriptor> allBeans, ClassLoader classLoader) {
+        int matchCount = 0;
+        for (var bean : allBeans) {
+            try {
+                var beanClass = classLoader.loadClass(bean.beanClass().value());
+                if (type.isAssignableFrom(beanClass)) {
+                    matchCount++;
+                }
+            } catch (ClassNotFoundException _) {
+                // Not visible through this loader: it matches no lookup.
+            }
+        }
+        return matchCount;
     }
 }

@@ -95,7 +95,7 @@ public final class VaubanInvoker implements Invoker<Object, Object>, InvokerInfo
     private static java.lang.invoke.MethodHandle unreflect(Method method) {
         try {
             return java.lang.invoke.MethodHandles.lookup().unreflect(method).asFixedArity();
-        } catch (IllegalAccessException e) {
+        } catch (IllegalAccessException _) {
             return null;
         }
     }
@@ -109,10 +109,10 @@ public final class VaubanInvoker implements Invoker<Object, Object>, InvokerInfo
         try {
             if (instanceLookup) {
                 var inst = cdi.select(beanClass);
-                var handle = inst.getHandle();
-                instance = handle.get();
-                if (handle.getBean() != null && handle.getBean().getScope() == Dependent.class) {
-                    cleanups.add(handle::destroy);
+                var instanceHandle = inst.getHandle();
+                instance = instanceHandle.get();
+                if (instanceHandle.getBean() != null && instanceHandle.getBean().getScope() == Dependent.class) {
+                    cleanups.add(instanceHandle::destroy);
                 }
             }
 
@@ -136,10 +136,10 @@ public final class VaubanInvoker implements Invoker<Object, Object>, InvokerInfo
                         arguments[idx] = cdi.getBeanManager();
                     } else {
                         var inst = cdi.select(paramType);
-                        var handle = inst.getHandle();
-                        arguments[idx] = handle.get();
-                        if (handle.getBean() != null && handle.getBean().getScope() == Dependent.class) {
-                            cleanups.add(handle::destroy);
+                        var argumentHandle = inst.getHandle();
+                        arguments[idx] = argumentHandle.get();
+                        if (argumentHandle.getBean() != null && argumentHandle.getBean().getScope() == Dependent.class) {
+                            cleanups.add(argumentHandle::destroy);
                         }
                     }
                 }
@@ -188,7 +188,7 @@ public final class VaubanInvoker implements Invoker<Object, Object>, InvokerInfo
             for (var cleanup : cleanups) {
                 try {
                     cleanup.run();
-                } catch (Exception ignored) {
+                } catch (Exception _) {
                     // intentionally empty
                 }
             }

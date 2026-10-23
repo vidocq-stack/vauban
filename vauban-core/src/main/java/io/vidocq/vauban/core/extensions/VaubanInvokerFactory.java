@@ -105,7 +105,7 @@ public final class VaubanInvokerFactory implements InvokerFactory {
                     // Find the actual implementation on the bean class
                     try {
                         return beanClass.getMethod(methodName, m.getParameterTypes());
-                    } catch (NoSuchMethodException e) {
+                    } catch (NoSuchMethodException _) {
                         return m;
                     }
                 }

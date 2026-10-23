@@ -22,7 +22,9 @@ package io.vidocq.vauban.core.extensions;
 import io.vidocq.vauban.core.bean.model.BeanDescriptor;
 import io.vidocq.vauban.core.langmodel.IndexLookup;
 import io.vidocq.vauban.indexer.model.DotName;
+import io.vidocq.vauban.indexer.model.TypeInfo;
 
+import java.util.Optional;
 import java.util.Set;
 
 /**
@@ -59,21 +61,23 @@ final class BceTypeMatcher {
         for (var type : types) {
             if (type == Object.class) return true;
             var typeName = DotName.of(type.getName());
-            if (typeName.equals(classInfo.name())) return true;
-            if (withSubtypes) {
-                // Walk superclass chain
-                var current = classInfo;
-                while (current != null && current.superName() != null) {
-                    if (typeName.equals(current.superName())) return true;
-                    current = lookup.getClass(current.superName()).orElse(null);
-                }
-                // Check interfaces
-                for (var iface : classInfo.interfaces()) {
-                    if (typeName.equals(iface)) return true;
-                }
+            if (typeName.equals(classInfo.name())
+                    || (withSubtypes && isSubtypeByIndex(typeName, classInfo, lookup))) {
+                return true;
             }
         }
         return false;
+    }
+
+    /** Whether {@code typeName} is a superclass of {@code classInfo}, as far as the index knows, or one of its interfaces. */
+    private static boolean isSubtypeByIndex(DotName typeName, io.vidocq.vauban.indexer.model.ClassInfo classInfo,
+                                            IndexLookup lookup) {
+        var current = classInfo;
+        while (current != null && current.superName() != null) {
+            if (typeName.equals(current.superName())) return true;
+            current = lookup.getClass(current.superName()).orElse(null);
+        }
+        return classInfo.interfaces().contains(typeName);
     }
 
     /** Check if a class matches Enhancement types filter. */
@@ -97,64 +101,62 @@ final class BceTypeMatcher {
         try {
             var clazz = classLoader.loadClass(beanClass.value());
             return matchesAnnotations(withAnnotations, clazz);
-        } catch (ClassNotFoundException e) {
+        } catch (ClassNotFoundException _) {
             return false;
         }
     }
 
-    /** Check if a class has at least one of the required annotations (on class, methods, or fields). */
+    /** Check if a class has at least one of the required annotations (on class, methods, fields, or constructors). */
     static boolean matchesAnnotations(Class<? extends java.lang.annotation.Annotation>[] withAnnotations,
                                       Class<?> targetClass) {
         if (withAnnotations == null || withAnnotations.length == 0) return true;
         for (var ann : withAnnotations) {
-            if (targetClass.isAnnotationPresent(ann)) return true;
-            for (var m : BceProcessor.getDeclaredMethodsSafe(targetClass)) {
-                if (m.isAnnotationPresent(ann)) return true;
+            if (targetClass.isAnnotationPresent(ann)
+                    || anyAnnotated(BceProcessor.getDeclaredMethodsSafe(targetClass), ann)
+                    || anyFieldAnnotated(targetClass, ann)
+                    || anyConstructorAnnotated(targetClass, ann)) {
+                return true;
             }
-            // Defensive: getDeclaredFields/Constructors may throw NoClassDefFoundError
-            // if a signature references an optional type absent from the classpath.
-            try {
-                for (var f : targetClass.getDeclaredFields()) {
-                    if (f.isAnnotationPresent(ann)) return true;
-                }
-            } catch (LinkageError ignored) { /* skip */ }
-            try {
-                for (var c : targetClass.getDeclaredConstructors()) {
-                    if (c.isAnnotationPresent(ann)) return true;
-                }
-            } catch (LinkageError ignored) { /* skip */ }
+        }
+        return false;
+    }
+
+    /**
+     * Whether a field of {@code targetClass} carries {@code ann}. Defensive: reading the fields, or the
+     * constructors below, throws {@link NoClassDefFoundError} when a signature names an optional type
+     * absent at run time; such a class then matches through its other members only.
+     */
+    private static boolean anyFieldAnnotated(Class<?> targetClass, Class<? extends java.lang.annotation.Annotation> ann) {
+        try {
+            return anyAnnotated(targetClass.getDeclaredFields(), ann);
+        } catch (LinkageError _) {
+            return false;
+        }
+    }
+
+    private static boolean anyConstructorAnnotated(Class<?> targetClass,
+                                                   Class<? extends java.lang.annotation.Annotation> ann) {
+        try {
+            return anyAnnotated(targetClass.getDeclaredConstructors(), ann);
+        } catch (LinkageError _) {
+            return false;
+        }
+    }
+
+    private static boolean anyAnnotated(java.lang.reflect.AnnotatedElement[] elements,
+                                        Class<? extends java.lang.annotation.Annotation> ann) {
+        for (var element : elements) {
+            if (element.isAnnotationPresent(ann)) return true;
         }
         return false;
     }
 
     static boolean matchesObserverTypes(Class<?>[] types, io.vidocq.vauban.core.bean.model.ObserverDescriptor observer, ClassLoader classLoader) {
-        String declaringClassName = observer.declaringClass().value();
-        try {
-            var declaringClass = classLoader.loadClass(declaringClassName);
-            for (var type : types) {
-                if (type.isAssignableFrom(declaringClass)) {
-                    return true;
-                }
-            }
-        } catch (ClassNotFoundException e) {
-            // skip
-        }
-        return false;
+        return loadsAsSubtypeOfAny(types, observer.declaringClass().value(), classLoader);
     }
 
     static boolean matchesInterceptorTypes(Class<?>[] types, io.vidocq.vauban.core.bean.model.InterceptorDescriptor interceptor, ClassLoader classLoader) {
-        String className = interceptor.interceptorClass().value();
-        try {
-            var clazz = classLoader.loadClass(className);
-            for (var type : types) {
-                if (type.isAssignableFrom(clazz)) {
-                    return true;
-                }
-            }
-        } catch (ClassNotFoundException e) {
-            // skip
-        }
-        return false;
+        return loadsAsSubtypeOfAny(types, interceptor.interceptorClass().value(), classLoader);
     }
 
     /**
@@ -164,22 +166,37 @@ final class BceTypeMatcher {
      */
     static boolean matchesTypes(Class<?>[] types, BeanDescriptor bean, ClassLoader classLoader) {
         for (var beanTypeInfo : bean.types()) {
-            String beanTypeName = switch (beanTypeInfo) {
-                case io.vidocq.vauban.indexer.model.TypeInfo.ClassType ct -> ct.name().value();
-                case io.vidocq.vauban.indexer.model.TypeInfo.ParameterizedType pt -> pt.rawType().value();
-                default -> null;
-            };
-            if (beanTypeName == null) continue;
-            try {
-                var beanType = classLoader.loadClass(beanTypeName);
-                for (var type : types) {
-                    if (type.isAssignableFrom(beanType)) {
-                        return true;
-                    }
-                }
-            } catch (ClassNotFoundException e) {
-                // skip
+            var beanTypeName = rawTypeName(beanTypeInfo);
+            if (beanTypeName.isPresent() && loadsAsSubtypeOfAny(types, beanTypeName.get(), classLoader)) {
+                return true;
             }
+        }
+        return false;
+    }
+
+    /** The class a bean type names, or empty for a type that names none (a type variable, an array…). */
+    private static Optional<String> rawTypeName(TypeInfo beanType) {
+        return switch (beanType) {
+            case TypeInfo.ClassType(DotName(var name)) -> Optional.of(name);
+            case TypeInfo.ParameterizedType(DotName(var rawName), _) -> Optional.of(rawName);
+            default -> Optional.empty();
+        };
+    }
+
+    /**
+     * Whether the class {@code className}, loaded through {@code classLoader}, is a subtype of one of
+     * {@code types}; {@code false} when the loader cannot find it.
+     */
+    private static boolean loadsAsSubtypeOfAny(Class<?>[] types, String className, ClassLoader classLoader) {
+        try {
+            var loaded = classLoader.loadClass(className);
+            for (var type : types) {
+                if (type.isAssignableFrom(loaded)) {
+                    return true;
+                }
+            }
+        } catch (ClassNotFoundException _) {
+            // Not visible through this loader: it matches nothing.
         }
         return false;
     }

@@ -351,13 +351,23 @@ public final class VaubanAnnotationBuilder implements AnnotationBuilder {
             case char[] v -> builder.member(name, v);
             case String[] v -> builder.member(name, v);
             case Annotation[] v -> builder.member(name, v);
-            // Enum<?>[] and Class<?>[] are not valid case labels (javac cannot parse a
-            // wildcard followed by array dims there), so they fall back to instanceof
-            default -> {
-                if (val instanceof Enum<?>[] v) builder.member(name, v);
-                else if (val instanceof Class<?>[] v) builder.member(name, v);
-                else throw new IllegalArgumentException("Unsupported annotation member type: " + val.getClass());
-            }
+            default -> addWildcardArrayMemberValue(builder, name, val);
         }
+    }
+
+    /**
+     * {@code Enum<?>[]} and {@code Class<?>[]} are not valid case labels — javac cannot parse a
+     * wildcard followed by array dimensions there — so they are told apart with {@code instanceof}.
+     */
+    private static void addWildcardArrayMemberValue(VaubanAnnotationBuilder builder, String name, Object val) {
+        if (val instanceof Enum<?>[] v) {
+            builder.member(name, v);
+            return;
+        }
+        if (val instanceof Class<?>[] v) {
+            builder.member(name, v);
+            return;
+        }
+        throw new IllegalArgumentException("Unsupported annotation member type: " + val.getClass());
     }
 }

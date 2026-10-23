@@ -37,6 +37,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.function.Predicate;
 
 /**
  * Applies recorded {@code @Enhancement} modifications ({@link VaubanClassConfig} and its
@@ -50,6 +51,8 @@ import java.util.Set;
  */
 final class EnhancementApplier {
 
+    private static final String VALUE = "value";
+
     private EnhancementApplier() {
     }
 
@@ -61,29 +64,32 @@ final class EnhancementApplier {
         var result = new ArrayList<InterceptorDescriptor>(interceptors.size());
         for (var descriptor : interceptors) {
             var configs = modifications.get(descriptor.interceptorClass());
-            if (configs == null || configs.isEmpty()) {
-                result.add(descriptor);
-                continue;
-            }
-            var updated = descriptor;
-            for (var config : configs) {
-                for (var annInfo : config.getAddedAnnotationInfos()) {
-                    if ("jakarta.annotation.Priority".equals(annInfo.name())) {
-                        int priorityValue = 0;
-                        var valueMember = annInfo.hasMember("value") ? annInfo.member("value") : null;
-                        if (valueMember != null && valueMember.isInt()) {
-                            priorityValue = valueMember.asInt();
-                        }
-                        updated = new InterceptorDescriptor(
-                                updated.interceptorClass(), updated.bindings(),
-                                updated.aroundInvokeMethod(), updated.aroundConstructMethod(),
-                                priorityValue, true, updated.bindingAnnotations());
-                    }
-                }
-            }
-            result.add(updated);
+            result.add(configs == null || configs.isEmpty() ? descriptor : withAddedPriority(descriptor, configs));
         }
         return result;
+    }
+
+    /** The interceptor with the priority the last {@code @Priority} an enhancement added gives it, if any. */
+    private static InterceptorDescriptor withAddedPriority(InterceptorDescriptor descriptor,
+                                                           List<VaubanClassConfig> configs) {
+        var updated = descriptor;
+        for (var config : configs) {
+            for (var annInfo : config.getAddedAnnotationInfos()) {
+                if ("jakarta.annotation.Priority".equals(annInfo.name())) {
+                    updated = new InterceptorDescriptor(
+                            updated.interceptorClass(), updated.bindings(),
+                            updated.aroundInvokeMethod(), updated.aroundConstructMethod(),
+                            priorityValue(annInfo), true, updated.bindingAnnotations());
+                }
+            }
+        }
+        return updated;
+    }
+
+    /** The {@code int} value of an added {@code @Priority}, or {@code 0} when it carries none. */
+    private static int priorityValue(AnnotationInfo priority) {
+        var valueMember = priority.hasMember(VALUE) ? priority.member(VALUE) : null;
+        return valueMember != null && valueMember.isInt() ? valueMember.asInt() : 0;
     }
 
     /**
@@ -105,10 +111,9 @@ final class EnhancementApplier {
             var configs = modifications.get(bean.beanClass());
             if (configs == null || configs.isEmpty()) {
                 result.add(bean);
-                continue;
+            } else if (!addsVeto(configs)) {
+                result.add(applyClassConfigs(bean, configs));
             }
-            if (addsVeto(configs)) continue;
-            result.add(applyClassConfigs(bean, configs));
         }
         return result;
     }
@@ -155,59 +160,14 @@ final class EnhancementApplier {
         return result;
     }
 
-    @SuppressWarnings("java:S135")
     private static ObserverDescriptor applyObserverConfigs(ObserverDescriptor observer, List<VaubanClassConfig> configs) {
         var qualifiers = new LinkedHashSet<>(observer.qualifiers());
         boolean removed = false;
 
         for (var config : configs) {
             for (var methodConfig : config.getMethodConfigs()) {
-                if (!methodConfig.info().name().equals(observer.methodName())) continue;
-                if (!methodConfig.isModified()) continue;
-
-                for (var paramConfig : methodConfig.getParameterConfigs()) {
-                    if (!paramConfig.isModified()) continue;
-
-                    // Check if this is the first parameter (the observed event parameter)
-                    var paramIndex = methodConfig.getParameterConfigs().indexOf(paramConfig);
-                    if (paramIndex != 0) continue; // Observer event parameter is typically the first
-
-                    if (paramConfig.isAllAnnotationsRemoved()) {
-                        // removeAllAnnotations removes @Observes/@ObservesAsync too → observer is removed
-                        removed = true;
-                        qualifiers.clear();
-                    }
-
-                    // Apply remove predicates to existing qualifiers
-                    for (var predicate : paramConfig.getRemovePredicates()) {
-                        qualifiers.removeIf(q -> {
-                            var annInfo = qualifierToAnnotationInfo(q);
-                            return annInfo != null && predicate.test(annInfo);
-                        });
-                    }
-
-                    // Add new qualifier annotations
-                    boolean hasExplicit = false;
-                    for (var annClass : paramConfig.getAddedAnnotationClasses()) {
-                        var qName = DotName.of(annClass.getName());
-                        qualifiers.add(new QualifierInstance(qName, Map.of()));
-                        if (!qName.equals(QualifierInstance.ANY_NAME) && !qName.equals(QualifierInstance.NAMED_NAME)
-                                && !qName.equals(QualifierInstance.DEFAULT_NAME)) {
-                            hasExplicit = true;
-                        }
-                    }
-                    for (var annInfo : paramConfig.getAddedAnnotations()) {
-                        var qi = annotationInfoToQualifier(annInfo);
-                        qualifiers.add(qi);
-                        if (!qi.annotationName().equals(QualifierInstance.ANY_NAME)
-                                && !qi.annotationName().equals(QualifierInstance.NAMED_NAME)
-                                && !qi.annotationName().equals(QualifierInstance.DEFAULT_NAME)) {
-                            hasExplicit = true;
-                        }
-                    }
-                    if (hasExplicit) {
-                        qualifiers.removeIf(q -> q.annotationName().equals(QualifierInstance.DEFAULT_NAME));
-                    }
+                if (methodConfig.info().name().equals(observer.methodName()) && methodConfig.isModified()) {
+                    removed |= applyObservedParameterConfig(methodConfig, qualifiers);
                 }
             }
         }
@@ -221,6 +181,68 @@ final class EnhancementApplier {
                 List.copyOf(qualifiers), observer.async(), observer.priority(),
                 observer.reception(), observer.transactionPhase(), observer.syntheticInvoker()
         );
+    }
+
+    /**
+     * Applies the modifications of the observed event parameter — the first parameter of the
+     * observer method — to the observer's qualifiers.
+     *
+     * @return whether they removed all its annotations, {@code @Observes} or {@code @ObservesAsync}
+     *         included, which removes the observer once no qualifier is left
+     */
+    private static boolean applyObservedParameterConfig(VaubanMethodConfig methodConfig,
+                                                        Set<QualifierInstance> qualifiers) {
+        var parameterConfigs = methodConfig.getParameterConfigs();
+        if (parameterConfigs.isEmpty() || !parameterConfigs.getFirst().isModified()) {
+            return false;
+        }
+        var paramConfig = parameterConfigs.getFirst();
+        boolean removed = paramConfig.isAllAnnotationsRemoved();
+        if (removed) {
+            qualifiers.clear();
+        }
+        removeMatching(qualifiers, paramConfig.getRemovePredicates());
+
+        boolean hasExplicit = false;
+        for (var annClass : paramConfig.getAddedAnnotationClasses()) {
+            var qName = DotName.of(annClass.getName());
+            qualifiers.add(new QualifierInstance(qName, Map.of()));
+            hasExplicit |= isExplicitObserverQualifier(qName);
+        }
+        for (var annInfo : paramConfig.getAddedAnnotations()) {
+            var qi = annotationInfoToQualifier(annInfo);
+            qualifiers.add(qi);
+            hasExplicit |= isExplicitObserverQualifier(qi.annotationName());
+        }
+        if (hasExplicit) {
+            removeDefault(qualifiers);
+        }
+        return removed;
+    }
+
+    /** A qualifier that makes an observed parameter lose {@code @Default}: neither {@code @Any}, {@code @Named} nor {@code @Default}. */
+    private static boolean isExplicitObserverQualifier(DotName name) {
+        return !name.equals(QualifierInstance.ANY_NAME) && !name.equals(QualifierInstance.NAMED_NAME)
+                && !name.equals(QualifierInstance.DEFAULT_NAME);
+    }
+
+    /** A qualifier that makes a bean class lose {@code @Default}: neither {@code @Any} nor {@code @Named}. */
+    private static boolean isExplicitClassQualifier(DotName name) {
+        return !name.equals(QualifierInstance.ANY_NAME) && !name.equals(QualifierInstance.NAMED_NAME);
+    }
+
+    private static void removeDefault(Set<QualifierInstance> qualifiers) {
+        qualifiers.removeIf(q -> q.annotationName().equals(QualifierInstance.DEFAULT_NAME));
+    }
+
+    /** Removes every qualifier one of {@code predicates} matches, as the extension's {@code removeAnnotation} asked. */
+    private static void removeMatching(Set<QualifierInstance> qualifiers, List<Predicate<AnnotationInfo>> predicates) {
+        for (var predicate : predicates) {
+            qualifiers.removeIf(q -> {
+                var annInfo = qualifierToAnnotationInfo(q);
+                return annInfo != null && predicate.test(annInfo);
+            });
+        }
     }
 
     /**
@@ -241,117 +263,47 @@ final class EnhancementApplier {
         String name = null;
         for (var config : configs) {
             for (var info : config.getAddedAnnotationsIndexed()) {
-                if (!info.name().equals(QualifierInstance.NAMED_NAME)) continue;
-                var value = info.member("value") instanceof io.vidocq.vauban.indexer.model.AnnotationValue.StringVal sv
-                        ? sv.value() : "";
-                if (value.isEmpty() && config.info() != null) {
-                    var simpleName = config.info().simpleName();
-                    value = Character.toLowerCase(simpleName.charAt(0)) + simpleName.substring(1);
+                if (info.name().equals(QualifierInstance.NAMED_NAME)) {
+                    var value = namedValue(info, config);
+                    if (!value.isEmpty()) name = value;
                 }
-                if (!value.isEmpty()) name = value;
             }
         }
         return name;
     }
 
-    private static BeanDescriptor applyClassConfigs(BeanDescriptor bean, List<VaubanClassConfig> configs) {
-        var qualifiers = new LinkedHashSet<>(bean.qualifiers());
-        var interceptorBindings = new LinkedHashSet<>(bean.interceptorBindings());
-        var interceptorBindingAnnotations = new ArrayList<>(bean.interceptorBindingAnnotations());
-        var injectionPoints = new ArrayList<>(bean.injectionPoints());
-        var enhancedInjectionMethods = new LinkedHashSet<>(bean.enhancedInjectionMethods());
-
-        for (var config : configs) {
-            // Class-level annotation removals
-            for (var predicate : config.getRemovePredicates()) {
-                qualifiers.removeIf(q -> {
-                    var annInfo = qualifierToAnnotationInfo(q);
-                    return annInfo != null && predicate.test(annInfo);
-                });
-            }
-            if (config.isAllAnnotationsRemoved()) {
-                qualifiers.clear();
-                interceptorBindings.clear();
-                interceptorBindingAnnotations.clear();
-            }
-
-            // Class-level annotation additions — only annotations that are actually
-            // qualifiers should land in the qualifier set. Scopes / stereotypes /
-            // bean-defining annotations are handled separately (index rebuild + scope
-            // re-extraction) so they must not pollute qualifiers nor evict @Default.
-            boolean classHasExplicit = false;
-            for (var ann : config.getAddedAnnotations()) {
-                if (!isQualifierAnnotation(ann)) continue;
-                var qName = DotName.of(ann.getName());
-                qualifiers.add(qualifierOf(ann, config.getAddedAnnotationInstance(ann)));
-                if (!qName.equals(QualifierInstance.ANY_NAME) && !qName.equals(QualifierInstance.NAMED_NAME)) {
-                    classHasExplicit = true;
-                }
-            }
-            for (var annInfo : config.getAddedAnnotationInfos()) {
-                if (!isQualifierAnnotationInfo(annInfo)) continue;
-                var qi = annotationInfoToQualifier(annInfo);
-                qualifiers.add(qi);
-                if (!qi.annotationName().equals(QualifierInstance.ANY_NAME)
-                        && !qi.annotationName().equals(QualifierInstance.NAMED_NAME)) {
-                    classHasExplicit = true;
-                }
-            }
-            if (classHasExplicit) {
-                qualifiers.removeIf(q -> q.annotationName().equals(QualifierInstance.DEFAULT_NAME));
-            }
-
-            // Class-level @InterceptorBinding additions -> propagate to bean's
-            // interceptor bindings so they take part in interceptor resolution.
-            // Without this, a BCE that uses ClassConfig.addAnnotation(SomeBinding.class)
-            // to mark a bean class with a marker interceptor binding (e.g. SmallRye's
-            // @FaultToleranceBinding pattern) is silently ignored — the binding never
-            // reaches BeanDescriptor.interceptorBindings(), so InterceptorBeanWrapper
-            // and InterceptorManager never wire the corresponding @Interceptor.
-            for (var ann : config.getAddedAnnotations()) {
-                if (!isInterceptorBindingAnnotation(ann)) continue;
-                interceptorBindings.add(DotName.of(ann.getName()));
-            }
-            for (var annInfo : config.getAddedAnnotationInfos()) {
-                if (!isInterceptorBindingAnnotationInfo(annInfo)) continue;
-                interceptorBindings.add(DotName.of(annInfo.name()));
-                if (annInfo instanceof BuiltAnnotationInfo built) {
-                    try {
-                        var proxy = createAnnotationProxy(built);
-                        if (proxy != null) interceptorBindingAnnotations.add(proxy);
-                    } catch (Exception ignored) {
-                        // intentionally empty — best effort binding-member capture
-                    }
-                }
-            }
-
-            // Field-level modifications -> update injection points
-            for (var fieldConfig : config.getFieldConfigs()) {
-                if (!fieldConfig.isModified()) continue;
-                applyFieldEnhancement(fieldConfig, injectionPoints);
-            }
-
-            // Method-level modifications -> update interceptor bindings and injection points
-            for (var methodConfig : config.getMethodConfigs()) {
-                if (!methodConfig.isModified()) continue;
-                applyMethodEnhancement(methodConfig, interceptorBindings, interceptorBindingAnnotations);
-
-                boolean initializer = !methodConfig.info().isConstructor()
-                        && !methodConfig.info().isStatic()
-                        && hasAnnotation(methodConfig, jakarta.inject.Inject.class);
-                if (initializer && hasAddedAnnotation(methodConfig, jakarta.inject.Inject.class)) {
-                    enhancedInjectionMethods.add(initializerMethodKey(methodConfig));
-                }
-
-                for (int i = 0; i < methodConfig.getParameterConfigs().size(); i++) {
-                    var paramConfig = methodConfig.getParameterConfigs().get(i);
-                    if (paramConfig.isModified()
-                            || (initializer && hasAddedAnnotation(methodConfig, jakarta.inject.Inject.class))) {
-                        applyParameterEnhancement(methodConfig, paramConfig, i, initializer, injectionPoints);
-                    }
-                }
-            }
+    /** The value of an added {@code @Named}, or the default name of the class when it has none. */
+    private static String namedValue(io.vidocq.vauban.indexer.model.AnnotationInfo named, VaubanClassConfig config) {
+        var value = named.member(VALUE) instanceof io.vidocq.vauban.indexer.model.AnnotationValue.StringVal(var text)
+                ? text : "";
+        if (value.isEmpty() && config.info() != null) {
+            var simpleName = config.info().simpleName();
+            value = Character.toLowerCase(simpleName.charAt(0)) + simpleName.substring(1);
         }
+        return value;
+    }
+
+    /** The collections of a bean descriptor an enhancement changes, copied so that they can be. */
+    private record BeanEnhancement(Set<QualifierInstance> qualifiers, Set<DotName> interceptorBindings,
+                                   List<Annotation> interceptorBindingAnnotations,
+                                   List<InjectionPointInfo> injectionPoints, Set<String> enhancedInjectionMethods) {
+
+        static BeanEnhancement of(BeanDescriptor bean) {
+            return new BeanEnhancement(new LinkedHashSet<>(bean.qualifiers()),
+                    new LinkedHashSet<>(bean.interceptorBindings()),
+                    new ArrayList<>(bean.interceptorBindingAnnotations()),
+                    new ArrayList<>(bean.injectionPoints()),
+                    new LinkedHashSet<>(bean.enhancedInjectionMethods()));
+        }
+    }
+
+    private static BeanDescriptor applyClassConfigs(BeanDescriptor bean, List<VaubanClassConfig> configs) {
+        var enhanced = BeanEnhancement.of(bean);
+        for (var config : configs) {
+            applyClassAnnotations(config, enhanced);
+            applyMemberConfigs(config, enhanced);
+        }
+        var qualifiers = enhanced.qualifiers();
 
         // Re-add @Any if qualifiers were modified and it was there before
         if (!qualifiers.isEmpty() && qualifiers.stream().noneMatch(QualifierInstance::isAny)
@@ -366,15 +318,106 @@ final class EnhancementApplier {
             name = addedName;
             qualifiers.removeIf(q -> q.annotationName().equals(QualifierInstance.NAMED_NAME));
             qualifiers.add(new QualifierInstance(QualifierInstance.NAMED_NAME,
-                    Map.of("value", new io.vidocq.vauban.indexer.model.AnnotationValue.StringVal(addedName))));
+                    Map.of(VALUE, new io.vidocq.vauban.indexer.model.AnnotationValue.StringVal(addedName))));
         }
 
         return new BeanDescriptor(
                 bean.id(), bean.beanClass(), bean.kind(), bean.types(),
                 qualifiers, bean.scope(), bean.isAlternative(), bean.priority(),
-                injectionPoints, name, interceptorBindings,
-                bean.constructorBindings(), interceptorBindingAnnotations, enhancedInjectionMethods
+                enhanced.injectionPoints(), name, enhanced.interceptorBindings(),
+                bean.constructorBindings(), enhanced.interceptorBindingAnnotations(),
+                enhanced.enhancedInjectionMethods()
         );
+    }
+
+    /** The class-level removals and additions of one config: qualifiers and interceptor bindings. */
+    private static void applyClassAnnotations(VaubanClassConfig config, BeanEnhancement enhanced) {
+        removeMatching(enhanced.qualifiers(), config.getRemovePredicates());
+        if (config.isAllAnnotationsRemoved()) {
+            enhanced.qualifiers().clear();
+            enhanced.interceptorBindings().clear();
+            enhanced.interceptorBindingAnnotations().clear();
+        }
+        addClassQualifiers(config, enhanced.qualifiers());
+        addClassInterceptorBindings(config, enhanced);
+    }
+
+    /**
+     * Class-level annotation additions — only annotations that are actually qualifiers land in the
+     * qualifier set. Scopes / stereotypes / bean-defining annotations are handled separately (index
+     * rebuild + scope re-extraction) so they must not pollute qualifiers nor evict {@code @Default}.
+     */
+    private static void addClassQualifiers(VaubanClassConfig config, Set<QualifierInstance> qualifiers) {
+        boolean classHasExplicit = false;
+        for (var ann : config.getAddedAnnotations()) {
+            if (isQualifierAnnotation(ann)) {
+                qualifiers.add(qualifierOf(ann, config.getAddedAnnotationInstance(ann)));
+                classHasExplicit |= isExplicitClassQualifier(DotName.of(ann.getName()));
+            }
+        }
+        for (var annInfo : config.getAddedAnnotationInfos()) {
+            if (isQualifierAnnotationInfo(annInfo)) {
+                var qi = annotationInfoToQualifier(annInfo);
+                qualifiers.add(qi);
+                classHasExplicit |= isExplicitClassQualifier(qi.annotationName());
+            }
+        }
+        if (classHasExplicit) {
+            removeDefault(qualifiers);
+        }
+    }
+
+    /**
+     * Class-level {@code @InterceptorBinding} additions, propagated to the bean's interceptor
+     * bindings so they take part in interceptor resolution. Without this, a BCE that uses
+     * {@code ClassConfig.addAnnotation(SomeBinding.class)} to mark a bean class with a marker
+     * interceptor binding (e.g. SmallRye's {@code @FaultToleranceBinding} pattern) is silently
+     * ignored — the binding never reaches {@code BeanDescriptor.interceptorBindings()}, so
+     * {@code InterceptorBeanWrapper} and {@code InterceptorManager} never wire the corresponding
+     * {@code @Interceptor}.
+     */
+    private static void addClassInterceptorBindings(VaubanClassConfig config, BeanEnhancement enhanced) {
+        for (var ann : config.getAddedAnnotations()) {
+            if (isInterceptorBindingAnnotation(ann)) {
+                enhanced.interceptorBindings().add(DotName.of(ann.getName()));
+            }
+        }
+        addInterceptorBindingInfos(config.getAddedAnnotationInfos(), enhanced.interceptorBindings(),
+                enhanced.interceptorBindingAnnotations());
+    }
+
+    /** Field-level modifications update injection points; method-level ones bindings and injection points too. */
+    private static void applyMemberConfigs(VaubanClassConfig config, BeanEnhancement enhanced) {
+        for (var fieldConfig : config.getFieldConfigs()) {
+            if (fieldConfig.isModified()) {
+                applyFieldEnhancement(fieldConfig, enhanced.injectionPoints());
+            }
+        }
+        for (var methodConfig : config.getMethodConfigs()) {
+            if (methodConfig.isModified()) {
+                applyMethodConfig(methodConfig, enhanced);
+            }
+        }
+    }
+
+    private static void applyMethodConfig(VaubanMethodConfig methodConfig, BeanEnhancement enhanced) {
+        applyMethodEnhancement(methodConfig, enhanced.interceptorBindings(), enhanced.interceptorBindingAnnotations());
+
+        boolean initializer = !methodConfig.info().isConstructor()
+                && !methodConfig.info().isStatic()
+                && hasAnnotation(methodConfig, jakarta.inject.Inject.class);
+        boolean injectAdded = initializer && hasAddedAnnotation(methodConfig, jakarta.inject.Inject.class);
+        if (injectAdded) {
+            enhanced.enhancedInjectionMethods().add(initializerMethodKey(methodConfig));
+        }
+
+        var parameterConfigs = methodConfig.getParameterConfigs();
+        for (int i = 0; i < parameterConfigs.size(); i++) {
+            var paramConfig = parameterConfigs.get(i);
+            if (paramConfig.isModified() || injectAdded) {
+                applyParameterEnhancement(methodConfig, paramConfig, i, initializer, enhanced.injectionPoints());
+            }
+        }
     }
 
     private static void applyFieldEnhancement(VaubanFieldConfig fieldConfig,
@@ -397,12 +440,7 @@ final class EnhancementApplier {
                 ? sourceQualifiers(fieldConfig.info().annotations())
                 : new LinkedHashSet<>(existing.declaredQualifiers());
         if (fieldConfig.isAllAnnotationsRemoved()) declared.clear();
-        for (var predicate : fieldConfig.getRemovePredicates()) {
-            declared.removeIf(q -> {
-                var annotation = qualifierToAnnotationInfo(q);
-                return annotation != null && predicate.test(annotation);
-            });
-        }
+        removeMatching(declared, fieldConfig.getRemovePredicates());
         addQualifiers(declared, fieldConfig.getAddedAnnotations(), fieldConfig.getAddedAnnotationInfos(),
                 fieldConfig.getAddedAnnotationInstances());
         completeDeclaredQualifiers(declared);
@@ -427,17 +465,32 @@ final class EnhancementApplier {
         for (var ann : methodConfig.getAddedAnnotationInstances()) {
             if (isInterceptorBindingAnnotation(ann.annotationType())) interceptorBindingAnnotations.add(ann);
         }
-        for (var annInfo : methodConfig.getAddedAnnotationInfos()) {
-            if (!isInterceptorBindingAnnotationInfo(annInfo)) continue;
-            interceptorBindings.add(DotName.of(annInfo.name()));
-            if (annInfo instanceof BuiltAnnotationInfo built) {
-                try {
-                    var proxy = createAnnotationProxy(built);
-                    if (proxy != null) interceptorBindingAnnotations.add(proxy);
-                } catch (Exception ignored) {
-                    // intentionally empty
+        addInterceptorBindingInfos(methodConfig.getAddedAnnotationInfos(), interceptorBindings,
+                interceptorBindingAnnotations);
+    }
+
+    /**
+     * Adds the interceptor bindings among {@code infos} by name, and, for those an extension built,
+     * their instance for the member-value comparison of interceptor resolution.
+     */
+    private static void addInterceptorBindingInfos(List<AnnotationInfo> infos, Set<DotName> interceptorBindings,
+                                                   List<Annotation> interceptorBindingAnnotations) {
+        for (var annInfo : infos) {
+            if (isInterceptorBindingAnnotationInfo(annInfo)) {
+                interceptorBindings.add(DotName.of(annInfo.name()));
+                if (annInfo instanceof BuiltAnnotationInfo built) {
+                    addBindingInstance(built, interceptorBindingAnnotations);
                 }
             }
+        }
+    }
+
+    private static void addBindingInstance(BuiltAnnotationInfo built, List<Annotation> interceptorBindingAnnotations) {
+        try {
+            var proxy = createAnnotationProxy(built);
+            if (proxy != null) interceptorBindingAnnotations.add(proxy);
+        } catch (Exception _) {
+            // Best effort: the binding still takes part by its name, without its member values.
         }
     }
 
@@ -461,12 +514,7 @@ final class EnhancementApplier {
                 ? sourceQualifiers(parameterConfig.info().annotations())
                 : new LinkedHashSet<>(existing.declaredQualifiers());
         if (parameterConfig.isAllAnnotationsRemoved()) declared.clear();
-        for (var predicate : parameterConfig.getRemovePredicates()) {
-            declared.removeIf(q -> {
-                var annotation = qualifierToAnnotationInfo(q);
-                return annotation != null && predicate.test(annotation);
-            });
-        }
+        removeMatching(declared, parameterConfig.getRemovePredicates());
         addQualifiers(declared, parameterConfig.getAddedAnnotationClasses(),
                 parameterConfig.getAddedAnnotations(), parameterConfig.getAddedAnnotationInstances());
         completeDeclaredQualifiers(declared);
@@ -546,12 +594,6 @@ final class EnhancementApplier {
                 || config.getAddedAnnotationInstances().stream().anyMatch(a -> a.annotationType() == type);
     }
 
-    private static boolean hasAddedAnnotation(VaubanParameterConfig config, Class<? extends Annotation> type) {
-        return config.getAddedAnnotationClasses().contains(type)
-                || config.getAddedAnnotations().stream().anyMatch(a -> a.name().equals(type.getName()))
-                || config.getAddedAnnotationInstances().stream().anyMatch(a -> a.annotationType() == type);
-    }
-
     private static boolean hasAnnotation(VaubanMethodConfig config, Class<? extends Annotation> type) {
         var original = config.info().annotation(type);
         boolean removed = config.isAllAnnotationsRemoved()
@@ -587,7 +629,7 @@ final class EnhancementApplier {
                     ? Class.forName(annInfo.name(), false, cl)
                     : Class.forName(annInfo.name()));
             return isQualifierAnnotation(clazz);
-        } catch (ClassNotFoundException e) {
+        } catch (ClassNotFoundException _) {
             // Unknown annotation: treat as qualifier to keep prior behaviour for cases
             // where the annotation is not on the runtime classpath.
             return true;
@@ -606,7 +648,7 @@ final class EnhancementApplier {
                     ? Class.forName(annInfo.name(), false, cl)
                     : Class.forName(annInfo.name()));
             return isInterceptorBindingAnnotation(clazz);
-        } catch (ClassNotFoundException e) {
+        } catch (ClassNotFoundException _) {
             // Unknown annotation on the runtime classpath: don't assume it is
             // an interceptor binding (the previous behaviour was to drop it).
             return false;

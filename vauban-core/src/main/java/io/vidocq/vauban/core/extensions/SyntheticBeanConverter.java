@@ -43,19 +43,6 @@ final class SyntheticBeanConverter {
     }
 
     /**
-     * Converts a {@link VaubanSyntheticBeanBuilder} (the in-memory result of a BCE {@code @Synthesis}
-     * method) into a {@link BeanDescriptor} that the resolver and validator can reason about.
-     *
-     * <p>Used both by the runtime container (to register the bean in the live bean manager) and by
-     * the APT processor (to feed the deployment validator so {@code @Inject MyBceBean} compiles
-     * cleanly without an {@code Instance<>} workaround).
-     *
-     * <p>The {@code slot} parameter is folded into the synthetic bean's unique key — it must be
-     * unique within the surrounding bean list (callers typically pass {@code descriptors.size()}).
-     * No factory or creator is materialized here; that is a runtime-only concern handled by the
-     * container.
-     */
-    /**
      * Maps a runtime {@code Class} bean type to the index model. Array classes
      * (whose {@code getName()} is the JVM binary form {@code [Ljava.lang.Boolean;}
      * / {@code [Z}) become {@link TypeInfo.ArrayType} so they can match injection
@@ -76,6 +63,19 @@ final class SyntheticBeanConverter {
         return new TypeInfo.ClassType(DotName.of(cls.getName()));
     }
 
+    /**
+     * Converts a {@link VaubanSyntheticBeanBuilder} (the in-memory result of a BCE {@code @Synthesis}
+     * method) into a {@link BeanDescriptor} that the resolver and validator can reason about.
+     *
+     * <p>Used both by the runtime container (to register the bean in the live bean manager) and by
+     * the APT processor (to feed the deployment validator so {@code @Inject MyBceBean} compiles
+     * cleanly without an {@code Instance<>} workaround).
+     *
+     * <p>The {@code slot} parameter is folded into the synthetic bean's unique key — it must be
+     * unique within the surrounding bean list (callers typically pass {@code descriptors.size()}).
+     * No factory or creator is materialized here; that is a runtime-only concern handled by the
+     * container.
+     */
     static BeanDescriptor toBeanDescriptor(VaubanSyntheticBeanBuilder<?> synBean, int slot) {
         var beanClass = synBean.getBeanClass();
         var beanName = DotName.of(beanClass.getName());
@@ -94,21 +94,7 @@ final class SyntheticBeanConverter {
             beanTypes.add(new TypeInfo.ClassType(DotName.of("java.lang.Object")));
         }
 
-        var scope = ScopeInfo.DEPENDENT;
-        if (synBean.getScopeAnnotation() != null) {
-            var scopeAnn = synBean.getScopeAnnotation();
-            if (scopeAnn == jakarta.enterprise.context.ApplicationScoped.class) {
-                scope = ScopeInfo.APPLICATION;
-            } else if (scopeAnn == jakarta.enterprise.context.RequestScoped.class) {
-                scope = ScopeInfo.REQUEST;
-            } else if (scopeAnn == jakarta.inject.Singleton.class) {
-                scope = ScopeInfo.SINGLETON;
-            } else if (scopeAnn == jakarta.enterprise.context.SessionScoped.class) {
-                scope = ScopeInfo.SESSION;
-            } else if (scopeAnn == jakarta.enterprise.context.ConversationScoped.class) {
-                scope = ScopeInfo.CONVERSATION;
-            }
-        }
+        var scope = scopeOf(synBean.getScopeAnnotation());
 
         var qualifiers = new LinkedHashSet<QualifierInstance>();
         boolean hasExplicitQualifier = false;
@@ -140,6 +126,22 @@ final class SyntheticBeanConverter {
                 List.of(),
                 synBean.getName()
         );
+    }
+
+    /** The scope a synthetic bean declares, {@code @Dependent} when it declares none or one of its own. */
+    private static ScopeInfo scopeOf(Class<? extends Annotation> scopeAnn) {
+        if (scopeAnn == jakarta.enterprise.context.ApplicationScoped.class) {
+            return ScopeInfo.APPLICATION;
+        } else if (scopeAnn == jakarta.enterprise.context.RequestScoped.class) {
+            return ScopeInfo.REQUEST;
+        } else if (scopeAnn == jakarta.inject.Singleton.class) {
+            return ScopeInfo.SINGLETON;
+        } else if (scopeAnn == jakarta.enterprise.context.SessionScoped.class) {
+            return ScopeInfo.SESSION;
+        } else if (scopeAnn == jakarta.enterprise.context.ConversationScoped.class) {
+            return ScopeInfo.CONVERSATION;
+        }
+        return ScopeInfo.DEPENDENT;
     }
 
     /**

@@ -20,23 +20,14 @@
 package io.vidocq.vauban.core.extensions;
 
 import io.vidocq.vauban.core.bean.model.BeanDescriptor;
-import io.vidocq.vauban.core.bean.model.BeanId;
-import io.vidocq.vauban.core.bean.model.InjectionPointInfo;
 import io.vidocq.vauban.core.bean.model.InterceptorDescriptor;
 import io.vidocq.vauban.core.bean.model.ObserverDescriptor;
-import io.vidocq.vauban.core.bean.model.QualifierInstance;
 import io.vidocq.vauban.core.bean.model.ScopeInfo;
 import io.vidocq.vauban.core.langmodel.IndexLookup;
-import io.vidocq.vauban.core.langmodel.VaubanAnnotationInfo;
-import io.vidocq.vauban.core.langmodel.BuiltAnnotationInfo;
 import io.vidocq.vauban.core.langmodel.declarations.VaubanClassInfo;
 import io.vidocq.vauban.indexer.VaubanIndex;
-import io.vidocq.vauban.indexer.model.AnnotationValue;
 import io.vidocq.vauban.indexer.model.DotName;
-import io.vidocq.vauban.indexer.model.TypeInfo;
 import jakarta.enterprise.inject.build.compatible.spi.*;
-import jakarta.enterprise.lang.model.AnnotationInfo;
-import jakarta.enterprise.lang.model.AnnotationMember;
 
 import java.lang.annotation.Annotation;
 import java.lang.reflect.Method;
@@ -79,7 +70,7 @@ public final class BceProcessor {
                 var bce = instantiateBce(bceClass);
                 processEnhancement(bce, bceClass, List.of(), archiveClasses, lookup, classLoader, errors,
                         errorCauses, modifications);
-            } catch (Exception e) {
+            } catch (Exception _) {
                 // Enhancement-only errors are non-fatal
             }
         }
@@ -105,7 +96,7 @@ public final class BceProcessor {
             VaubanIndex index) {
         var lookup = new IndexLookup(index);
         var modifications = new HashMap<DotName, List<VaubanClassConfig>>();
-        var errors = new ArrayList<String>();
+        var sink = new EnhancementSink(new ArrayList<>(), new ArrayList<>(), modifications);
 
         for (var pair : replayPairs) {
             var bceClass = pair.getKey();
@@ -116,9 +107,9 @@ public final class BceProcessor {
                     if (method.getAnnotation(Enhancement.class) == null) continue;
                     makeAccessibleSafe(method);
                     var paramKind = detectEnhancementParamKind(method);
-                    invokeEnhancement(method, bce, paramKind, targetName, lookup, errors, new ArrayList<>(), modifications);
+                    invokeEnhancement(method, bce, paramKind, targetName, lookup, sink);
                 }
-            } catch (Exception e) {
+            } catch (Exception _) {
                 // Replay errors are non-fatal — skip pair
             }
         }
@@ -176,7 +167,7 @@ public final class BceProcessor {
                     }
                     method.invoke(bce, args);
                 }
-            } catch (Exception e) {
+            } catch (Exception _) {
                 // Discovery phase errors are silently ignored per spec
             }
         }
@@ -298,12 +289,12 @@ public final class BceProcessor {
 
     @FunctionalInterface
     private interface PhaseStep {
-        void run(Class<?> bceClass, Object bce) throws Exception;
+        void run(Class<?> bceClass, Object bce) throws ReflectiveOperationException;
     }
 
     @FunctionalInterface
     private interface PhaseAction {
-        void run() throws Exception;
+        void run() throws ReflectiveOperationException;
     }
 
     /**
@@ -322,20 +313,34 @@ public final class BceProcessor {
         var result = new ArrayList<>(applyEnhancements(beans, modifications));
         var existingBeanClasses = result.stream().map(BeanDescriptor::beanClass).collect(Collectors.toSet());
         for (var entry : modifications.entrySet()) {
-            if (existingBeanClasses.contains(entry.getKey())) continue;
-            var enhancedScope = enhancedScope(entry.getValue());
-            if (enhancedScope == null) continue;
-            var bean = managedBean.apply(entry.getKey());
-            if (bean == null) continue;
-            var promoted = new BeanDescriptor(
-                    bean.id(), bean.beanClass(), bean.kind(), bean.types(),
-                    bean.qualifiers(), enhancedScope, bean.isAlternative(),
-                    bean.priority(), bean.injectionPoints(), bean.name(),
-                    bean.interceptorBindings(), bean.constructorBindings(),
-                    bean.interceptorBindingAnnotations(), bean.enhancedInjectionMethods());
-            result.addAll(applyEnhancements(List.of(promoted), Map.of(entry.getKey(), entry.getValue())));
+            if (!existingBeanClasses.contains(entry.getKey())) {
+                promotedBean(entry.getKey(), entry.getValue(), managedBean).ifPresent(promoted ->
+                        result.addAll(applyEnhancements(List.of(promoted), Map.of(entry.getKey(), entry.getValue()))));
+            }
         }
         return result;
+    }
+
+    /**
+     * The managed bean a class that was no bean becomes once an {@code @Enhancement} gave it a scope,
+     * or empty when it gained none or cannot be a managed bean.
+     */
+    private static Optional<BeanDescriptor> promotedBean(DotName beanClass, List<VaubanClassConfig> configs,
+            java.util.function.Function<DotName, BeanDescriptor> managedBean) {
+        var enhancedScope = enhancedScope(configs);
+        if (enhancedScope == null) {
+            return Optional.empty();
+        }
+        var bean = managedBean.apply(beanClass);
+        if (bean == null) {
+            return Optional.empty();
+        }
+        return Optional.of(new BeanDescriptor(
+                bean.id(), bean.beanClass(), bean.kind(), bean.types(),
+                bean.qualifiers(), enhancedScope, bean.isAlternative(),
+                bean.priority(), bean.injectionPoints(), bean.name(),
+                bean.interceptorBindings(), bean.constructorBindings(),
+                bean.interceptorBindingAnnotations(), bean.enhancedInjectionMethods()));
     }
 
     /** The scope an {@code @Enhancement} added to a class, or {@code null} when it added none. */
@@ -371,8 +376,8 @@ public final class BceProcessor {
         member.trySetAccessible();
     }
 
-    @SuppressWarnings({"java:S3011", "java:S112"}) // CDI spec requires reflective access; container exceptions propagate as RuntimeException
-    private static Object instantiateBce(Class<?> bceClass) throws Exception {
+    @SuppressWarnings("java:S3011") // CDI spec requires reflective access
+    private static Object instantiateBce(Class<?> bceClass) throws ReflectiveOperationException {
         // Prefer ServiceLoader: a BCE declared via `provides ... with` is instantiated by the
         // module system WITHOUT requiring the module to open its package to vauban-core. This
         // removes the deep reflection that forced `opens <pkg> to io.vidocq.vauban.core`.
@@ -401,7 +406,7 @@ public final class BceProcessor {
                     return provider.get();
                 }
             }
-        } catch (Throwable _) {
+        } catch (RuntimeException | ServiceConfigurationError | LinkageError _) {
             // ServiceLoader unavailable / misconfigured — fall back to reflection.
         }
         return null;
@@ -443,13 +448,14 @@ public final class BceProcessor {
 
             var withAnnotations = enhancement.withAnnotations();
             var processedClasses = new java.util.HashSet<DotName>();
+            var sink = new EnhancementSink(errors, errorCauses, modifications);
 
             // First try beans (normal CDI path)
             for (var bean : beans) {
                 if (!BceTypeMatcher.matchesTypes(enhancement.types(), bean, classLoader)) continue;
                 if (!BceTypeMatcher.matchesAnnotations(withAnnotations, bean.beanClass(), classLoader)) continue;
                 processedClasses.add(bean.beanClass());
-                invokeEnhancement(method, bce, paramKind, bean.beanClass(), lookup, errors, errorCauses, modifications);
+                invokeEnhancement(method, bce, paramKind, bean.beanClass(), lookup, sink);
             }
 
             // Also check archive classes for non-bean classes (e.g. added via ScannedClasses)
@@ -460,7 +466,7 @@ public final class BceProcessor {
                     if (!BceTypeMatcher.matchesClass(enhancement.types(), enhancement.withSubtypes(), archiveClass)) continue;
                     if (!BceTypeMatcher.matchesAnnotations(withAnnotations, archiveClass)) continue;
                     processedClasses.add(className);
-                    invokeEnhancement(method, bce, paramKind, className, lookup, errors, errorCauses, modifications);
+                    invokeEnhancement(method, bce, paramKind, className, lookup, sink);
                 }
             }
 
@@ -483,17 +489,23 @@ public final class BceProcessor {
                     if (!withAnnotationNames.isEmpty()
                             && !BceTypeMatcher.matchesAnnotationsByIndex(withAnnotationNames, classInfo)) continue;
                     processedClasses.add(classInfo.name());
-                    invokeEnhancement(method, bce, paramKind, classInfo.name(), lookup, errors, errorCauses, modifications);
+                    invokeEnhancement(method, bce, paramKind, classInfo.name(), lookup, sink);
                 }
             }
         }
     }
 
+    /**
+     * Where the {@code @Enhancement} invocations of one phase report: the error messages, the
+     * exceptions behind them, and the modifications keyed by the class they modify.
+     */
+    private record EnhancementSink(List<String> errors, List<Throwable> errorCauses,
+                                   Map<DotName, List<VaubanClassConfig>> modifications) {
+    }
+
     private static void invokeEnhancement(Method method, Object bce, EnhancementParamKind paramKind,
-                                           DotName className, IndexLookup lookup,
-                                           List<String> errors,
-                                           List<Throwable> errorCauses,
-                                           Map<DotName, List<VaubanClassConfig>> modifications) {
+                                           DotName className, IndexLookup lookup, EnhancementSink sink) {
+        var modifications = sink.modifications();
         var indexClass = lookup.getClass(className).orElse(null);
         if (indexClass == null) return;
         var vaubanClassInfo = new VaubanClassInfo(indexClass, lookup);
@@ -537,8 +549,8 @@ public final class BceProcessor {
         } catch (Exception e) {
             var unwrapped = e instanceof java.lang.reflect.InvocationTargetException ite
                     ? java.util.Objects.requireNonNullElse(ite.getCause(), ite) : e;
-            errors.add("@Enhancement error: " + unwrapped.getMessage());
-            errorCauses.add(unwrapped);
+            sink.errors().add("@Enhancement error: " + unwrapped.getMessage());
+            sink.errorCauses().add(unwrapped);
         }
     }
 
@@ -848,7 +860,7 @@ public final class BceProcessor {
         for (var c = cls; c != null && c != Object.class; c = c.getSuperclass()) {
             try {
                 Collections.addAll(methods, c.getDeclaredMethods());
-            } catch (LinkageError ignored) {
+            } catch (LinkageError _) {
                 // Optional type missing in a signature — skip this layer.
             }
         }

@@ -70,8 +70,8 @@ final class LangModelTypeMapper {
             }
             case ArrayType at -> {
                 var elem = toIndexType(at.componentType());
-                if (elem instanceof TypeInfo.ArrayType inner) {
-                    yield new TypeInfo.ArrayType(inner.componentType(), inner.dimensions() + 1);
+                if (elem instanceof TypeInfo.ArrayType(var innerComponent, var innerDimensions)) {
+                    yield new TypeInfo.ArrayType(innerComponent, innerDimensions + 1);
                 }
                 yield new TypeInfo.ArrayType(elem, 1);
             }

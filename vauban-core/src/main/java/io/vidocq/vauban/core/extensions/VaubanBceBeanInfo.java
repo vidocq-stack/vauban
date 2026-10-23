@@ -21,13 +21,10 @@ package io.vidocq.vauban.core.extensions;
 
 import io.vidocq.vauban.core.bean.model.BeanDescriptor;
 import io.vidocq.vauban.core.langmodel.IndexLookup;
-import io.vidocq.vauban.core.langmodel.VaubanAnnotationInfo;
 import io.vidocq.vauban.core.langmodel.declarations.VaubanClassInfo;
 import io.vidocq.vauban.core.langmodel.types.TypeMapper;
-import io.vidocq.vauban.indexer.model.DotName;
 import jakarta.enterprise.inject.build.compatible.spi.BeanInfo;
 import jakarta.enterprise.inject.build.compatible.spi.DisposerInfo;
-import jakarta.enterprise.inject.build.compatible.spi.InterceptorInfo;
 import jakarta.enterprise.inject.build.compatible.spi.StereotypeInfo;
 import jakarta.enterprise.lang.model.AnnotationInfo;
 import jakarta.enterprise.lang.model.declarations.ClassInfo;

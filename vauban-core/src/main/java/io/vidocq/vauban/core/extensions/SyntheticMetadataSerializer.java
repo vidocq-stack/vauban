@@ -47,6 +47,10 @@ public final class SyntheticMetadataSerializer {
     public static final String METADATA_PATH = "META-INF/vauban-synthetic-metadata.properties";
     public static final String BCE_PROCESSED_MARKER = "META-INF/vauban-bce-processed";
 
+    private static final String QUALIFIERS = ".qualifiers";
+    private static final String PRIORITY = ".priority";
+    private static final String EVENT_TYPE = ".eventType";
+
     private SyntheticMetadataSerializer() {}
 
     // ---- Write ----
@@ -93,9 +97,10 @@ public final class SyntheticMetadataSerializer {
         // compilation is still producing. A class type is written by name and loaded at run time like
         // the others (BUG-20261008-01); this format has no notation for a parameterized type yet.
         for (var type : builder.getIndexTypes()) {
-            if (type instanceof io.vidocq.vauban.indexer.model.TypeInfo.ClassType ct
-                    && !typeNames.contains(ct.name().value())) {
-                typeNames.add(ct.name().value());
+            if (type instanceof io.vidocq.vauban.indexer.model.TypeInfo.ClassType(
+                    io.vidocq.vauban.indexer.model.DotName(var className))
+                    && !typeNames.contains(className)) {
+                typeNames.add(className);
             }
         }
         props.setProperty(prefix + ".types", String.join(",", typeNames));
@@ -105,14 +110,14 @@ public final class SyntheticMetadataSerializer {
             qualifierNames.add(q.annotationType().getName());
         }
         if (!qualifierNames.isEmpty()) {
-            props.setProperty(prefix + ".qualifiers", String.join(",", qualifierNames));
+            props.setProperty(prefix + QUALIFIERS, String.join(",", qualifierNames));
         }
 
         if (builder.getName() != null) {
             props.setProperty(prefix + ".name", builder.getName());
         }
         props.setProperty(prefix + ".alternative", String.valueOf(builder.isAlternative()));
-        props.setProperty(prefix + ".priority", String.valueOf(builder.getPriority()));
+        props.setProperty(prefix + PRIORITY, String.valueOf(builder.getPriority()));
 
         writeParams(props, prefix, "synthetic bean " + builder.getBeanClass().getName(), builder.getParams());
     }
@@ -121,9 +126,9 @@ public final class SyntheticMetadataSerializer {
                                               VaubanSyntheticObserverBuilder<?> builder) {
         var eventType = builder.getEventType();
         if (eventType instanceof Class<?> cls) {
-            props.setProperty(prefix + ".eventType", cls.getName());
+            props.setProperty(prefix + EVENT_TYPE, cls.getName());
         } else {
-            props.setProperty(prefix + ".eventType", eventType.getTypeName());
+            props.setProperty(prefix + EVENT_TYPE, eventType.getTypeName());
         }
 
         if (builder.getObserverClass() != null) {
@@ -135,10 +140,10 @@ public final class SyntheticMetadataSerializer {
             qualifierNames.add(q.annotationType().getName());
         }
         if (!qualifierNames.isEmpty()) {
-            props.setProperty(prefix + ".qualifiers", String.join(",", qualifierNames));
+            props.setProperty(prefix + QUALIFIERS, String.join(",", qualifierNames));
         }
 
-        props.setProperty(prefix + ".priority", String.valueOf(builder.getPriority()));
+        props.setProperty(prefix + PRIORITY, String.valueOf(builder.getPriority()));
         props.setProperty(prefix + ".async", String.valueOf(builder.isAsync()));
 
         writeParams(props, prefix, "synthetic observer of " + builder.getEventType().getTypeName(), builder.getParams());
@@ -182,10 +187,10 @@ public final class SyntheticMetadataSerializer {
                     props.getProperty(prefix + ".disposer"),
                     props.getProperty(prefix + ".scope"),
                     parseList(props.getProperty(prefix + ".types", "")),
-                    parseList(props.getProperty(prefix + ".qualifiers", "")),
+                    parseList(props.getProperty(prefix + QUALIFIERS, "")),
                     readParams(props, prefix),
                     Boolean.parseBoolean(props.getProperty(prefix + ".alternative", "false")),
-                    Integer.parseInt(props.getProperty(prefix + ".priority", "0")),
+                    Integer.parseInt(props.getProperty(prefix + PRIORITY, "0")),
                     props.getProperty(prefix + ".name")
             ));
         }
@@ -200,11 +205,11 @@ public final class SyntheticMetadataSerializer {
         for (int i = 0; i < count; i++) {
             var prefix = "observer." + i;
             observers.add(new SyntheticObserverDescriptor(
-                    props.getProperty(prefix + ".eventType"),
+                    props.getProperty(prefix + EVENT_TYPE),
                     props.getProperty(prefix + ".observer"),
-                    parseList(props.getProperty(prefix + ".qualifiers", "")),
+                    parseList(props.getProperty(prefix + QUALIFIERS, "")),
                     readParams(props, prefix),
-                    Integer.parseInt(props.getProperty(prefix + ".priority",
+                    Integer.parseInt(props.getProperty(prefix + PRIORITY,
                             String.valueOf(jakarta.interceptor.Interceptor.Priority.APPLICATION))),
                     Boolean.parseBoolean(props.getProperty(prefix + ".async", "false"))
             ));

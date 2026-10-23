@@ -64,8 +64,8 @@ public final class VaubanSyntheticBeanBuilder<T> implements SyntheticBeanBuilder
         // Best effort: store class name, resolve later
         try {
             types.add(Class.forName(type.name(), false, beanClass.getClassLoader()));
-        } catch (ClassNotFoundException e) {
-            // ignore
+        } catch (ClassNotFoundException _) {
+            // Best effort: a type the bean class's loader cannot see is left out.
         }
         return this;
     }

@@ -160,21 +160,22 @@ public final class SyntheticParamCodec {
 
     private static String member(AnnotationValue value) {
         return switch (value) {
-            case AnnotationValue.StringVal v -> "s:" + v.value();
-            case AnnotationValue.BooleanVal v -> "z:" + v.value();
-            case AnnotationValue.ByteVal v -> "b:" + v.value();
-            case AnnotationValue.CharVal v -> "c:" + (int) v.value();
-            case AnnotationValue.ShortVal v -> "h:" + v.value();
-            case AnnotationValue.IntVal v -> "i:" + v.value();
-            case AnnotationValue.LongVal v -> "j:" + v.value();
-            case AnnotationValue.FloatVal v -> "f:" + v.value();
-            case AnnotationValue.DoubleVal v -> "d:" + v.value();
-            case AnnotationValue.ClassVal v -> "k:" + v.className().value();
-            case AnnotationValue.EnumVal v -> "e:" + frame(v.enumType().value()) + frame(v.constantName());
-            case AnnotationValue.AnnotationVal v -> "@:" + annotation(v.annotation());
-            case AnnotationValue.ArrayVal v -> {
+            case AnnotationValue.StringVal(var text) -> "s:" + text;
+            case AnnotationValue.BooleanVal(var flag) -> "z:" + flag;
+            case AnnotationValue.ByteVal(var number) -> "b:" + number;
+            case AnnotationValue.CharVal(var character) -> "c:" + (int) character;
+            case AnnotationValue.ShortVal(var number) -> "h:" + number;
+            case AnnotationValue.IntVal(var number) -> "i:" + number;
+            case AnnotationValue.LongVal(var number) -> "j:" + number;
+            case AnnotationValue.FloatVal(var number) -> "f:" + number;
+            case AnnotationValue.DoubleVal(var number) -> "d:" + number;
+            case AnnotationValue.ClassVal(DotName(var className)) -> "k:" + className;
+            case AnnotationValue.EnumVal(DotName(var enumType), var constantName) ->
+                    "e:" + frame(enumType) + frame(constantName);
+            case AnnotationValue.AnnotationVal(var nested) -> "@:" + annotation(nested);
+            case AnnotationValue.ArrayVal(var elements) -> {
                 var out = new StringBuilder("[:");
-                v.values().forEach(element -> out.append(frame(member(element))));
+                elements.forEach(element -> out.append(frame(member(element))));
                 yield out.toString();
             }
         };
@@ -323,7 +324,7 @@ public final class SyntheticParamCodec {
         }
         try {
             return Class.forName(name, false, loader);
-        } catch (ClassNotFoundException | LinkageError e) {
+        } catch (ClassNotFoundException | LinkageError _) {
             throw missing(name);
         }
     }
