@@ -186,15 +186,7 @@ public final class ClientProxySourceRenderer {
             sb.append(params.get(i).sourceName()).append(" p").append(i);
         }
         sb.append(")");
-        // Keep the bean method's (erased) checked-exception contract so the forwarding call compiles.
-        var thrown = m.thrownTypes();
-        if (!thrown.isEmpty()) {
-            sb.append(" throws ");
-            for (int i = 0; i < thrown.size(); i++) {
-                if (i > 0) sb.append(", ");
-                sb.append(thrown.get(i).sourceName());
-            }
-        }
+        appendThrowsClause(sb, m.thrownTypes());
         sb.append(" {\n");
         // A shadowed default method goes through its interface: a call typed by the bean class
         // resolves to the shadowing private method and is refused (BUG-20261004-08). The interface
@@ -212,5 +204,17 @@ public final class ClientProxySourceRenderer {
         }
         sb.append(");\n");
         sb.append("    }\n\n");
+    }
+
+    /** Keeps the bean method's (erased) checked-exception contract so the forwarding call compiles. */
+    private static void appendThrowsClause(StringBuilder sb, List<TypeRef> thrown) {
+        if (thrown.isEmpty()) {
+            return;
+        }
+        sb.append(" throws ");
+        for (int i = 0; i < thrown.size(); i++) {
+            if (i > 0) sb.append(", ");
+            sb.append(thrown.get(i).sourceName());
+        }
     }
 }

@@ -41,6 +41,8 @@ import java.lang.constant.MethodTypeDesc;
  */
 public final class BeanFactoryGenerator {
 
+    private static final String CREATE = "create";
+
     private BeanFactoryGenerator() {}
 
     /**
@@ -80,7 +82,7 @@ public final class BeanFactoryGenerator {
                     ClassTypeSig.of(beanFactoryCD, TypeArg.of(ClassTypeSig.of(beanCD)))
             )));
 
-            // Constructor: public MyBean_Factory() { super(); }
+            // The public no-arg constructor, which only calls the Object constructor.
             clb.withMethodBody(
                     ConstantDescs.INIT_NAME,
                     MethodTypeDesc.of(ConstantDescs.CD_void),
@@ -92,9 +94,9 @@ public final class BeanFactoryGenerator {
                         cob.return_();
                     });
 
-            // Method: public MyBean create() { return new MyBean(); }
+            // The typed create method, which calls the bean's no-arg constructor.
             clb.withMethodBody(
-                    "create",
+                    CREATE,
                     MethodTypeDesc.of(beanCD),
                     ClassFile.ACC_PUBLIC,
                     cob -> {
@@ -105,15 +107,15 @@ public final class BeanFactoryGenerator {
                         cob.areturn();
                     });
 
-            // Bridge method: public Object create() { return this.create(); }
-            // (needed due to type erasure of BeanFactory<T>)
+            // The bridge create method returning Object, which delegates to the typed one
+            // (needed because BeanFactory's type parameter is erased).
             clb.withMethodBody(
-                    "create",
+                    CREATE,
                     MethodTypeDesc.of(objectCD),
                     ClassFile.ACC_PUBLIC | ClassFile.ACC_BRIDGE | ClassFile.ACC_SYNTHETIC,
                     cob -> {
                         cob.aload(0);
-                        cob.invokevirtual(factoryCD, "create", MethodTypeDesc.of(beanCD));
+                        cob.invokevirtual(factoryCD, CREATE, MethodTypeDesc.of(beanCD));
                         cob.areturn();
                     });
         });

@@ -120,24 +120,28 @@ public final class WeavePlan {
      */
     public static void executeRegisteredPlans() {
         for (var property : System.getProperties().stringPropertyNames()) {
-            if (!property.startsWith(PROP_PREFIX)) continue;
-            Path outputDir = Path.of(System.getProperty(property));
-            Path planFile = outputDir.resolve(PLAN_RESOURCE);
-            try {
-                if (!Files.isRegularFile(planFile)) {
-                    System.clearProperty(property);
-                    continue;
-                }
-                if (execute(outputDir, planFile)) {
-                    Files.deleteIfExists(planFile);
-                    System.clearProperty(property);
-                }
-            } catch (IOException | UncheckedIOException e) {
-                // Loud, never silent: an unexecuted plan means the boot validator will
-                // report the unwoven bean with a clear message anyway.
-                LOG.log(System.Logger.Level.ERROR,
-                        "[Vauban] failed to execute weave plan " + planFile, e);
+            if (property.startsWith(PROP_PREFIX)) {
+                executeRegisteredPlan(property);
             }
+        }
+    }
+
+    /** Executes the plan registered under {@code property}; unregisters it once done or gone. */
+    private static void executeRegisteredPlan(String property) {
+        Path outputDir = Path.of(System.getProperty(property));
+        Path planFile = outputDir.resolve(PLAN_RESOURCE);
+        try {
+            if (!Files.isRegularFile(planFile)) {
+                System.clearProperty(property);
+            } else if (execute(outputDir, planFile)) {
+                Files.deleteIfExists(planFile);
+                System.clearProperty(property);
+            }
+        } catch (IOException | UncheckedIOException e) {
+            // Loud, never silent: an unexecuted plan means the boot validator will
+            // report the unwoven bean with a clear message anyway.
+            LOG.log(System.Logger.Level.ERROR,
+                    "[Vauban] failed to execute weave plan " + planFile, e);
         }
     }
 
@@ -145,22 +149,27 @@ public final class WeavePlan {
     private static boolean execute(Path outputDir, Path planFile) throws IOException {
         boolean complete = true;
         for (var raw : Files.readAllLines(planFile)) {
-            if (raw.isBlank()) continue;
-            var line = Line.parse(raw);
-            Path classFile = outputDir.resolve(line.fqn().replace('.', '/') + ".class");
-            if (!Files.isRegularFile(classFile)) {
+            if (!raw.isBlank() && !executeLine(outputDir, Line.parse(raw))) {
                 complete = false;
-                continue;
-            }
-            byte[] bytes = Files.readAllBytes(classFile);
-            byte[] result = switch (line.kind()) {
-                case BEAN -> ProxyLinkWeaver.addMarkerConstructor(bytes, line.chain());
-                case PROXY -> ProxyLinkWeaver.retargetProxyConstructor(bytes);
-            };
-            if (result != null) {
-                Files.write(classFile, result);
             }
         }
         return complete;
+    }
+
+    /** Weaves the class file of one line; returns {@code false} when that class file is absent. */
+    private static boolean executeLine(Path outputDir, Line line) throws IOException {
+        Path classFile = outputDir.resolve(line.fqn().replace('.', '/') + ".class");
+        if (!Files.isRegularFile(classFile)) {
+            return false;
+        }
+        byte[] bytes = Files.readAllBytes(classFile);
+        byte[] result = switch (line.kind()) {
+            case BEAN -> ProxyLinkWeaver.addMarkerConstructor(bytes, line.chain());
+            case PROXY -> ProxyLinkWeaver.retargetProxyConstructor(bytes);
+        };
+        if (result != null) {
+            Files.write(classFile, result);
+        }
+        return true;
     }
 }

@@ -90,12 +90,7 @@ public final class InterfaceProxySourceRenderer {
         var methods = new ArrayList<ProxyMethodShape>();
         var seen = new HashSet<String>();
         for (ExecutableElement m : ElementFilter.methodsIn(elements.getAllMembers(iface))) {
-            var mods = m.getModifiers();
-            if (mods.contains(Modifier.STATIC) || mods.contains(Modifier.PRIVATE)) {
-                continue;
-            }
-            if (m.getEnclosingElement() instanceof TypeElement te
-                    && te.getQualifiedName().contentEquals("java.lang.Object")) {
+            if (!isForwardable(m)) {
                 continue;
             }
             var params = m.getParameters().stream()
@@ -104,17 +99,26 @@ public final class InterfaceProxySourceRenderer {
             var key = m.getSimpleName() + "|" + params.stream()
                     .map(io.vidocq.vauban.core.interceptor.TypeRef::sourceName)
                     .reduce("", (a, b) -> a + "," + b);
-            if (!seen.add(key)) {
-                continue;
+            if (seen.add(key)) {
+                methods.add(new ProxyMethodShape(
+                        m.getSimpleName().toString(),
+                        InterceptedShapeFromElements.typeRefOf(m.getReturnType(), elements, types, 0),
+                        params,
+                        m.getThrownTypes().stream()
+                                .map(t -> InterceptedShapeFromElements.typeRefOf(t, elements, types, 0)).toList(),
+                        false));
             }
-            methods.add(new ProxyMethodShape(
-                    m.getSimpleName().toString(),
-                    InterceptedShapeFromElements.typeRefOf(m.getReturnType(), elements, types, 0),
-                    params,
-                    m.getThrownTypes().stream()
-                            .map(t -> InterceptedShapeFromElements.typeRefOf(t, elements, types, 0)).toList(),
-                    false));
         }
         return methods;
+    }
+
+    /** An instance method a client can call, other than one of the implicit {@code java.lang.Object} methods. */
+    private static boolean isForwardable(ExecutableElement m) {
+        var mods = m.getModifiers();
+        if (mods.contains(Modifier.STATIC) || mods.contains(Modifier.PRIVATE)) {
+            return false;
+        }
+        return !(m.getEnclosingElement() instanceof TypeElement te
+                && te.getQualifiedName().contentEquals("java.lang.Object"));
     }
 }

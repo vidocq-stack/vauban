@@ -28,7 +28,7 @@ import io.vidocq.vauban.indexer.model.TypeInfo;
 
 import java.util.Comparator;
 import java.util.List;
-import java.util.function.Function;
+import java.util.function.UnaryOperator;
 import java.util.stream.Collectors;
 
 /**
@@ -49,15 +49,23 @@ public final class AnnotationArtefacts {
     private static final DotName NONBINDING = DotName.of("jakarta.enterprise.util.Nonbinding");
     private static final DotName RETENTION = DotName.of("java.lang.annotation.Retention");
     private static final DotName RETENTION_POLICY = DotName.of("java.lang.annotation.RetentionPolicy");
+    private static final String JAVA_LANG_OBJECT = "java.lang.Object";
+    private static final String OVERRIDE = "\n    @Override\n";
+    private static final String CASE_OPEN = "            case \"";
+    private static final String DEFAULT_NULL = "            default -> null;\n";
+    private static final String SWITCH_END = "        };\n";
+    private static final String METHOD_END = "    }\n";
+    private static final String NESTED_METHOD_END = ";\n        }\n";
+    private static final String RETURN = "            return ";
 
     /**
      * The canonical name of a type given its binary name, or {@code null} when the compiler does not
      * know the type; then the binary name with each {@code $} turned into {@code .} is written, which
      * is right for a nested type only (BUG-20261007-01).
      */
-    private final Function<String, String> canonicalNames;
+    private final UnaryOperator<String> canonicalNames;
 
-    private AnnotationArtefacts(Function<String, String> canonicalNames) {
+    private AnnotationArtefacts(UnaryOperator<String> canonicalNames) {
         this.canonicalNames = canonicalNames;
     }
 
@@ -87,7 +95,7 @@ public final class AnnotationArtefacts {
      * @param canonicalNames the canonical name of a type given its binary name, or {@code null} when
      *                       the type is not known
      */
-    public static Rendered render(List<ClassInfo> annotationTypes, Function<String, String> canonicalNames) {
+    public static Rendered render(List<ClassInfo> annotationTypes, UnaryOperator<String> canonicalNames) {
         return new AnnotationArtefacts(canonicalNames).renderAll(annotationTypes);
     }
 
@@ -116,39 +124,39 @@ public final class AnnotationArtefacts {
         // class, which the JVM loads when an arm below runs. A type that is on the compile path and
         // absent at run time — an optional integration — therefore costs nothing, where a chain of
         // `instanceof` resolved every one of them on the first call (vauban#88, heisenberg).
-        sb.append("\n    @Override\n");
+        sb.append(OVERRIDE);
         sb.append("    public io.vidocq.vauban.api.AnnotationTypeMetadata annotationMetadata(String annotationClassName) {\n");
         sb.append("        return switch (annotationClassName) {\n");
         for (var type : types) {
-            sb.append("            case \"").append(type.name().value()).append("\" -> ")
+            sb.append(CASE_OPEN).append(type.name().value()).append("\" -> ")
                     .append(literalName(type.name())).append(".metadata();\n");
         }
-        sb.append("            default -> null;\n");
-        sb.append("        };\n");
-        sb.append("    }\n");
+        sb.append(DEFAULT_NULL);
+        sb.append(SWITCH_END);
+        sb.append(METHOD_END);
 
-        sb.append("\n    @Override\n");
+        sb.append(OVERRIDE);
         sb.append("    public java.util.Map<String, Object> readAnnotation(java.lang.annotation.Annotation annotation) {\n");
         sb.append("        return switch (annotation.annotationType().getName()) {\n");
         for (var type : types) {
-            sb.append("            case \"").append(type.name().value()).append("\" -> ")
+            sb.append(CASE_OPEN).append(type.name().value()).append("\" -> ")
                     .append(literalName(type.name())).append(".read(annotation);\n");
         }
-        sb.append("            default -> null;\n");
-        sb.append("        };\n");
-        sb.append("    }\n");
+        sb.append(DEFAULT_NULL);
+        sb.append(SWITCH_END);
+        sb.append(METHOD_END);
 
-        sb.append("\n    @Override\n");
+        sb.append(OVERRIDE);
         sb.append("    public java.lang.annotation.Annotation annotationLiteral(String annotationClassName,\n");
         sb.append("            java.util.Map<String, Object> members) {\n");
         sb.append("        return switch (annotationClassName) {\n");
         for (var type : types) {
-            sb.append("            case \"").append(type.name().value()).append("\" -> new ")
+            sb.append(CASE_OPEN).append(type.name().value()).append("\" -> new ")
                     .append(literalName(type.name())).append("(members);\n");
         }
-        sb.append("            default -> null;\n");
-        sb.append("        };\n");
-        sb.append("    }\n");
+        sb.append(DEFAULT_NULL);
+        sb.append(SWITCH_END);
+        sb.append(METHOD_END);
         return sb.toString();
     }
 
@@ -248,11 +256,11 @@ public final class AnnotationArtefacts {
             sb.append("\n        @Override\n        public ").append(sourceName(member.returnType())).append(" ")
                     .append(member.name()).append("() {\n            return ")
                     .append(isArray(member.returnType()) ? field(member) + ".clone()" : field(member))
-                    .append(";\n        }\n");
+                    .append(NESTED_METHOD_END);
         }
         sb.append("\n        @Override\n");
         sb.append("        public Class<? extends java.lang.annotation.Annotation> annotationType() {\n");
-        sb.append("            return ").append(source).append(".class;\n        }\n");
+        sb.append(RETURN).append(source).append(".class;\n        }\n");
         sb.append(metadataMethod(type, rendered));
         sb.append(readMethod(type));
         sb.append(equalsMethod(source, members));
@@ -263,7 +271,7 @@ public final class AnnotationArtefacts {
             sb.append("            throw new java.lang.annotation.IncompleteAnnotationException(")
                     .append(source).append(".class, member);\n        }\n");
         }
-        sb.append("    }\n");
+        sb.append(METHOD_END);
         return sb.toString();
     }
 
@@ -271,13 +279,13 @@ public final class AnnotationArtefacts {
         var sb = new StringBuilder();
         sb.append("\n        @Override\n        public boolean equals(Object other) {\n");
         if (members.isEmpty()) {
-            sb.append("            return other instanceof ").append(source).append(";\n        }\n");
+            sb.append("            return other instanceof ").append(source).append(NESTED_METHOD_END);
             return sb.toString();
         }
         sb.append("            if (!(other instanceof ").append(source).append(" that)) return false;\n");
-        sb.append("            return ").append(members.stream()
-                .map(member -> memberEquals(member)).collect(Collectors.joining("\n                    && ")));
-        sb.append(";\n        }\n");
+        sb.append(RETURN).append(members.stream()
+                .map(this::memberEquals).collect(Collectors.joining("\n                    && ")));
+        sb.append(NESTED_METHOD_END);
         return sb.toString();
     }
 
@@ -288,8 +296,8 @@ public final class AnnotationArtefacts {
         if (isArray(member.returnType())) {
             return "java.util.Arrays.equals(" + field + ", " + call + ")";
         }
-        if (member.returnType() instanceof TypeInfo.PrimitiveType primitive) {
-            return switch (primitive.kind()) {
+        if (member.returnType() instanceof TypeInfo.PrimitiveType(TypeInfo.PrimitiveType.Kind kind)) {
+            return switch (kind) {
                 case FLOAT -> "Float.valueOf(" + field + ").equals(" + call + ")";
                 case DOUBLE -> "Double.valueOf(" + field + ").equals(" + call + ")";
                 default -> field + " == " + call;
@@ -305,9 +313,9 @@ public final class AnnotationArtefacts {
             sb.append("            return 0;\n        }\n");
             return sb.toString();
         }
-        sb.append("            return ").append(members.stream()
+        sb.append(RETURN).append(members.stream()
                 .map(this::memberHash).collect(Collectors.joining("\n                    + ")));
-        sb.append(";\n        }\n");
+        sb.append(NESTED_METHOD_END);
         return sb.toString();
     }
 
@@ -317,8 +325,8 @@ public final class AnnotationArtefacts {
         String value;
         if (isArray(member.returnType())) {
             value = "java.util.Arrays.hashCode(" + field + ")";
-        } else if (member.returnType() instanceof TypeInfo.PrimitiveType primitive) {
-            value = switch (primitive.kind()) {
+        } else if (member.returnType() instanceof TypeInfo.PrimitiveType(TypeInfo.PrimitiveType.Kind kind)) {
+            value = switch (kind) {
                 case BOOLEAN -> "Boolean.hashCode(" + field + ")";
                 case BYTE -> "Byte.hashCode(" + field + ")";
                 case CHAR -> "Character.hashCode(" + field + ")";
@@ -368,8 +376,8 @@ public final class AnnotationArtefacts {
     }
 
     private String scalarRendering(TypeInfo type, String value) {
-        if (type instanceof TypeInfo.ClassType classType) {
-            return switch (classType.name().value()) {
+        if (type instanceof TypeInfo.ClassType(DotName name)) {
+            return switch (name.value()) {
                 case "java.lang.String" -> "\"\\\"\" + " + value + " + \"\\\"\"";
                 case "java.lang.Class" -> value + ".getName() + \".class\"";
                 default -> "String.valueOf(" + value + ")";
@@ -402,9 +410,9 @@ public final class AnnotationArtefacts {
     private boolean keptAtRuntime(ClassInfo type) {
         return type.annotation(RETENTION)
                 .map(retention -> retention.members().get("value"))
-                .filter(value -> value instanceof AnnotationValue.EnumVal enumValue
-                        && enumValue.enumType().equals(RETENTION_POLICY)
-                        && "RUNTIME".equals(enumValue.constantName()))
+                .filter(value -> value instanceof AnnotationValue.EnumVal(DotName enumType, String constantName)
+                        && enumType.equals(RETENTION_POLICY)
+                        && "RUNTIME".equals(constantName))
                 .isPresent();
     }
 
@@ -420,27 +428,28 @@ public final class AnnotationArtefacts {
     private boolean renderable(AnnotationValue value, List<ClassInfo> rendered) {
         return switch (value) {
             // A nested annotation needs a literal class, so its type has to be rendered here too.
-            case AnnotationValue.AnnotationVal nested -> rendered.stream()
-                    .anyMatch(type -> type.name().equals(nested.annotation().name()));
-            case AnnotationValue.ArrayVal array -> array.values().stream().allMatch(item -> renderable(item, rendered));
+            case AnnotationValue.AnnotationVal(AnnotationInfo nested) -> rendered.stream()
+                    .anyMatch(type -> type.name().equals(nested.name()));
+            case AnnotationValue.ArrayVal(List<AnnotationValue> values) ->
+                    values.stream().allMatch(item -> renderable(item, rendered));
             default -> true;
         };
     }
 
     private String expression(AnnotationValue value, TypeInfo type, List<ClassInfo> rendered) {
         return switch (value) {
-            case AnnotationValue.StringVal v -> quote(v.value());
-            case AnnotationValue.BooleanVal v -> String.valueOf(v.value());
-            case AnnotationValue.ByteVal v -> "(byte) " + v.value();
-            case AnnotationValue.CharVal v -> charLiteral(v.value());
-            case AnnotationValue.ShortVal v -> "(short) " + v.value();
-            case AnnotationValue.IntVal v -> String.valueOf(v.value());
-            case AnnotationValue.LongVal v -> v.value() + "L";
-            case AnnotationValue.FloatVal v -> floatLiteral(v.value());
-            case AnnotationValue.DoubleVal v -> doubleLiteral(v.value());
-            case AnnotationValue.ClassVal v -> sourceName(v.className()) + ".class";
-            case AnnotationValue.EnumVal v -> sourceName(v.enumType()) + "." + v.constantName();
-            case AnnotationValue.AnnotationVal v -> nestedLiteral(v.annotation(), rendered);
+            case AnnotationValue.StringVal(String v) -> quote(v);
+            case AnnotationValue.BooleanVal(boolean v) -> String.valueOf(v);
+            case AnnotationValue.ByteVal(byte v) -> "(byte) " + v;
+            case AnnotationValue.CharVal(char v) -> charLiteral(v);
+            case AnnotationValue.ShortVal(short v) -> "(short) " + v;
+            case AnnotationValue.IntVal(int v) -> String.valueOf(v);
+            case AnnotationValue.LongVal(long v) -> v + "L";
+            case AnnotationValue.FloatVal(float v) -> floatLiteral(v);
+            case AnnotationValue.DoubleVal(double v) -> doubleLiteral(v);
+            case AnnotationValue.ClassVal(DotName className) -> sourceName(className) + ".class";
+            case AnnotationValue.EnumVal(DotName enumType, String constantName) -> sourceName(enumType) + "." + constantName;
+            case AnnotationValue.AnnotationVal(AnnotationInfo annotation) -> nestedLiteral(annotation, rendered);
             case AnnotationValue.ArrayVal v -> arrayExpression(v, type, rendered);
         };
     }
@@ -453,7 +462,7 @@ public final class AnnotationArtefacts {
                     var member = members.stream().filter(m -> m.name().equals(entry.getKey())).findFirst();
                     return "\"" + entry.getKey() + "\", "
                             + expression(entry.getValue(),
-                                    member.map(MethodInfo::returnType).orElse(new TypeInfo.ClassType(DotName.of("java.lang.Object"))),
+                                    member.map(MethodInfo::returnType).orElse(new TypeInfo.ClassType(DotName.of(JAVA_LANG_OBJECT))),
                                     rendered);
                 })
                 .collect(Collectors.joining(", "));
@@ -504,7 +513,7 @@ public final class AnnotationArtefacts {
             case 'F' -> "float";
             case 'D' -> "double";
             case 'L' -> canonicalName(element.substring(1, element.length() - 1));
-            default -> "java.lang.Object";
+            default -> JAVA_LANG_OBJECT;
         };
         return name + "[]".repeat(dimensions);
     }
@@ -512,19 +521,20 @@ public final class AnnotationArtefacts {
     /** The type as the declaration writes it — what a field, a parameter or an override must say. */
     String sourceName(TypeInfo type) {
         return switch (type) {
-            case TypeInfo.ClassType classType -> sourceName(classType.name());
-            case TypeInfo.ParameterizedType parameterized -> sourceName(parameterized.rawType())
-                    + parameterized.typeArguments().stream().map(this::sourceName)
+            case TypeInfo.ClassType(DotName name) -> sourceName(name);
+            case TypeInfo.ParameterizedType(DotName rawType, List<TypeInfo> typeArguments) -> sourceName(rawType)
+                    + typeArguments.stream().map(this::sourceName)
                             .collect(Collectors.joining(", ", "<", ">"));
-            case TypeInfo.ArrayType array -> sourceName(array.componentType()) + "[]".repeat(array.dimensions());
-            case TypeInfo.PrimitiveType primitive -> primitive.kind().name().toLowerCase(java.util.Locale.ROOT);
-            case TypeInfo.WildcardType wildcard -> {
-                if (wildcard.upperBound() != null) yield "? extends " + sourceName(wildcard.upperBound());
-                if (wildcard.lowerBound() != null) yield "? super " + sourceName(wildcard.lowerBound());
+            case TypeInfo.ArrayType(TypeInfo componentType, int dimensions) ->
+                    sourceName(componentType) + "[]".repeat(dimensions);
+            case TypeInfo.PrimitiveType(TypeInfo.PrimitiveType.Kind kind) -> kind.name().toLowerCase(java.util.Locale.ROOT);
+            case TypeInfo.WildcardType(TypeInfo upperBound, TypeInfo lowerBound) -> {
+                if (upperBound != null) yield "? extends " + sourceName(upperBound);
+                if (lowerBound != null) yield "? super " + sourceName(lowerBound);
                 yield "?";
             }
             case TypeInfo.VoidType _ -> "void";
-            default -> "java.lang.Object";
+            default -> JAVA_LANG_OBJECT;
         };
     }
 
@@ -532,15 +542,16 @@ public final class AnnotationArtefacts {
     private String erasure(TypeInfo type) {
         return switch (type) {
             case TypeInfo.ParameterizedType parameterized -> sourceName(parameterized.rawType());
-            case TypeInfo.ArrayType array -> erasure(array.componentType()) + "[]".repeat(array.dimensions());
+            case TypeInfo.ArrayType(TypeInfo componentType, int dimensions) ->
+                    erasure(componentType) + "[]".repeat(dimensions);
             default -> sourceName(type);
         };
     }
 
     /** The boxed form, for the cast of a value taken out of a {@code Map<String, Object>}. */
     private String boxed(TypeInfo type) {
-        if (type instanceof TypeInfo.PrimitiveType primitive) {
-            return switch (primitive.kind()) {
+        if (type instanceof TypeInfo.PrimitiveType(TypeInfo.PrimitiveType.Kind kind)) {
+            return switch (kind) {
                 case BOOLEAN -> "Boolean";
                 case BYTE -> "Byte";
                 case CHAR -> "Character";

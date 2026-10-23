@@ -51,12 +51,20 @@ import java.util.Set;
  */
 public final class ElementScanner {
 
-    private final Elements elements;
-    private final Types types;
+    private static final String JAVA_LANG_OBJECT = "java.lang.Object";
 
+    private final Elements elements;
+
+    /**
+     * Creates a scanner.
+     *
+     * @param elements the element utilities of the processing environment
+     * @param types    the type utilities of the processing environment; checked, not kept
+     *                 (the scanner needs no type operation, the parameter stays for callers)
+     */
     public ElementScanner(Elements elements, Types types) {
         this.elements = Objects.requireNonNull(elements);
-        this.types = Objects.requireNonNull(types);
+        Objects.requireNonNull(types);
     }
 
     /**
@@ -244,12 +252,9 @@ public final class ElementScanner {
                 var tv = (javax.lang.model.type.TypeVariable) mirror;
                 var bounds = new ArrayList<TypeInfo>();
                 var upper = tv.getUpperBound();
-                if (upper != null && upper.getKind() != TypeKind.NONE) {
-                    // Skip java.lang.Object bound (implicit)
-                    if (!(upper.getKind() == TypeKind.DECLARED
-                            && "java.lang.Object".equals(((TypeElement) ((DeclaredType) upper).asElement()).getQualifiedName().toString()))) {
-                        bounds.add(typeMirrorToTypeInfo(upper));
-                    }
+                // The java.lang.Object bound is implicit: skip it.
+                if (upper != null && upper.getKind() != TypeKind.NONE && !isJavaLangObject(upper)) {
+                    bounds.add(typeMirrorToTypeInfo(upper));
                 }
                 yield new TypeInfo.TypeVariable(tv.asElement().getSimpleName().toString(), bounds);
             }
@@ -259,8 +264,13 @@ public final class ElementScanner {
                 TypeInfo lower = wt.getSuperBound() != null ? typeMirrorToTypeInfo(wt.getSuperBound()) : null;
                 yield new TypeInfo.WildcardType(upper, lower);
             }
-            default -> new TypeInfo.ClassType(DotName.of("java.lang.Object")); // fallback
+            default -> new TypeInfo.ClassType(DotName.of(JAVA_LANG_OBJECT)); // fallback
         };
+    }
+
+    private static boolean isJavaLangObject(TypeMirror type) {
+        return type.getKind() == TypeKind.DECLARED
+                && JAVA_LANG_OBJECT.equals(((TypeElement) ((DeclaredType) type).asElement()).getQualifiedName().toString());
     }
 
     /**
@@ -272,7 +282,7 @@ public final class ElementScanner {
         return switch (mirror.getKind()) {
             case DECLARED -> binaryName((TypeElement) ((DeclaredType) mirror).asElement());
             case BOOLEAN, BYTE, CHAR, SHORT, INT, LONG, FLOAT, DOUBLE, VOID, ARRAY -> DotName.fromDescriptor(descriptor(mirror));
-            default -> DotName.of("java.lang.Object");
+            default -> DotName.of(JAVA_LANG_OBJECT);
         };
     }
 

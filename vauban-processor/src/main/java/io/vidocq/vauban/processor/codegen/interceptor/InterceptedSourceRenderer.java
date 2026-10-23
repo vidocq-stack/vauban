@@ -61,6 +61,11 @@ public final class InterceptedSourceRenderer {
     private static final String IM = "io.vidocq.vauban.core.interceptor.InterceptorManager";
     private static final String CTX = "io.vidocq.vauban.core.interceptor.VaubanInvocationContext";
     private static final String CREATIONAL = "jakarta.enterprise.context.spi.CreationalContext";
+    private static final String PUBLIC_MEMBER = "    public ";
+    private static final String MEMBER_END = "    }\n\n";
+    private static final String CLASS_LITERAL = ".class";
+    private static final String TRY_OPEN = "        try {\n";
+    private static final String BLOCK_END = "        }\n";
 
     private InterceptedSourceRenderer() {}
 
@@ -118,10 +123,10 @@ public final class InterceptedSourceRenderer {
         // (vauban#145): each mirror declares Throwable; the generated provider, which creates the
         // subclass, rethrows whatever it throws as is.
         for (CtorShape ctor : shape.constructors()) {
-            sb.append("    public ").append(subSimple).append("(").append(params(ctor.params()))
+            sb.append(PUBLIC_MEMBER).append(subSimple).append("(").append(params(ctor.params()))
                     .append(") throws java.lang.Throwable {\n");
             sb.append("        super(").append(args(ctor.params().size())).append(");\n");
-            sb.append("    }\n\n");
+            sb.append(MEMBER_END);
         }
 
         // $$init setter
@@ -132,7 +137,7 @@ public final class InterceptedSourceRenderer {
         sb.append("        this.$$bindings = b;\n");
         sb.append("        this.$$constructorBindings = cb;\n");
         sb.append("        this.$$context = c;\n");
-        sb.append("    }\n\n");
+        sb.append(MEMBER_END);
 
         // The $$ti$ glue erases to (Object, Object[]) Object, so two overloaded methods would
         // collide on the bare $$ti$<name>; give each overload a unique name (the $$super$<name>
@@ -175,8 +180,8 @@ public final class InterceptedSourceRenderer {
             if (m.defaultOwner() == null) continue;
             any = true;
             var type = new StringBuilder("java.lang.invoke.MethodType.methodType(")
-                    .append(sourceName(m.returnType())).append(".class");
-            for (TypeRef p : m.params()) type.append(", ").append(sourceName(p)).append(".class");
+                    .append(sourceName(m.returnType())).append(CLASS_LITERAL);
+            for (TypeRef p : m.params()) type.append(", ").append(sourceName(p)).append(CLASS_LITERAL);
             type.append(")");
             sb.append("    private static final java.lang.invoke.MethodHandle ").append(DEFAULT_HANDLE_PREFIX).append(i)
                     .append(" = $$special(").append(sourceName(m.defaultOwner())).append(".class, \"")
@@ -185,14 +190,14 @@ public final class InterceptedSourceRenderer {
         if (!any) return;
         sb.append("\n    private static java.lang.invoke.MethodHandle $$special(Class<?> owner, String name,\n")
                 .append("            java.lang.invoke.MethodType type) {\n")
-                .append("        try {\n")
+                .append(TRY_OPEN)
                 .append("            return java.lang.invoke.MethodHandles.lookup().findSpecial(owner, name, type, ")
                 .append(subSimple).append(".class);\n")
                 .append("        } catch (ReflectiveOperationException e) {\n")
                 .append("            throw new IllegalStateException(\"Cannot reach the default method \"\n")
                 .append("                    + owner.getName() + \".\" + name, e);\n")
-                .append("        }\n")
-                .append("    }\n\n");
+                .append(BLOCK_END)
+                .append(MEMBER_END);
     }
 
     /**
@@ -214,10 +219,10 @@ public final class InterceptedSourceRenderer {
         TypeRef ret = m.memberReturnType();
         String retType = sourceName(ret);
         sb.append("    @Override\n");
-        sb.append("    public ").append(retType).append(" ").append(m.name())
+        sb.append(PUBLIC_MEMBER).append(retType).append(" ").append(m.name())
                 .append("(").append(params(m.memberParams())).append(") {\n");
 
-        sb.append("        try {\n");
+        sb.append(TRY_OPEN);
         // Pre-init guard: during construction the container has not called $$init yet. It lives
         // INSIDE the try so that a checked exception thrown by the original method propagates through
         // sneaky() — the override drops the `throws` clause (MethodShape carries no throws), so a bare
@@ -252,8 +257,8 @@ public final class InterceptedSourceRenderer {
         }
         sb.append("        } catch (Throwable $$t) {\n");
         sb.append("            throw sneaky($$t);\n");
-        sb.append("        }\n");
-        sb.append("    }\n\n");
+        sb.append(BLOCK_END);
+        sb.append(MEMBER_END);
     }
 
     /**
@@ -263,23 +268,23 @@ public final class InterceptedSourceRenderer {
      */
     private static void renderSuperBridge(StringBuilder sb, MethodShape m, String defaultHandle) {
         TypeRef ret = m.returnType();
-        sb.append("    public ").append(sourceName(ret)).append(" ")
+        sb.append(PUBLIC_MEMBER).append(sourceName(ret)).append(" ")
                 .append(InterceptedShape.superBridgeName(m.name()))
                 .append("(").append(params(m.params())).append(") throws Exception {\n");
         if (defaultHandle != null) {
             // MethodHandle.invoke throws Throwable: rethrown as is, the bridge's contract unchanged.
-            sb.append("        try {\n");
+            sb.append(TRY_OPEN);
             sb.append("            ").append(ret.isVoid() ? "" : "return ")
                     .append(originalCall(m, defaultHandle, args(m.params().size()), ret)).append(";\n");
             sb.append("        } catch (Throwable $$t) {\n");
             sb.append("            throw sneaky($$t);\n");
-            sb.append("        }\n");
+            sb.append(BLOCK_END);
         } else if (ret.isVoid()) {
             sb.append("        super.").append(m.name()).append("(").append(memberArgs(m)).append(");\n");
         } else {
             sb.append("        return super.").append(m.name()).append("(").append(memberArgs(m)).append(");\n");
         }
-        sb.append("    }\n\n");
+        sb.append(MEMBER_END);
     }
 
     /** {@code p0, (java.lang.String) p1, …}: each declared-type argument cast to its member type. */
@@ -317,7 +322,7 @@ public final class InterceptedSourceRenderer {
         } else {
             sb.append("        return ").append(call).append(";\n");
         }
-        sb.append("    }\n\n");
+        sb.append(MEMBER_END);
     }
 
     // ---- rendering helpers ----
@@ -356,16 +361,16 @@ public final class InterceptedSourceRenderer {
     private static String classLiterals(List<TypeRef> params) {
         var sb = new StringBuilder();
         for (TypeRef p : params) {
-            sb.append(", ").append(sourceName(p)).append(".class");
+            sb.append(", ").append(sourceName(p)).append(CLASS_LITERAL);
         }
         return sb.toString();
     }
 
-    private static String boxExpr(TypeRef t, String var) {
+    private static String boxExpr(TypeRef t, String expr) {
         if (t.isPrimitive()) {
-            return wrapper(t) + ".valueOf(" + var + ")";
+            return wrapper(t) + ".valueOf(" + expr + ")";
         }
-        return var;
+        return expr;
     }
 
     private static String unboxExpr(TypeRef t, String objExpr) {
