@@ -101,6 +101,11 @@ class EnhancementApplierConfigsTest {
         public void setup(String text) {
             // an initializer once an extension adds @Inject
         }
+
+        @Inject
+        public void init(String text) {
+            // an initializer from the start
+        }
     }
 
     private static VaubanClassConfig listenerConfig() {
@@ -230,6 +235,33 @@ class EnhancementApplierConfigsTest {
         assertEquals(1, bean.enhancedInjectionMethods().size());
         assertTrue(bean.enhancedInjectionMethods().iterator().next().contains("setup"));
         assertEquals(1, bean.injectionPoints().size());
+    }
+
+    @Test
+    void aDeclaredInitializerWithAModifiedParameterIsNoEnhancedInitializer() {
+        var config = listenerConfig();
+        method(config, "init", 1).getParameterConfigs().getFirst().addAnnotation(Red.class);
+
+        var bean = enhanced(config);
+
+        assertTrue(bean.enhancedInjectionMethods().isEmpty());
+        assertEquals(1, bean.injectionPoints().size());
+    }
+
+    @Test
+    void addedAnyAndNamedClassQualifiersKeepDefault() {
+        var config = listenerConfig();
+        config.addAnnotation(built(Any.class));
+        config.addAnnotation(built(Named.class, VALUE, BuiltAnnotationMember.ofString("listener")));
+        var defaultBean = new BeanDescriptor(BeanDescriptor.minimal(LISTENER).id(), LISTENER,
+                BeanDescriptor.BeanKind.MANAGED, Set.of(new TypeInfo.ClassType(LISTENER)),
+                Set.of(QualifierInstance.DEFAULT, QualifierInstance.ANY), null, false, 0, List.of(), null);
+
+        var bean = EnhancementApplier.applyEnhancements(List.of(defaultBean), Map.of(LISTENER, List.of(config)))
+                .getFirst();
+
+        assertTrue(names(bean.qualifiers()).containsAll(
+                Set.of(QualifierInstance.DEFAULT_NAME, QualifierInstance.ANY_NAME, QualifierInstance.NAMED_NAME)));
     }
 
     // ---- observers ----
