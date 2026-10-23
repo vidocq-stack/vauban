@@ -168,20 +168,6 @@ final class DisposerInvoker {
         }
     }
 
-    static void validateDisposerMethodDefinitions(List<DisposerDescriptor> disposers) {
-        var disposersByKey = new java.util.HashMap<String, List<DisposerDescriptor>>();
-        for (var disposer : disposers) {
-            var key = disposer.declaringClass().value() + "#" + disposer.disposedType();
-            disposersByKey.computeIfAbsent(key, k -> new java.util.ArrayList<>()).add(disposer);
-        }
-        for (var entry : disposersByKey.entrySet()) {
-            if (entry.getValue().size() > 1) {
-                throw new jakarta.enterprise.inject.spi.DefinitionException(
-                        "Multiple disposer methods for the same producer type: " + entry.getKey());
-            }
-        }
-    }
-
     void wireDisposers(List<BeanDescriptor> descriptors, List<DisposerDescriptor> disposers) {
         for (var descriptor : descriptors) {
             if (descriptor.kind() == BeanDescriptor.BeanKind.PRODUCER_METHOD
