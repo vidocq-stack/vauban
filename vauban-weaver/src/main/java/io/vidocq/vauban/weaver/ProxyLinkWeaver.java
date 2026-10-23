@@ -133,8 +133,8 @@ public final class ProxyLinkWeaver {
         var model = cf.parse(proxyClass);
         var superDesc = model.superclass().orElseThrow().asSymbol();
         return cf.transformClass(model, (clb, ce) -> {
-            if (ce instanceof MethodModel mm && mm.methodName().equalsString("<init>")) {
-                clb.withMethodBody("<init>", mm.methodTypeSymbol(), mm.flags().flagsMask(), cob -> {
+            if (ce instanceof MethodModel mm && mm.methodName().equalsString(ConstantDescs.INIT_NAME)) {
+                clb.withMethodBody(ConstantDescs.INIT_NAME, mm.methodTypeSymbol(), mm.flags().flagsMask(), cob -> {
                     cob.aload(0);
                     cob.aconst_null();
                     cob.invokespecial(superDesc, ConstantDescs.INIT_NAME, MTD_MARKER);
@@ -147,7 +147,7 @@ public final class ProxyLinkWeaver {
     }
 
     private static boolean isMarkerCtor(MethodModel method) {
-        return method.methodName().equalsString("<init>")
+        return method.methodName().equalsString(ConstantDescs.INIT_NAME)
                 && method.methodTypeSymbol().parameterCount() == 1
                 && method.methodTypeSymbol().parameterType(0).equals(CD_PROXY_LINK);
     }

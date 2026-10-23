@@ -28,7 +28,6 @@ import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.Map;
 import java.util.Set;
-import java.util.stream.Collectors;
 
 /**
  * The hand-off between the container's load-time weaving detection and
@@ -74,7 +73,7 @@ public record WeavingPlan(Map<String, ProxyLinkWeaver.SuperChain> beans, Set<Str
     public static WeavingPlan parse(String text) {
         var beans = new LinkedHashMap<String, ProxyLinkWeaver.SuperChain>();
         var proxies = new LinkedHashSet<String>();
-        for (var line : text.lines().map(String::strip).filter(l -> !l.isEmpty()).collect(Collectors.toList())) {
+        for (var line : text.lines().map(String::strip).filter(l -> !l.isEmpty()).toList()) {
             var parts = line.split(" ");
             switch (parts[0]) {
                 case "BEAN" -> {

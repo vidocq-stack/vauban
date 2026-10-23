@@ -59,7 +59,7 @@ final class WeavingTransformer implements ClassFileTransformer {
             if (proxies.contains(className)) {
                 return ProxyLinkWeaver.retargetProxyConstructor(classfileBuffer);
             }
-        } catch (Throwable t) {
+        } catch (RuntimeException t) {
             System.err.println("[vauban-weaver] load-time weaving of " + className
                     + " failed, class left unchanged: " + t);
         }

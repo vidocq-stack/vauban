@@ -83,21 +83,27 @@ public final class BeanWeavingAnalysis {
         return scopeCache.computeIfAbsent(descriptor, d -> {
             if (!d.startsWith("L") || !d.endsWith(";")) return false;
             var bytes = resolver.bytesOf(d.substring(1, d.length() - 1).replace('/', '.'));
-            if (bytes == null) return false;
-            try {
-                for (var attribute : ClassFile.of().parse(bytes).attributes()) {
-                    if (!(attribute instanceof RuntimeVisibleAnnotationsAttribute annotations)) continue;
-                    for (var annotation : annotations.annotations()) {
-                        if (NORMAL_SCOPE_DESCRIPTOR.equals(annotation.className().stringValue())) {
-                            return true;
-                        }
-                    }
+            return bytes != null && isMetaAnnotatedNormalScope(bytes);
+        });
+    }
+
+    /**
+     * Whether the annotation type in {@code bytes} carries {@code @NormalScope}. Bytes that are not a
+     * class file (e.g. an encrypted entry) are not a resolvable scope.
+     */
+    private static boolean isMetaAnnotatedNormalScope(byte[] bytes) {
+        try {
+            for (var attribute : ClassFile.of().parse(bytes).attributes()) {
+                if (attribute instanceof RuntimeVisibleAnnotationsAttribute annotations
+                        && annotations.annotations().stream()
+                                .anyMatch(a -> NORMAL_SCOPE_DESCRIPTOR.equals(a.className().stringValue()))) {
+                    return true;
                 }
-            } catch (IllegalArgumentException unparseable) {
-                // not class-file bytes (e.g. an encrypted entry) — not a resolvable scope
             }
             return false;
-        });
+        } catch (IllegalArgumentException _) {
+            return false;
+        }
     }
 
     /** {@code true} when the class needs the woven marker: no marker, no usable no-arg. */
