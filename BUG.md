@@ -99,6 +99,33 @@ object of the bean instance (CDI 4.1 §6.4.1), serves its construction, its `@Po
 Interceptors 2.2 §2.2). Beans without interceptors still get the caller's context, null included. Tests:
 `InterceptedBeanCreateWithoutCreationalContextTest.aroundConstructPostConstructAndAroundInvoke` and
 `.postConstructOnly` (vauban-core).
+## VAU-APT-002 — `VaubanProcessor`: a broken extension service entry fails the compilation instead of being skipped
+- **Date**: 2026-10-24 — **Status**: FIXED (fix/vauban-tickets, vauban#199, Vidocq/vidocq#285)
+- **Severity**: low (a malformed `META-INF/services` entry for `BuildCompatibleExtension` on the processor path)
+
+### Symptom
+A `META-INF/services/jakarta.enterprise.inject.build.compatible.spi.BuildCompatibleExtension` entry on the annotation
+processor path that names a class which cannot be loaded or instantiated fails the whole compilation with
+`java.util.ServiceConfigurationError: … Provider com.missing.AbsentExtension not found`, raised from the processor's
+`init`. The extensions listed next to it never run. Found while fixing VAU-MVN-002 (vauban#189), the same defect in
+`vauban:generate`.
+
+### Repro
+Put a service file listing a missing class and a working extension on the processor path; compile any bean with the
+processor.
+
+### Cause
+`VaubanProcessor.discoverBceClasses` ran `ServiceLoader.forEach` inside a `catch (Exception)`. `ServiceLoader` reports
+a broken provider with `ServiceConfigurationError`, an `Error`, which that catch does not handle.
+
+### Fix
+The discovery walks the `ServiceLoader` iterator itself, as `vauban:generate` does since VAU-MVN-002: a provider that
+fails with `ServiceConfigurationError` or a `LinkageError` is skipped with a compiler warning naming the service file
+and the provider, and the extensions after it still run. The same error twice in a row ends the discovery, since
+`ServiceLoader` cannot move past it (the service files themselves cannot be listed). Skipping with a warning matches
+`vauban:generate` and the processor's warning for build compatible extensions it cannot load (vauban#29); CDI 4.1
+§12.1 only defines a build compatible extension as a service provider declared in `META-INF/services`. Test:
+`BceCompileTimeTest.aBrokenExtensionServiceEntryIsSkippedWithAWarningAndTheOthersStillRun` (vauban-processor).
 
 ---
 

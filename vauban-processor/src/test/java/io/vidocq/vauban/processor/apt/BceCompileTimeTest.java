@@ -140,6 +140,11 @@ class BceCompileTimeTest {
 
     private CompilationResult compileWithBce(List<Class<?>> bceClasses, List<Path> extraClasspath,
                                              String... sources) throws IOException {
+        return compile(processor -> processor.overrideBceClasses(bceClasses), extraClasspath, sources);
+    }
+
+    private CompilationResult compile(java.util.function.Consumer<VaubanProcessor> setup, List<Path> extraClasspath,
+                                      String... sources) throws IOException {
         var compiler = ToolProvider.getSystemJavaCompiler();
         var diagnostics = new DiagnosticCollector<JavaFileObject>();
 
@@ -183,7 +188,7 @@ class BceCompileTimeTest {
 
         try (var fileManager = compiler.getStandardFileManager(diagnostics, null, null)) {
             var processor = new VaubanProcessor();
-            processor.overrideBceClasses(bceClasses);
+            setup.accept(processor);
 
             var task = compiler.getTask(null, fileManager, diagnostics, options, null, sourceFiles);
             task.setProcessors(List.of(processor));
@@ -284,6 +289,58 @@ class BceCompileTimeTest {
 
         assertTrue(result.hasFile(SyntheticMetadataSerializer.BCE_PROCESSED_MARKER),
                 "BCE processed marker should be written");
+    }
+
+    @Test
+    @DisplayName("a broken extension service entry is skipped with a warning and the other extensions still run (vauban#199)")
+    void aBrokenExtensionServiceEntryIsSkippedWithAWarningAndTheOthersStillRun() throws IOException {
+        // The working extension is compiled into a directory of its own: ServiceLoader ignores a class-path
+        // provider whose class sits in a named module, as the test classes do.
+        var extensions = tempDir.resolve("extensions");
+        Files.createDirectories(extensions.resolve("ext"));
+        var extension = extensions.resolve("ext/ScopingExtension.java");
+        Files.writeString(extension, """
+                package ext;
+
+                import jakarta.enterprise.context.RequestScoped;
+                import jakarta.enterprise.inject.build.compatible.spi.BuildCompatibleExtension;
+                import jakarta.enterprise.inject.build.compatible.spi.ClassConfig;
+                import jakarta.enterprise.inject.build.compatible.spi.Enhancement;
+
+                public class ScopingExtension implements BuildCompatibleExtension {
+                    @Enhancement(types = Object.class, withAnnotations = jakarta.inject.Named.class)
+                    public void addScope(ClassConfig clazz) {
+                        clazz.addAnnotation(RequestScoped.class);
+                    }
+                }
+                """);
+        var compiled = ToolProvider.getSystemJavaCompiler().run(null, null, null,
+                "-proc:none", "--release", "25", "-classpath", resolveCompilationClasspath(),
+                "-d", extensions.toString(), extension.toString());
+        assertEquals(0, compiled, "Precondition: the extension compiles");
+        var serviceFile = "META-INF/services/" + BuildCompatibleExtension.class.getName();
+        Files.createDirectories(extensions.resolve("META-INF/services"));
+        Files.writeString(extensions.resolve(serviceFile), "com.missing.AbsentExtension\next.ScopingExtension\n");
+
+        CompilationResult result;
+        try (var loader = new java.net.URLClassLoader(new java.net.URL[] {extensions.toUri().toURL()},
+                getClass().getClassLoader())) {
+            result = compile(processor -> processor.overrideBceClassLoader(loader), List.of(), """
+                    import jakarta.inject.Named;
+
+                    @Named
+                    public class EnhancedService {
+                        public String hello() { return "hello"; }
+                    }
+                    """);
+        }
+
+        assertTrue(result.success(), "Compilation should succeed. Messages: " + result.messages());
+        assertTrue(result.messages().stream().anyMatch(message -> message.startsWith("WARNING")
+                        && message.contains(serviceFile) && message.contains("com.missing.AbsentExtension")),
+                "a warning names the service file and the broken provider: " + result.messages());
+        assertTrue(result.hasFile("EnhancedService_ClientProxy.class"),
+                "the working extension still ran and made the bean @RequestScoped: " + result.messages());
     }
 
     @Test

@@ -124,6 +124,7 @@ public class VaubanProcessor extends AbstractProcessor {
     private static final String BCE_RUNTIME_LIST_PATH = "META-INF/vauban-bce-runtime.list";
     private static final String LOG_PREFIX = "[Vauban] ";
     private static final String BCE_PREFIX = "[Vauban BCE] ";
+    private static final String BCE_SERVICE_PATH = "META-INF/services/" + BuildCompatibleExtension.class.getName();
     private static final String FAILED_TO_WRITE = "[Vauban] Failed to write ";
     private static final String CLIENT_PROXY_SUFFIX = "_ClientProxy";
     private static final String JAVA_LANG_OBJECT = "java.lang.Object";
@@ -166,6 +167,13 @@ public class VaubanProcessor extends AbstractProcessor {
         this.overrideBceClasses = bceClasses;
     }
 
+    private ClassLoader bceClassLoader;
+
+    /** Visible for testing — the class loader whose {@code ServiceLoader} discovers the BCEs, in place of the processor's. */
+    public void overrideBceClassLoader(ClassLoader classLoader) {
+        this.bceClassLoader = classLoader;
+    }
+
     /** Visible for testing — returns the set of external class names after processing. */
     public Set<DotName> getExternalClassNames() {
         return Collections.unmodifiableSet(externalClassNames);
@@ -182,7 +190,7 @@ public class VaubanProcessor extends AbstractProcessor {
         // Discover BCEs early so their @Enhancement(withAnnotations=...) annotations
         // are included in getSupportedAnnotationTypes(). Without this, classes annotated
         // with e.g. @Path would never be seen by the APT roundEnv.
-        var cl = VaubanProcessor.class.getClassLoader();
+        var cl = bceClassLoader != null ? bceClassLoader : VaubanProcessor.class.getClassLoader();
         discoveredBceClasses = overrideBceClasses != null ? overrideBceClasses : discoverBceClasses(cl);
         bceAnnotationTypes = extractBceAnnotationTypes(discoveredBceClasses);
     }
@@ -1356,15 +1364,31 @@ public class VaubanProcessor extends AbstractProcessor {
                         + " container).");
     }
 
+    /**
+     * The build compatible extensions {@code cl} provides. A provider that cannot be loaded or instantiated is skipped
+     * with a warning naming the service file, and the others still run (vauban#199).
+     */
     private List<Class<?>> discoverBceClasses(ClassLoader cl) {
         var bceClasses = new ArrayList<Class<?>>();
-        try {
-            ServiceLoader.load(BuildCompatibleExtension.class, cl)
-                    .forEach(ext -> bceClasses.add(ext.getClass()));
-        } catch (Exception e) {
-            // ServiceLoader failed — no BCEs
-            processingEnv.getMessager().printMessage(Diagnostic.Kind.NOTE,
-                    "[Vauban] BCE discovery via ServiceLoader: " + e.getMessage());
+        var providers = ServiceLoader.load(BuildCompatibleExtension.class, cl).iterator();
+        String lastError = null;
+        var more = true;
+        while (more) {
+            try {
+                more = providers.hasNext();
+                if (more) {
+                    bceClasses.add(providers.next().getClass());
+                }
+            } catch (ServiceConfigurationError | LinkageError e) {
+                // ServiceLoader goes on with the next provider after an error; the same error twice in a row
+                // means it cannot move past it (the service files themselves cannot be listed)
+                more = !Objects.equals(lastError, e.getMessage());
+                if (more) {
+                    lastError = e.getMessage();
+                    processingEnv.getMessager().printMessage(Diagnostic.Kind.WARNING, LOG_PREFIX
+                            + "Skipping a build compatible extension listed in " + BCE_SERVICE_PATH + ": " + lastError);
+                }
+            }
         }
         if (!bceClasses.isEmpty()) {
             processingEnv.getMessager().printMessage(Diagnostic.Kind.NOTE,
