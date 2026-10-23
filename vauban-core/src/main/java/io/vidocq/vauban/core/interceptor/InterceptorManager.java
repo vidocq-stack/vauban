@@ -107,15 +107,9 @@ public final class InterceptorManager {
         ScopedValue.where(INTERCEPTION, new InterceptionState(chain, bindings, ctx)).run(action);
     }
 
-    @SuppressWarnings("unchecked")
     public static <R> R $$callIntercepted(List<VaubanInvocationContext.InterceptorInvocation> chain, Set<DotName> bindings, CreationalContext<?> ctx, ScopedValue.CallableOp<R, Exception> action) throws Exception {
-        try {
-            return ScopedValue.where(INTERCEPTION, new InterceptionState(chain, bindings, ctx)).call(action);
-        } catch (Exception e) {
-            throw e;
-        } catch (Throwable t) {
-            throw new RuntimeException(t);
-        }
+        // An Error propagates unchanged, as it does from $$runIntercepted (VAU-Q5-001).
+        return ScopedValue.where(INTERCEPTION, new InterceptionState(chain, bindings, ctx)).call(action);
     }
 
     @SuppressWarnings("java:S3010") // Static singleton set in constructor — single container instance by design

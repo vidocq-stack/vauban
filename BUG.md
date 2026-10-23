@@ -5,6 +5,30 @@ suspected cause, status. Updated on every investigation.
 
 ---
 
+## VAU-Q5-001 — `InterceptorManager.$$callIntercepted` wraps an `Error` in a `RuntimeException`
+- **Date**: 2026-10-23 — **Status**: FIXED (`refactor/zero-issues-5`, Vidocq/vidocq#285)
+- **Severity**: low (no caller in Vauban or the ecosystem today; the method is public in an exported package)
+
+### Symptom
+An `Error` thrown by the action given to `$$callIntercepted` (an `AssertionError`, a `StackOverflowError`) came out
+as a `RuntimeException` whose cause is the error, while its sibling `$$runIntercepted`, and
+`VaubanLookup.invokeMethod`, let an `Error` propagate unchanged. Found while cleaning up SonarQube findings
+(`java:S1181`, `java:S112`).
+
+### Repro
+`CallInterceptedTest.propagatesAnErrorUnchanged` (vauban-core): the action throws an `Error`, the call must throw
+that same error.
+
+### Cause
+The method caught `Throwable` after `Exception` and wrapped what remained, which for a `CallableOp<R, Exception>`
+can only be an `Error`, in a new `RuntimeException`.
+
+### Fix
+The method returns what `ScopedValue.Carrier.call` returns and lets its exceptions through: checked exceptions,
+runtime exceptions and errors all come out unchanged.
+
+---
+
 ## VAU-CL-001 — Resources of plain jars and directories have `vauban:` URLs that libraries cannot read as folders
 - **Date**: 2026-10-22 — **Status**: FIXED (`pr/ybl/standard-resource-urls`, vauban#177)
 - **Severity**: medium (Vaadin's development mode logs errors and pins no npm versions; other libraries that read
