@@ -176,6 +176,16 @@ final class InterceptorBeanWrapper {
         }
     }
 
+    /**
+     * The creational context an intercepted factory creates a bean with: the caller's, or one of the bean's own when
+     * the caller passes none (VAU-INT-008). Its interceptor instances are dependent objects of the bean instance
+     * (CDI 4.1 §6.4.1), one per interceptor class: without a context, the dependent context answers no reference to
+     * them, and the chains of a same bean instance would not share them.
+     */
+    private static CreationalContext<Object> contextOfItsOwnIfNone(CreationalContext<Object> ctx) {
+        return ctx != null ? ctx : new CreationalContextImpl<>();
+    }
+
     /** An interceptor created while another one is being created: its fields injected and {@code @PostConstruct} called here. */
     private Object createNestedInterceptor(String className, CreationalContext<?> ctx) throws ReflectiveOperationException {
         var constructor = findConstructor(container.loadClass(className));
@@ -922,7 +932,8 @@ final class InterceptorBeanWrapper {
         }
 
         @Override
-        public Object create(VaubanInvocationContext constructCtx, CreationalContext<Object> creationalCtx) {
+        public Object create(VaubanInvocationContext constructCtx, CreationalContext<Object> callerCtx) {
+            var creationalCtx = contextOfItsOwnIfNone(callerCtx);
             try {
                 Object[] finalArgs = constructCtx != null ? constructCtx.getParameters() : null;
                 var targetCtor = targetConstructor(finalArgs);
@@ -1086,7 +1097,8 @@ final class InterceptorBeanWrapper {
          * back here with its context; with it, or without a chain, instantiates and wires the subclass.
          */
         @Override
-        public Object create(VaubanInvocationContext constructCtx, CreationalContext<Object> ctx) {
+        public Object create(VaubanInvocationContext constructCtx, CreationalContext<Object> callerCtx) {
+            var ctx = contextOfItsOwnIfNone(callerCtx);
             try {
                 var ctor = interceptedClass.getDeclaredConstructor();
                 if (constructCtx == null) {

@@ -129,7 +129,7 @@ context, the interceptor instance resolves to `null`. It stays open as VAU-INT-0
 ---
 
 ## VAU-INT-008 — An intercepted bean's factory, called without a creational context, NPEs on an `@AroundConstruct`
-- **Date**: 2026-10-23 — **Status**: OPEN (vauban#192)
+- **Date**: 2026-10-23 — **Status**: FIXED (fix/vauban-tickets, vauban#192, Vidocq/vidocq#285)
 - **Severity**: low (only a direct `ManagedBean.factory().create()` with no creational context; the container
   always passes one)
 
@@ -149,6 +149,22 @@ A `@Dependent` bean bound to an `@AroundConstruct` interceptor; resolve its `Man
 and that `null` is returned as the interceptor instance instead of falling back on creating it. The chain
 resolution then dereferences it. Treating a `null` reference as "no bean" would change the eager interceptor
 creation of `InterceptorBeanWrapper` (around line 509), which ignores the result today, so it needs its own look.
+
+### Fix
+`InterceptedFactory` and `FallbackInterceptedFactory` now create the bean with a creational context of its own when
+the caller passes none (`InterceptorBeanWrapper.contextOfItsOwnIfNone`), as `VaubanBeanManager.createCreationalContext`
+would give one. Its interceptor instances are dependent objects of the bean instance (CDI 4.1 §6.4.1): with a
+context, the dependent context returns them, and the `@AroundConstruct` chain and the business method chains of that
+bean instance share one instance per interceptor class (Jakarta Interceptors 2.2 §2.2). The eager interceptor
+creation of `InterceptorBeanWrapper` is unchanged: a direct `factory().create()` does not reach it, and it still
+receives the caller's context. Tests: `InterceptedFactoryWithoutCreationalContextTest.regularFactory` and
+`.fallbackFactory` (vauban-core).
+
+`Bean#create(null)` on an intercepted bean with an `@AroundConstruct` interceptor now gets past the factory, then
+fails in its `@PostConstruct` step with a separate cause: `ManagedBean.create` hands the null context on to the
+injector, and `InterceptorManager.resolveLifecycleChain` puts an `InterceptorInvocation(null, null)` placeholder in
+the chain when it has no context, which `VaubanInvocationContext.makeAccessibleSafe` dereferences. It needs its own
+entry.
 
 ---
 
