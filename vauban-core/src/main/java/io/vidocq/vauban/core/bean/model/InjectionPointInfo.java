@@ -103,8 +103,8 @@ public record InjectionPointInfo(
 
     private static String jvmDescriptor(io.vidocq.vauban.indexer.model.TypeInfo type) {
         return switch (type) {
-            case io.vidocq.vauban.indexer.model.TypeInfo.VoidType ignored -> "V";
-            case io.vidocq.vauban.indexer.model.TypeInfo.PrimitiveType primitive -> switch (primitive.kind()) {
+            case io.vidocq.vauban.indexer.model.TypeInfo.VoidType _ -> "V";
+            case io.vidocq.vauban.indexer.model.TypeInfo.PrimitiveType(var kind) -> switch (kind) {
                 case BOOLEAN -> "Z";
                 case BYTE -> "B";
                 case CHAR -> "C";
@@ -114,12 +114,12 @@ public record InjectionPointInfo(
                 case FLOAT -> "F";
                 case DOUBLE -> "D";
             };
-            case io.vidocq.vauban.indexer.model.TypeInfo.ArrayType array ->
-                    "[".repeat(array.dimensions()) + jvmDescriptor(array.componentType());
+            case io.vidocq.vauban.indexer.model.TypeInfo.ArrayType(var componentType, var dimensions) ->
+                    "[".repeat(dimensions) + jvmDescriptor(componentType);
             case io.vidocq.vauban.indexer.model.TypeInfo.ParameterizedType parameterized ->
                     "L" + parameterized.rawType().value().replace('.', '/') + ";";
-            case io.vidocq.vauban.indexer.model.TypeInfo.ClassType clazz ->
-                    "L" + clazz.name().value().replace('.', '/') + ";";
+            case io.vidocq.vauban.indexer.model.TypeInfo.ClassType(var name) ->
+                    "L" + name.value().replace('.', '/') + ";";
             case io.vidocq.vauban.indexer.model.TypeInfo.TypeVariable variable ->
                     variable.bounds().isEmpty() ? "Ljava/lang/Object;" : jvmDescriptor(variable.bounds().getFirst());
             case io.vidocq.vauban.indexer.model.TypeInfo.WildcardType wildcard ->

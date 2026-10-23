@@ -88,7 +88,7 @@ public final class QualifierMatcher {
 
     /** The keys of a set of qualifiers — those of a bean, or of an injection point. */
     public Set<AnnotationKey> keys(java.util.Collection<QualifierInstance> qualifiers) {
-        var result = new java.util.HashSet<AnnotationKey>(qualifiers.size() * 2);
+        var result = java.util.HashSet.<AnnotationKey>newHashSet(qualifiers.size());
         for (var qualifier : qualifiers) {
             result.add(key(qualifier));
         }
