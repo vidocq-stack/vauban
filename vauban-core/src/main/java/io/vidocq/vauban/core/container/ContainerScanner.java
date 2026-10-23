@@ -34,6 +34,10 @@ final class ContainerScanner {
 
     private static final System.Logger LOG = System.getLogger(ContainerScanner.class.getName());
 
+    private static final String CLASS_SUFFIX = ".class";
+    private static final String FILE_PREFIX = "file:";
+    private static final String JAR_FILE_PREFIX = "jar:file:";
+
     private final VaubanContainerBuilder host;
 
     ContainerScanner(VaubanContainerBuilder host) {
@@ -59,31 +63,31 @@ final class ContainerScanner {
                 }
             }
         } catch (Exception e) {
-            throw new RuntimeException("Failed to scan package: " + packageName, e);
+            throw new ContainerOperationException("Failed to scan package: " + packageName, e);
         }
     }
 
-    private void scanDirectory(java.nio.file.Path dir, String packageName, ClassLoader cl) throws Exception {
+    private void scanDirectory(java.nio.file.Path dir, String packageName, ClassLoader cl) throws IOException {
         if (!java.nio.file.Files.isDirectory(dir)) return;
         try (var stream = java.nio.file.Files.walk(dir)) {
-            stream.filter(p -> p.toString().endsWith(".class"))
+            stream.filter(p -> p.toString().endsWith(CLASS_SUFFIX))
                     .forEach(p -> {
                         var relative = dir.relativize(p).toString();
                         var className = packageName + "." + relative
                                 .replace(java.io.File.separatorChar, '.')
-                                .replace(".class", "");
+                                .replace(CLASS_SUFFIX, "");
                         tryAddBeanClass(className, cl);
                     });
         }
     }
 
-    private void scanJarEntries(java.net.URL jarUrl, String packagePath, ClassLoader cl) throws Exception {
+    private void scanJarEntries(java.net.URL jarUrl, String packagePath, ClassLoader cl) throws IOException {
         var connection = (java.net.JarURLConnection) jarUrl.openConnection();
         try (var jarFile = connection.getJarFile()) {
             jarFile.entries().asIterator().forEachRemaining(entry -> {
                 var name = entry.getName();
-                if (name.startsWith(packagePath) && name.endsWith(".class")) {
-                    var className = name.replace('/', '.').replace(".class", "");
+                if (name.startsWith(packagePath) && name.endsWith(CLASS_SUFFIX)) {
+                    var className = name.replace('/', '.').replace(CLASS_SUFFIX, "");
                     tryAddBeanClass(className, cl);
                 }
             });
@@ -138,7 +142,9 @@ final class ContainerScanner {
                 host.bceProcessedSources.add(extractSourceRoot(markerUrls.nextElement().toString(),
                         io.vidocq.vauban.core.extensions.SyntheticMetadataSerializer.BCE_PROCESSED_MARKER));
             }
-        } catch (java.io.IOException ignored) {}
+        } catch (java.io.IOException _) {
+            // No marker can be read: no source counts as processed by a build compatible extension.
+        }
 
         // 3. Read vauban-beans.list files from all JARs/directories
         try {
@@ -154,7 +160,7 @@ final class ContainerScanner {
                 }
             }
         } catch (java.io.IOException e) {
-            throw new RuntimeException("Failed to scan classpath for vauban-beans.list", e);
+            throw new java.io.UncheckedIOException("Failed to scan classpath for vauban-beans.list", e);
         }
 
         // 4. Read META-INF/services/jakarta.enterprise.inject.build.compatible.spi.BuildCompatibleExtension
@@ -244,46 +250,70 @@ final class ContainerScanner {
             var beansXmlUrls = cl.getResources("META-INF/beans.xml");
             while (beansXmlUrls.hasMoreElements()) {
                 var beansXmlUrl = beansXmlUrls.nextElement();
-                var urlStr = beansXmlUrl.toString();
-                BeanDiscoveryMode mode;
-                try (var in = beansXmlUrl.openStream()) {
-                    mode = BeanDiscoveryMode.of(new String(in.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8));
-                } catch (IOException | IllegalArgumentException e) {
-                    throw new jakarta.enterprise.inject.spi.DeploymentException(
-                            "Cannot read the bean discovery mode of " + urlStr + ": " + e.getMessage(), e);
+                var mode = discoveryMode(beansXmlUrl);
+                if (mode != BeanDiscoveryMode.NONE) {
+                    scanBeanArchive(beansXmlUrl, cl, mode == BeanDiscoveryMode.ALL, unprocessedOnly, onArchive);
                 }
-                if (mode == BeanDiscoveryMode.NONE) continue;
-                boolean forced = mode == BeanDiscoveryMode.ALL;
-                try {
-                    if (urlStr.startsWith("jar:")) {
-                        int bangIdx = urlStr.indexOf('!');
-                        if (bangIdx > 0) {
-                            // jar:file:/path/to.jar!/META-INF/beans.xml  or  jar:nested:...
-                            var fileStart = urlStr.indexOf("file:");
-                            var jarFilePath = fileStart >= 0
-                                    ? urlStr.substring(fileStart + "file:".length(), bangIdx)
-                                    : null;
-                            if (jarFilePath != null) {
-                                var jarRootUrl = new java.net.URL("jar:file:" + jarFilePath + "!/");
-                                if (unprocessedOnly && processedJar(jarRootUrl)) continue;
-                                scanJarEntries(jarRootUrl, cl, forced);
-                                onArchive.accept(jarRootUrl);
-                            }
-                        }
-                    } else if (urlStr.startsWith("file:")) {
-                        // file:/path/classes/META-INF/beans.xml
-                        var beansXmlPath = java.nio.file.Path.of(beansXmlUrl.toURI());
-                        var classesRoot = beansXmlPath.getParent().getParent();
-                        if (unprocessedOnly && PROCESSED_MARKERS.stream()
-                                .anyMatch(marker -> java.nio.file.Files.exists(classesRoot.resolve(marker)))) continue;
-                        scanDirectory(classesRoot, cl, forced);
-                        onArchive.accept(classesRoot.toUri().toURL());
-                    }
-                } catch (Exception e) { /* skip problematic archives */ }
             }
-        } catch (java.io.IOException e) {
+        } catch (java.io.IOException _) {
             // non-fatal — classpath scan failure
         }
+    }
+
+    /** The discovery mode a {@code beans.xml} declares; one that cannot be read fails the deployment. */
+    private static BeanDiscoveryMode discoveryMode(java.net.URL beansXmlUrl) {
+        try (var in = beansXmlUrl.openStream()) {
+            return BeanDiscoveryMode.of(new String(in.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8));
+        } catch (IOException | IllegalArgumentException e) {
+            throw new jakarta.enterprise.inject.spi.DeploymentException(
+                    "Cannot read the bean discovery mode of " + beansXmlUrl + ": " + e.getMessage(), e);
+        }
+    }
+
+    /**
+     * Scans the archive a {@code beans.xml} belongs to, a jar or a directory of classes, unless
+     * {@code unprocessedOnly} and a Vauban build step indexed it. An archive that cannot be read is skipped.
+     */
+    private void scanBeanArchive(java.net.URL beansXmlUrl, ClassLoader cl, boolean forced, boolean unprocessedOnly,
+                                 java.util.function.Consumer<java.net.URL> onArchive) {
+        var urlStr = beansXmlUrl.toString();
+        try {
+            if (urlStr.startsWith("jar:")) {
+                scanJarBeanArchive(urlStr, cl, forced, unprocessedOnly, onArchive);
+            } else if (urlStr.startsWith(FILE_PREFIX)) {
+                scanDirectoryBeanArchive(beansXmlUrl, cl, forced, unprocessedOnly, onArchive);
+            }
+        } catch (Exception _) {
+            // skip problematic archives
+        }
+    }
+
+    /**
+     * {@code jar:file:/path/to.jar!/META-INF/beans.xml}. An archive whose URL names no file, such as a
+     * {@code jar:nested:} one, is left alone.
+     */
+    private void scanJarBeanArchive(String urlStr, ClassLoader cl, boolean forced, boolean unprocessedOnly,
+                                    java.util.function.Consumer<java.net.URL> onArchive) throws IOException {
+        int bangIdx = urlStr.indexOf('!');
+        var fileStart = urlStr.indexOf(FILE_PREFIX);
+        if (bangIdx <= 0 || fileStart < 0) return;
+        var jarFilePath = urlStr.substring(fileStart + FILE_PREFIX.length(), bangIdx);
+        var jarRootUrl = java.net.URI.create(JAR_FILE_PREFIX + jarFilePath + "!/").toURL();
+        if (unprocessedOnly && processedJar(jarRootUrl)) return;
+        scanJarEntries(jarRootUrl, cl, forced);
+        onArchive.accept(jarRootUrl);
+    }
+
+    /** {@code file:/path/classes/META-INF/beans.xml}: the archive is the directory above {@code META-INF}. */
+    private void scanDirectoryBeanArchive(java.net.URL beansXmlUrl, ClassLoader cl, boolean forced,
+                                          boolean unprocessedOnly, java.util.function.Consumer<java.net.URL> onArchive)
+            throws java.net.URISyntaxException, IOException {
+        var beansXmlPath = java.nio.file.Path.of(beansXmlUrl.toURI());
+        var classesRoot = beansXmlPath.getParent().getParent();
+        if (unprocessedOnly && PROCESSED_MARKERS.stream()
+                .anyMatch(marker -> java.nio.file.Files.exists(classesRoot.resolve(marker)))) return;
+        scanDirectory(classesRoot, cl, forced);
+        onArchive.accept(classesRoot.toUri().toURL());
     }
 
     private static boolean processedJar(java.net.URL jarRootUrl) throws IOException {
@@ -294,14 +324,14 @@ final class ContainerScanner {
         }
     }
 
-    private void scanJarEntries(java.net.URL jarRootUrl, ClassLoader cl, boolean forced) throws Exception {
+    private void scanJarEntries(java.net.URL jarRootUrl, ClassLoader cl, boolean forced) throws IOException {
         var connection = (java.net.JarURLConnection) jarRootUrl.openConnection();
         try (var jarFile = connection.getJarFile()) {
             jarFile.entries().asIterator().forEachRemaining(entry -> {
                 var name = entry.getName();
-                if (!name.endsWith(".class")) return;
+                if (!name.endsWith(CLASS_SUFFIX)) return;
                 if (name.contains("module-info") || name.contains("package-info")) return;
-                var className = name.replace('/', '.').replace(".class", "");
+                var className = name.replace('/', '.').replace(CLASS_SUFFIX, "");
                 tryAddArchiveClass(className, cl, forced);
             });
         }
@@ -310,16 +340,18 @@ final class ContainerScanner {
     private void scanDirectory(java.nio.file.Path rootDir, ClassLoader cl, boolean forced) {
         if (!java.nio.file.Files.isDirectory(rootDir)) return;
         try (var stream = java.nio.file.Files.walk(rootDir)) {
-            stream.filter(p -> p.toString().endsWith(".class"))
+            stream.filter(p -> p.toString().endsWith(CLASS_SUFFIX))
                     .forEach(p -> {
                         var relative = rootDir.relativize(p).toString();
                         var className = relative
                                 .replace(java.io.File.separatorChar, '.')
                                 .replace('/', '.')
-                                .replace(".class", "");
+                                .replace(CLASS_SUFFIX, "");
                         tryAddArchiveClass(className, cl, forced);
                     });
-        } catch (Exception e) { /* skip */ }
+        } catch (Exception _) {
+            // An unreadable directory contributes no class.
+        }
     }
 
     /**
@@ -336,7 +368,7 @@ final class ContainerScanner {
             if (java.lang.reflect.Modifier.isAbstract(clazz.getModifiers())) return;
             host.addBeanClass(clazz);
             if (forced) host.forcedDiscoveryClasses.add(clazz);
-        } catch (ClassNotFoundException | NoClassDefFoundError e) {
+        } catch (ClassNotFoundException | NoClassDefFoundError _) {
             // Skip unloadable classes
         }
     }
@@ -352,9 +384,9 @@ final class ContainerScanner {
             var markers = cl.getResources("META-INF/vauban.header");
             while (markers.hasMoreElements()) {
                 var markerUrl = markers.nextElement().toString();
-                if (markerUrl.startsWith("jar:file:")) {
+                if (markerUrl.startsWith(JAR_FILE_PREFIX)) {
                     var jarPath = java.nio.file.Path.of(
-                            markerUrl.substring("jar:file:".length(), markerUrl.indexOf('!')));
+                            markerUrl.substring(JAR_FILE_PREFIX.length(), markerUrl.indexOf('!')));
                     try {
                         loadPluginsIfNeeded();
                         scanSjar(jarPath);
@@ -365,7 +397,7 @@ final class ContainerScanner {
                                 "Set VAUBAN_SJAR_KEY environment variable or call builder.pluginContext() with the decryption key.");
                         LOG.log(System.Logger.Level.WARNING,
                                 "Beans from this JAR will NOT be available.");
-                    } catch (IllegalStateException e) {
+                    } catch (IllegalStateException _) {
                         LOG.log(System.Logger.Level.WARNING,
                                 "Encrypted JAR {0} found but no ByteSourcePlugin available.", jarPath.getFileName());
                         LOG.log(System.Logger.Level.WARNING,
@@ -376,7 +408,7 @@ final class ContainerScanner {
                     }
                 }
             }
-        } catch (java.io.IOException e) {
+        } catch (java.io.IOException _) {
             // Classpath scan failure — non-fatal
         }
     }
@@ -401,7 +433,7 @@ final class ContainerScanner {
                 tryAddBeanClass(className, engineLoader);
             }
         } catch (IOException e) {
-            throw new RuntimeException("Failed to scan SJAR: " + sjarPath, e);
+            throw new java.io.UncheckedIOException("Failed to scan SJAR: " + sjarPath, e);
         }
     }
 
@@ -420,7 +452,8 @@ final class ContainerScanner {
         try {
             var providerClass = Class.forName("io.vidocq.vauban.sjar.SjarKeyProvider");
             return (io.vidocq.vauban.classloader.spi.PluginContext) providerClass.getDeclaredConstructor().newInstance();
-        } catch (Exception e) {
+        } catch (Exception _) {
+            // No vauban-sjar key provider: the plugins get an empty context.
             return io.vidocq.vauban.classloader.spi.PluginContext.empty();
         }
     }
