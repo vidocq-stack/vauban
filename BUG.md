@@ -27,6 +27,8 @@ match of `getDeclaredMethods()`, whose order is unspecified, then checked the pa
 The lookup keeps only the overload that has an `@Observes`/`@ObservesAsync` parameter (observers) or a `@Disposes`
 parameter (disposers).
 
+---
+
 ## VAU-CL-002 — Reading a `jar:` resource after its loader is closed throws `NullPointerException`
 - **Date**: 2026-10-23 — **Status**: OPEN
 - **Severity**: low (a connection opened before the loader closed, read after; the caller gets an NPE instead of an
