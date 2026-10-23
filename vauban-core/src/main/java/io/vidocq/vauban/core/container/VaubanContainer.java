@@ -789,7 +789,7 @@ public final class VaubanContainer implements AutoCloseable {
         private Object construct(CreationalContext<Object> creationalCtx) throws ClassNotFoundException {
             var beanClass = loadClass(descriptor.beanClass().value());
 
-            var injectCtor = injectConstructor(beanClass, ctorParamCount);
+            var injectCtor = injectConstructor(beanClass, ctorParamCount, descriptor.injectionPoints());
             if (injectCtor == null) {
                 throw new ContainerOperationException("No @Inject constructor found for " + descriptor.beanClass());
             }
@@ -809,10 +809,20 @@ public final class VaubanContainer implements AutoCloseable {
             return result;
         }
 
-        /** The constructor {@code @Inject} marks, else the first one taking {@code parameterCount} parameters, or {@code null}. */
-        private static java.lang.reflect.Constructor<?> injectConstructor(Class<?> beanClass, int parameterCount) {
+        /**
+         * The constructor {@code @Inject} marks, else the one whose parameters {@code points} describe (an
+         * {@code @Inject} an {@code @Enhancement} added, vauban#187), else the first one taking
+         * {@code parameterCount} parameters, or {@code null}.
+         */
+        private static java.lang.reflect.Constructor<?> injectConstructor(Class<?> beanClass, int parameterCount,
+                                                                         List<InjectionPointInfo> points) {
             for (var ctor : beanClass.getDeclaredConstructors()) {
                 if (ctor.isAnnotationPresent(jakarta.inject.Inject.class)) {
+                    return ctor;
+                }
+            }
+            for (var ctor : beanClass.getDeclaredConstructors()) {
+                if (ctor.getParameterCount() == parameterCount && QualifierHelper.describesConstructor(points, ctor)) {
                     return ctor;
                 }
             }

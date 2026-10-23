@@ -115,8 +115,8 @@ creation of `InterceptorBeanWrapper` (around line 509), which ignores the result
 ---
 
 ## VAU-BCE-006 — An `@Inject` that a build compatible extension adds on a constructor is ignored
-- **Date**: 2026-10-23 — **Status**: OPEN (vauban#187) (to check against the CDI Lite specification)
-- **Severity**: medium if confirmed (a possible CDI Lite conformance gap; the TCK does not cover it)
+- **Date**: 2026-10-23 — **Status**: FIXED (fix/vauban-tickets, vauban#187, Vidocq/vidocq#285)
+- **Severity**: medium (a CDI Lite conformance gap; the TCK does not cover it)
 
 ### Symptom
 A bean with a no-arg constructor and a one-argument constructor that an `@Enhancement` makes `@Inject`: the
@@ -128,8 +128,20 @@ null.
 no-arg constructor; look the bean up and check the value the injected constructor sets.
 
 ### Cause
-Not investigated yet. The constructor selection in `VaubanContainer` does not seem to read the annotations the
-enhancement phase added (lines 803-807 of the refactored code are never reached).
+CDI 4.1 §13.5.1 has the container alter its metadata with what the `@Enhancement` phase did before bean discovery,
+and §3.5.1 makes the `@Inject` constructor the bean constructor, all its parameters injection points: it is a bug.
+`EnhancementApplier` created the injection points of an added `@Inject` for fields and initializer methods only,
+constructors being excluded, so the descriptor recorded no constructor parameter and the container took the
+pre-registered no-arg factory. Constructor selection (`VaubanContainer`) and `ManagedBean.getInjectionPoints()` also
+read `@Inject` on the class only.
+
+### Fix
+`EnhancementApplier` treats a constructor that an enhancement marks `@Inject` like an initializer: each parameter
+becomes a constructor injection point, so it is validated and resolved. `VaubanContainer` creates the bean through
+the constructor whose parameters the descriptor describes (exact overload, parameter types included) before falling
+back on the parameter count, and `ManagedBean.getInjectionPoints()` reports that constructor's parameters
+(`QualifierHelper.describesConstructor`). Tests: `BceInjectionEnhancementTest.constructorAnEnhancementMarksInjectIsTheBeanConstructor`
+(with a same-arity `String` overload) and `unsatisfiedParameterOfConstructorAnEnhancementMarksInjectFailsDeployment`.
 
 ---
 

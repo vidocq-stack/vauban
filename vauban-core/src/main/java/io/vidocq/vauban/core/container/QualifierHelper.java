@@ -77,6 +77,22 @@ final class QualifierHelper {
     }
 
     /**
+     * Whether the descriptor records the first parameter of {@code constructor} as a constructor injection point,
+     * matched on the whole description, parameter types included: so does the bean constructor an
+     * {@code @Enhancement} marked {@code @Inject}, which the class itself does not annotate. {@code false} without
+     * {@code points} or without parameters.
+     */
+    static boolean describesConstructor(List<InjectionPointInfo> points, java.lang.reflect.Constructor<?> constructor) {
+        if (points == null || constructor.getParameterCount() == 0) {
+            return false;
+        }
+        var wanted = InjectionPointInfo.parameterDescription(simpleName(constructor.getDeclaringClass()), null, 0,
+                MethodType.methodType(void.class, constructor.getParameterTypes()).descriptorString());
+        return points.stream().anyMatch(point -> point.kind() == InjectionPointInfo.InjectionKind.CONSTRUCTOR_PARAMETER
+                && point.description().equals(wanted));
+    }
+
+    /**
      * The qualifiers the descriptor records for {@code field}, as annotation instances.
      * {@code null} when nothing describes it — an interceptor's field, injected without a descriptor.
      */

@@ -104,7 +104,10 @@ CDI 4.1 introduces Build Compatible Extensions (BCEs): `@Discovery`, `@Enhanceme
 
 An enhancement that adds `@Inject` to a field or initializer creates its injection points,
 including every initializer parameter; constructor and initializer qualifier changes retain their
-member values and identify the exact overload (vauban#139). This also applies to a class that gains
+member values and identify the exact overload (vauban#139). [.tag-new]#NEW# An enhancement that adds
+`@Inject` to a constructor makes it the bean constructor, as CDI requires: the container creates the
+bean through it rather than through the no-arg constructor, and reports its parameters as injection
+points (vauban#187). This also applies to a class that gains
 its scope through enhancement. The frozen build-time patch records class and member additions,
 so boot does not need to instantiate the extension again to restore them.
 Direct generated field writes and method calls remain the first access path. For a managed class

@@ -403,11 +403,12 @@ final class EnhancementApplier {
     private static void applyMethodConfig(VaubanMethodConfig methodConfig, BeanEnhancement enhanced) {
         applyMethodEnhancement(methodConfig, enhanced.interceptorBindings(), enhanced.interceptorBindingAnnotations());
 
-        boolean initializer = !methodConfig.info().isConstructor()
-                && !methodConfig.info().isStatic()
+        // An initializer method or a bean constructor: every parameter of either is an injection point (CDI 3.5.1,
+        // 3.7.1), so an @Inject the enhancement adds makes them part of the bean's metadata (CDI 13.5.1).
+        boolean injected = !methodConfig.info().isStatic()
                 && hasAnnotation(methodConfig, jakarta.inject.Inject.class);
-        boolean injectAdded = initializer && hasAddedAnnotation(methodConfig, jakarta.inject.Inject.class);
-        if (injectAdded) {
+        boolean injectAdded = injected && hasAddedAnnotation(methodConfig, jakarta.inject.Inject.class);
+        if (injectAdded && !methodConfig.info().isConstructor()) {
             enhanced.enhancedInjectionMethods().add(initializerMethodKey(methodConfig));
         }
 
@@ -415,7 +416,7 @@ final class EnhancementApplier {
         for (int i = 0; i < parameterConfigs.size(); i++) {
             var paramConfig = parameterConfigs.get(i);
             if (paramConfig.isModified() || injectAdded) {
-                applyParameterEnhancement(methodConfig, paramConfig, i, initializer, enhanced.injectionPoints());
+                applyParameterEnhancement(methodConfig, paramConfig, i, injected, enhanced.injectionPoints());
             }
         }
     }
@@ -495,7 +496,7 @@ final class EnhancementApplier {
     }
 
     private static void applyParameterEnhancement(VaubanMethodConfig methodConfig,
-            VaubanParameterConfig parameterConfig, int index, boolean initializer,
+            VaubanParameterConfig parameterConfig, int index, boolean injected,
             List<InjectionPointInfo> injectionPoints) {
         var method = methodConfig.info();
         var kind = method.isConstructor()
@@ -507,7 +508,7 @@ final class EnhancementApplier {
                 method.parameters().stream()
                         .map(parameter -> LangModelTypeMapper.toIndexType(parameter.type())).toList());
         int existingIndex = findPoint(injectionPoints, kind, description);
-        if (existingIndex < 0 && !initializer) return;
+        if (existingIndex < 0 && !injected) return;
 
         var existing = existingIndex >= 0 ? injectionPoints.get(existingIndex) : null;
         var declared = existing == null

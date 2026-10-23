@@ -995,9 +995,10 @@ public final class ManagedBean<T> implements Bean<T> {
                     addParameterInjectionPoints((java.lang.reflect.Method) member, points, typeMapping, result);
                 }
             }
-            // Scan @Inject constructor
+            // The bean constructor: the one @Inject marks, or the one an @Enhancement made @Inject (vauban#187)
             for (var ctor : beanClass.getDeclaredConstructors()) {
-                if (ctor.isAnnotationPresent(jakarta.inject.Inject.class)) {
+                if (ctor.isAnnotationPresent(jakarta.inject.Inject.class)
+                        || QualifierHelper.describesConstructor(points, ctor)) {
                     addParameterInjectionPoints(ctor, points, typeMapping, result);
                 }
             }
