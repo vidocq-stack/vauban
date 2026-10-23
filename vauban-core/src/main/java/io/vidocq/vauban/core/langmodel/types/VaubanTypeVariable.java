@@ -29,24 +29,11 @@ import java.util.List;
 import java.util.Objects;
 import java.util.function.Predicate;
 
-public final class VaubanTypeVariable implements TypeVariable {
+public record VaubanTypeVariable(String name, List<Type> bounds) implements TypeVariable {
 
-    private final String name;
-    private final List<Type> bounds;
-
-    public VaubanTypeVariable(String name, List<Type> bounds) {
-        this.name = Objects.requireNonNull(name);
-        this.bounds = List.copyOf(bounds);
-    }
-
-    @Override
-    public String name() {
-        return name;
-    }
-
-    @Override
-    public List<Type> bounds() {
-        return bounds;
+    public VaubanTypeVariable {
+        Objects.requireNonNull(name);
+        bounds = List.copyOf(bounds);
     }
 
     @Override
@@ -95,11 +82,12 @@ public final class VaubanTypeVariable implements TypeVariable {
 
     @Override
     public boolean equals(Object o) {
-        if (this == o) return true;
-        if (!(o instanceof VaubanTypeVariable that)) return false;
-        return name.equals(that.name) && bounds.equals(that.bounds);
+        return this == o
+                || (o instanceof VaubanTypeVariable(var otherName, var otherBounds)
+                        && name.equals(otherName) && bounds.equals(otherBounds));
     }
 
+    // The hash the class had before it became a record: same values, same iteration orders.
     @Override
     public int hashCode() {
         return Objects.hash(name, bounds);

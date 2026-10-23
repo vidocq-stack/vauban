@@ -46,29 +46,23 @@ public final class TypeMapper {
             // so portable extensions can do `type instanceof PrimitiveType` (e.g. to box it).
             // Without this, such a type was exposed as ClassType[name=boolean] and broke synthetic
             // bean registration for primitive injection points (Cervantes @Claim boolean).
-            case TypeInfo.ClassType c when primitiveKind(c.name()) != null ->
-                    new VaubanPrimitiveType(primitiveKind(c.name()));
-            case TypeInfo.ClassType c -> new VaubanClassType(c.name(), lookup);
+            case TypeInfo.ClassType(var name) when primitiveKind(name) != null ->
+                    new VaubanPrimitiveType(primitiveKind(name));
+            case TypeInfo.ClassType(var name) -> new VaubanClassType(name, lookup);
             case TypeInfo.ArrayType a -> mapArray(a, lookup);
-            case TypeInfo.ParameterizedType pt -> new VaubanParameterizedType(
-                    pt.rawType(),
-                    pt.typeArguments().stream().map(t -> map(t, lookup)).toList(),
+            case TypeInfo.ParameterizedType(var rawType, var typeArguments) -> new VaubanParameterizedType(
+                    rawType,
+                    typeArguments.stream().map(t -> map(t, lookup)).toList(),
                     lookup);
-            case TypeInfo.TypeVariable tv -> new VaubanTypeVariable(
-                    tv.name(),
-                    tv.bounds().stream().map(t -> map(t, lookup)).toList());
-            case TypeInfo.WildcardType w -> new VaubanWildcardType(
-                    w.upperBound() != null ? map(w.upperBound(), lookup) : null,
-                    w.lowerBound() != null ? map(w.lowerBound(), lookup) : null);
+            case TypeInfo.TypeVariable(var name, var bounds) -> new VaubanTypeVariable(
+                    name,
+                    bounds.stream().map(t -> map(t, lookup)).toList());
+            case TypeInfo.WildcardType(var upperBound, var lowerBound) -> new VaubanWildcardType(
+                    upperBound != null ? map(upperBound, lookup) : null,
+                    lowerBound != null ? map(lowerBound, lookup) : null);
         };
     }
 
-    /**
-     * Maps an indexer array type to a CDI array type.
-     * The indexer model stores dimensions as an int, but the CDI model uses
-     * nested component types. For example, {@code int[][]} (dimensions=2) becomes
-     * {@code ArrayType(ArrayType(int))}.
-     */
     /**
      * Maps a reserved primitive name ("boolean", "int", …) to its {@link PrimitiveKind}, or
      * {@code null} for any real class name (no class may be named like a primitive).
@@ -87,6 +81,12 @@ public final class TypeMapper {
         };
     }
 
+    /**
+     * Maps an indexer array type to a CDI array type.
+     * The indexer model stores dimensions as an int, but the CDI model uses
+     * nested component types. For example, {@code int[][]} (dimensions=2) becomes
+     * {@code ArrayType(ArrayType(int))}.
+     */
     private static Type mapArray(TypeInfo.ArrayType arrayType, IndexLookup lookup) {
         Type element = map(arrayType.componentType(), lookup);
         Type result = element;

@@ -31,7 +31,6 @@ import java.lang.annotation.Annotation;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
-import java.util.Optional;
 import java.util.function.Predicate;
 
 public final class VaubanMethodInfo implements jakarta.enterprise.lang.model.declarations.MethodInfo {

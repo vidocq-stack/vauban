@@ -29,17 +29,10 @@ import java.util.List;
 import java.util.Objects;
 import java.util.function.Predicate;
 
-public final class VaubanArrayType implements ArrayType {
+public record VaubanArrayType(Type componentType) implements ArrayType {
 
-    private final Type componentType;
-
-    public VaubanArrayType(Type componentType) {
-        this.componentType = Objects.requireNonNull(componentType);
-    }
-
-    @Override
-    public Type componentType() {
-        return componentType;
+    public VaubanArrayType {
+        Objects.requireNonNull(componentType);
     }
 
     @Override
@@ -79,11 +72,11 @@ public final class VaubanArrayType implements ArrayType {
 
     @Override
     public boolean equals(Object o) {
-        if (this == o) return true;
-        if (!(o instanceof VaubanArrayType that)) return false;
-        return componentType.equals(that.componentType);
+        return this == o
+                || (o instanceof VaubanArrayType(var otherComponent) && componentType.equals(otherComponent));
     }
 
+    // The hash the class had before it became a record: same values, same iteration orders.
     @Override
     public int hashCode() {
         return Objects.hash(componentType);

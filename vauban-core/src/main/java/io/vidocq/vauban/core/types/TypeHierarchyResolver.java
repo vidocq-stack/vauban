@@ -65,7 +65,9 @@ public class TypeHierarchyResolver {
                     resolveInternal(gi, newMap, result);
                 }
             }
-            default -> { }
+            default -> {
+                // A type variable, a wildcard or an array type adds no supertype to walk.
+            }
         }
     }
 

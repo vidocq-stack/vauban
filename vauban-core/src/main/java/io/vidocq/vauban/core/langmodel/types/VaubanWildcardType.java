@@ -29,25 +29,7 @@ import java.util.List;
 import java.util.Objects;
 import java.util.function.Predicate;
 
-public final class VaubanWildcardType implements WildcardType {
-
-    private final Type upperBound;
-    private final Type lowerBound;
-
-    public VaubanWildcardType(Type upperBound, Type lowerBound) {
-        this.upperBound = upperBound;
-        this.lowerBound = lowerBound;
-    }
-
-    @Override
-    public Type upperBound() {
-        return upperBound;
-    }
-
-    @Override
-    public Type lowerBound() {
-        return lowerBound;
-    }
+public record VaubanWildcardType(Type upperBound, Type lowerBound) implements WildcardType {
 
     @Override
     public boolean hasAnnotation(Class<? extends Annotation> annotationType) {
@@ -92,11 +74,12 @@ public final class VaubanWildcardType implements WildcardType {
 
     @Override
     public boolean equals(Object o) {
-        if (this == o) return true;
-        if (!(o instanceof VaubanWildcardType that)) return false;
-        return Objects.equals(upperBound, that.upperBound) && Objects.equals(lowerBound, that.lowerBound);
+        return this == o
+                || (o instanceof VaubanWildcardType(var otherUpper, var otherLower)
+                        && Objects.equals(upperBound, otherUpper) && Objects.equals(lowerBound, otherLower));
     }
 
+    // The hash the class had before it became a record: same values, same iteration orders.
     @Override
     public int hashCode() {
         return Objects.hash(upperBound, lowerBound);

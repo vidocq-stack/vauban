@@ -29,11 +29,11 @@ import java.util.List;
 public final class BuiltAnnotationMember implements AnnotationMember {
 
     private final Kind kind;
-    private final Object value;
+    private final Object memberValue;
 
     private BuiltAnnotationMember(Kind kind, Object value) {
         this.kind = kind;
-        this.value = value;
+        this.memberValue = value;
     }
 
     public static BuiltAnnotationMember ofBoolean(boolean v) { return new BuiltAnnotationMember(Kind.BOOLEAN, v); }
@@ -57,7 +57,7 @@ public final class BuiltAnnotationMember implements AnnotationMember {
     /** The binary name of the enum type — {@link #asEnumClass()} would need an index to answer. */
     String enumTypeName() {
         checkKind(Kind.ENUM);
-        return ((EnumValue) value).enumTypeName();
+        return ((EnumValue) memberValue).enumTypeName();
     }
 
     @Override
@@ -68,61 +68,61 @@ public final class BuiltAnnotationMember implements AnnotationMember {
     @Override
     public boolean asBoolean() {
         checkKind(Kind.BOOLEAN);
-        return (boolean) value;
+        return (boolean) memberValue;
     }
 
     @Override
     public byte asByte() {
         checkKind(Kind.BYTE);
-        return (byte) value;
+        return (byte) memberValue;
     }
 
     @Override
     public short asShort() {
         checkKind(Kind.SHORT);
-        return (short) value;
+        return (short) memberValue;
     }
 
     @Override
     public int asInt() {
         checkKind(Kind.INT);
-        return (int) value;
+        return (int) memberValue;
     }
 
     @Override
     public long asLong() {
         checkKind(Kind.LONG);
-        return (long) value;
+        return (long) memberValue;
     }
 
     @Override
     public float asFloat() {
         checkKind(Kind.FLOAT);
-        return (float) value;
+        return (float) memberValue;
     }
 
     @Override
     public double asDouble() {
         checkKind(Kind.DOUBLE);
-        return (double) value;
+        return (double) memberValue;
     }
 
     @Override
     public char asChar() {
         checkKind(Kind.CHAR);
-        return (char) value;
+        return (char) memberValue;
     }
 
     @Override
     public String asString() {
         checkKind(Kind.STRING);
-        return (String) value;
+        return (String) memberValue;
     }
 
     @Override
     public <E extends Enum<E>> E asEnum(Class<E> enumType) {
         checkKind(Kind.ENUM);
-        var ev = (EnumValue) value;
+        var ev = (EnumValue) memberValue;
         return Enum.valueOf(enumType, ev.constantName());
     }
 
@@ -134,26 +134,26 @@ public final class BuiltAnnotationMember implements AnnotationMember {
     @Override
     public String asEnumConstant() {
         checkKind(Kind.ENUM);
-        return ((EnumValue) value).constantName();
+        return ((EnumValue) memberValue).constantName();
     }
 
     @Override
     public Type asType() {
         checkKind(Kind.CLASS);
-        return (Type) value;
+        return (Type) memberValue;
     }
 
     @Override
     public AnnotationInfo asNestedAnnotation() {
         checkKind(Kind.NESTED_ANNOTATION);
-        return (AnnotationInfo) value;
+        return (AnnotationInfo) memberValue;
     }
 
     @Override
     @SuppressWarnings("unchecked")
     public List<AnnotationMember> asArray() {
         checkKind(Kind.ARRAY);
-        return (List<AnnotationMember>) value;
+        return (List<AnnotationMember>) memberValue;
     }
 
     private void checkKind(Kind expected) {
@@ -164,6 +164,6 @@ public final class BuiltAnnotationMember implements AnnotationMember {
 
     @Override
     public String toString() {
-        return String.valueOf(value);
+        return String.valueOf(memberValue);
     }
 }

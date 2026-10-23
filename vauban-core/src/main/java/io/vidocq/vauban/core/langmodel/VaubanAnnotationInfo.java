@@ -20,7 +20,6 @@
 package io.vidocq.vauban.core.langmodel;
 
 import io.vidocq.vauban.core.langmodel.declarations.VaubanClassInfo;
-import io.vidocq.vauban.indexer.model.DotName;
 import jakarta.enterprise.lang.model.AnnotationMember;
 
 import java.util.LinkedHashMap;

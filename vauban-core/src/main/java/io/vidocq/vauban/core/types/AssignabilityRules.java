@@ -25,6 +25,7 @@ import io.vidocq.vauban.indexer.model.TypeInfo;
 import io.vidocq.vauban.indexer.model.TypeInfo.*;
 
 import java.util.HashSet;
+import java.util.List;
 import java.util.Objects;
 import java.util.Set;
 
@@ -77,34 +78,7 @@ public final class AssignabilityRules {
         if (beanType.equals(requiredType)) return true;
 
         // CDI spec: primitive types and their wrappers are considered identical
-        if (requiredType instanceof PrimitiveType rp) {
-            var wrapperName = PRIMITIVE_TO_WRAPPER.get(rp.kind().name());
-            if (wrapperName != null
-                    && beanType instanceof ClassType bc && bc.name().equals(wrapperName)) return true;
-        }
-        if (beanType instanceof PrimitiveType bp) {
-            var wrapperName = PRIMITIVE_TO_WRAPPER.get(bp.kind().name());
-            if (wrapperName != null
-                    && requiredType instanceof ClassType rc && rc.name().equals(wrapperName)) return true;
-        }
-
-        // Handle ClassType with primitive name (e.g. ClassType[name=boolean] <-> ClassType[name=java.lang.Boolean])
-        if (beanType instanceof ClassType bc && requiredType instanceof ClassType rc) {
-            var beanWrapper = PRIMITIVE_NAME_TO_WRAPPER.get(bc.name().value());
-            var reqWrapper = PRIMITIVE_NAME_TO_WRAPPER.get(rc.name().value());
-            if (beanWrapper != null && rc.name().equals(beanWrapper)) return true;
-            if (reqWrapper != null && bc.name().equals(reqWrapper)) return true;
-            if (beanWrapper != null && reqWrapper != null && beanWrapper.equals(reqWrapper)) return true;
-        }
-        // Handle PrimitiveType <-> ClassType[primitive name]
-        if (beanType instanceof PrimitiveType bp2 && requiredType instanceof ClassType rc) {
-            var primName = bp2.kind().name().toLowerCase();
-            if (rc.name().value().equals(primName)) return true;
-        }
-        if (requiredType instanceof PrimitiveType rp2 && beanType instanceof ClassType bc) {
-            var primName = rp2.kind().name().toLowerCase();
-            if (bc.name().value().equals(primName)) return true;
-        }
+        if (identicalPrimitives(beanType, requiredType)) return true;
 
         return switch (requiredType) {
             case ClassType req -> isAssignableToClass(beanType, req);
@@ -116,46 +90,75 @@ public final class AssignabilityRules {
         };
     }
 
+    /**
+     * A primitive type and its wrapper, whichever stands for the bean and which for the required type,
+     * the primitive given either as a {@code PrimitiveType} or as a {@code ClassType} with a primitive
+     * name ({@code ClassType[name=boolean]}).
+     */
+    private static boolean identicalPrimitives(TypeInfo beanType, TypeInfo requiredType) {
+        if (requiredType instanceof PrimitiveType(var kind) && isWrapperOf(beanType, kind)) return true;
+        if (beanType instanceof PrimitiveType(var kind) && isWrapperOf(requiredType, kind)) return true;
+
+        // Handle ClassType with primitive name (e.g. ClassType[name=boolean] <-> ClassType[name=java.lang.Boolean])
+        if (beanType instanceof ClassType(var beanName) && requiredType instanceof ClassType(var requiredName)
+                && primitiveAndWrapper(beanName, requiredName)) return true;
+
+        // Handle PrimitiveType <-> ClassType[primitive name]
+        if (beanType instanceof PrimitiveType(var kind) && namesPrimitive(requiredType, kind)) return true;
+        return requiredType instanceof PrimitiveType(var kind) && namesPrimitive(beanType, kind);
+    }
+
+    /** {@code type} is the {@code ClassType} of the wrapper of the primitive {@code kind}. */
+    private static boolean isWrapperOf(TypeInfo type, PrimitiveType.Kind kind) {
+        var wrapperName = PRIMITIVE_TO_WRAPPER.get(kind.name());
+        return wrapperName != null && type instanceof ClassType(var name) && name.equals(wrapperName);
+    }
+
+    /** {@code type} is a {@code ClassType} with the name of the primitive {@code kind}. */
+    private static boolean namesPrimitive(TypeInfo type, PrimitiveType.Kind kind) {
+        return type instanceof ClassType(DotName(var name)) && name.equals(kind.name().toLowerCase());
+    }
+
+    /** One name is a primitive's and the other its wrapper's, or both are names of the same primitive. */
+    private static boolean primitiveAndWrapper(DotName beanName, DotName requiredName) {
+        var beanWrapper = PRIMITIVE_NAME_TO_WRAPPER.get(beanName.value());
+        var reqWrapper = PRIMITIVE_NAME_TO_WRAPPER.get(requiredName.value());
+        return (beanWrapper != null && requiredName.equals(beanWrapper))
+                || (reqWrapper != null && beanName.equals(reqWrapper))
+                || (beanWrapper != null && beanWrapper.equals(reqWrapper));
+    }
+
     private boolean isAssignableToClass(TypeInfo beanType, ClassType required) {
         return switch (beanType) {
-            case ClassType bean -> isSubtypeOf(bean.name(), required.name());
-            case TypeVariable tv -> {
-                // A TypeVariable is assignable to a ClassType if at least one bound is assignable
-                for (var bound : tv.bounds()) {
-                    if (isAssignable(bound, required)) {
-                        yield true;
-                    }
-                }
-                yield false;
-            }
-            case ParameterizedType bean -> {
-                // CDI 4.1 Section 5.2.4: A parameterized bean type is assignable to
-                // a raw required type if the raw types are identical and all type parameters
-                // of the bean type are either unbounded type variables or java.lang.Object.
-                if (!bean.rawType().equals(required.name())) {
-                    // Check if there's any supertype that matches
-                    yield isSubtypeOf(bean.rawType(), required.name());
-                } else {
-                    for (TypeInfo arg : bean.typeArguments()) {
-                        if (arg instanceof TypeVariable tv) {
-                            for (TypeInfo bound : tv.bounds()) {
-                                if (bound instanceof ClassType ct && !ct.name().value().equals(JAVA_LANG_OBJECT)) {
-                                    yield false;
-                                }
-                            }
-                        } else if (arg instanceof ClassType ct) {
-                            if (!ct.name().value().equals(JAVA_LANG_OBJECT)) {
-                                yield false;
-                            }
-                        } else {
-                            yield false;
-                        }
-                    }
-                    yield true;
-                }
-            }
+            case ClassType(var beanName) -> isSubtypeOf(beanName, required.name());
+            // A TypeVariable is assignable to a ClassType if at least one bound is assignable
+            case TypeVariable(_, var bounds) -> bounds.stream().anyMatch(bound -> isAssignable(bound, required));
+            // CDI 4.1 Section 5.2.4: A parameterized bean type is assignable to
+            // a raw required type if the raw types are identical and all type parameters
+            // of the bean type are either unbounded type variables or java.lang.Object.
+            // Otherwise, check if there's any supertype that matches.
+            case ParameterizedType(var rawType, var typeArguments) -> rawType.equals(required.name())
+                    ? rawEquivalentArguments(typeArguments)
+                    : isSubtypeOf(rawType, required.name());
             default -> false;
         };
+    }
+
+    /** Every argument is {@code java.lang.Object}, or a type variable with no class bound but {@code java.lang.Object}. */
+    private static boolean rawEquivalentArguments(List<TypeInfo> arguments) {
+        return arguments.stream().allMatch(AssignabilityRules::isRawEquivalentArgument);
+    }
+
+    private static boolean isRawEquivalentArgument(TypeInfo argument) {
+        return switch (argument) {
+            case TypeVariable(_, var bounds) -> bounds.stream().noneMatch(AssignabilityRules::isClassOtherThanObject);
+            case ClassType _ -> isObjectClass(argument);
+            default -> false;
+        };
+    }
+
+    private static boolean isClassOtherThanObject(TypeInfo type) {
+        return type instanceof ClassType && !isObjectClass(type);
     }
 
     /**
@@ -166,37 +169,11 @@ public final class AssignabilityRules {
     public boolean beanTypeMatches(TypeInfo beanType, TypeInfo requiredType) {
         if (beanType.equals(requiredType)) return true;
         return switch (requiredType) {
-            case ClassType req -> switch (beanType) {
-                case ClassType bean -> {
-                    if (bean.name().equals(req.name())) yield true;
-                    var beanWrapper = PRIMITIVE_NAME_TO_WRAPPER.get(bean.name().value());
-                    var reqWrapper = PRIMITIVE_NAME_TO_WRAPPER.get(req.name().value());
-                    if (beanWrapper != null && req.name().equals(beanWrapper)) yield true;
-                    if (reqWrapper != null && bean.name().equals(reqWrapper)) yield true;
-                    if (beanWrapper != null && reqWrapper != null && beanWrapper.equals(reqWrapper)) yield true;
-                    yield false;
-                }
-                case ParameterizedType bean -> {
-                    if (!bean.rawType().equals(req.name())) {
-                        yield false;
-                    }
-                    for (TypeInfo arg : bean.typeArguments()) {
-                        if (arg instanceof TypeVariable tv) {
-                            for (TypeInfo bound : tv.bounds()) {
-                                if (bound instanceof ClassType ct && !ct.name().value().equals(JAVA_LANG_OBJECT)) {
-                                    yield false;
-                                }
-                            }
-                        } else if (arg instanceof ClassType ct) {
-                            if (!ct.name().value().equals(JAVA_LANG_OBJECT)) {
-                                yield false;
-                            }
-                        } else {
-                            yield false;
-                        }
-                    }
-                    yield true;
-                }
+            case ClassType(var requiredName) -> switch (beanType) {
+                case ClassType(var beanName) ->
+                        beanName.equals(requiredName) || primitiveAndWrapper(beanName, requiredName);
+                case ParameterizedType(var rawType, var typeArguments) ->
+                        rawType.equals(requiredName) && rawEquivalentArguments(typeArguments);
                 default -> false;
             };
             case ParameterizedType req -> isAssignableToParameterized(beanType, req);
@@ -206,26 +183,25 @@ public final class AssignabilityRules {
 
     private boolean isAssignableToParameterized(TypeInfo beanType, ParameterizedType required) {
         return switch (beanType) {
-            case ParameterizedType bean -> {
-                if (!bean.rawType().equals(required.rawType())) yield false;
-                if (bean.typeArguments().size() != required.typeArguments().size()) yield false;
-                // Each type argument must match (CDI 4.1 Section 2.4.1)
-                for (int i = 0; i < bean.typeArguments().size(); i++) {
-                    if (!isTypeArgumentAssignable(bean.typeArguments().get(i), required.typeArguments().get(i))) {
-                        yield false;
-                    }
-                }
-                yield true;
-            }
+            case ParameterizedType(var rawType, var typeArguments) -> rawType.equals(required.rawType())
+                    && typeArgumentsAssignable(typeArguments, required.typeArguments());
             // CDI spec 4.1 Section 2.4.1: A raw bean type is assignable to a parameterized required type if they have identical raw types.
             // This case specifically applies when the bean itself IS a raw type (no type parameters in declaration).
             // However, most beans in these tests ARE parameterized, so they fall into the ParameterizedType case above.
-            case ClassType bean -> {
-                if (!bean.name().equals(required.rawType())) yield false;
-                yield true;
-            }
+            case ClassType(var beanName) -> beanName.equals(required.rawType());
             default -> false;
         };
+    }
+
+    private boolean typeArgumentsAssignable(List<TypeInfo> beanArguments, List<TypeInfo> requiredArguments) {
+        if (beanArguments.size() != requiredArguments.size()) return false;
+        // Each type argument must match (CDI 4.1 Section 2.4.1)
+        for (int i = 0; i < beanArguments.size(); i++) {
+            if (!isTypeArgumentAssignable(beanArguments.get(i), requiredArguments.get(i))) {
+                return false;
+            }
+        }
+        return true;
     }
 
     /**
@@ -236,77 +212,48 @@ public final class AssignabilityRules {
      */
     private boolean isTypeArgumentAssignable(TypeInfo beanArg, TypeInfo requiredArg) {
         return switch (requiredArg) {
-            case WildcardType wildcard -> {
-                if (beanArg instanceof TypeVariable beanTv && !beanTv.bounds().isEmpty()) {
-                    // Bean TV with bounds: lower bound must be assignable to ALL bounds,
-                    // and at least one bound must be assignable to upper bound
-                    if (wildcard.lowerBound() != null) {
-                        for (var beanBound : beanTv.bounds()) {
-                            if (!isAssignable(wildcard.lowerBound(), beanBound)) yield false;
-                        }
-                    }
-                    if (wildcard.upperBound() != null) {
-                        boolean anyMatch = false;
-                        for (var beanBound : beanTv.bounds()) {
-                            if (isAssignable(beanBound, wildcard.upperBound())) {
-                                anyMatch = true;
-                                break;
-                            }
-                        }
-                        if (!anyMatch) yield false;
-                    }
-                    yield true;
-                }
+            case WildcardType(var upperBound, var lowerBound) -> wildcardAdmits(beanArg, upperBound, lowerBound);
+            // CDI spec rule (f): bean TV vs required TV. No rule for required TV vs bean actual type: no match.
+            case TypeVariable(_, var requiredBounds) -> beanArg instanceof TypeVariable(_, var beanBounds)
+                    && boundsCovered(beanBounds, requiredBounds);
+            default -> actualTypeAdmits(beanArg, requiredArg);
+        };
+    }
 
-                TypeInfo effectiveBeanArg = beanArg;
-                if (beanArg instanceof WildcardType bw) {
-                    effectiveBeanArg = bw.upperBound() != null ? bw.upperBound()
-                            : new ClassType(DotName.of(JAVA_LANG_OBJECT));
-                }
+    /** A required wildcard argument with these bounds admits the bean's argument. */
+    private boolean wildcardAdmits(TypeInfo beanArg, TypeInfo upperBound, TypeInfo lowerBound) {
+        if (beanArg instanceof TypeVariable(_, var beanBounds) && !beanBounds.isEmpty()) {
+            // Bean TV with bounds: lower bound must be assignable to ALL bounds,
+            // and at least one bound must be assignable to upper bound
+            return (lowerBound == null || beanBounds.stream().allMatch(beanBound -> isAssignable(lowerBound, beanBound)))
+                    && (upperBound == null || beanBounds.stream().anyMatch(beanBound -> isAssignable(beanBound, upperBound)));
+        }
 
-                if (wildcard.lowerBound() != null
-                        && !isAssignable(wildcard.lowerBound(), effectiveBeanArg)) yield false;
-                if (wildcard.upperBound() != null
-                        && !isAssignable(effectiveBeanArg, wildcard.upperBound())) yield false;
-                yield true;
-            }
-            case TypeVariable tv -> {
-                if (beanArg instanceof TypeVariable beanTv) {
-                    // CDI spec rule (f): bean TV vs required TV
-                    // Each bound of the bean TV must be covered by at least one bound of the required TV
-                    for (var beanBound : beanTv.bounds()) {
-                        boolean covered = false;
-                        for (var reqBound : tv.bounds()) {
-                            if (isAssignable(reqBound, beanBound)) {
-                                covered = true;
-                                break;
-                            }
-                        }
-                        if (!covered) yield false;
-                    }
-                    yield true;
-                }
-                // CDI spec: no rule for required TV vs bean actual type -> no match
-                yield false;
-            }
-            default -> {
-                // CDI spec rule (e): bean arg is a type variable, required arg is an actual type
-                // The actual type must be assignable to all bounds of the bean type variable
-                if (beanArg instanceof TypeVariable tv) {
-                     for (var bound : tv.bounds()) {
-                         if (!isAssignable(requiredArg, bound)) yield false;
-                     }
-                     yield true;
-                }
-                if (beanArg instanceof WildcardType beanWild) {
-                    // Bean wildcard vs required concrete: check bounds
-                    if (beanWild.upperBound() != null) {
-                        yield isAssignable(beanWild.upperBound(), requiredArg);
-                    }
-                    yield false;
-                }
-                yield beanArg.equals(requiredArg);
-            }
+        TypeInfo effectiveBeanArg = beanArg;
+        if (beanArg instanceof WildcardType(var beanUpperBound, _)) {
+            effectiveBeanArg = beanUpperBound != null ? beanUpperBound
+                    : new ClassType(DotName.of(JAVA_LANG_OBJECT));
+        }
+
+        return (lowerBound == null || isAssignable(lowerBound, effectiveBeanArg))
+                && (upperBound == null || isAssignable(effectiveBeanArg, upperBound));
+    }
+
+    /** Each bound of the bean TV must be covered by at least one bound of the required TV. */
+    private boolean boundsCovered(List<TypeInfo> beanBounds, List<TypeInfo> requiredBounds) {
+        return beanBounds.stream().allMatch(beanBound ->
+                requiredBounds.stream().anyMatch(reqBound -> isAssignable(reqBound, beanBound)));
+    }
+
+    /** A required actual type argument admits the bean's argument. */
+    private boolean actualTypeAdmits(TypeInfo beanArg, TypeInfo requiredArg) {
+        return switch (beanArg) {
+            // CDI spec rule (e): bean arg is a type variable, required arg is an actual type
+            // The actual type must be assignable to all bounds of the bean type variable
+            case TypeVariable(_, var bounds) -> bounds.stream().allMatch(bound -> isAssignable(requiredArg, bound));
+            // Bean wildcard vs required concrete: check bounds
+            case WildcardType(var upperBound, _) -> upperBound != null && isAssignable(upperBound, requiredArg);
+            default -> beanArg.equals(requiredArg);
         };
     }
 
@@ -321,11 +268,9 @@ public final class AssignabilityRules {
     }
 
     private boolean isAssignableToArray(TypeInfo beanType, ArrayType required) {
-        if (beanType instanceof ArrayType beanArray) {
-            if (beanArray.dimensions() != required.dimensions()) return false;
-            return arrayElementMatches(beanArray.componentType(), required.componentType());
-        }
-        return false;
+        return beanType instanceof ArrayType(var beanComponent, var beanDimensions)
+                && beanDimensions == required.dimensions()
+                && arrayElementMatches(beanComponent, required.componentType());
     }
 
     /**
@@ -346,40 +291,42 @@ public final class AssignabilityRules {
             var requiredName = primitiveName(required);
             return beanName != null && beanName.equals(requiredName);
         }
-        if (bean instanceof ClassType b && required instanceof ParameterizedType r) {
-            return b.name().equals(r.rawType()) && allArgumentsUnbounded(r.typeArguments());
+        if (bean instanceof ClassType(var beanName)
+                && required instanceof ParameterizedType(var rawType, var typeArguments)) {
+            return beanName.equals(rawType) && allArgumentsUnbounded(typeArguments);
         }
-        if (bean instanceof ParameterizedType b && required instanceof ClassType r) {
-            return b.rawType().equals(r.name()) && allArgumentsUnbounded(b.typeArguments());
+        if (bean instanceof ParameterizedType(var rawType, var typeArguments)
+                && required instanceof ClassType(var requiredName)) {
+            return rawType.equals(requiredName) && allArgumentsUnbounded(typeArguments);
         }
         return isAssignable(bean, required);
     }
 
     private static String primitiveName(TypeInfo type) {
         return switch (type) {
-            case PrimitiveType p -> p.kind().name().toLowerCase();
-            case ClassType c -> c.name().value();
+            case PrimitiveType(var kind) -> kind.name().toLowerCase();
+            case ClassType(DotName(var name)) -> name;
             default -> null;
         };
     }
 
-    private static boolean allArgumentsUnbounded(java.util.List<TypeInfo> arguments) {
-        for (var argument : arguments) {
-            boolean unbounded = switch (argument) {
-                case WildcardType w -> w.lowerBound() == null
-                        && (w.upperBound() == null || isObjectClass(w.upperBound()));
-                case ClassType c -> c.name().value().equals(JAVA_LANG_OBJECT);
-                case TypeVariable tv -> tv.bounds().isEmpty()
-                        || tv.bounds().stream().allMatch(AssignabilityRules::isObjectClass);
-                default -> false;
-            };
-            if (!unbounded) return false;
-        }
-        return true;
+    private static boolean allArgumentsUnbounded(List<TypeInfo> arguments) {
+        return arguments.stream().allMatch(AssignabilityRules::isUnbounded);
+    }
+
+    private static boolean isUnbounded(TypeInfo argument) {
+        return switch (argument) {
+            case WildcardType(var upperBound, var lowerBound) -> lowerBound == null
+                    && (upperBound == null || isObjectClass(upperBound));
+            case ClassType _ -> isObjectClass(argument);
+            case TypeVariable(_, var bounds) -> bounds.isEmpty()
+                    || bounds.stream().allMatch(AssignabilityRules::isObjectClass);
+            default -> false;
+        };
     }
 
     private static boolean isObjectClass(TypeInfo type) {
-        return type instanceof ClassType c && c.name().value().equals(JAVA_LANG_OBJECT);
+        return type instanceof ClassType(DotName(var name)) && name.equals(JAVA_LANG_OBJECT);
     }
 
     private boolean isAssignableToBounds(TypeInfo beanType, TypeVariable required) {
@@ -421,8 +368,8 @@ public final class AssignabilityRules {
                         return true;
                     }
                 }
-            } catch (Exception e) {
-                // skip
+            } catch (Exception _) {
+                // Not loadable from here: not a subtype as far as this walk can tell.
             }
             return false;
         }

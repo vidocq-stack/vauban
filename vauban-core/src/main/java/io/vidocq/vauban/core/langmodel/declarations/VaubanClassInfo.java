@@ -151,11 +151,9 @@ public final class VaubanClassInfo implements jakarta.enterprise.lang.model.decl
     public Collection<jakarta.enterprise.lang.model.declarations.MethodInfo> methods() {
         var result = new java.util.ArrayList<jakarta.enterprise.lang.model.declarations.MethodInfo>();
         // Methods declared directly on this class
-        var declaredMethodNames = new java.util.HashSet<String>();
         for (var m : indexClass.methods()) {
             if (!m.isConstructor() && !m.isStaticInitializer()) {
                 result.add(new VaubanMethodInfo(m, this, lookup));
-                declaredMethodNames.add(m.name());
             }
         }
         // Methods from superinterfaces (always included, even if overridden,
