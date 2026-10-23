@@ -130,7 +130,7 @@ class StandardResourceUrlsTest {
         }
         assertThrows(IllegalStateException.class, () -> shared.getEntry("a/b/d.txt"),
                 "the shared jar file closes with the loader");
-        assertThrows(java.io.IOException.class, () -> url.openStream(), "the loader is closed");
+        assertThrows(java.io.IOException.class, url::openStream, "the loader is closed");
     }
 
     @Test

@@ -114,7 +114,7 @@ final class BuiltInReaders {
                 var base = root.toAbsolutePath().normalize();
                 var file = base.resolve(name).normalize();
                 return file.startsWith(base) ? file : null;
-            } catch (InvalidPathException e) {
+            } catch (InvalidPathException _) {
                 return null;
             }
         }
@@ -185,13 +185,6 @@ final class BuiltInReaders {
             return URL.of(URI.create(base + encodePath(name) + fragment), handler);
         }
 
-        private synchronized JarFile shared() throws IOException {
-            if (shared == null) {
-                shared = open(path);
-            }
-            return shared;
-        }
-
         private static JarFile open(Path path) throws IOException {
             return new JarFile(path.toFile(), false, ZipFile.OPEN_READ, JarFile.runtimeVersion());
         }
@@ -233,6 +226,16 @@ final class BuiltInReaders {
                 return getUseCaches() ? shared() : open(path);
             }
 
+            /** The reader's shared jar file, opened on first use under the reader's lock, as close() takes it. */
+            private JarFile shared() throws IOException {
+                synchronized (JarReader.this) {
+                    if (shared == null) {
+                        shared = open(path);
+                    }
+                    return shared;
+                }
+            }
+
             @Override
             public JarEntry getJarEntry() throws IOException {
                 connect();
@@ -256,7 +259,7 @@ final class BuiltInReaders {
                     connect();
                     var entry = getEntryName() == null ? null : entry();
                     return entry == null ? -1 : entry.getSize();
-                } catch (IOException e) {
+                } catch (IOException _) {
                     return -1;
                 }
             }
@@ -264,7 +267,7 @@ final class BuiltInReaders {
             private JarEntry entry() {
                 try {
                     return jar.getJarEntry(getEntryName());
-                } catch (IllegalStateException closed) {
+                } catch (IllegalStateException _) {
                     return null;
                 }
             }
