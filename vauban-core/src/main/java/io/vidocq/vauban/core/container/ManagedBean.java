@@ -106,7 +106,8 @@ public final class ManagedBean<T> implements Bean<T> {
     }
 
     @Override
-    public T create(CreationalContext<T> creationalContext) {
+    public T create(CreationalContext<T> callerContext) {
+        var creationalContext = contextOfItsOwnIfIntercepted(callerContext);
         T instance = factory.create(creationalContext);
         
         // CDI spec: producer returning null for non-Dependent scope -> IllegalProductException
@@ -119,6 +120,20 @@ public final class ManagedBean<T> implements Bean<T> {
             injector.accept(instance, creationalContext);
         }
         return instance;
+    }
+
+    /**
+     * The creational context an intercepted bean is created with: the caller's, or one of the bean's own when the
+     * caller passes none (VAU-LIFE-002), as its intercepted factory does (VAU-INT-008). Its factory and its
+     * {@code @PostConstruct} step then share it, so one interceptor instance per interceptor class, a dependent object
+     * of the bean instance (CDI 4.1 §6.4.1), serves its construction, its lifecycle callbacks and its methods. Only an
+     * intercepted bean gets an interceptor manager.
+     */
+    private CreationalContext<T> contextOfItsOwnIfIntercepted(CreationalContext<T> callerContext) {
+        if (callerContext != null || interceptorManager == null) {
+            return callerContext;
+        }
+        return new io.vidocq.vauban.core.context.CreationalContextImpl<>();
     }
 
     @Override

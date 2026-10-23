@@ -40,6 +40,34 @@ index. A class outside the index (a JDK type reached through `ClassType.declarat
 `BceClassTypeParametersTest.typeParametersAreExposedWithTheirBounds` (vauban-core),
 `ClassFileScannerTest$TypeParameters` and `ClassInfoTest` (vauban-indexer), `ElementScannerTypeParametersTest` (vauban-processor: the
 processor and the bytecode scan agree).
+## VAU-LIFE-002 — `Bean#create(null)` of an intercepted bean fails in its `@PostConstruct` step
+- **Date**: 2026-10-24 — **Status**: FIXED (fix/vauban-tickets, vauban#200, Vidocq/vidocq#285)
+- **Severity**: low (only a direct `Bean#create` with no creational context; the container always passes one)
+
+### Symptom
+`Bean#create(null)` on a bean bound to a lifecycle interceptor (`@PostConstruct`), once vauban#192 let it past the
+factory, failed with `NullPointerException: Cannot invoke "java.lang.reflect.AccessibleObject.trySetAccessible()"
+because "member" is null`, from `VaubanInvocationContext.makeAccessibleSafe`, in `BeanLifecycle.callInterceptedPostConstruct`.
+
+### Repro
+`InterceptedBeanCreateWithoutCreationalContextTest` (vauban-core): `Bean#create(null)` on a bean whose interceptor
+has `@AroundConstruct`, `@PostConstruct` and `@AroundInvoke` methods, and on a bean bound to a `@PostConstruct`
+interceptor only; both failed before the fix.
+
+### Cause
+`ManagedBean.create` handed the null context on to the injector, which runs the `@PostConstruct` step. With no context,
+`InterceptorManager.resolveLifecycleChain` cannot resolve the interceptor instances and puts an
+`InterceptorInvocation(null, null)` placeholder in the chain, which the invocation context dereferences. The
+creational context the intercepted factory made of its own (VAU-INT-008) stays inside the factory.
+
+### Fix
+`ManagedBean.create` of an intercepted bean (the only beans with an interceptor manager) now creates a creational
+context of the bean's own when the caller passes none, and hands it to both the factory and the injector. The
+`@PostConstruct` interceptors are resolved from it, and one interceptor instance per interceptor class, a dependent
+object of the bean instance (CDI 4.1 §6.4.1), serves its construction, its `@PostConstruct` and its methods (Jakarta
+Interceptors 2.2 §2.2). Beans without interceptors still get the caller's context, null included. Tests:
+`InterceptedBeanCreateWithoutCreationalContextTest.aroundConstructPostConstructAndAroundInvoke` and
+`.postConstructOnly` (vauban-core).
 
 ---
 
@@ -163,8 +191,8 @@ receives the caller's context. Tests: `InterceptedFactoryWithoutCreationalContex
 `Bean#create(null)` on an intercepted bean with an `@AroundConstruct` interceptor now gets past the factory, then
 fails in its `@PostConstruct` step with a separate cause: `ManagedBean.create` hands the null context on to the
 injector, and `InterceptorManager.resolveLifecycleChain` puts an `InterceptorInvocation(null, null)` placeholder in
-the chain when it has no context, which `VaubanInvocationContext.makeAccessibleSafe` dereferences. It needs its own
-entry.
+the chain when it has no context, which `VaubanInvocationContext.makeAccessibleSafe` dereferences. Tracked and
+fixed as VAU-LIFE-002 (vauban#200).
 
 ---
 
