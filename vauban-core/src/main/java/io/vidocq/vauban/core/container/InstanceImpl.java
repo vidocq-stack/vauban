@@ -26,7 +26,6 @@ import jakarta.enterprise.util.TypeLiteral;
 import java.lang.annotation.Annotation;
 import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.HashSet;
 import java.util.IdentityHashMap;
 import java.util.Iterator;
 import java.util.Map;
@@ -204,8 +203,7 @@ public final class InstanceImpl<T> implements Instance<T> {
     private jakarta.enterprise.inject.spi.InjectionPoint updateInjectionPointType(
             Class<?> newType, Annotation[] newQualifiers) {
         if (injectionPoint == null) return null;
-        var qualSet = new java.util.LinkedHashSet<Annotation>();
-        for (var q : newQualifiers) qualSet.add(q);
+        var qualSet = new java.util.LinkedHashSet<Annotation>(Arrays.asList(newQualifiers));
         if (qualSet.isEmpty()) qualSet.add(jakarta.enterprise.inject.Default.Literal.INSTANCE);
         return new VaubanInjectionPoint(newType, qualSet, injectionPoint.getBean(), injectionPoint.getMember());
     }
@@ -270,7 +268,7 @@ public final class InstanceImpl<T> implements Instance<T> {
         try {
             container.getBeanManager().resolve(beans);
             return false;
-        } catch (jakarta.enterprise.inject.AmbiguousResolutionException e) {
+        } catch (jakarta.enterprise.inject.AmbiguousResolutionException _) {
             return true;
         }
     }
@@ -283,7 +281,7 @@ public final class InstanceImpl<T> implements Instance<T> {
         try {
             container.getBeanManager().resolve(beans);
             return true;
-        } catch (jakarta.enterprise.inject.AmbiguousResolutionException e) {
+        } catch (jakarta.enterprise.inject.AmbiguousResolutionException _) {
             return false;
         }
     }
@@ -311,9 +309,9 @@ public final class InstanceImpl<T> implements Instance<T> {
             try {
                 var ctx = bm.getContext(scope);
                 if (ctx instanceof jakarta.enterprise.context.spi.AlterableContext ac) {
-                    ac.destroy((jakarta.enterprise.context.spi.Contextual<?>) bean);
+                    ac.destroy(bean);
                 }
-            } catch (Exception e) {
+            } catch (Exception _) {
                 // Best effort -- context may not be active
             }
         }
@@ -334,7 +332,6 @@ public final class InstanceImpl<T> implements Instance<T> {
 
     @Override
     public Iterable<? extends Handle<T>> handles() {
-        var bm = container.getBeanManager();
         var beans = getEffectiveBeans();
         var result = new ArrayList<Handle<T>>();
         for (var b : beans) {
@@ -372,10 +369,9 @@ public final class InstanceImpl<T> implements Instance<T> {
                 }
 
                 // Track dependent instances locally so Instance.destroy() works
-                if (bean.getScope() == jakarta.enterprise.context.Dependent.class) {
-                    if (ctx instanceof io.vidocq.vauban.core.context.CreationalContextImpl<?> cci) {
-                        dependentInstances.put(ref, cci);
-                    }
+                if (bean.getScope() == jakarta.enterprise.context.Dependent.class
+                        && ctx instanceof io.vidocq.vauban.core.context.CreationalContextImpl<?> cci) {
+                    dependentInstances.put(ref, cci);
                 }
                 instances.add(ref);
             }
@@ -408,13 +404,12 @@ public final class InstanceImpl<T> implements Instance<T> {
         int maxPriority = alternatives.stream()
                 .mapToInt(b -> b instanceof ManagedBean<?> mb ? mb.descriptor().priority() : 0)
                 .max().orElse(0);
-        var best = alternatives.stream()
+        return alternatives.stream()
                 .filter(b -> {
                     int p = b instanceof ManagedBean<?> mb ? mb.descriptor().priority() : 0;
                     return p == maxPriority;
                 })
                 .collect(java.util.stream.Collectors.toCollection(java.util.LinkedHashSet::new));
-        return best;
     }
 
     /**
@@ -478,9 +473,9 @@ public final class InstanceImpl<T> implements Instance<T> {
                     var bm = container.getBeanManager();
                     var ctx = bm.getContext(scope);
                     if (ctx instanceof jakarta.enterprise.context.spi.AlterableContext ac) {
-                        ac.destroy((jakarta.enterprise.context.spi.Contextual<?>) bean);
+                        ac.destroy(bean);
                     }
-                } catch (Exception e) {
+                } catch (Exception _) {
                     // Best effort
                 }
             }

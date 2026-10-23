@@ -42,8 +42,6 @@ import java.util.Map;
 
 final class BeanInjector {
 
-    private static final System.Logger LOG = System.getLogger(BeanInjector.class.getName());
-
     private final VaubanContainer container;
     private final VaubanLookup vaubanLookup;
 
@@ -107,21 +105,30 @@ final class BeanInjector {
         for (int i = 0; i < hierarchy.size(); i++) {
             var clazz = hierarchy.get(i);
             for (var field : clazz.getDeclaredFields()) {
-                if ((field.isAnnotationPresent(jakarta.inject.Inject.class) || isEnhancedField(descriptor, field))
-                        && !Modifier.isStatic(field.getModifiers())) {
+                if (isInjectedField(descriptor, field)) {
                     members.add(field);
                 }
             }
             var subclasses = hierarchy.subList(i + 1, hierarchy.size());
             for (var method : clazz.getDeclaredMethods()) {
-                if (!method.isAnnotationPresent(jakarta.inject.Inject.class)
-                        && !isEnhancedInitializer(descriptor, method)) continue;
-                if (Modifier.isStatic(method.getModifiers())) continue;
-                if (isOverriddenInSubclasses(method, subclasses)) continue;
-                members.add(method);
+                if (isInitializer(descriptor, method) && !isOverriddenInSubclasses(method, subclasses)) {
+                    members.add(method);
+                }
             }
         }
         return members;
+    }
+
+    /** A non-static field that {@code @Inject} marks, or that an {@code @Enhancement} made injected. */
+    private static boolean isInjectedField(BeanDescriptor descriptor, Field field) {
+        return (field.isAnnotationPresent(jakarta.inject.Inject.class) || isEnhancedField(descriptor, field))
+                && !Modifier.isStatic(field.getModifiers());
+    }
+
+    /** A non-static method that {@code @Inject} marks, or that an {@code @Enhancement} made an initializer. */
+    private static boolean isInitializer(BeanDescriptor descriptor, Method method) {
+        return (method.isAnnotationPresent(jakarta.inject.Inject.class) || isEnhancedInitializer(descriptor, method))
+                && !Modifier.isStatic(method.getModifiers());
     }
 
     private static boolean isEnhancedField(BeanDescriptor descriptor, Field field) {
@@ -302,7 +309,7 @@ final class BeanInjector {
                 tc.release();
             }
         } catch (Exception e) {
-            throw new RuntimeException("Failed to call initializer method: " + method.getName(), e);
+            throw new ContainerOperationException("Failed to call initializer method: " + method.getName(), e);
         }
     }
 

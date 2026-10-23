@@ -41,6 +41,8 @@ import java.util.Map;
  */
 final class SyntheticComponentRegistrar {
 
+    private static final String OBJECT_CLASS_NAME = "java.lang.Object";
+
     private SyntheticComponentRegistrar() {
     }
 
@@ -94,19 +96,19 @@ final class SyntheticComponentRegistrar {
             var builder = new io.vidocq.vauban.core.extensions.VaubanSyntheticBeanBuilder(beanClass);
 
             if (synDesc.creatorClassName() != null) {
-                builder.createWith((Class) Class.forName(synDesc.creatorClassName(), false, cl));
+                builder.createWith(Class.forName(synDesc.creatorClassName(), false, cl));
             }
             if (synDesc.disposerClassName() != null) {
-                builder.disposeWith((Class) Class.forName(synDesc.disposerClassName(), false, cl));
+                builder.disposeWith(Class.forName(synDesc.disposerClassName(), false, cl));
             }
             if (synDesc.scopeAnnotation() != null) {
-                builder.scope((Class) Class.forName(synDesc.scopeAnnotation(), false, cl));
+                builder.scope(Class.forName(synDesc.scopeAnnotation(), false, cl));
             }
             for (var typeName : synDesc.types()) {
                 resolveOptionalClass(typeName, cl, builder::type);
             }
             for (var qualName : synDesc.qualifiers()) {
-                resolveOptionalClass(qualName, cl, c -> builder.qualifier((Class) c));
+                resolveOptionalClass(qualName, cl, builder::qualifier);
             }
             if (synDesc.name() != null) builder.name(synDesc.name());
             builder.alternative(synDesc.alternative());
@@ -131,7 +133,7 @@ final class SyntheticComponentRegistrar {
                 builder.observeWith(Class.forName(synDesc.observerClassName(), false, cl));
             }
             for (var qualName : synDesc.qualifiers()) {
-                resolveOptionalClass(qualName, cl, c -> builder.qualifier((Class) c));
+                resolveOptionalClass(qualName, cl, builder::qualifier);
             }
             builder.priority(synDesc.priority());
             builder.async(synDesc.async());
@@ -170,27 +172,9 @@ final class SyntheticComponentRegistrar {
         }
     }
 
-    @SuppressWarnings({"unchecked", "rawtypes"})
     static ObserverDescriptor buildSyntheticObserver(
             io.vidocq.vauban.core.extensions.VaubanSyntheticObserverBuilder<?> synObs) {
-        var eventReflectType = synObs.getEventType();
-        TypeInfo eventTypeInfo;
-        if (eventReflectType instanceof Class<?> cls) {
-            eventTypeInfo = new TypeInfo.ClassType(DotName.of(cls.getName()));
-        } else if (eventReflectType instanceof java.lang.reflect.ParameterizedType pt
-                && pt.getRawType() instanceof Class<?> rawCls) {
-            var typeArgs = new java.util.ArrayList<TypeInfo>();
-            for (var arg : pt.getActualTypeArguments()) {
-                if (arg instanceof Class<?> argCls) {
-                    typeArgs.add(new TypeInfo.ClassType(DotName.of(argCls.getName())));
-                } else {
-                    typeArgs.add(new TypeInfo.ClassType(DotName.of("java.lang.Object")));
-                }
-            }
-            eventTypeInfo = new TypeInfo.ParameterizedType(DotName.of(rawCls.getName()), typeArgs);
-        } else {
-            eventTypeInfo = new TypeInfo.ClassType(DotName.of("java.lang.Object"));
-        }
+        var eventTypeInfo = eventTypeInfo(synObs.getEventType());
 
         // With their member values: a synthetic observer qualified @Channel("alpha") observes that
         // event and no other (BUG-20260914-15).
@@ -200,17 +184,56 @@ final class SyntheticComponentRegistrar {
         }
 
         var observerClass = synObs.getObserverClass();
-        var params = synObs.getParams();
 
-        java.util.function.BiConsumer<Object, java.lang.annotation.Annotation[]> invoker = (event, eventQualifiers) -> {
+        return new ObserverDescriptor(
+                DotName.of(observerClass.getName()),
+                "observe",
+                eventTypeInfo,
+                qualifiers,
+                synObs.isAsync(),
+                synObs.getPriority(),
+                "ALWAYS",
+                "IN_PROGRESS",
+                syntheticObserverInvoker(observerClass, synObs.getParams())
+        );
+    }
+
+    /**
+     * The index form of a synthetic observer's event type: a class, a parameterized type whose
+     * arguments are kept when they are classes, and {@code java.lang.Object} for anything else.
+     */
+    private static TypeInfo eventTypeInfo(java.lang.reflect.Type eventReflectType) {
+        return switch (eventReflectType) {
+            case Class<?> cls -> new TypeInfo.ClassType(DotName.of(cls.getName()));
+            case java.lang.reflect.ParameterizedType pt when pt.getRawType() instanceof Class<?> rawCls -> {
+                var typeArgs = new java.util.ArrayList<TypeInfo>();
+                for (var arg : pt.getActualTypeArguments()) {
+                    var argName = arg instanceof Class<?> argCls ? argCls.getName() : OBJECT_CLASS_NAME;
+                    typeArgs.add(new TypeInfo.ClassType(DotName.of(argName)));
+                }
+                yield new TypeInfo.ParameterizedType(DotName.of(rawCls.getName()), typeArgs);
+            }
+            case null, default -> new TypeInfo.ClassType(DotName.of(OBJECT_CLASS_NAME));
+        };
+    }
+
+    /**
+     * Calls a new instance of the synthetic observer class with the event, its metadata and the
+     * parameters the build compatible extension gave.
+     */
+    @SuppressWarnings({"unchecked", "rawtypes"})
+    private static java.util.function.BiConsumer<Object, java.lang.annotation.Annotation[]> syntheticObserverInvoker(
+            Class<? extends jakarta.enterprise.inject.build.compatible.spi.SyntheticObserver<?>> observerClass,
+            Map<String, Object> params) {
+        return (event, eventQualifiers) -> {
             try {
-                var observer = (jakarta.enterprise.inject.build.compatible.spi.SyntheticObserver) observerClass.getDeclaredConstructor().newInstance();
+                var observer = observerClass.getDeclaredConstructor().newInstance();
                 var vaubanParams = new io.vidocq.vauban.core.extensions.VaubanParameters(params);
                 var metadata = new jakarta.enterprise.inject.spi.EventMetadata() {
                     @Override public java.util.Set<java.lang.annotation.Annotation> getQualifiers() {
                         var qs = new java.util.LinkedHashSet<java.lang.annotation.Annotation>();
                         if (eventQualifiers != null) {
-                            for (var q : eventQualifiers) qs.add(q);
+                            java.util.Collections.addAll(qs, eventQualifiers);
                         }
                         qs.add(jakarta.enterprise.inject.Any.Literal.INSTANCE);
                         return java.util.Set.copyOf(qs);
@@ -229,18 +252,6 @@ final class SyntheticComponentRegistrar {
                 throw new jakarta.enterprise.event.ObserverException("Synthetic observer failed", e);
             }
         };
-
-        return new ObserverDescriptor(
-                DotName.of(observerClass.getName()),
-                "observe",
-                eventTypeInfo,
-                qualifiers,
-                synObs.isAsync(),
-                synObs.getPriority(),
-                "ALWAYS",
-                "IN_PROGRESS",
-                invoker
-        );
     }
 
     /**
@@ -297,10 +308,21 @@ final class SyntheticComponentRegistrar {
         var syntheticKey = DotName.of(descriptor.id().value());
 
         // Create factory using SyntheticBeanCreator
-        var creatorClass = synBean.getCreatorClass();
         var creatorParams = synBean.getParams();
         var isDependent = descriptor.scope().equals(io.vidocq.vauban.core.bean.model.ScopeInfo.DEPENDENT);
-        factories.put(syntheticKey, new BeanFactory<Object>() {
+        factories.put(syntheticKey, syntheticFactory(synBean.getCreatorClass(), creatorParams, isDependent));
+
+        // Register synthetic disposer if present
+        var disposerClass = synBean.getDisposerClass();
+        if (disposerClass != null) {
+            syntheticDisposers.put(syntheticKey, syntheticDisposer(disposerClass, creatorParams));
+        }
+    }
+
+    /** A factory that creates the synthetic bean through a new instance of its creator class. */
+    private static BeanFactory<Object> syntheticFactory(Class<?> creatorClass, Map<String, Object> creatorParams,
+                                                        boolean isDependent) {
+        return new BeanFactory<>() {
             @Override
             public Object create() { return create((CreationalContext<Object>) null); }
             @Override
@@ -326,26 +348,26 @@ final class SyntheticComponentRegistrar {
                     throw new jakarta.enterprise.inject.CreationException(e);
                 }
             }
-        });
+        };
+    }
 
-        // Register synthetic disposer if present
-        var disposerClass = synBean.getDisposerClass();
-        if (disposerClass != null) {
-            syntheticDisposers.put(syntheticKey, (instance, ctx) -> {
-                try {
-                    @SuppressWarnings("unchecked")
-                    var disposer = (jakarta.enterprise.inject.build.compatible.spi.SyntheticBeanDisposer<Object>)
-                            disposerClass.getDeclaredConstructor().newInstance();
-                    var vaubanParams = new io.vidocq.vauban.core.extensions.VaubanParameters(creatorParams);
-                    var container = VaubanContainer.current();
-                    var lookup = new InstanceImpl<>(container, Object.class, new Annotation[]{jakarta.enterprise.inject.Default.Literal.INSTANCE}, null, (io.vidocq.vauban.core.context.CreationalContextImpl<?>) ctx);
-                    disposer.dispose(instance, lookup, vaubanParams);
-                } catch (RuntimeException e) {
-                    throw e;
-                } catch (Exception e) {
-                    // CDI spec: exceptions in disposer methods are suppressed
-                }
-            });
-        }
+    /** A disposer that destroys the synthetic bean through a new instance of its disposer class. */
+    private static java.util.function.BiConsumer<Object, CreationalContext<?>> syntheticDisposer(
+            Class<?> disposerClass, Map<String, Object> creatorParams) {
+        return (instance, ctx) -> {
+            try {
+                @SuppressWarnings("unchecked")
+                var disposer = (jakarta.enterprise.inject.build.compatible.spi.SyntheticBeanDisposer<Object>)
+                        disposerClass.getDeclaredConstructor().newInstance();
+                var vaubanParams = new io.vidocq.vauban.core.extensions.VaubanParameters(creatorParams);
+                var container = VaubanContainer.current();
+                var lookup = new InstanceImpl<>(container, Object.class, new Annotation[]{jakarta.enterprise.inject.Default.Literal.INSTANCE}, null, (io.vidocq.vauban.core.context.CreationalContextImpl<?>) ctx);
+                disposer.dispose(instance, lookup, vaubanParams);
+            } catch (RuntimeException e) {
+                throw e;
+            } catch (Exception _) {
+                // CDI spec: exceptions in disposer methods are suppressed
+            }
+        };
     }
 }

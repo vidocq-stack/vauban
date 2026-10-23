@@ -59,8 +59,9 @@ final class QualifierHelper {
             if (point.kind() == InjectionPointInfo.InjectionKind.FIELD) continue;
             if (point.description().equals(wanted)) exact = point;
             else if (point.description().equals(legacy)) {
-                // Old descriptors use the name/position-only format. A unique legacy match is safe;
-                // overloaded members remain unresolved rather than receiving another member's qualifier.
+                // Old descriptors name a parameter by member name and position only. A unique legacy
+                // match is safe, but overloaded members stay unresolved rather than receive the
+                // qualifiers of another member.
                 if (found != null) return null;
                 found = point;
             }
@@ -173,17 +174,12 @@ final class QualifierHelper {
         var quals = new ArrayList<Annotation>();
         boolean hasExplicitQualifier = false;
         for (var ann : annotations) {
-            if (ann.annotationType() == jakarta.inject.Inject.class) continue;
-            if (ann.annotationType() == jakarta.enterprise.inject.Default.class) {
+            var type = ann.annotationType();
+            if (type == jakarta.enterprise.inject.Default.class) {
                 quals.add(ann);
-                continue;
-            }
-            if (ann.annotationType() == jakarta.enterprise.inject.Any.class) {
-                quals.add(ann);
-                hasExplicitQualifier = true;
-                continue;
-            }
-            if (ann.annotationType().isAnnotationPresent(jakarta.inject.Qualifier.class)) {
+            } else if (type != jakarta.inject.Inject.class
+                    && (type == jakarta.enterprise.inject.Any.class
+                            || type.isAnnotationPresent(jakarta.inject.Qualifier.class))) {
                 quals.add(ann);
                 hasExplicitQualifier = true;
             }

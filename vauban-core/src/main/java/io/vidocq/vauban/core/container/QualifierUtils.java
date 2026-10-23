@@ -39,6 +39,9 @@ import java.util.Set;
  */
 public final class QualifierUtils {
 
+    /** The member of {@code @Named} that holds the name. */
+    private static final String VALUE = "value";
+
     private QualifierUtils() {}
 
     /**
@@ -87,7 +90,7 @@ public final class QualifierUtils {
             case "jakarta.enterprise.inject.Default" -> jakarta.enterprise.inject.Default.Literal.INSTANCE;
             case "jakarta.enterprise.inject.Any" -> jakarta.enterprise.inject.Any.Literal.INSTANCE;
             case "jakarta.inject.Named" ->
-                    jakarta.enterprise.inject.literal.NamedLiteral.of(stringMember(qualifier, "value"));
+                    jakarta.enterprise.inject.literal.NamedLiteral.of(stringMember(qualifier, VALUE));
             default -> {
                 if (types != null) {
                     yield types.instanceOf(qualifier.annotationName(), qualifier.members());
@@ -107,15 +110,15 @@ public final class QualifierUtils {
         if (beanName == null || !qualifier.annotationName().equals(QualifierInstance.NAMED_NAME)) {
             return qualifier;
         }
-        if (!stringMember(qualifier, "value").isEmpty()) {
+        if (!stringMember(qualifier, VALUE).isEmpty()) {
             return qualifier;
         }
         return new QualifierInstance(QualifierInstance.NAMED_NAME,
-                Map.of("value", new AnnotationValue.StringVal(beanName)));
+                Map.of(VALUE, new AnnotationValue.StringVal(beanName)));
     }
 
     private static String stringMember(QualifierInstance qualifier, String member) {
-        return qualifier.members().get(member) instanceof AnnotationValue.StringVal value ? value.value() : "";
+        return qualifier.members().get(member) instanceof AnnotationValue.StringVal(var value) ? value : "";
     }
 
     private static Class<? extends Annotation> annotationType(String name, ClassLoader cl) {

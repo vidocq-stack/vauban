@@ -122,7 +122,7 @@ final class DeploymentClassLoader extends ClassLoader {
             for (var delegate : delegates) {
                 try {
                     return delegate.loadClass(name);
-                } catch (ClassNotFoundException ignored) {
+                } catch (ClassNotFoundException _) {
                     // Not in this part of the deployment — ask the next one.
                 }
             }

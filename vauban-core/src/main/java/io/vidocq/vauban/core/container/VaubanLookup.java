@@ -106,7 +106,8 @@ public final class VaubanLookup {
         MethodHandle mh;
         try {
             mh = MethodHandles.publicLookup().unreflectConstructor(constructor);
-        } catch (IllegalAccessException publicAccessInsufficient) {
+        } catch (IllegalAccessException _) {
+            // Public access is insufficient: the caller falls back to the private-lookup path.
             return null;
         }
         try {
@@ -150,7 +151,7 @@ public final class VaubanLookup {
         } catch (RuntimeException | Error e) {
             throw e;
         } catch (Throwable e) {
-            throw new RuntimeException("Failed to set field: " + field, e);
+            throw new ContainerOperationException("Failed to set field: " + field, e);
         }
     }
 
@@ -168,7 +169,7 @@ public final class VaubanLookup {
         } catch (RuntimeException | Error e) {
             throw e;
         } catch (Throwable e) {
-            throw new RuntimeException("Failed to get field: " + field, e);
+            throw new ContainerOperationException("Failed to get field: " + field, e);
         }
     }
 
@@ -180,9 +181,7 @@ public final class VaubanLookup {
         // In-module call first: a generated provider that owns this method calls it directly (no
         // reflection, no opens). NOT_INVOKED means "not owned" — fall through to reflection.
         if (componentProviders != null) {
-            var callArgs = (args == null) ? new Object[0] : args;
-            var result = componentProviders.invoke(instance, method.getDeclaringClass().getName(),
-                    methodId(method), callArgs);
+            var result = invokeInModule(instance, method, args);
             if (result != io.vidocq.vauban.api.VaubanComponentProvider.NOT_INVOKED) return result;
         }
         try {
@@ -200,14 +199,27 @@ public final class VaubanLookup {
         } catch (RuntimeException | Error e) {
             throw e;
         } catch (Throwable e) {
-            // Unwrap and propagate the target exception directly
-            // CDI spec requires producer method exceptions to propagate as-is
-            var cause = e.getCause() != null ? e.getCause() : e;
-            if (cause instanceof RuntimeException re) throw re;
-            if (cause instanceof Error err) throw err;
-            if (cause instanceof Exception ex) throw new jakarta.enterprise.inject.CreationException(ex);
-            throw new jakarta.enterprise.inject.CreationException(e);
+            throw targetException(e);
         }
+    }
+
+    /** The call a generated provider owning {@code method} makes in its module, or {@code NOT_INVOKED}. */
+    private Object invokeInModule(Object instance, Method method, Object... args) {
+        var callArgs = (args == null) ? new Object[0] : args;
+        return componentProviders.invoke(instance, method.getDeclaringClass().getName(), methodId(method), callArgs);
+    }
+
+    /**
+     * The exception a reflective call propagates: the target's own, unwrapped, since CDI requires a
+     * producer method's exception to propagate as-is. An {@link Error} is thrown from here; a checked
+     * exception is wrapped in a {@link jakarta.enterprise.inject.CreationException}.
+     */
+    private static RuntimeException targetException(Throwable e) {
+        var cause = e.getCause() != null ? e.getCause() : e;
+        if (cause instanceof RuntimeException re) return re;
+        if (cause instanceof Error err) throw err;
+        if (cause instanceof Exception ex) return new jakarta.enterprise.inject.CreationException(ex);
+        return new jakarta.enterprise.inject.CreationException(e);
     }
 
     /**
@@ -253,14 +265,10 @@ public final class VaubanLookup {
      * members still go through {@code privateLookupIn}, which needs the package {@code opens}-ed.
      */
     public void makeAccessible(java.lang.reflect.AccessibleObject member) {
-        Class<?> declaringClass = switch (member) {
-            case Method m -> m.getDeclaringClass();
-            case Field f -> f.getDeclaringClass();
-            case Constructor<?> c -> c.getDeclaringClass();
-            default -> null;
-        };
-        if (declaringClass != null) {
-            if (isPubliclyInvocable(member, declaringClass)) {
+        // A method, a field and a constructor are each a Member: the three kinds this handles.
+        if (member instanceof java.lang.reflect.Member reflected) {
+            var declaringClass = reflected.getDeclaringClass();
+            if (isPubliclyInvocable(reflected, declaringClass)) {
                 ensureReads(declaringClass.getModule()); // reflective invoke needs only a read edge
                 return;
             }
@@ -274,14 +282,8 @@ public final class VaubanLookup {
      * member of a public class that is either on the class path (unnamed module) or in a package
      * exported to {@code io.vidocq.vauban.core}.
      */
-    private static boolean isPubliclyInvocable(java.lang.reflect.AccessibleObject member,
-            Class<?> declaringClass) {
-        int mods = switch (member) {
-            case Method m -> m.getModifiers();
-            case Field f -> f.getModifiers();
-            case Constructor<?> c -> c.getModifiers();
-            default -> 0;
-        };
+    private static boolean isPubliclyInvocable(java.lang.reflect.Member member, Class<?> declaringClass) {
+        int mods = member.getModifiers();
         if (!java.lang.reflect.Modifier.isPublic(mods)
                 || !java.lang.reflect.Modifier.isPublic(declaringClass.getModifiers())) {
             return false;
@@ -321,7 +323,7 @@ public final class VaubanLookup {
                 }
                 return MethodHandles.privateLookupIn(clazz, rootLookup);
             } catch (IllegalAccessException e) {
-                throw new RuntimeException("Cannot reflectively access " + clazz.getName()
+                throw new ContainerOperationException("Cannot reflectively access " + clazz.getName()
                         + " on the module path. Either (preferred) provide a generated "
                         + "VaubanComponentProvider for its module — the APT or packaging plugin "
                         + "emits a `_VaubanComponents` and the module declares `provides "
@@ -337,7 +339,7 @@ public final class VaubanLookup {
             var lookup = lookupFor(clazz);
             return lookup.findConstructor(clazz, type);
         } catch (NoSuchMethodException | IllegalAccessException e) {
-            throw new RuntimeException("Cannot find constructor for " + clazz.getName(), e);
+            throw new ContainerOperationException("Cannot find constructor for " + clazz.getName(), e);
         }
     }
 }
