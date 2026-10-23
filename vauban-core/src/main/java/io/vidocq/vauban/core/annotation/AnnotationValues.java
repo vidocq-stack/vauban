@@ -118,7 +118,7 @@ public final class AnnotationValues {
         try {
             member.trySetAccessible();
             return Optional.of(member.invoke(annotation));
-        } catch (IllegalAccessException | InvocationTargetException e) {
+        } catch (IllegalAccessException | InvocationTargetException _) {
             return Optional.empty();
         }
     }

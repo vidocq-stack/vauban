@@ -21,6 +21,7 @@ package io.vidocq.vauban.core.annotation;
 
 import io.vidocq.vauban.indexer.model.AnnotationInfo;
 import io.vidocq.vauban.indexer.model.AnnotationValue;
+import io.vidocq.vauban.indexer.model.DotName;
 
 import java.lang.annotation.Annotation;
 import java.lang.annotation.IncompleteAnnotationException;
@@ -92,7 +93,7 @@ public final class AnnotationInstances {
                 if (type.isAnnotation()) {
                     return Optional.of(type.asSubclass(Annotation.class));
                 }
-            } catch (ClassNotFoundException | LinkageError e) {
+            } catch (ClassNotFoundException | LinkageError _) {
                 // The next loader may see it.
             }
         }
@@ -178,7 +179,7 @@ public final class AnnotationInstances {
                 } else {
                     try {
                         theirs = read(member, other);
-                    } catch (ReflectiveOperationException | RuntimeException e) {
+                    } catch (ReflectiveOperationException | RuntimeException _) {
                         // A member this module may not invoke — a non-public annotation type in a
                         // package that opens nothing. The other side reads us instead; the JDK's own
                         // handler and AnnotationLiteral both do it with privileged access.
@@ -226,6 +227,54 @@ public final class AnnotationInstances {
             var name = type.getCanonicalName() != null ? type.getCanonicalName() : type.getName();
             return "@" + name + "(" + String.join(", ", rendered) + ")";
         }
+
+        /** Annotation members hand out a copy of their array, so a caller cannot change the instance. */
+        private static Object copyOf(Object value) {
+            return switch (value) {
+                case boolean[] array -> array.clone();
+                case byte[] array -> array.clone();
+                case char[] array -> array.clone();
+                case short[] array -> array.clone();
+                case int[] array -> array.clone();
+                case long[] array -> array.clone();
+                case float[] array -> array.clone();
+                case double[] array -> array.clone();
+                case Object[] array -> array.clone();
+                default -> value;
+            };
+        }
+
+        /** {@code Annotation#equals}: arrays compare element by element, floats and doubles by their bits. */
+        private static boolean memberValueEquals(Object mine, Object theirs) {
+            if (mine == null || theirs == null) return mine == theirs;
+            return switch (mine) {
+                case boolean[] array -> theirs instanceof boolean[] other && Arrays.equals(array, other);
+                case byte[] array -> theirs instanceof byte[] other && Arrays.equals(array, other);
+                case char[] array -> theirs instanceof char[] other && Arrays.equals(array, other);
+                case short[] array -> theirs instanceof short[] other && Arrays.equals(array, other);
+                case int[] array -> theirs instanceof int[] other && Arrays.equals(array, other);
+                case long[] array -> theirs instanceof long[] other && Arrays.equals(array, other);
+                case float[] array -> theirs instanceof float[] other && Arrays.equals(array, other);
+                case double[] array -> theirs instanceof double[] other && Arrays.equals(array, other);
+                case Object[] array -> theirs instanceof Object[] other && Arrays.equals(array, other);
+                default -> mine.equals(theirs);
+            };
+        }
+
+        private static int memberValueHashCode(Object value) {
+            return switch (value) {
+                case boolean[] array -> Arrays.hashCode(array);
+                case byte[] array -> Arrays.hashCode(array);
+                case char[] array -> Arrays.hashCode(array);
+                case short[] array -> Arrays.hashCode(array);
+                case int[] array -> Arrays.hashCode(array);
+                case long[] array -> Arrays.hashCode(array);
+                case float[] array -> Arrays.hashCode(array);
+                case double[] array -> Arrays.hashCode(array);
+                case Object[] array -> Arrays.hashCode(array);
+                default -> value.hashCode();
+            };
+        }
     }
 
     // ---- member values ----
@@ -242,7 +291,7 @@ public final class AnnotationInstances {
     private static Object convert(AnnotationValue value, Class<?> target, ClassLoader loader) {
         if (target.isArray()) {
             var component = target.getComponentType();
-            var items = value instanceof AnnotationValue.ArrayVal array ? array.values() : List.of(value);
+            var items = value instanceof AnnotationValue.ArrayVal(var arrayItems) ? arrayItems : List.of(value);
             var result = Array.newInstance(component, items.size());
             for (int i = 0; i < items.size(); i++) {
                 Array.set(result, i, convert(items.get(i), component, loader));
@@ -252,20 +301,20 @@ public final class AnnotationInstances {
         return switch (value) {
             // An extension can write a class or an enum constant as a string (BUG-20260914-16), and a
             // number wider or narrower than the member declares; the declared type decides.
-            case AnnotationValue.StringVal v -> string(v.value(), target, loader);
-            case AnnotationValue.BooleanVal v -> v.value();
-            case AnnotationValue.ByteVal v -> number(v.value(), target);
-            case AnnotationValue.CharVal v -> v.value();
-            case AnnotationValue.ShortVal v -> number(v.value(), target);
-            case AnnotationValue.IntVal v -> number(v.value(), target);
-            case AnnotationValue.LongVal v -> number(v.value(), target);
-            case AnnotationValue.FloatVal v -> number(v.value(), target);
-            case AnnotationValue.DoubleVal v -> number(v.value(), target);
-            case AnnotationValue.ClassVal v -> classOf(v.className().value(), loader);
-            case AnnotationValue.EnumVal v -> enumOf(target, v.constantName());
-            case AnnotationValue.AnnotationVal v -> nested(target, v.annotation(), loader);
+            case AnnotationValue.StringVal(var text) -> string(text, target, loader);
+            case AnnotationValue.BooleanVal(var flag) -> flag;
+            case AnnotationValue.ByteVal(var numeric) -> number(numeric, target);
+            case AnnotationValue.CharVal(var character) -> character;
+            case AnnotationValue.ShortVal(var numeric) -> number(numeric, target);
+            case AnnotationValue.IntVal(var numeric) -> number(numeric, target);
+            case AnnotationValue.LongVal(var numeric) -> number(numeric, target);
+            case AnnotationValue.FloatVal(var numeric) -> number(numeric, target);
+            case AnnotationValue.DoubleVal(var numeric) -> number(numeric, target);
+            case AnnotationValue.ClassVal(DotName(var className)) -> classOf(className, loader);
+            case AnnotationValue.EnumVal(_, var constantName) -> enumOf(target, constantName);
+            case AnnotationValue.AnnotationVal(var inner) -> nested(target, inner, loader);
             // An array value for a member that is not an array: keep the first item.
-            case AnnotationValue.ArrayVal v -> v.values().isEmpty() ? null : convert(v.values().getFirst(), target, loader);
+            case AnnotationValue.ArrayVal(var items) -> items.isEmpty() ? null : convert(items.getFirst(), target, loader);
         };
     }
 
@@ -309,7 +358,7 @@ public final class AnnotationInstances {
         for (var candidate : loaders(loader)) {
             try {
                 return Class.forName(name, false, candidate);
-            } catch (ClassNotFoundException | LinkageError e) {
+            } catch (ClassNotFoundException | LinkageError _) {
                 // The next loader may see it.
             }
         }
@@ -322,54 +371,6 @@ public final class AnnotationInstances {
                 .filter(Objects::nonNull)
                 .distinct()
                 .toList();
-    }
-
-    /** Annotation members hand out a copy of their array, so a caller cannot change the instance. */
-    private static Object copyOf(Object value) {
-        return switch (value) {
-            case boolean[] array -> array.clone();
-            case byte[] array -> array.clone();
-            case char[] array -> array.clone();
-            case short[] array -> array.clone();
-            case int[] array -> array.clone();
-            case long[] array -> array.clone();
-            case float[] array -> array.clone();
-            case double[] array -> array.clone();
-            case Object[] array -> array.clone();
-            default -> value;
-        };
-    }
-
-    /** {@code Annotation#equals}: arrays compare element by element, floats and doubles by their bits. */
-    private static boolean memberValueEquals(Object mine, Object theirs) {
-        if (mine == null || theirs == null) return mine == theirs;
-        return switch (mine) {
-            case boolean[] array -> theirs instanceof boolean[] other && Arrays.equals(array, other);
-            case byte[] array -> theirs instanceof byte[] other && Arrays.equals(array, other);
-            case char[] array -> theirs instanceof char[] other && Arrays.equals(array, other);
-            case short[] array -> theirs instanceof short[] other && Arrays.equals(array, other);
-            case int[] array -> theirs instanceof int[] other && Arrays.equals(array, other);
-            case long[] array -> theirs instanceof long[] other && Arrays.equals(array, other);
-            case float[] array -> theirs instanceof float[] other && Arrays.equals(array, other);
-            case double[] array -> theirs instanceof double[] other && Arrays.equals(array, other);
-            case Object[] array -> theirs instanceof Object[] other && Arrays.equals(array, other);
-            default -> mine.equals(theirs);
-        };
-    }
-
-    private static int memberValueHashCode(Object value) {
-        return switch (value) {
-            case boolean[] array -> Arrays.hashCode(array);
-            case byte[] array -> Arrays.hashCode(array);
-            case char[] array -> Arrays.hashCode(array);
-            case short[] array -> Arrays.hashCode(array);
-            case int[] array -> Arrays.hashCode(array);
-            case long[] array -> Arrays.hashCode(array);
-            case float[] array -> Arrays.hashCode(array);
-            case double[] array -> Arrays.hashCode(array);
-            case Object[] array -> Arrays.hashCode(array);
-            default -> value.hashCode();
-        };
     }
 
     private static String render(Object value) {

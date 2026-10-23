@@ -52,6 +52,8 @@ import java.util.concurrent.ConcurrentHashMap;
  */
 public final class AnnotationTypes {
 
+    private static final String VALUE = "value";
+
     private final VaubanIndex index;
     private final List<ClassLoader> loaders;
     private final Map<String, Set<String>> extensionNonbinding;
@@ -102,23 +104,26 @@ public final class AnnotationTypes {
         var ignored = extensionNonbinding.getOrDefault(type.value(), Set.of());
         var members = new HashMap<String, AnnotationValue>();
         var info = type(type);
-        if (info.isPresent()) {
-            for (var member : info.get().members()) {
-                if (member.nonbinding() || ignored.contains(member.name())) {
-                    continue;
-                }
-                var value = written.containsKey(member.name()) ? written.get(member.name()) : member.defaultValue();
-                if (value != null) {
-                    members.put(member.name(), complete(value));
-                }
-            }
-        }
+        info.ifPresent(declared -> putBindingMembers(declared, written, ignored, members));
         written.forEach((name, value) -> {
             if (!ignored.contains(name) && (info.isEmpty() || info.get().member(name).isEmpty())) {
                 members.put(name, complete(value));
             }
         });
         return new AnnotationKey(type, members);
+    }
+
+    /** Every binding member {@code declared} declares, with its written value or its default. */
+    private void putBindingMembers(AnnotationTypeInfo declared, Map<String, AnnotationValue> written,
+            Set<String> ignored, Map<String, AnnotationValue> members) {
+        for (var member : declared.members()) {
+            if (!member.nonbinding() && !ignored.contains(member.name())) {
+                var value = written.containsKey(member.name()) ? written.get(member.name()) : member.defaultValue();
+                if (value != null) {
+                    members.put(member.name(), complete(value));
+                }
+            }
+        }
     }
 
     /**
@@ -136,20 +141,20 @@ public final class AnnotationTypes {
         // The context lifecycle qualifiers the container fires itself, read through their one member: with
         // reflection forbidden, @Initialized(ApplicationScoped.class) used to throw here (vauban#97).
         if (annotation instanceof jakarta.enterprise.context.Initialized scope) {
-            return key(DotName.of(name), Map.of("value", new AnnotationValue.ClassVal(DotName.of(scope.value().getName()))));
+            return key(DotName.of(name), Map.of(VALUE, new AnnotationValue.ClassVal(DotName.of(scope.value().getName()))));
         }
         if (annotation instanceof jakarta.enterprise.context.BeforeDestroyed scope) {
-            return key(DotName.of(name), Map.of("value", new AnnotationValue.ClassVal(DotName.of(scope.value().getName()))));
+            return key(DotName.of(name), Map.of(VALUE, new AnnotationValue.ClassVal(DotName.of(scope.value().getName()))));
         }
         if (annotation instanceof jakarta.enterprise.context.Destroyed scope) {
-            return key(DotName.of(name), Map.of("value", new AnnotationValue.ClassVal(DotName.of(scope.value().getName()))));
+            return key(DotName.of(name), Map.of(VALUE, new AnnotationValue.ClassVal(DotName.of(scope.value().getName()))));
         }
         if (annotation instanceof jakarta.inject.Named named) {
-            return key(DotName.of(name), Map.of("value", new AnnotationValue.StringVal(named.value())));
+            return key(DotName.of(name), Map.of(VALUE, new AnnotationValue.StringVal(named.value())));
         }
         var read = readByProvider(annotation);
-        if (read != null) {
-            return key(DotName.of(name), read);
+        if (read.isPresent()) {
+            return key(DotName.of(name), read.get());
         }
         var info = AnnotationValues.infoOf(annotation);
         return key(info.name(), info.members());
@@ -192,7 +197,7 @@ public final class AnnotationTypes {
     }
 
     /** The members of an instance, read by the module that generated its type's reader. */
-    private Map<String, AnnotationValue> readByProvider(java.lang.annotation.Annotation annotation) {
+    private Optional<Map<String, AnnotationValue>> readByProvider(java.lang.annotation.Annotation annotation) {
         for (var provider : providers) {
             var values = provider.readAnnotation(annotation);
             if (values != null) {
@@ -202,10 +207,10 @@ public final class AnnotationTypes {
                         members.put(name, indexValue(value));
                     }
                 });
-                return members;
+                return Optional.of(members);
             }
         }
-        return null;
+        return Optional.empty();
     }
 
     private ClassLoader loader() {
@@ -217,7 +222,7 @@ public final class AnnotationTypes {
         if (annotations == null || annotations.length == 0) {
             return Set.of();
         }
-        var keys = new HashSet<AnnotationKey>(annotations.length * 2);
+        var keys = HashSet.<AnnotationKey>newHashSet(annotations.length);
         for (var annotation : annotations) {
             keys.add(key(annotation));
         }
@@ -232,9 +237,9 @@ public final class AnnotationTypes {
     /** Completes every nested annotation of {@code value} with its defaults. */
     private AnnotationValue complete(AnnotationValue value) {
         return switch (value) {
-            case AnnotationValue.AnnotationVal nested -> new AnnotationValue.AnnotationVal(
-                    new AnnotationInfo(nested.annotation().name(), allMembers(nested.annotation())));
-            case AnnotationValue.ArrayVal array -> new AnnotationValue.ArrayVal(array.values().stream()
+            case AnnotationValue.AnnotationVal(var nested) -> new AnnotationValue.AnnotationVal(
+                    new AnnotationInfo(nested.name(), allMembers(nested)));
+            case AnnotationValue.ArrayVal(var items) -> new AnnotationValue.ArrayVal(items.stream()
                     .map(this::complete).toList());
             default -> value;
         };
@@ -266,6 +271,11 @@ public final class AnnotationTypes {
                 return indexed.map(AnnotationTypeInfo::of);
             }
         }
+        return fromClassFile(name).or(() -> fromDeclaration(name));
+    }
+
+    /** The type as its class file describes it, read through the first loader that has a readable one. */
+    private Optional<AnnotationTypeInfo> fromClassFile(DotName name) {
         var classFile = name.toInternal() + ".class";
         for (var loader : loaders) {
             try (var in = loader.getResourceAsStream(classFile)) {
@@ -275,10 +285,15 @@ public final class AnnotationTypes {
                         return Optional.of(AnnotationTypeInfo.of(scanned));
                     }
                 }
-            } catch (IOException | RuntimeException e) {
+            } catch (IOException | RuntimeException _) {
                 // An unreadable class file: the next loader, then reflection, may still describe the type.
             }
         }
+        return Optional.empty();
+    }
+
+    /** The type as its declaration reads by reflection, through the first loader that sees it. */
+    private Optional<AnnotationTypeInfo> fromDeclaration(DotName name) {
         for (var loader : loaders) {
             try {
                 var type = Class.forName(name.value(), false, loader);
@@ -286,7 +301,7 @@ public final class AnnotationTypes {
                     return Optional.of(reflect(type));
                 }
             } catch (ClassNotFoundException | LinkageError | TypeNotPresentException
-                     | EnumConstantNotPresentException | ArrayStoreException e) {
+                     | EnumConstantNotPresentException | ArrayStoreException _) {
                 // Not visible through this loader, or a declaration that cannot be read, such as a
                 // default naming a class missing at run time. Anything else — the refusal of
                 // vauban.annotations.reflection=forbid, above all — is the caller's to see.
@@ -313,11 +328,10 @@ public final class AnnotationTypes {
      */
     private AnnotationValue indexValue(Object value) {
         if (value instanceof java.lang.annotation.Annotation annotation) {
-            var read = readByProvider(annotation);
-            return read != null
-                    ? new AnnotationValue.AnnotationVal(
-                            new AnnotationInfo(DotName.of(annotation.annotationType().getName()), read))
-                    : AnnotationValues.of(annotation);
+            return readByProvider(annotation)
+                    .<AnnotationValue>map(read -> new AnnotationValue.AnnotationVal(
+                            new AnnotationInfo(DotName.of(annotation.annotationType().getName()), read)))
+                    .orElseGet(() -> AnnotationValues.of(annotation));
         }
         if (value instanceof Object[] items) {
             return new AnnotationValue.ArrayVal(Arrays.stream(items).map(this::indexValue).toList());
