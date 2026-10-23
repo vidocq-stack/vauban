@@ -99,6 +99,17 @@ class ClassFileScannerTest {
         public final void finalMethod() {}
     }
 
+    @SuppressWarnings("java:S2326") // the declared type parameters are what the tests read
+    static class Generic<T, N extends Number & Comparable<N>, W extends Map<? extends CharSequence, ? super Integer>,
+            E extends Map.Entry<int[][], List<?>>, C extends CharSequence, U extends T> {
+    }
+
+    @SuppressWarnings("java:S2326") // the declared type parameters are what the tests read
+    static class Outer<O> {
+        class Inner<P extends O> {
+        }
+    }
+
     // --- Utility ---
 
     private static byte[] bytesOf(Class<?> clazz) throws IOException {
@@ -437,6 +448,55 @@ class ClassFileScannerTest {
                     .filter(m -> m.name().equals("setValue")).findFirst().orElseThrow();
             assertEquals(1, setter.parameters().size());
             assertInstanceOf(PrimitiveType.class, setter.parameters().getFirst().type());
+        }
+    }
+
+    @Nested
+    @DisplayName("class type parameters (vauban#207)")
+    class TypeParameters {
+
+        private static final TypeInfo NUMBER = new ClassType(DotName.of("java.lang.Number"));
+
+        @Test
+        @DisplayName("records each type parameter with its bounds, without the implicit Object bound")
+        void recordsTypeParametersAndBounds() throws IOException {
+            var n = new TypeVariable("N", List.of(NUMBER,
+                    new ParameterizedType(DotName.of("java.lang.Comparable"), List.of(new TypeVariable("N", List.of())))));
+            var w = new TypeVariable("W", List.of(new ParameterizedType(DotName.of("java.util.Map"), List.of(
+                    new WildcardType(new ClassType(DotName.of("java.lang.CharSequence")), null),
+                    new WildcardType(null, new ClassType(DotName.of("java.lang.Integer")))))));
+            var e = new TypeVariable("E", List.of(new ParameterizedType(DotName.of("java.util.Map$Entry"), List.of(
+                    new ArrayType(new PrimitiveType(PrimitiveType.Kind.INT), 2),
+                    new ParameterizedType(DotName.of("java.util.List"), List.of(new WildcardType(null, null)))))));
+            var c = new TypeVariable("C", List.of(new ClassType(DotName.of("java.lang.CharSequence"))));
+            var u = new TypeVariable("U", List.of(new TypeVariable("T", List.of())));
+
+            assertEquals(List.of(new TypeVariable("T", List.of()), n, w, e, c, u),
+                    List.copyOf(scan(Generic.class).typeParameters()));
+        }
+
+        @Test
+        @DisplayName("records a bound naming a type parameter of the enclosing class without bounds")
+        void boundNamingAnEnclosingTypeParameter() throws IOException {
+            assertEquals(List.of(new TypeVariable("P", List.of(new TypeVariable("O", List.of())))),
+                    List.copyOf(scan(Outer.Inner.class).typeParameters()));
+        }
+
+        @Test
+        @DisplayName("records no type parameter for a class that declares none")
+        void nonGenericClass() throws IOException {
+            assertEquals(List.of(), List.copyOf(scan(SimpleClass.class).typeParameters()));
+        }
+
+        @Test
+        @DisplayName("records no type parameter, and does not fail, when the class signature does not parse")
+        void malformedSignature() {
+            byte[] bytes = java.lang.classfile.ClassFile.of().build(java.lang.constant.ClassDesc.of("app.Broken"),
+                    builder -> builder.with(java.lang.classfile.attribute.SignatureAttribute.of(
+                            builder.constantPool().utf8Entry("<T:"))));
+            var info = ClassFileScanner.scan(bytes);
+            assertEquals(DotName.of("app.Broken"), info.name());
+            assertEquals(List.of(), List.copyOf(info.typeParameters()));
         }
     }
 }

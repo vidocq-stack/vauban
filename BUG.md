@@ -5,6 +5,44 @@ suspected cause, status. Updated on every investigation.
 
 ---
 
+## VAU-BCE-007 — `VaubanClassInfo.typeParameters()` always returns an empty list
+- **Date**: 2026-10-24 — **Status**: FIXED (fix/vauban-tickets, vauban#207, Vidocq/vidocq#285)
+- **Severity**: low (a build compatible extension cannot read the type parameters of a generic class, nor get a
+  type variable from it; the CDI TCK does not cover it)
+
+### Symptom
+`ClassInfo.typeParameters()`, in the lang model a build compatible extension sees, returned an empty list for every
+class, generic or not, in `@Enhancement` as in `@Registration`. The lang model contract is the type parameters the
+class declares, as `TypeVariable`s with their bounds. Found while fixing vauban#188 (Vidocq/vidocq#285).
+
+### Repro
+`BceClassTypeParametersTest` (vauban-core): a `@Dependent` bean `Holder<T, N extends Number & Comparable<N>,
+L extends List<N>>`, read by an `@Enhancement(types = Holder.class)` and a `@Registration` method; both saw `""`
+instead of `T extends java.lang.Object; N extends java.lang.Number & java.lang.Comparable<N>; L extends
+java.util.List<N>`.
+
+### Cause
+`VaubanClassInfo.typeParameters()` was a stub returning `List.of()`, and the index had nothing to back it: the
+bytecode scan (`ClassFileScanner`) read descriptors only, never the class `Signature` attribute, and the processor's
+`ElementScanner` did not record the type parameters of the `TypeElement`.
+
+### Fix
+The index `ClassInfo` gains a `typeParameters` component (`List<TypeInfo.TypeVariable>`; the former constructors
+remain and record none). The bytecode scan reads it from the class `Signature` attribute with the Class-File API
+(new `ClassTypeParameters`), the processor from `TypeElement.getTypeParameters()`, with the same rules: declaration
+order, the implicit `java.lang.Object` bound left out as everywhere in the index, a bound naming another type
+parameter of the class carries that parameter's bounds, and a type variable met again while its own bounds are read
+(`T` in `<T extends Comparable<T>>`) or one of an enclosing class is recorded without bounds, so the model stays
+finite. A class signature that does not parse records no type parameter instead of failing the scan.
+`VaubanClassInfo.typeParameters()` maps them to `VaubanTypeVariable`s, giving a type parameter that declares no
+bound `java.lang.Object` as its single bound, as the lang model requires. No reflection: both paths read the
+index. A class outside the index (a JDK type reached through `ClassType.declaration()`) still has none. Tests:
+`BceClassTypeParametersTest.typeParametersAreExposedWithTheirBounds` (vauban-core),
+`ClassFileScannerTest$TypeParameters` and `ClassInfoTest` (vauban-indexer), `ElementScannerTypeParametersTest` (vauban-processor: the
+processor and the bytecode scan agree).
+
+---
+
 ## VAU-OBS-004 — An observer or disposer method with overloads can fail deployment, depending on method order
 - **Date**: 2026-10-23 — **Status**: FIXED (`test/coverage`, vauban#185, Vidocq/vidocq#285)
 - **Severity**: medium (a valid application fails to deploy, or deploys, depending on the JVM's method order)

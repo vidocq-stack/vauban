@@ -34,6 +34,7 @@ import javax.lang.model.element.ElementKind;
 import javax.lang.model.element.ExecutableElement;
 import javax.lang.model.element.Modifier;
 import javax.lang.model.element.TypeElement;
+import javax.lang.model.element.TypeParameterElement;
 import javax.lang.model.element.VariableElement;
 import javax.lang.model.type.DeclaredType;
 import javax.lang.model.type.TypeKind;
@@ -41,10 +42,12 @@ import javax.lang.model.type.TypeMirror;
 import javax.lang.model.util.Elements;
 import javax.lang.model.util.Types;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Objects;
 import java.util.Set;
+import java.util.function.Function;
 
 /**
  * Converts javax.lang.model elements to Vauban indexer model.
@@ -121,7 +124,47 @@ public final class ElementScanner {
         };
 
         return new ClassInfo(name, superName, interfaces, accessFlags, fields, methods, annotations, kind,
-                typeElement.getSimpleName().toString());
+                typeElement.getSimpleName().toString(), new TypeParameterReader(typeElement).typeParameters());
+    }
+
+    /**
+     * Reads the type parameters of one class the way the bytecode scan reads them from the class signature, so both
+     * build the same index: each with the bounds it declares, the implicit {@code java.lang.Object} bound left out;
+     * a bound naming another type parameter of the class carries that parameter's bounds, while a type parameter met
+     * again while its own bounds are read, or one of an enclosing class, is recorded without bounds.
+     */
+    private final class TypeParameterReader {
+
+        private final List<? extends TypeParameterElement> declared;
+        private final Set<Element> reading = new HashSet<>();
+
+        TypeParameterReader(TypeElement typeElement) {
+            this.declared = typeElement.getTypeParameters();
+        }
+
+        List<TypeInfo.TypeVariable> typeParameters() {
+            return declared.stream().map(this::typeVariable).toList();
+        }
+
+        private TypeInfo.TypeVariable typeVariable(TypeParameterElement parameter) {
+            var name = parameter.getSimpleName().toString();
+            if (!reading.add(parameter)) {
+                return new TypeInfo.TypeVariable(name, List.of());
+            }
+            var bounds = parameter.getBounds().stream()
+                    .filter(bound -> !isJavaLangObject(bound))
+                    .map(bound -> typeMirrorToTypeInfo(bound, this::reference))
+                    .toList();
+            reading.remove(parameter);
+            return new TypeInfo.TypeVariable(name, bounds);
+        }
+
+        private TypeInfo reference(javax.lang.model.type.TypeVariable variable) {
+            var element = variable.asElement();
+            return declared.contains(element)
+                    ? typeVariable((TypeParameterElement) element)
+                    : new TypeInfo.TypeVariable(element.getSimpleName().toString(), List.of());
+        }
     }
 
     private FieldInfo scanField(VariableElement field) {
@@ -211,6 +254,12 @@ public final class ElementScanner {
     }
 
     TypeInfo typeMirrorToTypeInfo(TypeMirror mirror) {
+        return typeMirrorToTypeInfo(mirror, this::typeVariableWithUpperBound);
+    }
+
+    /** Converts a type, mapping each type variable it meets with {@code typeVariables}. */
+    private TypeInfo typeMirrorToTypeInfo(TypeMirror mirror,
+            Function<javax.lang.model.type.TypeVariable, TypeInfo> typeVariables) {
         return switch (mirror.getKind()) {
             case VOID -> new TypeInfo.VoidType();
             case BOOLEAN -> new TypeInfo.PrimitiveType(TypeInfo.PrimitiveType.Kind.BOOLEAN);
@@ -233,7 +282,7 @@ public final class ElementScanner {
                     yield new TypeInfo.ClassType(dotName);
                 } else {
                     var typeArgs = declaredType.getTypeArguments().stream()
-                            .map(this::typeMirrorToTypeInfo)
+                            .map(argument -> typeMirrorToTypeInfo(argument, typeVariables))
                             .toList();
                     yield new TypeInfo.ParameterizedType(dotName, typeArgs);
                 }
@@ -246,26 +295,30 @@ public final class ElementScanner {
                     dims++;
                     component = ((javax.lang.model.type.ArrayType) component).getComponentType();
                 }
-                yield new TypeInfo.ArrayType(typeMirrorToTypeInfo(component), dims);
+                yield new TypeInfo.ArrayType(typeMirrorToTypeInfo(component, typeVariables), dims);
             }
-            case TYPEVAR -> {
-                var tv = (javax.lang.model.type.TypeVariable) mirror;
-                var bounds = new ArrayList<TypeInfo>();
-                var upper = tv.getUpperBound();
-                // The java.lang.Object bound is implicit: skip it.
-                if (upper != null && upper.getKind() != TypeKind.NONE && !isJavaLangObject(upper)) {
-                    bounds.add(typeMirrorToTypeInfo(upper));
-                }
-                yield new TypeInfo.TypeVariable(tv.asElement().getSimpleName().toString(), bounds);
-            }
+            case TYPEVAR -> typeVariables.apply((javax.lang.model.type.TypeVariable) mirror);
             case WILDCARD -> {
                 var wt = (javax.lang.model.type.WildcardType) mirror;
-                TypeInfo upper = wt.getExtendsBound() != null ? typeMirrorToTypeInfo(wt.getExtendsBound()) : null;
-                TypeInfo lower = wt.getSuperBound() != null ? typeMirrorToTypeInfo(wt.getSuperBound()) : null;
+                TypeInfo upper = wt.getExtendsBound() != null
+                        ? typeMirrorToTypeInfo(wt.getExtendsBound(), typeVariables) : null;
+                TypeInfo lower = wt.getSuperBound() != null
+                        ? typeMirrorToTypeInfo(wt.getSuperBound(), typeVariables) : null;
                 yield new TypeInfo.WildcardType(upper, lower);
             }
             default -> new TypeInfo.ClassType(DotName.of(JAVA_LANG_OBJECT)); // fallback
         };
+    }
+
+    /** A type variable of a field, method or parameter type, with its upper bound unless that is Object. */
+    private TypeInfo typeVariableWithUpperBound(javax.lang.model.type.TypeVariable tv) {
+        var bounds = new ArrayList<TypeInfo>();
+        var upper = tv.getUpperBound();
+        // The java.lang.Object bound is implicit: skip it.
+        if (upper != null && upper.getKind() != TypeKind.NONE && !isJavaLangObject(upper)) {
+            bounds.add(typeMirrorToTypeInfo(upper));
+        }
+        return new TypeInfo.TypeVariable(tv.asElement().getSimpleName().toString(), bounds);
     }
 
     private static boolean isJavaLangObject(TypeMirror type) {

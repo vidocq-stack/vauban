@@ -59,6 +59,7 @@ public final class ClassFileScanner {
         var methods = new ArrayList<MethodInfo>();
         var annotations = new ArrayList<AnnotationInfo>();
         String simpleName = null;
+        List<TypeVariable> typeParameters = List.of();
 
         for (var element : cm) {
             switch (element) {
@@ -67,6 +68,7 @@ public final class ClassFileScanner {
                 case RuntimeVisibleAnnotationsAttribute rvaa ->
                         rvaa.annotations().forEach(a -> annotations.add(buildAnnotationInfo(a)));
                 case InnerClassesAttribute ica -> simpleName = innerSimpleName(cm, ica);
+                case SignatureAttribute sa -> typeParameters = typeParameters(sa);
                 default -> {
                     // other class elements carry nothing the index records
                 }
@@ -74,7 +76,20 @@ public final class ClassFileScanner {
         }
 
         var kind = determineKind(cm, superName);
-        return new ClassInfo(name, superName, interfaces, accessFlags, fields, methods, annotations, kind, simpleName);
+        return new ClassInfo(name, superName, interfaces, accessFlags, fields, methods, annotations, kind, simpleName,
+                typeParameters);
+    }
+
+    /**
+     * The type parameters the class signature declares. A signature that does not parse names no type parameter:
+     * the JVM itself only reads it on demand, through reflection, so a malformed one must not fail the scan.
+     */
+    private static List<TypeVariable> typeParameters(SignatureAttribute attribute) {
+        try {
+            return ClassTypeParameters.of(attribute.asClassSignature());
+        } catch (IllegalArgumentException _) {
+            return List.of();
+        }
     }
 
     /**

@@ -22,6 +22,7 @@ package io.vidocq.vauban.core.langmodel.declarations;
 import io.vidocq.vauban.core.langmodel.IndexLookup;
 import io.vidocq.vauban.core.langmodel.VaubanAnnotationInfo;
 import io.vidocq.vauban.core.langmodel.types.TypeMapper;
+import io.vidocq.vauban.core.langmodel.types.VaubanTypeVariable;
 import io.vidocq.vauban.indexer.model.DotName;
 import io.vidocq.vauban.indexer.model.TypeInfo;
 import jakarta.enterprise.lang.model.AnnotationInfo;
@@ -34,6 +35,8 @@ import java.util.List;
 import java.util.function.Predicate;
 
 public final class VaubanClassInfo implements jakarta.enterprise.lang.model.declarations.ClassInfo {
+
+    private static final DotName OBJECT = DotName.of("java.lang.Object");
 
     private final io.vidocq.vauban.indexer.model.ClassInfo indexClass;
     private final IndexLookup lookup;
@@ -61,9 +64,22 @@ public final class VaubanClassInfo implements jakarta.enterprise.lang.model.decl
         return pkg.isEmpty() ? null : new VaubanPackageInfo(pkg);
     }
 
+    /**
+     * The type parameters the class declares, read from the index. The index leaves out the implicit
+     * {@code java.lang.Object} bound; the lang model gives every type parameter at least one bound, so a type
+     * parameter that declares none has {@code java.lang.Object} as its single bound.
+     */
     @Override
     public List<TypeVariable> typeParameters() {
-        return List.of();
+        return indexClass.typeParameters().stream()
+                .map(parameter -> (TypeVariable) new VaubanTypeVariable(parameter.name(), bounds(parameter)))
+                .toList();
+    }
+
+    private List<Type> bounds(TypeInfo.TypeVariable parameter) {
+        var bounds = parameter.bounds().isEmpty() ? List.<TypeInfo>of(new TypeInfo.ClassType(OBJECT))
+                : parameter.bounds();
+        return bounds.stream().map(bound -> TypeMapper.map(bound, lookup)).toList();
     }
 
     @Override
