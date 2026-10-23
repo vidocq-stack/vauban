@@ -26,7 +26,6 @@ import io.vidocq.vauban.indexer.model.TypeInfo.*;
 import java.lang.reflect.*;
 import java.util.Arrays;
 import java.util.List;
-import java.util.stream.Collectors;
 
 public final class TypeInfoUtils {
 
@@ -109,58 +108,5 @@ public final class TypeInfoUtils {
                 .map(TypeInfoUtils::fromReflectType)
                 .toList();
         return new io.vidocq.vauban.indexer.model.TypeInfo.TypeVariable(tv.getName(), bounds);
-    }
-
-    public static Type toReflectType(TypeInfo type, ClassLoader cl) {
-        if (type == null) return null;
-        try {
-            return switch (type) {
-                case VoidType _ -> void.class;
-                case PrimitiveType(var kind) -> switch (kind) {
-                    case BOOLEAN -> boolean.class;
-                    case BYTE -> byte.class;
-                    case CHAR -> char.class;
-                    case SHORT -> short.class;
-                    case INT -> int.class;
-                    case LONG -> long.class;
-                    case FLOAT -> float.class;
-                    case DOUBLE -> double.class;
-                };
-                case ClassType(DotName(var name)) -> Class.forName(name, true, cl);
-                case ArrayType(var componentType, var dimensions) -> {
-                    Class<?> comp = (Class<?>) toReflectType(componentType, cl);
-                    yield java.lang.reflect.Array.newInstance(comp, new int[dimensions]).getClass();
-                }
-                case io.vidocq.vauban.indexer.model.TypeInfo.ParameterizedType(DotName(var rawName), var typeArguments) -> {
-                    Class<?> raw = Class.forName(rawName, true, cl);
-                    Type[] args = typeArguments.stream()
-                            .map(a -> toReflectType(a, cl))
-                            .toArray(Type[]::new);
-                    yield new ParameterizedTypeImpl(raw, args, raw.getDeclaringClass());
-                }
-                default -> Object.class; // Fallback
-            };
-        } catch (ClassNotFoundException e) {
-            throw new TypeNotPresentException(e.getMessage(), e);
-        }
-    }
-
-    private static class ParameterizedTypeImpl implements java.lang.reflect.ParameterizedType {
-        private final Class<?> rawType;
-        private final java.lang.reflect.Type[] actualTypeArguments;
-        private final java.lang.reflect.Type ownerType;
-
-        public ParameterizedTypeImpl(Class<?> rawType, java.lang.reflect.Type[] actualTypeArguments, java.lang.reflect.Type ownerType) {
-            this.rawType = rawType;
-            this.actualTypeArguments = actualTypeArguments;
-            this.ownerType = ownerType;
-        }
-        @Override public java.lang.reflect.Type[] getActualTypeArguments() { return actualTypeArguments; }
-        @Override public java.lang.reflect.Type getRawType() { return rawType; }
-        @Override public java.lang.reflect.Type getOwnerType() { return ownerType; }
-        @Override public String toString() { 
-            return rawType.getName() + "<" + 
-                Arrays.stream(actualTypeArguments).map(Type::getTypeName).collect(Collectors.joining(",")) + ">"; 
-        }
     }
 }
