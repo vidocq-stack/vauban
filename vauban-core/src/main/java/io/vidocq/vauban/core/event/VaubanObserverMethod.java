@@ -21,6 +21,7 @@ package io.vidocq.vauban.core.event;
 
 import io.vidocq.vauban.core.bean.model.ObserverDescriptor;
 import io.vidocq.vauban.core.container.QualifierUtils;
+import io.vidocq.vauban.indexer.model.DotName;
 import io.vidocq.vauban.indexer.model.TypeInfo;
 import jakarta.enterprise.event.Reception;
 import jakarta.enterprise.event.TransactionPhase;
@@ -54,7 +55,7 @@ public final class VaubanObserverMethod<T> implements ObserverMethod<T> {
     public Class<?> getBeanClass() {
         try {
             return Class.forName(descriptor.declaringClass().value(), true, classLoader);
-        } catch (ClassNotFoundException e) {
+        } catch (ClassNotFoundException _) {
             return Object.class;
         }
     }
@@ -71,40 +72,40 @@ public final class VaubanObserverMethod<T> implements ObserverMethod<T> {
 
     private Type resolveTypeInfo(TypeInfo typeInfo) {
         return switch (typeInfo) {
-            case TypeInfo.ClassType ct -> {
+            case TypeInfo.ClassType(DotName(var name)) -> {
                 try {
-                    yield Class.forName(ct.name().value(), true, classLoader);
-                } catch (ClassNotFoundException e) {
+                    yield Class.forName(name, true, classLoader);
+                } catch (ClassNotFoundException _) {
                     yield Object.class;
                 }
             }
-            case TypeInfo.ParameterizedType pt -> {
+            case TypeInfo.ParameterizedType(DotName(var rawName), var typeArguments) -> {
                 try {
-                    var rawClass = Class.forName(pt.rawType().value(), true, classLoader);
-                    var typeArgs = pt.typeArguments().stream()
+                    var rawClass = Class.forName(rawName, true, classLoader);
+                    var typeArgs = typeArguments.stream()
                             .map(this::resolveTypeInfo)
                             .toArray(Type[]::new);
                     yield new ResolvedParameterizedType(rawClass, typeArgs);
-                } catch (ClassNotFoundException e) {
+                } catch (ClassNotFoundException _) {
                     yield Object.class;
                 }
             }
-            case TypeInfo.TypeVariable tv -> {
-                var bounds = tv.bounds().stream()
+            case TypeInfo.TypeVariable(var name, var typeBounds) -> {
+                var bounds = typeBounds.stream()
                         .map(this::resolveTypeInfo)
                         .filter(t -> t != Object.class)
                         .toArray(Type[]::new);
-                yield new ResolvedTypeVariable(tv.name(), bounds.length > 0 ? bounds : new Type[]{Object.class});
+                yield new ResolvedTypeVariable(name, bounds.length > 0 ? bounds : new Type[]{Object.class});
             }
-            case TypeInfo.WildcardType wt -> {
-                var upper = wt.upperBound() != null ? resolveTypeInfo(wt.upperBound()) : Object.class;
-                var lower = wt.lowerBound() != null ? resolveTypeInfo(wt.lowerBound()) : null;
+            case TypeInfo.WildcardType(var upperBound, var lowerBound) -> {
+                var upper = upperBound != null ? resolveTypeInfo(upperBound) : Object.class;
+                var lower = lowerBound != null ? resolveTypeInfo(lowerBound) : null;
                 yield new ResolvedWildcardType(
                         new Type[]{upper},
                         lower != null ? new Type[]{lower} : new Type[0]);
             }
-            case TypeInfo.ArrayType at -> {
-                var component = resolveTypeInfo(at.componentType());
+            case TypeInfo.ArrayType(var componentType, _) -> {
+                var component = resolveTypeInfo(componentType);
                 if (component instanceof Class<?> cc) {
                     yield java.lang.reflect.Array.newInstance(cc, 0).getClass();
                 }

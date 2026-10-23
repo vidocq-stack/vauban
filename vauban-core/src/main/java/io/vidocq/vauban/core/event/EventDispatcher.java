@@ -22,6 +22,7 @@ package io.vidocq.vauban.core.event;
 import io.vidocq.vauban.core.bean.model.ObserverDescriptor;
 import io.vidocq.vauban.core.annotation.AnnotationKey;
 import io.vidocq.vauban.core.container.VaubanContainer;
+import io.vidocq.vauban.indexer.model.DotName;
 import io.vidocq.vauban.indexer.model.TypeInfo;
 
 
@@ -188,14 +189,9 @@ public final class EventDispatcher {
         var result = new ArrayList<ObserverDescriptor>();
         for (int i = 0; i < observers.size(); i++) {
             var observer = observers.get(i);
-            if (asyncOnly && !observer.async()) continue;
-            if (!asyncOnly && observer.async()) continue;
-
-            if (!eventTypeMatches(observer, eventType)) {
-                continue;
-            }
-
-            if (observerMatches(observerKeys(i), eventKeys)) {
+            if (observer.async() == asyncOnly
+                    && eventTypeMatches(observer, eventType)
+                    && observerMatches(observerKeys(i), eventKeys)) {
                 result.add(observer);
             }
         }
@@ -236,25 +232,25 @@ public final class EventDispatcher {
         Class<?> eventClass = resolveTypeToClass(eventType);
         if (eventClass == null) return false;
 
-        if (observer.eventType() instanceof TypeInfo.TypeVariable tv) {
+        if (observer.eventType() instanceof TypeInfo.TypeVariable(_, var bounds)) {
             // CDI spec: TypeVariable observer matches any event assignable to the bounds
-            if (!tv.bounds().isEmpty()) {
-                for (var bound : tv.bounds()) {
-                    var boundClass = resolveObservedType(bound);
-                    if (boundClass != null && !boundClass.isAssignableFrom(eventClass)) {
-                        return false;
-                    }
-                }
-            }
-            return true;
+            return withinObservedBounds(bounds, eventClass);
         }
 
         Class<?> observedClass = resolveObservedType(observer.eventType());
-        if (observedClass == null) return false;
-        if (!observedClass.isAssignableFrom(eventClass)) return false;
+        if (observedClass == null || !observedClass.isAssignableFrom(eventClass)) return false;
 
-        if (observer.eventType() instanceof TypeInfo.ParameterizedType pt) {
-            if (!matchesParameterizedObserver(pt, eventType)) return false;
+        return !(observer.eventType() instanceof TypeInfo.ParameterizedType pt)
+                || matchesParameterizedObserver(pt, eventType);
+    }
+
+    /** {@code eventClass} is assignable to every bound that resolves to a class. */
+    private boolean withinObservedBounds(List<TypeInfo> bounds, Class<?> eventClass) {
+        for (var bound : bounds) {
+            var boundClass = resolveObservedType(bound);
+            if (boundClass != null && !boundClass.isAssignableFrom(eventClass)) {
+                return false;
+            }
         }
         return true;
     }
@@ -265,109 +261,118 @@ public final class EventDispatcher {
         try {
             var cl = container.classLoader();
             var rawObserved = Class.forName(observerType.rawType().value(), true, cl);
-
-            java.lang.reflect.ParameterizedType eventGenericType = null;
-            for (java.lang.reflect.Type supertype : io.vidocq.vauban.core.types.TypeHierarchyResolver.resolveAllSupertypes(eventType)) {
-                if (supertype instanceof java.lang.reflect.ParameterizedType pt) {
-                    if (pt.getRawType() == rawObserved
-                            || (pt.getRawType() instanceof Class<?> ptc && ptc.getName().equals(rawObserved.getName()))) {
-                        eventGenericType = pt;
-                        break;
-                    }
-                }
-            }
-
-            if (eventGenericType == null) {
-                return true;
-            }
-
-            var eventTypeArgs = eventGenericType.getActualTypeArguments();
-            var observerTypeArgs = observerType.typeArguments();
-            if (eventTypeArgs.length != observerTypeArgs.size()) return false;
-
-            for (int i = 0; i < eventTypeArgs.length; i++) {
-                if (!typeArgMatchesObserver(eventTypeArgs[i], observerTypeArgs.get(i), cl)) {
-                    return false;
-                }
-            }
-            return true;
-        } catch (Exception e) {
+            var eventGenericType = parameterizedSupertype(eventType, rawObserved);
+            return eventGenericType == null
+                    || typeArgsMatchObserver(eventGenericType.getActualTypeArguments(), observerType.typeArguments(), cl);
+        } catch (Exception _) {
             return true;
         }
     }
 
-    private static boolean typeArgMatchesObserver(java.lang.reflect.Type eventArg, TypeInfo observerArg, ClassLoader cl)
-            throws ClassNotFoundException {
-        if (observerArg instanceof TypeInfo.TypeVariable tv) {
-            if (!tv.bounds().isEmpty()) {
-                var eventClass = resolveTypeToClass(eventArg);
-                if (eventClass != null) {
-                    for (var bound : tv.bounds()) {
-                        var boundClass = resolveTypeInfoToClass(bound, cl);
-                        if (boundClass != null && !boundClass.isAssignableFrom(eventClass)) {
-                            return false;
-                        }
-                    }
-                }
+    /** The supertype of {@code eventType} that parameterizes {@code rawObserved}, or {@code null}. */
+    private static java.lang.reflect.ParameterizedType parameterizedSupertype(
+            java.lang.reflect.Type eventType, Class<?> rawObserved) {
+        for (java.lang.reflect.Type supertype : io.vidocq.vauban.core.types.TypeHierarchyResolver.resolveAllSupertypes(eventType)) {
+            if (supertype instanceof java.lang.reflect.ParameterizedType pt && sameRawType(pt.getRawType(), rawObserved)) {
+                return pt;
             }
-            return true;
         }
+        return null;
+    }
 
-        if (observerArg instanceof TypeInfo.WildcardType wt) {
-            if (wt.upperBound() != null && !(wt.upperBound() instanceof TypeInfo.ClassType ct
-                    && ct.name().value().equals("java.lang.Object"))) {
-                var upperClass = resolveTypeInfoToClass(wt.upperBound(), cl);
-                var eventClass = resolveTypeToClass(eventArg);
-                if (upperClass != null && eventClass != null && !upperClass.isAssignableFrom(eventClass)) {
-                    return false;
-                }
-            }
-            if (wt.lowerBound() != null) {
-                var lowerClass = resolveTypeInfoToClass(wt.lowerBound(), cl);
-                var eventClass = resolveTypeToClass(eventArg);
-                if (lowerClass != null && eventClass != null && !eventClass.isAssignableFrom(lowerClass)) {
-                    return false;
-                }
-            }
-            return true;
-        }
+    /**
+     * The same class, or a class of the same name: the event's class and the observer's may come from two
+     * class loaders or module layers, where the same class has two {@code Class} objects.
+     */
+    private static boolean sameRawType(java.lang.reflect.Type raw, Class<?> rawObserved) {
+        return raw == rawObserved
+                || (raw instanceof Class<?> rawClass && rawClass.getName().equals(rawObserved.getName()));
+    }
 
-        if (observerArg instanceof TypeInfo.ClassType ct) {
-            var expectedName = ct.name().value();
-            if (eventArg instanceof Class<?> ec) {
-                return expectedName.equals(ec.getName());
-            }
-            if (eventArg instanceof java.lang.reflect.WildcardType ewt) {
-                for (var bound : ewt.getUpperBounds()) {
-                    if (bound instanceof Class<?> bc && expectedName.equals(bc.getName())) return true;
-                }
+    private static boolean typeArgsMatchObserver(java.lang.reflect.Type[] eventArgs, List<TypeInfo> observerArgs,
+            ClassLoader cl) {
+        if (eventArgs.length != observerArgs.size()) return false;
+        for (int i = 0; i < eventArgs.length; i++) {
+            if (!typeArgMatchesObserver(eventArgs[i], observerArgs.get(i), cl)) {
                 return false;
             }
-            return false;
         }
-
-        if (observerArg instanceof TypeInfo.ParameterizedType opt) {
-            if (eventArg instanceof java.lang.reflect.ParameterizedType ept) {
-                var obsRawName = opt.rawType().value();
-                var eptRaw = ept.getRawType();
-                if (!(eptRaw instanceof Class<?> eptRawClass && obsRawName.equals(eptRawClass.getName()))) return false;
-                var eArgs = ept.getActualTypeArguments();
-                var oArgs = opt.typeArguments();
-                if (eArgs.length != oArgs.size()) return false;
-                for (int i = 0; i < eArgs.length; i++) {
-                    if (!typeArgMatchesObserver(eArgs[i], oArgs.get(i), cl)) return false;
-                }
-                return true;
-            }
-            return false;
-        }
-
         return true;
     }
 
+    private static boolean typeArgMatchesObserver(java.lang.reflect.Type eventArg, TypeInfo observerArg, ClassLoader cl) {
+        return switch (observerArg) {
+            case TypeInfo.TypeVariable(_, var bounds) -> withinBounds(eventArg, bounds, cl);
+            case TypeInfo.WildcardType(var upperBound, var lowerBound) ->
+                    withinWildcard(eventArg, upperBound, lowerBound, cl);
+            case TypeInfo.ClassType(DotName(var expectedName)) -> isClassNamed(eventArg, expectedName);
+            case TypeInfo.ParameterizedType(DotName(var rawName), var typeArguments) ->
+                    isParameterizedAs(eventArg, rawName, typeArguments, cl);
+            default -> true;
+        };
+    }
+
+    /** A type variable of the observer: the event's argument is assignable to every bound that resolves. */
+    private static boolean withinBounds(java.lang.reflect.Type eventArg, List<TypeInfo> bounds, ClassLoader cl) {
+        var eventClass = resolveTypeToClass(eventArg);
+        if (eventClass == null) return true;
+        for (var bound : bounds) {
+            if (!assignableOrUnknown(resolveTypeInfoToClass(bound, cl), eventClass)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /** A wildcard of the observer: the event's argument lies between its bounds, an {@code Object} upper bound aside. */
+    private static boolean withinWildcard(java.lang.reflect.Type eventArg, TypeInfo upperBound, TypeInfo lowerBound,
+            ClassLoader cl) {
+        if (upperBound != null && !isObject(upperBound)
+                && !assignableOrUnknown(resolveTypeInfoToClass(upperBound, cl), resolveTypeToClass(eventArg))) {
+            return false;
+        }
+        return lowerBound == null
+                || assignableOrUnknown(resolveTypeToClass(eventArg), resolveTypeInfoToClass(lowerBound, cl));
+    }
+
+    private static boolean isObject(TypeInfo type) {
+        return type instanceof TypeInfo.ClassType(DotName(var name)) && name.equals("java.lang.Object");
+    }
+
+    /** {@code to} is assignable from {@code from}, or one of them did not resolve to a class. */
+    private static boolean assignableOrUnknown(Class<?> to, Class<?> from) {
+        return to == null || from == null || to.isAssignableFrom(from);
+    }
+
+    /** A class of the observer: the event's argument is that class, or a wildcard with it as an upper bound. */
+    private static boolean isClassNamed(java.lang.reflect.Type eventArg, String expectedName) {
+        if (eventArg instanceof Class<?> ec) {
+            return expectedName.equals(ec.getName());
+        }
+        if (eventArg instanceof java.lang.reflect.WildcardType ewt) {
+            for (var bound : ewt.getUpperBounds()) {
+                if (bound instanceof Class<?> bc && expectedName.equals(bc.getName())) return true;
+            }
+        }
+        return false;
+    }
+
+    /** A parameterized type of the observer: the event's argument has its raw type and matching arguments. */
+    private static boolean isParameterizedAs(java.lang.reflect.Type eventArg, String rawName,
+            List<TypeInfo> typeArguments, ClassLoader cl) {
+        return eventArg instanceof java.lang.reflect.ParameterizedType ept
+                && ept.getRawType() instanceof Class<?> eventRaw
+                && rawName.equals(eventRaw.getName())
+                && typeArgsMatchObserver(ept.getActualTypeArguments(), typeArguments, cl);
+    }
+
     private static Class<?> resolveTypeInfoToClass(TypeInfo typeInfo, ClassLoader cl) {
-        if (typeInfo instanceof TypeInfo.ClassType ct) {
-            try { return Class.forName(ct.name().value(), true, cl); } catch (Exception e) { return null; }
+        if (typeInfo instanceof TypeInfo.ClassType(DotName(var name))) {
+            try {
+                return Class.forName(name, true, cl);
+            } catch (Exception _) {
+                return null;
+            }
         }
         return null;
     }
@@ -380,22 +385,19 @@ public final class EventDispatcher {
 
 
     private static boolean containsTypeVariable(java.lang.reflect.Type type) {
-        if (type instanceof java.lang.reflect.TypeVariable<?>) return true;
-        if (type instanceof java.lang.reflect.ParameterizedType pt) {
-            for (var arg : pt.getActualTypeArguments()) {
-                if (containsTypeVariable(arg)) return true;
-            }
-        }
-        if (type instanceof java.lang.reflect.GenericArrayType gat) {
-            return containsTypeVariable(gat.getGenericComponentType());
-        }
-        if (type instanceof java.lang.reflect.WildcardType wt) {
-            for (var bound : wt.getUpperBounds()) {
-                if (containsTypeVariable(bound)) return true;
-            }
-            for (var bound : wt.getLowerBounds()) {
-                if (containsTypeVariable(bound)) return true;
-            }
+        return switch (type) {
+            case java.lang.reflect.TypeVariable<?> _ -> true;
+            case java.lang.reflect.ParameterizedType pt -> anyContainsTypeVariable(pt.getActualTypeArguments());
+            case java.lang.reflect.GenericArrayType gat -> containsTypeVariable(gat.getGenericComponentType());
+            case java.lang.reflect.WildcardType wt ->
+                    anyContainsTypeVariable(wt.getUpperBounds()) || anyContainsTypeVariable(wt.getLowerBounds());
+            case null, default -> false;
+        };
+    }
+
+    private static boolean anyContainsTypeVariable(java.lang.reflect.Type[] types) {
+        for (var type : types) {
+            if (containsTypeVariable(type)) return true;
         }
         return false;
     }
@@ -467,25 +469,28 @@ public final class EventDispatcher {
 
         // Try superclass
         var genSuper = current.getGenericSuperclass();
-        if (genSuper != null) {
-            Class<?> superRaw = resolveTypeToClass(genSuper);
-            if (superRaw != null && target.isAssignableFrom(superRaw)) {
-                if (propagateDown(superRaw, target, targetMap, resolvedMap)) {
-                    mapCurrentFromSuper(current, genSuper, superRaw, resolvedMap);
-                    return true;
-                }
-            }
+        if (genSuper != null && propagateThrough(current, genSuper, target, targetMap, resolvedMap)) {
+            return true;
         }
 
         // Try interfaces
         for (var genIface : current.getGenericInterfaces()) {
-            Class<?> ifaceRaw = resolveTypeToClass(genIface);
-            if (ifaceRaw != null && target.isAssignableFrom(ifaceRaw)) {
-                if (propagateDown(ifaceRaw, target, targetMap, resolvedMap)) {
-                    mapCurrentFromSuper(current, genIface, ifaceRaw, resolvedMap);
-                    return true;
-                }
+            if (propagateThrough(current, genIface, target, targetMap, resolvedMap)) {
+                return true;
             }
+        }
+        return false;
+    }
+
+    /** Propagates through the direct supertype {@code genSuper} of {@code current}, when it leads to {@code target}. */
+    private static boolean propagateThrough(Class<?> current, java.lang.reflect.Type genSuper, Class<?> target,
+            java.util.Map<String, java.lang.reflect.Type> targetMap,
+            java.util.Map<String, java.lang.reflect.Type> resolvedMap) {
+        Class<?> superRaw = resolveTypeToClass(genSuper);
+        if (superRaw != null && target.isAssignableFrom(superRaw)
+                && propagateDown(superRaw, target, targetMap, resolvedMap)) {
+            mapCurrentFromSuper(current, genSuper, superRaw, resolvedMap);
+            return true;
         }
         return false;
     }
@@ -546,20 +551,13 @@ public final class EventDispatcher {
     }
 
     private static java.lang.reflect.ParameterizedType findGenericSupertype(Class<?> clazz, Class<?> targetRaw) {
-        for (var iface : clazz.getGenericInterfaces()) {
-            if (iface instanceof java.lang.reflect.ParameterizedType pt && pt.getRawType() == targetRaw) {
-                return pt;
-            }
-        }
-        if (clazz.getGenericSuperclass() instanceof java.lang.reflect.ParameterizedType pt
-                && pt.getRawType() == targetRaw) {
-            return pt;
+        var direct = directGenericSupertype(clazz, targetRaw);
+        if (direct != null) {
+            return direct;
         }
         // Recurse through supertypes
         for (var iface : clazz.getGenericInterfaces()) {
-            Class<?> rawIface = (iface instanceof java.lang.reflect.ParameterizedType pt)
-                    ? (Class<?>) pt.getRawType()
-                    : (iface instanceof Class<?> c ? c : null);
+            Class<?> rawIface = resolveTypeToClass(iface);
             if (rawIface != null && targetRaw.isAssignableFrom(rawIface)) {
                 var result = findGenericSupertype(rawIface, targetRaw);
                 if (result != null) return result;
@@ -568,6 +566,20 @@ public final class EventDispatcher {
         var superclass = clazz.getSuperclass();
         if (superclass != null && targetRaw.isAssignableFrom(superclass)) {
             return findGenericSupertype(superclass, targetRaw);
+        }
+        return null;
+    }
+
+    /** The direct supertype of {@code clazz} that parameterizes {@code targetRaw}, interfaces first, or {@code null}. */
+    private static java.lang.reflect.ParameterizedType directGenericSupertype(Class<?> clazz, Class<?> targetRaw) {
+        for (var iface : clazz.getGenericInterfaces()) {
+            if (iface instanceof java.lang.reflect.ParameterizedType pt && pt.getRawType() == targetRaw) {
+                return pt;
+            }
+        }
+        if (clazz.getGenericSuperclass() instanceof java.lang.reflect.ParameterizedType pt
+                && pt.getRawType() == targetRaw) {
+            return pt;
         }
         return null;
     }
@@ -618,7 +630,7 @@ public final class EventDispatcher {
     }
 
     public void invokeObserverDirect(ObserverDescriptor observer, Object event) {
-        invokeObserver(observer, event, (Annotation[]) new Annotation[0]);
+        invokeObserver(observer, event, new Annotation[0]);
     }
 
     private void invokeObserver(ObserverDescriptor observer, Object event, Annotation... eventQualifiers) {
@@ -634,128 +646,191 @@ public final class EventDispatcher {
         }
         try {
             var beanClass = Class.forName(observer.declaringClass().value(), true, container.classLoader());
-
-            if ("IF_EXISTS".equals(observer.reception())) {
-                var bm = container.getBeanManager();
-                var beans = bm.getBeans(beanClass);
-                if (!beans.isEmpty()) {
-                    var bean = bm.resolve(beans);
-                    if (bean != null) {
-                        var scope = bean.getScope();
-                        var ctx = bm.getContext(scope);
-                        var existing = ctx.get((jakarta.enterprise.context.spi.Contextual<?>) bean);
-                        if (existing == null) return;
-                    }
-                }
+            if (lacksContextualInstance(observer, beanClass)) {
+                return;
             }
-
             var method = findMethod(beanClass, observer.methodName(), event.getClass());
             if (method != null) {
-                // Invocation goes through VaubanLookup.invokeMethod: it calls the observer in-module
-                // via the module's generated provider when one owns it (no reflection, no opens), and
-                // only the reflective fallback needs deep access. makeAccessible is therefore done
-                // lazily inside that fallback, not eagerly here.
-                var bm = container.getBeanManager();
-                var exactBean = container.findManagedBeanByExactClass(beanClass);
-                boolean declaringIsDependent = exactBean != null
-                        && exactBean.getScope() == jakarta.enterprise.context.Dependent.class;
-                @SuppressWarnings("unchecked")
-                var beanCtx = declaringIsDependent
-                        ? new io.vidocq.vauban.core.context.CreationalContextImpl<>()
-                        : null;
-                var beanInstance = java.lang.reflect.Modifier.isStatic(method.getModifiers())
-                        ? null : (beanCtx != null
-                                ? bm.getReference(exactBean, beanClass, beanCtx)
-                                : container.selectByBeanClass(beanClass));
-                try {
-                    if (method.getParameterCount() == 1) {
-                        try {
-                            container.getVaubanLookup().invokeMethod(beanInstance, method, event);
-                        } catch (jakarta.enterprise.inject.CreationException ce) {
-                            throw asObserverException(ce, observer);
-                        }
-                    } else {
-                        var ctx = new io.vidocq.vauban.core.context.CreationalContextImpl<>();
-                        var paramTypes = method.getParameterTypes();
-                        var args = new Object[paramTypes.length];
-                        var params = method.getParameters();
-                        for (int i = 0; i < params.length; i++) {
-                            if (params[i].isAnnotationPresent(jakarta.enterprise.event.Observes.class)
-                                    || params[i].isAnnotationPresent(jakarta.enterprise.event.ObservesAsync.class)) {
-                                args[i] = event;
-                            } else if (paramTypes[i] == jakarta.enterprise.inject.spi.EventMetadata.class) {
-                                final Object eventObj = event;
-                                // CDI spec: EventMetadata.getQualifiers() returns the qualifiers
-                                // explicitly passed at fire-time plus @Any (always implicit).
-                                // @Default is NOT added implicitly to EventMetadata.
-                                final var metaQualifiers = new java.util.LinkedHashSet<java.lang.annotation.Annotation>();
-                                if (eventQualifiers != null) {
-                                    for (var q : eventQualifiers) metaQualifiers.add(q);
-                                }
-                                metaQualifiers.add(jakarta.enterprise.inject.Any.Literal.INSTANCE);
-                                final java.util.Set<java.lang.annotation.Annotation> immutableQualifiers =
-                                        java.util.Set.copyOf(metaQualifiers);
-                                final java.lang.reflect.Type resolvedType = resolveRuntimeEventType(eventObj, selectedEventType);
-                                args[i] = new jakarta.enterprise.inject.spi.EventMetadata() {
-                                    @Override public java.util.Set<java.lang.annotation.Annotation> getQualifiers() {
-                                        return immutableQualifiers;
-                                    }
-                                    @Override public jakarta.enterprise.inject.spi.InjectionPoint getInjectionPoint() {
-                                        return eventInjectionPoint;
-                                    }
-                                    @Override public java.lang.reflect.Type getType() {
-                                        return resolvedType;
-                                    }
-                                };
-                            } else if (paramTypes[i] == jakarta.enterprise.inject.Instance.class
-                                    || paramTypes[i] == jakarta.inject.Provider.class) {
-                                Class<?> instanceType = Object.class;
-                                var genericType = method.getGenericParameterTypes()[i];
-                                if (genericType instanceof java.lang.reflect.ParameterizedType pt
-                                        && pt.getActualTypeArguments().length > 0) {
-                                    var typeArg = pt.getActualTypeArguments()[0];
-                                    if (typeArg instanceof Class<?> c) instanceType = c;
-                                }
-                                var paramQualifiers = observerParamQualifiers(observer, method, i, params[i]);
-                                args[i] = new io.vidocq.vauban.core.container.InstanceImpl<>(
-                                        container, instanceType, paramQualifiers, null, ctx);
-                            } else {
-                                var paramQualifiers = observerParamQualifiers(observer, method, i, params[i]);
-                                // Resolve generic type variables for inherited observer methods
-                                var resolvedParamType = resolveObserverParamType(beanClass, method, i);
-                                var beans = paramQualifiers.length > 0
-                                        ? bm.getBeans(resolvedParamType, paramQualifiers)
-                                        : bm.getBeans(resolvedParamType);
-                                if (!beans.isEmpty()) {
-                                    var bean = bm.resolve(beans);
-                                    var ref = bm.getReference(bean, paramTypes[i], ctx);
-                                    args[i] = ref;
-                                } else {
-                                    args[i] = container.resolveParameter(paramTypes[i],
-                                            method.getGenericParameterTypes()[i]);
-                                }
-                            }
-                        }
-                        try {
-                            container.getVaubanLookup().invokeMethod(beanInstance, method, args);
-                        } catch (jakarta.enterprise.inject.CreationException ce) {
-                            throw asObserverException(ce, observer);
-                        } finally {
-                            ctx.release();
-                        }
-                    }
-                } finally {
-                    if (beanCtx != null) beanCtx.release();
-                }
+                invokeObserverMethod(observer, beanClass, method,
+                        new ObservedEvent(event, selectedEventType, eventInjectionPoint, eventQualifiers));
             }
-        } catch (jakarta.enterprise.event.ObserverException e) {
-            throw e;
         } catch (RuntimeException e) {
             throw e;
         } catch (Exception e) {
             throw new jakarta.enterprise.event.ObserverException(
                     "Failed to invoke observer: " + observer.declaringClass().value()
                             + "." + observer.methodName(), e);
+        }
+    }
+
+    /** A conditional observer ({@code IF_EXISTS}) whose bean has no contextual instance is not notified. */
+    private boolean lacksContextualInstance(ObserverDescriptor observer, Class<?> beanClass) {
+        if (!"IF_EXISTS".equals(observer.reception())) {
+            return false;
+        }
+        var bm = container.getBeanManager();
+        var beans = bm.getBeans(beanClass);
+        if (beans.isEmpty()) {
+            return false;
+        }
+        var bean = bm.resolve(beans);
+        return bean != null
+                && bm.getContext(bean.getScope()).get((jakarta.enterprise.context.spi.Contextual<?>) bean) == null;
+    }
+
+    private void invokeObserverMethod(ObserverDescriptor observer, Class<?> beanClass, Method method,
+            ObservedEvent observed) {
+        // Invocation goes through VaubanLookup.invokeMethod: it calls the observer in-module
+        // via the module's generated provider when one owns it (no reflection, no opens), and
+        // only the reflective fallback needs deep access. makeAccessible is therefore done
+        // lazily inside that fallback, not eagerly here.
+        var exactBean = container.findManagedBeanByExactClass(beanClass);
+        boolean declaringIsDependent = exactBean != null
+                && exactBean.getScope() == jakarta.enterprise.context.Dependent.class;
+        var beanCtx = declaringIsDependent
+                ? new io.vidocq.vauban.core.context.CreationalContextImpl<>()
+                : null;
+        var beanInstance = receiverOf(method, beanClass, exactBean, beanCtx);
+        try {
+            if (method.getParameterCount() == 1) {
+                invoke(observer, beanInstance, method, observed.event());
+            } else {
+                invokeWithInjectedParameters(observer, beanClass, method, beanInstance, observed);
+            }
+        } finally {
+            if (beanCtx != null) beanCtx.release();
+        }
+    }
+
+    /** The instance the observer is called on: none for a static method, a new one for a dependent bean. */
+    private Object receiverOf(Method method, Class<?> beanClass,
+            io.vidocq.vauban.core.container.ManagedBean<?> exactBean,
+            io.vidocq.vauban.core.context.CreationalContextImpl<?> beanCtx) {
+        if (java.lang.reflect.Modifier.isStatic(method.getModifiers())) {
+            return null;
+        }
+        return beanCtx != null
+                ? container.getBeanManager().getReference(exactBean, beanClass, beanCtx)
+                : container.selectByBeanClass(beanClass);
+    }
+
+    private void invokeWithInjectedParameters(ObserverDescriptor observer, Class<?> beanClass, Method method,
+            Object beanInstance, ObservedEvent observed) {
+        var ctx = new io.vidocq.vauban.core.context.CreationalContextImpl<>();
+        var args = observerArguments(observer, beanClass, method, observed, ctx);
+        try {
+            invoke(observer, beanInstance, method, args);
+        } finally {
+            ctx.release();
+        }
+    }
+
+    private void invoke(ObserverDescriptor observer, Object beanInstance, Method method, Object... args) {
+        try {
+            container.getVaubanLookup().invokeMethod(beanInstance, method, args);
+        } catch (jakarta.enterprise.inject.CreationException ce) {
+            throw asObserverException(ce, observer);
+        }
+    }
+
+    /** The arguments of an observer method: the event, its metadata, then injected beans and instances. */
+    private Object[] observerArguments(ObserverDescriptor observer, Class<?> beanClass, Method method,
+            ObservedEvent observed, io.vidocq.vauban.core.context.CreationalContextImpl<Object> ctx) {
+        var paramTypes = method.getParameterTypes();
+        var args = new Object[paramTypes.length];
+        var params = method.getParameters();
+        for (int i = 0; i < params.length; i++) {
+            if (isEventParameter(params[i])) {
+                args[i] = observed.event();
+            } else if (paramTypes[i] == jakarta.enterprise.inject.spi.EventMetadata.class) {
+                args[i] = observed.metadata();
+            } else if (paramTypes[i] == jakarta.enterprise.inject.Instance.class
+                    || paramTypes[i] == jakarta.inject.Provider.class) {
+                args[i] = instanceArgument(observer, method, i, params[i], ctx);
+            } else {
+                args[i] = beanArgument(observer, beanClass, method, i, params[i], ctx);
+            }
+        }
+        return args;
+    }
+
+    private static boolean isEventParameter(java.lang.reflect.Parameter param) {
+        return param.isAnnotationPresent(jakarta.enterprise.event.Observes.class)
+                || param.isAnnotationPresent(jakarta.enterprise.event.ObservesAsync.class);
+    }
+
+    private Object instanceArgument(ObserverDescriptor observer, Method method, int index,
+            java.lang.reflect.Parameter param, io.vidocq.vauban.core.context.CreationalContextImpl<Object> ctx) {
+        Class<?> instanceType = Object.class;
+        var genericType = method.getGenericParameterTypes()[index];
+        if (genericType instanceof java.lang.reflect.ParameterizedType pt
+                && pt.getActualTypeArguments().length > 0
+                && pt.getActualTypeArguments()[0] instanceof Class<?> c) {
+            instanceType = c;
+        }
+        var paramQualifiers = observerParamQualifiers(observer, method, index, param);
+        return new io.vidocq.vauban.core.container.InstanceImpl<>(
+                container, instanceType, paramQualifiers, null, ctx);
+    }
+
+    private Object beanArgument(ObserverDescriptor observer, Class<?> beanClass, Method method, int index,
+            java.lang.reflect.Parameter param, io.vidocq.vauban.core.context.CreationalContextImpl<Object> ctx) {
+        var bm = container.getBeanManager();
+        var paramQualifiers = observerParamQualifiers(observer, method, index, param);
+        // Resolve generic type variables for inherited observer methods
+        var resolvedParamType = resolveObserverParamType(beanClass, method, index);
+        var beans = paramQualifiers.length > 0
+                ? bm.getBeans(resolvedParamType, paramQualifiers)
+                : bm.getBeans(resolvedParamType);
+        if (beans.isEmpty()) {
+            return container.resolveParameter(param.getType(), method.getGenericParameterTypes()[index]);
+        }
+        return bm.getReference(bm.resolve(beans), param.getType(), ctx);
+    }
+
+    /** An event being delivered, with what an {@link jakarta.enterprise.inject.spi.EventMetadata} parameter tells of it. */
+    private static final class ObservedEvent {
+        private final Object event;
+        private final java.lang.reflect.Type selectedType;
+        private final jakarta.enterprise.inject.spi.InjectionPoint injectionPoint;
+        private final Annotation[] qualifiers;
+
+        ObservedEvent(Object event, java.lang.reflect.Type selectedType,
+                jakarta.enterprise.inject.spi.InjectionPoint injectionPoint, Annotation[] qualifiers) {
+            this.event = event;
+            this.selectedType = selectedType;
+            this.injectionPoint = injectionPoint;
+            this.qualifiers = qualifiers;
+        }
+
+        Object event() {
+            return event;
+        }
+
+        jakarta.enterprise.inject.spi.EventMetadata metadata() {
+            // CDI spec: EventMetadata.getQualifiers() returns the qualifiers
+            // explicitly passed at fire-time plus @Any (always implicit).
+            // @Default is NOT added implicitly to EventMetadata.
+            final var metaQualifiers = new java.util.LinkedHashSet<java.lang.annotation.Annotation>();
+            if (qualifiers != null) {
+                Collections.addAll(metaQualifiers, qualifiers);
+            }
+            metaQualifiers.add(jakarta.enterprise.inject.Any.Literal.INSTANCE);
+            final java.util.Set<java.lang.annotation.Annotation> immutableQualifiers =
+                    java.util.Set.copyOf(metaQualifiers);
+            final java.lang.reflect.Type resolvedType = resolveRuntimeEventType(event, selectedType);
+            final var eventInjectionPoint = injectionPoint;
+            return new jakarta.enterprise.inject.spi.EventMetadata() {
+                @Override public java.util.Set<java.lang.annotation.Annotation> getQualifiers() {
+                    return immutableQualifiers;
+                }
+                @Override public jakarta.enterprise.inject.spi.InjectionPoint getInjectionPoint() {
+                    return eventInjectionPoint;
+                }
+                @Override public java.lang.reflect.Type getType() {
+                    return resolvedType;
+                }
+            };
         }
     }
 
@@ -786,18 +861,18 @@ public final class EventDispatcher {
         try {
             var cl = container.classLoader();
             return switch (typeInfo) {
-                case TypeInfo.ClassType ct -> {
-                    var primitiveClass = PRIMITIVE_NAME_TO_CLASS.get(ct.name().value());
-                    yield primitiveClass != null ? primitiveClass : Class.forName(ct.name().value(), true, cl);
+                case TypeInfo.ClassType(DotName(var name)) -> {
+                    var primitiveClass = PRIMITIVE_NAME_TO_CLASS.get(name);
+                    yield primitiveClass != null ? primitiveClass : Class.forName(name, true, cl);
                 }
-                case TypeInfo.ParameterizedType pt -> Class.forName(pt.rawType().value(), true, cl);
-                case TypeInfo.ArrayType at -> {
-                    var component = resolveObservedType(at.componentType());
+                case TypeInfo.ParameterizedType(DotName(var rawName), _) -> Class.forName(rawName, true, cl);
+                case TypeInfo.ArrayType(var componentType, _) -> {
+                    var component = resolveObservedType(componentType);
                     yield component != null
                             ? java.lang.reflect.Array.newInstance(component, 0).getClass()
                             : null;
                 }
-                case TypeInfo.PrimitiveType pt -> switch (pt.kind()) {
+                case TypeInfo.PrimitiveType(var kind) -> switch (kind) {
                     case BOOLEAN -> boolean.class;
                     case BYTE -> byte.class;
                     case CHAR -> char.class;
@@ -807,21 +882,13 @@ public final class EventDispatcher {
                     case FLOAT -> float.class;
                     case DOUBLE -> double.class;
                 };
-                case TypeInfo.TypeVariable tv -> {
-                    if (!tv.bounds().isEmpty()) {
-                        yield resolveObservedType(tv.bounds().getFirst());
-                    }
-                    yield Object.class;
-                }
-                case TypeInfo.WildcardType wt -> {
-                    if (wt.upperBound() != null) {
-                        yield resolveObservedType(wt.upperBound());
-                    }
-                    yield Object.class;
-                }
+                case TypeInfo.TypeVariable(_, var bounds) ->
+                        bounds.isEmpty() ? Object.class : resolveObservedType(bounds.getFirst());
+                case TypeInfo.WildcardType(var upperBound, _) ->
+                        upperBound == null ? Object.class : resolveObservedType(upperBound);
                 default -> null;
             };
-        } catch (ClassNotFoundException e) {
+        } catch (ClassNotFoundException _) {
             return null;
         }
     }
@@ -832,32 +899,39 @@ public final class EventDispatcher {
         return io.vidocq.vauban.core.container.ManagedBean.resolveType(genericType, typeMapping);
     }
 
-    private Method findMethod(Class<?> clazz, String name, Class<?> eventType) {
+    private static Method findMethod(Class<?> clazz, String name, Class<?> eventType) {
         var current = clazz;
         while (current != null && current != Object.class) {
-            for (var method : current.getDeclaredMethods()) {
-                if (method.getName().equals(name) && method.getParameterCount() >= 1) {
-                    var params = method.getParameters();
-                    for (int p = 0; p < params.length; p++) {
-                        if (params[p].isAnnotationPresent(jakarta.enterprise.event.Observes.class)
-                                || params[p].isAnnotationPresent(jakarta.enterprise.event.ObservesAsync.class)) {
-                            if (params[p].getType().isAssignableFrom(eventType)) {
-                                return method;
-                            }
-                            var genericType = method.getGenericParameterTypes()[p];
-                            if (genericType instanceof java.lang.reflect.TypeVariable<?>) {
-                                return method;
-                            }
-                        }
-                    }
-                    if (method.getParameterTypes()[0].isAssignableFrom(eventType)) {
-                        return method;
-                    }
-                }
+            var method = declaredObserverMethod(current, name, eventType);
+            if (method != null) {
+                return method;
             }
             current = current.getSuperclass();
         }
         return null;
+    }
+
+    /** The method {@code name} that {@code type} declares and that observes {@code eventType}, or {@code null}. */
+    private static Method declaredObserverMethod(Class<?> type, String name, Class<?> eventType) {
+        for (var method : type.getDeclaredMethods()) {
+            if (method.getName().equals(name) && method.getParameterCount() >= 1 && observes(method, eventType)) {
+                return method;
+            }
+        }
+        return null;
+    }
+
+    /** Its event parameter accepts {@code eventType} or is a type variable; else its first parameter accepts it. */
+    private static boolean observes(Method method, Class<?> eventType) {
+        var params = method.getParameters();
+        for (int p = 0; p < params.length; p++) {
+            if (isEventParameter(params[p])
+                    && (params[p].getType().isAssignableFrom(eventType)
+                            || method.getGenericParameterTypes()[p] instanceof java.lang.reflect.TypeVariable<?>)) {
+                return true;
+            }
+        }
+        return method.getParameterTypes()[0].isAssignableFrom(eventType);
     }
 
     /**
@@ -880,10 +954,11 @@ public final class EventDispatcher {
         io.vidocq.vauban.core.annotation.AnnotationReflection.checkParameter(param);
         var quals = new java.util.ArrayList<java.lang.annotation.Annotation>();
         for (var ann : param.getAnnotations()) {
-            if (ann.annotationType() == jakarta.enterprise.event.Observes.class) continue;
-            if (ann.annotationType() == jakarta.enterprise.event.ObservesAsync.class) continue;
-            if (ann.annotationType() == jakarta.enterprise.inject.TransientReference.class) continue;
-            if (ann.annotationType().isAnnotationPresent(jakarta.inject.Qualifier.class)) {
+            var type = ann.annotationType();
+            if (type != jakarta.enterprise.event.Observes.class
+                    && type != jakarta.enterprise.event.ObservesAsync.class
+                    && type != jakarta.enterprise.inject.TransientReference.class
+                    && type.isAnnotationPresent(jakarta.inject.Qualifier.class)) {
                 quals.add(ann);
             }
         }
