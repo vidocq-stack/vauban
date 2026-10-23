@@ -127,7 +127,7 @@ public final class CdiProxifierTransformer implements ClassTransformerPlugin {
                 return null;
             }
             return ProxyLinkWeaver.addMarkerConstructor(bytes, chain);
-        } catch (IllegalArgumentException unparseable) {
+        } catch (IllegalArgumentException _) {
             return null;
         }
     }
@@ -145,7 +145,7 @@ public final class CdiProxifierTransformer implements ClassTransformerPlugin {
         try {
             if (!willHaveMarker(beanName, beanBytes, archive)) return null;
             return ProxyLinkWeaver.retargetProxyConstructor(proxyBytes);
-        } catch (IllegalArgumentException unparseable) {
+        } catch (IllegalArgumentException _) {
             return null;
         }
     }
@@ -179,7 +179,7 @@ public final class CdiProxifierTransformer implements ClassTransformerPlugin {
                     if (!ProxyLinkWeaver.hasMarkerConstructor(beanBytes) && isWovenBean(beanBytes, a)) {
                         set.add(bean);
                     }
-                } catch (IllegalArgumentException unparseable) {
+                } catch (IllegalArgumentException _) {
                     // not a candidate
                 }
             }
@@ -201,30 +201,44 @@ public final class CdiProxifierTransformer implements ClassTransformerPlugin {
             var set = new LinkedHashSet<>(placed);
             for (var type : placed) {
                 var current = type;
-                for (int depth = 0; depth < MAX_DEPTH; depth++) {
-                    var currentBytes = a.classBytes(current);
-                    if (currentBytes == null) break;
-                    String superName;
-                    try {
-                        superName = ClassFile.of().parse(currentBytes).superclass()
-                                .map(s -> s.asInternalName().replace('/', '.'))
-                                .orElse(null);
-                    } catch (IllegalArgumentException unparseable) {
-                        break;
+                for (int depth = 0; depth < MAX_DEPTH && current != null; depth++) {
+                    current = superclassToWeave(a, current);
+                    if (current != null) {
+                        set.add(current);
                     }
-                    if (superName == null || "java.lang.Object".equals(superName)) break;
-                    var superBytes = a.classBytes(superName);
-                    if (superBytes == null) break; // not defined by this loader
-                    if (ProxyLinkWeaver.hasMarkerConstructor(superBytes)
-                            || ProxyLinkWeaver.hasNonPrivateNoArgConstructor(superBytes)) {
-                        break; // the chain ends here without weaving anything more
-                    }
-                    set.add(superName);
-                    current = superName;
                 }
             }
             return Set.copyOf(set);
         });
+    }
+
+    /**
+     * The superclass of {@code name} that must be woven as well, or {@code null} when the chain
+     * ends at {@code name}: its bytes or its superclass are not defined by this loader, it extends
+     * {@code Object}, or its superclass already offers the marker or a non-private no-arg
+     * constructor.
+     */
+    private static String superclassToWeave(ArchiveContext archive, String name) {
+        var bytes = archive.classBytes(name);
+        if (bytes == null) return null;
+        var superName = superclassName(bytes);
+        if (superName == null || "java.lang.Object".equals(superName)) return null;
+        var superBytes = archive.classBytes(superName);
+        if (superBytes == null) return null; // not defined by this loader
+        boolean chainEnds = ProxyLinkWeaver.hasMarkerConstructor(superBytes)
+                || ProxyLinkWeaver.hasNonPrivateNoArgConstructor(superBytes);
+        return chainEnds ? null : superName;
+    }
+
+    /** The binary name of the superclass declared in {@code bytes}, or {@code null} if none or unparseable. */
+    private static String superclassName(byte[] bytes) {
+        try {
+            return ClassFile.of().parse(bytes).superclass()
+                    .map(s -> s.asInternalName().replace('/', '.'))
+                    .orElse(null);
+        } catch (IllegalArgumentException _) {
+            return null;
+        }
     }
 
     private Map<String, Boolean> scopeCache(ArchiveContext archive) {

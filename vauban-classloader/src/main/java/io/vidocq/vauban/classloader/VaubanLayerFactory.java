@@ -39,6 +39,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Queue;
 import java.util.Set;
 import java.util.stream.Collectors;
 
@@ -162,18 +163,7 @@ public final class VaubanLayerFactory {
                 queue.add(resolved);
             }
         }
-        // A kept module cannot read a re-layered one: keep, transitively, what it reads. An
-        // automatic module reads every module, so following it would keep the whole application;
-        // it is kept for itself only.
-        while (!queue.isEmpty()) {
-            var module = queue.poll();
-            if (module.reference().descriptor().isAutomatic()) continue;
-            for (var read : module.reads()) {
-                if (read.configuration() == configuration && kept.add(read)) {
-                    queue.add(read);
-                }
-            }
-        }
+        keepWhatKeptModulesRead(configuration, kept, queue);
         var paths = new LinkedHashSet<Path>();
         for (var resolved : configuration.modules()) {
             if (kept.contains(resolved)) continue;
@@ -182,6 +172,25 @@ public final class VaubanLayerFactory {
                     .ifPresent(paths::add);
         }
         return List.copyOf(paths);
+    }
+
+    /**
+     * A kept module cannot read a re-layered one: keeps, transitively, what the modules of
+     * {@code queue} read. An automatic module reads every module, so following it would keep the
+     * whole application. It is kept for itself only.
+     */
+    private static void keepWhatKeptModulesRead(Configuration configuration, Set<ResolvedModule> kept,
+            Queue<ResolvedModule> queue) {
+        while (!queue.isEmpty()) {
+            var module = queue.poll();
+            if (!module.reference().descriptor().isAutomatic()) {
+                for (var read : module.reads()) {
+                    if (read.configuration() == configuration && kept.add(read)) {
+                        queue.add(read);
+                    }
+                }
+            }
+        }
     }
 
     private static boolean keptByRule(ResolvedModule resolved, Collection<String> keptPrefixes,
@@ -251,7 +260,7 @@ public final class VaubanLayerFactory {
         Map<String, List<String>> fromFiles;
         try {
             fromFiles = readServiceFiles(reference);
-        } catch (IOException | UncheckedIOException unreadable) {
+        } catch (IOException | UncheckedIOException _) {
             return reference;
         }
         if (fromFiles.isEmpty()) {
@@ -263,28 +272,7 @@ public final class VaubanLayerFactory {
             merged.computeIfAbsent(provides.service(), s -> new LinkedHashSet<>())
                     .addAll(provides.providers());
         }
-        var changed = false;
-        Set<String> readable = null;
-        for (var entry : fromFiles.entrySet()) {
-            if (!merged.containsKey(entry.getKey())) {
-                if (readable == null) {
-                    readable = readablePackages(descriptor, base, parent);
-                }
-                if (!readable.contains(packageOf(entry.getKey()))) {
-                    continue;
-                }
-            }
-            var providers = merged.computeIfAbsent(entry.getKey(), s -> new LinkedHashSet<>());
-            for (var impl : entry.getValue()) {
-                // A provider must live in this module — services files may also name
-                // classes from other archives on a shared class path; skip those.
-                var pkg = impl.lastIndexOf('.') > 0 ? impl.substring(0, impl.lastIndexOf('.')) : "";
-                if (descriptor.packages().contains(pkg) && providers.add(impl)) {
-                    changed = true;
-                }
-            }
-        }
-        if (!changed) {
+        if (!mergeServiceFiles(merged, fromFiles, descriptor, base, parent)) {
             return reference;
         }
 
@@ -295,6 +283,52 @@ public final class VaubanLayerFactory {
                 return reference.open();
             }
         };
+    }
+
+    /**
+     * Merges into {@code merged} the providers {@code fromFiles} declares, skipping a service type the module cannot
+     * read when the descriptor does not already provide it.
+     *
+     * @return whether a provider was added
+     */
+    private static boolean mergeServiceFiles(Map<String, LinkedHashSet<String>> merged,
+            Map<String, List<String>> fromFiles, ModuleDescriptor descriptor, ModuleFinder base, ModuleLayer parent) {
+        var changed = false;
+        Set<String> readable = null;
+        for (var entry : fromFiles.entrySet()) {
+            var service = entry.getKey();
+            if (!merged.containsKey(service)) {
+                if (readable == null) {
+                    readable = readablePackages(descriptor, base, parent);
+                }
+                if (!readable.contains(packageOf(service))) {
+                    continue;
+                }
+            }
+            var providers = merged.computeIfAbsent(service, s -> new LinkedHashSet<>());
+            if (addOwnProviders(providers, entry.getValue(), descriptor)) {
+                changed = true;
+            }
+        }
+        return changed;
+    }
+
+    /**
+     * Adds to {@code providers} those of {@code candidates} that live in the module. Services files may also name
+     * classes from other archives on a shared class path, which are skipped.
+     *
+     * @return whether a provider was added
+     */
+    private static boolean addOwnProviders(Set<String> providers, List<String> candidates,
+            ModuleDescriptor descriptor) {
+        var added = false;
+        for (var impl : candidates) {
+            var pkg = impl.lastIndexOf('.') > 0 ? impl.substring(0, impl.lastIndexOf('.')) : "";
+            if (descriptor.packages().contains(pkg) && providers.add(impl)) {
+                added = true;
+            }
+        }
+        return added;
     }
 
     /**
@@ -311,30 +345,34 @@ public final class VaubanLayerFactory {
         var seen = new LinkedHashSet<String>();
         while (!queue.isEmpty()) {
             var name = queue.poll();
-            if (!seen.add(name)) {
-                continue;
-            }
-            var required = base.find(name).map(ModuleReference::descriptor)
-                    .or(() -> parent.findModule(name).map(Module::getDescriptor));
-            if (required.isEmpty()) {
-                continue;
-            }
-            var module = required.get();
-            if (module.isAutomatic()) {
-                readable.addAll(module.packages()); // an automatic module exports every package
-            }
-            for (var exports : module.exports()) {
-                if (!exports.isQualified() || exports.targets().contains(descriptor.name())) {
-                    readable.add(exports.source());
-                }
-            }
-            for (var requires : module.requires()) {
-                if (requires.modifiers().contains(ModuleDescriptor.Requires.Modifier.TRANSITIVE)) {
-                    queue.add(requires.name());
-                }
+            if (seen.add(name)) {
+                base.find(name).map(ModuleReference::descriptor)
+                        .or(() -> parent.findModule(name).map(Module::getDescriptor))
+                        .ifPresent(module -> addReadPackages(module, descriptor.name(), readable, queue));
             }
         }
         return readable;
+    }
+
+    /**
+     * Adds to {@code readable} the packages {@code module} exports to {@code reader}, and queues the modules it
+     * requires transitively.
+     */
+    private static void addReadPackages(ModuleDescriptor module, String reader, Set<String> readable,
+            Queue<String> queue) {
+        if (module.isAutomatic()) {
+            readable.addAll(module.packages()); // an automatic module exports every package
+        }
+        for (var exports : module.exports()) {
+            if (!exports.isQualified() || exports.targets().contains(reader)) {
+                readable.add(exports.source());
+            }
+        }
+        for (var requires : module.requires()) {
+            if (requires.modifiers().contains(ModuleDescriptor.Requires.Modifier.TRANSITIVE)) {
+                queue.add(requires.name());
+            }
+        }
     }
 
     private static String packageOf(String binaryName) {
@@ -437,7 +475,7 @@ public final class VaubanLayerFactory {
                 Path path = image.getPath("/modules/" + module);
                 return java.nio.file.Files.isDirectory(path)
                         ? java.util.Optional.of(path) : java.util.Optional.empty();
-            } catch (RuntimeException e) {
+            } catch (RuntimeException _) {
                 return java.util.Optional.empty();
             }
         }

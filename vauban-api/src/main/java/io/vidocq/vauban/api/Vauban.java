@@ -35,18 +35,20 @@ public final class Vauban {
      */
     public static final String VERSION = loadVersion();
 
+    private static final String UNKNOWN_VERSION = "unknown";
+
     private Vauban() {}
 
     private static String loadVersion() {
         try (InputStream in = Vauban.class.getResourceAsStream("version.properties")) {
             if (in == null) {
-                return "unknown";
+                return UNKNOWN_VERSION;
             }
             Properties props = new Properties();
             props.load(in);
-            return props.getProperty("version", "unknown");
-        } catch (IOException e) {
-            return "unknown";
+            return props.getProperty("version", UNKNOWN_VERSION);
+        } catch (IOException _) {
+            return UNKNOWN_VERSION;
         }
     }
 }

@@ -77,6 +77,7 @@ public class VaubanClassLoader extends ClassLoader implements AutoCloseable {
     public static final String DUMP_PROPERTY = "vauban.classloader.dump";
 
     private static final System.Logger LOG = System.getLogger(VaubanClassLoader.class.getName());
+    private static final String CLASS_SUFFIX = ".class";
     /**
      * Never defined by this loader even when an archive bundles them: the platform, and
      * the container's own modules (precise prefixes — application code may legitimately
@@ -116,7 +117,8 @@ public class VaubanClassLoader extends ClassLoader implements AutoCloseable {
          * URLClassLoader or the module path gives it (vauban#153).
          */
         final ProtectionDomain domain;
-        volatile Optional<Set<String>> beansList;
+        /** The bean list once read: {@code null} until the first {@link #beansList()} call. */
+        private volatile BeansList cachedBeansList;
 
         Archive(Path path, ArchiveReader reader) {
             this.path = path;
@@ -151,25 +153,33 @@ public class VaubanClassLoader extends ClassLoader implements AutoCloseable {
         }
 
         Optional<Set<String>> beansList() {
-            var list = beansList;
-            if (list == null) {
-                try {
-                    list = reader.readResource("META-INF/vauban-beans.list")
-                            .map(bytes -> {
-                                var names = new LinkedHashSet<String>();
-                                new String(bytes, StandardCharsets.UTF_8).lines()
-                                        .map(String::strip)
-                                        .filter(l -> !l.isEmpty() && !l.startsWith("#"))
-                                        .forEach(names::add);
-                                return (Set<String>) names;
-                            });
-                } catch (IOException e) {
-                    list = Optional.empty();
-                }
-                beansList = list;
+            var cached = cachedBeansList;
+            if (cached == null) {
+                cached = new BeansList(readBeansList().orElse(null));
+                cachedBeansList = cached;
             }
-            return list;
+            return Optional.ofNullable(cached.names());
         }
+
+        private Optional<Set<String>> readBeansList() {
+            try {
+                return reader.readResource("META-INF/vauban-beans.list")
+                        .map(bytes -> {
+                            var names = new LinkedHashSet<String>();
+                            new String(bytes, StandardCharsets.UTF_8).lines()
+                                    .map(String::strip)
+                                    .filter(l -> !l.isEmpty() && !l.startsWith("#"))
+                                    .forEach(names::add);
+                            return Collections.unmodifiableSet(names);
+                        });
+            } catch (IOException _) {
+                return Optional.empty();
+            }
+        }
+    }
+
+    /** The bean list of an archive, as read once: {@code names} is {@code null} when the archive ships none. */
+    private record BeansList(Set<String> names) {
     }
 
     /**
@@ -291,7 +301,7 @@ public class VaubanClassLoader extends ClassLoader implements AutoCloseable {
         return !produced.isEmpty() && !managesClass(binaryName) && !isExcluded(binaryName)
                 && placedProxyTypes().contains(produced)
                 && classIndex.containsKey(toEntry(produced))
-                && placedBytes(binaryName) != null;
+                && placedBytes(binaryName).isPresent();
     }
 
     /** The union of every placement manifest visible through the archives, read once. */
@@ -306,7 +316,7 @@ public class VaubanClassLoader extends ClassLoader implements AutoCloseable {
                                     .map(String::strip)
                                     .filter(l -> !l.isEmpty() && !l.startsWith("#"))
                                     .forEach(names::add));
-                } catch (IOException e) {
+                } catch (IOException _) {
                     // an unreadable manifest places nothing from that archive
                 }
             }
@@ -322,18 +332,18 @@ public class VaubanClassLoader extends ClassLoader implements AutoCloseable {
                 : "";
     }
 
-    /** The placed bytes of {@code proxyBinaryName} from whichever archive ships them, or null. */
-    private byte[] placedBytes(String proxyBinaryName) {
+    /** The placed bytes of {@code proxyBinaryName} from whichever archive ships them, if any. */
+    private Optional<byte[]> placedBytes(String proxyBinaryName) {
         var entry = PLACED_PREFIX + toEntry(proxyBinaryName);
         for (var archive : archives) {
             try {
                 var bytes = archive.reader.readResource(entry);
-                if (bytes.isPresent()) return bytes.get();
-            } catch (IOException e) {
+                if (bytes.isPresent()) return bytes;
+            } catch (IOException _) {
                 // try the next archive
             }
         }
-        return null;
+        return Optional.empty();
     }
 
     /**
@@ -350,10 +360,7 @@ public class VaubanClassLoader extends ClassLoader implements AutoCloseable {
         if (produced.isEmpty() || !placedProxyTypes().contains(produced)) {
             throw new ClassNotFoundException(name);
         }
-        var bytes = placedBytes(name);
-        if (bytes == null) {
-            throw new ClassNotFoundException(name);
-        }
+        var bytes = placedBytes(name).orElseThrow(() -> new ClassNotFoundException(name));
         var owner = classIndex.get(toEntry(produced));
         if (owner == null) {
             throw new ClassNotFoundException("Cannot place " + name + ": " + produced
@@ -368,7 +375,7 @@ public class VaubanClassLoader extends ClassLoader implements AutoCloseable {
     /** Binary names of every class the managed archives contain, in archive order. */
     public List<String> managedClassNames() {
         return classIndex.keySet().stream()
-                .map(entry -> entry.substring(0, entry.length() - ".class".length())
+                .map(entry -> entry.substring(0, entry.length() - CLASS_SUFFIX.length())
                         .replace('/', '.'))
                 .toList();
     }
@@ -478,7 +485,7 @@ public class VaubanClassLoader extends ClassLoader implements AutoCloseable {
     protected Class<?> findClass(String moduleName, String name) {
         try {
             return findClass(name);
-        } catch (ClassNotFoundException e) {
+        } catch (ClassNotFoundException _) {
             return null;
         }
     }
@@ -493,7 +500,7 @@ public class VaubanClassLoader extends ClassLoader implements AutoCloseable {
     private static CodeSource codeSource(Path path) {
         try {
             return new CodeSource(path.toUri().toURL(), (CodeSigner[]) null);
-        } catch (MalformedURLException | IllegalArgumentException e) {
+        } catch (MalformedURLException | IllegalArgumentException _) {
             return null;
         }
     }
@@ -531,7 +538,7 @@ public class VaubanClassLoader extends ClassLoader implements AutoCloseable {
         if (archive == null) return null;
         try {
             return archive.reader.readClass(toEntry(binaryName));
-        } catch (IOException e) {
+        } catch (IOException _) {
             return null;
         }
     }
@@ -540,7 +547,7 @@ public class VaubanClassLoader extends ClassLoader implements AutoCloseable {
         var dir = System.getProperty(DUMP_PROPERTY);
         if (dir == null) return;
         try {
-            var file = Path.of(dir, transformer, name.replace('.', '/') + ".class");
+            var file = Path.of(dir, transformer, name.replace('.', '/') + CLASS_SUFFIX);
             Files.createDirectories(file.getParent());
             Files.write(file, bytes);
         } catch (IOException e) {
@@ -556,7 +563,7 @@ public class VaubanClassLoader extends ClassLoader implements AutoCloseable {
                 if (resource.isPresent()) {
                     return new ByteArrayInputStream(resource.get());
                 }
-            } catch (IOException e) {
+            } catch (IOException _) {
                 // try the next archive
             }
         }
@@ -615,13 +622,13 @@ public class VaubanClassLoader extends ClassLoader implements AutoCloseable {
             };
             return URL.of(java.net.URI.create("vauban:" + archive.path.toUri() + "!/"
                     + BuiltInReaders.encodePath(name)), handler);
-        } catch (IOException e) {
+        } catch (IOException _) {
             return null;
         }
     }
 
     private static String toEntry(String binaryName) {
-        return binaryName.replace('.', '/') + ".class";
+        return binaryName.replace('.', '/') + CLASS_SUFFIX;
     }
 
     @Override

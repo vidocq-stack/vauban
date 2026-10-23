@@ -224,7 +224,7 @@ public final class Launch {
         try {
             var provider = Class.forName("io.vidocq.vauban.sjar.SjarKeyProvider");
             return (PluginContext) provider.getDeclaredConstructor().newInstance();
-        } catch (ReflectiveOperationException | RuntimeException e) {
+        } catch (ReflectiveOperationException | RuntimeException _) {
             return PluginContext.empty();
         }
     }
