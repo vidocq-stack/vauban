@@ -22,14 +22,17 @@ package io.vidocq.vauban.core.container;
 import io.vidocq.vauban.core.BeanFactory;
 import io.vidocq.vauban.core.bean.discovery.BeanDiscovery;
 import io.vidocq.vauban.core.bean.model.BeanDescriptor;
-import io.vidocq.vauban.core.bean.model.BeanId;
+import io.vidocq.vauban.core.bean.model.InterceptorDescriptor;
 import io.vidocq.vauban.core.bean.model.ObserverDescriptor;
-import io.vidocq.vauban.core.bean.model.QualifierInstance;
 import io.vidocq.vauban.core.bean.resolution.BeanResolver;
+import io.vidocq.vauban.core.bean.validation.DeploymentValidator;
+import io.vidocq.vauban.core.extensions.BceProcessor;
+import io.vidocq.vauban.core.extensions.VaubanClassConfig;
 import io.vidocq.vauban.core.types.AssignabilityRules;
 import io.vidocq.vauban.indexer.IndexBuilder;
+import io.vidocq.vauban.indexer.VaubanIndex;
+import io.vidocq.vauban.indexer.model.AnnotationInfo;
 import io.vidocq.vauban.indexer.model.DotName;
-import io.vidocq.vauban.indexer.model.TypeInfo;
 import jakarta.enterprise.context.spi.CreationalContext;
 
 import java.io.IOException;
@@ -43,6 +46,17 @@ import java.util.Set;
 public final class VaubanContainerBuilder {
 
     private static final System.Logger LOG = System.getLogger(VaubanContainerBuilder.class.getName());
+
+    private static final String DEFINITION_FAILED = "CDI definition validation failed:\n";
+    private static final String DEPLOYMENT_FAILED = "CDI deployment validation failed:\n";
+
+    /** The validation errors CDI reports as a {@code DeploymentException}: ambiguous or unsatisfied dependencies. */
+    private static final Set<DeploymentValidator.ValidationError.Kind> DEPLOYMENT_ERROR_KINDS = java.util.EnumSet.of(
+            DeploymentValidator.ValidationError.Kind.DEPLOYMENT_ERROR,
+            DeploymentValidator.ValidationError.Kind.UNPROXYABLE_BEAN,
+            DeploymentValidator.ValidationError.Kind.UNSATISFIED_DEPENDENCY,
+            DeploymentValidator.ValidationError.Kind.AMBIGUOUS_DEPENDENCY,
+            DeploymentValidator.ValidationError.Kind.CIRCULAR_DEPENDENCY);
 
     private final List<Class<?>> beanClasses = new ArrayList<>();
     final Set<String> bceProcessedSources = new java.util.HashSet<>();
@@ -167,9 +181,6 @@ public final class VaubanContainerBuilder {
     }
 
     /**
-     * Register a custom factory for a bean class.
-     */
-    /**
      * Set a custom class definer for dynamically generated classes (e.g., interceptor subclasses).
      * The function takes (className, bytecode) and returns the defined Class.
      */
@@ -223,7 +234,7 @@ public final class VaubanContainerBuilder {
             try {
                 this.lookup = java.lang.invoke.MethodHandles.privateLookupIn(
                         callerClass, java.lang.invoke.MethodHandles.lookup());
-            } catch (IllegalAccessException e) {
+            } catch (IllegalAccessException _) {
                 // Fallback: use default lookup (unnamed modules / classpath)
                 this.lookup = java.lang.invoke.MethodHandles.lookup();
             }
@@ -242,12 +253,6 @@ public final class VaubanContainerBuilder {
         return this;
     }
 
-    /**
-     * Loads {@code META-INF/vauban-bce-runtime.list} from every source on the classpath.
-     * Each non-comment line has the format {@code <bceFqn>;<targetFqn>}. Pairs whose
-     * BCE class or target class cannot be resolved are skipped silently (partial JARs,
-     * stripped distributions, etc.).
-     */
     private static final DotName ACTIVATE_REQUEST_CONTEXT =
             DotName.of("jakarta.enterprise.context.control.ActivateRequestContext");
 
@@ -270,6 +275,12 @@ public final class VaubanContainerBuilder {
         return name -> index.getClassByName(name).map(discovery::buildManagedBean).orElse(null);
     }
 
+    /**
+     * Loads {@code META-INF/vauban-bce-runtime.list} from every source on the classpath.
+     * Each non-comment line has the format {@code <bceFqn>;<targetFqn>}. Pairs whose
+     * BCE class or target class cannot be resolved are skipped silently (partial JARs,
+     * stripped distributions, etc.).
+     */
     private static List<Map.Entry<Class<?>, Class<?>>> loadRuntimeReplayList(ClassLoader cl) {
         var pairs = new ArrayList<Map.Entry<Class<?>, Class<?>>>();
         try {
@@ -289,17 +300,20 @@ public final class VaubanContainerBuilder {
                 new java.io.InputStreamReader(url.openStream(), java.nio.charset.StandardCharsets.UTF_8))) {
             String line;
             while ((line = reader.readLine()) != null) {
-                line = line.strip();
-                if (line.isEmpty() || line.startsWith("#")) continue;
-                int sep = line.indexOf(';');
-                if (sep <= 0 || sep == line.length() - 1) continue;
-                var pair = resolvePair(line.substring(0, sep).strip(),
-                        line.substring(sep + 1).strip(), cl);
+                var pair = parseRuntimeListLine(line.strip(), cl);
                 if (pair != null) pairs.add(pair);
             }
         } catch (IOException _) {
             // unreadable resource — skip
         }
+    }
+
+    /** The pair a stripped {@code <bceFqn>;<targetFqn>} line names, or {@code null} for a comment or blank line. */
+    private static Map.Entry<Class<?>, Class<?>> parseRuntimeListLine(String line, ClassLoader cl) {
+        if (line.isEmpty() || line.startsWith("#")) return null;
+        int sep = line.indexOf(';');
+        if (sep <= 0 || sep == line.length() - 1) return null;
+        return resolvePair(line.substring(0, sep).strip(), line.substring(sep + 1).strip(), cl);
     }
 
     private static Map.Entry<Class<?>, Class<?>> resolvePair(String bceFqn, String targetFqn, ClassLoader cl) {
@@ -328,22 +342,27 @@ public final class VaubanContainerBuilder {
             var urls = cl.getResources(
                     io.vidocq.vauban.core.extensions.EnhancementPatchSerializer.PATCH_PATH);
             while (urls.hasMoreElements()) {
-                try (var is = urls.nextElement().openStream()) {
-                    var patch = io.vidocq.vauban.core.extensions.EnhancementPatchSerializer.read(is);
-                    patch.forEach((target, anns) -> {
-                        var list = merged.computeIfAbsent(DotName.of(target), _ -> new ArrayList<>());
-                        for (var ann : anns) {
-                            if (!list.contains(ann)) list.add(ann);
-                        }
-                    });
-                } catch (IOException _) {
-                    // unreadable patch resource — skip
-                }
+                mergeEnhancementPatch(urls.nextElement(), merged);
             }
         } catch (IOException _) {
             // classpath scan failure — non-fatal
         }
         return merged;
+    }
+
+    /** Merges the patch {@code url} holds into {@code merged}, each added annotation once. */
+    private static void mergeEnhancementPatch(java.net.URL url, Map<DotName, List<AnnotationInfo>> merged) {
+        try (var is = url.openStream()) {
+            var patch = io.vidocq.vauban.core.extensions.EnhancementPatchSerializer.read(is);
+            patch.forEach((target, anns) -> {
+                var list = merged.computeIfAbsent(DotName.of(target), _ -> new ArrayList<>());
+                for (var ann : anns) {
+                    if (!list.contains(ann)) list.add(ann);
+                }
+            });
+        } catch (IOException _) {
+            // unreadable patch resource — skip
+        }
     }
 
     /**
@@ -356,7 +375,7 @@ public final class VaubanContainerBuilder {
             var location = codeSource.getLocation();
             if (location == null) return false;
             return bceProcessedSources.contains(location.toString());
-        } catch (Exception e) {
+        } catch (Exception _) {
             return false;
         }
     }
@@ -449,20 +468,6 @@ public final class VaubanContainerBuilder {
         var entryTccl = Thread.currentThread().getContextClassLoader();
         if (entryTccl != null) loaders.add(entryTccl);
         if (loaders.size() <= 1) return loaders.iterator().next();
-        // A VaubanClassLoader (application module layer) must become the composite's
-        // PARENT, whatever the bean scan order put first: module-mode ServiceLoader only
-        // walks the parent chain's service catalogs, and the layer loader's own chain
-        // already reaches the application loader — a composite parented elsewhere would
-        // hide the layer's providers (generated _VaubanComponents, Cassini adapters…).
-        var layerLoader = loaders.stream()
-                .filter(io.vidocq.vauban.classloader.VaubanClassLoader.class::isInstance)
-                .findFirst();
-        if (layerLoader.isPresent() && !loaders.getFirst().equals(layerLoader.get())) {
-            var reordered = new java.util.LinkedHashSet<ClassLoader>();
-            reordered.add(layerLoader.get());
-            reordered.addAll(loaders);
-            loaders = reordered;
-        }
         // Composite ClassLoader that delegates to all bean ClassLoaders — for
         // classes AND resources. Resources matter as much as classes: this
         // loader is installed as TCCL for the whole build, and libraries read
@@ -471,74 +476,91 @@ public final class VaubanContainerBuilder {
         // ConfigSources via TCCL.getResources during BCE validation). The
         // default getResources only consults the parent and findResources, so
         // both findResource and findResources must aggregate every loader.
-        var loaderList = java.util.List.copyOf(loaders);
-        return new ClassLoader(loaderList.getFirst()) {
-            @Override
-            protected Class<?> findClass(String name) throws ClassNotFoundException {
-                for (var loader : loaderList) {
-                    try { return loader.loadClass(name); } catch (ClassNotFoundException ignored) { }
+        return new CompositeClassLoader(java.util.List.copyOf(layerLoaderFirst(loaders)));
+    }
+
+    /**
+     * {@code loaders}, with the first VaubanClassLoader (application module layer) moved first: it must become the
+     * composite's PARENT, whatever the bean scan order put first. Module-mode ServiceLoader only walks the parent
+     * chain's service catalogs, and the layer loader's own chain already reaches the application loader — a
+     * composite parented elsewhere would hide the layer's providers (generated _VaubanComponents, Cassini adapters…).
+     */
+    private static java.util.SequencedSet<ClassLoader> layerLoaderFirst(java.util.LinkedHashSet<ClassLoader> loaders) {
+        var layerLoader = loaders.stream()
+                .filter(io.vidocq.vauban.classloader.VaubanClassLoader.class::isInstance)
+                .findFirst();
+        if (layerLoader.isEmpty() || loaders.getFirst().equals(layerLoader.get())) {
+            return loaders;
+        }
+        var reordered = new java.util.LinkedHashSet<ClassLoader>();
+        reordered.add(layerLoader.get());
+        reordered.addAll(loaders);
+        return reordered;
+    }
+
+    /** A class loader that finds classes and resources in each of its loaders, in order; parented by the first. */
+    private static final class CompositeClassLoader extends ClassLoader {
+        private final List<ClassLoader> loaderList;
+
+        CompositeClassLoader(List<ClassLoader> loaderList) {
+            super(loaderList.getFirst());
+            this.loaderList = loaderList;
+        }
+
+        @Override
+        protected Class<?> findClass(String name) throws ClassNotFoundException {
+            for (var loader : loaderList) {
+                try {
+                    return loader.loadClass(name);
+                } catch (ClassNotFoundException _) {
+                    // not this loader's: try the next one
                 }
-                throw new ClassNotFoundException(name);
             }
-            @Override
-            public java.io.InputStream getResourceAsStream(String name) {
-                for (var loader : loaderList) {
-                    var is = loader.getResourceAsStream(name);
-                    if (is != null) return is;
-                }
-                return super.getResourceAsStream(name);
+            throw new ClassNotFoundException(name);
+        }
+
+        @Override
+        public java.io.InputStream getResourceAsStream(String name) {
+            for (var loader : loaderList) {
+                var is = loader.getResourceAsStream(name);
+                if (is != null) return is;
             }
-            @Override
-            protected java.net.URL findResource(String name) {
-                for (var loader : loaderList) {
-                    var url = loader.getResource(name);
-                    if (url != null) return url;
-                }
-                return null;
+            return super.getResourceAsStream(name);
+        }
+
+        @Override
+        protected java.net.URL findResource(String name) {
+            for (var loader : loaderList) {
+                var url = loader.getResource(name);
+                if (url != null) return url;
             }
-            @Override
-            protected java.util.Enumeration<java.net.URL> findResources(String name) throws IOException {
-                var all = new java.util.LinkedHashSet<java.net.URL>();
-                for (var loader : loaderList) {
-                    all.addAll(java.util.Collections.list(loader.getResources(name)));
+            return null;
+        }
+
+        @Override
+        protected java.util.Enumeration<java.net.URL> findResources(String name) throws IOException {
+            // Deduplicated by external form: URL.equals may resolve host names.
+            var all = new java.util.LinkedHashMap<String, java.net.URL>();
+            for (var loader : loaderList) {
+                for (var url : java.util.Collections.list(loader.getResources(name))) {
+                    all.putIfAbsent(url.toExternalForm(), url);
                 }
-                // getResources() = parent.getResources() + findResources(): the
-                // parent is loaderList.getFirst(), so drop its results here to
-                // avoid duplicates in the concatenated enumeration.
-                var parent = getParent();
-                if (parent != null) {
-                    java.util.Collections.list(parent.getResources(name)).forEach(all::remove);
-                }
-                return java.util.Collections.enumeration(all);
             }
-        };
+            // getResources() = parent.getResources() + findResources(): the
+            // parent is loaderList.getFirst(), so drop its results here to
+            // avoid duplicates in the concatenated enumeration.
+            var parent = getParent();
+            if (parent != null) {
+                java.util.Collections.list(parent.getResources(name))
+                        .forEach(url -> all.remove(url.toExternalForm()));
+            }
+            return java.util.Collections.enumeration(all.values());
+        }
     }
 
     public VaubanContainer build() {
         var indexBuilder = new IndexBuilder();
-
-        for (var clazz : beanClasses) {
-            try {
-                String resource = clazz.getName().replace('.', '/') + ".class";
-                try (var is = clazz.getClassLoader().getResourceAsStream(resource)) {
-                    if (is != null) {
-                        indexBuilder.add(io.vidocq.vauban.indexer.scanner.ClassFileScanner.scan(is.readAllBytes()));
-                    } else {
-                        // Fallback for classes not in resources (e.g. dynamic or some test classes)
-                    }
-                }
-            } catch (IOException e) {
-                throw new RuntimeException("Failed to scan class: " + clazz.getName(), e);
-            }
-
-            // Auto-register factory — will be replaced with constructor-aware
-            // version after discovery if @Inject constructor is found
-            if (!factories.containsKey(DotName.of(clazz.getName()))) {
-                var beanClass2 = clazz;
-                var lkp = getBuilderLookup();
-                factories.put(DotName.of(clazz.getName()), () -> instantiate(beanClass2, lkp));
-            }
-        }
+        indexBeanClasses(indexBuilder);
 
         // Set TCCL to a ClassLoader that can resolve classes from ALL sources
         // (plain beans + encrypted SJAR beans may use different ClassLoaders)
@@ -559,7 +581,7 @@ public final class VaubanContainerBuilder {
 
         // --- Identify BCE classes and unprocessed archive classes ---
         var bceClasses = beanClasses.stream()
-                .filter(c -> ReflectionValidator.isBuildCompatibleExtension(c))
+                .filter(ReflectionValidator::isBuildCompatibleExtension)
                 .toList();
 
         // Classes from sources WITHOUT vauban-bce-processed marker need runtime @Enhancement
@@ -591,34 +613,17 @@ public final class VaubanContainerBuilder {
             bceClasses = List.of();
         }
 
-        io.vidocq.vauban.core.extensions.BceProcessor.DiscoveryResult discoveryResult = null;
+        BceProcessor.DiscoveryResult discoveryResult = null;
         var extensionAddedClasses = new ArrayList<Class<?>>();
         if (!bceClasses.isEmpty()) {
             var tempIndex = indexBuilder.build();
             var tempLookup = new io.vidocq.vauban.core.langmodel.IndexLookup(tempIndex);
-            discoveryResult = io.vidocq.vauban.core.extensions.BceProcessor.processDiscovery(bceClasses, tempLookup);
+            discoveryResult = BceProcessor.processDiscovery(bceClasses, tempLookup);
 
             // Add scanned classes to the index
             for (var className : discoveryResult.scannedClasses().getAddedClasses()) {
-                try {
-                    var cls = Class.forName(className, false, discoveryClassLoader);
-                    // A class an extension added is part of the deployment from now on: the
-                    // later extension phases resolve it by identity, not by loading it again.
-                    bceClassLoader.register(cls);
-                    extensionAddedClasses.add(cls);
-                    String resource = className.replace('.', '/') + ".class";
-                    try (var is = discoveryClassLoader.getResourceAsStream(resource)) {
-                        if (is != null) {
-                            indexBuilder.add(io.vidocq.vauban.indexer.scanner.ClassFileScanner.scan(is.readAllBytes()));
-                        }
-                    }
-                    if (!factories.containsKey(DotName.of(className))) {
-                        var lkp = getBuilderLookup();
-                        factories.put(DotName.of(className), () -> instantiate(cls, lkp));
-                    }
-                } catch (Exception e) {
-                    // Class not found — skip
-                }
+                addExtensionScannedClass(className, discoveryClassLoader, bceClassLoader, indexBuilder,
+                        extensionAddedClasses);
             }
         }
 
@@ -629,249 +634,65 @@ public final class VaubanContainerBuilder {
         var moduleLookups = io.vidocq.vauban.core.access.ModuleLookups.register(
                 componentProviders.providers(), beanClasses);
         extensionAddedClasses.forEach(moduleLookups::addManagedClass);
-        boolean built = false;
 
-        // Validate class-level CDI rules (before bean discovery)
-        try {
-            var classErrors = io.vidocq.vauban.core.bean.validation.ClassValidator.validate(index);
-            if (!classErrors.isEmpty()) {
-                var msg = new StringBuilder("CDI definition validation failed:\n");
-                for (var error : classErrors) {
-                    msg.append("  - ").append(error).append("\n");
-                }
-                throw new jakarta.enterprise.inject.spi.DefinitionException(msg.toString());
-            }
-
-            // Reflection-based validation (for generic signatures not in bytecode index)
-            // Exclude BCE classes from validation (they are not beans)
+        try (var scope = new BuildScope(previousCl, moduleLookups)) {
+            // Validate class-level CDI rules (before bean discovery).
+            // Reflection-based validation covers generic signatures not in the bytecode index;
+            // BCE classes are excluded from it (they are not beans).
             var nonBceClasses = beanClasses.stream()
                     .filter(c -> !ReflectionValidator.isBuildCompatibleExtension(c))
                     .toList();
-            var reflectionErrors = ReflectionValidator.validateWithReflection(nonBceClasses);
-            if (!reflectionErrors.isEmpty()) {
-                var msg = new StringBuilder("CDI definition validation failed:\n");
-                for (var error : reflectionErrors) {
-                    msg.append("  - ").append(error).append("\n");
-                }
-                throw new jakarta.enterprise.inject.spi.DefinitionException(msg.toString());
-            }
+            validateClassDefinitions(index, nonBceClasses);
 
             // --- Collect Enhancement modifications: full BCE for unprocessed JARs +
             //     targeted replay for pre-processed JARs (vauban-bce-runtime.list) ---
-            var combinedEnhMods = new java.util.HashMap<DotName, List<io.vidocq.vauban.core.extensions.VaubanClassConfig>>();
-            // VAU-BCE-002: signatures of every synthetic bean registered during this boot,
-            // shared between the runtime BCE path and the APT metadata path so identical
-            // registrations (duplicated BCE discovery, wrapper subclasses) collapse to one.
-            var seenSyntheticSignatures = new java.util.HashSet<String>();
-
             // BCEs available for the full Enhancement scan = explicit beanClasses BCEs
             // + BCEs declared in the runtime-list (they live in pre-processed JARs).
             var fullBceClasses = new java.util.LinkedHashSet<>(bceClasses);
             for (var pair : runtimeReplayPairs) {
                 fullBceClasses.add(pair.getKey());
             }
-
-            if (!unprocessedArchiveClasses.isEmpty() && !fullBceClasses.isEmpty()) {
-                var enhMods = io.vidocq.vauban.core.extensions.BceProcessor.processEnhancementOnly(
-                        List.copyOf(fullBceClasses), unprocessedArchiveClasses, index, bceClassLoader);
-                enhMods.forEach((k, v) -> combinedEnhMods.computeIfAbsent(k, _ -> new ArrayList<>()).addAll(v));
-            }
-
-            // Legacy reflective replay — only for targets NOT covered by the frozen patch.
-            if (!effectiveReplayPairs.isEmpty()) {
-                var replayMods = io.vidocq.vauban.core.extensions.BceProcessor.replayEnhancementForTargets(
-                        effectiveReplayPairs, index);
-                replayMods.forEach((k, v) -> combinedEnhMods.computeIfAbsent(k, _ -> new ArrayList<>()).addAll(v));
-            }
-
-            io.vidocq.vauban.core.extensions.EnhancementPatchSerializer
-                    .memberConfigurations(enhancementPatch, index).forEach((name, configs) ->
-                            combinedEnhMods.computeIfAbsent(name, _ -> new ArrayList<>()).addAll(configs));
+            var combinedEnhMods = collectEnhancements(unprocessedArchiveClasses, fullBceClasses,
+                    effectiveReplayPairs, enhancementPatch, index, bceClassLoader);
+            // VAU-BCE-002: signatures of every synthetic bean registered during this boot,
+            // shared between the runtime BCE path and the APT metadata path so identical
+            // registrations (duplicated BCE discovery, wrapper subclasses) collapse to one.
+            var seenSyntheticSignatures = new java.util.HashSet<String>();
 
             // Rebuild index with annotations added by Enhancement: live modifications
             // (full scan for unprocessed JARs / legacy replay) plus the frozen patch.
-            if (!combinedEnhMods.isEmpty() || !enhancementPatch.isEmpty()) {
-                var enrichedBuilder = new IndexBuilder();
-                for (var classInfo : index.getKnownClasses()) {
-                    var mods = combinedEnhMods.get(classInfo.name());
-                    var patched = enhancementPatch.get(classInfo.name());
-                    if (mods != null || patched != null) {
-                        var newAnnotations = new java.util.ArrayList<>(classInfo.annotations());
-                        // With their members: an added @Named("x") or qualifier member is part of the
-                        // class (BUG-20261008-05).
-                        if (mods != null) {
-                            for (var config : mods) {
-                                newAnnotations.addAll(config.getAddedAnnotationsIndexed());
-                            }
-                        }
-                        if (patched != null) {
-                            newAnnotations.addAll(patched);
-                        }
-                        // withAnnotations keeps the simple name: a nested class's default bean name
-                        // is not its binary simple name (Outer$Bean)
-                        enrichedBuilder.add(classInfo.withAnnotations(newAnnotations));
-                    } else {
-                        enrichedBuilder.add(classInfo);
-                    }
-                }
-                index = enrichedBuilder.build();
-            }
+            index = enrichIndex(index, combinedEnhMods, enhancementPatch);
 
-            // vauban#24 load-time weaving tier (backstop — the Vidocq bootstrap already ran
-            // it before its extensions could load application classes): must run BEFORE
-            // discovery/validation, both may load bean classes, and a class loaded before
-            // the agent is attached can no longer gain its (ProxyLink) constructor.
-            var weavingLoader = classLoader != null
-                    ? classLoader : Thread.currentThread().getContextClassLoader();
-            var loadTimeWeaving =
-                    io.vidocq.vauban.core.weaving.LoadTimeWeaving.prepare(weavingLoader);
-            if (loadTimeWeaving.failure() != null) {
-                LOG.log(System.Logger.Level.WARNING, loadTimeWeaving.failure());
-            }
-
-            // issue #42, Stage 3b: open the packages of produced types that fall to runtime proxy
-            // generation to the container (via the agent), so the runtime fallback needs no
-            // hand-written --add-opens. A strict no-op when no META-INF/vauban/required-opens.list
-            // is present (the common case, including the TCK).
-            io.vidocq.vauban.core.opens.OpensApplier.apply(weavingLoader);
+            var loadTimeWeaving = prepareLoadTimeWeaving();
 
             var discovery = new BeanDiscovery(index);
-            discovery.setStrictScannedDiscovery(strictScannedDiscovery);
-
-            // Apply @Discovery results to BeanDiscovery
-            if (discoveryResult != null) {
-                var meta = discoveryResult.metaAnnotations();
-                discovery.setCustomQualifiers(
-                        meta.getCustomQualifiers().stream()
-                                .map(c -> DotName.of(c.getName()))
-                                .collect(java.util.stream.Collectors.toSet()));
-                discovery.setCustomInterceptorBindings(
-                        meta.getCustomInterceptorBindings().stream()
-                                .map(c -> DotName.of(c.getName()))
-                                .collect(java.util.stream.Collectors.toSet()));
-                discovery.setCustomStereotypes(
-                        meta.getCustomStereotypes().stream()
-                                .map(c -> DotName.of(c.getName()))
-                                .collect(java.util.stream.Collectors.toSet()));
-                var stereotypeAnns = new java.util.HashMap<DotName, java.util.Set<Class<? extends java.lang.annotation.Annotation>>>();
-                for (var entry : meta.getStereotypeAnnotations().entrySet()) {
-                    stereotypeAnns.put(DotName.of(entry.getKey().getName()), entry.getValue());
-                }
-                discovery.setCustomStereotypeAnnotations(stereotypeAnns);
-                // The container's own AnnotationTypes reads them back below, so no static state.
-                discovery.setCustomNonbindingMembers(meta.getNonbindingMembers());
-                VaubanBeanManager.setCustomQualifierTypes(meta.getCustomQualifiers());
-                VaubanBeanManager.setCustomInterceptorBindingTypes(meta.getCustomInterceptorBindings());
-                VaubanBeanManager.setCustomStereotypeTypes(meta.getCustomStereotypes());
-
-                // Classes added via ScannedClasses bypass annotation check
-                if (!discoveryResult.scannedClasses().getAddedClasses().isEmpty()) {
-                    var scannedDotNames = discoveryResult.scannedClasses().getAddedClasses().stream()
-                            .map(DotName::of)
-                            .collect(java.util.stream.Collectors.toSet());
-                    discovery.setForcedBeanClasses(scannedDotNames);
-                    // When not a bean archive, also restrict discovery to scanned classes only
-                    if (!isBeanArchive) {
-                        discovery.setScannedClassesFilter(scannedDotNames);
-                    }
-                }
-            }
-
-            // Force bean classes from bean-discovery-mode=all archives (e.g. from scanBeanArchivesFromClasspath)
-            if (!forcedDiscoveryClasses.isEmpty()) {
-                var dotNames = forcedDiscoveryClasses.stream()
-                        .map(c -> DotName.of(c.getName()))
-                        .collect(java.util.stream.Collectors.toSet());
-                discovery.addForcedBeanClasses(dotNames);
-            }
+            configureDiscovery(discovery, discoveryResult);
 
             var descriptors = new ArrayList<>(discovery.discoverBeans());
             var observers = new ArrayList<>(discovery.discoverObservers());
-            var interceptors = new ArrayList<>(discovery.discoverInterceptors());
-            // CDI 4.1 §6.5.9: the built-in @ActivateRequestContext interceptor, only when a class
-            // of the deployment uses the binding, so that no other deployment pays for interception
-            // checks it does not need (Vidocq/vauban#147).
-            if (usesBinding(index, ACTIVATE_REQUEST_CONTEXT)) {
-                interceptors.add(new io.vidocq.vauban.core.bean.model.InterceptorDescriptor(
-                        DotName.of(io.vidocq.vauban.core.context.ActivateRequestContextInterceptor.class.getName()),
-                        java.util.Set.of(ACTIVATE_REQUEST_CONTEXT),
-                        io.vidocq.vauban.core.context.ActivateRequestContextInterceptor.AROUND_INVOKE, null,
-                        io.vidocq.vauban.core.context.ActivateRequestContextInterceptor.PRIORITY, true, List.of()));
-            }
+            List<InterceptorDescriptor> interceptors =
+                    new ArrayList<>(discovery.discoverInterceptors());
+            addActivateRequestContextInterceptor(index, interceptors);
             var disposers = discovery.discoverDisposerMethods();
             var syntheticDisposers = new LinkedHashMap<DotName, java.util.function.BiConsumer<Object, CreationalContext<?>>>();
 
             // --- Build Compatible Extensions (BCE) — remaining phases ---
             if (!bceClasses.isEmpty()) {
-                var bceResult = io.vidocq.vauban.core.extensions.BceProcessor.process(
+                var bceResult = BceProcessor.process(
                         bceClasses, descriptors, observers, interceptors, index,
                         bceClassLoader,
                         discoveryResult.bceInstances(),
                         nonBceClasses,
                         managedBeans(index, discovery));
-
-                // BCE definition errors → DefinitionException
-                if (!bceResult.definitionErrors().isEmpty()) {
-                    var msg = new StringBuilder("CDI definition validation failed:\n");
-                    for (var error : bceResult.definitionErrors()) {
-                        msg.append("  - ").append(error).append("\n");
-                    }
-                    throw new jakarta.enterprise.inject.spi.DefinitionException(msg.toString());
-                }
-
-                // BCE deployment errors → DeploymentException. The first typed
-                // exception a BCE threw becomes the cause (VAU-BCE-003): specs
-                // define the exception a failed deployment must surface, and TCKs
-                // assert it through the cause chain (@ShouldThrowException).
-                if (!bceResult.deploymentErrors().isEmpty()) {
-                    var msg = new StringBuilder("CDI deployment validation failed:\n");
-                    for (var error : bceResult.deploymentErrors()) {
-                        msg.append("  - ").append(error).append("\n");
-                    }
-                    var failure = new jakarta.enterprise.inject.spi.DeploymentException(msg.toString());
-                    var causes = bceResult.deploymentErrorCauses();
-                    if (!causes.isEmpty()) {
-                        failure.initCause(causes.getFirst());
-                        for (var extra : causes.subList(1, causes.size())) {
-                            failure.addSuppressed(extra);
-                        }
-                    }
-                    throw failure;
-                }
-
-                // Register synthetic beans
-                for (var synBean : bceResult.syntheticBeans()) {
-                    SyntheticComponentRegistrar.registerSyntheticBean(synBean, descriptors, factories,
-                            syntheticDisposers, seenSyntheticSignatures);
-                }
-
-                // Register synthetic observers
-                for (var synObs : bceResult.syntheticObservers()) {
-                    observers.add(SyntheticComponentRegistrar.buildSyntheticObserver(synObs));
-                }
-
-                // Merge BCE enhancement modifications into the combined map (replay + full)
-                bceResult.enhancementModifications().forEach((k, v) ->
-                        combinedEnhMods.computeIfAbsent(k, _ -> new ArrayList<>()).addAll(v));
+                failOnExtensionErrors(bceResult);
+                registerExtensionResults(bceResult, descriptors, observers, syntheticDisposers,
+                        seenSyntheticSignatures, combinedEnhMods);
             }
 
             // Apply ALL enhancement modifications (replay + full BCE) to descriptors
             if (!combinedEnhMods.isEmpty()) {
-                // Modified beans, plus the non-beans that gained a scope via Enhancement
-                // (e.g. @Path classes that receive @RequestScoped from a BCE)
-                var modified = io.vidocq.vauban.core.extensions.BceProcessor.beansAfterEnhancement(
-                        descriptors, combinedEnhMods,
-                        managedBeans(index, discovery));
-                descriptors.clear();
-                descriptors.addAll(modified);
-
-                interceptors = new ArrayList<>(io.vidocq.vauban.core.extensions.BceProcessor.applyInterceptorEnhancements(
-                        interceptors, combinedEnhMods));
-
-                var modifiedObservers = io.vidocq.vauban.core.extensions.BceProcessor.applyObserverEnhancements(
-                        observers, combinedEnhMods);
-                observers.clear();
-                observers.addAll(modifiedObservers);
+                interceptors = applyEnhancements(new Discovered(descriptors, observers, interceptors),
+                        combinedEnhMods, managedBeans(index, discovery));
             }
 
             // Load synthetic beans/observers from APT-generated metadata (if BCE was processed at compile time)
@@ -899,124 +720,489 @@ public final class VaubanContainerBuilder {
             // Validate disposer method definitions (CDI 4.1 Section 3.5)
             DisposerInvoker.validateDisposerDefinitions(disposers, descriptors);
 
-
             // Validate deployment — throw if there are errors
-            var assignability = new AssignabilityRules(index);
-            var tempResolver = new BeanResolver(descriptors, interceptors, assignability, qualifierMatcher);
-            var validator = new io.vidocq.vauban.core.bean.validation.DeploymentValidator(
-                    descriptors, tempResolver, index)
-                    .loadTimeWoven(loadTimeWeaving.planned());
-            var errors = validator.validate();
-            if (!errors.isEmpty()) {
-                var definitionErrors = errors.stream()
-                        .filter(e -> e.kind() == io.vidocq.vauban.core.bean.validation.DeploymentValidator.ValidationError.Kind.DEFINITION_ERROR)
-                        .toList();
-
-                if (!definitionErrors.isEmpty()) {
-                    var msg = new StringBuilder("CDI definition validation failed:\n");
-                    for (var error : definitionErrors) {
-                        msg.append("  - ").append(error.message()).append("\n");
-                    }
-                    throw new jakarta.enterprise.inject.spi.DefinitionException(msg.toString());
-                }
-
-                // Ambiguous or unsatisfied dependencies are DeploymentExceptions in CDI
-                var deploymentErrors = errors.stream()
-                        .filter(e -> e.kind() == io.vidocq.vauban.core.bean.validation.DeploymentValidator.ValidationError.Kind.DEPLOYMENT_ERROR
-                                || e.kind() == io.vidocq.vauban.core.bean.validation.DeploymentValidator.ValidationError.Kind.UNPROXYABLE_BEAN
-                                || e.kind() == io.vidocq.vauban.core.bean.validation.DeploymentValidator.ValidationError.Kind.UNSATISFIED_DEPENDENCY
-                                || e.kind() == io.vidocq.vauban.core.bean.validation.DeploymentValidator.ValidationError.Kind.AMBIGUOUS_DEPENDENCY
-                                || e.kind() == io.vidocq.vauban.core.bean.validation.DeploymentValidator.ValidationError.Kind.CIRCULAR_DEPENDENCY)
-                        .toList();
-
-                if (!deploymentErrors.isEmpty()) {
-                    var msg = new StringBuilder("CDI deployment validation failed:\n");
-                    for (var error : deploymentErrors) {
-                        msg.append("  - ").append(error.message()).append("\n");
-                    }
-                    throw new jakarta.enterprise.inject.spi.DeploymentException(msg.toString());
-                }
-
-                // Default fallback
-                var msg = new StringBuilder("CDI validation failed:\n");
-                for (var error : errors) {
-                    msg.append("  - ").append(error.message()).append("\n");
-                }
-                throw new jakarta.enterprise.inject.spi.DeploymentException(msg.toString());
-            }
+            validateDeployment(new Discovered(descriptors, observers, interceptors), index, qualifierMatcher,
+                    loadTimeWeaving);
 
             var beanClassLoader = discoveryClassLoader;
             var vaubanLookup = getBuilderLookup();
             var container = new VaubanContainer(index, descriptors, observers, interceptors, disposers, factories, syntheticDisposers, beanClassLoader, classDefiner, vaubanLookup, componentProviders, qualifierMatcher);
 
-            // Register custom contexts from Build Compatible Extensions (MetaAnnotations.addContext).
-            // Instantiation order: module's VaubanComponentProvider (zero reflection), then the
-            // PUBLIC constructor path — a BCE context class is public with a public no-arg
-            // constructor, so in an exported package this needs no `opens` on the module path —
-            // and only then the private-lookup path (classpath, or an opened package).
-            // A declared scope whose context cannot be installed is a deployment error: silently
-            // skipping it makes every bean of that scope silently fall back to per-lookup
-            // instances (VAU-CTX-001, surfaced as mansart's "empty @TransactionScoped" bug).
-            // Registered by the extensions that ran at boot, then those the processor froze into
-            // META-INF/vauban-contexts.list: an application compiled with the processor skips its
-            // extensions at boot, and would otherwise lose every context they register.
-            var contextRegistrations = new java.util.LinkedHashMap<String, java.util.Map.Entry<Class<? extends java.lang.annotation.Annotation>, Class<?>>>();
-            if (discoveryResult != null) {
-                for (var reg : discoveryResult.metaAnnotations().getCustomContexts()) {
-                    contextRegistrations.putIfAbsent(reg.scopeAnnotation().getName() + ";" + reg.contextClass().getName(),
-                            java.util.Map.entry(reg.scopeAnnotation(), reg.contextClass()));
-                }
-            }
-            for (var frozen : io.vidocq.vauban.core.extensions.FrozenContexts.read(discoveryClassLoader)) {
-                var key = frozen.scope() + ";" + frozen.contextClass();
-                if (contextRegistrations.containsKey(key)) continue;
-                try {
-                    @SuppressWarnings("unchecked")
-                    var scope = (Class<? extends java.lang.annotation.Annotation>)
-                            Class.forName(frozen.scope(), false, discoveryClassLoader);
-                    contextRegistrations.put(key, java.util.Map.entry(scope,
-                            Class.forName(frozen.contextClass(), false, discoveryClassLoader)));
-                } catch (ClassNotFoundException | LinkageError e) {
-                    throw new jakarta.enterprise.inject.spi.DeploymentException(
-                            "Cannot load the context " + frozen.contextClass() + " registered for scope "
-                                    + frozen.scope() + " (" + io.vidocq.vauban.core.extensions.FrozenContexts.PATH + ")", e);
-                }
-            }
-            {
-                for (var reg : contextRegistrations.values()) {
-                    var contextClass = reg.getValue();
-                    try {
-                        Object instance = componentProviders.create(contextClass.getName());
-                        if (instance == null) {
-                            try {
-                                instance = vaubanLookup.newInstancePublic(contextClass.getConstructor());
-                            } catch (NoSuchMethodException noPublicNoArgCtor) {
-                                // fall through to the private-lookup path
-                            }
-                        }
-                        if (instance == null) {
-                            instance = vaubanLookup.newInstance(contextClass);
-                        }
-                        var ctx = (jakarta.enterprise.context.spi.Context) instance;
-                        container.contexts.computeIfAbsent(reg.getKey(), k -> new java.util.ArrayList<>()).add(ctx);
-                    } catch (Exception e) {
-                        throw new jakarta.enterprise.inject.spi.DeploymentException(
-                                "Cannot install the context " + contextClass.getName()
-                                        + " registered for scope " + reg.getKey().getName()
-                                        + " (MetaAnnotations.addContext). The context class must be public"
-                                        + " with a public no-arg constructor in an exported package.", e);
-                    }
-                }
-            }
+            installContexts(container, contextRegistrations(discoveryResult, discoveryClassLoader), vaubanLookup);
 
             container.withdrawOnClose(moduleLookups);
-            built = true;
+            scope.built();
             return container;
-        } finally {
-            if (!built) {
-                moduleLookups.close();
+        }
+    }
+
+    /**
+     * What {@link #build()} undoes when it leaves: the module lookups, unless the container took them over, and the
+     * context class loader, always.
+     */
+    private static final class BuildScope implements AutoCloseable {
+        private final ClassLoader previousCl;
+        private final io.vidocq.vauban.core.access.ModuleLookups.Registration moduleLookups;
+        private boolean built;
+
+        BuildScope(ClassLoader previousCl, io.vidocq.vauban.core.access.ModuleLookups.Registration moduleLookups) {
+            this.previousCl = previousCl;
+            this.moduleLookups = moduleLookups;
+        }
+
+        /** The container was built and withdraws the module lookups itself when it closes. */
+        void built() {
+            built = true;
+        }
+
+        @Override
+        public void close() {
+            try {
+                if (!built) {
+                    moduleLookups.close();
+                }
+            } finally {
+                Thread.currentThread().setContextClassLoader(previousCl);
             }
-            Thread.currentThread().setContextClassLoader(previousCl);
+        }
+    }
+
+    /** The beans, observers and interceptors discovery found, as the later phases rework them. */
+    private record Discovered(List<BeanDescriptor> descriptors,
+                              List<ObserverDescriptor> observers,
+                              List<InterceptorDescriptor> interceptors) {}
+
+    /** Indexes the class file of every bean class and gives each a default factory, unless it has one. */
+    private void indexBeanClasses(IndexBuilder indexBuilder) {
+        for (var clazz : beanClasses) {
+            scanClassFile(clazz, indexBuilder);
+
+            // Auto-register factory — will be replaced with constructor-aware
+            // version after discovery if @Inject constructor is found
+            if (!factories.containsKey(DotName.of(clazz.getName()))) {
+                var lkp = getBuilderLookup();
+                factories.put(DotName.of(clazz.getName()), () -> instantiate(clazz, lkp));
+            }
+        }
+    }
+
+    private static void scanClassFile(Class<?> clazz, IndexBuilder indexBuilder) {
+        String resource = clazz.getName().replace('.', '/') + ".class";
+        try (var is = clazz.getClassLoader().getResourceAsStream(resource)) {
+            // A class with no class file among the resources (e.g. dynamic or some test classes) is not indexed.
+            if (is != null) {
+                indexBuilder.add(io.vidocq.vauban.indexer.scanner.ClassFileScanner.scan(is.readAllBytes()));
+            }
+        } catch (IOException e) {
+            throw new java.io.UncheckedIOException("Failed to scan class: " + clazz.getName(), e);
+        }
+    }
+
+    /**
+     * Loads a class an extension added through {@code ScannedClasses}, records it in {@code extensionAddedClasses},
+     * indexes it and gives it a default factory. A class that cannot be loaded is skipped.
+     */
+    private void addExtensionScannedClass(String className, ClassLoader discoveryClassLoader,
+            DeploymentClassLoader bceClassLoader, IndexBuilder indexBuilder, List<Class<?>> extensionAddedClasses) {
+        try {
+            var cls = Class.forName(className, false, discoveryClassLoader);
+            // A class an extension added is part of the deployment from now on: the
+            // later extension phases resolve it by identity, not by loading it again.
+            bceClassLoader.register(cls);
+            extensionAddedClasses.add(cls);
+            indexClassResource(className, discoveryClassLoader, indexBuilder);
+            if (!factories.containsKey(DotName.of(className))) {
+                var lkp = getBuilderLookup();
+                factories.put(DotName.of(className), () -> instantiate(cls, lkp));
+            }
+        } catch (Exception _) {
+            // Class not found — skip
+        }
+    }
+
+    private static void indexClassResource(String className, ClassLoader loader, IndexBuilder indexBuilder)
+            throws IOException {
+        String resource = className.replace('.', '/') + ".class";
+        try (var is = loader.getResourceAsStream(resource)) {
+            if (is != null) {
+                indexBuilder.add(io.vidocq.vauban.indexer.scanner.ClassFileScanner.scan(is.readAllBytes()));
+            }
+        }
+    }
+
+    /** Fails with a {@code DefinitionException} listing the class-level definition errors, if any. */
+    private static void validateClassDefinitions(VaubanIndex index,
+            List<Class<?>> nonBceClasses) {
+        var classErrors = io.vidocq.vauban.core.bean.validation.ClassValidator.validate(index);
+        if (!classErrors.isEmpty()) {
+            throw new jakarta.enterprise.inject.spi.DefinitionException(failureMessage(DEFINITION_FAILED, classErrors));
+        }
+        var reflectionErrors = ReflectionValidator.validateWithReflection(nonBceClasses);
+        if (!reflectionErrors.isEmpty()) {
+            throw new jakarta.enterprise.inject.spi.DefinitionException(
+                    failureMessage(DEFINITION_FAILED, reflectionErrors));
+        }
+    }
+
+    /** {@code header}, then one {@code "  - error"} line per error. */
+    private static String failureMessage(String header, List<String> errors) {
+        var msg = new StringBuilder(header);
+        for (var error : errors) {
+            msg.append("  - ").append(error).append("\n");
+        }
+        return msg.toString();
+    }
+
+    /**
+     * The Enhancement modifications of the full extension scan of the unprocessed archives, of the legacy reflective
+     * replay (only for targets not covered by the frozen patch) and of the members of the frozen patch.
+     */
+    private static Map<DotName, List<VaubanClassConfig>> collectEnhancements(
+            List<Class<?>> unprocessedArchiveClasses, Set<Class<?>> fullBceClasses,
+            List<Map.Entry<Class<?>, Class<?>>> effectiveReplayPairs,
+            Map<DotName, List<AnnotationInfo>> enhancementPatch,
+            VaubanIndex index, DeploymentClassLoader bceClassLoader) {
+        var combinedEnhMods = new java.util.HashMap<DotName, List<VaubanClassConfig>>();
+        if (!unprocessedArchiveClasses.isEmpty() && !fullBceClasses.isEmpty()) {
+            var enhMods = BceProcessor.processEnhancementOnly(
+                    List.copyOf(fullBceClasses), unprocessedArchiveClasses, index, bceClassLoader);
+            enhMods.forEach((k, v) -> combinedEnhMods.computeIfAbsent(k, _ -> new ArrayList<>()).addAll(v));
+        }
+
+        // Legacy reflective replay — only for targets NOT covered by the frozen patch.
+        if (!effectiveReplayPairs.isEmpty()) {
+            var replayMods = BceProcessor.replayEnhancementForTargets(
+                    effectiveReplayPairs, index);
+            replayMods.forEach((k, v) -> combinedEnhMods.computeIfAbsent(k, _ -> new ArrayList<>()).addAll(v));
+        }
+
+        io.vidocq.vauban.core.extensions.EnhancementPatchSerializer
+                .memberConfigurations(enhancementPatch, index).forEach((name, configs) ->
+                        combinedEnhMods.computeIfAbsent(name, _ -> new ArrayList<>()).addAll(configs));
+        return combinedEnhMods;
+    }
+
+    /** {@code index} with the annotations the Enhancement modifications and the frozen patch add to its classes. */
+    private static VaubanIndex enrichIndex(VaubanIndex index,
+            Map<DotName, List<VaubanClassConfig>> combinedEnhMods,
+            Map<DotName, List<AnnotationInfo>> enhancementPatch) {
+        if (combinedEnhMods.isEmpty() && enhancementPatch.isEmpty()) {
+            return index;
+        }
+        var enrichedBuilder = new IndexBuilder();
+        for (var classInfo : index.getKnownClasses()) {
+            enrichedBuilder.add(enrichedClass(classInfo, combinedEnhMods.get(classInfo.name()),
+                    enhancementPatch.get(classInfo.name())));
+        }
+        return enrichedBuilder.build();
+    }
+
+    private static io.vidocq.vauban.indexer.model.ClassInfo enrichedClass(
+            io.vidocq.vauban.indexer.model.ClassInfo classInfo,
+            List<VaubanClassConfig> mods,
+            List<AnnotationInfo> patched) {
+        if (mods == null && patched == null) {
+            return classInfo;
+        }
+        var newAnnotations = new java.util.ArrayList<>(classInfo.annotations());
+        // With their members: an added @Named("x") or qualifier member is part of the
+        // class (BUG-20261008-05).
+        if (mods != null) {
+            for (var config : mods) {
+                newAnnotations.addAll(config.getAddedAnnotationsIndexed());
+            }
+        }
+        if (patched != null) {
+            newAnnotations.addAll(patched);
+        }
+        // withAnnotations keeps the simple name: a nested class's default bean name
+        // is not its binary simple name (Outer$Bean)
+        return classInfo.withAnnotations(newAnnotations);
+    }
+
+    /**
+     * vauban#24 load-time weaving tier (backstop — the Vidocq bootstrap already ran it before its extensions could
+     * load application classes): must run BEFORE discovery/validation, both may load bean classes, and a class loaded
+     * before the agent is attached can no longer gain its (ProxyLink) constructor.
+     */
+    private io.vidocq.vauban.core.weaving.LoadTimeWeaving.Result prepareLoadTimeWeaving() {
+        var weavingLoader = classLoader != null
+                ? classLoader : Thread.currentThread().getContextClassLoader();
+        var loadTimeWeaving =
+                io.vidocq.vauban.core.weaving.LoadTimeWeaving.prepare(weavingLoader);
+        if (loadTimeWeaving.failure() != null) {
+            LOG.log(System.Logger.Level.WARNING, loadTimeWeaving.failure());
+        }
+
+        // issue #42, Stage 3b: open the packages of produced types that fall to runtime proxy
+        // generation to the container (via the agent), so the runtime fallback needs no
+        // hand-written --add-opens. A strict no-op when no META-INF/vauban/required-opens.list
+        // is present (the common case, including the TCK).
+        io.vidocq.vauban.core.opens.OpensApplier.apply(weavingLoader);
+        return loadTimeWeaving;
+    }
+
+    private void configureDiscovery(BeanDiscovery discovery,
+            BceProcessor.DiscoveryResult discoveryResult) {
+        discovery.setStrictScannedDiscovery(strictScannedDiscovery);
+
+        // Apply @Discovery results to BeanDiscovery
+        if (discoveryResult != null) {
+            applyExtensionDiscovery(discovery, discoveryResult);
+        }
+
+        // Force bean classes from bean-discovery-mode=all archives (e.g. from scanBeanArchivesFromClasspath)
+        if (!forcedDiscoveryClasses.isEmpty()) {
+            discovery.addForcedBeanClasses(dotNames(forcedDiscoveryClasses));
+        }
+    }
+
+    private void applyExtensionDiscovery(BeanDiscovery discovery,
+            BceProcessor.DiscoveryResult discoveryResult) {
+        var meta = discoveryResult.metaAnnotations();
+        discovery.setCustomQualifiers(dotNames(meta.getCustomQualifiers()));
+        discovery.setCustomInterceptorBindings(dotNames(meta.getCustomInterceptorBindings()));
+        discovery.setCustomStereotypes(dotNames(meta.getCustomStereotypes()));
+        var stereotypeAnns = new java.util.HashMap<DotName, java.util.Set<Class<? extends Annotation>>>();
+        for (var entry : meta.getStereotypeAnnotations().entrySet()) {
+            stereotypeAnns.put(DotName.of(entry.getKey().getName()), entry.getValue());
+        }
+        discovery.setCustomStereotypeAnnotations(stereotypeAnns);
+        // The container's own AnnotationTypes reads them back below, so no static state.
+        discovery.setCustomNonbindingMembers(meta.getNonbindingMembers());
+        VaubanBeanManager.setCustomQualifierTypes(meta.getCustomQualifiers());
+        VaubanBeanManager.setCustomInterceptorBindingTypes(meta.getCustomInterceptorBindings());
+        VaubanBeanManager.setCustomStereotypeTypes(meta.getCustomStereotypes());
+
+        // Classes added via ScannedClasses bypass annotation check
+        if (!discoveryResult.scannedClasses().getAddedClasses().isEmpty()) {
+            var scannedDotNames = discoveryResult.scannedClasses().getAddedClasses().stream()
+                    .map(DotName::of)
+                    .collect(java.util.stream.Collectors.toSet());
+            discovery.setForcedBeanClasses(scannedDotNames);
+            // When not a bean archive, also restrict discovery to scanned classes only
+            if (!isBeanArchive) {
+                discovery.setScannedClassesFilter(scannedDotNames);
+            }
+        }
+    }
+
+    private static Set<DotName> dotNames(java.util.Collection<? extends Class<?>> classes) {
+        return classes.stream()
+                .map(c -> DotName.of(c.getName()))
+                .collect(java.util.stream.Collectors.toSet());
+    }
+
+    /**
+     * CDI 4.1 §6.5.9: the built-in {@code @ActivateRequestContext} interceptor, only when a class of the deployment
+     * uses the binding, so that no other deployment pays for interception checks it does not need
+     * (Vidocq/vauban#147).
+     */
+    private static void addActivateRequestContextInterceptor(VaubanIndex index,
+            List<InterceptorDescriptor> interceptors) {
+        if (usesBinding(index, ACTIVATE_REQUEST_CONTEXT)) {
+            interceptors.add(new InterceptorDescriptor(
+                    DotName.of(io.vidocq.vauban.core.context.ActivateRequestContextInterceptor.class.getName()),
+                    java.util.Set.of(ACTIVATE_REQUEST_CONTEXT),
+                    io.vidocq.vauban.core.context.ActivateRequestContextInterceptor.AROUND_INVOKE, null,
+                    io.vidocq.vauban.core.context.ActivateRequestContextInterceptor.PRIORITY, true, List.of()));
+        }
+    }
+
+    /**
+     * BCE definition errors → DefinitionException; BCE deployment errors → DeploymentException. The first typed
+     * exception a BCE threw becomes the cause (VAU-BCE-003): specs define the exception a failed deployment must
+     * surface, and TCKs assert it through the cause chain (@ShouldThrowException).
+     */
+    private static void failOnExtensionErrors(BceProcessor.Result bceResult) {
+        if (!bceResult.definitionErrors().isEmpty()) {
+            throw new jakarta.enterprise.inject.spi.DefinitionException(
+                    failureMessage(DEFINITION_FAILED, bceResult.definitionErrors()));
+        }
+        if (!bceResult.deploymentErrors().isEmpty()) {
+            var failure = new jakarta.enterprise.inject.spi.DeploymentException(
+                    failureMessage(DEPLOYMENT_FAILED, bceResult.deploymentErrors()));
+            var causes = bceResult.deploymentErrorCauses();
+            if (!causes.isEmpty()) {
+                failure.initCause(causes.getFirst());
+                for (var extra : causes.subList(1, causes.size())) {
+                    failure.addSuppressed(extra);
+                }
+            }
+            throw failure;
+        }
+    }
+
+    /** Registers the synthetic beans and observers of the extensions, and merges their enhancement modifications. */
+    private void registerExtensionResults(BceProcessor.Result bceResult,
+            List<BeanDescriptor> descriptors, List<ObserverDescriptor> observers,
+            Map<DotName, java.util.function.BiConsumer<Object, CreationalContext<?>>> syntheticDisposers,
+            Set<String> seenSyntheticSignatures,
+            Map<DotName, List<VaubanClassConfig>> combinedEnhMods) {
+        // Register synthetic beans
+        for (var synBean : bceResult.syntheticBeans()) {
+            SyntheticComponentRegistrar.registerSyntheticBean(synBean, descriptors, factories,
+                    syntheticDisposers, seenSyntheticSignatures);
+        }
+
+        // Register synthetic observers
+        for (var synObs : bceResult.syntheticObservers()) {
+            observers.add(SyntheticComponentRegistrar.buildSyntheticObserver(synObs));
+        }
+
+        // Merge BCE enhancement modifications into the combined map (replay + full)
+        bceResult.enhancementModifications().forEach((k, v) ->
+                combinedEnhMods.computeIfAbsent(k, _ -> new ArrayList<>()).addAll(v));
+    }
+
+    /**
+     * Applies the enhancement modifications to the discovered beans and observers, in place, and returns the
+     * interceptors they give. Modified beans include the non-beans that gained a scope via Enhancement (e.g.
+     * {@code @Path} classes that receive {@code @RequestScoped} from a BCE).
+     */
+    private static List<InterceptorDescriptor> applyEnhancements(
+            Discovered discovered,
+            Map<DotName, List<VaubanClassConfig>> combinedEnhMods,
+            java.util.function.Function<DotName, BeanDescriptor> managedBeans) {
+        var descriptors = discovered.descriptors();
+        var modified = BceProcessor.beansAfterEnhancement(
+                descriptors, combinedEnhMods, managedBeans);
+        descriptors.clear();
+        descriptors.addAll(modified);
+
+        var interceptors = new ArrayList<>(BceProcessor.applyInterceptorEnhancements(
+                discovered.interceptors(), combinedEnhMods));
+
+        var observers = discovered.observers();
+        var modifiedObservers = BceProcessor.applyObserverEnhancements(
+                observers, combinedEnhMods);
+        observers.clear();
+        observers.addAll(modifiedObservers);
+        return interceptors;
+    }
+
+    /** Deployment validation: a definition error first, then a deployment error, then any other error. */
+    private static void validateDeployment(Discovered discovered, VaubanIndex index,
+            io.vidocq.vauban.core.bean.resolution.QualifierMatcher qualifierMatcher,
+            io.vidocq.vauban.core.weaving.LoadTimeWeaving.Result loadTimeWeaving) {
+        var descriptors = discovered.descriptors();
+        var assignability = new AssignabilityRules(index);
+        var tempResolver = new BeanResolver(descriptors, discovered.interceptors(), assignability, qualifierMatcher);
+        var validator = new DeploymentValidator(
+                descriptors, tempResolver, index)
+                .loadTimeWoven(loadTimeWeaving.planned());
+        var errors = validator.validate();
+        if (errors.isEmpty()) {
+            return;
+        }
+        var definitionErrors = messagesOf(errors, Set.of(
+                DeploymentValidator.ValidationError.Kind.DEFINITION_ERROR));
+        if (!definitionErrors.isEmpty()) {
+            throw new jakarta.enterprise.inject.spi.DefinitionException(
+                    failureMessage(DEFINITION_FAILED, definitionErrors));
+        }
+
+        // Ambiguous or unsatisfied dependencies are DeploymentExceptions in CDI
+        var deploymentErrors = messagesOf(errors, DEPLOYMENT_ERROR_KINDS);
+        if (!deploymentErrors.isEmpty()) {
+            throw new jakarta.enterprise.inject.spi.DeploymentException(
+                    failureMessage(DEPLOYMENT_FAILED, deploymentErrors));
+        }
+
+        // Default fallback
+        throw new jakarta.enterprise.inject.spi.DeploymentException(failureMessage("CDI validation failed:\n",
+                errors.stream().map(DeploymentValidator.ValidationError::message)
+                        .toList()));
+    }
+
+    private static List<String> messagesOf(
+            List<DeploymentValidator.ValidationError> errors,
+            Set<DeploymentValidator.ValidationError.Kind> kinds) {
+        return errors.stream()
+                .filter(e -> kinds.contains(e.kind()))
+                .map(DeploymentValidator.ValidationError::message)
+                .toList();
+    }
+
+    /**
+     * The custom contexts to register, by {@code scope;contextClass}: those the extensions that ran at boot
+     * registered (MetaAnnotations.addContext), then those the processor froze into META-INF/vauban-contexts.list. An
+     * application compiled with the processor skips its extensions at boot, and would otherwise lose every context
+     * they register.
+     */
+    private static Map<String, Map.Entry<Class<? extends Annotation>, Class<?>>> contextRegistrations(
+            BceProcessor.DiscoveryResult discoveryResult,
+            ClassLoader discoveryClassLoader) {
+        var contextRegistrations = new LinkedHashMap<String, Map.Entry<Class<? extends Annotation>, Class<?>>>();
+        if (discoveryResult != null) {
+            for (var reg : discoveryResult.metaAnnotations().getCustomContexts()) {
+                contextRegistrations.putIfAbsent(reg.scopeAnnotation().getName() + ";" + reg.contextClass().getName(),
+                        java.util.Map.entry(reg.scopeAnnotation(), reg.contextClass()));
+            }
+        }
+        for (var frozen : io.vidocq.vauban.core.extensions.FrozenContexts.read(discoveryClassLoader)) {
+            var key = frozen.scope() + ";" + frozen.contextClass();
+            if (!contextRegistrations.containsKey(key)) {
+                contextRegistrations.put(key, loadFrozenContext(frozen, discoveryClassLoader));
+            }
+        }
+        return contextRegistrations;
+    }
+
+    private static Map.Entry<Class<? extends Annotation>, Class<?>> loadFrozenContext(
+            io.vidocq.vauban.core.extensions.FrozenContexts.Entry frozen, ClassLoader discoveryClassLoader) {
+        try {
+            @SuppressWarnings("unchecked")
+            var scope = (Class<? extends Annotation>)
+                    Class.forName(frozen.scope(), false, discoveryClassLoader);
+            return java.util.Map.entry(scope, Class.forName(frozen.contextClass(), false, discoveryClassLoader));
+        } catch (ClassNotFoundException | LinkageError e) {
+            throw new jakarta.enterprise.inject.spi.DeploymentException(
+                    "Cannot load the context " + frozen.contextClass() + " registered for scope "
+                            + frozen.scope() + " (" + io.vidocq.vauban.core.extensions.FrozenContexts.PATH + ")", e);
+        }
+    }
+
+    /**
+     * Registers the custom contexts from Build Compatible Extensions (MetaAnnotations.addContext). Instantiation
+     * order: module's VaubanComponentProvider (zero reflection), then the PUBLIC constructor path — a BCE context
+     * class is public with a public no-arg constructor, so in an exported package this needs no {@code opens} on the
+     * module path — and only then the private-lookup path (classpath, or an opened package). A declared scope whose
+     * context cannot be installed is a deployment error: silently skipping it makes every bean of that scope silently
+     * fall back to per-lookup instances (VAU-CTX-001, surfaced as mansart's "empty @TransactionScoped" bug).
+     */
+    private void installContexts(VaubanContainer container,
+            Map<String, Map.Entry<Class<? extends Annotation>, Class<?>>> contextRegistrations,
+            VaubanLookup vaubanLookup) {
+        for (var reg : contextRegistrations.values()) {
+            var contextClass = reg.getValue();
+            try {
+                Object instance = componentProviders.create(contextClass.getName());
+                if (instance == null) {
+                    instance = newInstanceThroughPublicConstructor(contextClass, vaubanLookup);
+                }
+                if (instance == null) {
+                    instance = vaubanLookup.newInstance(contextClass);
+                }
+                var ctx = (jakarta.enterprise.context.spi.Context) instance;
+                container.contexts.computeIfAbsent(reg.getKey(), k -> new java.util.ArrayList<>()).add(ctx);
+            } catch (Exception e) {
+                throw new jakarta.enterprise.inject.spi.DeploymentException(
+                        "Cannot install the context " + contextClass.getName()
+                                + " registered for scope " + reg.getKey().getName()
+                                + " (MetaAnnotations.addContext). The context class must be public"
+                                + " with a public no-arg constructor in an exported package.", e);
+            }
+        }
+    }
+
+    /** A new {@code contextClass} through its public no-arg constructor, or {@code null} when it has none. */
+    private static Object newInstanceThroughPublicConstructor(Class<?> contextClass, VaubanLookup vaubanLookup) {
+        try {
+            return vaubanLookup.newInstancePublic(contextClass.getConstructor());
+        } catch (NoSuchMethodException _) {
+            // fall through to the private-lookup path
+            return null;
         }
     }
 
