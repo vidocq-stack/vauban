@@ -98,86 +98,133 @@ public final class InterceptedShapeFromElements {
     public static InterceptedShape from(TypeElement bean, Elements elements, Types types,
             java.util.function.Consumer<String> omitted, java.util.function.Consumer<String> unnameable) {
         String beanBinaryName = elements.getBinaryName(bean).toString();
-
-        // Constructors — the (ProxyLink) client-proxy entry constructor is not mirrored:
-        // the $$Intercepted subclass IS the contextual instance and must run business
-        // constructors only (Vidocq/vauban#24).
-        var ctors = new ArrayList<CtorShape>();
-        for (ExecutableElement ctor : ElementFilter.constructorsIn(bean.getEnclosedElements())) {
-            if (ctor.getModifiers().contains(Modifier.PRIVATE)) continue;
-            if (io.vidocq.vauban.processor.codegen.proxy.ClientProxyShapeFromElements
-                    .isProxyLinkConstructor(ctor)) continue;
-            ctors.add(new CtorShape(paramShapes(ctor, elements, types)));
-        }
+        var ctors = constructorShapes(bean, elements, types);
 
         // Methods — all members including inherited, one per member signature. getAllMembers drops
         // an overridden method, but not a class method that implements an interface method for the
         // bean (PlainBase.label(String) for Labeled<String>.label(T)): both are the member
         // label(String), which the source renderer would declare twice (BUG-20261004-06). Class
         // methods come first, so the one the bean runs wins; a final one still hides the other.
+        var request = new Request(bean, elements.getPackageOf(bean), elements, types, omitted, unnameable);
         var methods = new ArrayList<MethodShape>();
         var seen = new LinkedHashSet<String>();
         var members = ElementFilter.methodsIn(elements.getAllMembers(bean));
-        var beanPackage = elements.getPackageOf(bean);
         for (boolean interfacePass : new boolean[] {false, true}) {
             for (ExecutableElement method : members) {
-                if (declaredByInterface(method) != interfacePass) continue;
-                if (!seen.add(memberSignatureKey(bean, method, types))) continue;
-                if (!shouldIntercept(method, elements)) continue;
-                // As InterceptorSubclassGenerator#methodShapeOf: a return type the subclass may not
-                // access cannot be typed from what the chain returns; a parameter is loaded by name.
-                var returnType = types.erasure(method.getReturnType());
-                if (!resolvableFrom(returnType, beanPackage, elements)) {
-                    omitted.accept(bean.getQualifiedName() + ": the generated subclass does not intercept the inherited method "
-                            + ((TypeElement) method.getEnclosingElement()).getQualifiedName() + "." + method
-                            + " — its return type " + returnType + " is a class package " + beanPackage.getQualifiedName()
-                            + " may not access, so no subclass there can type the value an interceptor chain returns;"
-                            + " a call runs it as on a plain instance of the bean. The bytecode generators (run-time"
-                            + " fallback, Maven plugin) leave it out too (BUG-20261004-09).");
-                    continue;
-                }
-                var shape = methodShape(bean, method, elements, types);
-                if (!descriptorResolvableFrom(method, beanPackage, elements, types)) {
-                    shape = shape.withInaccessibleTypes();
-                }
-                if (isShadowedDefault(bean, method, types)) {
-                    // super.<name>() would resolve to the shadowing declaration: the bridge reaches
-                    // the default through an interface the subclass lists (BUG-20261004-08), or,
-                    // when no interface it may name carries it — or the override and the listed
-                    // interface would name a type this package cannot — the method is left alone.
-                    var owner = accessibleDefaultOwner(bean, method, beanPackage, elements, types);
-                    if (owner == null) {
-                        // InterceptorSubclassGenerator decides by class-file access instead
-                        // (ShadowedDefaults#accessibleOwner): it leaves out a package-private interface
-                        // of another package too, but lists a private nested interface of the bean's
-                        // package, which Java source cannot name (BUG-20261004-09).
-                        omitted.accept(notIntercepted(bean, method, "no interface carrying it can be named from package "
-                                + beanPackage.getQualifiedName(),
-                                "Whether the bytecode generators (run-time fallback, Maven plugin) intercept it"
-                                        + " depends on class-file access, a different rule (BUG-20261004-09)."));
-                        continue;
+                if (declaredByInterface(method) == interfacePass
+                        && seen.add(memberSignatureKey(bean, method, types))
+                        && shouldIntercept(method)) {
+                    MethodShape shape = interceptedMethodShape(request, method);
+                    if (shape != null) {
+                        methods.add(shape);
                     }
-                    var ownerType = asTheBeanParameterisesIt(bean, owner, types);
-                    if (!memberSignatureNameableFrom(bean, method, beanPackage, elements, types)
-                            || !nameableFrom(ownerType, beanPackage, elements)) {
-                        omitted.accept(notIntercepted(bean, method, "its override, or the interface "
-                                + ownerType + " the subclass would list, names a type package "
-                                + beanPackage.getQualifiedName() + " cannot",
-                                "The bytecode generators (run-time fallback, Maven plugin) override by descriptor"
-                                        + " and keep it, so a subclass they generate differs from this one."));
-                        continue;
-                    }
-                    shape = shape.withDefaultOwner(TypeRef.ofReference(elements.getBinaryName(owner).toString(), 0,
-                                    owner.getQualifiedName().toString()),
-                            ownerType.toString());
-                } else if (!memberSignatureNameableFrom(bean, method, beanPackage, elements, types, false)) {
-                    unnameable.accept(memberSignature(bean, method, types));
                 }
-                methods.add(shape);
             }
         }
 
         return new InterceptedShape(beanBinaryName, ctors, methods);
+    }
+
+    /**
+     * What one shape is built from: the bean, its package — where the subclass is generated — the
+     * processing utilities, and where the processor's reports go.
+     */
+    private record Request(TypeElement bean, PackageElement beanPackage, Elements elements, Types types,
+            java.util.function.Consumer<String> omitted, java.util.function.Consumer<String> unnameable) {}
+
+    /**
+     * Constructors — the (ProxyLink) client-proxy entry constructor is not mirrored:
+     * the $$Intercepted subclass IS the contextual instance and must run business
+     * constructors only (Vidocq/vauban#24).
+     */
+    private static List<CtorShape> constructorShapes(TypeElement bean, Elements elements, Types types) {
+        var ctors = new ArrayList<CtorShape>();
+        for (ExecutableElement ctor : ElementFilter.constructorsIn(bean.getEnclosedElements())) {
+            if (!ctor.getModifiers().contains(Modifier.PRIVATE)
+                    && !io.vidocq.vauban.processor.codegen.proxy.ClientProxyShapeFromElements
+                            .isProxyLinkConstructor(ctor)) {
+                ctors.add(new CtorShape(paramShapes(ctor, elements, types)));
+            }
+        }
+        return ctors;
+    }
+
+    /**
+     * The override of an interceptable {@code method}, or {@code null} when the subclass leaves it
+     * alone (reported to the request's {@code omitted}).
+     */
+    private static MethodShape interceptedMethodShape(Request request, ExecutableElement method) {
+        var bean = request.bean();
+        var beanPackage = request.beanPackage();
+        var beanPackageName = beanPackage.getQualifiedName();
+        var elements = request.elements();
+        var types = request.types();
+        // As InterceptorSubclassGenerator#methodShapeOf: a return type the subclass may not
+        // access cannot be typed from what the chain returns; a parameter is loaded by name.
+        var returnType = types.erasure(method.getReturnType());
+        if (!resolvableFrom(returnType, beanPackage, elements)) {
+            request.omitted().accept(bean.getQualifiedName()
+                    + ": the generated subclass does not intercept the inherited method "
+                    + ((TypeElement) method.getEnclosingElement()).getQualifiedName() + "." + method
+                    + " — its return type " + returnType + " is a class package " + beanPackageName
+                    + " may not access, so no subclass there can type the value an interceptor chain returns;"
+                    + " a call runs it as on a plain instance of the bean. The bytecode generators (run-time"
+                    + " fallback, Maven plugin) leave it out too (BUG-20261004-09).");
+            return null;
+        }
+        var shape = methodShape(bean, method, elements, types);
+        if (!descriptorResolvableFrom(method, beanPackage, elements, types)) {
+            shape = shape.withInaccessibleTypes();
+        }
+        if (isShadowedDefault(bean, method, types)) {
+            return shadowedDefaultShape(request, method, shape);
+        }
+        if (!memberSignatureNameableFrom(bean, method, beanPackage, elements, types, false)) {
+            request.unnameable().accept(memberSignature(bean, method, types));
+        }
+        return shape;
+    }
+
+    /**
+     * {@code shape} bridged to the shadowed default {@code method} through an interface, or
+     * {@code null} when the subclass must leave the method alone (reported to the request's
+     * {@code omitted}).
+     */
+    private static MethodShape shadowedDefaultShape(Request request, ExecutableElement method, MethodShape shape) {
+        var bean = request.bean();
+        var beanPackage = request.beanPackage();
+        var beanPackageName = beanPackage.getQualifiedName();
+        var elements = request.elements();
+        var types = request.types();
+        // super.<name>() would resolve to the shadowing declaration: the bridge reaches
+        // the default through an interface the subclass lists (BUG-20261004-08), or,
+        // when no interface it may name carries it — or the override and the listed
+        // interface would name a type this package cannot — the method is left alone.
+        var owner = accessibleDefaultOwner(bean, method, beanPackage, elements, types);
+        if (owner == null) {
+            // InterceptorSubclassGenerator decides by class-file access instead
+            // (ShadowedDefaults#accessibleOwner): it leaves out a package-private interface
+            // of another package too, but lists a private nested interface of the bean's
+            // package, which Java source cannot name (BUG-20261004-09).
+            request.omitted().accept(notIntercepted(bean, method,
+                    "no interface carrying it can be named from package " + beanPackageName,
+                    "Whether the bytecode generators (run-time fallback, Maven plugin) intercept it"
+                            + " depends on class-file access, a different rule (BUG-20261004-09)."));
+            return null;
+        }
+        var ownerType = asTheBeanParameterisesIt(bean, owner, types);
+        if (!memberSignatureNameableFrom(bean, method, beanPackage, elements, types)
+                || !nameableFrom(ownerType, beanPackage, elements)) {
+            request.omitted().accept(notIntercepted(bean, method, "its override, or the interface "
+                    + ownerType + " the subclass would list, names a type package "
+                    + beanPackageName + " cannot",
+                    "The bytecode generators (run-time fallback, Maven plugin) override by descriptor"
+                            + " and keep it, so a subclass they generate differs from this one."));
+            return null;
+        }
+        return shape.withDefaultOwner(TypeRef.ofReference(elements.getBinaryName(owner).toString(), 0,
+                        owner.getQualifiedName().toString()),
+                ownerType.toString());
     }
 
     /**
@@ -230,7 +277,7 @@ public final class InterceptedShapeFromElements {
         if (modifiers.contains(Modifier.PUBLIC) || modifiers.contains(Modifier.PROTECTED)) return true;
         var ownerPackage = packageOf(owner);
         for (TypeElement c = bean; c != null && !c.equals(owner); c = superclassOf(c)) {
-            if (!packageOf(c).equals(ownerPackage)) return false;
+            if (!java.util.Objects.equals(packageOf(c), ownerPackage)) return false;
         }
         return true;
     }
@@ -536,7 +583,7 @@ public final class InterceptedShapeFromElements {
 
     // ---- predicate ----
 
-    private static boolean shouldIntercept(ExecutableElement method, Elements elements) {
+    private static boolean shouldIntercept(ExecutableElement method) {
         var mods = method.getModifiers();
         if (mods.contains(Modifier.STATIC)) return false;
         if (mods.contains(Modifier.PRIVATE)) return false;
@@ -545,8 +592,8 @@ public final class InterceptedShapeFromElements {
 
         // Skip methods declared on java.lang.Object
         Element enclosing = method.getEnclosingElement();
-        if (enclosing instanceof TypeElement te) {
-            if (JAVA_LANG_OBJECT.equals(te.getQualifiedName().toString())) return false;
+        if (enclosing instanceof TypeElement te && JAVA_LANG_OBJECT.equals(te.getQualifiedName().toString())) {
+            return false;
         }
 
         // @Inject initializers, the target class's interceptor methods and lifecycle callbacks are not
@@ -648,7 +695,7 @@ public final class InterceptedShapeFromElements {
                     return TypeRef.ofReference(binaryName, dims, te.getQualifiedName().toString());
                 }
                 // Fallback for unusual mirrors (intersection types, error types): treat as Object
-                return TypeRef.ofReference("java.lang.Object", dims);
+                return TypeRef.ofReference(JAVA_LANG_OBJECT, dims);
             }
         }
     }

@@ -35,6 +35,7 @@ import javax.lang.model.util.Types;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.function.Consumer;
+import java.util.stream.Stream;
 
 /**
  * Builds a {@link ClientProxyShape} from a {@link TypeElement} — the APT
@@ -103,30 +104,46 @@ public final class ClientProxyShapeFromElements {
             javax.lang.model.element.PackageElement proxyPackage, Elements elements, Types types) {
         var unnameable = new ArrayList<String>();
         var seen = new java.util.HashSet<String>();
-        boolean declaring = true;
-        for (TypeElement c = bean; c != null && !isObject(c); c = superclassOf(c), declaring = false) {
-            for (ExecutableElement m : ElementFilter.methodsIn(c.getEnclosedElements())) {
-                if (!seen.add(memberKey(bean, m, types))) continue;
-                if (!shouldProxy(m)) continue;
-                if (!declaring && !m.getModifiers().contains(Modifier.PUBLIC)) continue;
-                if (!InterceptedShapeFromElements.memberSignatureNameableFrom(bean, m, proxyPackage, elements, types,
-                        false)) {
-                    unnameable.add(InterceptedShapeFromElements.memberSignature(bean, m, types));
-                }
-            }
-        }
-        // The defaults addDefaultMethods would forward through the bean class: not shadowed, and no
-        // class method with the same member signature.
-        for (ExecutableElement m : ElementFilter.methodsIn(elements.getAllMembers(bean))) {
-            if (!m.getModifiers().contains(Modifier.DEFAULT) || !shouldProxy(m)) continue;
-            if (InterceptedShapeFromElements.isShadowedDefault(bean, m, types)) continue;
-            if (!seen.add(memberKey(bean, m, types))) continue;
+        for (ExecutableElement m : forwardedClassMethods(bean, types, seen)) {
             if (!InterceptedShapeFromElements.memberSignatureNameableFrom(bean, m, proxyPackage, elements, types,
                     false)) {
                 unnameable.add(InterceptedShapeFromElements.memberSignature(bean, m, types));
             }
         }
+        // The defaults addDefaultMethods would forward through the bean class: not shadowed, and no
+        // class method with the same member signature.
+        for (ExecutableElement m : ElementFilter.methodsIn(elements.getAllMembers(bean))) {
+            if (isProxiedDefault(m)
+                    && !InterceptedShapeFromElements.isShadowedDefault(bean, m, types)
+                    && seen.add(memberKey(bean, m, types))
+                    && !InterceptedShapeFromElements.memberSignatureNameableFrom(bean, m, proxyPackage, elements,
+                            types, false)) {
+                unnameable.add(InterceptedShapeFromElements.memberSignature(bean, m, types));
+            }
+        }
         return unnameable;
+    }
+
+    /**
+     * The class methods a source proxy of {@code bean} forwards: the proxyable members of the bean
+     * and its superclasses (below {@code java.lang.Object}), inherited ones only when public, the
+     * most derived declaration of a member signature deciding. {@code seen} receives every member
+     * signature met, forwarded or not.
+     */
+    private static List<ExecutableElement> forwardedClassMethods(TypeElement bean, Types types,
+            java.util.Set<String> seen) {
+        var forwarded = new ArrayList<ExecutableElement>();
+        boolean declaring = true;
+        for (TypeElement c : classesBelowObject(bean)) {
+            for (ExecutableElement m : ElementFilter.methodsIn(c.getEnclosedElements())) {
+                if (seen.add(memberKey(bean, m, types)) && shouldProxy(m)
+                        && (declaring || m.getModifiers().contains(Modifier.PUBLIC))) {
+                    forwarded.add(m);
+                }
+            }
+            declaring = false;
+        }
+        return forwarded;
     }
 
     /**
@@ -172,6 +189,10 @@ public final class ClientProxyShapeFromElements {
         }
     }
 
+    /** What a shape is built from: the type proxied, where the proxy is rendered, and how. */
+    private record ShapeRequest(TypeElement bean, javax.lang.model.element.PackageElement proxyPackage,
+            Elements elements, Types types, Consumer<String> omitted, Subject subject, boolean asMember) {}
+
     private static ClientProxyShape from(TypeElement bean, javax.lang.model.element.PackageElement proxyPackage,
             Elements elements, Types types, Consumer<String> omitted, Subject subject, boolean asMember) {
         String beanBinaryName = elements.getBinaryName(bean).toString();
@@ -193,16 +214,11 @@ public final class ClientProxyShapeFromElements {
         // is keyed on that signature too: echo(String) overriding Base<String>.echo(T) is one
         // member, and the most derived declaration decides, a non-proxyable one included.
         var seen = new java.util.HashSet<String>();
-        boolean declaring = true;
-        for (TypeElement c = bean; c != null && !isObject(c); c = superclassOf(c), declaring = false) {
-            for (ExecutableElement m : ElementFilter.methodsIn(c.getEnclosedElements())) {
-                if (!seen.add(memberKey(bean, m, types))) continue;
-                if (!shouldProxy(m)) continue;
-                if (!declaring && !m.getModifiers().contains(Modifier.PUBLIC)) continue;
-                methods.add(methodShape(bean, m, asMember, false, elements, types));
-            }
+        for (ExecutableElement m : forwardedClassMethods(bean, types, seen)) {
+            methods.add(methodShape(bean, m, asMember, false, elements, types));
         }
-        addDefaultMethods(bean, asMember, proxyPackage, elements, types, seen, methods, omitted, subject);
+        addDefaultMethods(new ShapeRequest(bean, proxyPackage, elements, types, omitted, subject, asMember),
+                seen, methods);
 
         return new ClientProxyShape(beanBinaryName, superCtorParams(bean, elements, types), methods);
     }
@@ -215,60 +231,94 @@ public final class ClientProxyShapeFromElements {
      * {@code RuntimeClientProxyGenerator.shapeOf}, and {@link InterfaceProxySourceRenderer} for an
      * interface-typed proxy.
      */
-    private static void addDefaultMethods(TypeElement bean, boolean asMember,
-            javax.lang.model.element.PackageElement proxyPackage, Elements elements,
-            Types types, java.util.Set<String> seen, List<ProxyMethodShape> methods, Consumer<String> omitted,
-            Subject subject) {
+    private static void addDefaultMethods(ShapeRequest request, java.util.Set<String> seen,
+            List<ProxyMethodShape> methods) {
         // What the proxy already declares: whatever path finds a method, it is declared once.
         var declared = new java.util.HashSet<String>();
         for (var m : methods) declared.add(declaredSignature(m));
-        for (ExecutableElement m : ElementFilter.methodsIn(elements.getAllMembers(bean))) {
-            if (!m.getModifiers().contains(Modifier.DEFAULT) || !shouldProxy(m)) continue;
-            if (InterceptedShapeFromElements.isShadowedDefault(bean, m, types)) {
-                // A declaration the bean does not inherit (a private superclass method) holds the
-                // key, and a call typed by the bean class would resolve to it and be refused: forward
-                // through an interface instead (BUG-20261004-08), or not at all when none qualifies.
-                // The proxy must name the interface where it is rendered: the bean's package, or a
-                // producer's (#42) — where a package-private one of the bean's package is out of reach.
-                var owner = InterceptedShapeFromElements.accessibleDefaultOwner(bean, m, proxyPackage, elements, types);
-                if (owner == null) {
-                    omitted.accept(notForwarded(bean, m, subject, "no interface carrying it can be named from package "
-                            + proxyPackage.getQualifiedName(), SHADOWED_CALL));
-                    continue;
+        for (ExecutableElement m : ElementFilter.methodsIn(request.elements().getAllMembers(request.bean()))) {
+            if (isProxiedDefault(m)) {
+                ProxyMethodShape shape = InterceptedShapeFromElements.isShadowedDefault(request.bean(), m,
+                        request.types())
+                        ? shadowedDefaultShape(request, m)
+                        : unshadowedDefaultShape(request, m, seen);
+                if (shape != null && declared.add(declaredSignature(shape))) {
+                    methods.add(shape);
                 }
-                // Rendered as source, the override declares the member signature: when that names
-                // a type the proxy's package cannot (a package-private type argument of another
-                // package), the method is not forwarded either, rather than breaking the build.
-                if (asMember && !InterceptedShapeFromElements.memberSignatureNameableFrom(
-                        bean, m, proxyPackage, elements, types)) {
-                    omitted.accept(notForwarded(bean, m, subject,
-                            unnameableMember(bean, m, proxyPackage, types, subject), SHADOWED_CALL));
-                    continue;
-                }
-                var shape = methodShape(bean, m, asMember, false, elements, types);
-                if (!declared.add(declaredSignature(shape))) continue;
-                methods.add(new ProxyMethodShape(shape.name(), shape.returnType(), shape.params(),
-                        shape.thrownTypes(), false,
-                        TypeRef.ofReference(elements.getBinaryName(owner).toString(), 0,
-                                owner.getQualifiedName().toString())));
-                continue;
             }
-            // A class method that is the same member (PlainBase.tag(String) implementing
-            // Tagged<String>.tag(T)) was seen first and is the one the bean runs.
-            if (!seen.add(memberKey(bean, m, types))) continue;
-            // Rendered as source, the override declares the member signature, which may name a
-            // type the proxy's package cannot (label(Hidden) from Labeled<Hidden> bound in another
-            // package): not forwarded then — what a proxy did before defaults were forwarded at
-            // all (BUG-20261004-02) — rather than breaking the build.
-            if (asMember && !InterceptedShapeFromElements.memberSignatureNameableFrom(
-                    bean, m, proxyPackage, elements, types)) {
-                omitted.accept(notForwarded(bean, m, subject,
-                        unnameableMember(bean, m, proxyPackage, types, subject), UNSHADOWED_CALL));
-                continue;
-            }
-            var shape = methodShape(bean, m, asMember, false, elements, types); // interface methods are public
-            if (declared.add(declaredSignature(shape))) methods.add(shape);
         }
+    }
+
+    /** A {@code default} method the proxy may forward, by the same rules as a class method. */
+    private static boolean isProxiedDefault(ExecutableElement m) {
+        return m.getModifiers().contains(Modifier.DEFAULT) && shouldProxy(m);
+    }
+
+    /**
+     * The forward of a shadowed default {@code m}, or {@code null} (reported to the request's
+     * {@code omitted}) when the proxy cannot forward it.
+     */
+    private static ProxyMethodShape shadowedDefaultShape(ShapeRequest request, ExecutableElement m) {
+        var bean = request.bean();
+        var proxyPackage = request.proxyPackage();
+        // A declaration the bean does not inherit (a private superclass method) holds the
+        // key, and a call typed by the bean class would resolve to it and be refused: forward
+        // through an interface instead (BUG-20261004-08), or not at all when none qualifies.
+        // The proxy must name the interface where it is rendered: the bean's package, or a
+        // producer's (#42) — where a package-private one of the bean's package is out of reach.
+        var owner = InterceptedShapeFromElements.accessibleDefaultOwner(bean, m, proxyPackage, request.elements(),
+                request.types());
+        if (owner == null) {
+            request.omitted().accept(notForwarded(bean, m, request.subject(),
+                    "no interface carrying it can be named from package " + proxyPackage.getQualifiedName(),
+                    SHADOWED_CALL));
+            return null;
+        }
+        // Rendered as source, the override declares the member signature: when that names
+        // a type the proxy's package cannot (a package-private type argument of another
+        // package), the method is not forwarded either, rather than breaking the build.
+        if (!memberSignatureWritable(request, m)) {
+            request.omitted().accept(notForwarded(bean, m, request.subject(),
+                    unnameableMember(bean, m, proxyPackage, request.types(), request.subject()), SHADOWED_CALL));
+            return null;
+        }
+        var shape = methodShape(bean, m, request.asMember(), false, request.elements(), request.types());
+        return new ProxyMethodShape(shape.name(), shape.returnType(), shape.params(),
+                shape.thrownTypes(), false,
+                TypeRef.ofReference(request.elements().getBinaryName(owner).toString(), 0,
+                        owner.getQualifiedName().toString()));
+    }
+
+    /**
+     * The forward of a default {@code m} nothing shadows, or {@code null} when a class method is the
+     * same member or when the proxy cannot forward it (then reported to the request's {@code omitted}).
+     */
+    private static ProxyMethodShape unshadowedDefaultShape(ShapeRequest request, ExecutableElement m,
+            java.util.Set<String> seen) {
+        var bean = request.bean();
+        // A class method that is the same member (PlainBase.tag(String) implementing
+        // Tagged<String>.tag(T)) was seen first and is the one the bean runs.
+        if (!seen.add(memberKey(bean, m, request.types()))) {
+            return null;
+        }
+        // Rendered as source, the override declares the member signature, which may name a
+        // type the proxy's package cannot (label(Hidden) from Labeled<Hidden> bound in another
+        // package): not forwarded then — what a proxy did before defaults were forwarded at
+        // all (BUG-20261004-02) — rather than breaking the build.
+        if (!memberSignatureWritable(request, m)) {
+            request.omitted().accept(notForwarded(bean, m, request.subject(),
+                    unnameableMember(bean, m, request.proxyPackage(), request.types(), request.subject()),
+                    UNSHADOWED_CALL));
+            return null;
+        }
+        // Interface methods are public: plain forwarding.
+        return methodShape(bean, m, request.asMember(), false, request.elements(), request.types());
+    }
+
+    /** {@code true} unless the proxy is rendered as source and cannot write the member signature of {@code m}. */
+    private static boolean memberSignatureWritable(ShapeRequest request, ExecutableElement m) {
+        return !request.asMember() || InterceptedShapeFromElements.memberSignatureNameableFrom(
+                request.bean(), m, request.proxyPackage(), request.elements(), request.types());
     }
 
     /** The name and parameter types the proxy declares a method with. */
@@ -370,22 +420,29 @@ public final class ClientProxyShapeFromElements {
         var methods = new ArrayList<ProxyMethodShape>();
         var seen = new java.util.HashSet<String>();
         boolean declaring = true;
-        for (TypeElement c = bean; c != null && !isObject(c); c = superclassOf(c), declaring = false) {
+        for (TypeElement c : classesBelowObject(bean)) {
             boolean samePackage = elements.getPackageOf(c).getQualifiedName().contentEquals(beanPackage);
             for (ExecutableElement m : ElementFilter.methodsIn(c.getEnclosedElements())) {
-                if (!seen.add(memberKey(bean, m, types))) continue;
-                if (!shouldProxy(m)) continue;
-                var mods = m.getModifiers();
-                boolean isPublic = mods.contains(Modifier.PUBLIC);
-                if (!declaring && !isPublic && !mods.contains(Modifier.PROTECTED) && !samePackage) {
-                    continue; // package-private in another runtime package: not overridable from here
+                if (seen.add(memberKey(bean, m, types)) && shouldProxy(m)
+                        && colocatedForwardable(m, declaring, samePackage)) {
+                    boolean isPublic = m.getModifiers().contains(Modifier.PUBLIC);
+                    methods.add(methodShape(bean, m, false, !isPublic && !samePackage, elements, types));
                 }
-                methods.add(methodShape(bean, m, false, !isPublic && !samePackage, elements, types));
             }
+            declaring = false;
         }
-        addDefaultMethods(bean, false, elements.getPackageOf(bean), elements, types, seen, methods, omitted -> {},
-                Subject.BEAN);
+        addDefaultMethods(new ShapeRequest(bean, elements.getPackageOf(bean), elements, types, omitted -> {},
+                Subject.BEAN, false), seen, methods);
         return new ClientProxyShape(beanBinaryName, superCtorParams(bean, elements, types), methods);
+    }
+
+    /**
+     * Whether a placed proxy forwards {@code m}: every member except an inherited package-private one
+     * of another runtime package, which is not overridable from the bean's package.
+     */
+    private static boolean colocatedForwardable(ExecutableElement m, boolean declaring, boolean samePackage) {
+        var mods = m.getModifiers();
+        return declaring || samePackage || mods.contains(Modifier.PUBLIC) || mods.contains(Modifier.PROTECTED);
     }
 
     /** Mirrors the bytecode generators: skip static/private/final/abstract/{@code $$}. */
@@ -405,19 +462,24 @@ public final class ClientProxyShapeFromElements {
      * no-arg (or absent) constructor, meaning a plain {@code super()} call.
      */
     private static List<TypeRef> superCtorParams(TypeElement bean, Elements elements, Types types) {
+        ExecutableElement chosen = superConstructor(bean);
+        if (chosen == null) return List.of();
+        return typeRefs(chosen.getParameters(), elements, types);
+    }
+
+    /** The {@code (ProxyLink)} constructor if non-private, else the non-private one with the fewest parameters. */
+    private static ExecutableElement superConstructor(TypeElement bean) {
         ExecutableElement simplest = null;
         for (ExecutableElement c : ElementFilter.constructorsIn(bean.getEnclosedElements())) {
-            if (c.getModifiers().contains(Modifier.PRIVATE)) continue;
-            if (isProxyLinkConstructor(c)) {
-                simplest = c;
-                break;
+            boolean accessible = !c.getModifiers().contains(Modifier.PRIVATE);
+            if (accessible && isProxyLinkConstructor(c)) {
+                return c;
             }
-            if (simplest == null || c.getParameters().size() < simplest.getParameters().size()) {
+            if (accessible && (simplest == null || c.getParameters().size() < simplest.getParameters().size())) {
                 simplest = c;
             }
         }
-        if (simplest == null) return List.of();
-        return typeRefs(simplest.getParameters(), elements, types);
+        return simplest;
     }
 
     /** True when {@code c} is the opt-in {@code (ProxyLink)} client-proxy entry constructor. */
@@ -444,6 +506,12 @@ public final class ClientProxyShapeFromElements {
 
     private static TypeRef typeRef(TypeMirror tm, Elements elements, Types types) {
         return InterceptedShapeFromElements.typeRefOf(tm, elements, types, 0);
+    }
+
+    /** {@code type} and its superclasses, most derived first, up to but excluding {@code java.lang.Object}. */
+    private static List<TypeElement> classesBelowObject(TypeElement type) {
+        return Stream.iterate(type, c -> c != null && !isObject(c), ClientProxyShapeFromElements::superclassOf)
+                .toList();
     }
 
     /** {@code true} when {@code t} is {@code java.lang.Object} — the walk stops there. */

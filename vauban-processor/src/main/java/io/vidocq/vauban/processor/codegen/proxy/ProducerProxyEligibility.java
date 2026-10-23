@@ -78,6 +78,18 @@ public final class ProducerProxyEligibility {
 
     /** The verdict for {@code type}. */
     public static Reason of(TypeElement type) {
+        Reason verdict = classVerdict(type);
+        if (verdict == null) {
+            verdict = constructorVerdict(type);
+        }
+        if (verdict == null) {
+            verdict = methodsVerdict(type);
+        }
+        return verdict == null ? Reason.ELIGIBLE : verdict;
+    }
+
+    /** The verdict on the class itself (kind, modifiers, nesting), or {@code null} when it passes. */
+    private static Reason classVerdict(TypeElement type) {
         if (type.getKind() != ElementKind.CLASS) {
             return Reason.NOT_A_CLASS;
         }
@@ -97,23 +109,16 @@ public final class ProducerProxyEligibility {
         if (type.getNestingKind() != NestingKind.TOP_LEVEL && !mods.contains(Modifier.STATIC)) {
             return Reason.INACCESSIBLE_NESTED;
         }
+        return null;
+    }
 
-        // The constructor the shape will chain super() to must be reachable from the producer's
-        // package — i.e. public or protected (a subclass may invoke a protected super ctor).
-        // Mirror ClientProxyShapeFromElements.superCtorParams: (ProxyLink) first, else fewest params.
-        ExecutableElement chosen = null;
-        for (ExecutableElement c : ElementFilter.constructorsIn(type.getEnclosedElements())) {
-            if (c.getModifiers().contains(Modifier.PRIVATE)) {
-                continue;
-            }
-            if (ClientProxyShapeFromElements.isProxyLinkConstructor(c)) {
-                chosen = c;
-                break;
-            }
-            if (chosen == null || c.getParameters().size() < chosen.getParameters().size()) {
-                chosen = c;
-            }
-        }
+    /**
+     * The constructor the shape will chain super() to must be reachable from the producer's
+     * package — i.e. public or protected (a subclass may invoke a protected super ctor).
+     * Returns {@code null} when it is.
+     */
+    private static Reason constructorVerdict(TypeElement type) {
+        ExecutableElement chosen = superConstructor(type);
         if (chosen == null) {
             return Reason.NO_ACCESSIBLE_CTOR;
         }
@@ -121,42 +126,73 @@ public final class ProducerProxyEligibility {
         if (!cm.contains(Modifier.PUBLIC) && !cm.contains(Modifier.PROTECTED)) {
             return Reason.NO_ACCESSIBLE_CTOR;
         }
+        return null;
+    }
 
-        // Every client-visible overridable method must be forwardable across the package boundary,
-        // i.e. public. Non-static final methods make the type unproxyable per CDI 4.1 §3.10.
-        //
-        // The walk covers INHERITED methods too (up to, but excluding, java.lang.Object), mirroring
-        // the bytecode path: a method inherited from a superclass is neither declared here nor
-        // overridden by the proxy, so judging only declared methods would hand out a proxy that
-        // silently runs the superclass body against the proxy's own empty state.
+    /**
+     * Mirrors ClientProxyShapeFromElements.superCtorParams: the (ProxyLink) constructor first,
+     * else the non-private constructor with the fewest parameters; {@code null} when none.
+     */
+    private static ExecutableElement superConstructor(TypeElement type) {
+        ExecutableElement chosen = null;
+        for (ExecutableElement c : ElementFilter.constructorsIn(type.getEnclosedElements())) {
+            if (ClientProxyShapeFromElements.isProxyLinkConstructor(c)
+                    && !c.getModifiers().contains(Modifier.PRIVATE)) {
+                return c;
+            }
+            if (!c.getModifiers().contains(Modifier.PRIVATE)
+                    && (chosen == null || c.getParameters().size() < chosen.getParameters().size())) {
+                chosen = c;
+            }
+        }
+        return chosen;
+    }
+
+    /**
+     * Every client-visible overridable method must be forwardable across the package boundary,
+     * i.e. public. Non-static final methods make the type unproxyable per CDI 4.1 §3.10.
+     *
+     * <p>The walk covers INHERITED methods too (up to, but excluding, java.lang.Object), mirroring
+     * the bytecode path: a method inherited from a superclass is neither declared here nor
+     * overridden by the proxy, so judging only declared methods would hand out a proxy that
+     * silently runs the superclass body against the proxy's own empty state.
+     *
+     * @return the first obstacle met, or {@code null} when every method is forwardable
+     */
+    private static Reason methodsVerdict(TypeElement type) {
         var seen = new java.util.HashSet<String>();
         for (TypeElement c = type; c != null && !isObject(c); c = superclassOf(c)) {
             for (ExecutableElement m : ElementFilter.methodsIn(c.getEnclosedElements())) {
-                var mm = m.getModifiers();
-                if (mm.contains(Modifier.STATIC) || mm.contains(Modifier.PRIVATE)) {
-                    continue;
-                }
-                if (m.getSimpleName().toString().startsWith("$$")) {
-                    continue;
-                }
                 // A subclass override already judged wins: it is the one the proxy overrides.
-                if (!seen.add(signatureKey(m))) {
-                    continue;
-                }
-                if (mm.contains(Modifier.FINAL)) {
-                    return Reason.FINAL_VIRTUALS;
-                }
-                if (mm.contains(Modifier.ABSTRACT)) {
-                    continue; // the class is concrete; defensively ignore
-                }
-                if (!mm.contains(Modifier.PUBLIC)) {
-                    return mm.contains(Modifier.PROTECTED)
-                            ? Reason.PROTECTED_VIRTUALS
-                            : Reason.PACKAGE_PRIVATE_VIRTUALS;
+                Reason verdict = isClientVisible(m) && seen.add(signatureKey(m)) ? methodVerdict(m) : null;
+                if (verdict != null) {
+                    return verdict;
                 }
             }
         }
-        return Reason.ELIGIBLE;
+        return null;
+    }
+
+    /** A virtual method a client can call, other than the {@code $$} plumbing of a generated class. */
+    private static boolean isClientVisible(ExecutableElement m) {
+        var mm = m.getModifiers();
+        return !mm.contains(Modifier.STATIC) && !mm.contains(Modifier.PRIVATE)
+                && !m.getSimpleName().toString().startsWith("$$");
+    }
+
+    /** The obstacle one first-seen method raises, or {@code null} when it is forwardable. */
+    private static Reason methodVerdict(ExecutableElement m) {
+        var mm = m.getModifiers();
+        if (mm.contains(Modifier.FINAL)) {
+            return Reason.FINAL_VIRTUALS;
+        }
+        // A public method is forwardable. An abstract one is ignored defensively, the class being concrete.
+        if (mm.contains(Modifier.ABSTRACT) || mm.contains(Modifier.PUBLIC)) {
+            return null;
+        }
+        return mm.contains(Modifier.PROTECTED)
+                ? Reason.PROTECTED_VIRTUALS
+                : Reason.PACKAGE_PRIVATE_VIRTUALS;
     }
 
     /** {@code true} when {@code t} is {@code java.lang.Object} — the walk stops there. */
