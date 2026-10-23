@@ -92,33 +92,10 @@ public final class OpensApplier {
         var container = OpensApplier.class.getModule(); // io.vidocq.vauban.core
         var pending = new LinkedHashMap<Module, Set<String>>();
         for (var fqn : producedTypeFqns) {
-            Class<?> c;
-            try {
-                c = Class.forName(fqn, false, loader);
-            } catch (Throwable notHere) {
-                continue; // not loadable from this layer — leave it to the runtime
+            var c = loadable(fqn, loader);
+            if (c != null && needsOpening(c, fqn, container)) {
+                pending.computeIfAbsent(c.getModule(), m -> new LinkedHashSet<>()).add(c.getPackageName());
             }
-            var module = c.getModule();
-            if (module == null || !module.isNamed()) {
-                continue; // class path (unnamed module): already open to everyone
-            }
-            var pkg = c.getPackageName();
-            if (c.getClassLoader() instanceof io.vidocq.vauban.classloader.VaubanClassLoader vcl
-                    && vcl.placesClass(fqn + "_ClientProxy")
-                    && module.isExported(pkg, container)) {
-                // #42 Stage 4: the loader that owns the package defines the shipped proxy into
-                // it — nothing to open, and nothing the runtime needs to generate. The container
-                // still instantiates that proxy from io.vidocq.vauban.core, which needs the package
-                // exported to it: when it is not, the package stays pending so the warning (or the
-                // opt-in open) applies instead of a silent failure at the injection point.
-                LOG.log(System.Logger.Level.DEBUG, () -> fqn + ": proxy placed by the Vauban "
-                        + "class loader, no opens needed");
-                continue;
-            }
-            if (module.isOpen(pkg, container)) {
-                continue; // already opened (by module-info or a previous apply)
-            }
-            pending.computeIfAbsent(module, m -> new LinkedHashSet<>()).add(pkg);
         }
         if (pending.isEmpty()) {
             return;
@@ -149,6 +126,11 @@ public final class OpensApplier {
                     + "fully public so the proxy is built at compile time.");
             return;
         }
+        openPackages(inst, pending, container);
+    }
+
+    /** Opens each pending package to the container through {@code inst}, module by module. */
+    private static void openPackages(Instrumentation inst, Map<Module, Set<String>> pending, Module container) {
         for (var entry : pending.entrySet()) {
             var module = entry.getKey();
             if (!inst.isModifiableModule(module)) {
@@ -168,6 +150,37 @@ public final class OpensApplier {
         }
     }
 
+    /** The produced type {@code fqn}, or {@code null} when it is not loadable from this layer — left to the runtime. */
+    private static Class<?> loadable(String fqn, ClassLoader loader) {
+        try {
+            return Class.forName(fqn, false, loader);
+        } catch (ClassNotFoundException | LinkageError | RuntimeException _) {
+            return null;
+        }
+    }
+
+    /** Whether the package of the produced type {@code c} still has to be opened to the container. */
+    private static boolean needsOpening(Class<?> c, String fqn, Module container) {
+        var module = c.getModule();
+        if (module == null || !module.isNamed()) {
+            return false; // class path (unnamed module): already open to everyone
+        }
+        var pkg = c.getPackageName();
+        if (c.getClassLoader() instanceof io.vidocq.vauban.classloader.VaubanClassLoader vcl
+                && vcl.placesClass(fqn + "_ClientProxy")
+                && module.isExported(pkg, container)) {
+            // #42 Stage 4: the loader that owns the package defines the shipped proxy into
+            // it — nothing to open, and nothing the runtime needs to generate. The container
+            // still instantiates that proxy from io.vidocq.vauban.core, which needs the package
+            // exported to it: when it is not, the package stays pending so the warning (or the
+            // opt-in open) applies instead of a silent failure at the injection point.
+            LOG.log(System.Logger.Level.DEBUG, () -> fqn + ": proxy placed by the Vauban "
+                    + "class loader, no opens needed");
+            return false;
+        }
+        return !module.isOpen(pkg, container); // already opened (by module-info or a previous apply)
+    }
+
     private static Instrumentation instrumentation() {
         var inst = AgentAccess.instrumentation();
         if (inst != null) {
@@ -176,7 +189,7 @@ public final class OpensApplier {
         // Best-effort self-attach through the weaver's AttachBack helper (no weaving plan).
         try {
             io.vidocq.vauban.core.weaving.LoadTimeWeaving.ensureAgentAttached();
-        } catch (Throwable ignore) {
+        } catch (RuntimeException | LinkageError _) {
             // attach unavailable (e.g. jdk.attach missing) — fall through, warn above
         }
         return AgentAccess.instrumentation();
