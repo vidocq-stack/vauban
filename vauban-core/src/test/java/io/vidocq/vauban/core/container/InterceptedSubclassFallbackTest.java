@@ -55,7 +55,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * When the {@code $$Intercepted} subclass of a bean cannot be defined the regular way, the container falls back on a
  * second definition and a factory that creates the subclass through its no-arg constructor, after the
  * {@code @AroundConstruct} chain when there is one (an {@code @AroundConstruct} chain that proceeds is not covered
- * here: on this path it recurses into the factory without a creational context, a defect reported separately). A definition that fails again, or fails with a linkage error, is a
+ * here: on this path it recurses into the factory without a creational context, a defect reported separately). A
+ * definition that fails again, or fails with a linkage error, is a
  * deployment or definition problem. Each scenario uses its own bean class: a subclass, once defined, stays defined.
  */
 @DisplayName("InterceptorBeanWrapper: the fallback definition of an intercepted subclass")

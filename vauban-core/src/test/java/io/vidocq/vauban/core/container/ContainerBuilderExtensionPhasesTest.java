@@ -162,6 +162,68 @@ class ContainerBuilderExtensionPhasesTest {
         }
     }
 
+    /** Defined again by {@link UnreadableClassLoader}, whose class files cannot be read back. */
+    public static class Isolated {
+    }
+
+    /** Defines {@link Isolated} itself; every resource it hands out fails on the first read. */
+    private static final class UnreadableClassLoader extends ClassLoader {
+        UnreadableClassLoader() {
+            super(ContainerBuilderExtensionPhasesTest.class.getClassLoader());
+        }
+
+        @Override
+        protected Class<?> loadClass(String name, boolean resolve) throws ClassNotFoundException {
+            if (!name.equals(Isolated.class.getName())) {
+                return super.loadClass(name, resolve);
+            }
+            synchronized (getClassLoadingLock(name)) {
+                var loaded = findLoadedClass(name);
+                if (loaded != null) {
+                    return loaded;
+                }
+                try (var in = getParent().getResourceAsStream(name.replace('.', '/') + ".class")) {
+                    var bytes = in.readAllBytes();
+                    return defineClass(name, bytes, 0, bytes.length);
+                } catch (IOException e) {
+                    throw new ClassNotFoundException(name, e);
+                }
+            }
+        }
+
+        @Override
+        public java.io.InputStream getResourceAsStream(String name) {
+            return new java.io.InputStream() {
+                @Override
+                public int read() throws IOException {
+                    throw new IOException("cannot read " + name);
+                }
+            };
+        }
+    }
+
+    @Test
+    @DisplayName("a bean class whose class file cannot be read fails the scan")
+    void unreadableClassFile() throws ClassNotFoundException {
+        var isolated = Class.forName(Isolated.class.getName(), false, new UnreadableClassLoader());
+        var builder = VaubanContainer.builder().addBeanClass(isolated);
+
+        var thrown = assertThrows(java.io.UncheckedIOException.class, builder::build);
+
+        assertTrue(thrown.getMessage().startsWith("Failed to scan class"), thrown.getMessage());
+    }
+
+    @Test
+    @DisplayName("a bean class with no class file, such as a dynamic proxy, is not indexed and the deployment boots")
+    void classWithoutClassFile() {
+        var proxyClass = java.lang.reflect.Proxy.newProxyInstance(getClass().getClassLoader(),
+                new Class<?>[]{Runnable.class}, (proxy, method, args) -> null).getClass();
+
+        try (var container = VaubanContainer.builder().addBeanClass(proxyClass).addBeanClass(Plain.class).build()) {
+            assertEquals("plain", container.select(Plain.class).id());
+        }
+    }
+
     @Test
     @DisplayName("extensions failing a phase: the first exception is the cause, the others are suppressed")
     void deploymentErrorCauses() {

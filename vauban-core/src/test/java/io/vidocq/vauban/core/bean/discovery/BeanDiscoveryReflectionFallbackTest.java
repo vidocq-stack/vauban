@@ -120,6 +120,51 @@ class BeanDiscoveryReflectionFallbackTest {
     public static class TypedHost extends ArrayList<String> {
     }
 
+    @jakarta.enterprise.inject.Stereotype
+    @jakarta.enterprise.inject.Alternative
+    @Priority(3)
+    @Retention(RetentionPolicy.RUNTIME)
+    public @interface RankedAlternative {
+    }
+
+    @jakarta.enterprise.inject.Stereotype
+    @Retention(RetentionPolicy.RUNTIME)
+    public @interface PlainStereotype {
+    }
+
+    @jakarta.enterprise.inject.Stereotype
+    @Retention(RetentionPolicy.RUNTIME)
+    public @interface UnindexedStereotype {
+    }
+
+    @jakarta.enterprise.inject.Stereotype
+    @jakarta.inject.Named
+    @Retention(RetentionPolicy.RUNTIME)
+    public @interface NamingStereotype {
+    }
+
+    @jakarta.enterprise.context.Dependent
+    public static class StereotypedProducers {
+        @Produces
+        @RankedAlternative
+        public String ranked() {
+            return "ranked";
+        }
+
+        @Produces
+        @PlainStereotype
+        @UnindexedStereotype
+        public Integer plain() {
+            return 1;
+        }
+
+        @Produces
+        @NamingStereotype
+        public Long named() {
+            return 2L;
+        }
+    }
+
     private static ClassInfo scan(Class<?> type) {
         var resource = type.getName().replace('.', '/') + ".class";
         try (var in = type.getClassLoader().getResourceAsStream(resource)) {
@@ -334,5 +379,39 @@ class BeanDiscoveryReflectionFallbackTest {
                 .filter(b -> b.kind() == BeanDescriptor.BeanKind.PRODUCER_METHOD).findFirst().orElseThrow();
 
         assertNull(producer.name());
+    }
+
+    @Test
+    @DisplayName("without a thread context class loader, deployment classes load through the caller's loader")
+    void noContextClassLoader() throws ClassNotFoundException {
+        var thread = Thread.currentThread();
+        var previous = thread.getContextClassLoader();
+        thread.setContextClassLoader(null);
+        try {
+            assertEquals(String.class, DeploymentClasses.load("java.lang.String"));
+        } finally {
+            thread.setContextClassLoader(previous);
+        }
+    }
+
+    @Test
+    @DisplayName("a producer's stereotypes make it an alternative, give it a priority, or name it")
+    void producerStereotypes() {
+        var beans = discovery(scan(StereotypedProducers.class), scan(RankedAlternative.class),
+                scan(PlainStereotype.class)).discoverBeans();
+
+        var ranked = producerNamed(beans, "ranked");
+        var plain = producerNamed(beans, "plain");
+        var named = producerNamed(beans, "named");
+        assertTrue(ranked.isAlternative());
+        assertEquals(3, ranked.priority());
+        assertFalse(plain.isAlternative());
+        assertEquals(0, plain.priority());
+        assertNull(plain.name());
+        assertEquals("named", named.name());
+    }
+
+    private static BeanDescriptor producerNamed(List<BeanDescriptor> beans, String method) {
+        return beans.stream().filter(b -> b.id().value().endsWith("#" + method)).findFirst().orElseThrow();
     }
 }

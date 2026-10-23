@@ -150,6 +150,21 @@ class StereotypeAndInterceptorReflectionTest {
         }
     }
 
+    @Watched
+    @Interceptor
+    @Priority(7)
+    public static class CompleteInterceptor extends BaseInterceptor {
+        @AroundInvoke
+        public Object around(InvocationContext context) throws Exception {
+            return context.proceed();
+        }
+
+        @jakarta.interceptor.AroundConstruct
+        public Object construct(InvocationContext context) throws Exception {
+            return context.proceed();
+        }
+    }
+
     private static ClassInfo scan(Class<?> type) {
         var resource = type.getName().replace('.', '/') + ".class";
         try (var in = type.getClassLoader().getResourceAsStream(resource)) {
@@ -221,5 +236,22 @@ class StereotypeAndInterceptorReflectionTest {
                 "a binding an extension declared is read by reflection");
         assertFalse(interceptor.bindings().contains(DotName.of(Alternative.class.getName())),
                 "a built-in CDI annotation read by reflection is never a binding");
+    }
+
+    @Test
+    @DisplayName("once both around methods are found on the class, its superclasses are not read")
+    void completeAroundMethods() {
+        var partial = new ClassInfo(DotName.of(CompleteInterceptor.class.getName()), null, List.of(), 0x0001,
+                List.of(), List.of(), List.of(new AnnotationInfo(DotName.of(Interceptor.class.getName()), Map.of()),
+                new AnnotationInfo(DotName.of(Watched.class.getName()), Map.of()),
+                new AnnotationInfo(DotName.of(Priority.class.getName()),
+                        Map.of("value", new io.vidocq.vauban.indexer.model.AnnotationValue.IntVal(7)))),
+                ClassInfo.ClassKind.CLASS);
+
+        var interceptor = discovery(partial).discoverInterceptors().getFirst();
+
+        assertEquals("around", interceptor.aroundInvokeMethod());
+        assertEquals("construct", interceptor.aroundConstructMethod());
+        assertEquals(7, interceptor.priority());
     }
 }

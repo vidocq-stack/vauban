@@ -331,6 +331,55 @@ class InterceptorInstanceCreationTest {
         }
     }
 
+    @InterceptorBinding
+    @Retention(RetentionPolicy.RUNTIME)
+    @Target({ElementType.TYPE, ElementType.CONSTRUCTOR})
+    public @interface Refused {
+    }
+
+    /** Fails every construction it intercepts with a checked exception. */
+    @Refused
+    @Interceptor
+    @Priority(Interceptor.Priority.APPLICATION)
+    public static class RefusingInterceptor {
+        @jakarta.interceptor.AroundConstruct
+        public Object construct(InvocationContext context) throws Exception {
+            throw new java.io.IOException("construction refused");
+        }
+    }
+
+    @Refused
+    @Dependent
+    public static class RefusedService {
+    }
+
+    /** Intercepted, and built through an {@code @Inject} constructor whose parameter the descriptor describes. */
+    @Dependent
+    public static class TimedService {
+        private final Clock clock;
+
+        @Inject
+        public TimedService(Clock clock) {
+            this.clock = clock;
+        }
+
+        @Counted
+        public String time() {
+            return clock.now();
+        }
+    }
+
+    public static class PlainBase {
+        public String base() {
+            return "base";
+        }
+    }
+
+    /** Neither bound nor intercepting itself, in a deployment with no interceptor. */
+    @Dependent
+    public static class PlainChild extends PlainBase {
+    }
+
     /** Intercepted by its own {@code @AroundInvoke} method, in a deployment with no interceptor. */
     @Dependent
     public static class SelfIntercepted {
@@ -479,6 +528,46 @@ class InterceptorInstanceCreationTest {
             assertNotNull(withConstructContext);
             assertThrows(RuntimeException.class,
                     () -> ((io.vidocq.vauban.core.BeanFactory<Object>) factory).create(tooManyArguments));
+        }
+    }
+
+    @Test
+    @DisplayName("an @AroundConstruct interceptor that throws a checked exception fails with a CreationException")
+    void aroundConstructCheckedException() {
+        try (var container = VaubanContainer.builder()
+                .addBeanClass(RefusingInterceptor.class)
+                .addBeanClass(RefusedService.class)
+                .build()) {
+
+            var thrown = assertThrows(CreationException.class, () -> container.select(RefusedService.class));
+
+            assertTrue(causeChain(thrown).contains("construction refused"), causeChain(thrown));
+        }
+    }
+
+    @Test
+    @DisplayName("an intercepted bean gets its @Inject constructor arguments")
+    void interceptedConstructorInjection() {
+        try (var container = VaubanContainer.builder()
+                .addBeanClass(PrefixLabel.class)
+                .addBeanClass(Clock.class)
+                .addBeanClass(CountingInterceptor.class)
+                .addBeanClass(TimedService.class)
+                .build()) {
+
+            assertEquals("now", container.select(TimedService.class).time());
+            assertEquals(List.of("prefix@now:time"), CALLS);
+        }
+    }
+
+    @Test
+    @DisplayName("a bean with nothing to intercept, in a deployment without interceptors, is left as it is")
+    void nothingToIntercept() {
+        try (var container = VaubanContainer.builder().addBeanClass(PlainChild.class).build()) {
+            var child = container.select(PlainChild.class);
+
+            assertEquals("base", child.base());
+            assertEquals(PlainChild.class, child.getClass());
         }
     }
 

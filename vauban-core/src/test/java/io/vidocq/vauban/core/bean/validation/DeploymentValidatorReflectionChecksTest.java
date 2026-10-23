@@ -145,12 +145,15 @@ class DeploymentValidatorReflectionChecksTest {
     void normalScopedPrimitiveProducer() {
         var indexNamed = bean("Host#count", WithHarmlessFinals.class, BeanDescriptor.BeanKind.PRODUCER_METHOD,
                 ScopeInfo.APPLICATION, Set.of(cls("int"), cls(OBJECT)), List.of(), Set.of());
+        var primitive = bean("Host#size", WithHarmlessFinals.class, BeanDescriptor.BeanKind.PRODUCER_METHOD,
+                ScopeInfo.APPLICATION, Set.of(new TypeInfo.PrimitiveType(TypeInfo.PrimitiveType.Kind.LONG)),
+                List.of(), Set.of());
         var plain = bean("Host#text", WithHarmlessFinals.class, BeanDescriptor.BeanKind.PRODUCER_FIELD,
                 ScopeInfo.APPLICATION, Set.of(cls("java.lang.String")), List.of(), Set.of());
 
-        var messages = messages(List.of(indexNamed, plain));
+        var messages = messages(List.of(indexNamed, primitive, plain));
 
-        assertEquals(1, messages.size(), messages::toString);
+        assertEquals(2, messages.size(), messages::toString);
         assertTrue(messages.getFirst().contains("has primitive return type"), messages::toString);
     }
 
@@ -169,7 +172,7 @@ class DeploymentValidatorReflectionChecksTest {
     }
 
     @Test
-    @DisplayName("interceptors, normal-scoped beans and unloadable classes are not checked as intercepted classes")
+    @DisplayName("interceptors, normal-scoped beans, producers and unloadable classes are not checked as intercepted classes")
     void interceptedChecksSkipped() {
         var bindings = Set.of(DotName.of(BINDING));
         var missing = new BeanDescriptor(new BeanId(MISSING_CLASS), DotName.of(MISSING_CLASS),
@@ -177,9 +180,13 @@ class DeploymentValidatorReflectionChecksTest {
                 Set.of(QualifierInstance.DEFAULT, QualifierInstance.ANY), ScopeInfo.DEPENDENT, false, 0, List.of(),
                 null, bindings);
 
+        var producer = bean("Host#bound", WithFinalMethod.class, BeanDescriptor.BeanKind.PRODUCER_METHOD,
+                ScopeInfo.DEPENDENT, Set.of(cls("java.lang.String")), List.of(), bindings);
+
         var messages = messages(List.of(
                 managed(SomeInterceptor.class, ScopeInfo.DEPENDENT, bindings),
                 managed(WithFinalMethod.class, ScopeInfo.REQUEST, bindings),
+                producer,
                 missing));
 
         assertEquals(List.of(), messages);
@@ -213,14 +220,15 @@ class DeploymentValidatorReflectionChecksTest {
     }
 
     @Test
-    @DisplayName("a normal-scoped bean that is final, has only a private constructor, or a final method cannot be proxied")
+    @DisplayName("a normal-scoped bean that is final, has no usable no-arg constructor, or a final method cannot be proxied")
     void unproxyableNormalScopedBeans() {
         var messages = messages(List.of(
                 injecting(FinalClass.class), managed(FinalClass.class, ScopeInfo.APPLICATION, Set.of()),
                 injecting(PrivateConstructor.class), managed(PrivateConstructor.class, ScopeInfo.APPLICATION, Set.of()),
-                injecting(WithFinalMethod.class), managed(WithFinalMethod.class, ScopeInfo.APPLICATION, Set.of())));
+                injecting(WithFinalMethod.class), managed(WithFinalMethod.class, ScopeInfo.APPLICATION, Set.of()),
+                injecting(ArgumentConstructor.class), managed(ArgumentConstructor.class, ScopeInfo.APPLICATION, Set.of())));
 
-        assertEquals(3, messages.size(), messages::toString);
+        assertEquals(4, messages.size(), messages::toString);
         assertTrue(messages.stream().anyMatch(m -> m.contains("cannot be a final class")), messages::toString);
         assertTrue(messages.stream().anyMatch(m -> m.contains("has final method fixed")), messages::toString);
     }
@@ -240,6 +248,8 @@ class DeploymentValidatorReflectionChecksTest {
                 Arguments.of(new TypeInfo.WildcardType(cls("java.lang.String"), null), true),
                 Arguments.of(new TypeInfo.WildcardType(cls(OBJECT), cls("java.lang.String")), true),
                 Arguments.of(cls("java.lang.String"), true),
+                Arguments.of(new TypeInfo.WildcardType(
+                        new TypeInfo.ParameterizedType(DotName.of("java.util.List"), List.of(cls(OBJECT))), null), true),
                 Arguments.of(
                         new TypeInfo.ParameterizedType(DotName.of("java.util.List"), List.of(cls(OBJECT))), true));
     }
