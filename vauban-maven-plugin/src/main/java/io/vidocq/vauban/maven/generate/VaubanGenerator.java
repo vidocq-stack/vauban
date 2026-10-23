@@ -928,18 +928,26 @@ public final class VaubanGenerator {
         var bceClasses = new ArrayList<Class<?>>();
         var providers = java.util.ServiceLoader.load(
                 jakarta.enterprise.inject.build.compatible.spi.BuildCompatibleExtension.class, cl).iterator();
-        while (true) {
+        String lastError = null;
+        var more = true;
+        while (more) {
             try {
-                if (!providers.hasNext()) {
-                    return bceClasses;
+                more = providers.hasNext();
+                if (more) {
+                    bceClasses.add(providers.next().getClass());
                 }
-                bceClasses.add(providers.next().getClass());
             } catch (ServiceConfigurationError | LinkageError e) {
-                // ServiceLoader goes on with the next provider after an error
-                warnings.add("Skipping a build compatible extension listed in " + BCE_SERVICE_PATH + ": "
-                        + e.getMessage());
+                // ServiceLoader goes on with the next provider after an error; the same error twice in a row means
+                // it cannot move past it (the service files themselves cannot be listed)
+                more = !java.util.Objects.equals(lastError, e.getMessage());
+                if (more) {
+                    lastError = e.getMessage();
+                    warnings.add("Skipping a build compatible extension listed in " + BCE_SERVICE_PATH + ": "
+                            + lastError);
+                }
             }
         }
+        return bceClasses;
     }
 
     private static List<Class<?>> loadArchiveClasses(

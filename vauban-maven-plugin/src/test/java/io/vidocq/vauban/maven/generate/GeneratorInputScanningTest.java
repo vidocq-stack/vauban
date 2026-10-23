@@ -207,6 +207,30 @@ class GeneratorInputScanningTest {
     }
 
     @Test
+    void serviceFilesThatCannotBeListedStopTheDiscoveryWithOneWarning() throws IOException {
+        var lib = jar(tmp.resolve("deps.jar"), Map.of("io/vidocq/vauban/maven/generate/deps/Tally.class",
+                compiled(Tally.class)));
+        var output = tmp.resolve("output");
+        // ServiceLoader throws the same error on every hasNext() when the service files cannot be listed.
+        var unlistable = new ClassLoader(getClass().getClassLoader()) {
+            @Override
+            public java.util.Enumeration<URL> getResources(String name) throws IOException {
+                if (name.equals(EXTENSION_SERVICE)) {
+                    throw new IOException("service files cannot be listed");
+                }
+                return super.getResources(name);
+            }
+        };
+
+        var result = org.junit.jupiter.api.Assertions.assertTimeoutPreemptively(java.time.Duration.ofSeconds(20),
+                () -> VaubanGenerator.generate(new VaubanGenerator.Config(List.of(lib), null, output, unlistable)));
+
+        assertEquals(1, result.warnings().stream().filter(warning -> warning.contains(EXTENSION_SERVICE)).count(),
+                result.warnings().toString());
+        assertEquals(List.of(Tally.class.getName()), result.discoveredBeanClasses());
+    }
+
+    @Test
     void aScannedJarGetsAProviderForItsTopLevelManagedBeansOnly() throws IOException {
         var entries = new LinkedHashMap<String, byte[]>();
         entries.put("io/vidocq/vauban/maven/generate/deps/Counter.class", compiled(Counter.class));
