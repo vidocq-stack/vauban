@@ -123,11 +123,12 @@ public final class ManagedBean<T> implements Bean<T> {
     }
 
     /**
-     * The creational context an intercepted bean is created with: the caller's, or one of the bean's own when the
-     * caller passes none (VAU-LIFE-002), as its intercepted factory does (VAU-INT-008). Its factory and its
-     * {@code @PostConstruct} step then share it, so one interceptor instance per interceptor class, a dependent object
-     * of the bean instance (CDI 4.1 §6.4.1), serves its construction, its lifecycle callbacks and its methods. Only an
-     * intercepted bean gets an interceptor manager.
+     * The creational context an intercepted bean is created or destroyed with: the caller's, or one of the bean's own
+     * when the caller passes none (VAU-LIFE-002, VAU-LIFE-003), as its intercepted factory does (VAU-INT-008). At
+     * creation, its factory and its {@code @PostConstruct} step then share it, so one interceptor instance per
+     * interceptor class, a dependent object of the bean instance (CDI 4.1 §6.4.1), serves its construction, its
+     * lifecycle callbacks and its methods. At destruction, its {@code @PreDestroy} interceptors are resolved from it,
+     * then released with it. Only an intercepted bean gets an interceptor manager.
      */
     private CreationalContext<T> contextOfItsOwnIfIntercepted(CreationalContext<T> callerContext) {
         if (callerContext != null || interceptorManager == null) {
@@ -137,8 +138,9 @@ public final class ManagedBean<T> implements Bean<T> {
     }
 
     @Override
-    public void destroy(T instance, CreationalContext<T> creationalContext) {
+    public void destroy(T instance, CreationalContext<T> callerContext) {
         if (instance == null) return;
+        var creationalContext = contextOfItsOwnIfIntercepted(callerContext);
 
         if (destroyer != null) {
             try {

@@ -40,6 +40,37 @@ index. A class outside the index (a JDK type reached through `ClassType.declarat
 `BceClassTypeParametersTest.typeParametersAreExposedWithTheirBounds` (vauban-core),
 `ClassFileScannerTest$TypeParameters` and `ClassInfoTest` (vauban-indexer), `ElementScannerTypeParametersTest` (vauban-processor: the
 processor and the bytecode scan agree).
+## VAU-LIFE-003 — `Bean#destroy(instance, null)` of an intercepted bean silently skips `@PreDestroy`
+- **Date**: 2026-10-24 — **Status**: FIXED (fix/vauban-tickets, vauban#203, Vidocq/vidocq#285)
+- **Severity**: low (only a direct `Bean#destroy` with no creational context; the container always passes one)
+
+### Symptom
+`Bean#destroy(instance, null)` on a bean bound to a `@PreDestroy` interceptor returned without error, but neither the
+interceptor's `@PreDestroy` method nor the bean's own `@PreDestroy` method ran. Found while fixing vauban#200.
+
+### Repro
+`InterceptedBeanDestroyWithoutCreationalContextTest` (vauban-core): a bean whose interceptor and class both declare a
+`@PreDestroy` method, destroyed with `Bean#destroy(instance, null)`; no callback ran before the fix (`expected:
+<[pre-destroy, target-pre-destroy]> but was: <[]>`).
+
+### Cause
+`ManagedBean.destroy` handed the null context on to its `@PreDestroy` step. With no context,
+`InterceptorManager.resolveLifecycleChain` cannot resolve the interceptor instances and puts an
+`InterceptorInvocation(null, null)` placeholder in the chain. The invocation context failed on it before reaching any
+callback, and the `catch` meant for exceptions thrown by `@PreDestroy` callbacks swallowed that failure too.
+
+### Fix
+`ManagedBean.destroy` of an intercepted bean now creates a creational context of the bean's own when the caller passes
+none, as `ManagedBean.create` does since VAU-LIFE-002. The `@PreDestroy` interceptors are resolved from it, the
+callbacks run through them (CDI 4.1 §7.3.1 and §5.5.3, Jakarta Interceptors 2.2), and the context is released
+afterwards with the interceptor instances it holds. An exception thrown by a `@PreDestroy` callback is still caught and
+not reported, as CDI 4.1 §6.1 requires ("If an exception occurs while destroying an instance, the exception must be
+caught by the destroy() method"; Jakarta Annotations 3.0 `@PreDestroy`: "it is ignored by the container"). Tests:
+`InterceptedBeanDestroyWithoutCreationalContextTest.preDestroyRunsThroughItsInterceptor` and
+`.failingPreDestroyIsIgnored` (vauban-core).
+
+---
+
 ## VAU-LIFE-002 — `Bean#create(null)` of an intercepted bean fails in its `@PostConstruct` step
 - **Date**: 2026-10-24 — **Status**: FIXED (fix/vauban-tickets, vauban#200, Vidocq/vidocq#285)
 - **Severity**: low (only a direct `Bean#create` with no creational context; the container always passes one)
