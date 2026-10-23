@@ -159,8 +159,12 @@ public class VaubanProcessor extends AbstractProcessor {
      */
     private final Set<DotName> externalClassNames = new LinkedHashSet<>();
 
-    /** Visible for testing — allows injecting BCE classes without ServiceLoader. */
-    public List<Class<?>> overrideBceClasses;
+    private List<Class<?>> overrideBceClasses;
+
+    /** Visible for testing — injects BCE classes without ServiceLoader. */
+    public void overrideBceClasses(List<Class<?>> bceClasses) {
+        this.overrideBceClasses = bceClasses;
+    }
 
     /** Visible for testing — returns the set of external class names after processing. */
     public Set<DotName> getExternalClassNames() {

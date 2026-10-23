@@ -181,23 +181,8 @@ public final class ComponentProviderGenerator {
             List<FieldInject> fieldInjects, List<MethodInvoke> methodInvokes,
             List<String> clientProxyFqns, List<ProducerProxy> producerProxies,
             AnnotationArtefacts.Rendered annotations) {
-        return generateFrom(packageName, components, fieldInjects, methodInvokes, clientProxyFqns,
-                producerProxies, annotations, java.util.Set.of());
-    }
-
-    /**
-     * Full overload, {@code bytecodeClasses} holding the binary names of the generated subclasses and
-     * proxies the processor emitted as bytecode, because Java source cannot declare one of their
-     * overrides (BUG-20261004-09). It emits them in the last round, so javac never reads them back and
-     * this source cannot name them: it instantiates them through its own {@code MethodHandles.lookup()}
-     * instead — the provider's full-privilege lookup in its own package, so still no {@code opens}.
-     */
-    public static Generated generateFrom(String packageName, List<Component> components,
-            List<FieldInject> fieldInjects, List<MethodInvoke> methodInvokes,
-            List<String> clientProxyFqns, List<ProducerProxy> producerProxies,
-            AnnotationArtefacts.Rendered annotations, java.util.Set<String> bytecodeClasses) {
         return generateFrom(packageName, SIMPLE_NAME, new Contents(components, fieldInjects, methodInvokes,
-                clientProxyFqns, producerProxies, annotations, bytecodeClasses));
+                clientProxyFqns, producerProxies, annotations, java.util.Set.of()));
     }
 
     /**
@@ -209,13 +194,16 @@ public final class ComponentProviderGenerator {
      * @param clientProxyFqns the {@code <Bean>_ClientProxy} classes the provider instantiates in-module
      * @param producerProxies the build-time proxies of normal-scoped producers (issue #42)
      * @param annotations     what this package's own annotation types declare (vauban#70)
-     * @param bytecodeClasses the binary names of the classes the processor emitted as bytecode
+     * @param bytecodeClasses the binary names of the generated subclasses and proxies the processor emitted as
+     *                        bytecode, because Java source cannot declare one of their overrides
+     *                        (BUG-20261004-09); the provider instantiates them through its own
+     *                        {@code MethodHandles.lookup()}, so still no {@code opens}
      */
     public record Contents(List<Component> components, List<FieldInject> fieldInjects,
             List<MethodInvoke> methodInvokes, List<String> clientProxyFqns, List<ProducerProxy> producerProxies,
             AnnotationArtefacts.Rendered annotations, java.util.Set<String> bytecodeClasses) {}
 
-    /** {@link #generateFrom(String, List, List, List, List, List, AnnotationArtefacts.Rendered, java.util.Set)}
+    /** The provider of {@code contents}, generated in {@code packageName}
      * under {@code simpleName}: {@link #SIMPLE_NAME}, or {@link #TEST_SIMPLE_NAME} for a test compilation. */
     public static Generated generateFrom(String packageName, String simpleName, Contents contents) {
         var className = packageName.isEmpty() ? simpleName : packageName + "." + simpleName;

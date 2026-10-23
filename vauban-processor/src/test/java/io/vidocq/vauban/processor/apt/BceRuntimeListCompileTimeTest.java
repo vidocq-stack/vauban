@@ -404,7 +404,7 @@ class BceRuntimeListCompileTimeTest {
 
         try (var fileManager = compiler.getStandardFileManager(diagnostics, null, null)) {
             var processor = new VaubanProcessor();
-            processor.overrideBceClasses = bceClasses;
+            processor.overrideBceClasses(bceClasses);
 
             var task = compiler.getTask(null, fileManager, diagnostics, options, null, sourceFiles);
             task.setProcessors(List.of(processor));

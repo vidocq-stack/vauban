@@ -35,7 +35,7 @@ final class ReflectionMethodInfo implements jakarta.enterprise.lang.model.declar
 
     private final Method method;
 
-    ReflectionMethodInfo(Method method, Class<?> declaringClass) {
+    ReflectionMethodInfo(Method method) {
         this.method = method;
     }
 

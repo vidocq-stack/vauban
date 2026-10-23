@@ -220,15 +220,16 @@ class ComponentProviderGeneratorTest {
                 "lib.Thing_ClientProxy", "app.Thing$$1f_ClientProxy"));
         var plain = ComponentProviderGenerator.generateFrom("app", components, List.of(), List.of(), proxies,
                 producerProxies, new AnnotationArtefacts.Rendered("", ""));
-        assertEquals(plain.source(), ComponentProviderGenerator.generateFrom("app", components, List.of(), List.of(),
-                proxies, producerProxies, new AnnotationArtefacts.Rendered("", ""), java.util.Set.of()).source(),
+        assertEquals(plain.source(), ComponentProviderGenerator.generateFrom("app", ComponentProviderGenerator.SIMPLE_NAME,
+                new ComponentProviderGenerator.Contents(components, List.of(), List.of(), proxies, producerProxies,
+                        new AnnotationArtefacts.Rendered("", ""), java.util.Set.of())).source(),
                 "no bytecode class: the provider is unchanged");
         assertFalse(plain.source().contains("$$construct"), plain.source());
 
-        var s = ComponentProviderGenerator.generateFrom("app", components, List.of(), List.of(), proxies,
-                producerProxies, new AnnotationArtefacts.Rendered("", ""),
-                java.util.Set.of("app.Foo$$Intercepted", "app.Svc$$Intercepted", "app.Bar_ClientProxy",
-                        "app.Thing$$1f_ClientProxy")).source();
+        var s = ComponentProviderGenerator.generateFrom("app", ComponentProviderGenerator.SIMPLE_NAME,
+                new ComponentProviderGenerator.Contents(components, List.of(), List.of(), proxies, producerProxies,
+                        new AnnotationArtefacts.Rendered("", ""), java.util.Set.of("app.Foo$$Intercepted", "app.Svc$$Intercepted", "app.Bar_ClientProxy",
+                        "app.Thing$$1f_ClientProxy"))).source();
         assertTrue(s.contains("case \"app.Foo\" -> new app.Foo();"), s);
         assertTrue(s.contains("case \"app.Foo$$Intercepted\" -> $$construct(\"app.Foo$$Intercepted\", new Class<?>[0], new Object[0]);"), s);
         assertTrue(s.contains("case \"app.Svc$$Intercepted\" -> $$construct(\"app.Svc$$Intercepted\", new Class<?>[] {app.Repo.class, int.class}, args);"), s);
