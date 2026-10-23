@@ -57,13 +57,13 @@ public final class CoverageFixtures {
         @Inject Dependency dependency;
 
         @Inject
-        void setUp(Dependency dependency) {}
+        void setUp(Dependency dependency) { /* no behaviour needed */ }
 
         @PostConstruct
-        void init() {}
+        void init() { /* no behaviour needed */ }
 
         @PreDestroy
-        void close() {}
+        void close() { /* no behaviour needed */ }
     }
 
     @Dependent
@@ -91,7 +91,7 @@ public final class CoverageFixtures {
         @Inject Dependency dependency;
 
         @Inject
-        void setUp(Dependency dependency) {}
+        void setUp(Dependency dependency) { /* no behaviour needed */ }
 
         @AroundInvoke
         public Object around(InvocationContext context) throws Exception {
@@ -101,7 +101,7 @@ public final class CoverageFixtures {
 
     @Audited @Dependent
     public static class AuditedBean {
-        public void work() {}
+        public void work() { /* no behaviour needed */ }
     }
 
     /** Records its own initialization: reading its metadata must never run it. Named by string only, never loaded. */
@@ -119,7 +119,7 @@ public final class CoverageFixtures {
     /** Intercepted, with a subclass the test defines before boot, as a build would ship it; used by one test only. */
     @Audited @Dependent
     public static class PreGeneratedBean {
-        public void work() {}
+        public void work() { /* no behaviour needed */ }
     }
 
     public static class Widget {}
@@ -135,13 +135,13 @@ public final class CoverageFixtures {
             return new Widget();
         }
 
-        void dispose(@Disposes Widget widget) {}
+        void dispose(@Disposes Widget widget) { /* no behaviour needed */ }
     }
 
     public record Ping(String value) {}
 
     @Dependent
     public static class Pinger {
-        void onPing(@Observes Ping ping) {}
+        void onPing(@Observes Ping ping) { /* no behaviour needed */ }
     }
 }

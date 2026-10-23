@@ -80,7 +80,7 @@ class ComponentProviderClassGeneratorTest {
         var beanFqn = pkg + ".CtorTarget";
         var providerFqn = pkg + "._GenCtorComponents";
 
-        // class CtorTarget { final String dep; public CtorTarget(String dep) { this.dep = dep; } }
+        // CtorTarget: a class with a final String field "dep", set by its public one-argument constructor
         var cdBean = ClassDesc.of(beanFqn);
         var cdObject = ConstantDescs.CD_Object;
         var cdString = ConstantDescs.CD_String;
@@ -135,7 +135,7 @@ class ComponentProviderClassGeneratorTest {
         var targetFqn = pkg + ".InjectTarget";
         var providerFqn = pkg + "._GenInjectComponents";
 
-        // Generate a minimal target bean: class InjectTarget { String service; Object dependency; }
+        // Generate a minimal target bean, InjectTarget, with a String field "service" and an Object field "dependency"
         byte[] targetBytes = buildTargetBeanBytecode(targetFqn);
 
         var fi1 = new FieldInject(targetFqn, "service", "java.lang.String");
@@ -206,12 +206,8 @@ class ComponentProviderClassGeneratorTest {
         var beanFqn = pkg + ".InvokeTarget";
         var providerFqn = pkg + "._GenInvokeComponents";
 
-        // Build a minimal target bean:
-        // class InvokeTarget {
-        //   String lastArg;
-        //   void record(String s) { this.lastArg = s; }
-        //   Object make() { return "result"; }
-        // }
+        // Build a minimal target bean, InvokeTarget: a String field "lastArg", a record(String) method
+        // that stores its argument in that field, and a make() method that returns "result".
         var cdBean = ClassDesc.of(beanFqn);
         var cdObject = ConstantDescs.CD_Object;
         var cdString = ConstantDescs.CD_String;
@@ -226,7 +222,7 @@ class ComponentProviderClassGeneratorTest {
                 cob.invokespecial(cdObject, ConstantDescs.INIT_NAME, mtdVoid);
                 cob.return_();
             });
-            // void record(String s) { this.lastArg = s; }
+            // record(String): stores its argument in "lastArg"
             var mtdRecordDesc = MethodTypeDesc.of(ConstantDescs.CD_void, cdString);
             clb.withMethodBody("record", mtdRecordDesc, 0 /* package-private */, cob -> {
                 cob.aload(0);
@@ -234,7 +230,7 @@ class ComponentProviderClassGeneratorTest {
                 cob.putfield(cdBean, "lastArg", cdString);
                 cob.return_();
             });
-            // Object make() { return "result"; }
+            // make(): returns "result"
             var mtdMakeDesc = MethodTypeDesc.of(cdObject);
             clb.withMethodBody("make", mtdMakeDesc, 0 /* package-private */, cob -> {
                 cob.ldc("result");
@@ -292,11 +288,9 @@ class ComponentProviderClassGeneratorTest {
         var proxyFqn = pkg + ".Bean_ClientProxy";
         var providerFqn = pkg + "._GenProxyComponents";
 
-        // Minimal proxy: class Bean_ClientProxy {
-        //   java.util.function.Supplier $$delegate;            // package-private (read back in test)
-        //   public Bean_ClientProxy() { super(); }
-        //   public void $$setDelegate(Supplier d) { this.$$delegate = d; }
-        // }
+        // Minimal proxy, Bean_ClientProxy: a package-private Supplier field "$$delegate" (read back in the
+        // test), a public no-argument constructor that only calls super, and a public $$setDelegate(Supplier)
+        // method that stores its argument in that field.
         var cdProxy = ClassDesc.of(proxyFqn);
         var cdObject = ConstantDescs.CD_Object;
         var cdSupplier = ClassDesc.of("java.util.function.Supplier");

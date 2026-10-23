@@ -76,9 +76,9 @@ class SyntheticQualifierMemberTest {
 
     /** Carries the qualifiers the test selects and fires with. Never a bean. */
     static final class Qualifiers {
-        @Channel("alpha") void alpha() {}
+        @Channel("alpha") void alpha() { /* the annotation is the fixture */ }
 
-        @Channel("beta") void beta() {}
+        @Channel("beta") void beta() { /* the annotation is the fixture */ }
     }
 
     public static class AlphaCreator implements SyntheticBeanCreator<String> {
@@ -130,7 +130,7 @@ class SyntheticQualifierMemberTest {
     @Test
     @DisplayName("a synthetic bean answers the lookup its qualifier's member value selects")
     void syntheticBeanKeepsItsQualifierMembers() {
-        try (var container = VaubanContainer.builder().addBeanClass(SyntheticBce.class).build()) {
+        try (var _ = VaubanContainer.builder().addBeanClass(SyntheticBce.class).build()) {
             assertEquals("alpha-bean", CDI.current().select(String.class, qualifier("alpha")).get());
         }
     }
@@ -138,7 +138,7 @@ class SyntheticQualifierMemberTest {
     @Test
     @DisplayName("another member value selects no synthetic bean")
     void anotherMemberValueSelectsNoSyntheticBean() {
-        try (var container = VaubanContainer.builder().addBeanClass(SyntheticBce.class).build()) {
+        try (var _ = VaubanContainer.builder().addBeanClass(SyntheticBce.class).build()) {
             var instance = CDI.current().select(String.class, qualifier("beta"));
             assertThrows(UnsatisfiedResolutionException.class, instance::get);
         }
@@ -156,6 +156,6 @@ class SyntheticQualifierMemberTest {
             emitter.event.select(qualifier("beta")).fire(new Ping("2"));
         }
 
-        assertEquals(List.of("synthetic:1"), RECEIVED);
+        assertEquals(RECEIVED, List.of("synthetic:1"));
     }
 }

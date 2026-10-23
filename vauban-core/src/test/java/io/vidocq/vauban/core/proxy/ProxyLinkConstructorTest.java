@@ -76,6 +76,7 @@ class ProxyLinkConstructorTest {
             this.name = collaborator.name();
         }
 
+        @SuppressWarnings("java:S1172") // the parameter is the signature under test
         protected DerefsItsParameter(ProxyLink link) {
             this.name = null;
         }

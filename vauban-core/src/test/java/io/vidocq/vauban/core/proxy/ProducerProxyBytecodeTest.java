@@ -45,7 +45,7 @@ class ProducerProxyBytecodeTest {
     public static final class FinalThing {}
 
     public static class ProtectedMethodThing {
-        protected void secret() {}
+        protected void secret() { /* no behaviour needed */ }
     }
 
     public interface AnInterface {

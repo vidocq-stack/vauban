@@ -92,7 +92,7 @@ class GeneratedAnnotationProviderTest {
 
     /** Carries the qualifier the programmatic lookup selects with, built by the JDK. */
     static final class Qualifiers {
-        @Channel("wire") void wire() {}
+        @Channel("wire") void wire() { /* the annotation is the fixture */ }
     }
 
     /** The literal the processor renders for {@code @Channel}, in the annotation type's own package. */
@@ -224,7 +224,7 @@ class GeneratedAnnotationProviderTest {
     @Test
     @DisplayName("a qualifier no provider owns still resolves, by reading it")
     void anUnownedQualifierStillResolves() {
-        try (var container = VaubanContainer.builder()
+        try (var _ = VaubanContainer.builder()
                 .addComponentProvider(new GeneratedProvider())
                 .addBeanClass(CardPayment.class)
                 .addBeanClass(WirePayment.class)

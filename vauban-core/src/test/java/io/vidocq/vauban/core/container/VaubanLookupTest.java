@@ -73,7 +73,7 @@ class VaubanLookupTest {
     // -- Test classes --
 
     public static class SimpleBean {
-        public SimpleBean() {}
+        public SimpleBean() { /* nothing to initialise */ }
         public String greet() { return "hello"; }
     }
 
@@ -92,6 +92,7 @@ class VaubanLookupTest {
 
     public static class BeanWithField {
         public String message;
+        @SuppressWarnings("java:S1068") // read through reflection by the tests
         private int count;
     }
 
@@ -103,7 +104,7 @@ class VaubanLookupTest {
         public String echo(String input) { return input; }
         public int add(int a, int b) { return a + b; }
         public static String staticMethod() { return "static"; }
-        public void voidMethod() {}
+        public void voidMethod() { /* no behaviour needed */ }
     }
 
     public static class BeanWithPrivateConstructor {
@@ -161,7 +162,7 @@ class VaubanLookupTest {
             // but addReads will have been called before the exception
             try {
                 lookup.lookupFor(connectionClass);
-            } catch (RuntimeException ignored) {
+            } catch (RuntimeException _) {
                 // The privateLookupIn exception is expected for closed JDK modules
             }
 
@@ -180,7 +181,7 @@ class VaubanLookupTest {
 
             try {
                 lookup.lookupFor(loggerClass);
-            } catch (RuntimeException ignored) {
+            } catch (RuntimeException _) {
                 // The privateLookupIn exception is expected for closed JDK modules
             }
 
@@ -194,7 +195,7 @@ class VaubanLookupTest {
         void shouldSucceedForUserClassInSameModule() {
             // The test classes are in the same module -- no access problem
             var result = lookup.lookupFor(SimpleBean.class);
-            assertNotNull(result);
+            assertEquals(SimpleBean.class, result.lookupClass());
         }
     }
 

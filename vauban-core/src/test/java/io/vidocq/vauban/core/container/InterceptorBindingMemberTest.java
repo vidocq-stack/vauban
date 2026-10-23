@@ -158,7 +158,7 @@ class InterceptorBindingMemberTest {
             assertEquals("a", worker.a());
             assertEquals("b", worker.b());
         }
-        assertEquals(List.of("audited:a"), CALLS);
+        assertEquals(CALLS, List.of("audited:a"));
     }
 
     @Test
@@ -167,7 +167,7 @@ class InterceptorBindingMemberTest {
         try (var container = boot(TracedInterceptor.class, TracedWorker.class)) {
             assertEquals("traced", container.select(TracedWorker.class).traced());
         }
-        assertEquals(List.of("traced:traced"), CALLS);
+        assertEquals(CALLS, List.of("traced:traced"));
     }
 
     /**
@@ -181,7 +181,7 @@ class InterceptorBindingMemberTest {
         try (var container = boot(MeteredBce.class, MeteredInterceptor.class, MeteredWorker.class)) {
             assertEquals("metered", container.select(MeteredWorker.class).metered());
         }
-        assertEquals(List.of("metered:metered"), CALLS);
+        assertEquals(CALLS, List.of("metered:metered"));
     }
 
     @Test
@@ -190,6 +190,6 @@ class InterceptorBindingMemberTest {
         try (var container = boot(MeteredBce.class, MeteredInterceptor.class, MeteredOtherGroupWorker.class)) {
             assertEquals("metered", container.select(MeteredOtherGroupWorker.class).metered());
         }
-        assertEquals(List.of(), CALLS, "group is still binding, so group \"other\" must not bind the interceptor");
+        assertEquals(CALLS, List.of(), "group is still binding, so group \"other\" must not bind the interceptor");
     }
 }

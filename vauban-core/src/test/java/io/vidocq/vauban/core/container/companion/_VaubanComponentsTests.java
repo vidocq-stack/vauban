@@ -22,6 +22,7 @@ package io.vidocq.vauban.core.container.companion;
 import io.vidocq.vauban.api.VaubanComponentProvider;
 
 /** The test round's provider of the same package (vauban#101). Package-private, as nothing names it. */
+@SuppressWarnings("java:S2187") // not a test: the provider is found by its name, which ends in Tests
 final class _VaubanComponentsTests implements VaubanComponentProvider {
     @Override
     public Object create(String className) {

@@ -135,10 +135,10 @@ class LifecycleCallbackInterceptionTest {
                 .initialize()) {
             assertEquals("done", container.select(ScopedService.class).get().work());
         }
-        assertEquals(List.of(
+        assertEquals(SEEN, List.of(
                 "postConstruct:method=null", "init",
                 "around:work",
-                "preDestroy:method=null", "dispose"), SEEN);
+                "preDestroy:method=null", "dispose"));
     }
 
     @Test
@@ -152,9 +152,9 @@ class LifecycleCallbackInterceptionTest {
             assertEquals("done", service.work());
             handle.destroy(service);
         }
-        assertEquals(List.of(
+        assertEquals(SEEN, List.of(
                 "postConstruct:method=null", "init",
                 "around:work",
-                "preDestroy:method=null", "dispose"), SEEN);
+                "preDestroy:method=null", "dispose"));
     }
 }

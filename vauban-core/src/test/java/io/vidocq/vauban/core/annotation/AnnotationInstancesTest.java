@@ -40,7 +40,6 @@ import static io.vidocq.vauban.core.annotation.AnnotationFixture.loader;
 import static io.vidocq.vauban.core.annotation.AnnotationFixture.scanned;
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -127,7 +126,7 @@ class AnnotationInstancesTest {
     void differentMemberValuesAreNotEqual() throws IOException {
         assertNotEquals(built(Written.class), jdk(Other.class));
         assertNotEquals(jdk(Other.class), built(Written.class));
-        assertFalse(built(Written.class).equals(built(Other.class)));
+        assertNotEquals(built(Written.class), built(Other.class));
     }
 
     @Test

@@ -388,7 +388,7 @@ class BceRuntimeReplayTest {
             clb.with(RuntimeVisibleAnnotationsAttribute.of(
                     Annotation.of(CD_PathLike)));
 
-            // public <init>() { super(); }
+            // a public no-argument constructor that only calls super
             clb.withMethodBody(
                     ConstantDescs.INIT_NAME,
                     MTD_void,

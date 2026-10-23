@@ -29,6 +29,8 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
+
 /**
  * ONE-SHOT dumper: writes the golden {@code .class} snapshots to
  * {@code src/test/resources/golden-intercepted/<simpleName>.class}.
@@ -38,11 +40,11 @@ import java.nio.file.Paths;
  * After running, commit the updated {@code .class} files and re-enable
  * {@link GoldenBytecodeTest} to enforce byte-for-byte equivalence.
  *
- * <p>Run with: {@code ./mvnw -pl vauban-core -Dtest=GoldenSnapshotDumper#dumpGoldenSnapshots test}
+ * <p>Run with: {@code ./mvnw -pl vauban-core -Dtest=GoldenSnapshotDumperTest#dumpGoldenSnapshots test}
  */
 @Disabled("One-shot golden snapshot writer — enable locally to regenerate .class files")
 @DisplayName("Golden snapshot dumper (one-shot)")
-class GoldenSnapshotDumper {
+class GoldenSnapshotDumperTest {
 
     @Test
     @DisplayName("writes GoldenBean$$Intercepted.class to src/test/resources/golden-intercepted/")
@@ -59,13 +61,14 @@ class GoldenSnapshotDumper {
             String simpleName = fixture.getSimpleName() + "$$Intercepted";
             Path out = resourcesDir.resolve(simpleName + ".class");
             Files.write(out, generated.bytecode());
+            assertEquals(generated.bytecode().length, Files.size(out), "the snapshot is written whole");
             System.out.println("Wrote " + out + " (" + generated.bytecode().length + " bytes)");
         }
     }
 
     private static Path resolveGoldenDir() throws Exception {
         // Walk up from the test .class location to find vauban-core module root
-        URL classUrl = GoldenSnapshotDumper.class.getProtectionDomain().getCodeSource().getLocation();
+        URL classUrl = GoldenSnapshotDumperTest.class.getProtectionDomain().getCodeSource().getLocation();
         Path testClasses = Paths.get(classUrl.toURI());
         // testClasses = .../vauban-core/target/test-classes
         Path moduleRoot = testClasses.getParent().getParent();

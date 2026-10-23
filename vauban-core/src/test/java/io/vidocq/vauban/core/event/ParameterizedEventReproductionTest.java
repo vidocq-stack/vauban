@@ -19,7 +19,6 @@
  */
 package io.vidocq.vauban.core.event;
 
-import io.vidocq.vauban.core.bean.model.ObserverDescriptor;
 import io.vidocq.vauban.core.types.AssignabilityRules;
 import io.vidocq.vauban.indexer.IndexBuilder;
 import io.vidocq.vauban.indexer.model.DotName;
@@ -30,9 +29,7 @@ import java.lang.reflect.ParameterizedType;
 import java.lang.reflect.Type;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Set;
 
-import static org.junit.jupiter.api.Assertions.assertFalse;
 
 class ParameterizedEventReproductionTest {
 
@@ -46,15 +43,6 @@ class ParameterizedEventReproductionTest {
         var stringListType = new TypeInfo.ParameterizedType(
                 DotName.of("java.util.List"),
                 List.of(new TypeInfo.ClassType(DotName.of("java.lang.String")))
-        );
-        
-        var observer = new ObserverDescriptor(
-                DotName.of("com.example.MyObserver"),
-                "observeStringList",
-                stringListType,
-                List.of(),
-                false,
-                0
         );
         
         // Pass null for container, but EventDispatcher constructor currently does requireNonNull
@@ -72,7 +60,6 @@ class ParameterizedEventReproductionTest {
 
         // Test case 2: fire(ArrayList<String>, List.class)
         // This is what happens when calling event.select(List.class).fire(new ArrayList<String>())
-        Type selectedRawList = List.class;
         // In EventDispatcher.fire, we do: resolveEventType(event.getClass(), selectedType)
         // If event is ArrayList<String>, event.getClass() is ArrayList.class (RAW)
         // resolveEventType(ArrayList.class, List.class)

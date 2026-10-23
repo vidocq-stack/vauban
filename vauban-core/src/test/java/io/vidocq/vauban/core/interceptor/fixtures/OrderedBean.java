@@ -28,6 +28,7 @@ public class OrderedBean extends OrderedBeanSuper {
 
     public String soZulu() { return "soZulu"; }
 
+    @SuppressWarnings("java:S1172") // the parameter is the signature under test
     public String soMike(int n) { return "soMike"; }
 
     public String soKilo() { return "soKilo"; }
@@ -38,6 +39,7 @@ public class OrderedBean extends OrderedBeanSuper {
 
     public String soMike() { return "soMike"; }
 
+    @SuppressWarnings("java:S1172") // the parameter is the signature under test
     public String soCharlie(String s) { return "soCharlie"; }
 
     public String soXray() { return "soXray"; }

@@ -87,13 +87,13 @@ class QualifierMemberEventTest {
 
     /** Carries the event qualifiers. Never a bean. */
     static final class Qualifiers {
-        @Channel("alpha") void alpha() {}
+        @Channel("alpha") void alpha() { /* the annotation is the fixture */ }
 
-        @Routed(value = "r", note = "event") void routed() {}
+        @Routed(value = "r", note = "event") void routed() { /* the annotation is the fixture */ }
 
-        @Stream(value = "event", group = "g") void stream() {}
+        @Stream(value = "event", group = "g") void stream() { /* the annotation is the fixture */ }
 
-        @Stream(value = "observer", group = "g") void streamIdentical() {}
+        @Stream(value = "observer", group = "g") void streamIdentical() { /* the annotation is the fixture */ }
     }
 
     @Dependent
@@ -174,7 +174,7 @@ class QualifierMemberEventTest {
         try (var container = boot(ChannelListener.class)) {
             container.select(Emitter.class).event.select(qualifier("alpha")).fire(new Ping("1"));
         }
-        assertEquals(List.of("alpha:1"), RECEIVED);
+        assertEquals(RECEIVED, List.of("alpha:1"));
     }
 
     @Test
@@ -183,7 +183,7 @@ class QualifierMemberEventTest {
         try (var container = boot(RoutedListener.class)) {
             container.select(Emitter.class).event.select(qualifier("routed")).fire(new Ping("2"));
         }
-        assertEquals(List.of("routed:2"), RECEIVED);
+        assertEquals(RECEIVED, List.of("routed:2"));
     }
 
     @Test
@@ -193,7 +193,7 @@ class QualifierMemberEventTest {
             container.select(Emitter.class).event.select(qualifier("alpha")).fireAsync(new Ping("3"))
                     .toCompletableFuture().get(10, TimeUnit.SECONDS);
         }
-        assertEquals(List.of("async-alpha:3"), RECEIVED);
+        assertEquals(RECEIVED, List.of("async-alpha:3"));
     }
 
     @Test
@@ -202,7 +202,7 @@ class QualifierMemberEventTest {
         try (var container = boot(StreamBce.class, StreamListener.class)) {
             container.select(Emitter.class).event.select(qualifier("streamIdentical")).fire(new Ping("5"));
         }
-        assertEquals(List.of("stream:5"), RECEIVED);
+        assertEquals(RECEIVED, List.of("stream:5"));
     }
 
     @Test
@@ -211,6 +211,6 @@ class QualifierMemberEventTest {
         try (var container = boot(StreamBce.class, StreamListener.class)) {
             container.select(Emitter.class).event.select(qualifier("stream")).fire(new Ping("4"));
         }
-        assertEquals(List.of("stream:4"), RECEIVED);
+        assertEquals(RECEIVED, List.of("stream:4"));
     }
 }

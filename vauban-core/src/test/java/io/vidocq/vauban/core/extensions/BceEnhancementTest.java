@@ -20,7 +20,6 @@
 package io.vidocq.vauban.core.extensions;
 
 import io.vidocq.vauban.core.bean.model.ScopeInfo;
-import io.vidocq.vauban.core.container.VaubanContainerBuilder;
 import io.vidocq.vauban.indexer.IndexBuilder;
 import io.vidocq.vauban.indexer.model.DotName;import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
@@ -80,8 +79,7 @@ class BceEnhancementTest {
     /**
      * Call the package-private matchesClass(Class<?>[], boolean, Class<?>) directly.
      */
-    private static boolean invokeMatchesClass(Class<?>[] types, boolean withSubtypes, Class<?> targetClass)
-            throws Exception {
+    private static boolean invokeMatchesClass(Class<?>[] types, boolean withSubtypes, Class<?> targetClass) {
         return BceTypeMatcher.matchesClass(types, withSubtypes, targetClass);
     }
 
@@ -212,7 +210,7 @@ class BceEnhancementTest {
 
         @Test
         @DisplayName("config with @RequestScoped returns ScopeInfo normal=true")
-        void shouldReturnRequestScopedWhenAdded() throws Exception {
+        void shouldReturnRequestScopedWhenAdded() {
             var config = makeClassConfig();
             config.addAnnotation(jakarta.enterprise.context.RequestScoped.class);
 
@@ -225,7 +223,7 @@ class BceEnhancementTest {
 
         @Test
         @DisplayName("config with @ApplicationScoped returns ScopeInfo normal=true")
-        void shouldReturnApplicationScopedWhenAdded() throws Exception {
+        void shouldReturnApplicationScopedWhenAdded() {
             var config = makeClassConfig();
             config.addAnnotation(jakarta.enterprise.context.ApplicationScoped.class);
 
@@ -238,7 +236,7 @@ class BceEnhancementTest {
 
         @Test
         @DisplayName("config with @Dependent returns ScopeInfo.DEPENDENT")
-        void shouldReturnDependentWhenAdded() throws Exception {
+        void shouldReturnDependentWhenAdded() {
             var config = makeClassConfig();
             config.addAnnotation(jakarta.enterprise.context.Dependent.class);
 
@@ -250,7 +248,7 @@ class BceEnhancementTest {
 
         @Test
         @DisplayName("config with @Singleton returns ScopeInfo.SINGLETON")
-        void shouldReturnSingletonWhenAdded() throws Exception {
+        void shouldReturnSingletonWhenAdded() {
             var config = makeClassConfig();
             config.addAnnotation(jakarta.inject.Singleton.class);
 
@@ -262,7 +260,7 @@ class BceEnhancementTest {
 
         @Test
         @DisplayName("config without a scope annotation returns null")
-        void shouldReturnNullWhenNoScopeAnnotation() throws Exception {
+        void shouldReturnNullWhenNoScopeAnnotation() {
             var config = makeClassConfig();
             // No annotation added
 
@@ -273,7 +271,7 @@ class BceEnhancementTest {
 
         @Test
         @DisplayName("config with a non-scope annotation returns null")
-        void shouldReturnNullWhenNonScopeAnnotation() throws Exception {
+        void shouldReturnNullWhenNonScopeAnnotation() {
             var config = makeClassConfig();
             config.addAnnotation(SuppressWarnings.class);
 
@@ -284,7 +282,7 @@ class BceEnhancementTest {
 
         @Test
         @DisplayName("an empty config list returns null")
-        void shouldReturnNullWhenEmptyConfigList() throws Exception {
+        void shouldReturnNullWhenEmptyConfigList() {
             var scope = invokeExtractEnhancedScope(List.of());
 
             assertNull(scope);
@@ -292,7 +290,7 @@ class BceEnhancementTest {
 
         @Test
         @DisplayName("the first config with a scope wins over the following ones")
-        void shouldReturnFirstScopeWhenMultipleConfigs() throws Exception {
+        void shouldReturnFirstScopeWhenMultipleConfigs() {
             var config1 = makeClassConfig();
             config1.addAnnotation(jakarta.enterprise.context.RequestScoped.class);
 
@@ -307,7 +305,7 @@ class BceEnhancementTest {
 
         @Test
         @DisplayName("a config without a scope followed by a config with a scope returns the scope")
-        void shouldSkipNonScopeAndReturnFirstScope() throws Exception {
+        void shouldSkipNonScopeAndReturnFirstScope() {
             var config1 = makeClassConfig();
             config1.addAnnotation(SuppressWarnings.class);
 
@@ -483,7 +481,7 @@ class BceEnhancementTest {
 
             EnhancedBean(String dependency) {}
 
-            void initialize(String dependency) {}
+            void initialize(String dependency) { /* no behaviour needed */ }
         }
 
         private VaubanClassConfig config() {

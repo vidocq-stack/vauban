@@ -26,6 +26,7 @@ public class OrderedBeanSuper {
 
     String soPapa() { return "soPapa"; }
 
+    @SuppressWarnings("java:S1172") // the parameter is the signature under test
     public String soHotel(int n) { return "soHotel"; }
 
     protected String soDelta() { return "soDelta"; }

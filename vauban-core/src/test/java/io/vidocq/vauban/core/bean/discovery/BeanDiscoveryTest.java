@@ -477,8 +477,8 @@ class BeanDiscoveryTest {
         // VAU-DISC-001 — Regression. In annotated discovery mode (a non-bean archive, i.e.
         // beanArchive=false), a Build Compatible Extension that adds classes via
         // ScannedClasses.add() must NOT suppress beans that carry a bean-defining annotation.
-        // VaubanContainerBuilder restricts discovery to the BCE-scanned set when !isBeanArchive;
-        // that restriction used to swallow legitimately-annotated beans. Surfaced by the Mansart
+        // VaubanContainerBuilder restricts discovery to the BCE-scanned set when the archive is not
+        // a bean archive; that restriction used to swallow legitimately-annotated beans. Surfaced by the Mansart
         // Jakarta Data TCK harness: its MansartDataExtension scans the runtime producer, which
         // turned the scanned set into an exclusive whitelist and silently dropped the test's
         // @Singleton @Produces DataSource — leaving every @Repository's RepositoryRuntime

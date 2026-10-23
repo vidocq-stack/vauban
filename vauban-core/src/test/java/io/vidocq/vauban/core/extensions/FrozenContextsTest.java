@@ -55,7 +55,7 @@ class FrozenContextsTest {
         @Override public <T> T get(Contextual<T> contextual, CreationalContext<T> cc) { return null; }
         @Override public <T> T get(Contextual<T> contextual) { return null; }
         @Override public boolean isActive() { return true; }
-        @Override public void destroy(Contextual<?> contextual) { }
+        @Override public void destroy(Contextual<?> contextual) { /* no behaviour needed */ }
     }
 
     @Test

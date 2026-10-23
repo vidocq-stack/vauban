@@ -91,7 +91,7 @@ class RuntimeClientProxyGeneratorTest {
 
     public static class MultiCtorService {
         public MultiCtorService() {}
-        public MultiCtorService(String dep) {}
+        public MultiCtorService(String dep) { /* nothing to initialise */ }
         public String hello() { return "real"; }
     }
 
@@ -336,11 +336,10 @@ class RuntimeClientProxyGeneratorTest {
         void shouldHaveDefaultValuesInUndelegatedProxy() throws Exception {
             var proxy = RuntimeClientProxyGenerator.generate(PrimitiveCtorService.class);
             Object instance = instantiateProxy(proxy);
-            // Direct cast possible because the proxy is a subclass
-            PrimitiveCtorService asService = (PrimitiveCtorService) instance;
-            // Without a delegate, the fields reflect the default values passed to super()
-            // count=0, flag=false
-            // (but getCount() and isFlag() will be delegated if a delegate is set)
+            // The proxy is a subclass of the bean. Without a delegate, its fields hold the default values
+            // passed to super (a count of zero, a flag of false); getCount() and isFlag() are delegated
+            // once a delegate is set.
+            assertInstanceOf(PrimitiveCtorService.class, instance);
         }
 
         @Test

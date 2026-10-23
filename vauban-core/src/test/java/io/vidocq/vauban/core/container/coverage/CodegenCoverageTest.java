@@ -209,7 +209,7 @@ class CodegenCoverageTest {
         String subclass = PREFIX + "PreGeneratedBean$$Intercepted";
         try {
             Class.forName(subclass, false, bean.getClassLoader());
-        } catch (ClassNotFoundException absent) {
+        } catch (ClassNotFoundException _) {
             // Defined by the test, not by Vauban: what a subclass shipped by the build looks like at boot.
             var generated = io.vidocq.vauban.core.interceptor.InterceptorSubclassGenerator.generate(bean);
             java.lang.invoke.MethodHandles.privateLookupIn(bean, java.lang.invoke.MethodHandles.lookup())

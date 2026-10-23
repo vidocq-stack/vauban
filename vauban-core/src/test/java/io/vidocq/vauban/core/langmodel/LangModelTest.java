@@ -26,17 +26,15 @@ import io.vidocq.vauban.core.langmodel.types.VaubanPrimitiveType;
 import io.vidocq.vauban.core.langmodel.types.VaubanVoidType;
 import io.vidocq.vauban.indexer.IndexBuilder;
 import io.vidocq.vauban.indexer.model.*;
-import io.vidocq.vauban.indexer.model.ClassInfo.ClassKind;
 import io.vidocq.vauban.indexer.scanner.ClassFileScanner;
 import jakarta.enterprise.lang.model.types.PrimitiveType;
-import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 
 import java.io.IOException;
-import java.util.List;
-import java.util.Map;
+import java.lang.annotation.Retention;
+import java.lang.annotation.RetentionPolicy;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -45,8 +43,12 @@ import static org.junit.jupiter.api.Assertions.*;
 class LangModelTest {
 
     // Test data classes
-    @Deprecated
+    @Retention(RetentionPolicy.RUNTIME)
+    @interface Marked {}
+
+    @Marked
     static class AnnotatedService {
+        @SuppressWarnings("java:S1172") // the parameter is the signature under test
         public String process(int id) { return ""; }
     }
 
@@ -55,7 +57,7 @@ class LangModelTest {
     }
 
     static class MyImpl extends AnnotatedService implements MyInterface {
-        @Override public void doWork() {}
+        @Override public void doWork() { /* no behaviour needed */ }
     }
 
     static IndexLookup buildLookup(Class<?>... classes) throws IOException {
@@ -149,8 +151,8 @@ class LangModelTest {
             var lookup = buildLookup(AnnotatedService.class);
             var indexClass = scanClass(AnnotatedService.class);
             var classInfo = new VaubanClassInfo(indexClass, lookup);
-            assertTrue(classInfo.hasAnnotation(Deprecated.class));
-            assertNotNull(classInfo.annotation(Deprecated.class));
+            assertTrue(classInfo.hasAnnotation(Marked.class));
+            assertNotNull(classInfo.annotation(Marked.class));
         }
 
         @Test
@@ -219,13 +221,6 @@ class LangModelTest {
         @Test
         @DisplayName("exposes annotation values")
         void shouldExposeAnnotationValues() throws IOException {
-            var annot = new io.vidocq.vauban.indexer.model.AnnotationInfo(
-                    DotName.of("test.MyAnnotation"),
-                    Map.of(
-                            "strVal", new io.vidocq.vauban.indexer.model.AnnotationValue.StringVal("hello"),
-                            "intVal", new io.vidocq.vauban.indexer.model.AnnotationValue.IntVal(42),
-                            "boolVal", new io.vidocq.vauban.indexer.model.AnnotationValue.BooleanVal(true)
-                    ));
             var lookup = buildLookup();
             var member = new VaubanAnnotationMember(
                     new io.vidocq.vauban.indexer.model.AnnotationValue.StringVal("hello"), lookup);

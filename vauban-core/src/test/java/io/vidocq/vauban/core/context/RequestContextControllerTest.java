@@ -230,7 +230,7 @@ class RequestContextControllerTest {
                     otherId.set(container.select(RequestScopeCounter.class).id());
                     otherActivated.countDown();
                     release.await();
-                } catch (InterruptedException e) {
+                } catch (InterruptedException _) {
                     Thread.currentThread().interrupt();
                 } finally {
                     controller.deactivate();
@@ -254,7 +254,7 @@ class RequestContextControllerTest {
     private boolean isRequestContextActive() {
         try {
             return container.getBeanManager().getContext(RequestScoped.class).isActive();
-        } catch (ContextNotActiveException e) {
+        } catch (ContextNotActiveException _) {
             return false;
         }
     }

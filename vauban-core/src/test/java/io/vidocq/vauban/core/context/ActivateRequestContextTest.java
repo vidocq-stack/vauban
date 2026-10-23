@@ -202,7 +202,7 @@ class ActivateRequestContextTest {
     static boolean isActive(BeanManager beanManager) {
         try {
             return beanManager.getContext(RequestScoped.class).isActive();
-        } catch (ContextNotActiveException e) {
+        } catch (ContextNotActiveException _) {
             return false;
         }
     }

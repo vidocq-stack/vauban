@@ -60,7 +60,7 @@ class CrossPackageShadowedDefaultTest {
         static final List<Method> CALLS = new CopyOnWriteArrayList<>();
 
         @AroundInvoke
-        public Object record(InvocationContext ctx) throws Exception {
+        public Object recordCall(InvocationContext ctx) throws Exception {
             CALLS.add(ctx.getMethod());
             return ctx.proceed();
         }
@@ -114,7 +114,7 @@ class CrossPackageShadowedDefaultTest {
         Tagged tagged = scoped;
         assertEquals("default x", tagged.tag("x"));
         var tag = Tagged.class.getDeclaredMethod("tag", String.class);
-        assertEquals(List.of(ScopedCrossPackageTagged.class.getDeclaredMethod("own"), tag), FixtureInterceptor.CALLS);
+        assertEquals(FixtureInterceptor.CALLS, List.of(ScopedCrossPackageTagged.class.getDeclaredMethod("own"), tag));
     }
 
     @Test
@@ -122,6 +122,6 @@ class CrossPackageShadowedDefaultTest {
     void throughTheSubclass() throws Exception {
         Tagged tagged = container.select(CrossPackageTagged.class).get();
         assertEquals("default y", tagged.tag("y"));
-        assertEquals(List.of(Tagged.class.getDeclaredMethod("tag", String.class)), FixtureInterceptor.CALLS);
+        assertEquals(FixtureInterceptor.CALLS, List.of(Tagged.class.getDeclaredMethod("tag", String.class)));
     }
 }

@@ -58,7 +58,7 @@ class InaccessibleMemberTypeTest {
         static final List<String> CALLS = new CopyOnWriteArrayList<>();
 
         @AroundInvoke
-        public Object record(InvocationContext ctx) throws Exception {
+        public Object recordCall(InvocationContext ctx) throws Exception {
             CALLS.add(ctx.getMethod().getName() + "/" + ctx.getParameters().length);
             return ctx.proceed();
         }
@@ -101,7 +101,7 @@ class InaccessibleMemberTypeTest {
         var bean = container.select(HiddenTaker.class).get();
         assertEquals("took hidden", HiddenParameterBase.callTake(bean));
         assertEquals("took 7 1 hidden 3", HiddenParameterBase.callTakeMany(bean));
-        assertEquals(List.of("take/1", "takeMany/3"), FixtureInterceptor.CALLS);
+        assertEquals(FixtureInterceptor.CALLS, List.of("take/1", "takeMany/3"));
     }
 
     @Test
@@ -109,7 +109,7 @@ class InaccessibleMemberTypeTest {
     void hiddenReturnTypeLeftAlone() {
         var bean = container.select(HiddenTaker.class).get();
         assertEquals("hidden", HiddenParameterBase.callGive(bean));
-        assertEquals(List.of(), FixtureInterceptor.CALLS);
+        assertEquals(FixtureInterceptor.CALLS, List.of());
     }
 
     @Test
@@ -118,6 +118,6 @@ class InaccessibleMemberTypeTest {
         var scoped = container.select(ScopedHiddenTaker.class).get();
         assertEquals("took hidden", HiddenParameterBase.callTake(scoped));
         assertEquals("hidden", HiddenParameterBase.callGive(scoped));
-        assertEquals(List.of("take/1"), FixtureInterceptor.CALLS);
+        assertEquals(FixtureInterceptor.CALLS, List.of("take/1"));
     }
 }

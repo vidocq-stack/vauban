@@ -62,6 +62,7 @@ class BceInjectionEnhancementTest {
             initialized = dependency;
         }
 
+        @SuppressWarnings("java:S1172") // the parameter is the signature under test
         public void initialize(String ignored) {
             unrelatedOverloadCalled = true;
         }
@@ -87,7 +88,7 @@ class BceInjectionEnhancementTest {
                         method.parameters().getFirst().addAnnotation(
                                 AnnotationBuilder.of(Chosen.class).member("value", "selected").build());
                     });
-            config.constructors().stream()
+            config.constructors()
                     .forEach(constructor -> constructor.parameters().getFirst().addAnnotation(
                             AnnotationBuilder.of(Chosen.class).member("value", "selected").build()));
         }

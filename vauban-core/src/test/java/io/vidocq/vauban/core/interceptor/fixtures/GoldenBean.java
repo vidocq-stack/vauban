@@ -37,16 +37,16 @@ public class GoldenBean extends GoldenBeanSuper {
     public GoldenBean() {}
 
     /** Constructor with params — tests multiple non-private constructors. */
-    public GoldenBean(String name, int value) {}
+    public GoldenBean(String name, int value) { /* nothing to initialise */ }
 
     /** Void no-arg method. */
-    public void voidNoArg() {}
+    public void voidNoArg() { /* no behaviour needed */ }
 
     /**
      * Method with primitive params including {@code long} and {@code double} (category-2 types
      * that each occupy two local-variable slots — the critical slot-arithmetic test).
      */
-    public void primitiveParams(boolean b, byte by, char c, short s, int i, long l, float f, double d) {}
+    public void primitiveParams(boolean b, byte by, char c, short s, int i, long l, float f, double d) { /* no behaviour needed */ }
 
     /** int-returning method. */
     public int intReturn(int x) {

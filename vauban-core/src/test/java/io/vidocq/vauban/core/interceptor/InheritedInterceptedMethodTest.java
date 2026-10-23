@@ -264,7 +264,7 @@ class InheritedInterceptedMethodTest {
         assertEquals(Grandparent.class.getDeclaredMethod("fromGrandparent", String.class), seen.method());
         assertTrue(seen.bindings().contains("Marked"),
                 "the method-level binding of the inherited method must be visible, got " + seen.bindings());
-        assertEquals(List.of(seen.method()), MarkingInterceptor.CALLS,
+        assertEquals(MarkingInterceptor.CALLS, List.of(seen.method()),
                 "the interceptor bound to the inherited method's binding must run");
     }
 
@@ -324,7 +324,7 @@ class InheritedInterceptedMethodTest {
         assertEquals(Parent.class.getDeclaredMethod("rebound"), seen.method());
         assertFalse(seen.bindings().contains("Marked"),
                 "Parent overrides rebound() without @Marked, got " + seen.bindings());
-        assertEquals(List.of(), MarkingInterceptor.CALLS,
+        assertEquals(MarkingInterceptor.CALLS, List.of(),
                 "the binding of the overridden Grandparent.rebound() must not select its interceptor");
     }
 
@@ -335,7 +335,7 @@ class InheritedInterceptedMethodTest {
         var seen = onlySeen();
         assertEquals(Grandparent.class.getDeclaredMethod("overloaded", int.class), seen.method());
         assertTrue(seen.bindings().contains("Marked"), "got " + seen.bindings());
-        assertEquals(List.of(seen.method()), MarkingInterceptor.CALLS);
+        assertEquals(MarkingInterceptor.CALLS, List.of(seen.method()));
     }
 
     @Test
@@ -346,6 +346,6 @@ class InheritedInterceptedMethodTest {
         assertEquals(Parent.class.getDeclaredMethod("overloaded", String.class), seen.method());
         assertFalse(seen.bindings().contains("Marked"),
                 "the @Marked of the int overload must not leak to the String one, got " + seen.bindings());
-        assertEquals(List.of(), MarkingInterceptor.CALLS);
+        assertEquals(MarkingInterceptor.CALLS, List.of());
     }
 }

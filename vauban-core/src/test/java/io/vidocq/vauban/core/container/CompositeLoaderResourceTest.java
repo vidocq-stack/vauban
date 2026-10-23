@@ -124,7 +124,7 @@ class CompositeLoaderResourceTest {
             Thread.currentThread().setContextClassLoader(deploymentLoader);
 
             TcclProbeBce.seenPlural = null;
-            try (VaubanContainer container = VaubanContainer.builder()
+            try (VaubanContainer _ = VaubanContainer.builder()
                     .addBeanClass(TcclProbeBce.class)
                     .addBeanClass(ForeignBean.class)
                     .build()) {
@@ -152,7 +152,7 @@ class CompositeLoaderResourceTest {
 
             TcclProbeBce.seenPlural = null;
             TcclProbeBce.seenSingle = null;
-            try (VaubanContainer container = VaubanContainer.builder()
+            try (VaubanContainer _ = VaubanContainer.builder()
                     .addBeanClass(TcclProbeBce.class)
                     .addBeanClass(foreignBean)
                     .build()) {

@@ -67,7 +67,7 @@ class InaccessibleDefaultOwnerTest {
         static final List<Method> CALLS = new CopyOnWriteArrayList<>();
 
         @AroundInvoke
-        public Object record(InvocationContext ctx) throws Exception {
+        public Object recordCall(InvocationContext ctx) throws Exception {
             CALLS.add(ctx.getMethod());
             return ctx.proceed();
         }
@@ -105,7 +105,7 @@ class InaccessibleDefaultOwnerTest {
     void shadowedDefaultWithNoAccessibleInterface() throws Exception {
         var bean = container.select(CarriedBean.class).get();
         assertEquals("own", bean.own());
-        assertEquals(List.of(CarriedBean.class.getDeclaredMethod("own")), FixtureInterceptor.CALLS,
+        assertEquals(FixtureInterceptor.CALLS, List.of(CarriedBean.class.getDeclaredMethod("own")),
                 "the bean is intercepted");
         FixtureInterceptor.CALLS.clear();
 
@@ -114,7 +114,7 @@ class InaccessibleDefaultOwnerTest {
         assertEquals(outcome(() -> DefaultCarrier.callCarried(new CarriedBean())),
                 outcome(() -> DefaultCarrier.callCarried(bean)),
                 "carried() on the intercepted bean must behave as on a plain instance");
-        assertEquals(List.of(), FixtureInterceptor.CALLS);
+        assertEquals(FixtureInterceptor.CALLS, List.of());
     }
 
     /** The result of {@code call}, or the class of what it threw. */

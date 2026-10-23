@@ -235,7 +235,7 @@ class DefaultMethodInterceptionTest {
         var markedGreet = Greeter.class.getDeclaredMethod("markedGreet", String.class);
         assertEquals(markedGreet, seen.method());
         assertTrue(seen.bindings().contains("Marked"), "got " + seen.bindings());
-        assertEquals(List.of(markedGreet), MarkingInterceptor.CALLS,
+        assertEquals(MarkingInterceptor.CALLS, List.of(markedGreet),
                 "the interceptor bound to the default method's binding must run");
     }
 
@@ -245,14 +245,14 @@ class DefaultMethodInterceptionTest {
         assertEquals("marked w", scoped.markedGreet("w"));
         var markedGreet = Greeter.class.getDeclaredMethod("markedGreet", String.class);
         assertEquals(markedGreet, onlySeen().method());
-        assertEquals(List.of(markedGreet), MarkingInterceptor.CALLS);
+        assertEquals(MarkingInterceptor.CALLS, List.of(markedGreet));
     }
 
     @Test
     @DisplayName("a bean bound only through a default method it inherits is intercepted")
     void beanBoundOnlyByADefaultMethod() throws Exception {
         assertEquals("only", boundOnlyByADefaultMethod.only());
-        assertEquals(List.of(MarkedOnly.class.getDeclaredMethod("only")), MarkingInterceptor.CALLS);
+        assertEquals(MarkingInterceptor.CALLS, List.of(MarkedOnly.class.getDeclaredMethod("only")));
     }
 
     @Test
@@ -271,7 +271,7 @@ class DefaultMethodInterceptionTest {
         var hidden = Hider.class.getDeclaredMethod("hidden", String.class);
         assertEquals(hidden, seen.method());
         assertTrue(seen.bindings().contains("Marked"), "got " + seen.bindings());
-        assertEquals(List.of(hidden), MarkingInterceptor.CALLS);
+        assertEquals(MarkingInterceptor.CALLS, List.of(hidden));
     }
 
     @Test
@@ -283,7 +283,7 @@ class DefaultMethodInterceptionTest {
         assertEquals("default y", hider.hidden("y"));
         var hidden = Hider.class.getDeclaredMethod("hidden", String.class);
         assertEquals(hidden, onlySeen().method());
-        assertEquals(List.of(hidden), MarkingInterceptor.CALLS);
+        assertEquals(MarkingInterceptor.CALLS, List.of(hidden));
     }
 
     @Test
@@ -293,6 +293,6 @@ class DefaultMethodInterceptionTest {
         var seen = onlySeen();
         assertEquals(DependentGreeter.class.getDeclaredMethod("rebound"), seen.method());
         assertFalse(seen.bindings().contains("Marked"), "got " + seen.bindings());
-        assertEquals(List.of(), MarkingInterceptor.CALLS);
+        assertEquals(MarkingInterceptor.CALLS, List.of());
     }
 }

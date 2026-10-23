@@ -145,7 +145,7 @@ class VaubanInvocationContextTest {
     // --- 4. concurrent proceed() from 2 vthreads sharing the same ctx ---
 
     static final class ConcurrentForker {
-        public Object around(InvocationContext ctx) throws Exception {
+        public Object around(InvocationContext ctx) {
             var f1 = CompletableFuture.supplyAsync(() -> safe(ctx),
                     r -> Thread.ofVirtual().start(r));
             var f2 = CompletableFuture.supplyAsync(() -> safe(ctx),

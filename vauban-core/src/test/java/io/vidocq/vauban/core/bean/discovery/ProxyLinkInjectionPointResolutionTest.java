@@ -54,10 +54,12 @@ class ProxyLinkInjectionPointResolutionTest {
     /** Marker first, so a declaration-ordered reflection walk meets it before the @Inject ctor. */
     public static class Bean {
         protected Bean(ProxyLink link) {
+            // nothing to initialise
         }
 
         @Inject
         public Bean(Collaborator collaborator) {
+            // nothing to initialise
         }
     }
 

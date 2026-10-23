@@ -157,7 +157,7 @@ class BceEnhancementMembersTest {
             assertEquals(List.of(DefaultNamed.class),
                     bm.getBeans("defaultNamed").stream().map(b -> (Object) b.getBeanClass()).toList());
         }
-        assertEquals(Map.of("Named1", "enhanced", "DefaultNamed", "defaultNamed"), RecordingBce.NAMES);
+        assertEquals(RecordingBce.NAMES, Map.of("Named1", "enhanced", "DefaultNamed", "defaultNamed"));
     }
 
     @Test

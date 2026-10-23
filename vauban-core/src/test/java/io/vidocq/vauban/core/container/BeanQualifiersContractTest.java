@@ -38,7 +38,7 @@ import java.lang.annotation.Target;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 
 /**
  * Safety net for vauban#70: the qualifier instances a bean exposes through {@link Bean#getQualifiers()}
@@ -161,7 +161,7 @@ class BeanQualifiersContractTest {
     void nonbindingMemberInEquals() {
         var built = containerBuilt(Noted.class);
         assertEquals(jdkBuilt(Noted.class), built);
-        assertFalse(built.equals(OtherNote.class.getAnnotation(Noted.class)),
+        assertNotEquals(built, OtherNote.class.getAnnotation(Noted.class),
                 "Annotation#equals compares every member; @Nonbinding only matters to CDI resolution");
     }
 

@@ -66,11 +66,11 @@ class BceEnhancementErrorCauseTest {
     @Test
     @DisplayName("@Enhancement exception is reachable through the DeploymentException causes")
     void enhancementExceptionIsPreservedAsCause() {
+        var builder = VaubanContainer.builder()
+                .addBeanClass(RejectingBce.class)
+                .addBeanClass(SomeBean.class);
         DeploymentException failure = assertThrows(DeploymentException.class, () -> {
-            try (VaubanContainer container = VaubanContainer.builder()
-                    .addBeanClass(RejectingBce.class)
-                    .addBeanClass(SomeBean.class)
-                    .build()) {
+            try (VaubanContainer _ = builder.build()) {
                 // deployment must fail before the container is usable
             }
         });

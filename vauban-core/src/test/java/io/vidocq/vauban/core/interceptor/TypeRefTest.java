@@ -50,11 +50,13 @@ class TypeRefTest {
     @Test
     @DisplayName("wrapperBinaryName rejects void and non-primitives (same contract as wrapperClassDesc)")
     void wrapperBinaryNameRejectsNonPrimitives() {
-        assertThrows(IllegalStateException.class, () -> TypeRef.ofVoid().wrapperBinaryName());
-        assertThrows(IllegalStateException.class, () -> TypeRef.ofReference("java.lang.String").wrapperBinaryName());
+        var voidType = TypeRef.ofVoid();
+        var stringType = TypeRef.ofReference("java.lang.String");
         // int[] is a reference type, not a primitive (VAU-INT-002)
-        assertThrows(IllegalStateException.class,
-                () -> TypeRef.ofPrimitive(TypeRef.Primitive.INT, 1).wrapperBinaryName());
+        var intArrayType = TypeRef.ofPrimitive(TypeRef.Primitive.INT, 1);
+        assertThrows(IllegalStateException.class, voidType::wrapperBinaryName);
+        assertThrows(IllegalStateException.class, stringType::wrapperBinaryName);
+        assertThrows(IllegalStateException.class, intArrayType::wrapperBinaryName);
     }
 
     @Test

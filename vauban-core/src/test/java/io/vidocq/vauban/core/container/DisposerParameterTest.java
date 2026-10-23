@@ -136,9 +136,9 @@ class DisposerParameterTest {
             bean.destroy(ledger, context);
 
             // A disposer runs once per destroyed instance (BUG-20260914-18).
-            assertEquals(List.of("plain:registry"), DISPOSED);
+            assertEquals(DISPOSED, List.of("plain:registry"));
             // The @Dependent parameter created for the call is destroyed when the call completes.
-            assertEquals(List.of("registry"), RELEASED);
+            assertEquals(RELEASED, List.of("registry"));
         }
     }
 
@@ -165,7 +165,7 @@ class DisposerParameterTest {
             bean.destroy(ledger, context);
 
             // One call, and it received the wire payment, never the card one.
-            assertEquals(List.of("ledger:wire"), DISPOSED);
+            assertEquals(DISPOSED, List.of("ledger:wire"));
         }
     }
 }

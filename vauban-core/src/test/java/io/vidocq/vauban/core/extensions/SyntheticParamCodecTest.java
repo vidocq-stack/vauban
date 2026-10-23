@@ -156,7 +156,8 @@ class SyntheticParamCodecTest {
     @Test
     @DisplayName("a value of no supported type is refused, never dropped")
     void unsupported() {
-        var error = assertThrows(IllegalArgumentException.class, () -> SyntheticParamCodec.encode(new Object()));
+        var opaque = new Object();
+        var error = assertThrows(IllegalArgumentException.class, () -> SyntheticParamCodec.encode(opaque));
         assertTrue(error.getMessage().contains("java.lang.Object"), error.getMessage());
         assertThrows(IllegalArgumentException.class, () -> SyntheticParamCodec.encode(new Object[] {"x"}));
     }
@@ -166,8 +167,11 @@ class SyntheticParamCodecTest {
     void writerRefusesWithContext() {
         var builder = new VaubanSyntheticBeanBuilder<>(Greeter.class);
         builder.getParams().put("opaque", new Object());
-        var error = assertThrows(IllegalArgumentException.class, () -> SyntheticMetadataSerializer.write(
-                java.util.List.of(builder), java.util.List.of(), new java.io.ByteArrayOutputStream()));
+        java.util.List<VaubanSyntheticBeanBuilder<?>> builders = java.util.List.of(builder);
+        java.util.List<VaubanSyntheticObserverBuilder<?>> noObservers = java.util.List.of();
+        var sink = new java.io.ByteArrayOutputStream();
+        var error = assertThrows(IllegalArgumentException.class,
+                () -> SyntheticMetadataSerializer.write(builders, noObservers, sink));
         assertTrue(error.getMessage().contains(Greeter.class.getName()), error.getMessage());
         assertTrue(error.getMessage().contains("'opaque'"), error.getMessage());
     }
@@ -175,8 +179,9 @@ class SyntheticParamCodecTest {
     @Test
     @DisplayName("a class the run time cannot load is reported, never dropped")
     void missingClass() {
+        var loader = getClass().getClassLoader();
         var error = assertThrows(IllegalArgumentException.class,
-                () -> SyntheticParamCodec.decode("C:com.example.Missing", getClass().getClassLoader()));
+                () -> SyntheticParamCodec.decode("C:com.example.Missing", loader));
         assertTrue(error.getMessage().contains("com.example.Missing"), error.getMessage());
     }
 

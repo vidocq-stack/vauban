@@ -20,7 +20,6 @@
 package io.vidocq.vauban.core.types;
 
 import io.vidocq.vauban.indexer.IndexBuilder;
-import io.vidocq.vauban.indexer.VaubanIndex;
 import io.vidocq.vauban.indexer.model.*;
 import io.vidocq.vauban.indexer.model.ClassInfo.ClassKind;
 import io.vidocq.vauban.indexer.model.TypeInfo.*;

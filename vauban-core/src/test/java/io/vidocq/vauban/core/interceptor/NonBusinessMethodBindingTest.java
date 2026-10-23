@@ -57,7 +57,7 @@ class NonBusinessMethodBindingTest {
         static final List<Method> CALLS = new CopyOnWriteArrayList<>();
 
         @AroundInvoke
-        public Object record(InvocationContext ctx) throws Exception {
+        public Object recordCall(InvocationContext ctx) throws Exception {
             CALLS.add(ctx.getMethod());
             return ctx.proceed();
         }
@@ -120,7 +120,7 @@ class NonBusinessMethodBindingTest {
         var bean = container.select(BoundThroughAForeignPackagePrivateMethod.class).get();
         assertEquals(BoundThroughAForeignPackagePrivateMethod.class, bean.getClass(), "not intercepted");
         assertEquals("own", bean.own());
-        assertEquals(List.of(), FixtureInterceptor.CALLS);
+        assertEquals(FixtureInterceptor.CALLS, List.of());
     }
 
     @Test
@@ -129,7 +129,7 @@ class NonBusinessMethodBindingTest {
         var bean = container.select(BoundThroughAPrivateMethod.class).get();
         assertEquals(BoundThroughAPrivateMethod.class, bean.getClass(), "not intercepted");
         assertEquals("hidden", bean.visible());
-        assertEquals(List.of(), FixtureInterceptor.CALLS);
+        assertEquals(FixtureInterceptor.CALLS, List.of());
     }
 
     @Test
@@ -138,6 +138,6 @@ class NonBusinessMethodBindingTest {
         var bean = container.select(BoundThroughAStaticMethod.class).get();
         assertEquals(BoundThroughAStaticMethod.class, bean.getClass(), "not intercepted");
         assertEquals("util", bean.visible());
-        assertEquals(List.of(), FixtureInterceptor.CALLS);
+        assertEquals(FixtureInterceptor.CALLS, List.of());
     }
 }

@@ -91,11 +91,11 @@ class UnproxyableInterceptedBeanTest {
     }
 
     private static DeploymentException deploymentFailure(Class<?> beanClass) {
+        var builder = VaubanContainer.builder()
+                .addBeanClass(MarkingInterceptor.class)
+                .addBeanClass(beanClass);
         return assertThrows(DeploymentException.class, () -> {
-            try (var container = VaubanContainer.builder()
-                    .addBeanClass(MarkingInterceptor.class)
-                    .addBeanClass(beanClass)
-                    .build()) {
+            try (var _ = builder.build()) {
                 // the deployment must not succeed
             }
         });

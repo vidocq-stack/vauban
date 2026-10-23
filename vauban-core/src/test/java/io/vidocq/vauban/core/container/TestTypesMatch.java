@@ -20,11 +20,10 @@
 package io.vidocq.vauban.core.container;
 
 import java.lang.reflect.Method;
-import java.lang.reflect.ParameterizedType;
 import java.lang.reflect.Type;
 
 public class TestTypesMatch {
-    public static void main(String[] args) throws Exception {
+    public static void main() throws Exception {
         Method dummy = TestTypesMatch.class.getMethod("dummy");
         Type requiredType = dummy.getGenericReturnType();
         

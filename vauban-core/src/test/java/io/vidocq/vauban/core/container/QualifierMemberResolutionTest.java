@@ -228,35 +228,35 @@ class QualifierMemberResolutionTest {
 
     /** Carries the annotation instances handed to programmatic lookups. Never a bean. */
     static final class Qualifiers {
-        @Label("two") void label() {}
+        @Label("two") void label() { /* the annotation is the fixture */ }
 
-        @Sized(level = 2, budget = 20L, fast = false, ratio = 2.5f, weight = 3.5) void sized() {}
+        @Sized(level = 2, budget = 20L, fast = false, ratio = 2.5f, weight = 3.5) void sized() { /* the annotation is the fixture */ }
 
-        @Coded(grade = 'b', tier = 2, rank = 20) void coded() {}
+        @Coded(grade = 'b', tier = 2, rank = 20) void coded() { /* the annotation is the fixture */ }
 
-        @Colored(Hue.BLUE) void colored() {}
+        @Colored(Hue.BLUE) void colored() { /* the annotation is the fixture */ }
 
-        @OfKind(Integer.class) void ofKind() {}
+        @OfKind(Integer.class) void ofKind() { /* the annotation is the fixture */ }
 
-        @Tagged({"c"}) void tagged() {}
+        @Tagged({"c"}) void tagged() { /* the annotation is the fixture */ }
 
-        @Numbered({3}) void numbered() {}
+        @Numbered({3}) void numbered() { /* the annotation is the fixture */ }
 
-        @Wrapped(@Inner("y")) void wrapped() {}
+        @Wrapped(@Inner("y")) void wrapped() { /* the annotation is the fixture */ }
 
-        @Graded("standard") void graded() {}
+        @Graded("standard") void graded() { /* the annotation is the fixture */ }
 
-        @Noted(value = "two", note = "lookup") void noted() {}
+        @Noted(value = "two", note = "lookup") void noted() { /* the annotation is the fixture */ }
 
-        @Named("reportService") void named() {}
+        @Named("reportService") void named() { /* the annotation is the fixture */ }
 
-        @Role("admin") @Role("audit") void roles() {}
+        @Role("admin") @Role("audit") void roles() { /* the annotation is the fixture */ }
 
-        @Branded("acme") void branded() {}
+        @Branded("acme") void branded() { /* the annotation is the fixture */ }
 
-        @Leveled(1L) void leveled() {}
+        @Leveled(1L) void leveled() { /* the annotation is the fixture */ }
 
-        @ExtLabel(value = "lookup", group = "two") void extLabel() {}
+        @ExtLabel(value = "lookup", group = "two") void extLabel() { /* the annotation is the fixture */ }
     }
 
     // ---- String ----
@@ -735,7 +735,7 @@ class QualifierMemberResolutionTest {
     }
 
     private static String selected(Annotation[] qualifiers, Class<?>... beans) {
-        try (var container = build(null, beans)) {
+        try (var _ = build(null, beans)) {
             return CDI.current().select(Service.class, qualifiers).get().id();
         }
     }
@@ -1065,9 +1065,9 @@ class QualifierMemberResolutionTest {
     class NoDefaultFallback {
         @Test @DisplayName("programmatic lookup")
         void programmatic() {
-            try (var container = build(null, LabelOne.class, PlainService.class)) {
-                assertThrows(UnsatisfiedResolutionException.class,
-                        () -> CDI.current().select(Service.class, qualifiers("label")).get());
+            try (var _ = build(null, LabelOne.class, PlainService.class)) {
+                var selection = CDI.current().select(Service.class, qualifiers("label"));
+                assertThrows(UnsatisfiedResolutionException.class, selection::get);
             }
         }
 

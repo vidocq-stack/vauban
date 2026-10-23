@@ -142,15 +142,15 @@ class LifecycleObserverFailureTest {
     @Test
     @DisplayName("a throwing @Initialized(ApplicationScoped) observer fails the boot, logged, with nothing left behind")
     void aThrowingInitializedObserverFailsTheBoot() {
-        DeploymentException failure = assertThrows(DeploymentException.class, () -> VaubanContainer.builder()
+        var builder = VaubanContainer.builder()
                 .addBeanClass(FailingInit.class)
                 .addBeanClass(LaterInit.class)
-                .addBeanClass(StartupObserver.class)
-                .build());
+                .addBeanClass(StartupObserver.class);
+        DeploymentException failure = assertThrows(DeploymentException.class, builder::build);
 
         assertSame(BOOM, failure.getCause(), "the observer's exception is the cause");
         assertTrue(failure.getMessage().contains(FailingInit.class.getName()), failure.getMessage());
-        assertEquals(List.of("FailingInit"), CALLS, "CDI §9.5: later observers and Startup are not notified");
+        assertEquals(CALLS, List.of("FailingInit"), "CDI §9.5: later observers and Startup are not notified");
         assertNull(VaubanContainer.current(), "no half-built container is left behind");
         String logged = logged();
         assertEquals(1, count(logged, MARK), logged);
@@ -161,9 +161,8 @@ class LifecycleObserverFailureTest {
     @Test
     @DisplayName("an Error from a startup observer propagates unchanged and leaves nothing behind")
     void anErrorFromAStartupObserverLeavesNothingBehind() {
-        assertThrows(ExceptionInInitializerError.class, () -> VaubanContainer.builder()
-                .addBeanClass(ErrorInit.class)
-                .build());
+        var builder = VaubanContainer.builder().addBeanClass(ErrorInit.class);
+        assertThrows(ExceptionInInitializerError.class, builder::build);
 
         assertNull(VaubanContainer.current(), "no half-built container is left behind");
     }
@@ -178,7 +177,7 @@ class LifecycleObserverFailureTest {
 
         container.close();
 
-        assertEquals(List.of("FailingShutdown"), CALLS, "CDI §9.5: later observers are not notified");
+        assertEquals(CALLS, List.of("FailingShutdown"), "CDI §9.5: later observers are not notified");
         assertNull(VaubanContainer.current(), "close() completed");
         String logged = logged();
         assertEquals(1, count(logged, MARK), logged);
@@ -237,7 +236,7 @@ class LifecycleObserverFailureTest {
                 .build();
         container.close();
 
-        assertEquals(List.of("LaterInit", "Startup", "LaterShutdown"), CALLS);
+        assertEquals(CALLS, List.of("LaterInit", "Startup", "LaterShutdown"));
         assertEquals("", logged());
         assertNull(VaubanContainer.current());
     }
