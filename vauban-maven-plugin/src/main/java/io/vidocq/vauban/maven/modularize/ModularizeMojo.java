@@ -25,7 +25,6 @@ import org.apache.maven.model.License;
 import org.apache.maven.plugin.AbstractMojo;
 import org.apache.maven.plugin.MojoExecutionException;
 import org.apache.maven.plugin.MojoFailureException;
-import org.apache.maven.plugins.annotations.Component;
 import org.apache.maven.plugins.annotations.LifecyclePhase;
 import org.apache.maven.plugins.annotations.Mojo;
 import org.apache.maven.plugins.annotations.Parameter;
@@ -71,7 +70,7 @@ public class ModularizeMojo extends AbstractMojo {
     @Parameter(defaultValue = "${session}", readonly = true, required = true)
     private MavenSession session;
 
-    @Component
+    /** Injected through the requirement the hand-written {@code plugin.xml} declares. */
     private ProjectBuilder projectBuilder;
 
     @Parameter(defaultValue = "${project.build.directory}", readonly = true, required = true)
@@ -134,12 +133,7 @@ public class ModularizeMojo extends AbstractMojo {
                 artifactByJarName.put(f.getName(), a);
             }
         }
-        var options = new Modularizer.Options(modeOf(mode),
-                new HashSet<>(includes == null ? List.of() : includes),
-                new HashSet<>(excludes == null ? List.of() : excludes),
-                moduleNames == null ? Map.of() : moduleNames,
-                openModules,
-                forceExplicit);
+        var options = options();
         Modularizer.Result result;
         try {
             result = Modularizer.run(closure, artifactIdByJar, buildDir.toPath(), options, this::log);
@@ -149,25 +143,40 @@ public class ModularizeMojo extends AbstractMojo {
             throw new MojoExecutionException("vauban:modularize failed", e);
         }
         if (allowedLicenses != null && !allowedLicenses.isEmpty()) {
-            // The patched copy keeps the file name of the jar it was made from (ModularizedJars),
-            // so the file name is enough to find the artifact each patched jar came from.
-            Map<String, List<String>> licenses = new LinkedHashMap<>();
-            for (Path patched : result.patched()) {
-                Artifact a = artifactByJarName.get(patched.getFileName().toString());
-                if (a == null) {
-                    throw new MojoExecutionException("No artifact matches patched jar " + patched);
-                }
-                licenses.put(a.getGroupId() + ":" + a.getArtifactId(), licensesOf(a));
-            }
-            List<String> violations = LicenseGate.violations(licenses, new HashSet<>(allowedLicenses));
-            if (!violations.isEmpty()) {
-                throw new MojoFailureException("vauban:modularize licence gate:\n  "
-                        + String.join("\n  ", violations));
-            }
+            checkLicenses(result, artifactByJarName);
         }
         getLog().info("vauban:modularize — " + result.patched().size() + " jar(s) patched, "
                 + result.skipped().size() + " left as is; report: "
                 + ModularizedJars.root(buildDir.toPath()).resolve(Modularizer.REPORT_FILE_NAME));
+    }
+
+    private Modularizer.Options options() throws MojoFailureException {
+        return new Modularizer.Options(modeOf(mode),
+                new HashSet<>(includes == null ? List.of() : includes),
+                new HashSet<>(excludes == null ? List.of() : excludes),
+                moduleNames == null ? Map.of() : moduleNames,
+                openModules,
+                forceExplicit);
+    }
+
+    /** Fails the build when a patched jar's licence is not in {@code allowedLicenses}. */
+    private void checkLicenses(Modularizer.Result result, Map<String, Artifact> artifactByJarName)
+            throws MojoExecutionException, MojoFailureException {
+        // The patched copy keeps the file name of the jar it was made from (ModularizedJars),
+        // so the file name is enough to find the artifact each patched jar came from.
+        Map<String, List<String>> licenses = new LinkedHashMap<>();
+        for (Path patched : result.patched()) {
+            Artifact a = artifactByJarName.get(patched.getFileName().toString());
+            if (a == null) {
+                throw new MojoExecutionException("No artifact matches patched jar " + patched);
+            }
+            licenses.put(a.getGroupId() + ":" + a.getArtifactId(), licensesOf(a));
+        }
+        List<String> violations = LicenseGate.violations(licenses, new HashSet<>(allowedLicenses));
+        if (!violations.isEmpty()) {
+            throw new MojoFailureException("vauban:modularize licence gate:\n  "
+                    + String.join("\n  ", violations));
+        }
     }
 
     /**

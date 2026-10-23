@@ -42,17 +42,21 @@ public final class VaubanModuleReferences {
     public static Set<String> of(Collection<byte[]> classFiles) {
         for (byte[] bytes : classFiles) {
             for (PoolEntry entry : ClassFile.of().parse(bytes).constantPool()) {
-                boolean names = switch (entry) {
-                    case ClassEntry type -> type.asInternalName().startsWith(CORE_PACKAGE);
-                    // A descriptor names a type without a class entry: (Lio/vidocq/vauban/core/…;)V
-                    case Utf8Entry utf -> utf.stringValue().contains("L" + CORE_PACKAGE);
-                    default -> false;
-                };
-                if (names) {
+                if (namesCoreType(entry)) {
                     return Set.of(CORE_MODULE);
                 }
             }
         }
         return Set.of();
+    }
+
+    /** Whether a constant-pool entry names a type of {@code io.vidocq.vauban.core}. */
+    private static boolean namesCoreType(PoolEntry entry) {
+        return switch (entry) {
+            case ClassEntry type -> type.asInternalName().startsWith(CORE_PACKAGE);
+            // A descriptor names a type without a class entry: (Lio/vidocq/vauban/core/…;)V
+            case Utf8Entry utf -> utf.stringValue().contains("L" + CORE_PACKAGE);
+            default -> false;
+        };
     }
 }

@@ -36,6 +36,7 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.jar.JarFile;
 
 /**
@@ -76,33 +77,7 @@ public class EnhanceDependenciesMojo extends AbstractMojo {
             var jars = collectDependencyJars();
             var classLoader = buildClassLoader(jars);
 
-            // Group each requested type under the dependency jar that contains it.
-            var byJar = new LinkedHashMap<Path, List<String>>();
-            for (var fqn : enhancedTypes) {
-                var entry = fqn.replace('.', '/') + ".class";
-                Path owner = null;
-                for (var jar : jars) {
-                    if (containsEntry(jar, entry)) {
-                        owner = jar;
-                        break;
-                    }
-                }
-                if (owner == null) {
-                    log.warn("Vauban enhance-dependencies: no dependency jar contains " + fqn);
-                    continue;
-                }
-                if (Files.isDirectory(owner)) {
-                    // A reactor dependency that has not been packaged yet: the type is right there,
-                    // but this goal rewrites a jar, and there is no jar. Saying which is which beats
-                    // failing the build with "Is a directory" from three frames down.
-                    log.warn("Vauban enhance-dependencies: " + fqn + " was found in " + owner
-                            + ", a classes directory rather than a jar, so it cannot be enhanced. "
-                            + "This happens in a multi-module build when the dependency has not been "
-                            + "packaged yet — run a phase that packages it (install, or package).");
-                    continue;
-                }
-                byJar.computeIfAbsent(owner, k -> new ArrayList<>()).add(fqn);
-            }
+            var byJar = groupByJar(jars);
             if (byJar.isEmpty()) {
                 log.warn("Vauban enhance-dependencies: none of the requested types were found in a "
                         + "dependency jar (a directory dependency cannot be enhanced).");
@@ -133,6 +108,30 @@ public class EnhanceDependenciesMojo extends AbstractMojo {
         }
     }
 
+    /** Each requested type, grouped under the dependency jar that contains it. */
+    private Map<Path, List<String>> groupByJar(List<Path> jars) {
+        var log = getLog();
+        var byJar = new LinkedHashMap<Path, List<String>>();
+        for (var fqn : enhancedTypes) {
+            var entry = fqn.replace('.', '/') + ".class";
+            Path owner = jars.stream().filter(jar -> containsEntry(jar, entry)).findFirst().orElse(null);
+            if (owner == null) {
+                log.warn("Vauban enhance-dependencies: no dependency jar contains " + fqn);
+            } else if (Files.isDirectory(owner)) {
+                // A reactor dependency that has not been packaged yet: the type is right there,
+                // but this goal rewrites a jar, and there is no jar. Saying which is which beats
+                // failing the build with "Is a directory" from three frames down.
+                log.warn("Vauban enhance-dependencies: " + fqn + " was found in " + owner
+                        + ", a classes directory rather than a jar, so it cannot be enhanced. "
+                        + "This happens in a multi-module build when the dependency has not been "
+                        + "packaged yet — run a phase that packages it (install, or package).");
+            } else {
+                byJar.computeIfAbsent(owner, k -> new ArrayList<>()).add(fqn);
+            }
+        }
+        return byJar;
+    }
+
     /**
      * The Maven coordinates of the dependency that {@code jar} is the artefact of, so the enhanced
      * copy can name its origin. Falls back to the file name when the jar is not a project artefact.
@@ -154,7 +153,7 @@ public class EnhanceDependenciesMojo extends AbstractMojo {
         }
         try (var jf = new JarFile(jar.toFile())) {
             return jf.getEntry(entry) != null;
-        } catch (Exception e) {
+        } catch (Exception _) {
             return false;
         }
     }

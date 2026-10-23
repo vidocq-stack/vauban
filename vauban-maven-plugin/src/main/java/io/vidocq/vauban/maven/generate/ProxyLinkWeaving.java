@@ -79,12 +79,17 @@ final class ProxyLinkWeaving {
             List<BeanDescriptor> beans, List<String> warnings) {
         var weaving = new ProxyLinkWeaving(classesDir, index, classLoader, warnings);
         for (var bean : beans) {
-            if (bean.kind() != BeanDescriptor.BeanKind.MANAGED || !bean.scope().isNormal()) continue;
-            var fqn = bean.beanClass().value();
-            if (fqn.contains("$")) continue; // nested beans keep the runtime fallback
-            weaving.ensureMarker(fqn);
+            if (isWeavable(bean)) {
+                weaving.ensureMarker(bean.beanClass().value());
+            }
         }
         return List.copyOf(weaving.patched);
+    }
+
+    /** A normal-scoped managed bean, top-level: nested beans keep the runtime fallback. */
+    private static boolean isWeavable(BeanDescriptor bean) {
+        return bean.kind() == BeanDescriptor.BeanKind.MANAGED && bean.scope().isNormal()
+                && !bean.beanClass().value().contains("$");
     }
 
     /**

@@ -40,24 +40,7 @@ public final class ModuleAnalyzer {
 
         try (var jar = new JarFile(jarPath.toFile())) {
             // Collect all packages
-            var entries = jar.entries();
-            boolean hasModuleInfo = false;
-            while (entries.hasMoreElements()) {
-                var entry = entries.nextElement();
-                if (entry.getName().equals("module-info.class")) {
-                    hasModuleInfo = true;
-                } else if (entry.getName().endsWith(".class") && !entry.isDirectory()) {
-                    var pkg = entry.getName().replace('/', '.');
-                    int lastDot = pkg.lastIndexOf('.');
-                    if (lastDot > 0) {
-                        pkg = pkg.substring(0, lastDot); // remove .class
-                        lastDot = pkg.lastIndexOf('.');
-                        if (lastDot > 0) {
-                            packages.add(pkg.substring(0, lastDot)); // remove ClassName
-                        }
-                    }
-                }
-            }
+            boolean hasModuleInfo = collectPackages(jar, packages);
 
             if (hasModuleInfo) {
                 // Explicit module - read module name from module-info.class using Class-File API
@@ -65,13 +48,10 @@ public final class ModuleAnalyzer {
                 moduleName = readModuleName(jar);
             } else {
                 // Check MANIFEST.MF for Automatic-Module-Name
-                var manifest = jar.getManifest();
-                if (manifest != null) {
-                    var autoName = manifest.getMainAttributes().getValue("Automatic-Module-Name");
-                    if (autoName != null && !autoName.isBlank()) {
-                        type = ModuleType.AUTOMATIC;
-                        moduleName = autoName.trim();
-                    }
+                var autoName = automaticModuleName(jar);
+                if (autoName != null) {
+                    type = ModuleType.AUTOMATIC;
+                    moduleName = autoName;
                 }
             }
 
@@ -84,6 +64,52 @@ public final class ModuleAnalyzer {
         }
 
         return new ModuleAnalysisResult(jarPath, fileName, type, moduleName, packages, issues);
+    }
+
+    /**
+     * Adds to {@code packages} the package of every class of {@code jar}.
+     *
+     * @return whether the jar holds a {@code module-info.class}
+     */
+    private static boolean collectPackages(JarFile jar, Set<String> packages) {
+        var entries = jar.entries();
+        boolean hasModuleInfo = false;
+        while (entries.hasMoreElements()) {
+            var entry = entries.nextElement();
+            if (entry.getName().equals("module-info.class")) {
+                hasModuleInfo = true;
+            } else if (entry.getName().endsWith(".class") && !entry.isDirectory()) {
+                var pkg = packageOfClassEntry(entry.getName());
+                if (pkg != null) {
+                    packages.add(pkg);
+                }
+            }
+        }
+        return hasModuleInfo;
+    }
+
+    /** The package of a class entry such as {@code com/acme/Foo.class}, or {@code null} for the unnamed package. */
+    private static String packageOfClassEntry(String entryName) {
+        var pkg = entryName.replace('/', '.');
+        int lastDot = pkg.lastIndexOf('.');
+        if (lastDot > 0) {
+            pkg = pkg.substring(0, lastDot); // remove .class
+            lastDot = pkg.lastIndexOf('.');
+            if (lastDot > 0) {
+                return pkg.substring(0, lastDot); // remove ClassName
+            }
+        }
+        return null;
+    }
+
+    /** The {@code Automatic-Module-Name} of {@code jar}'s manifest, trimmed, or {@code null} when absent or blank. */
+    private static String automaticModuleName(JarFile jar) throws IOException {
+        var manifest = jar.getManifest();
+        if (manifest == null) {
+            return null;
+        }
+        var autoName = manifest.getMainAttributes().getValue("Automatic-Module-Name");
+        return autoName != null && !autoName.isBlank() ? autoName.trim() : null;
     }
 
     /**
@@ -127,7 +153,7 @@ public final class ModuleAnalyzer {
         // Collapse consecutive dots
         name = name.replaceAll("\\.{2,}", ".");
         // Remove leading/trailing dots
-        name = name.replaceAll("^\\.|\\.$", "");
+        name = name.replaceAll("(?:^\\.)|(?:\\.$)", "");
         return name;
     }
 

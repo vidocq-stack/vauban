@@ -179,7 +179,7 @@ public class DistMojo extends AbstractMojo {
                     PosixFilePermission.OWNER_EXECUTE,
                     PosixFilePermission.GROUP_READ, PosixFilePermission.GROUP_EXECUTE,
                     PosixFilePermission.OTHERS_READ, PosixFilePermission.OTHERS_EXECUTE));
-        } catch (UnsupportedOperationException e) {
+        } catch (UnsupportedOperationException _) {
             // Windows — no POSIX permissions
         }
     }

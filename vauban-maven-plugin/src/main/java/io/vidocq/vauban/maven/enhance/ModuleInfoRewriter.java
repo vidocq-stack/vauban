@@ -76,35 +76,44 @@ public final class ModuleInfoRewriter {
             for (var o : old.opens()) mb.opens(o);
             for (var u : old.uses()) mb.uses(u);
 
-            // requires: copy all, add every wanted module that is absent.
-            for (var r : old.requires()) {
-                mb.requires(r);
-                wanted.remove(r.requires().name().stringValue());
-            }
-            for (var name : wanted) {
-                mb.requires(ModuleRequireInfo.of(ModuleDesc.of(name), 0, null));
-            }
-
-            // provides: copy all, merging our providers into the existing SPI directive (if any).
-            boolean spiFound = false;
-            for (var p : old.provides()) {
-                if (!newProviderCDs.isEmpty() && p.provides().asSymbol().equals(spiCD)) {
-                    var impls = new LinkedHashSet<ClassDesc>();
-                    for (var w : p.providesWith()) impls.add(w.asSymbol());
-                    impls.addAll(newProviderCDs);
-                    mb.provides(ModuleProvideInfo.of(spiCD, new ArrayList<>(impls)));
-                    spiFound = true;
-                } else {
-                    mb.provides(p);
-                }
-            }
-            if (!spiFound && !newProviderCDs.isEmpty()) {
-                mb.provides(ModuleProvideInfo.of(spiCD, newProviderCDs));
-            }
+            copyRequires(mb, old, wanted);
+            copyProvides(mb, old, spiCD, newProviderCDs);
         });
 
         return cf.transformClass(model,
-                ClassTransform.dropping(el -> el instanceof ModuleAttribute)
+                ClassTransform.dropping(ModuleAttribute.class::isInstance)
                         .andThen(ClassTransform.endHandler(clb -> clb.with(newAttr))));
+    }
+
+    /** Copies every {@code requires} of {@code old}, then adds each {@code wanted} module that is absent. */
+    private static void copyRequires(ModuleAttribute.ModuleAttributeBuilder mb, ModuleAttribute old,
+                                     Set<String> wanted) {
+        for (var r : old.requires()) {
+            mb.requires(r);
+            wanted.remove(r.requires().name().stringValue());
+        }
+        for (var name : wanted) {
+            mb.requires(ModuleRequireInfo.of(ModuleDesc.of(name), 0, null));
+        }
+    }
+
+    /** Copies every {@code provides} of {@code old}, merging {@code newProviderCDs} into the SPI directive (if any). */
+    private static void copyProvides(ModuleAttribute.ModuleAttributeBuilder mb, ModuleAttribute old, ClassDesc spiCD,
+                                     List<ClassDesc> newProviderCDs) {
+        boolean spiFound = false;
+        for (var p : old.provides()) {
+            if (!newProviderCDs.isEmpty() && p.provides().asSymbol().equals(spiCD)) {
+                var impls = new LinkedHashSet<ClassDesc>();
+                for (var w : p.providesWith()) impls.add(w.asSymbol());
+                impls.addAll(newProviderCDs);
+                mb.provides(ModuleProvideInfo.of(spiCD, new ArrayList<>(impls)));
+                spiFound = true;
+            } else {
+                mb.provides(p);
+            }
+        }
+        if (!spiFound && !newProviderCDs.isEmpty()) {
+            mb.provides(ModuleProvideInfo.of(spiCD, newProviderCDs));
+        }
     }
 }

@@ -108,10 +108,8 @@ public class GenerateMojo extends AbstractMojo {
         var jars = new ArrayList<Path>();
         for (var artifact : project.getArtifacts()) {
             var file = artifact.getFile();
-            if (file != null) {
-                if (file.getName().endsWith(".jar") || file.isDirectory()) {
-                    jars.add(file.toPath());
-                }
+            if (file != null && (file.getName().endsWith(".jar") || file.isDirectory())) {
+                jars.add(file.toPath());
             }
         }
         return jars;

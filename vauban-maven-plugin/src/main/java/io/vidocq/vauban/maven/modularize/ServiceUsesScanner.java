@@ -97,6 +97,135 @@ final class ServiceUsesScanner {
     /** Identity of a method across the closure: owner, name and descriptor. */
     private record MethodKey(String owner, String name, String descriptor) {}
 
+    /**
+     * The closure's call graph, restricted to the methods that could forward a service type, and the methods found to
+     * reach a {@code ServiceLoader} lookup.
+     */
+    private static final class CallGraph {
+
+        private final Map<MethodKey, Set<MethodKey>> callees = new HashMap<>();
+        // Known limitation: a class present in several jars of the closure (a shaded or duplicated
+        // copy) resolves to the last jar iterated. Only the attribution of a forwarded service is
+        // affected, and the split-package guard already rejects the case that matters — two
+        // automatic jars sharing a package.
+        private final Map<String, Path> jarOfClass = new HashMap<>();
+        // Direct supertypes of each class: a call written against an interface or a superclass method dispatches
+        // to the implementation that reaches ServiceLoader (Vaadin's Lookup.lookupAll → LookupImpl, vauban#167).
+        private final Map<String, List<String>> supersOf = new HashMap<>();
+        /** The same method declared by a supertype → its implementations: calling the former may run the latter. */
+        private final Map<MethodKey, Set<MethodKey>> implementations = new HashMap<>();
+        private final Set<MethodKey> lookups = new HashSet<>();
+        private final Map<MethodKey, Set<String>> chainCache = new HashMap<>();
+
+        /** Records the class of {@code model}, its direct supertypes and the calls of its methods taking a Class. */
+        void addClass(ClassModel model, Path jar) {
+            String owner = model.thisClass().asInternalName();
+            jarOfClass.put(owner, jar);
+            List<String> supers = new ArrayList<>();
+            model.superclass().ifPresent(sc -> supers.add(sc.asInternalName()));
+            model.interfaces().forEach(i -> supers.add(i.asInternalName()));
+            supersOf.put(owner, supers);
+            for (MethodModel method : model.methods()) {
+                MethodTypeDesc type = method.methodTypeSymbol();
+                // Without a Class parameter a method has no service type to forward; whatever
+                // it looks up is already caught where the class constant is written.
+                if (type.parameterList().contains(CLASS)) {
+                    Set<MethodKey> invoked = new HashSet<>();
+                    eachInstruction(method, element -> {
+                        if (element instanceof InvokeInstruction invoke) {
+                            invoked.add(keyOf(invoke));
+                        }
+                    });
+                    callees.put(new MethodKey(owner, method.methodName().stringValue(),
+                            type.descriptorString()), invoked);
+                }
+            }
+        }
+
+        /** Maps each method declared by a supertype to the implementations the closure defines. */
+        void linkImplementations() {
+            for (MethodKey key : callees.keySet()) {
+                for (String supertype : supertypes(key.owner())) {
+                    implementations.computeIfAbsent(new MethodKey(supertype, key.name(), key.descriptor()),
+                            k -> new HashSet<>()).add(key);
+                }
+            }
+        }
+
+        /** Grows {@link #lookups} to its fixed point. */
+        void resolveLookups() {
+            boolean growing = true;
+            while (growing) {
+                growing = growLookups();
+            }
+        }
+
+        /** One pass of the fixed point; whether it found a new lookup. */
+        private boolean growLookups() {
+            boolean grew = false;
+            for (Map.Entry<MethodKey, Set<MethodKey>> entry : implementations.entrySet()) {
+                if (!lookups.contains(entry.getKey())
+                        && entry.getValue().stream().anyMatch(lookups::contains)) {
+                    lookups.add(entry.getKey());
+                    grew = true;
+                }
+            }
+            for (Map.Entry<MethodKey, Set<MethodKey>> entry : callees.entrySet()) {
+                if (!lookups.contains(entry.getKey()) && entry.getValue().stream()
+                        .anyMatch(callee -> isServiceLoaderLookup(callee) || lookups.contains(callee))) {
+                    lookups.add(entry.getKey());
+                    grew = true;
+                }
+            }
+            return grew;
+        }
+
+        /**
+         * The classes on the forwarding chain from {@code entry} down to {@code ServiceLoader}: every
+         * one of them may be the caller {@code ServiceLoader} sees.
+         */
+        Set<String> chainOwners(MethodKey entry) {
+            Set<String> cached = chainCache.get(entry);
+            if (cached != null) {
+                return cached;
+            }
+            Set<String> owners = new HashSet<>();
+            Set<MethodKey> seen = new HashSet<>();
+            Deque<MethodKey> queue = new ArrayDeque<>();
+            queue.add(entry);
+            seen.add(entry);
+            while (!queue.isEmpty()) {
+                MethodKey current = queue.poll();
+                owners.add(current.owner());
+                for (MethodKey callee : callees.getOrDefault(current, Set.of())) {
+                    if (lookups.contains(callee) && seen.add(callee)) {
+                        queue.add(callee);
+                    }
+                }
+                for (MethodKey implementation : implementations.getOrDefault(current, Set.of())) {
+                    if (lookups.contains(implementation) && seen.add(implementation)) {
+                        queue.add(implementation);
+                    }
+                }
+            }
+            chainCache.put(entry, owners);
+            return owners;
+        }
+
+        /** Every supertype of {@code owner} the closure defines, transitively. */
+        private Set<String> supertypes(String owner) {
+            Set<String> all = new HashSet<>();
+            Deque<String> queue = new ArrayDeque<>(supersOf.getOrDefault(owner, List.of()));
+            while (!queue.isEmpty()) {
+                String type = queue.poll();
+                if (all.add(type)) {
+                    queue.addAll(supersOf.getOrDefault(type, List.of()));
+                }
+            }
+            return all;
+        }
+    }
+
     /** Service binary names per jar, ready to be turned into {@code uses} directives. */
     private final Map<Path, Set<String>> servicesByJar;
 
@@ -118,85 +247,21 @@ final class ServiceUsesScanner {
         // entries, so adding them up would double-count the same unreadable classes.
         Map<Path, Integer> unreadable = new LinkedHashMap<>();
         // Pass 1: the call graph, restricted to the methods that could forward a service type.
-        Map<MethodKey, Set<MethodKey>> callees = new HashMap<>();
-        // Known limitation: a class present in several jars of the closure (a shaded or duplicated
-        // copy) resolves to the last jar iterated. Only the attribution of a forwarded service is
-        // affected, and the split-package guard already rejects the case that matters — two
-        // automatic jars sharing a package.
-        Map<String, Path> jarOfClass = new HashMap<>();
-        // Direct supertypes of each class: a call written against an interface or a superclass method dispatches
-        // to the implementation that reaches ServiceLoader (Vaadin's Lookup.lookupAll → LookupImpl, vauban#167).
-        Map<String, List<String>> supersOf = new HashMap<>();
+        CallGraph graph = new CallGraph();
         for (Path jar : closure) {
-            record(unreadable, jar, forEachClass(jar, model -> {
-                String owner = model.thisClass().asInternalName();
-                jarOfClass.put(owner, jar);
-                List<String> supers = new ArrayList<>();
-                model.superclass().ifPresent(sc -> supers.add(sc.asInternalName()));
-                model.interfaces().forEach(i -> supers.add(i.asInternalName()));
-                supersOf.put(owner, supers);
-                for (MethodModel method : model.methods()) {
-                    MethodTypeDesc type = method.methodTypeSymbol();
-                    // Without a Class parameter a method has no service type to forward; whatever
-                    // it looks up is already caught where the class constant is written.
-                    if (!type.parameterList().contains(CLASS)) {
-                        continue;
-                    }
-                    Set<MethodKey> invoked = new HashSet<>();
-                    eachInstruction(method, element -> {
-                        if (element instanceof InvokeInstruction invoke) {
-                            invoked.add(keyOf(invoke));
-                        }
-                    });
-                    callees.put(new MethodKey(owner, method.methodName().stringValue(),
-                            type.descriptorString()), invoked);
-                }
-            }));
+            recordFailures(unreadable, jar, forEachClass(jar, model -> graph.addClass(model, jar)));
         }
-
-        // The same method declared by a supertype → its implementations: calling the former may run the latter.
-        Map<MethodKey, Set<MethodKey>> implementations = new HashMap<>();
-        for (MethodKey key : callees.keySet()) {
-            for (String supertype : supertypes(key.owner(), supersOf)) {
-                implementations.computeIfAbsent(new MethodKey(supertype, key.name(), key.descriptor()),
-                        k -> new HashSet<>()).add(key);
-            }
-        }
+        graph.linkImplementations();
 
         // Pass 2: fixed point — a helper calling a helper is the common case
         // (ServiceHelper.loadFactory → loadFactories → loadFactories(Class, ClassLoader)), and a supertype method
         // is a lookup when one of its implementations is.
-        Set<MethodKey> lookups = new HashSet<>();
-        boolean growing = true;
-        while (growing) {
-            growing = false;
-            for (Map.Entry<MethodKey, Set<MethodKey>> entry : implementations.entrySet()) {
-                if (!lookups.contains(entry.getKey())
-                        && entry.getValue().stream().anyMatch(lookups::contains)) {
-                    lookups.add(entry.getKey());
-                    growing = true;
-                }
-            }
-            for (Map.Entry<MethodKey, Set<MethodKey>> entry : callees.entrySet()) {
-                if (lookups.contains(entry.getKey())) {
-                    continue;
-                }
-                for (MethodKey callee : entry.getValue()) {
-                    if (isServiceLoaderLookup(callee) || lookups.contains(callee)) {
-                        lookups.add(entry.getKey());
-                        growing = true;
-                        break;
-                    }
-                }
-            }
-        }
+        graph.resolveLookups();
 
         // Pass 3: harvest the class constants and spread each service along its forwarding chain.
         Map<Path, Set<String>> servicesByJar = new HashMap<>();
-        Map<MethodKey, Set<String>> chainCache = new HashMap<>();
         for (Path jar : closure) {
-            record(unreadable, jar, forEachClass(jar, model -> harvest(model, jar, callees, implementations,
-                    lookups, jarOfClass, chainCache, servicesByJar)));
+            recordFailures(unreadable, jar, forEachClass(jar, model -> harvest(model, jar, graph, servicesByJar)));
         }
         // Reported once per jar, after both passes: a class the scanner cannot read is a service
         // lookup it cannot see, so a jar whose descriptor is generated from a partial scan may be
@@ -209,7 +274,7 @@ final class ServiceUsesScanner {
     }
 
     /** Keeps the worst count seen for {@code jar}; the passes read the same entries. */
-    private static void record(Map<Path, Integer> unreadable, Path jar, int failures) {
+    private static void recordFailures(Map<Path, Integer> unreadable, Path jar, int failures) {
         if (failures > 0) {
             unreadable.merge(jar, failures, Math::max);
         }
@@ -226,10 +291,7 @@ final class ServiceUsesScanner {
     }
 
     /** Harvests the lookups of one class and records them against every jar that needs them. */
-    private static void harvest(ClassModel model, Path jar, Map<MethodKey, Set<MethodKey>> callees,
-                                Map<MethodKey, Set<MethodKey>> implementations, Set<MethodKey> lookups, Map<String, Path> jarOfClass,
-                                Map<MethodKey, Set<String>> chainCache,
-                                Map<Path, Set<String>> servicesByJar) {
+    private static void harvest(ClassModel model, Path jar, CallGraph graph, Map<Path, Set<String>> servicesByJar) {
         for (MethodModel method : model.methods()) {
             // `ServiceLoader.load(Foo.class)` compiles to `ldc Foo.class` then `invokestatic`,
             // with any ClassLoader or ModuleLayer argument loaded around it — and that argument is
@@ -253,37 +315,50 @@ final class ServiceUsesScanner {
                     pending.addLast(cd);
                     constantOnTop[0] = true;
                 } else if (element instanceof InvokeInstruction invoke) {
-                    MethodKey key = keyOf(invoke);
-                    boolean direct = isServiceLoaderLookup(key);
-                    if (!direct && !lookups.contains(key)) {
-                        consume(pending, invoke, afterConstant);
-                        return;
-                    }
-                    for (ClassDesc candidate : pending) {
-                        if (!candidate.isClassOrInterface()) {
-                            continue;
-                        }
-                        String service = binaryNameOf(candidate);
-                        // The naming jar: correct on its own for the direct shape, and harmless
-                        // for the indirect one.
-                        servicesByJar.computeIfAbsent(jar, j -> new HashSet<>()).add(service);
-                        // The forwarding chain: those are the modules ServiceLoader will see as
-                        // the caller, so those are the ones that would fail without the directive.
-                        if (!direct) {
-                            for (String owner : chainOwners(key, callees, implementations, lookups, chainCache)) {
-                                Path helperJar = jarOfClass.get(owner);
-                                if (helperJar != null) {
-                                    servicesByJar.computeIfAbsent(helperJar, j -> new HashSet<>()).add(service);
-                                }
-                            }
-                        }
-                    }
-                    // Reset per lookup: a constant pushed after this call belongs to the next one.
-                    pending.clear();
+                    onInvoke(invoke, afterConstant, pending, jar, graph, servicesByJar);
                 } else if (element instanceof ReturnInstruction || element instanceof ThrowInstruction) {
                     pending.clear();
                 }
             });
+        }
+    }
+
+    /**
+     * A call: a lookup records the pending candidates as services, any other call removes the candidates it
+     * consumes.
+     */
+    private static void onInvoke(InvokeInstruction invoke, boolean afterConstant, Deque<ClassDesc> pending,
+                                 Path jar, CallGraph graph, Map<Path, Set<String>> servicesByJar) {
+        MethodKey key = keyOf(invoke);
+        boolean direct = isServiceLoaderLookup(key);
+        if (!direct && !graph.lookups.contains(key)) {
+            consume(pending, invoke, afterConstant);
+            return;
+        }
+        for (ClassDesc candidate : pending) {
+            if (candidate.isClassOrInterface()) {
+                recordService(binaryNameOf(candidate), key, direct, jar, graph, servicesByJar);
+            }
+        }
+        // Reset per lookup: a constant pushed after this call belongs to the next one.
+        pending.clear();
+    }
+
+    /** Records {@code service} against the jar naming it and, for a forwarded lookup, every jar of the chain. */
+    private static void recordService(String service, MethodKey key, boolean direct, Path jar, CallGraph graph,
+                                      Map<Path, Set<String>> servicesByJar) {
+        // The naming jar: correct on its own for the direct shape, and harmless
+        // for the indirect one.
+        servicesByJar.computeIfAbsent(jar, j -> new HashSet<>()).add(service);
+        // The forwarding chain: those are the modules ServiceLoader will see as
+        // the caller, so those are the ones that would fail without the directive.
+        if (!direct) {
+            for (String owner : graph.chainOwners(key)) {
+                Path helperJar = graph.jarOfClass.get(owner);
+                if (helperJar != null) {
+                    servicesByJar.computeIfAbsent(helperJar, j -> new HashSet<>()).add(service);
+                }
+            }
         }
     }
 
@@ -328,53 +403,6 @@ final class ServiceUsesScanner {
         }
     }
 
-    /**
-     * The classes on the forwarding chain from {@code entry} down to {@code ServiceLoader}: every
-     * one of them may be the caller {@code ServiceLoader} sees.
-     */
-    private static Set<String> chainOwners(MethodKey entry, Map<MethodKey, Set<MethodKey>> callees,
-                                           Map<MethodKey, Set<MethodKey>> implementations,
-                                           Set<MethodKey> lookups, Map<MethodKey, Set<String>> cache) {
-        Set<String> cached = cache.get(entry);
-        if (cached != null) {
-            return cached;
-        }
-        Set<String> owners = new HashSet<>();
-        Set<MethodKey> seen = new HashSet<>();
-        Deque<MethodKey> queue = new ArrayDeque<>();
-        queue.add(entry);
-        seen.add(entry);
-        while (!queue.isEmpty()) {
-            MethodKey current = queue.poll();
-            owners.add(current.owner());
-            for (MethodKey callee : callees.getOrDefault(current, Set.of())) {
-                if (lookups.contains(callee) && seen.add(callee)) {
-                    queue.add(callee);
-                }
-            }
-            for (MethodKey implementation : implementations.getOrDefault(current, Set.of())) {
-                if (lookups.contains(implementation) && seen.add(implementation)) {
-                    queue.add(implementation);
-                }
-            }
-        }
-        cache.put(entry, owners);
-        return owners;
-    }
-
-    /** Every supertype of {@code owner} the closure defines, transitively. */
-    private static Set<String> supertypes(String owner, Map<String, List<String>> supersOf) {
-        Set<String> all = new HashSet<>();
-        Deque<String> queue = new ArrayDeque<>(supersOf.getOrDefault(owner, List.of()));
-        while (!queue.isEmpty()) {
-            String type = queue.poll();
-            if (all.add(type)) {
-                queue.addAll(supersOf.getOrDefault(type, List.of()));
-            }
-        }
-        return all;
-    }
-
     /** Whether {@code key} is one of the static {@code ServiceLoader} lookup factories. */
     private static boolean isServiceLoaderLookup(MethodKey key) {
         return SERVICE_LOADER.equals(key.owner())
@@ -407,26 +435,34 @@ final class ServiceUsesScanner {
         int failures = 0;
         try (JarFile jf = new JarFile(jar.toFile())) {
             for (JarEntry entry : jf.stream().toList()) {
-                String name = entry.getName();
-                if (entry.isDirectory() || !name.endsWith(".class") || name.endsWith("module-info.class")) {
-                    continue;
-                }
-                ClassModel model;
-                try (InputStream in = jf.getInputStream(entry)) {
-                    model = ClassFile.of().parse(in.readAllBytes());
-                } catch (RuntimeException | IOException e) {
-                    failures++;
-                    continue;
-                }
-                try {
-                    visitor.accept(model);
-                } catch (RuntimeException e) {
-                    // Same reasoning: one unreadable member must not cost the jar its descriptor.
+                if (isScannedClass(entry) && !visit(jf, entry, visitor)) {
                     failures++;
                 }
             }
         }
         return failures;
+    }
+
+    private static boolean isScannedClass(JarEntry entry) {
+        String name = entry.getName();
+        return !entry.isDirectory() && name.endsWith(".class") && !name.endsWith("module-info.class");
+    }
+
+    /** Parses {@code entry} and hands it to {@code visitor}; {@code false} when it could not be read or visited. */
+    private static boolean visit(JarFile jf, JarEntry entry, Consumer<ClassModel> visitor) {
+        ClassModel model;
+        try (InputStream in = jf.getInputStream(entry)) {
+            model = ClassFile.of().parse(in.readAllBytes());
+        } catch (RuntimeException | IOException _) {
+            return false;
+        }
+        try {
+            visitor.accept(model);
+            return true;
+        } catch (RuntimeException _) {
+            // Same reasoning: one unreadable member must not cost the jar its descriptor.
+            return false;
+        }
     }
 
     /** {@code Lcom/acme/Foo;} → {@code com.acme.Foo} (nested types keep their {@code $}). */

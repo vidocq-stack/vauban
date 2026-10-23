@@ -32,7 +32,9 @@ public final class ModuleReport {
         var sb = new StringBuilder();
         sb.append("=== Java Module Analysis Report ===\n\n");
 
-        int explicit = 0, automatic = 0, unnamed = 0;
+        int explicit = 0;
+        int automatic = 0;
+        int unnamed = 0;
 
         for (var r : results) {
             var icon = switch (r.type()) {

@@ -85,6 +85,9 @@ public final class Modularizer {
      */
     public static final String KEPT_AUTOMATIC_PREFIX = "kept automatic: ";
 
+    /** Prefix of a message the mojo logs at the warning level. */
+    private static final String WARN = "WARN ";
+
     private Modularizer() {}
 
     /**
@@ -374,21 +377,21 @@ public final class Modularizer {
                     + blocking.get(0).service() + " from " + generated.moduleNames().get(jar)
                     + " cannot be declared (module cycle); jlink will reject it, dev mode works";
             report.append('\n').append(message).append('\n');
-            log.accept("WARN " + message);
+            log.accept(WARN + message);
             // One jar regularly loses several services the same way; naming only the first would
             // hide how much of its lookup surface the cycle costs.
             for (UsesLegality.Drop drop : blocking) {
                 String detail = "dropped uses: " + jar.getFileName() + " — " + drop.service()
                         + " (" + drop.reason() + ")";
                 report.append(detail).append('\n');
-                log.accept("WARN " + detail);
+                log.accept(WARN + detail);
             }
         }
         for (UsesLegality.Drop drop : legality.verdict().drops()) {
             String message = "dropped uses: " + drop.jar().getFileName() + " — " + drop.service()
                     + " (" + drop.reason() + ")";
             report.append('\n').append(message).append('\n');
-            log.accept("WARN " + message);
+            log.accept(WARN + message);
         }
         for (Path s : selection.skipped()) {
             report.append("\nskipped: ").append(s.getFileName()).append('\n');
@@ -396,10 +399,6 @@ public final class Modularizer {
         return allSkipped;
     }
 
-    /**
-     * Two automatic jars sharing a package cannot both become named modules, and the
-     * module system would reject them side by side anyway — fail early with the names.
-     */
     /** Prefix of the report line naming a resource directory several jars hold (vauban#163). */
     static final String SHARED_RESOURCE_PREFIX = "shared resource directory: ";
 
@@ -420,6 +419,10 @@ public final class Modularizer {
         });
     }
 
+    /**
+     * Two automatic jars sharing a package cannot both become named modules, and the
+     * module system would reject them side by side anyway — fail early with the names.
+     */
     private static void assertNoSplitPackage(List<JarModuleInfo> infos) throws IOException {
         List<ModuleAnalysisResult> analyses = new ArrayList<>();
         for (JarModuleInfo info : infos) {

@@ -229,20 +229,16 @@ final class UsesLegality {
         boolean readsAnAutomaticModule = false;
         while (!queue.isEmpty()) {
             String name = queue.poll();
-            if (!seen.add(name)) {
-                continue;
-            }
-            if (name.equals(target)) {
-                return true;
-            }
-            Mod mod = byName.get(name);
-            if (mod == null) {
-                continue;
-            }
-            if (mod.automatic()) {
-                readsAnAutomaticModule = true;
-            } else {
-                queue.addAll(mod.requiresTransitive());
+            if (seen.add(name)) {
+                if (name.equals(target)) {
+                    return true;
+                }
+                Mod mod = byName.get(name);
+                if (mod != null && mod.automatic()) {
+                    readsAnAutomaticModule = true;
+                } else if (mod != null) {
+                    queue.addAll(mod.requiresTransitive());
+                }
             }
         }
         Mod targetMod = byName.get(target);
@@ -265,7 +261,7 @@ final class UsesLegality {
             // which jars have none. A jar with no derivable module name (unchecked FindException
             // there, IOException here) cannot host a uses directive either, so it drops out.
             return JarModuleClassifier.descriptorOf(jar);
-        } catch (IOException | RuntimeException e) {
+        } catch (IOException | RuntimeException _) {
             return null;
         }
     }

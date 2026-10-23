@@ -36,6 +36,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -71,15 +72,16 @@ import java.util.regex.Pattern;
 public final class ModuleDescriptorSynthesizer {
 
     /** A class name written as a type descriptor, as in a field, method or annotation descriptor. */
-    private static final Pattern DESCRIPTOR_TYPE = Pattern.compile("L([A-Za-z_$][\\w$]*(?:/[\\w$]+)*);");
+    private static final Pattern DESCRIPTOR_TYPE = Pattern.compile("L([A-Za-z_$][\\w$]*+(?:/[\\w$]++)*+);");
     /** A bare internal name, as a constant-pool class entry holds it. */
-    private static final Pattern INTERNAL_NAME = Pattern.compile("[A-Za-z_$][\\w$]*(?:/[\\w$]+)+");
+    private static final Pattern INTERNAL_NAME = Pattern.compile("[A-Za-z_$][\\w$]*+(?:/[\\w$]++)++");
     /** Signature files: a descriptor added to a jar invalidates them, so they are not carried over. */
     private static final Pattern SIGNATURE_FILE =
             Pattern.compile("META-INF/[^/]+\\.(SF|DSA|RSA|EC)", Pattern.CASE_INSENSITIVE);
 
     private static final String SERVICES = "META-INF/services/";
     private static final String MODULE_INFO = "module-info.class";
+    private static final String JAVA_BASE = "java.base";
     /** {@code META-INF/versions/<n>/} — the prefix a multi-release jar files its variants under. */
     private static final Pattern VERSIONED = Pattern.compile("META-INF/versions/\\d+/");
 
@@ -123,6 +125,25 @@ public final class ModuleDescriptorSynthesizer {
         public Result {
             notes = List.copyOf(notes);
         }
+
+        @Override
+        public boolean equals(Object other) {
+            return other instanceof Result(var otherModuleInfo, var otherDescriptor, var otherNotes)
+                    && Arrays.equals(moduleInfo, otherModuleInfo)
+                    && Objects.equals(descriptor, otherDescriptor)
+                    && notes.equals(otherNotes);
+        }
+
+        @Override
+        public int hashCode() {
+            return Objects.hash(Arrays.hashCode(moduleInfo), descriptor, notes);
+        }
+
+        @Override
+        public String toString() {
+            return "Result[moduleInfo=" + Arrays.toString(moduleInfo) + ", descriptor=" + descriptor
+                    + ", notes=" + notes + "]";
+        }
     }
 
     /** Synthesize a descriptor for {@code request.jar()}, without touching the jar itself. */
@@ -152,6 +173,39 @@ public final class ModuleDescriptorSynthesizer {
         // closure also holds stays out: two modules holding one package fail at boot, and the JDK itself leaves such
         // directories out of an automatic module.
         packages = new TreeSet<>(packages);
+        addUnsharedResourceDirectories(request, resourceOnly, packages, notes);
+
+        var owners = packageOwners(request, notes);
+        var requires = new TreeSet<String>();
+        for (String pkg : referenced) {
+            if (packages.contains(pkg)) {
+                continue; // its own code
+            }
+            String owner = owners.get(pkg);
+            if (owner == null) {
+                notes.add("DEBUG no module of the closure owns package " + pkg
+                        + ", referenced by " + request.jar().getFileName() + ": no requires added");
+            } else {
+                addRequirement(request, owner, requires);
+            }
+        }
+        // A `provides` must name a type the module reads, or the whole graph is rejected at resolution. A service of
+        // an optional dependency missing from the closure (reactor-core's micrometer ContextAccessor) is left out,
+        // as the JDK ignores such a service file for an automatic module; one from the closure gets its requires
+        // even when the provider's own bytecode never names it (vauban#162).
+        requireServiceOwners(request, services, packages, owners, requires, notes);
+
+        byte[] moduleInfo = emit(request, packages, requires, services);
+        var descriptor = ModuleDescriptor.read(new java.io.ByteArrayInputStream(moduleInfo));
+        return new Result(moduleInfo, descriptor, notes);
+    }
+
+    /**
+     * Adds to {@code packages} each directory of {@code resourceOnly} that no other jar of the closure holds; notes
+     * the others.
+     */
+    private static void addUnsharedResourceDirectories(Request request, Set<String> resourceOnly,
+                                                       Set<String> packages, List<String> notes) throws IOException {
         for (String pkg : resourceOnly) {
             List<String> sharing = new ArrayList<>();
             for (Path other : request.closure()) {
@@ -167,44 +221,36 @@ public final class ModuleDescriptorSynthesizer {
                         + String.join(", ", sharing) + ", left out of the module descriptor");
             }
         }
+    }
 
-        var owners = packageOwners(request, notes);
-        var requires = new TreeSet<String>();
-        for (String pkg : referenced) {
-            if (packages.contains(pkg)) {
-                continue; // its own code
-            }
-            String owner = owners.get(pkg);
-            if (owner == null) {
-                notes.add("DEBUG no module of the closure owns package " + pkg
-                        + ", referenced by " + request.jar().getFileName() + ": no requires added");
-            } else if (!owner.equals(request.moduleName()) && !"java.base".equals(owner)) {
-                requires.add(owner);
-            }
-        }
-        // A `provides` must name a type the module reads, or the whole graph is rejected at resolution. A service of
-        // an optional dependency missing from the closure (reactor-core's micrometer ContextAccessor) is left out,
-        // as the JDK ignores such a service file for an automatic module; one from the closure gets its requires
-        // even when the provider's own bytecode never names it (vauban#162).
+    /**
+     * Requires the owner of each service type {@code services} provides from another module; drops a service no
+     * module of the closure owns.
+     */
+    private static void requireServiceOwners(Request request, Map<String, List<String>> services,
+                                             Set<String> packages, Map<String, String> owners,
+                                             Set<String> requires, List<String> notes) {
         for (var it = services.entrySet().iterator(); it.hasNext(); ) {
             String service = it.next().getKey();
             String pkg = packageOfBinaryName(service);
-            if (packages.contains(pkg)) {
-                continue;
-            }
-            String owner = owners.get(pkg);
-            if (owner == null) {
-                notes.add("WARN dropped provides: " + request.jar().getFileName() + " — " + service
-                        + " (not in closure)");
-                it.remove();
-            } else if (!owner.equals(request.moduleName()) && !"java.base".equals(owner)) {
-                requires.add(owner);
+            if (!packages.contains(pkg)) {
+                String owner = owners.get(pkg);
+                if (owner == null) {
+                    notes.add("WARN dropped provides: " + request.jar().getFileName() + " — " + service
+                            + " (not in closure)");
+                    it.remove();
+                } else {
+                    addRequirement(request, owner, requires);
+                }
             }
         }
+    }
 
-        byte[] moduleInfo = emit(request, packages, requires, services);
-        var descriptor = ModuleDescriptor.read(new java.io.ByteArrayInputStream(moduleInfo));
-        return new Result(moduleInfo, descriptor, notes);
+    /** Requires {@code owner}, unless it is the module itself or {@code java.base}, which every module reads. */
+    private static void addRequirement(Request request, String owner, Set<String> requires) {
+        if (!owner.equals(request.moduleName()) && !JAVA_BASE.equals(owner)) {
+            requires.add(owner);
+        }
     }
 
     /**
@@ -245,41 +291,46 @@ public final class ModuleDescriptorSynthesizer {
     private static byte[] emit(Request request, Set<String> packages, Set<String> requires,
                                Map<String, List<String>> services) {
         var packageDescs = packages.stream().map(PackageDesc::of).toList();
-        var moduleAttribute = ModuleAttribute.of(ModuleDesc.of(request.moduleName()), mb -> {
-            mb.moduleFlags(request.open() ? ClassFile.ACC_OPEN : 0);
-            if (request.version() != null && !request.version().isBlank()) {
-                mb.moduleVersion(request.version());
-            }
-            mb.requires(ModuleDesc.of("java.base"), ClassFile.ACC_MANDATED, null);
-            for (String required : requires) {
-                mb.requires(ModuleDesc.of(required), 0, null);
-            }
-            // A library coming off the class path had every package visible; keep it that way,
-            // rather than guessing which ones its users import.
-            for (PackageDesc pkg : packageDescs) {
-                mb.exports(pkg, 0);
-            }
-            if (!request.open()) {
-                // An open module opens everything implicitly, and the JVM rejects a descriptor that
-                // opens a package on top of that ("the opens table for an open module must be
-                // 0 length"). Only a closed module spells its opens out.
-                for (PackageDesc pkg : packageDescs) {
-                    mb.opens(pkg, 0);
-                }
-            }
-            for (String service : request.uses()) {
-                mb.uses(ClassDesc.of(service));
-            }
-            for (var entry : services.entrySet()) {
-                mb.provides(ClassDesc.of(entry.getKey()),
-                        entry.getValue().stream().map(ClassDesc::of).toArray(ClassDesc[]::new));
-            }
-        });
+        var moduleAttribute = ModuleAttribute.of(ModuleDesc.of(request.moduleName()),
+                mb -> describe(mb, request, packageDescs, requires, services));
         // ModulePackages, as javac writes it. Nothing here strictly needs it — every package is
         // exported, so a reader can infer the same list — but it is the authoritative one, and it
         // stays right if the export policy above ever narrows.
         return ClassFile.of().buildModule(moduleAttribute,
                 clb -> clb.with(ModulePackagesAttribute.ofNames(packageDescs)));
+    }
+
+    private static void describe(ModuleAttribute.ModuleAttributeBuilder mb, Request request,
+                                 List<PackageDesc> packageDescs, Set<String> requires,
+                                 Map<String, List<String>> services) {
+        mb.moduleFlags(request.open() ? ClassFile.ACC_OPEN : 0);
+        if (request.version() != null && !request.version().isBlank()) {
+            mb.moduleVersion(request.version());
+        }
+        mb.requires(ModuleDesc.of(JAVA_BASE), ClassFile.ACC_MANDATED, null);
+        for (String required : requires) {
+            mb.requires(ModuleDesc.of(required), 0, null);
+        }
+        // A library coming off the class path had every package visible; keep it that way,
+        // rather than guessing which ones its users import.
+        for (PackageDesc pkg : packageDescs) {
+            mb.exports(pkg, 0);
+        }
+        if (!request.open()) {
+            // An open module opens everything implicitly, and the JVM rejects a descriptor that
+            // opens a package on top of that ("the opens table for an open module must be
+            // 0 length"). Only a closed module spells its opens out.
+            for (PackageDesc pkg : packageDescs) {
+                mb.opens(pkg, 0);
+            }
+        }
+        for (String service : request.uses()) {
+            mb.uses(ClassDesc.of(service));
+        }
+        for (var entry : services.entrySet()) {
+            mb.provides(ClassDesc.of(entry.getKey()),
+                    entry.getValue().stream().map(ClassDesc::of).toArray(ClassDesc[]::new));
+        }
     }
 
     // ---- jar reading ---------------------------------------------------------------------------
@@ -353,16 +404,12 @@ public final class ModuleDescriptorSynthesizer {
         var packages = new TreeSet<String>(classPackagesOf(jar));
         for (JarEntry entry : jar.stream().toList()) {
             String name = entry.getName();
-            if (classEntry(name) != null) {
-                continue;
-            }
             int slash = name.lastIndexOf('/');
-            if (entry.isDirectory() || slash <= 0 || name.startsWith("META-INF/")) {
-                continue;
-            }
-            String pkg = name.substring(0, slash).replace('/', '.');
-            if (javax.lang.model.SourceVersion.isName(pkg)) {
-                packages.add(pkg);
+            if (classEntry(name) == null && !entry.isDirectory() && slash > 0 && !name.startsWith("META-INF/")) {
+                String pkg = name.substring(0, slash).replace('/', '.');
+                if (javax.lang.model.SourceVersion.isName(pkg)) {
+                    packages.add(pkg);
+                }
             }
         }
         return packages;
@@ -440,38 +487,50 @@ public final class ModuleDescriptorSynthesizer {
             throws IOException {
         var services = new TreeMap<String, List<String>>();
         for (String name : jar.stream().map(JarEntry::getName).toList()) {
-            if (!name.startsWith(SERVICES) || name.endsWith("/")) {
-                continue;
-            }
-            String service = name.substring(SERVICES.length());
-            if (service.indexOf('/') >= 0) {
-                continue; // not a service file, just something filed under that directory
-            }
-            String body;
-            try (InputStream in = jar.getInputStream(jar.getJarEntry(name))) {
-                body = new String(in.readAllBytes(), StandardCharsets.UTF_8);
-            }
-            var providers = new ArrayList<String>();
-            for (String line : body.split("\n")) {
-                int comment = line.indexOf('#');
-                String provider = (comment < 0 ? line : line.substring(0, comment)).trim();
-                if (provider.isEmpty()) {
-                    continue;
+            String service = serviceOf(name);
+            if (service != null) {
+                String body;
+                try (InputStream in = jar.getInputStream(jar.getJarEntry(name))) {
+                    body = new String(in.readAllBytes(), StandardCharsets.UTF_8);
                 }
-                if (!packages.contains(packageOfBinaryName(provider))) {
-                    // `provides` may only name a class of this very module; keeping the entry would
-                    // make the descriptor unreadable.
-                    notes.add("WARN " + name + " lists " + provider
-                            + ", which this jar does not contain: left out of the module descriptor");
-                    continue;
+                var providers = providersIn(name, body, packages, notes);
+                if (!providers.isEmpty()) {
+                    services.put(service, List.copyOf(providers));
                 }
-                providers.add(provider);
-            }
-            if (!providers.isEmpty()) {
-                services.put(service, List.copyOf(providers));
             }
         }
         return services;
+    }
+
+    /** The service type a {@code META-INF/services/} file is named after, or {@code null} for another entry. */
+    private static String serviceOf(String entryName) {
+        if (!entryName.startsWith(SERVICES) || entryName.endsWith("/")) {
+            return null;
+        }
+        String service = entryName.substring(SERVICES.length());
+        // Not a service file when nested: just something filed under that directory
+        return service.indexOf('/') >= 0 ? null : service;
+    }
+
+    /** The providers a service file lists that this jar contains; notes the others. */
+    private static List<String> providersIn(String name, String body, Set<String> packages, List<String> notes) {
+        var providers = new ArrayList<String>();
+        for (String line : body.split("\n")) {
+            int comment = line.indexOf('#');
+            String provider = (comment < 0 ? line : line.substring(0, comment)).trim();
+            if (provider.isEmpty()) {
+                continue;
+            }
+            if (packages.contains(packageOfBinaryName(provider))) {
+                providers.add(provider);
+            } else {
+                // `provides` may only name a class of this very module; keeping the entry would
+                // make the descriptor unreadable.
+                notes.add("WARN " + name + " lists " + provider
+                        + ", which this jar does not contain: left out of the module descriptor");
+            }
+        }
+        return providers;
     }
 
     private static String packageOfBinaryName(String binaryName) {
@@ -489,7 +548,7 @@ public final class ModuleDescriptorSynthesizer {
     private static Map<String, String> packageOwners(Request request, List<String> notes) {
         var owners = new LinkedHashMap<String, String>();
         for (var reference : ModuleFinder.ofSystem().findAll()) {
-            record(owners, reference.descriptor());
+            recordOwner(owners, reference.descriptor());
         }
         for (Path jar : request.closure()) {
             if (jar.equals(request.jar())) {
@@ -497,7 +556,7 @@ public final class ModuleDescriptorSynthesizer {
             }
             try {
                 for (var reference : ModuleFinder.of(jar).findAll()) {
-                    record(owners, reference.descriptor());
+                    recordOwner(owners, reference.descriptor());
                 }
             } catch (FindException e) {
                 notes.add("WARN " + jar.getFileName() + " yields no module name ("
@@ -507,7 +566,7 @@ public final class ModuleDescriptorSynthesizer {
         return owners;
     }
 
-    private static void record(Map<String, String> owners, ModuleDescriptor descriptor) {
+    private static void recordOwner(Map<String, String> owners, ModuleDescriptor descriptor) {
         Set<String> owned = descriptor.isAutomatic()
                 ? descriptor.packages()
                 : exportedPackages(descriptor);

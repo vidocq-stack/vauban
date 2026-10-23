@@ -31,9 +31,9 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
-import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.jar.JarEntry;
 import java.util.jar.JarFile;
 import java.util.jar.JarOutputStream;
@@ -59,6 +59,7 @@ public final class DependencyEnhancer {
     private static final String MODULE_INFO = "module-info.class";
     private static final String MANIFEST = "META-INF/MANIFEST.MF";
     private static final String SERVICE_FILE = "META-INF/services/io.vidocq.vauban.api.VaubanComponentProvider";
+    private static final String ENHANCE_PREFIX = "enhance: ";
 
     /** What an enhancement produced. */
     public record Result(Path enhancedJar, List<String> enhancedTypes, List<String> providerFqns) {}
@@ -77,33 +78,14 @@ public final class DependencyEnhancer {
         var proxyFqnsByPackage = new LinkedHashMap<String, List<String>>();
         var enhanced = new ArrayList<String>();
         for (var fqn : typeFqns) {
-            Class<?> type;
-            try {
-                type = Class.forName(fqn, false, loader);
-            } catch (Throwable t) {
-                warnings.add("enhance: cannot load " + fqn + " (" + t + ")");
-                continue;
+            var proxyable = proxyableType(fqn, loader, warnings);
+            if (proxyable.isPresent()) {
+                var proxy = RuntimeClientProxyGenerator.generate(proxyable.get());
+                proxyBytesByName.put(proxy.className(), proxy.bytecode());
+                proxyFqnsByPackage.computeIfAbsent(packageOf(fqn), k -> new ArrayList<>())
+                        .add(proxy.className());
+                enhanced.add(fqn);
             }
-            if (!canProxy(type, warnings)) {
-                continue;
-            }
-            // Rewriting someone else's artefact is the heavy answer. When the only obstacle is the
-            // package boundary, the build ships the very same proxy as a resource and the Vauban
-            // class loader defines it inside the type's own package, jar untouched.
-            var verdict = ProducerProxyEligibility.of(type);
-            if (verdict.placeable()) {
-                warnings.add("enhance: " + type.getName() + " only needs its client proxy inside"
-                        + " its own package (" + verdict + "). The Vauban class loader ships and"
-                        + " defines that proxy without touching the jar, while rewriting a copy"
-                        + " here drops the jar's signature. Keep this goal for what placement"
-                        + " cannot do: no Vauban layer at launch, a package the library does not"
-                        + " export, or a GraalVM native image.");
-            }
-            var proxy = RuntimeClientProxyGenerator.generate(type);
-            proxyBytesByName.put(proxy.className(), proxy.bytecode());
-            proxyFqnsByPackage.computeIfAbsent(packageOf(fqn), k -> new ArrayList<>())
-                    .add(proxy.className());
-            enhanced.add(fqn);
         }
         if (enhanced.isEmpty()) {
             return new Result(null, List.of(), List.of());
@@ -125,6 +107,44 @@ public final class DependencyEnhancer {
         Files.createDirectories(outputDir);
         var enhancedJar = outputDir.resolve(sourceJar.getFileName());
 
+        writeEnhancedJar(sourceJar, coordinates, enhancedJar, providerFqns, proxyBytesByName, providerBytesByName);
+        return new Result(enhancedJar, enhanced, providerFqns);
+    }
+
+    /**
+     * {@code fqn} loaded through {@code loader}, when a client proxy can be generated for it; empty, with a
+     * warning, otherwise.
+     */
+    private static Optional<Class<?>> proxyableType(String fqn, ClassLoader loader, List<String> warnings) {
+        Class<?> type;
+        try {
+            type = Class.forName(fqn, false, loader);
+        } catch (ClassNotFoundException | LinkageError t) {
+            warnings.add(ENHANCE_PREFIX + "cannot load " + fqn + " (" + t + ")");
+            return Optional.empty();
+        }
+        if (!canProxy(type, warnings)) {
+            return Optional.empty();
+        }
+        // Rewriting someone else's artefact is the heavy answer. When the only obstacle is the
+        // package boundary, the build ships the very same proxy as a resource and the Vauban
+        // class loader defines it inside the type's own package, jar untouched.
+        var verdict = ProducerProxyEligibility.of(type);
+        if (verdict.placeable()) {
+            warnings.add(ENHANCE_PREFIX + type.getName() + " only needs its client proxy inside"
+                    + " its own package (" + verdict + "). The Vauban class loader ships and"
+                    + " defines that proxy without touching the jar, while rewriting a copy"
+                    + " here drops the jar's signature. Keep this goal for what placement"
+                    + " cannot do: no Vauban layer at launch, a package the library does not"
+                    + " export, or a GraalVM native image.");
+        }
+        return Optional.of(type);
+    }
+
+    /** Writes the enhanced copy of {@code sourceJar}: its entries, rewritten where needed, plus the generated classes. */
+    private static void writeEnhancedJar(Path sourceJar, String coordinates, Path enhancedJar,
+            List<String> providerFqns, Map<String, byte[]> proxyBytesByName,
+            Map<String, byte[]> providerBytesByName) throws IOException {
         try (var in = new JarFile(sourceJar.toFile());
              var out = new JarOutputStream(Files.newOutputStream(enhancedJar))) {
             // The manifest goes first so JarInputStream readers find it, and it is the one place
@@ -133,26 +153,9 @@ public final class DependencyEnhancer {
             var entries = in.entries();
             while (entries.hasMoreElements()) {
                 var entry = entries.nextElement();
-                var name = entry.getName();
-                if (name.equals(MANIFEST)) {
-                    continue; // rewritten above
+                if (isCarriedOver(entry.getName())) {
+                    copyEntry(in, entry, out, providerFqns);
                 }
-                if (isSignatureFile(name)) {
-                    // The content this signature attests no longer matches; carrying it over would
-                    // be misleading at best and a SecurityException at worst. Provenance is recorded
-                    // in the manifest instead.
-                    continue;
-                }
-                byte[] bytes;
-                try (InputStream is = in.getInputStream(entry)) {
-                    bytes = is.readAllBytes();
-                }
-                if (name.equals(MODULE_INFO)) {
-                    bytes = ModuleInfoRewriter.addComponentProvider(bytes, providerFqns);
-                } else if (name.equals(SERVICE_FILE)) {
-                    continue; // rewritten below (merged)
-                }
-                writeEntry(out, name, bytes);
             }
             // New generated classes.
             for (var pe : proxyBytesByName.entrySet()) {
@@ -165,49 +168,69 @@ public final class DependencyEnhancer {
             writeEntry(out, SERVICE_FILE,
                     (String.join("\n", providerFqns) + "\n").getBytes(StandardCharsets.UTF_8));
         }
-        return new Result(enhancedJar, enhanced, providerFqns);
+    }
+
+    /**
+     * Whether an entry of the source jar is copied as is (or, for {@code module-info.class}, rewritten). The
+     * manifest and the service file are rewritten separately. A signature no longer matches the content it
+     * attests: carrying it over would be misleading at best and a SecurityException at worst, so provenance is
+     * recorded in the manifest instead.
+     */
+    private static boolean isCarriedOver(String name) {
+        return !name.equals(MANIFEST) && !isSignatureFile(name) && !name.equals(SERVICE_FILE);
+    }
+
+    private static void copyEntry(JarFile in, JarEntry entry, JarOutputStream out, List<String> providerFqns)
+            throws IOException {
+        var name = entry.getName();
+        byte[] bytes;
+        try (InputStream is = in.getInputStream(entry)) {
+            bytes = is.readAllBytes();
+        }
+        if (name.equals(MODULE_INFO)) {
+            bytes = ModuleInfoRewriter.addComponentProvider(bytes, providerFqns);
+        }
+        writeEntry(out, name, bytes);
     }
 
     private static boolean canProxy(Class<?> type, List<String> warnings) {
+        var reason = unproxyableReason(type);
+        reason.ifPresent(r -> warnings.add(ENHANCE_PREFIX + type.getName() + r));
+        return reason.isEmpty();
+    }
+
+    /** Why no client proxy can extend {@code type}, as the end of a warning; empty when one can. */
+    private static Optional<String> unproxyableReason(Class<?> type) {
         if (type.isInterface() || type.isEnum() || type.isAnnotation()
                 || type.isArray() || type.isPrimitive() || type.isRecord()) {
-            warnings.add("enhance: " + type.getName() + " is not a proxyable class");
-            return false;
+            return Optional.of(" is not a proxyable class");
         }
         int mods = type.getModifiers();
         if (Modifier.isFinal(mods)) {
-            warnings.add("enhance: " + type.getName() + " is final (unproxyable)");
-            return false;
+            return Optional.of(" is final (unproxyable)");
         }
         if (Modifier.isAbstract(mods)) {
-            warnings.add("enhance: " + type.getName() + " is abstract (unproxyable)");
-            return false;
+            return Optional.of(" is abstract (unproxyable)");
         }
-        boolean ctor = false;
-        for (var c : type.getDeclaredConstructors()) {
-            if (!Modifier.isPrivate(c.getModifiers())) {
-                ctor = true;
-                break;
-            }
+        if (java.util.Arrays.stream(type.getDeclaredConstructors())
+                .allMatch(c -> Modifier.isPrivate(c.getModifiers()))) {
+            return Optional.of(" has no non-private constructor (unproxyable)");
         }
-        if (!ctor) {
-            warnings.add("enhance: " + type.getName() + " has no non-private constructor (unproxyable)");
-            return false;
-        }
+        return finalInstanceMethod(type).map(name -> " has a non-static final method " + name
+                + " (unproxyable per CDI 4.1 §3.10)");
+    }
+
+    /** The name of a non-static, non-private final method of {@code type} or a superclass, if any. */
+    private static Optional<String> finalInstanceMethod(Class<?> type) {
         for (Class<?> c = type; c != null && c != Object.class; c = c.getSuperclass()) {
             for (var m : c.getDeclaredMethods()) {
                 int mm = m.getModifiers();
-                if (Modifier.isStatic(mm) || Modifier.isPrivate(mm)) {
-                    continue;
-                }
-                if (Modifier.isFinal(mm)) {
-                    warnings.add("enhance: " + type.getName() + " has a non-static final method "
-                            + m.getName() + " (unproxyable per CDI 4.1 §3.10)");
-                    return false;
+                if (!Modifier.isStatic(mm) && !Modifier.isPrivate(mm) && Modifier.isFinal(mm)) {
+                    return Optional.of(m.getName());
                 }
             }
         }
-        return true;
+        return Optional.empty();
     }
 
     private static void writeEntry(JarOutputStream out, String name, byte[] bytes) throws IOException {
