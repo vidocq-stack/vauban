@@ -29,6 +29,7 @@ public class ConstructorBound {
     @Inject
     @Logged
     public ConstructorBound() {
+        // nothing to initialise
     }
 
     public String hello() {

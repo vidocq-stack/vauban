@@ -33,7 +33,7 @@ class VaubanVersionTest {
     @Test
     void versionMatchesTheBuildVersion() {
         // project.version is injected by surefire (systemPropertyVariables).
-        assertEquals(System.getProperty("project.version"), Vauban.VERSION,
+        assertEquals(Vauban.VERSION, System.getProperty("project.version"),
                 "Vauban.VERSION must be the Maven build version, not a hardcoded constant");
     }
 

@@ -47,7 +47,6 @@ import static org.junit.jupiter.api.Assertions.*;
 class VaubanClassLoaderTest {
 
     private static final String APPLICATION_SCOPED_DESC = "Ljakarta/enterprise/context/ApplicationScoped;";
-    private static final ClassDesc CD_PROXY_LINK = ClassDesc.of("io.vidocq.vauban.api.ProxyLink");
 
     @AfterEach
     void clearProperties() {

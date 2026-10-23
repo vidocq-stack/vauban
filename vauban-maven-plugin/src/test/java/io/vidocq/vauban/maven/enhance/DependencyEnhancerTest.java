@@ -288,7 +288,7 @@ class DependencyEnhancerTest {
                 if (jar.getEntry("module-info.class") != null) {
                     modular.add(path);
                 }
-            } catch (IOException ignored) {
+            } catch (IOException _) {
                 // not a readable jar: it cannot contribute a module either
             }
         }

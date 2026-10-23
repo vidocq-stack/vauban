@@ -47,10 +47,10 @@ class ClassFileScannerTest {
         public void setValue(int value) { this.value = value; }
     }
 
-    @Deprecated
+    @CustomAnnotation("marked")
     static class AnnotatedClass {
-        @Deprecated
-        public void deprecatedMethod() {}
+        @CustomAnnotation("marked")
+        public void deprecatedMethod() { /* no behaviour needed */ }
     }
 
     interface SimpleInterface {
@@ -59,7 +59,7 @@ class ClassFileScannerTest {
     }
 
     static class ImplementingClass extends SimpleClass implements SimpleInterface {
-        @Override public void doSomething() {}
+        @Override public void doSomething() { /* no behaviour needed */ }
     }
 
     enum SimpleEnum { A, B, C }
@@ -94,7 +94,7 @@ class ClassFileScannerTest {
         String required();
     }
 
-    static abstract class AbstractClass {
+    abstract static class AbstractClass {
         public abstract void abstractMethod();
         public final void finalMethod() {}
     }
@@ -261,7 +261,7 @@ class ClassFileScannerTest {
         @DisplayName("extracts the class annotations")
         void shouldExtractClassAnnotations() throws IOException {
             var info = scan(AnnotatedClass.class);
-            assertTrue(info.hasAnnotation(DotName.of("java.lang.Deprecated")));
+            assertTrue(info.hasAnnotation(DotName.of(CustomAnnotation.class.getName())));
         }
 
         @Test
@@ -271,7 +271,7 @@ class ClassFileScannerTest {
             var method = info.methods().stream()
                     .filter(m -> m.name().equals("deprecatedMethod")).findFirst().orElseThrow();
             assertTrue(method.annotations().stream()
-                    .anyMatch(a -> a.name().equals(DotName.of("java.lang.Deprecated"))));
+                    .anyMatch(a -> a.name().equals(DotName.of(CustomAnnotation.class.getName()))));
         }
 
         @Test

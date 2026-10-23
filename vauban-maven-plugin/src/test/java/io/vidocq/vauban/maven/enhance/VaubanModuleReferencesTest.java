@@ -22,6 +22,7 @@ package io.vidocq.vauban.maven.enhance;
 import org.junit.jupiter.api.Test;
 
 import java.lang.classfile.ClassFile;
+import java.lang.classfile.CodeBuilder;
 import java.lang.constant.ClassDesc;
 import java.lang.constant.ConstantDescs;
 import java.lang.constant.MethodTypeDesc;
@@ -37,7 +38,7 @@ class VaubanModuleReferencesTest {
         byte[] calling = ClassFile.of().build(ClassDesc.of("org.dep.Calling"), clb -> clb.withMethodBody("call",
                 MethodTypeDesc.of(ConstantDescs.CD_void,
                         ClassDesc.of("io.vidocq.vauban.core.interceptor.InterceptorManager")),
-                ClassFile.ACC_PUBLIC, cob -> cob.return_()));
+                ClassFile.ACC_PUBLIC, CodeBuilder::return_));
         byte[] plain = ClassFile.of().build(ClassDesc.of("org.dep.Plain"), clb -> { });
 
         assertEquals(Set.of("io.vidocq.vauban.core"), VaubanModuleReferences.of(List.of(plain, calling)));

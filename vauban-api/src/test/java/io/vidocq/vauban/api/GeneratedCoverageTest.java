@@ -48,8 +48,8 @@ class GeneratedCoverageTest {
     @Test
     @DisplayName("a coverage names its generator")
     void generatorIsRequired() {
-        assertThrows(NullPointerException.class,
-                () -> new GeneratedCoverage(null, Set.of(), Set.of(), Set.of(), Set.of()));
+        Set<String> none = Set.of();
+        assertThrows(NullPointerException.class, () -> new GeneratedCoverage(null, none, none, none, none));
     }
 
     @Test

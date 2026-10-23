@@ -199,7 +199,7 @@ class EnhancedDependencyTest {
                 if (jar.getEntry("module-info.class") != null) {
                     modular.add(path);
                 }
-            } catch (java.io.IOException ignored) {
+            } catch (java.io.IOException _) {
                 // not a readable jar: it cannot contribute a module either
             }
         }

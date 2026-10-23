@@ -31,6 +31,7 @@ import java.util.stream.Collectors;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -113,7 +114,7 @@ class ModularizedDependencyTest {
 
         // The copy carries the descriptor; the artefact in the local repository does not.
         try (var jar = new java.util.jar.JarFile(patched.toFile())) {
-            assertTrue(jar.getEntry("module-info.class") != null,
+            assertNotNull(jar.getEntry("module-info.class"),
                     "the copy is what gained the descriptor");
         }
     }

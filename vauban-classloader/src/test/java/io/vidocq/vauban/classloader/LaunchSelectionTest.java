@@ -116,7 +116,7 @@ class LaunchSelectionTest {
     private static Path real(Path p) {
         try {
             return p.toRealPath();
-        } catch (IOException e) {
+        } catch (IOException _) {
             return p.toAbsolutePath().normalize();
         }
     }

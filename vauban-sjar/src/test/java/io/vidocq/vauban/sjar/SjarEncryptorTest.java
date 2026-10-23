@@ -119,12 +119,11 @@ class SjarEncryptorTest {
     }
 
     @Test
-    void nonModularJarThrows() {
+    void nonModularJarThrows() throws Exception {
         var jarPath = tempDir.resolve("plain.jar");
-        assertThrows(Exception.class, () -> {
-            createPlainJar(jarPath);
-            SjarEncryptor.encryptJar(jarPath, SjarKeyProvider.generateKey(), "key");
-        });
+        createPlainJar(jarPath);
+        var key = SjarKeyProvider.generateKey();
+        assertThrows(Exception.class, () -> SjarEncryptor.encryptJar(jarPath, key, "key"));
     }
 
     @Test

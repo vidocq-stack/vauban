@@ -199,7 +199,7 @@ class ExampleAppEndToEndTest {
         } finally {
             // Cleanup
             Files.walk(tempDir).sorted(java.util.Comparator.reverseOrder())
-                    .forEach(p -> { try { Files.delete(p); } catch (IOException ignored) {} });
+                    .forEach(p -> { try { Files.delete(p); } catch (IOException _) { /* best effort cleanup */ } });
         }
     }
 

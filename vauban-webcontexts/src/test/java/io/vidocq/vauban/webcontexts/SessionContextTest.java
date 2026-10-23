@@ -57,8 +57,9 @@ class SessionContextTest {
     @Test
     void theSessionContextIsRegisteredAndInactiveOutsideASession() {
         // BeanManager.getContext throws when no context of the scope is active (CDI 4.1 §11.3.15).
+        var beanManager = container.getBeanManager();
         assertThrows(ContextNotActiveException.class,
-                () -> container.getBeanManager().getContext(SessionScoped.class), "no session bound to this thread");
+                () -> beanManager.getContext(SessionScoped.class), "no session bound to this thread");
         assertThrows(ContextNotActiveException.class, () -> cart.id());
     }
 
@@ -127,7 +128,7 @@ class SessionContextTest {
                 container.select(SessionEvents.class).log());
         assertTrue(session.attributes.isEmpty(), "the instance left the session: " + session.attributes.keySet());
         assertThrows(ContextNotActiveException.class,
-                () -> container.getBeanManager().getContext(SessionScoped.class),
+                () -> beanManager.getContext(SessionScoped.class),
                 "destroying a session leaves no session bound to the thread");
     }
 

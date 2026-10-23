@@ -27,5 +27,6 @@ public class MethodBound {
 
     @Logged
     public void write() {
+        // no behaviour needed
     }
 }

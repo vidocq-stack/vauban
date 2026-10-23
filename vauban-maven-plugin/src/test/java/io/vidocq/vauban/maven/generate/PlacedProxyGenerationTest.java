@@ -148,7 +148,7 @@ class PlacedProxyGenerationTest {
     }
 
     /** Sealed: the permitted subclasses are fixed, and a proxy is not among them. */
-    public sealed static class SealedThing permits SealedThing.Only {
+    public static sealed class SealedThing permits SealedThing.Only {
         public String describe() {
             return "sealed";
         }

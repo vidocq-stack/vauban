@@ -912,8 +912,11 @@ class ModularizerTest {
         Path b = plainJar("acme-b-1.0.jar", "com.acme.shared", "B", Map.of());
         Path buildDir = tmp.resolve("target");
 
-        var ex = assertThrows(IllegalStateException.class, () ->
-                Modularizer.run(List.of(a, b), Map.of(a, "acme-a", b, "acme-b"), buildDir, defaults(), s -> {}));
+        var closure = List.of(a, b);
+        var artifactIds = Map.of(a, "acme-a", b, "acme-b");
+        var options = defaults();
+        var ex = assertThrows(IllegalStateException.class,
+                () -> Modularizer.run(closure, artifactIds, buildDir, options, s -> {}));
 
         assertTrue(ex.getMessage().contains("com.acme.shared"));
         assertTrue(ex.getMessage().contains("acme-a-1.0.jar"));
