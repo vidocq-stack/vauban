@@ -387,29 +387,34 @@ final class ContainerScanner {
                 if (markerUrl.startsWith(JAR_FILE_PREFIX)) {
                     var jarPath = java.nio.file.Path.of(
                             markerUrl.substring(JAR_FILE_PREFIX.length(), markerUrl.indexOf('!')));
-                    try {
-                        loadPluginsIfNeeded();
-                        scanSjar(jarPath);
-                    } catch (SecurityException e) {
-                        LOG.log(System.Logger.Level.WARNING,
-                                "Cannot decrypt encrypted JAR {0}: {1}", jarPath.getFileName(), e.getMessage());
-                        LOG.log(System.Logger.Level.WARNING,
-                                "Set VAUBAN_SJAR_KEY environment variable or call builder.pluginContext() with the decryption key.");
-                        LOG.log(System.Logger.Level.WARNING,
-                                "Beans from this JAR will NOT be available.");
-                    } catch (IllegalStateException _) {
-                        LOG.log(System.Logger.Level.WARNING,
-                                "Encrypted JAR {0} found but no ByteSourcePlugin available.", jarPath.getFileName());
-                        LOG.log(System.Logger.Level.WARNING,
-                                "Add vauban-sjar to the classpath/module path.");
-                    } catch (Exception e) {
-                        LOG.log(System.Logger.Level.WARNING,
-                                "Failed to load encrypted JAR " + jarPath.getFileName(), e);
-                    }
+                    loadEncryptedJar(jarPath);
                 }
             }
         } catch (java.io.IOException _) {
             // Classpath scan failure — non-fatal
+        }
+    }
+
+    /** Decrypts and scans one encrypted JAR; a failure is logged and leaves its beans out. */
+    private void loadEncryptedJar(java.nio.file.Path jarPath) {
+        try {
+            loadPluginsIfNeeded();
+            scanSjar(jarPath);
+        } catch (SecurityException e) {
+            LOG.log(System.Logger.Level.WARNING,
+                    "Cannot decrypt encrypted JAR {0}: {1}", jarPath.getFileName(), e.getMessage());
+            LOG.log(System.Logger.Level.WARNING,
+                    "Set VAUBAN_SJAR_KEY environment variable or call builder.pluginContext() with the decryption key.");
+            LOG.log(System.Logger.Level.WARNING,
+                    "Beans from this JAR will NOT be available.");
+        } catch (IllegalStateException _) {
+            LOG.log(System.Logger.Level.WARNING,
+                    "Encrypted JAR {0} found but no ByteSourcePlugin available.", jarPath.getFileName());
+            LOG.log(System.Logger.Level.WARNING,
+                    "Add vauban-sjar to the classpath/module path.");
+        } catch (Exception e) {
+            LOG.log(System.Logger.Level.WARNING,
+                    "Failed to load encrypted JAR " + jarPath.getFileName(), e);
         }
     }
 

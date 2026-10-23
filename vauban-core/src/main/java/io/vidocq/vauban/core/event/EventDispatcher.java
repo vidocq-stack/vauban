@@ -513,77 +513,6 @@ public final class EventDispatcher {
         }
     }
 
-    /**
-     * CDI spec: EventMetadata.getType() returns the runtime class of the event object
-     * with type variables resolved. When the runtime class differs from the selected type's
-     * raw type (e.g., ArrayList fired through Event&lt;List&lt;...&gt;&gt;), we resolve
-     * the runtime class's type parameters from the selected type.
-     */
-    private static java.lang.reflect.Type resolveRuntimeEventType(Object event, java.lang.reflect.Type selectedType) {
-        if (selectedType == null) return event.getClass();
-        Class<?> runtimeClass = event.getClass();
-        if (!(selectedType instanceof java.lang.reflect.ParameterizedType selectedPT)) return selectedType;
-        Class<?> selectedRaw = (Class<?>) selectedPT.getRawType();
-        if (runtimeClass == selectedRaw) return selectedType;
-
-        var runtimeTypeParams = runtimeClass.getTypeParameters();
-        if (runtimeTypeParams.length == 0) return runtimeClass;
-
-        // Find the generic supertype of runtimeClass that matches selectedRaw
-        java.lang.reflect.ParameterizedType matchingSupertype = findGenericSupertype(runtimeClass, selectedRaw);
-        if (matchingSupertype == null) return selectedType;
-
-        // Map type variables from the matching supertype to the selected type's actual args
-        var varMap = new java.util.HashMap<String, java.lang.reflect.Type>();
-        var supertypeArgs = matchingSupertype.getActualTypeArguments();
-        var selectedArgs = selectedPT.getActualTypeArguments();
-        for (int i = 0; i < supertypeArgs.length && i < selectedArgs.length; i++) {
-            if (supertypeArgs[i] instanceof java.lang.reflect.TypeVariable<?> tv) {
-                varMap.put(tv.getName(), selectedArgs[i]);
-            }
-        }
-
-        var resolvedArgs = new java.lang.reflect.Type[runtimeTypeParams.length];
-        for (int i = 0; i < runtimeTypeParams.length; i++) {
-            resolvedArgs[i] = varMap.getOrDefault(runtimeTypeParams[i].getName(), Object.class);
-        }
-        return new ParameterizedTypeImpl(runtimeClass, resolvedArgs, null);
-    }
-
-    private static java.lang.reflect.ParameterizedType findGenericSupertype(Class<?> clazz, Class<?> targetRaw) {
-        var direct = directGenericSupertype(clazz, targetRaw);
-        if (direct != null) {
-            return direct;
-        }
-        // Recurse through supertypes
-        for (var iface : clazz.getGenericInterfaces()) {
-            Class<?> rawIface = resolveTypeToClass(iface);
-            if (rawIface != null && targetRaw.isAssignableFrom(rawIface)) {
-                var result = findGenericSupertype(rawIface, targetRaw);
-                if (result != null) return result;
-            }
-        }
-        var superclass = clazz.getSuperclass();
-        if (superclass != null && targetRaw.isAssignableFrom(superclass)) {
-            return findGenericSupertype(superclass, targetRaw);
-        }
-        return null;
-    }
-
-    /** The direct supertype of {@code clazz} that parameterizes {@code targetRaw}, interfaces first, or {@code null}. */
-    private static java.lang.reflect.ParameterizedType directGenericSupertype(Class<?> clazz, Class<?> targetRaw) {
-        for (var iface : clazz.getGenericInterfaces()) {
-            if (iface instanceof java.lang.reflect.ParameterizedType pt && pt.getRawType() == targetRaw) {
-                return pt;
-            }
-        }
-        if (clazz.getGenericSuperclass() instanceof java.lang.reflect.ParameterizedType pt
-                && pt.getRawType() == targetRaw) {
-            return pt;
-        }
-        return null;
-    }
-
     private static class ParameterizedTypeImpl implements java.lang.reflect.ParameterizedType {
         private final Class<?> rawType;
         private final java.lang.reflect.Type[] actualTypeArguments;
@@ -831,6 +760,77 @@ public final class EventDispatcher {
                     return resolvedType;
                 }
             };
+        }
+
+        /**
+         * CDI spec: EventMetadata.getType() returns the runtime class of the event object
+         * with type variables resolved. When the runtime class differs from the selected type's
+         * raw type (e.g., ArrayList fired through Event&lt;List&lt;...&gt;&gt;), we resolve
+         * the runtime class's type parameters from the selected type.
+         */
+        private static java.lang.reflect.Type resolveRuntimeEventType(Object event, java.lang.reflect.Type selectedType) {
+            if (selectedType == null) return event.getClass();
+            Class<?> runtimeClass = event.getClass();
+            if (!(selectedType instanceof java.lang.reflect.ParameterizedType selectedPT)) return selectedType;
+            Class<?> selectedRaw = (Class<?>) selectedPT.getRawType();
+            if (runtimeClass == selectedRaw) return selectedType;
+
+            var runtimeTypeParams = runtimeClass.getTypeParameters();
+            if (runtimeTypeParams.length == 0) return runtimeClass;
+
+            // Find the generic supertype of runtimeClass that matches selectedRaw
+            java.lang.reflect.ParameterizedType matchingSupertype = findGenericSupertype(runtimeClass, selectedRaw);
+            if (matchingSupertype == null) return selectedType;
+
+            // Map type variables from the matching supertype to the selected type's actual args
+            var varMap = new java.util.HashMap<String, java.lang.reflect.Type>();
+            var supertypeArgs = matchingSupertype.getActualTypeArguments();
+            var selectedArgs = selectedPT.getActualTypeArguments();
+            for (int i = 0; i < supertypeArgs.length && i < selectedArgs.length; i++) {
+                if (supertypeArgs[i] instanceof java.lang.reflect.TypeVariable<?> tv) {
+                    varMap.put(tv.getName(), selectedArgs[i]);
+                }
+            }
+
+            var resolvedArgs = new java.lang.reflect.Type[runtimeTypeParams.length];
+            for (int i = 0; i < runtimeTypeParams.length; i++) {
+                resolvedArgs[i] = varMap.getOrDefault(runtimeTypeParams[i].getName(), Object.class);
+            }
+            return new ParameterizedTypeImpl(runtimeClass, resolvedArgs, null);
+        }
+
+        private static java.lang.reflect.ParameterizedType findGenericSupertype(Class<?> clazz, Class<?> targetRaw) {
+            var direct = directGenericSupertype(clazz, targetRaw);
+            if (direct != null) {
+                return direct;
+            }
+            // Recurse through supertypes
+            for (var iface : clazz.getGenericInterfaces()) {
+                Class<?> rawIface = resolveTypeToClass(iface);
+                if (rawIface != null && targetRaw.isAssignableFrom(rawIface)) {
+                    var result = findGenericSupertype(rawIface, targetRaw);
+                    if (result != null) return result;
+                }
+            }
+            var superclass = clazz.getSuperclass();
+            if (superclass != null && targetRaw.isAssignableFrom(superclass)) {
+                return findGenericSupertype(superclass, targetRaw);
+            }
+            return null;
+        }
+
+        /** The direct supertype of {@code clazz} that parameterizes {@code targetRaw}, interfaces first, or {@code null}. */
+        private static java.lang.reflect.ParameterizedType directGenericSupertype(Class<?> clazz, Class<?> targetRaw) {
+            for (var iface : clazz.getGenericInterfaces()) {
+                if (iface instanceof java.lang.reflect.ParameterizedType pt && pt.getRawType() == targetRaw) {
+                    return pt;
+                }
+            }
+            if (clazz.getGenericSuperclass() instanceof java.lang.reflect.ParameterizedType pt
+                    && pt.getRawType() == targetRaw) {
+                return pt;
+            }
+            return null;
         }
     }
 

@@ -30,6 +30,10 @@ import java.util.stream.Collectors;
 
 public final class TypeInfoUtils {
 
+    private TypeInfoUtils() {
+        // static utility: no instances
+    }
+
     public static TypeInfo fromReflectType(Type type) {
         return switch (type) {
             case null -> null;
