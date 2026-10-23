@@ -121,7 +121,7 @@ class FallbackAroundConstructTest {
 
             assertEquals("hello", bean.greet());
             assertTrue(bean.getClass().getName().endsWith("$$Intercepted"), bean.getClass().getName());
-            assertEquals(List.of("around-construct"), CALLS);
+            assertEquals(List.of("around-construct"), List.copyOf(CALLS));
             assertEquals(1, PROCEEDED.size());
             assertSame(bean, PROCEEDED.getFirst(), "proceed() produced the instance the container returned");
         }
