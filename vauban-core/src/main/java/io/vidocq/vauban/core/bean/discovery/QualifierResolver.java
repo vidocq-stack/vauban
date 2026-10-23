@@ -169,39 +169,33 @@ final class QualifierResolver {
         }
 
         // Add annotations from stereotypes (direct + inherited)
-        // CDI spec: @Named from stereotype gives name but is NOT added as qualifier
         var allAnnotationNames = host.getAllAnnotationNames(classInfo);
         for (var annName : allAnnotationNames) {
             if (host.isStereotype(annName)) {
-                var stereotypeClass = host.index.getClassByName(annName);
-                if (stereotypeClass.isPresent()) {
-                    for (var sa : stereotypeClass.get().annotations()) {
-                        if (!sa.name().equals(BeanDiscovery.NAMED)) {
-                            allAnnotations.add(sa);
-                        }
-                    }
-                }
+                host.index.getClassByName(annName)
+                        .ifPresent(stereotype -> addStereotypeAnnotations(stereotype, allAnnotations));
             }
         }
 
         return computeQualifiers(allAnnotations);
     }
 
+    /** CDI spec: {@code @Named} from a stereotype gives a name but is NOT added as a qualifier. */
+    private static void addStereotypeAnnotations(ClassInfo stereotype, List<AnnotationInfo> allAnnotations) {
+        for (var sa : stereotype.annotations()) {
+            if (!sa.name().equals(BeanDiscovery.NAMED)) {
+                allAnnotations.add(sa);
+            }
+        }
+    }
+
     /**
      * Returns annotations inherited from superclasses (those NOT declared directly on classInfo).
      * Uses Java reflection — Class.getAnnotations() handles @Inherited automatically per JLS.
      */
-    @SuppressWarnings("java:S1141") // Nested try needed for classloader fallback
     List<java.lang.annotation.Annotation> getInheritedAnnotations(ClassInfo classInfo) {
         try {
-            // Use TCCL first (TCK sets this to its custom ClassLoader), fallback to system
-            var cl = Thread.currentThread().getContextClassLoader();
-            Class<?> cls;
-            try {
-                cls = Class.forName(classInfo.name().value(), false, cl);
-            } catch (ClassNotFoundException e1) {
-                cls = Class.forName(classInfo.name().value());
-            }
+            var cls = loadWithFallback(classInfo.name().value());
             var declared = cls.getDeclaredAnnotations();
             var all = cls.getAnnotations();
             var declaredNames = new HashSet<Class<?>>();
@@ -215,8 +209,21 @@ final class QualifierResolver {
                 }
             }
             return inherited;
-        } catch (ClassNotFoundException e) {
+        } catch (ClassNotFoundException _) {
             return List.of();
+        }
+    }
+
+    /**
+     * The class of the deployment the index names: through the thread context class loader first
+     * (the TCK sets it to its own loader), through {@link Class#forName(String)} when that fails.
+     */
+    private static Class<?> loadWithFallback(String name) throws ClassNotFoundException {
+        var cl = Thread.currentThread().getContextClassLoader();
+        try {
+            return Class.forName(name, false, cl);
+        } catch (ClassNotFoundException _) {
+            return Class.forName(name);
         }
     }
 
@@ -232,13 +239,13 @@ final class QualifierResolver {
         var result = new java.util.ArrayList<QualifierInstance>();
         // Check if this annotation's value() contains repeatable qualifier annotations
         var valueMember = ann.member(BeanDiscovery.MEMBER_VALUE);
-        if (!(valueMember instanceof io.vidocq.vauban.indexer.model.AnnotationValue.ArrayVal arrayVal)) {
+        if (!(valueMember instanceof io.vidocq.vauban.indexer.model.AnnotationValue.ArrayVal(var values))) {
             return result;
         }
-        for (var item : arrayVal.values()) {
-            if (item instanceof io.vidocq.vauban.indexer.model.AnnotationValue.AnnotationVal av
-                    && isQualifierAnnotation(av.annotation().name())) {
-                result.add(QualifierInstance.from(av.annotation()));
+        for (var item : values) {
+            if (item instanceof io.vidocq.vauban.indexer.model.AnnotationValue.AnnotationVal(var annotation)
+                    && isQualifierAnnotation(annotation.name())) {
+                result.add(QualifierInstance.from(annotation));
             }
         }
         return result;
@@ -264,10 +271,8 @@ final class QualifierResolver {
         }
         // Fallback: check via reflection with TCCL
         try {
-            var cl = Thread.currentThread().getContextClassLoader();
-            var annType = cl != null ? Class.forName(name.value(), false, cl) : Class.forName(name.value());
-            return annType.isAnnotationPresent(jakarta.inject.Qualifier.class);
-        } catch (ClassNotFoundException e) {
+            return DeploymentClasses.load(name.value()).isAnnotationPresent(jakarta.inject.Qualifier.class);
+        } catch (ClassNotFoundException _) {
             return false;
         }
     }

@@ -52,28 +52,27 @@ final class InterceptorDiscovery {
         var interceptors = new ArrayList<InterceptorDescriptor>();
 
         for (var classInfo : host.index.getKnownClasses()) {
-            boolean isInterceptor = classInfo.hasAnnotation(BeanDiscovery.INTERCEPTOR);
-            if (!isInterceptor) {
-                // Fallback to reflection if index is incomplete
-                try {
-                    var cl = Thread.currentThread().getContextClassLoader();
-                    var clazz = cl != null ? Class.forName(classInfo.name().value(), false, cl)
-                            : Class.forName(classInfo.name().value());
-                    if (clazz.isAnnotationPresent(jakarta.interceptor.Interceptor.class)) {
-                        isInterceptor = true;
-                    }
-                } catch (Exception e) { /* skip */ }
+            if (isInterceptorClass(classInfo)) {
+                addInterceptor(classInfo, interceptors);
             }
-
-            if (!isInterceptor) {
-                continue;
-            }
-            addInterceptor(classInfo, interceptors);
         }
 
         // Sort by priority
         interceptors.sort(Comparator.comparingInt(InterceptorDescriptor::priority));
         return interceptors;
+    }
+
+    private static boolean isInterceptorClass(ClassInfo classInfo) {
+        if (classInfo.hasAnnotation(BeanDiscovery.INTERCEPTOR)) {
+            return true;
+        }
+        // Fallback to reflection if index is incomplete
+        try {
+            return DeploymentClasses.load(classInfo.name().value())
+                    .isAnnotationPresent(jakarta.interceptor.Interceptor.class);
+        } catch (Exception _) {
+            return false;
+        }
     }
 
     private void addInterceptor(ClassInfo classInfo, List<InterceptorDescriptor> interceptors) {
@@ -85,81 +84,56 @@ final class InterceptorDiscovery {
         }
 
         // Find @AroundInvoke and @AroundConstruct methods (from index + reflection fallback)
-        String aroundInvoke = null;
-        String aroundConstruct = null;
-        for (var method : classInfo.methods()) {
-            if (BeanDiscovery.hasAnnotation(method.annotations(), BeanDiscovery.AROUND_INVOKE)) {
-                aroundInvoke = method.name();
-            }
-            if (BeanDiscovery.hasAnnotation(method.annotations(), BeanDiscovery.AROUND_CONSTRUCT)) {
-                aroundConstruct = method.name();
-            }
-        }
-        // Reflection fallback for @AroundInvoke / @AroundConstruct
-        if (aroundInvoke == null || aroundConstruct == null) {
-            try {
-                var cl = Thread.currentThread().getContextClassLoader();
-                var clazz = cl != null ? Class.forName(classInfo.name().value(), false, cl)
-                        : Class.forName(classInfo.name().value());
-                for (var m : clazz.getDeclaredMethods()) {
-                    if (aroundInvoke == null && m.isAnnotationPresent(jakarta.interceptor.AroundInvoke.class)) {
-                        aroundInvoke = m.getName();
-                    }
-                    if (aroundConstruct == null && m.isAnnotationPresent(jakarta.interceptor.AroundConstruct.class)) {
-                        aroundConstruct = m.getName();
-                    }
-                }
-                // Also check superclass
-                if (aroundInvoke == null || aroundConstruct == null) {
-                    var superClass = clazz.getSuperclass();
-                    while (superClass != null && superClass != Object.class) {
-                        for (var m : superClass.getDeclaredMethods()) {
-                            if (aroundInvoke == null && m.isAnnotationPresent(jakarta.interceptor.AroundInvoke.class)) {
-                                aroundInvoke = m.getName();
-                            }
-                            if (aroundConstruct == null && m.isAnnotationPresent(jakarta.interceptor.AroundConstruct.class)) {
-                                aroundConstruct = m.getName();
-                            }
-                        }
-                        if (aroundInvoke != null && aroundConstruct != null) break;
-                        superClass = superClass.getSuperclass();
-                    }
-                }
-            } catch (ClassNotFoundException e) { /* skip */ }
+        var aroundMethods = new AroundMethods();
+        aroundMethods.readIndex(classInfo);
+        if (!aroundMethods.complete()) {
+            aroundMethods.readHierarchy(classInfo);
         }
 
         // Collect actual binding annotations for member comparison
-        var bindingAnnotations = new ArrayList<java.lang.annotation.Annotation>();
-        try {
-            var cl = Thread.currentThread().getContextClassLoader();
-            var clazz2 = cl != null ? Class.forName(classInfo.name().value(), false, cl)
-                    : Class.forName(classInfo.name().value());
-            for (var ann : clazz2.getAnnotations()) {
-                // `bindings` above already says which types bind, extension-registered ones included.
-                // Asking the annotation type for a physical @InterceptorBinding instead dropped every
-                // binding an extension declared, leaving nothing to compare members with, so the
-                // interceptor bound whatever the values were (BUG-20260914-08).
-                if (bindings.contains(DotName.of(ann.annotationType().getName()))) {
-                    bindingAnnotations.add(ann);
-                }
-            }
-        } catch (ClassNotFoundException e) { /* skip */ }
+        var bindingAnnotations = bindingAnnotations(classInfo, bindings);
 
         var priority = host.extractPriority(classInfo.annotations());
         boolean hasPriority = BeanDiscovery.hasAnnotation(classInfo.annotations(), DotName.of("jakarta.annotation.Priority"));
         // Reflection fallback for @Priority detection
         if (!hasPriority) {
-            try {
-                var cl2 = Thread.currentThread().getContextClassLoader();
-                var clazz3 = cl2 != null ? Class.forName(classInfo.name().value(), false, cl2)
-                        : Class.forName(classInfo.name().value());
-                hasPriority = clazz3.isAnnotationPresent(jakarta.annotation.Priority.class);
-                if (hasPriority && priority == 0) {
-                    priority = clazz3.getAnnotation(jakarta.annotation.Priority.class).value();
-                }
-            } catch (Exception e) { /* skip */ }
+            var reflected = reflectedPriority(classInfo);
+            hasPriority = reflected != null;
+            if (hasPriority && priority == 0) {
+                priority = reflected.value();
+            }
         }
-        interceptors.add(new InterceptorDescriptor(classInfo.name(), bindings, aroundInvoke, aroundConstruct, priority, hasPriority, bindingAnnotations));
+        interceptors.add(new InterceptorDescriptor(classInfo.name(), bindings, aroundMethods.aroundInvoke,
+                aroundMethods.aroundConstruct, priority, hasPriority, bindingAnnotations));
+    }
+
+    /**
+     * The annotations of the interceptor class whose types bind. {@code bindings} already says which
+     * types bind, extension-registered ones included. Asking the annotation type for a physical
+     * {@code @InterceptorBinding} instead dropped every binding an extension declared, leaving
+     * nothing to compare members with, so the interceptor bound whatever the values were
+     * (BUG-20260914-08).
+     */
+    private static List<java.lang.annotation.Annotation> bindingAnnotations(ClassInfo classInfo,
+            Set<DotName> bindings) {
+        var bindingAnnotations = new ArrayList<java.lang.annotation.Annotation>();
+        try {
+            for (var ann : DeploymentClasses.load(classInfo.name().value()).getAnnotations()) {
+                if (bindings.contains(DotName.of(ann.annotationType().getName()))) {
+                    bindingAnnotations.add(ann);
+                }
+            }
+        } catch (ClassNotFoundException _) { /* skip */ }
+        return bindingAnnotations;
+    }
+
+    /** The {@code @Priority} the interceptor class carries when the index does not say, or {@code null}. */
+    private static jakarta.annotation.Priority reflectedPriority(ClassInfo classInfo) {
+        try {
+            return DeploymentClasses.load(classInfo.name().value()).getAnnotation(jakarta.annotation.Priority.class);
+        } catch (Exception _) {
+            return null;
+        }
     }
 
     /**
@@ -171,32 +145,35 @@ final class InterceptorDiscovery {
             return true;
         }
         String val = annotationName.value();
-        if (val.startsWith(BeanDiscovery.PREFIX_JAVA_ANNOTATION) ||
-            val.startsWith(BeanDiscovery.PREFIX_JAKARTA_INTERCEPTOR) ||
-            val.startsWith(BeanDiscovery.PREFIX_JAKARTA_INJECT) ||
-            val.startsWith("jakarta.inject.")) {
+        if (BeanDiscovery.isPlatformAnnotation(val)) {
             // These are never interceptor bindings themselves for application beans
             return false;
         }
         var annClass = host.index.getClassByName(annotationName);
-        if (annClass.isPresent()) {
-            // Check direct @InterceptorBinding
-            if (annClass.get().hasAnnotation(BeanDiscovery.INTERCEPTOR_BINDING)) return true;
-            // CDI spec: transitive interceptor bindings — check meta-annotations
-            for (var metaAnn : annClass.get().annotations()) {
-                if (metaAnn.name().equals(BeanDiscovery.INTERCEPTOR_BINDING)) return true;
-                // Check if a meta-annotation is itself an interceptor binding (transitive)
-                var metaClass = host.index.getClassByName(metaAnn.name());
-                if (metaClass.isPresent() && metaClass.get().hasAnnotation(BeanDiscovery.INTERCEPTOR_BINDING)) {
-                    return true;
-                }
-            }
+        if (annClass.isPresent() && isIndexedInterceptorBinding(annClass.get())) {
+            return true;
         }
         // Fallback: check via reflection with TCCL
+        return isReflectedInterceptorBinding(val);
+    }
+
+    /** Direct {@code @InterceptorBinding}, or a meta-annotation that is one (CDI transitive bindings). */
+    private boolean isIndexedInterceptorBinding(ClassInfo annClass) {
+        if (annClass.hasAnnotation(BeanDiscovery.INTERCEPTOR_BINDING)) return true;
+        for (var metaAnn : annClass.annotations()) {
+            if (metaAnn.name().equals(BeanDiscovery.INTERCEPTOR_BINDING)) return true;
+            // Check if a meta-annotation is itself an interceptor binding (transitive)
+            var metaClass = host.index.getClassByName(metaAnn.name());
+            if (metaClass.isPresent() && metaClass.get().hasAnnotation(BeanDiscovery.INTERCEPTOR_BINDING)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static boolean isReflectedInterceptorBinding(String annotationName) {
         try {
-            var cl = Thread.currentThread().getContextClassLoader();
-            var annType = cl != null ? Class.forName(val, false, cl)
-                    : Class.forName(val);
+            var annType = DeploymentClasses.load(annotationName);
             if (annType.isAnnotationPresent(jakarta.interceptor.InterceptorBinding.class)) return true;
             // Check transitive bindings via reflection
             for (var metaAnn : annType.getAnnotations()) {
@@ -205,7 +182,7 @@ final class InterceptorDiscovery {
                 }
             }
             return false;
-        } catch (ClassNotFoundException e) {
+        } catch (ClassNotFoundException _) {
             return false;
         }
     }
@@ -223,30 +200,33 @@ final class InterceptorDiscovery {
                 current = null;
             }
         }
+        collectReflectedBindings(classInfo, bindings);
+    }
 
-        // Fallback for classes not fully indexed (e.g. inner classes in some environments)
-        // Check for bindings via reflection as well, walking the hierarchy
+    /**
+     * Fallback for classes not fully indexed (e.g. inner classes in some environments): the bindings
+     * the class and its superclasses carry, read by reflection. Built-in Jakarta and Java annotations
+     * are explicitly left out of the final set.
+     */
+    private void collectReflectedBindings(ClassInfo classInfo, Set<DotName> bindings) {
         try {
-            var cl = Thread.currentThread().getContextClassLoader();
-            var clazz = cl != null ? Class.forName(classInfo.name().value(), false, cl)
-                    : Class.forName(classInfo.name().value());
-            var curr = clazz;
+            var curr = DeploymentClasses.load(classInfo.name().value());
             while (curr != null && curr != Object.class) {
                 for (var ann : curr.getAnnotations()) {
-                    var annType = ann.annotationType();
-                    if (isInterceptorBinding(DotName.of(annType.getName()))) {
-                        // EXPLICITLY SKIP built-in Jakarta/Java annotations in the final set
-                        String val = annType.getName();
-                        if (!val.startsWith(BeanDiscovery.PREFIX_JAVA_ANNOTATION) &&
-                            !val.startsWith(BeanDiscovery.PREFIX_JAKARTA_INTERCEPTOR) &&
-                            !val.startsWith(BeanDiscovery.PREFIX_JAKARTA_INJECT)) {
-                            bindings.add(DotName.of(val));
-                        }
+                    String val = ann.annotationType().getName();
+                    if (isInterceptorBinding(DotName.of(val)) && !hasBuiltInPrefix(val)) {
+                        bindings.add(DotName.of(val));
                     }
                 }
                 curr = curr.getSuperclass();
             }
-        } catch (Exception e) { /* skip */ }
+        } catch (Exception _) { /* skip */ }
+    }
+
+    private static boolean hasBuiltInPrefix(String annotationName) {
+        return annotationName.startsWith(BeanDiscovery.PREFIX_JAVA_ANNOTATION)
+                || annotationName.startsWith(BeanDiscovery.PREFIX_JAKARTA_INTERCEPTOR)
+                || annotationName.startsWith(BeanDiscovery.PREFIX_JAKARTA_INJECT);
     }
 
     private void collectBindingsRecursively(ClassInfo classInfo, Set<DotName> result, Set<DotName> visited) {
@@ -267,6 +247,57 @@ final class InterceptorDiscovery {
                 var annClass = host.index.getClassByName(name);
                 if (annClass.isPresent()) {
                     collectBindingsRecursively(annClass.get(), result, visited);
+                }
+            }
+        }
+    }
+
+    /**
+     * The {@code @AroundInvoke} and {@code @AroundConstruct} methods of an interceptor, read from
+     * the index first and from the class hierarchy for what the index does not say.
+     */
+    private static final class AroundMethods {
+
+        private String aroundInvoke;
+        private String aroundConstruct;
+
+        boolean complete() {
+            return aroundInvoke != null && aroundConstruct != null;
+        }
+
+        /** From the index: the last annotated method wins. */
+        void readIndex(ClassInfo classInfo) {
+            for (var method : classInfo.methods()) {
+                if (BeanDiscovery.hasAnnotation(method.annotations(), BeanDiscovery.AROUND_INVOKE)) {
+                    aroundInvoke = method.name();
+                }
+                if (BeanDiscovery.hasAnnotation(method.annotations(), BeanDiscovery.AROUND_CONSTRUCT)) {
+                    aroundConstruct = method.name();
+                }
+            }
+        }
+
+        /** Reflection fallback: the class, then its superclasses until both methods are known. */
+        void readHierarchy(ClassInfo classInfo) {
+            try {
+                var clazz = DeploymentClasses.load(classInfo.name().value());
+                readDeclared(clazz);
+                var superClass = clazz.getSuperclass();
+                while (!complete() && superClass != null && superClass != Object.class) {
+                    readDeclared(superClass);
+                    superClass = superClass.getSuperclass();
+                }
+            } catch (ClassNotFoundException _) { /* skip */ }
+        }
+
+        /** Keeps what is already known; otherwise the first annotated method declared by {@code type}. */
+        private void readDeclared(Class<?> type) {
+            for (var m : type.getDeclaredMethods()) {
+                if (aroundInvoke == null && m.isAnnotationPresent(jakarta.interceptor.AroundInvoke.class)) {
+                    aroundInvoke = m.getName();
+                }
+                if (aroundConstruct == null && m.isAnnotationPresent(jakarta.interceptor.AroundConstruct.class)) {
+                    aroundConstruct = m.getName();
                 }
             }
         }

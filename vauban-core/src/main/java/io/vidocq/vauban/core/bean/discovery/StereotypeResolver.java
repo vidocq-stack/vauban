@@ -42,15 +42,13 @@ final class StereotypeResolver {
         this.host = host;
     }
 
+
     boolean isStereotype(DotName annotationName) {
         if (host.customStereotypes.contains(annotationName)) {
             return true;
         }
         String val = annotationName.value();
-        if (val.startsWith(BeanDiscovery.PREFIX_JAVA_ANNOTATION) ||
-            val.startsWith(BeanDiscovery.PREFIX_JAKARTA_INTERCEPTOR) ||
-            val.startsWith(BeanDiscovery.PREFIX_JAKARTA_INJECT) ||
-            val.startsWith("jakarta.inject.")) {
+        if (BeanDiscovery.isPlatformAnnotation(val)) {
             return false;
         }
         var annClass = host.index.getClassByName(annotationName);
@@ -59,11 +57,8 @@ final class StereotypeResolver {
         }
         // Fallback: check via reflection
         try {
-            var cl = Thread.currentThread().getContextClassLoader();
-            var annType = cl != null ? Class.forName(val, false, cl)
-                    : Class.forName(val);
-            return annType.isAnnotationPresent(jakarta.enterprise.inject.Stereotype.class);
-        } catch (Exception e) {
+            return DeploymentClasses.load(val).isAnnotationPresent(jakarta.enterprise.inject.Stereotype.class);
+        } catch (Exception _) {
             return false;
         }
     }
@@ -87,30 +82,38 @@ final class StereotypeResolver {
     private boolean isAlternativeStereotype(DotName stereotypeName, Set<DotName> visited) {
         if (!visited.add(stereotypeName)) return false;
         var stereotypeClass = host.index.getClassByName(stereotypeName);
-        if (stereotypeClass.isPresent()) {
-            if (stereotypeClass.get().hasAnnotation(BeanDiscovery.ALTERNATIVE)) return true;
-            // Check transitive stereotypes
-            for (var ann : stereotypeClass.get().annotations()) {
-                if (isStereotype(ann.name()) && isAlternativeStereotype(ann.name(), visited)) {
+        return stereotypeClass.isPresent()
+                ? isIndexedAlternativeStereotype(stereotypeClass.get(), visited)
+                : isReflectedAlternativeStereotype(stereotypeName, visited);
+    }
+
+    private boolean isIndexedAlternativeStereotype(ClassInfo stereotypeClass, Set<DotName> visited) {
+        if (stereotypeClass.hasAnnotation(BeanDiscovery.ALTERNATIVE)) return true;
+        // Check transitive stereotypes
+        for (var ann : stereotypeClass.annotations()) {
+            if (isStereotype(ann.name()) && isAlternativeStereotype(ann.name(), visited)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private boolean isReflectedAlternativeStereotype(DotName stereotypeName, Set<DotName> visited) {
+        try {
+            var annType = DeploymentClasses.load(stereotypeName.value());
+            if (annType.isAnnotationPresent(jakarta.enterprise.inject.Alternative.class)) return true;
+            for (var metaAnn : annType.getAnnotations()) {
+                if (isReflectedStereotype(metaAnn)
+                        && isAlternativeStereotype(DotName.of(metaAnn.annotationType().getName()), visited)) {
                     return true;
                 }
             }
-        } else {
-            // Reflection fallback
-            try {
-                var cl = Thread.currentThread().getContextClassLoader();
-                var annType = cl != null ? Class.forName(stereotypeName.value(), false, cl)
-                        : Class.forName(stereotypeName.value());
-                if (annType.isAnnotationPresent(jakarta.enterprise.inject.Alternative.class)) return true;
-                for (var metaAnn : annType.getAnnotations()) {
-                    if (metaAnn.annotationType().isAnnotationPresent(jakarta.enterprise.inject.Stereotype.class)
-                            && isAlternativeStereotype(DotName.of(metaAnn.annotationType().getName()), visited)) {
-                        return true;
-                    }
-                }
-            } catch (ClassNotFoundException e) { /* skip */ }
-        }
+        } catch (ClassNotFoundException _) { /* skip */ }
         return false;
+    }
+
+    private static boolean isReflectedStereotype(java.lang.annotation.Annotation annotation) {
+        return annotation.annotationType().isAnnotationPresent(jakarta.enterprise.inject.Stereotype.class);
     }
 
     int extractPriorityWithStereotypes(ClassInfo classInfo) {
@@ -118,13 +121,11 @@ final class StereotypeResolver {
         if (priority > 0) return priority;
         // Check via reflection (more reliable for annotation member values)
         try {
-            var cl = Thread.currentThread().getContextClassLoader();
-            var clazz = cl != null ? Class.forName(classInfo.name().value(), false, cl)
-                    : Class.forName(classInfo.name().value());
+            var clazz = DeploymentClasses.load(classInfo.name().value());
             if (clazz.isAnnotationPresent(jakarta.annotation.Priority.class)) {
                 return clazz.getAnnotation(jakarta.annotation.Priority.class).value();
             }
-        } catch (Exception e) { /* skip */ }
+        } catch (Exception _) { /* skip */ }
         // Search through stereotypes (including transitive)
         var allAnnotationNames = host.getAllAnnotationNames(classInfo);
         for (var annName : allAnnotationNames) {
@@ -141,33 +142,42 @@ final class StereotypeResolver {
         // Check index
         var stereotypeClass = host.index.getClassByName(stereotypeName);
         if (stereotypeClass.isPresent()) {
-            int p = host.extractPriority(stereotypeClass.get().annotations());
+            int p = indexedStereotypePriority(stereotypeClass.get(), visited);
             if (p > 0) return p;
-            // Check transitive stereotypes
-            for (var ann : stereotypeClass.get().annotations()) {
-                if (isStereotype(ann.name())) {
-                    int tp = extractPriorityFromStereotypeRecursive(ann.name(), visited);
-                    if (tp > 0) return tp;
-                }
-            }
         }
         // Reflection fallback
+        return reflectedStereotypePriority(stereotypeName, visited);
+    }
+
+    /** The first positive {@code @Priority} the indexed stereotype or its own stereotypes declare, or 0. */
+    private int indexedStereotypePriority(ClassInfo stereotypeClass, Set<DotName> visited) {
+        int p = host.extractPriority(stereotypeClass.annotations());
+        if (p > 0) return p;
+        // Check transitive stereotypes
+        for (var ann : stereotypeClass.annotations()) {
+            if (isStereotype(ann.name())) {
+                int tp = extractPriorityFromStereotypeRecursive(ann.name(), visited);
+                if (tp > 0) return tp;
+            }
+        }
+        return 0;
+    }
+
+    private int reflectedStereotypePriority(DotName stereotypeName, Set<DotName> visited) {
         try {
-            var cl = Thread.currentThread().getContextClassLoader();
-            var annType = cl != null ? Class.forName(stereotypeName.value(), false, cl)
-                    : Class.forName(stereotypeName.value());
+            var annType = DeploymentClasses.load(stereotypeName.value());
             if (annType.isAnnotationPresent(jakarta.annotation.Priority.class)) {
                 return annType.getAnnotation(jakarta.annotation.Priority.class).value();
             }
             // Transitive via reflection
             for (var metaAnn : annType.getAnnotations()) {
-                if (metaAnn.annotationType().isAnnotationPresent(jakarta.enterprise.inject.Stereotype.class)) {
+                if (isReflectedStereotype(metaAnn)) {
                     int tp = extractPriorityFromStereotypeRecursive(
                             DotName.of(metaAnn.annotationType().getName()), visited);
                     if (tp > 0) return tp;
                 }
             }
-        } catch (Exception e) { /* skip */ }
+        } catch (Exception _) { /* skip */ }
         return 0;
     }
 
@@ -198,23 +208,30 @@ final class StereotypeResolver {
     private boolean hasNamedInStereotypeRecursive(DotName stereotypeName, Set<DotName> visited) {
         if (!visited.add(stereotypeName)) return false;
         var stereotypeClass = host.index.getClassByName(stereotypeName);
-        if (stereotypeClass.isPresent()) {
-            for (var ann : stereotypeClass.get().annotations()) {
-                if (ann.name().equals(BeanDiscovery.NAMED)) return true;
-                if (isStereotype(ann.name()) && hasNamedInStereotypeRecursive(ann.name(), visited)) return true;
-            }
-        } else {
-            try {
-                var annType = Class.forName(stereotypeName.value());
-                if (annType.isAnnotationPresent(jakarta.inject.Named.class)) return true;
-                for (var meta : annType.getAnnotations()) {
-                    if (meta.annotationType().isAnnotationPresent(jakarta.enterprise.inject.Stereotype.class)
-                            && hasNamedInStereotypeRecursive(DotName.of(meta.annotationType().getName()), visited)) {
-                        return true;
-                    }
-                }
-            } catch (ClassNotFoundException e) { /* skip */ }
+        return stereotypeClass.isPresent()
+                ? hasNamedInIndexedStereotype(stereotypeClass.get(), visited)
+                : hasNamedInReflectedStereotype(stereotypeName, visited);
+    }
+
+    private boolean hasNamedInIndexedStereotype(ClassInfo stereotypeClass, Set<DotName> visited) {
+        for (var ann : stereotypeClass.annotations()) {
+            if (ann.name().equals(BeanDiscovery.NAMED)) return true;
+            if (isStereotype(ann.name()) && hasNamedInStereotypeRecursive(ann.name(), visited)) return true;
         }
+        return false;
+    }
+
+    private boolean hasNamedInReflectedStereotype(DotName stereotypeName, Set<DotName> visited) {
+        try {
+            var annType = Class.forName(stereotypeName.value());
+            if (annType.isAnnotationPresent(jakarta.inject.Named.class)) return true;
+            for (var meta : annType.getAnnotations()) {
+                if (isReflectedStereotype(meta)
+                        && hasNamedInStereotypeRecursive(DotName.of(meta.annotationType().getName()), visited)) {
+                    return true;
+                }
+            }
+        } catch (ClassNotFoundException _) { /* skip */ }
         return false;
     }
 
@@ -237,7 +254,17 @@ final class StereotypeResolver {
     ScopeInfo findScopeInStereotypeRecursive(DotName stereotypeName, Set<DotName> visited) {
         if (!visited.add(stereotypeName)) return null;
 
-        // Check custom stereotype annotations (from @Discovery phase)
+        var customScope = customStereotypeScope(stereotypeName);
+        if (customScope != null) return customScope;
+
+        var stereotypeClass = host.index.getClassByName(stereotypeName);
+        return stereotypeClass.isPresent()
+                ? indexedStereotypeScope(stereotypeClass.get(), visited)
+                : reflectedStereotypeScope(stereotypeName, visited);
+    }
+
+    /** The scope among the annotations a {@code @Discovery} phase gave the stereotype, or {@code null}. */
+    private ScopeInfo customStereotypeScope(DotName stereotypeName) {
         var customAnns = host.customStereotypeAnnotations.get(stereotypeName);
         if (customAnns != null) {
             for (var annClass : customAnns) {
@@ -245,34 +272,37 @@ final class StereotypeResolver {
                 if (scope != null) return scope;
             }
         }
+        return null;
+    }
 
-        var stereotypeClass = host.index.getClassByName(stereotypeName);
-        if (stereotypeClass.isPresent()) {
-            // Check direct scope annotations
-            for (var ann : stereotypeClass.get().annotations()) {
-                var scope = host.mapScope(ann.name());
+    private ScopeInfo indexedStereotypeScope(ClassInfo stereotypeClass, Set<DotName> visited) {
+        // Check direct scope annotations
+        for (var ann : stereotypeClass.annotations()) {
+            var scope = host.mapScope(ann.name());
+            if (scope != null) return scope;
+        }
+        // Recurse into transitive stereotypes
+        for (var ann : stereotypeClass.annotations()) {
+            if (isStereotype(ann.name())) {
+                var scope = findScopeInStereotypeRecursive(ann.name(), visited);
                 if (scope != null) return scope;
             }
-            // Recurse into transitive stereotypes
-            for (var ann : stereotypeClass.get().annotations()) {
-                if (isStereotype(ann.name())) {
-                    var scope = findScopeInStereotypeRecursive(ann.name(), visited);
-                    if (scope != null) return scope;
+        }
+        return null;
+    }
+
+    private ScopeInfo reflectedStereotypeScope(DotName stereotypeName, Set<DotName> visited) {
+        try {
+            var annType = Class.forName(stereotypeName.value());
+            for (var metaAnn : annType.getAnnotations()) {
+                var scope = host.mapScope(DotName.of(metaAnn.annotationType().getName()));
+                if (scope != null) return scope;
+                if (isReflectedStereotype(metaAnn)) {
+                    var s = findScopeInStereotypeRecursive(DotName.of(metaAnn.annotationType().getName()), visited);
+                    if (s != null) return s;
                 }
             }
-        } else {
-            try {
-                var annType = Class.forName(stereotypeName.value());
-                for (var metaAnn : annType.getAnnotations()) {
-                    var scope = host.mapScope(DotName.of(metaAnn.annotationType().getName()));
-                    if (scope != null) return scope;
-                    if (metaAnn.annotationType().isAnnotationPresent(jakarta.enterprise.inject.Stereotype.class)) {
-                        var s = findScopeInStereotypeRecursive(DotName.of(metaAnn.annotationType().getName()), visited);
-                        if (s != null) return s;
-                    }
-                }
-            } catch (ClassNotFoundException e) { /* skip */ }
-        }
+        } catch (ClassNotFoundException _) { /* skip */ }
         return null;
     }
 }
