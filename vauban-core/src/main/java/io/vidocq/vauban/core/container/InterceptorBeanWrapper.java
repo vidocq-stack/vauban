@@ -1078,15 +1078,25 @@ final class InterceptorBeanWrapper {
 
         @Override
         public Object create(CreationalContext<Object> ctx) {
+            return create(null, ctx);
+        }
+
+        /**
+         * Without {@code constructCtx}, runs the {@code @AroundConstruct} chain when there is one, whose end calls
+         * back here with its context; with it, or without a chain, instantiates and wires the subclass.
+         */
+        @Override
+        public Object create(VaubanInvocationContext constructCtx, CreationalContext<Object> ctx) {
             try {
                 var ctor = interceptedClass.getDeclaredConstructor();
-                var constructChain2 = interceptorManager.resolveChainForConstructor(bindings, descriptor.constructorBindings(), ctor, ctx);
-                Object inst;
-                if (!constructChain2.isEmpty()) {
-                    inst = createThroughAroundConstruct(constructChain2, ctx);
-                } else {
-                    inst = instantiatePreferProvider(interceptedClass.getDeclaredConstructor(), new Object[0]);
+                if (constructCtx == null) {
+                    var constructChain = interceptorManager.resolveChainForConstructor(bindings,
+                            descriptor.constructorBindings(), ctor, ctx);
+                    if (!constructChain.isEmpty()) {
+                        return createThroughAroundConstruct(constructChain, ctx);
+                    }
                 }
+                var inst = instantiatePreferProvider(ctor, new Object[0]);
                 initIntercepted(interceptedClass, inst, interceptorManager, bindings, descriptor.constructorBindings(), ctx);
                 return inst;
             } catch (Exception ex) {
@@ -1096,9 +1106,14 @@ final class InterceptorBeanWrapper {
             }
         }
 
+        @Override
+        public Object create(VaubanInvocationContext constructCtx) {
+            return create(constructCtx, null);
+        }
+
         /**
-         * Runs the {@code @AroundConstruct} chain, whose end creates the instance through the default
-         * {@link BeanFactory#create(VaubanInvocationContext, CreationalContext)} of this factory.
+         * Runs the {@code @AroundConstruct} chain, whose end creates and wires the instance through
+         * {@link #create(VaubanInvocationContext, CreationalContext)} with the chain's context.
          */
         private Object createThroughAroundConstruct(List<VaubanInvocationContext.InterceptorInvocation> constructChain,
                                                     CreationalContext<Object> ctx) {

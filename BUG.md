@@ -58,7 +58,7 @@ that catches `IllegalStateException`: a closed jar file now reaches that `catch`
 ---
 
 ## VAU-INT-007 — Fallback intercepted factory: an `@AroundConstruct` that calls `proceed()` fails with an NPE
-- **Date**: 2026-10-23 — **Status**: OPEN
+- **Date**: 2026-10-23 — **Status**: FIXED (`docs/log-coverage-defects`, Vidocq/vidocq#285)
 - **Severity**: medium (only on the runtime fallback, when the pre-generated `$$Intercepted` subclass cannot be
   defined; the bean cannot be created)
 
@@ -75,6 +75,42 @@ definition of the `$$Intercepted` class, so that `InterceptorBeanWrapper` takes 
 `InterceptorBeanWrapper.FallbackInterceptedFactory` does not override `create(VaubanInvocationContext,
 CreationalContext)`. Its `createThroughAroundConstruct` lambda calls it; the default delegates to `create()`, then
 `create(null)`, which resolves the construct chain again with a null context.
+
+### Fix
+`FallbackInterceptedFactory` now overrides `create(VaubanInvocationContext, CreationalContext)` as the regular
+`InterceptedFactory` does: without a construct context it resolves the `@AroundConstruct` chain and, when there is
+one, runs it; the chain's end calls back with its context and the creational context, and that call instantiates
+and wires the subclass without resolving the chain again. `create(CreationalContext)` and
+`create(VaubanInvocationContext)` delegate to it. The instance is wired once, by the call that creates it (the old
+`create(CreationalContext)` wired it again after the chain). Test:
+`FallbackAroundConstructTest.selectedBeanIsCreatedThroughAroundConstruct` (vauban-core).
+
+The `factory().create()` symptom has a second, separate cause that both factories share: with no creational
+context, the interceptor instance resolves to `null`. It stays open as VAU-INT-008.
+
+---
+
+## VAU-INT-008 — An intercepted bean's factory, called without a creational context, NPEs on an `@AroundConstruct`
+- **Date**: 2026-10-23 — **Status**: OPEN
+- **Severity**: low (only a direct `ManagedBean.factory().create()` with no creational context; the container
+  always passes one)
+
+### Symptom
+`factory().create()` on an intercepted bean bound to an `@AroundConstruct` interceptor throws
+`NullPointerException: Cannot invoke "Object.getClass()" because "instance" is null`, in
+`InterceptorManager.resolveAroundConstructChain` for the regular `InterceptedFactory` and in
+`resolveChainAroundConstruct` for the fallback one. Found while fixing VAU-INT-007.
+
+### Repro
+A `@Dependent` bean bound to an `@AroundConstruct` interceptor; resolve its `ManagedBean` through the
+`BeanManager` and call `factory().create()`.
+
+### Cause
+`InterceptorBeanWrapper.getOrCreateInterceptorInstance` first asks `interceptorInstanceAsBean`, which calls
+`BeanManager.getReference(bean, type, null)`; the dependent context returns `null` for a null creational context,
+and that `null` is returned as the interceptor instance instead of falling back on creating it. The chain
+resolution then dereferences it. Treating a `null` reference as "no bean" would change the eager interceptor
+creation of `InterceptorBeanWrapper` (around line 509), which ignores the result today, so it needs its own look.
 
 ---
 
