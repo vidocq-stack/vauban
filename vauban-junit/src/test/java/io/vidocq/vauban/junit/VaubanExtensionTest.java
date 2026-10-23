@@ -21,10 +21,15 @@ package io.vidocq.vauban.junit;
 
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.enterprise.context.Dependent;
+import jakarta.enterprise.event.Observes;
+import jakarta.enterprise.event.Startup;
 import jakarta.inject.Inject;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.TestInstance;
+
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -111,6 +116,76 @@ class VaubanExtensionTest {
         @DisplayName("the bean is functional")
         void shouldReturnSameInstance2() {
             assertEquals("Hello, Vauban!", service.greet("Vauban"));
+        }
+    }
+
+    @SuppressWarnings("CdiManagedBeanInconsistencyInspection")
+    @Nested
+    @DisplayName("@VaubanTest with @TestInstance(PER_METHOD)")
+    @VaubanTest
+    @TestInstance(TestInstance.Lifecycle.PER_METHOD)
+    @AddBeans({GreetingService.class, PerMethodBootCounter.class})
+    class PerMethodLifecycleTest {
+
+        @Inject
+        GreetingService greetingService;
+
+        @Test
+        @DisplayName("injects the @Inject fields of each test instance")
+        void shouldInjectFieldsOfEachInstance() {
+            assertNotNull(greetingService);
+            assertEquals("Hello, World!", greetingService.greet("World"));
+        }
+
+        @Test
+        @DisplayName("boots a single container for the class")
+        void shouldBootOneContainer() {
+            assertEquals(1, PerMethodBootCounter.BOOTS.get());
+        }
+    }
+
+    @SuppressWarnings("CdiManagedBeanInconsistencyInspection")
+    @Nested
+    @DisplayName("@VaubanTest with @TestInstance(PER_CLASS)")
+    @VaubanTest
+    @TestInstance(TestInstance.Lifecycle.PER_CLASS)
+    @AddBeans({GreetingService.class, PerClassBootCounter.class})
+    class PerClassLifecycleTest {
+
+        @Inject
+        GreetingService greetingService;
+
+        @Test
+        @DisplayName("injects the @Inject fields of the shared test instance")
+        void shouldInjectFieldsOfSharedInstance() {
+            assertNotNull(greetingService);
+            assertEquals("Hello, World!", greetingService.greet("World"));
+        }
+
+        @Test
+        @DisplayName("boots a single container for the class")
+        void shouldBootOneContainer() {
+            assertEquals(1, PerClassBootCounter.BOOTS.get());
+        }
+    }
+
+    /** Counts the containers booted with it, for the per-method lifecycle test only. */
+    @ApplicationScoped
+    public static class PerMethodBootCounter {
+        static final AtomicInteger BOOTS = new AtomicInteger();
+
+        void onStartup(@Observes Startup event) {
+            BOOTS.incrementAndGet();
+        }
+    }
+
+    /** Counts the containers booted with it, for the per-class lifecycle test only. */
+    @ApplicationScoped
+    public static class PerClassBootCounter {
+        static final AtomicInteger BOOTS = new AtomicInteger();
+
+        void onStartup(@Observes Startup event) {
+            BOOTS.incrementAndGet();
         }
     }
 }

@@ -45,39 +45,52 @@ public final class VaubanExtension
 
     private static final ExtensionContext.Namespace NS =
             ExtensionContext.Namespace.create(VaubanExtension.class);
-    private static final String CONTAINER_KEY = "vaubanContainer";
 
     @Override
     public void beforeAll(ExtensionContext context) {
-        var testClass = context.getRequiredTestClass();
-        var addBeans = testClass.getAnnotation(AddBeans.class);
-
-        var builder = VaubanContainer.builder();
-
-        if (addBeans != null) {
-            for (var beanClass : addBeans.value()) {
-                builder.addBeanClass(beanClass);
-            }
-        }
-
-        var container = builder.build();
-        context.getStore(NS).put(CONTAINER_KEY, container);
+        containerOf(context);
     }
 
     @Override
     public void afterAll(ExtensionContext context) {
-        var container = getContainer(context);
+        var container = context.getStore(NS).get(context.getRequiredTestClass(), VaubanContainer.class);
         if (container != null) {
             container.close();
         }
     }
 
+    /**
+     * Injects the {@code @Inject} fields of the test instance. With the per-class lifecycle, JUnit calls this
+     * before {@link #beforeAll}, so the container is started here when it is not yet.
+     */
     @Override
     public void postProcessTestInstance(Object testInstance, ExtensionContext context) throws Exception {
-        var container = getContainer(context);
-        if (container == null) return;
+        injectFields(testInstance, containerOf(context));
+    }
 
-        injectFields(testInstance, container);
+    /**
+     * The container of the test class, started on first use and kept in the class-level store, so that it lives
+     * until {@link #afterAll} whichever callback asks first. It is keyed by the test class: a {@code @Nested}
+     * class gets its own container, not the one of its enclosing class that the store would inherit.
+     */
+    private static VaubanContainer containerOf(ExtensionContext context) {
+        var classContext = context;
+        while (classContext.getTestMethod().isPresent()) {
+            classContext = classContext.getParent().orElseThrow();
+        }
+        var testClass = classContext.getRequiredTestClass();
+        return classContext.getStore(NS).computeIfAbsent(testClass, VaubanExtension::start, VaubanContainer.class);
+    }
+
+    private static VaubanContainer start(Class<?> testClass) {
+        var builder = VaubanContainer.builder();
+        var addBeans = testClass.getAnnotation(AddBeans.class);
+        if (addBeans != null) {
+            for (var beanClass : addBeans.value()) {
+                builder.addBeanClass(beanClass);
+            }
+        }
+        return builder.build();
     }
 
     @SuppressWarnings("java:S3011") // CDI spec requires reflective access
@@ -103,17 +116,5 @@ public final class VaubanExtension
             current = current.getSuperclass();
         }
         return fields;
-    }
-
-    private VaubanContainer getContainer(ExtensionContext context) {
-        // Walk up to class-level store
-        var store = context.getStore(NS);
-        var container = store.get(CONTAINER_KEY, VaubanContainer.class);
-        if (container == null) {
-            container = context.getParent()
-                    .map(parent -> parent.getStore(NS).get(CONTAINER_KEY, VaubanContainer.class))
-                    .orElse(null);
-        }
-        return container;
     }
 }

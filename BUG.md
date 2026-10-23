@@ -171,7 +171,7 @@ names a class that does not exist; run the `generate` goal.
 ---
 
 ## VAU-TEST-002 — `VaubanExtension` leaves `@Inject` fields null with `@TestInstance(PER_CLASS)`
-- **Date**: 2026-10-23 — **Status**: OPEN (vauban#190)
+- **Date**: 2026-10-23 — **Status**: FIXED (fix/vauban-tickets, vauban#190, Vidocq/vidocq#285)
 - **Severity**: low (a limitation of the JUnit extension; the default per-method lifecycle works)
 
 ### Symptom
@@ -183,6 +183,12 @@ A `@VaubanTest` class with `@TestInstance(PER_CLASS)` and an `@Inject` field; an
 ### Cause
 With the per-class lifecycle, JUnit post-processes the test instance before `beforeAll`, where `VaubanExtension`
 starts the container, so the container is not in the store yet when the fields are injected.
+
+### Fix
+`beforeAll` and `postProcessTestInstance` both get the container from the class-level store with `computeIfAbsent`,
+keyed by the test class, so whichever runs first starts it and the class keeps a single container, closed by
+`afterAll`. `VaubanExtensionTest.PerClassLifecycleTest` (failed before the fix: `expected: not <null>`) and
+`VaubanExtensionTest.PerMethodLifecycleTest` cover both lifecycles, each checking that one container boots.
 
 ---
 

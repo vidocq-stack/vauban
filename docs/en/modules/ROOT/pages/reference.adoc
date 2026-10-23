@@ -429,6 +429,11 @@ Bean selection:
 * `@VaubanTest` — a plain marker (no members). Boots the container via `VaubanContainer.builder()` before all tests, closes it after the last one, and injects the test instance's `@Inject` fields.
 * `@AddBeans({Foo.class, Bar.class})` — a separate annotation that registers the listed classes on the container builder (`addBeanClass(...)`).
 
+[[junit-lifecycles]]
+=== Test instance lifecycles [.tag-new]#NEW#
+
+Both JUnit lifecycles get their `@Inject` fields. With the default `@TestInstance(PER_METHOD)`, each test gets a new instance, injected from the container of the class. With `@TestInstance(PER_CLASS)`, JUnit creates the single instance before the "before all" callbacks run, so the extension starts the container when it injects that instance; either way the class has one container, closed after its last test.
+
 [#lite-vs-full]
 == CDI 4.1 Lite vs Full comparison
 
