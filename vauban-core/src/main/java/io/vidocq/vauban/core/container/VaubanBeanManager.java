@@ -967,7 +967,7 @@ public final class VaubanBeanManager implements BeanManager {
         return true;
     }
 
-    private static boolean typesMatch(Type beanType, Type requiredType) {
+    static boolean typesMatch(Type beanType, Type requiredType) {
         if (beanType.equals(requiredType)) return true;
 
         // Primitive <-> wrapper matching
