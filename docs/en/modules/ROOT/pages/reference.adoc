@@ -374,6 +374,9 @@ original jars. Bind it to `process-classes` when dev mode must run against the p
 
 | `-Avauban.producerProxy=error\|warn\|note` [.tag-new]#NEW#
 | Default `note`. Severity of the diagnostic emitted when a normal-scoped `@Produces` returns a class type that is not build-time proxyable across a module boundary (the runtime then falls back to reflective proxy generation, which needs an `opens`). Set to `error` to enforce zero fallback, `warn` to surface it without failing the build. See xref:internals.adoc#proxy-strategies[Internals — client-proxy strategies].
+
+| `-Avauban.providesHint=false` [.tag-new]#NEW#
+| Default `true`: the note on each generated `_VaubanComponents` tells the module to declare it, `provides io.vidocq.vauban.api.VaubanComponentProvider with <pkg>._VaubanComponents;`, which a named module needs for `ServiceLoader` to find it. A runtime that turns the module's `META-INF/services` entries into `provides` when it loads the module, as Vidocq does, needs no such declaration: `false` keeps the note and drops the advice (VAU-APT-004).
 |===
 
 [#system-properties]

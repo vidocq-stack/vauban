@@ -5,6 +5,31 @@ suspected cause, status. Updated on every investigation.
 
 ---
 
+## VAU-APT-004 — The processor tells every Vidocq application to declare a `provides` it does not need
+- **Date**: 2026-10-24 — **Status**: FIXED (fix/provides-hint, Vidocq/vidocq#336)
+- **Severity**: low (a note on every build; the application works without the change it asks for)
+
+### Symptom
+Every build of an application created by `vidocq create` prints `[Vauban] Generated <pkg>._VaubanComponents (…). On
+the module path, add to module-info: provides io.vidocq.vauban.api.VaubanComponentProvider with
+<pkg>._VaubanComponents;`. The application has no such `provides`, and works under `vidocq dev`, `vidocq start` and
+from a jlink image (checked 2026-10-24, Vidocq/vidocq BUG-20261024-10). A user who follows the advice edits a file
+for nothing; one who does not wonders whether the build is broken.
+
+### Repro
+`ProvidesHintTest`: a module with one `@ApplicationScoped` bean; the note gives the advice, and there was no way to
+leave it out.
+
+### Cause
+The advice is right for Vauban alone: in a named module `ServiceLoader` reads `provides` only, not
+`META-INF/services`. Vidocq's application layer turns the `META-INF/services` entries the processor writes into
+`provides` when it defines the module, so a Vidocq application needs nothing. The processor cannot tell the two
+apart.
+
+### Fix
+`-Avauban.providesHint=false` (a supported option, so javac does not report it as unrecognized) keeps the note and
+drops the advice; the Vidocq runtime parent sets it. Default unchanged. Test `ProvidesHintTest`.
+
 ## VAU-BCE-007 — `VaubanClassInfo.typeParameters()` always returns an empty list
 - **Date**: 2026-10-24 — **Status**: FIXED (fix/vauban-tickets, vauban#207, Vidocq/vidocq#285)
 - **Severity**: low (a build compatible extension cannot read the type parameters of a generic class, nor get a

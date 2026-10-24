@@ -50,6 +50,11 @@ final class ProcessorCompiler {
     }
 
     static Result compile(Path workDir, Map<String, String> sources) throws IOException {
+        return compile(workDir, sources, List.of());
+    }
+
+    /** As {@link #compile(Path, Map)}, with {@code extraOptions} after the usual ones, such as {@code -A} options. */
+    static Result compile(Path workDir, Map<String, String> sources, List<String> extraOptions) throws IOException {
         var compiler = ToolProvider.getSystemJavaCompiler();
         var diagnostics = new DiagnosticCollector<JavaFileObject>();
         var sourceDir = Files.createDirectories(workDir.resolve("src"));
@@ -62,8 +67,9 @@ final class ProcessorCompiler {
         }
         var classes = Files.createDirectories(workDir.resolve("classes"));
         var generated = Files.createDirectories(workDir.resolve("generated"));
-        var options = List.of("-d", classes.toString(), "-s", generated.toString(), "--release", "25",
-                "-classpath", classPath(), "-proc:full");
+        var options = new ArrayList<>(List.of("-d", classes.toString(), "-s", generated.toString(), "--release", "25",
+                "-classpath", classPath(), "-proc:full"));
+        options.addAll(extraOptions);
         try (var fileManager = compiler.getStandardFileManager(diagnostics, null, null)) {
             var task = compiler.getTask(null, fileManager, diagnostics, options, null,
                     fileManager.getJavaFileObjectsFromFiles(files));

@@ -91,10 +91,15 @@ import java.util.stream.Collectors;
  *       when the processor detects it's invoked from a {@code testCompile} (i.e. the
  *       file manager points at {@code target/test-classes} as default output). Set to
  *       {@code all} to enforce validation on test sources too.</li>
+ *   <li>{@code -Avauban.providesHint=false} — the note on each generated
+ *       {@code _VaubanComponents} no longer tells the module to declare it with
+ *       {@code provides}. For a runtime that turns the module's {@code META-INF/services}
+ *       entries into {@code provides} when it loads the module, as Vidocq does, where the
+ *       declaration is not needed (VAU-APT-004).</li>
  * </ul>
  */
 @javax.annotation.processing.SupportedOptions({"vauban.validation", "vauban.validation.scope",
-        "vauban.producerProxy"})
+        "vauban.producerProxy", "vauban.providesHint"})
 public class VaubanProcessor extends AbstractProcessor {
 
     private static final Set<String> CDI_ANNOTATIONS = Set.of(
@@ -2246,6 +2251,15 @@ public class VaubanProcessor extends AbstractProcessor {
     }
 
     /**
+     * Whether the note on a generated provider tells the module to declare it with {@code provides}: unless
+     * {@code -Avauban.providesHint=false}, for a runtime that turns {@code META-INF/services} into
+     * {@code provides} itself (VAU-APT-004).
+     */
+    private boolean providesHint() {
+        return !"false".equalsIgnoreCase(processingEnv.getOptions().getOrDefault("vauban.providesHint", "true").strip());
+    }
+
+    /**
      * Generates the {@code <pkg>._VaubanComponents} provider for one package's beans (in-module
      * instantiation, field injection and method invocation) and returns its fully-qualified name so
      * the caller can list it (with the others) in the single class-path service file. The fields and
@@ -2271,12 +2285,15 @@ public class VaubanProcessor extends AbstractProcessor {
             processingEnv.getMessager().printMessage(Diagnostic.Kind.NOTE,
                     "[Vauban] Generated " + gen.className() + " (" + contents.components().size() + " component(s), "
                             + contents.fieldInjects().size() + " field(s), " + contents.methodInvokes().size()
-                            + " method(s)). "
+                            + " method(s))."
                             + (testRound
-                                    ? "Test compilation: the container finds it through the main sources' "
+                                    ? " Test compilation: the container finds it through the main sources' "
                                             + ComponentProviderGenerator.SIMPLE_NAME + "."
-                                    : "On the module path, add to module-info: provides "
-                                            + "io.vidocq.vauban.api.VaubanComponentProvider with " + gen.className() + ";"));
+                                    : providesHint()
+                                            ? " On the module path, add to module-info: provides "
+                                                    + "io.vidocq.vauban.api.VaubanComponentProvider with "
+                                                    + gen.className() + ";"
+                                            : ""));
             return gen.className();
         } catch (IOException e) {
             processingEnv.getMessager().printMessage(Diagnostic.Kind.WARNING,
