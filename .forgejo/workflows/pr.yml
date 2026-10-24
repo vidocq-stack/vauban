@@ -88,7 +88,7 @@ jobs:
           echo "docs-only=$docs_only" >> "$GITHUB_OUTPUT"
           echo "docs-only: $docs_only"
 
-      - uses: https://codefloe.com/Vidocq/ci/setup-maven@main
+      - uses: https://codefloe.com/Vidocq/ci/setup-maven@ci/step1-speedups
         if: steps.changes.outputs.docs-only != 'true'
 
       - name: Compute PR version (release-style, no -SNAPSHOT)
@@ -232,7 +232,7 @@ jobs:
 
       - name: Rebuild impacted downstream consumers against the local PR artifacts
         if: steps.changes.outputs.docs-only != 'true'
-        uses: https://codefloe.com/Vidocq/ci/build-impacted@main
+        uses: https://codefloe.com/Vidocq/ci/build-impacted@ci/step1-speedups
         with:
           producer-slug: ${{ github.repository }}
           producer-version: ${{ steps.version.outputs.version }}
