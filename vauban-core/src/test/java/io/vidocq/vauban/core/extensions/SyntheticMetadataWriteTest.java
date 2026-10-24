@@ -103,9 +103,10 @@ class SyntheticMetadataWriteTest {
                 types.ofArray(new VaubanTypeVariable("N", List.of(number)), 1));
 
         var messages = new ArrayList<String>();
+        List<VaubanSyntheticBeanBuilder<?>> noBeans = List.of();
         for (var observedType : observedTypes) {
             List<VaubanSyntheticObserverBuilder<?>> observers = List.of(new VaubanSyntheticObserverBuilder<>(observedType));
-            messages.add(assertThrows(IllegalArgumentException.class, () -> written(List.of(), observers)).getMessage());
+            messages.add(assertThrows(IllegalArgumentException.class, () -> written(noBeans, observers)).getMessage());
         }
 
         assertEquals(List.of("java.util.List<? extends java.lang.Number>",
