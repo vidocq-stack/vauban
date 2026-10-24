@@ -79,19 +79,19 @@ class InterceptedBeanCreateWithoutCreationalContextTest {
     public static class WatchingInterceptor {
         @AroundConstruct
         public Object construct(InvocationContext context) throws Exception {
-            record(AROUND_CONSTRUCT, this);
+            remember(AROUND_CONSTRUCT, this);
             return context.proceed();
         }
 
         @PostConstruct
         public void postConstruct(InvocationContext context) throws Exception {
-            record(POST_CONSTRUCT, this);
+            remember(POST_CONSTRUCT, this);
             context.proceed();
         }
 
         @AroundInvoke
         public Object invoke(InvocationContext context) throws Exception {
-            record(AROUND_INVOKE, this);
+            remember(AROUND_INVOKE, this);
             return context.proceed();
         }
     }
@@ -102,7 +102,7 @@ class InterceptedBeanCreateWithoutCreationalContextTest {
     public static class InitializingInterceptor {
         @PostConstruct
         public void postConstruct(InvocationContext context) throws Exception {
-            record(POST_CONSTRUCT, this);
+            remember(POST_CONSTRUCT, this);
             context.proceed();
         }
     }
@@ -129,7 +129,7 @@ class InterceptedBeanCreateWithoutCreationalContextTest {
         }
     }
 
-    private static void record(String call, Object interceptor) {
+    private static void remember(String call, Object interceptor) {
         CALLS.add(call);
         INTERCEPTORS.add(interceptor);
     }
