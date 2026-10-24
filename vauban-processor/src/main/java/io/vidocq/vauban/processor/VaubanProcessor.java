@@ -2282,18 +2282,20 @@ public class VaubanProcessor extends AbstractProcessor {
             try (var w = file.openWriter()) {
                 w.write(gen.source());
             }
+            String advice;
+            if (testRound) {
+                advice = " Test compilation: the container finds it through the main sources' "
+                        + ComponentProviderGenerator.SIMPLE_NAME + ".";
+            } else if (providesHint()) {
+                advice = " On the module path, add to module-info: provides "
+                        + "io.vidocq.vauban.api.VaubanComponentProvider with " + gen.className() + ";";
+            } else {
+                advice = "";
+            }
             processingEnv.getMessager().printMessage(Diagnostic.Kind.NOTE,
                     "[Vauban] Generated " + gen.className() + " (" + contents.components().size() + " component(s), "
                             + contents.fieldInjects().size() + " field(s), " + contents.methodInvokes().size()
-                            + " method(s))."
-                            + (testRound
-                                    ? " Test compilation: the container finds it through the main sources' "
-                                            + ComponentProviderGenerator.SIMPLE_NAME + "."
-                                    : providesHint()
-                                            ? " On the module path, add to module-info: provides "
-                                                    + "io.vidocq.vauban.api.VaubanComponentProvider with "
-                                                    + gen.className() + ";"
-                                            : ""));
+                            + " method(s))." + advice);
             return gen.className();
         } catch (IOException e) {
             processingEnv.getMessager().printMessage(Diagnostic.Kind.WARNING,
