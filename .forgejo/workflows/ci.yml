@@ -1,6 +1,7 @@
 name: CI
 
-# Post-merge flow (push on main). Common steps (Maven/Java setup, TCK, Central deploy,
+# Post-merge flow (push on main). One job: build and test, CDI TCK, then deploy,
+# so the SNAPSHOT is published without two more runner waits and setups. Common steps (Maven/Java setup, TCK, Central deploy,
 # Slack notification) are factored out via the composite actions in the Vidocq/ci repo.
 # Pull requests are handled by pr.yml.
 on:
@@ -14,7 +15,7 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  build:
+  build-and-deploy:
     runs-on: vidocq-runner
     steps:
       - uses: actions/checkout@v4
@@ -34,56 +35,15 @@ jobs:
             .ci-action
 
       - uses: ./.ci-action/setup-maven
+      # install, not verify: the TCK step below resolves the reactor modules from the local repository.
       - name: Build & test
-        run: mvn -B -ntp verify
+        run: mvn -B -ntp install
 
-  tck:
-    runs-on: vidocq-runner
-    needs: build
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Fetch Vidocq/ci action (Forgejo mirror, basic-auth)
-        shell: bash
-        env:
-          MIRROR_URL:  ${{ secrets.MIRROR_ASD_URL }}
-          MIRROR_USER: ${{ secrets.MIRROR_ASD_USER }}
-          MIRROR_PASS: ${{ secrets.MIRROR_ASD_PASSWORD }}
-        run: |
-          set -euo pipefail
-          enc_pass=$(python3 -c "import os,urllib.parse;print(urllib.parse.quote(os.environ['MIRROR_PASS'], safe=''))")
-          host="${MIRROR_URL#https://}"; host="${host#http://}"; host="${host%/}"
-          git clone --depth=1 --branch main \
-            "https://${MIRROR_USER}:${enc_pass}@${host}/Vidocq/ci.git" \
-            .ci-action
-
-      - uses: ./.ci-action/setup-maven
       - name: CDI TCK 4.1 Lite
         uses: ./.ci-action/run-tck
         with:
           module: vauban-tck-runner
-
-  deploy:
-    runs-on: vidocq-runner
-    needs: tck
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Fetch Vidocq/ci action (Forgejo mirror, basic-auth)
-        shell: bash
-        env:
-          MIRROR_URL:  ${{ secrets.MIRROR_ASD_URL }}
-          MIRROR_USER: ${{ secrets.MIRROR_ASD_USER }}
-          MIRROR_PASS: ${{ secrets.MIRROR_ASD_PASSWORD }}
-        run: |
-          set -euo pipefail
-          enc_pass=$(python3 -c "import os,urllib.parse;print(urllib.parse.quote(os.environ['MIRROR_PASS'], safe=''))")
-          host="${MIRROR_URL#https://}"; host="${host#http://}"; host="${host%/}"
-          git clone --depth=1 --branch main \
-            "https://${MIRROR_USER}:${enc_pass}@${host}/Vidocq/ci.git" \
-            .ci-action
-
-      - uses: ./.ci-action/setup-maven
+          pre-install: "false"
 
       - name: Deploy to Maven Central
         uses: ./.ci-action/deploy-maven
