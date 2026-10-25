@@ -5,6 +5,37 @@ suspected cause, status. Updated on every investigation.
 
 ---
 
+## VAU-APT-005 — Built by Eclipse's compiler (Eclipse, VS Code), an application loses its beans without a word
+- **Date**: 2026-10-25 — **Status**: FIXED (fix/eclipse-apt-file-object)
+- **Severity**: high (the application starts and answers 404 on its own REST resources; nothing says why)
+
+### Symptom
+A Vidocq application imported in VS Code (Java extension, jdt.ls 1.61: Eclipse JDT with m2e) or Eclipse, built by
+the IDE, had no `META-INF/vauban-beans.list`, no `META-INF/services/io.vidocq.vauban.api.VaubanComponentProvider` and
+no `META-INF/vauban-bce-processed` in `target/classes`. Started on that output, it booted (`anomalies none`) with one
+REST resource class instead of two, and `GET /hello` answered 404. The IDE's log had `Exception thrown by Java
+annotation processor io.vidocq.vauban.processor.VaubanProcessor` with `java.nio.file.FileSystemNotFoundException` at
+`ElementsImpl9.getFileObjectForType`. Found while checking Vidocq/vidocq#339 (evolution 2) in VS Code.
+
+### Repro
+`EclipseCompilerFileObjectTest`: the processor runs behind an `Elements` that throws `FileSystemNotFoundException`
+from `getFileObjectOf` for a type read from the class path, as Eclipse's does; its output must be javac's. By hand:
+jdt.ls headless on an application created by `vidocq create -x cassini-rest` (Vidocq/vidocq scratch probe), then the
+runtime on the IDE's `target/classes`.
+
+### Cause
+Eclipse's `Elements.getFileObjectOf` throws `FileSystemNotFoundException` for a type read from a jar: it builds a
+`Path` from a `jar:` URI without the zip file system. `compiledHere` (which annotation types are this compilation's)
+and `isTestRound` called it unguarded, so the last round stopped before writing the bean list, the provider service
+and the BCE marker.
+
+### Fix
+`fileObjectOf` catches the compiler's failure and answers "no file": a type whose file the compiler cannot give is on
+the path, not a source of this compilation. Checked in jdt.ls: no processor exception, the IDE's output has the same
+files as Maven's, and the application answers 200. Upstream: the exception itself is Eclipse JDT's.
+
+---
+
 ## VAU-APT-004 — The processor tells every Vidocq application to declare a `provides` it does not need
 - **Date**: 2026-10-24 — **Status**: FIXED (fix/provides-hint, Vidocq/vidocq#336)
 - **Severity**: low (a note on every build; the application works without the change it asks for)

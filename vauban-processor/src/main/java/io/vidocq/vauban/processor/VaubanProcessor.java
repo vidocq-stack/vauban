@@ -1554,9 +1554,21 @@ public class VaubanProcessor extends AbstractProcessor {
 
     /** Whether {@code element} comes from a source file of this compilation rather than the path. */
     private static boolean compiledHere(Elements elements, TypeElement element) {
-        var file = elements.getFileObjectOf(element);
-        return file instanceof javax.tools.JavaFileObject source
-                && source.getKind() == javax.tools.JavaFileObject.Kind.SOURCE;
+        var file = fileObjectOf(elements, element);
+        return file != null && file.getKind() == javax.tools.JavaFileObject.Kind.SOURCE;
+    }
+
+    /**
+     * The file {@code element} was read from, or {@code null} when the compiler cannot say. Eclipse's compiler (JDT APT,
+     * also behind VS Code's Java extension) throws {@link java.nio.file.FileSystemNotFoundException} for a type read
+     * from a jar: such a type is on the path, not a source of this compilation.
+     */
+    private static javax.tools.JavaFileObject fileObjectOf(Elements elements, javax.lang.model.element.Element element) {
+        try {
+            return elements.getFileObjectOf(element);
+        } catch (RuntimeException _) {
+            return null;
+        }
     }
 
     /** Every annotation named on a class, on its fields, on its methods and on their parameters. */
@@ -2330,7 +2342,7 @@ public class VaubanProcessor extends AbstractProcessor {
         if (existing == null) {
             return false;
         }
-        var file = processingEnv.getElementUtils().getFileObjectOf(existing);
+        var file = fileObjectOf(processingEnv.getElementUtils(), existing);
         if (file == null || file.getKind() != javax.tools.JavaFileObject.Kind.CLASS) {
             return false;
         }

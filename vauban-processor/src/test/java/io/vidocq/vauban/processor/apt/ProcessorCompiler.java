@@ -31,6 +31,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import javax.annotation.processing.Processor;
 import javax.tools.DiagnosticCollector;
 import javax.tools.JavaFileObject;
 import javax.tools.ToolProvider;
@@ -55,6 +56,12 @@ final class ProcessorCompiler {
 
     /** As {@link #compile(Path, Map)}, with {@code extraOptions} after the usual ones, such as {@code -A} options. */
     static Result compile(Path workDir, Map<String, String> sources, List<String> extraOptions) throws IOException {
+        return compile(workDir, sources, extraOptions, new VaubanProcessor());
+    }
+
+    /** As {@link #compile(Path, Map, List)}, with {@code processor} in place of a plain Vauban processor. */
+    static Result compile(Path workDir, Map<String, String> sources, List<String> extraOptions, Processor processor)
+            throws IOException {
         var compiler = ToolProvider.getSystemJavaCompiler();
         var diagnostics = new DiagnosticCollector<JavaFileObject>();
         var sourceDir = Files.createDirectories(workDir.resolve("src"));
@@ -73,7 +80,7 @@ final class ProcessorCompiler {
         try (var fileManager = compiler.getStandardFileManager(diagnostics, null, null)) {
             var task = compiler.getTask(null, fileManager, diagnostics, options, null,
                     fileManager.getJavaFileObjectsFromFiles(files));
-            task.setProcessors(List.of(new VaubanProcessor()));
+            task.setProcessors(List.of(processor));
             boolean success = task.call();
             var messages = new ArrayList<String>();
             for (var diagnostic : diagnostics.getDiagnostics()) {
