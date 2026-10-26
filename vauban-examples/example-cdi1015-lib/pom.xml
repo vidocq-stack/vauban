@@ -6,7 +6,7 @@
     <parent>
         <groupId>io.vidocq.vauban</groupId>
         <artifactId>vauban-examples</artifactId>
-        <version>0.4.0-SNAPSHOT</version>
+        <version>0.4.0-RC1</version>
     </parent>
     <artifactId>example-cdi1015-lib</artifactId>
     <name>Vauban :: Examples :: cdi#1015 :: Third-party library</name>
