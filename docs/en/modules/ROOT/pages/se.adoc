@@ -1,4 +1,4 @@
-= Vauban in Java SE [.tag-new]#NEW#
+= Vauban in Java SE
 :description: Running a CDI SE application with Vauban — SeContainerInitializer, the launcher, and what running inside a Vauban layer changes.
 
 [.lead]
@@ -29,7 +29,7 @@ more is needed: proxies are generated at build time and resolve with zero `opens
 (xref:internals.adoc#proxy-strategies[client-proxy strategies]).
 
 [#bean-archives]
-=== Default discovery: bean archives [.tag-new]#NEW#
+=== Default discovery: bean archives
 
 With neither `addBeanClasses` nor `addPackages`, `initialize()` discovers beans in every archive
 (jar or directory) of the class loader that contains a `META-INF/beans.xml`. Its
@@ -135,7 +135,7 @@ With the bare `<main-class>` form there is no module name to treat as a root, so
 hold the application back; name the module.
 
 [#kept-roots]
-==== Kept roots [.tag-new]#NEW#
+==== Kept roots
 
 A runtime that starts the application through this policy can name its own root modules: each of them
 stays in the parent layer with everything it reads, whatever their names, and every other explicit module
@@ -172,7 +172,7 @@ kept as well and the caller's module as the root. CDI-agnostic libraries are re-
 their proxies are placed.
 
 [#code-source]
-=== Where a layer class comes from [.tag-new]#NEW#
+=== Where a layer class comes from
 
 Every class the layer's loader defines carries its archive as its code source, as a class of the
 module path or of a `URLClassLoader` does: `type.getProtectionDomain().getCodeSource().getLocation()`
@@ -182,7 +182,7 @@ container that scans the jar of a `ServletContainerInitializer` for its `@Handle
 Before, the location was `null` (vauban#153).
 
 [#multi-release]
-=== Multi-release jars [.tag-new]#NEW#
+=== Multi-release jars
 
 The layer's loader reads a multi-release jar as the module path does: for a class or a resource, the entry of
 `META-INF/versions/N/` with the highest `N` that the running JDK accepts wins over the base entry, and a class

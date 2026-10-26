@@ -1,4 +1,4 @@
-= The JNDI `java:` namespace [.tag-new]#NEW#
+= The JNDI `java:` namespace
 :description: vauban-naming answers the JNDI java: names, such as java:comp/env/jdbc/orders, from the running CDI container: the names you declare, the four namespaces, links, the text form of a bean, what is checked at startup.
 
 [.lead]

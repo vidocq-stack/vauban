@@ -26,11 +26,11 @@ CDI 4.1 Lite ships four standard scopes. Vauban supports all of them, plus `@Req
 
 | `@RequestScoped`
 | One instance per request, normal-scope proxy.
-| ✅ with Cassini or Foy active, or activated by your code (xref:usage.adoc#activating-the-request-context[Activating the request context]) [.tag-new]#NEW#
+| ✅ with Cassini or Foy active, or activated by your code (xref:usage.adoc#activating-the-request-context[Activating the request context])
 
 | `@SessionScoped`
 | One instance per HTTP session.
-| ✅ with `vauban-webcontexts`, when Foy serves the request (xref:usage.adoc#web-contexts[Web contexts]) [.tag-new]#NEW#
+| ✅ with `vauban-webcontexts`, when Foy serves the request (xref:usage.adoc#web-contexts[Web contexts])
 |===
 
 [NOTE]
@@ -98,7 +98,7 @@ compiles, and this one is added once javac has finished. A hand-written one is c
 other and does run them — if you declare it yourself, keep field initializers side-effect free.
 
 [#which-proxy]
-=== Which proxy do I get, and what do I have to do? [.tag-new]#NEW#
+=== Which proxy do I get, and what do I have to do?
 
 Find your situation in the left column. Most of them ask nothing of you; the few that do,
 say so in one line. The mechanics behind each row are in
@@ -210,7 +210,7 @@ public class Service {
 
 `@Named`, `@Default`, `@Any` are supported. Custom qualifiers with `@Nonbinding` members work too.
 
-[.tag-new]#NEW# A `@Named` without a value on a `static` nested bean class takes the class's simple name, as CDI 4.1 §3.1.5 requires: `Outer.ReportService` is named `reportService`, where it used to be named `outer$ReportService`.
+A `@Named` without a value on a `static` nested bean class takes the class's simple name, as CDI 4.1 §3.1.5 requires: `Outer.ReportService` is named `reportService`, where it used to be named `outer$ReportService`.
 
 [#producers-and-disposes]
 == Producers and `@Disposes`
@@ -233,7 +233,7 @@ public class DataSourceProducer {
 
 The `@Disposes` callback runs when the producing bean is destroyed. No dedicated class is generated per producer method: the container invokes producers and disposers through the module's generated `_VaubanComponents` provider, with reflection only as a fallback.
 
-[.tag-new]#NEW# The disposer runs once per destroyed instance; it used to run twice, because its own call released the produced instance's context a second time. It now gets a context of its own (CDI 4.1 §6.4.2). Every parameter of a disposer other than the `@Disposes` one is an injection point, qualifiers included (CDI 4.1 §10.4.3): a qualified parameter used to fail validation as an unsatisfied dependency, or receive the `@Default` bean at run time.
+The disposer runs once per destroyed instance; it used to run twice, because its own call released the produced instance's context a second time. It now gets a context of its own (CDI 4.1 §6.4.2). Every parameter of a disposer other than the `@Disposes` one is an injection point, qualifiers included (CDI 4.1 §10.4.3): a qualified parameter used to fail validation as an unsatisfied dependency, or receive the `@Default` bean at run time.
 
 == Events
 
@@ -261,7 +261,7 @@ public class OrderListener {
 Async observers (`@ObservesAsync`) are dispatched on the `EventDispatcher`'s internal `Executors.newVirtualThreadPerTaskExecutor()`. See xref:internals.adoc#virtual-threads[the threading model].
 
 [[lifecycle-observer-failures]]
-=== When a lifecycle observer throws [.tag-new]#NEW#
+=== When a lifecycle observer throws
 
 The container fires `@Initialized(ApplicationScoped.class)` and `Startup` when it starts, and `Shutdown`,
 `@BeforeDestroyed(ApplicationScoped.class)` and `@Destroyed(ApplicationScoped.class)` when it closes. As CDI 4.1 §9.5
@@ -345,7 +345,7 @@ public class OrderResource {
 ----
 
 [#activating-the-request-context]
-=== Activating the request context [.tag-new]#NEW#
+=== Activating the request context
 
 Outside a request served by Cassini or Foy, a batch job, a message listener, a scheduled task, the request context is not active. CDI Lite gives two ways to activate it (CDI 4.1 §6.5.8, §6.5.9), and Vauban provides both:
 
@@ -373,7 +373,7 @@ The context is activated per thread: two threads each have their own request and
 xref:foy::index.adoc[Foy] exposes servlets, filters and listeners as CDI beans, and `@SessionScoped` follows the HTTP session, through the web contexts below. `@RequestScoped` follows the HTTP request: Foy activates the request context around each request through the built-in `RequestContextController`, each request on its own thread with its own instances.
 
 [#web-contexts]
-=== Web contexts: `@SessionScoped` [.tag-new]#NEW#
+=== Web contexts: `@SessionScoped`
 
 CDI Lite has no session context: CDI 4.1 §6.7.2 leaves it to the container that implements Servlet. `vauban-webcontexts` provides it, independent of any transport, and a web container drives it. With Foy there is nothing to do: `foy-cdi-vauban` depends on `vauban-webcontexts` and binds each request's `HttpSession` to it.
 
@@ -401,7 +401,7 @@ WebContexts.destroySession(beanManager, store, session);
 `SessionStore` adapts the session's attributes: get, set, remove, list, and the object to lock while an instance is created, the same for every request of one session.
 
 [#jndi]
-== The JNDI `java:` namespace [.tag-new]#NEW#
+== The JNDI `java:` namespace
 
 Code written for an application server looks its resources up by name: `new InitialContext().lookup("java:comp/env/jdbc/orders")`. `vauban-naming` answers those names from the running container, with the bean each name is declared for, such as the `@Named("orders")` `DataSource` bean. Declaring names, the four namespaces, links and what is checked at startup: xref:jndi.adoc[The JNDI java: namespace].
 
@@ -423,7 +423,7 @@ class GreetingServiceTest {
 The extension boots a minimal container per test class. See xref:reference.adoc#junit-extension[the JUnit reference].
 
 [[test-sources-beans]]
-=== Beans in the test sources [.tag-new]#NEW#
+=== Beans in the test sources
 
 A bean can live in `src/test/java`, in the same package as the main beans, and inject them. Maven compiles a
 module twice, the main sources then the tests, and the processor runs on both. The test compilation used to emit a

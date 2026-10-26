@@ -76,7 +76,7 @@ Lite-profile specifics worth knowing before migrating:
 * **`InjectionPoint` metadata** — supported.
 
 [#upgrading]
-== Upgrading from Vauban {release-version} [.tag-new]#NEW#
+== Upgrading from Vauban {release-version}
 
 What an application built on Vauban `{release-version}` may notice on the `{project-version}` line. The full list is in xref:whats-new.adoc[What's new].
 

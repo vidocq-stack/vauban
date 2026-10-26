@@ -47,7 +47,7 @@ The processor generates:
 | Subclass generated for beans with interceptor bindings — routes the intercepted methods through the interceptor chain (see <<intercepted-methods,which methods it covers>>).
 
 | `_VaubanComponents`
-| One per package. Implements `io.vidocq.vauban.api.VaubanComponentProvider`: instantiates the package's components in-module (`new X(…)`), injects fields, creates client proxies and invokes producers, observers, disposers and lifecycle callbacks — no reflection, no `opens`. [.tag-new]#NEW# Its `coverage()` declares all of these, keyed as the container asks for them; `VaubanContainer.codegenCoverage()` reads it to tell, per bean, observer and interceptor, which generator covers each operation and which falls back to reflection — what the Vidocq dev console shows. For a scanned dependency jar, `vidocq:generate` asks the generator for the same providers (`VaubanGenerator.Config#dependencyProviders`) and moves them into an enriched copy of that jar, whose descriptor declares them. [.tag-new]#NEW# It builds a bean through its `@Inject` constructor when it has one, and through a no-arg constructor only otherwise, the constructor the container picks (CDI 4.1 §3.1.1). It used to pick the no-arg one whenever it existed, so the container fell back to reflection, which a named module refuses without an `opens`.
+| One per package. Implements `io.vidocq.vauban.api.VaubanComponentProvider`: instantiates the package's components in-module (`new X(…)`), injects fields, creates client proxies and invokes producers, observers, disposers and lifecycle callbacks — no reflection, no `opens`.Its `coverage()` declares all of these, keyed as the container asks for them; `VaubanContainer.codegenCoverage()` reads it to tell, per bean, observer and interceptor, which generator covers each operation and which falls back to reflection — what the Vidocq dev console shows. For a scanned dependency jar, `vidocq:generate` asks the generator for the same providers (`VaubanGenerator.Config#dependencyProviders`) and moves them into an enriched copy of that jar, whose descriptor declares them.It builds a bean through its `@Inject` constructor when it has one, and through a no-arg constructor only otherwise, the constructor the container picks (CDI 4.1 §3.1.1). It used to pick the no-arg one whenever it existed, so the container fell back to reflection, which a named module refuses without an `opens`.
 |===
 
 Every generated class file carries the *project's* Java release, never the release of the JDK that
@@ -58,7 +58,7 @@ image. Weaving is the mirror rule: it patches a class someone else compiled, so 
 class's own version untouched.
 
 [#reproducible-output]
-[.tag-new]#NEW# The output is also reproducible: the same input gives the same files from one build
+The output is also reproducible: the same input gives the same files from one build
 to the next. The processor and `vauban:generate` write the entries of each `_VaubanComponents` in a
 stable order (beans by binary name, a bean's `$$Intercepted` right after it, then the client
 proxies, the producers' proxies, the annotation types and the service file's provider names, each
@@ -67,7 +67,7 @@ proxy ones that `vauban:generate` also uses, list its methods in a stable order 
 order `Class#getDeclaredMethods` happens to return, which depends on what the JVM loaded before.
 
 [#checked-exceptions]
-[.tag-new]#NEW# A bean method may declare checked exceptions, as CDI allows for constructors,
+A bean method may declare checked exceptions, as CDI allows for constructors,
 initializers, observers, producers and disposers. The generated source calls those methods
 directly, so it rethrows whatever they throw without declaring it: `_VaubanComponents` and
 `MyBean_Factory` route the call through a small generic `sneaky` helper, and the constructors of
@@ -76,7 +76,7 @@ the container as thrown, unwrapped, which is what `VaubanComponentProvider#invok
 Class-File path needs nothing of the kind: bytecode has no checked exceptions (vauban#145).
 
 [#intercepted-methods]
-=== Which methods the intercepted subclass covers [.tag-new]#NEW#
+=== Which methods the intercepted subclass covers
 
 `MyBean$$Intercepted` overrides every business method of the bean: the ones it declares, the
 public, protected and package-private superclass methods it inherits, and the interface default
@@ -98,7 +98,7 @@ bean overrides that method. The class-level bindings of an interface never apply
 `getInterceptorBindings()` includes its bindings. The client proxy of a normal-scoped bean forwards
 the same default methods to the contextual instance.
 
-[.tag-new]#NEW# Every client proxy the processor writes forwards these inherited methods, not only
+Every client proxy the processor writes forwards these inherited methods, not only
 the source one. A bean with private constructors only gets a bytecode proxy built from its
 elements, which forwards the inherited and default methods as the source proxy does; the proxy
 built from the index alone, which forwards only what the bean class declares, is left for a bean the
@@ -107,14 +107,14 @@ by its canonical name, so its intercepted subclass, its producers' proxies and i
 artefacts compile, and a normal-scoped producer of a nested class or interface gets a build-time
 proxy like any other.
 
-[.tag-new]#NEW# An intercepted bean with an `@Inject` constructor takes its parameters' qualifiers
+An intercepted bean with an `@Inject` constructor takes its parameters' qualifiers
 from the bean's descriptor, as a bean that is not intercepted does, so it is created under
 `-Dvauban.annotations.reflection=forbid`.
 
 An inherited member may have a signature, as a member of the bean, that names a type the generated
 class's package cannot name: a package-private type of another package, or a private nested type.
 Java source cannot override such a method; a class file can, by its descriptor.
-[.tag-new]#NEW# The processor therefore emits that intercepted subclass or client proxy — a
+The processor therefore emits that intercepted subclass or client proxy — a
 producer's proxy included — as bytecode, with the same emitters the container and `vauban:generate`
 use, and only that class: everything else is still rendered as source. The module's source
 `_VaubanComponents` reaches these classes through its own `MethodHandles.lookup()`, so the module
@@ -131,7 +131,7 @@ still needs no `opens`. Such a build used to fail. Two cases remain where a meth
   instead.
 
 [#proxy-strategies]
-== Client proxies — one strategy per case [.tag-new]#NEW#
+== Client proxies — one strategy per case
 
 A normal-scoped bean is never handed out directly: the container returns a `_ClientProxy`
 subclass that forwards every business method to the contextual instance. *Where* that
@@ -158,7 +158,7 @@ public*: public non-final non-sealed class, only public overridable methods, an 
 (public/protected) constructor. The check walks the **whole superclass hierarchy** (up to, but
 excluding, `java.lang.Object`), because a method inherited from a superclass is neither declared
 by the produced type nor overridden by the proxy: judging only declared methods would hand out a
-proxy that silently runs the superclass body against its own empty state. [.tag-new]#NEW#
+proxy that silently runs the superclass body against its own empty state.
 |Zero `opens`, zero runtime class definition (#42, Stage 1).
 
 |**Producer of an interface**
@@ -171,7 +171,7 @@ fallback).
 
 |**Producer of a class whose proxy must live in its own package** — a package-private or
 protected overridable member (declared or inherited), or no accessible constructor — *when a
-Vauban loader defines the library* [.tag-new]#NEW#
+Vauban loader defines the library*
 |The APT ships the **co-located** proxy as bytecode in the bean archive
 (`META-INF/vauban/placed/…_ClientProxy.class`) and lists the type in the placement manifest
 (`META-INF/vauban/required-opens.list`). When the library module is defined by a
@@ -204,7 +204,7 @@ The two levers that remove the hand-written `opens` when no Vauban loader define
 (when one does, placement makes both unnecessary):
 
 * **The container opens the module itself** (#42, Stage 3b) — *opt-in, and on borrowed time*
-  [.tag-new]#NEW#. The annotation processor lists the produced types that fall to runtime
+ . The annotation processor lists the produced types that fall to runtime
   generation in `META-INF/vauban/required-opens.list`; at boot `OpensApplier` loads each and —
   only when it is in a *named* module and not already open — calls
   `Instrumentation.redefineModule` to open its package to `io.vidocq.vauban.core`, reusing the
@@ -232,7 +232,7 @@ fully-public produced type (nothing to open) or the build-time lever below.
   survives integrity by default, since nothing is opened, attached or defined at runtime.
 +
 Because the copy is a *modified redistribution of someone else's artefact*, it declares itself
-[.tag-new]#NEW#: the enhanced jar drops the inherited signature files (`META-INF/++*++.SF`,
+: the enhanced jar drops the inherited signature files (`META-INF/++*++.SF`,
 `.DSA`, `.RSA`, `.EC`) rather than carrying a signature over content that no longer matches, drops
 the manifest's per-entry digests, and records its origin in the manifest main attributes:
 +
@@ -447,7 +447,7 @@ the deployment, in the block above:
   - Intercepted bean com.acme.Audit has final method write (interception requires subclassing)
 ----
 
-[.tag-new]#NEW# A bean intercepted any other way is checked when the container wraps it: through a
+A bean intercepted any other way is checked when the container wraps it: through a
 method-level binding it declares or inherits, an interface default method included, a constructor
 binding, or an `@AroundInvoke` method of its own. The `DeploymentException` then says why the bean
 is intercepted, since its own source may carry no binding at all:
@@ -565,7 +565,7 @@ Details worth knowing about the load-time tier:
   class loaded before the attach can no longer be woven. The hook therefore runs inside
   `VaubanContainerBuilder.build()` right after the index is final and before bean
   discovery, and the detection itself never loads classes.
-* **In a Vauban layer, no agent** [.tag-new]#NEW# — when the application's classes are defined
+* **In a Vauban layer, no agent**— when the application's classes are defined
   by a `VaubanClassLoader` (the xref:se.adoc[Java SE launcher], `Vidocq.run`, a dist), the
   loader's cdi-proxifier transformer applies the same weaving *at class definition*;
   `LoadTimeWeaving` detects the loader in the context class-loader chain and stands down. When
@@ -716,7 +716,7 @@ sequenceDiagram
 The `ApplicationContext` is built in memory, without opening any package.
 
 [#boot-failures]
-=== Failures are reported, not swallowed [.tag-new]#NEW#
+=== Failures are reported, not swallowed
 
 * A class named in a `META-INF/vauban-beans.list` that fails to load is still skipped, but with a
   warning that names it and the likely causes: a split package, or a missing module. It used to
@@ -817,7 +817,7 @@ Project Leyden CDS and `jlink` images are unaffected: every byte is produced at 
 Vauban layer reads modules straight from a runtime image.
 
 [[module-lookups]]
-== Module lookups for trusted extensions [.tag-new]#NEW#
+== Module lookups for trusted extensions
 
 Some extensions must call a member the application never opened. MicroProfile Fault Tolerance is the first: `@Fallback(fallbackMethod = "recover")` may name a `private` method, and the implementation lives in another module. Without help it needs `opens <package> to <extension>`, which is exactly what Vauban removes everywhere else.
 

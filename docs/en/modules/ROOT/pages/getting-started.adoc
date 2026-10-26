@@ -131,7 +131,7 @@ java --module-path target/modules --module io.example/io.example.Main
 
 [TIP]
 ====
-To run the application inside a Vauban layer instead of the boot layer — which is what lets a normal-scoped `@Produces` of a third-party class resolve with zero `opens`, and keeps the load-time agent out of IDE runs — start it through the launcher [.tag-new]#NEW#:
+To run the application inside a Vauban layer instead of the boot layer — which is what lets a normal-scoped `@Produces` of a third-party class resolve with zero `opens`, and keeps the load-time agent out of IDE runs — start it through the launcher:
 
 [source,bash]
 ----
@@ -160,7 +160,7 @@ Vauban ships three strategies, depending on context:
 | Multi-module application with transitive CDI dependencies
 | `VaubanContainer.builder().scanClasspath().build()`
 
-| [[scan-unprocessed]]`scanUnprocessedBeanArchives(onArchive)` [.tag-new]#NEW#
+| [[scan-unprocessed]]`scanUnprocessedBeanArchives(onArchive)`
 | Next to `scanClasspath()`: the `beans.xml` archives that no Vauban build step indexed, such as a dependency jar compiled without the processor, and only those. An archive with `META-INF/vauban-beans.list`, a generated `VaubanComponentProvider` or `META-INF/vauban-bce-processed` is left to `scanClasspath()`, so no bean is registered twice; the discovery mode of each `beans.xml` is honoured. `onArchive` receives the root of each archive scanned, to report it. Vidocq calls it when an IDE build skipped `vidocq:generate` (Vidocq/vidocq#83).
 | `VaubanContainer.builder().scanClasspath().scanUnprocessedBeanArchives(url -> log(url)).build()`
 

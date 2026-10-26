@@ -8,6 +8,6 @@ asciidoc:
   attributes:
     lang: en
     project-version: 0.4.0-SNAPSHOT
-    release-version: 0.3.0
+    release-version: 0.4.0-RC1
     # Used by page links into the source tree; without it the links render literally.
     repo-vauban: https://codefloe.com/Vidocq/vauban
