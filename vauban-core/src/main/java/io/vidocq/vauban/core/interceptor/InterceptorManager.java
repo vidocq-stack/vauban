@@ -411,6 +411,33 @@ public final class InterceptorManager {
     }
 
     /**
+     * The chain of an intercepted method on one bean instance, what a generated {@code $$Intercepted} override asks
+     * for on every call (vauban#227). Its interceptor instances are bound to the bean instance and its interceptors
+     * to the declarations, so the chain does not change between calls: it is resolved on the first one and kept in
+     * {@code chains}, the instance's own array. Without a creational context the interceptor instances are not
+     * settled yet, and nothing is kept.
+     *
+     * <p>Two threads making the first call together may both resolve it; each keeps an equal immutable list.
+     *
+     * @param chains the instance's {@code $$chains} array, one slot per intercepted method
+     * @param index  the method's slot
+     * @param method the method's {@code $$super$} bridge
+     */
+    @SuppressWarnings("unchecked")
+    public List<VaubanInvocationContext.InterceptorInvocation> chainFor(List<?>[] chains, int index,
+            Set<DotName> classBindings, java.lang.reflect.Method method, Object target, CreationalContext<?> ctx) {
+        var kept = (List<VaubanInvocationContext.InterceptorInvocation>) chains[index];
+        if (kept != null) {
+            return kept;
+        }
+        var chain = List.copyOf(resolveChainForMethod(classBindings, method, target, ctx));
+        if (ctx != null) {
+            chains[index] = chain;
+        }
+        return chain;
+    }
+
+    /**
      * Resolve the interceptor chain for a method, including target class @AroundInvoke methods.
      *
      * @param classBindings class-level interceptor bindings
@@ -741,7 +768,11 @@ public final class InterceptorManager {
 
     /**
      * Share interceptor instances with the provided creational context.
+     *
+     * @deprecated nothing fills the instances it shares: it only stays for {@code $$Intercepted} classes generated
+     *             before vauban#227, which call it after every intercepted call
      */
+    @Deprecated(forRemoval = true)
     public void shareInstances(CreationalContext<?> ctx) {
         if (ctx instanceof io.vidocq.vauban.core.context.CreationalContextImpl<?> vCtx) {
             for (var entry : interceptorInstances.entrySet()) {
