@@ -357,7 +357,7 @@ final class InterceptorBeanWrapper {
         }
 
         // Fallback: collect all interface types from the bean to implement via reflect.Proxy
-        runtimeGeneration.record(RuntimeGeneration.Kind.INTERFACE_PROXY, beanClass.getName());
+        runtimeGeneration.generated(RuntimeGeneration.Kind.INTERFACE_PROXY, beanClass.getName());
         java.util.Set<Class<?>> ifaceSet = new java.util.LinkedHashSet<>();
         for (var t : bean.getTypes()) {
             if (t instanceof Class<?> c && c.isInterface() && c != Object.class) {
@@ -436,7 +436,7 @@ final class InterceptorBeanWrapper {
         var generated = io.vidocq.vauban.core.proxy.RuntimeClientProxyGenerator.generate(beanClass);
         var proxyClass = defineProxyClass(beanClass, generated.className(), generated.bytecode());
         if (!preGenerated) {
-            runtimeGeneration.record(RuntimeGeneration.Kind.CLIENT_PROXY, generated.className());
+            runtimeGeneration.generated(RuntimeGeneration.Kind.CLIENT_PROXY, generated.className());
         }
 
         return proxyClass.getDeclaredConstructor(java.util.function.Supplier.class).newInstance(delegate);
@@ -445,7 +445,7 @@ final class InterceptorBeanWrapper {
     /** Whether {@code className} loads, uninitialized, from {@code beanClass}'s loader: a class the build generated. */
     private static boolean isLoadable(Class<?> beanClass, String className) {
         try {
-            Class.forName(className, false, beanClass.getClassLoader());
+            io.vidocq.vauban.core.loading.DeploymentClasses.load(className, beanClass.getClassLoader());
             return true;
         } catch (ClassNotFoundException | LinkageError _) {
             return false;
@@ -488,9 +488,9 @@ final class InterceptorBeanWrapper {
             return;
         }
         if (target.isInterface()) {
-            runtimeGeneration.record(RuntimeGeneration.Kind.INTERFACE_PROXY, target.getName());
+            runtimeGeneration.generated(RuntimeGeneration.Kind.INTERFACE_PROXY, target.getName());
         } else if (!isLoadable(target, key)) {
-            runtimeGeneration.record(RuntimeGeneration.Kind.CLIENT_PROXY, key);
+            runtimeGeneration.generated(RuntimeGeneration.Kind.CLIENT_PROXY, key);
         }
     }
 
@@ -879,7 +879,7 @@ final class InterceptorBeanWrapper {
             interceptedClass = defineInterceptedSubclass(beanClass);
         }
         if (!preGenerated) {
-            runtimeGeneration.record(RuntimeGeneration.Kind.INTERCEPTED_SUBCLASS, interceptedClass.getName());
+            runtimeGeneration.generated(RuntimeGeneration.Kind.INTERCEPTED_SUBCLASS, interceptedClass.getName());
         }
         installWrappedBean(descriptor, new InterceptedFactory(descriptor, beanClass, interceptedClass, classBindings),
                 preGenerated);
@@ -924,7 +924,7 @@ final class InterceptorBeanWrapper {
             throw new DeploymentException(CANNOT_DEFINE_SUBCLASS, ex2);
         }
         DEFINED_AT_RUNTIME.add(interceptedClass2);
-        runtimeGeneration.record(RuntimeGeneration.Kind.INTERCEPTED_SUBCLASS, interceptedClass2.getName());
+        runtimeGeneration.generated(RuntimeGeneration.Kind.INTERCEPTED_SUBCLASS, interceptedClass2.getName());
         installWrappedBean(descriptor, new FallbackInterceptedFactory(descriptor, beanClass, interceptedClass2, bindings),
                 false);
     }

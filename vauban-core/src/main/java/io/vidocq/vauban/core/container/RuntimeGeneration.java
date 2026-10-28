@@ -80,7 +80,7 @@ final class RuntimeGeneration {
      * Records a class generated, or about to be, at run time. During the boot it joins the boot's warning; after it,
      * it is announced at once, unless the boot already did.
      */
-    void record(Kind kind, String className) {
+    void generated(Kind kind, String className) {
         var generated = new Generated(kind, className);
         synchronized (atBoot) {
             if (!booted) {

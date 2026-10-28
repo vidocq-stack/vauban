@@ -132,8 +132,8 @@ class RuntimeGenerationTest {
     void bootWarning() {
         var warnings = new ArrayList<String>();
         var generation = new RuntimeGeneration(warnings::add);
-        generation.record(Kind.INTERCEPTED_SUBCLASS, "app.Audited$$Intercepted");
-        generation.record(Kind.CLIENT_PROXY, "app.Greeter_ClientProxy");
+        generation.generated(Kind.INTERCEPTED_SUBCLASS, "app.Audited$$Intercepted");
+        generation.generated(Kind.CLIENT_PROXY, "app.Greeter_ClientProxy");
         assertEquals(List.of(), warnings, "nothing before the end of the boot");
 
         generation.bootCompleted();
@@ -141,9 +141,11 @@ class RuntimeGenerationTest {
         assertEquals(1, warnings.size(), String.valueOf(warnings));
         var warning = warnings.getFirst();
         assertTrue(warning.contains("VAUBAN — RUNTIME CODE GENERATION FALLBACK"), warning);
-        assertTrue(warning.contains("2 classes are generated at boot instead of at build time:\n"
-                + "  - intercepted subclass app.Audited$$Intercepted\n"
-                + "  - client proxy app.Greeter_ClientProxy\n"), warning);
+        assertTrue(warning.contains("""
+                2 classes are generated at boot instead of at build time:
+                  - intercepted subclass app.Audited$$Intercepted
+                  - client proxy app.Greeter_ClientProxy
+                """), warning);
         assertTrue(warning.contains("add vauban-processor to the annotation processor path"), warning);
     }
 
@@ -152,18 +154,20 @@ class RuntimeGenerationTest {
     void afterTheBootEachNewClassOnce() {
         var warnings = new ArrayList<String>();
         var generation = new RuntimeGeneration(warnings::add);
-        generation.record(Kind.CLIENT_PROXY, "app.Early_ClientProxy");
+        generation.generated(Kind.CLIENT_PROXY, "app.Early_ClientProxy");
         generation.bootCompleted();
         assertEquals(1, warnings.size(), String.valueOf(warnings));
 
-        generation.record(Kind.CLIENT_PROXY, "app.Early_ClientProxy");
-        generation.record(Kind.CLIENT_PROXY, "app.Late_ClientProxy");
-        generation.record(Kind.CLIENT_PROXY, "app.Late_ClientProxy");
+        generation.generated(Kind.CLIENT_PROXY, "app.Early_ClientProxy");
+        generation.generated(Kind.CLIENT_PROXY, "app.Late_ClientProxy");
+        generation.generated(Kind.CLIENT_PROXY, "app.Late_ClientProxy");
 
         assertEquals(2, warnings.size(), String.valueOf(warnings));
         var late = warnings.getLast();
-        assertTrue(late.contains("1 class is generated now, after the boot instead of at build time:\n"
-                + "  - client proxy app.Late_ClientProxy\n"), late);
+        assertTrue(late.contains("""
+                1 class is generated now, after the boot instead of at build time:
+                  - client proxy app.Late_ClientProxy
+                """), late);
         assertEquals(List.of(new Generated(Kind.CLIENT_PROXY, "app.Early_ClientProxy")), generation.recordedAtBoot());
     }
 
