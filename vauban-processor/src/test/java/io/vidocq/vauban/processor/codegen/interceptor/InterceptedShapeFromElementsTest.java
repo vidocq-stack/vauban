@@ -494,6 +494,25 @@ class InterceptedShapeFromElementsTest {
         return unnameable;
     }
 
+    /** The inheritance shapes the client proxy paths are checked on, reused for the intercepted subclass. */
+    static java.util.stream.Stream<Class<?>> proxyFixtures() throws ClassNotFoundException {
+        var proxyTest = "io.vidocq.vauban.processor.codegen.proxy.ClientProxyInheritanceCrossCheckTest$";
+        var fixtures = new ArrayList<Class<?>>();
+        for (var nested : List.of("CleanChild", "HiddenChild", "SamePackageHookChild", "ForeignChild",
+                "WidenedHookChild", "StringEchoChild", "FinalizingCloneable", "DefaultChild")) {
+            fixtures.add(Class.forName(proxyTest + nested));
+        }
+        fixtures.add(io.vidocq.vauban.processor.fixture.colocated.ReturningChild.class);
+        return fixtures.stream();
+    }
+
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.MethodSource("proxyFixtures")
+    @DisplayName("fromElements and fromClass agree on the shapes the client proxy paths are checked on (vauban#227)")
+    void sameMethodSetOnTheProxyFixtures(Class<?> fixture) throws Exception {
+        assertSameMethodSet(fixture);
+    }
+
     // ---- helpers ----
 
     /** The run-time and the processor front-ends select the same methods of {@code fixture}. */
