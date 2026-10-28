@@ -6,6 +6,56 @@ Every published number (README, commit, post) must point to an entry here.
 
 ---
 
+## BENCH-20261028-01 — Generated code hot paths, reference before vauban#227
+
+- **Date**: 2026-10-28
+- **Commit**: 0ea96dfe (`main`) plus the new `GeneratedCodeBenchmark` and its beans (`Plain`,
+  `Counter`, `AuditedTally`), branch `perf/227-generated-hot-path`; no production code changed
+- **JVM**: Temurin 25+36-LTS, default flags
+- **Hardware**: Apple M5 Max / 18 cores (6 performance, 12 efficiency) / 128 GB RAM
+- **OS**: macOS 27.0.1 (arm64)
+- **Exact command**:
+  ```bash
+  ./mvnw -ntp clean install -DskipTests        # Maven 3.9.16
+  java -jar vauban-bench/target/benchmarks.jar GeneratedCodeBenchmark -f 3 -wi 5 -i 5 -w 2s -r 3s -prof gc
+  ```
+- **Results**:
+  ```
+  Benchmark                                                         Mode  Cnt     Score     Error   Units
+  GeneratedCodeBenchmark.clientProxyCall                            avgt   15   276,248 ±   6,184   ns/op
+  GeneratedCodeBenchmark.clientProxyCall:gc.alloc.rate.norm         avgt   15     0,002 ±   0,004    B/op
+  GeneratedCodeBenchmark.interceptedCall                            avgt   15    84,402 ±   2,903   ns/op
+  GeneratedCodeBenchmark.interceptedCall:gc.alloc.rate.norm         avgt   15   768,001 ±   0,001    B/op
+  GeneratedCodeBenchmark.interceptedCreation                        avgt   15  3540,006 ±  61,678   ns/op
+  GeneratedCodeBenchmark.interceptedCreation:gc.alloc.rate.norm     avgt   15  7630,164 ± 223,345    B/op
+  GeneratedCodeBenchmark.plainCall                                  avgt   15     0,337 ±   0,040   ns/op
+  GeneratedCodeBenchmark.plainCall:gc.alloc.rate.norm               avgt   15    ≈ 10⁻⁶              B/op
+  GeneratedCodeBenchmark.proxiedInterceptedCall                     avgt   15   381,935 ±  11,139   ns/op
+  GeneratedCodeBenchmark.proxiedInterceptedCall:gc.alloc.rate.norm  avgt   15   768,003 ±   0,005    B/op
+  ```
+- **Comparison with the previous run**: first run of this benchmark (new class). The closest earlier
+  figure, `QualifierResolutionBenchmark.interceptedCall` (BENCH-20260914-04: 360 ns, 768 B/op), is
+  the same path as `proxiedInterceptedCall` here (an `@ApplicationScoped` bean with one interceptor):
+  382 ns, 768 B/op, consistent with it.
+- **Notes**:
+  - What each benchmark runs: `plainCall` a `@Dependent` bean with nothing generated around it (the
+    floor); `clientProxyCall` an `@ApplicationScoped` bean through its `_ClientProxy` only;
+    `interceptedCall` a `@Dependent` bean through its `$$Intercepted` subclass only;
+    `proxiedInterceptedCall` both; `interceptedCreation` creating and destroying an intercepted
+    `@Dependent` bean. `boot()` checks each path runs the generated class it names.
+  - **The client proxy, not the interceptor, is the larger cost**: 276 ns for a call that does
+    nothing, against 84 ns for an interceptor chain. A stack profile (`-prof stack`, 1 fork) puts
+    about 95 % of the runnable samples in `Class.forName`: the proxy's delegate calls
+    `ManagedBean.getScope()` on every call, and `getScope()` loads the scope annotation class by name
+    each time. 0 B/op: the `CreationalContextImpl` the delegate allocates per call is removed by
+    escape analysis.
+  - `interceptedCall` allocates 768 B per call: the `Object[]` of arguments, the boxed argument, the
+    chain list and its invocations, and the `VaubanInvocationContext`; the generated override also
+    runs `getDeclaredMethod` on every call (vauban#227, finding 1).
+  - Load was not recorded for this run; read differences under about 3 % as noise.
+
+---
+
 ## BENCH-20260914-04 — Interceptor bindings on keys, chain worked out once (vauban#70, PR 5)
 
 - **Date**: 2026-09-14
