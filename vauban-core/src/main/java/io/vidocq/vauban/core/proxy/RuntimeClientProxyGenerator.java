@@ -31,17 +31,13 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * Runtime ({@code Class<?>}-driven) front-end of the client-proxy generation: walks the
- * full class hierarchy and the inherited interface default methods, selects the proxied methods —
- * the members of the bean ({@link BeanMembers#isBusinessMethodOf}), as the processor's
- * front-ends do — decides per method whether the
- * override must dispatch through a {@code MethodHandle} (JVMS §4.10.1.9 — protected member
- * declared in another runtime package), picks the simplest
- * non-private super constructor, and builds the neutral {@link ClientProxyShape}.
+ * Runtime ({@code Class<?>}-driven) front-end of the client-proxy generation: the class methods
+ * the proxy forwards, and whether each dispatches through a {@code MethodHandle}, come from
+ * {@link ForwardedMethods}, the super constructor from {@link ClientProxyShape#superConstructor},
+ * as on the processor's path; the inherited interface default methods are added here. It builds
+ * the neutral {@link ClientProxyShape}.
  *
- * <p>The bytecode itself is emitted once for all front-ends by {@link ClientProxyEmitter};
- * the compile-time {@code ClientProxyGenerator} in {@code vauban-processor} builds the same
- * shape from the indexer {@code ClassInfo} (declared methods only, no-arg constructor).
+ * <p>The bytecode itself is emitted once for all front-ends by {@link ClientProxyEmitter}.
  */
 public final class RuntimeClientProxyGenerator {
 
@@ -98,11 +94,17 @@ public final class RuntimeClientProxyGenerator {
      */
     public static ClientProxyShape shapeOf(Class<?> beanClass, boolean colocated) {
         // The proxy is generated in the bean's package (the suffix carries no dot).
-        String proxyPackage = packageOf(beanClass.getName());
-        var proxiedSeen = new java.util.HashSet<String>();
+        var selection = ForwardedMethods.select(ClassTypeView.of(beanClass), ForwardedMethods.Placement.TYPE_PACKAGE);
+        var proxiedSeen = new java.util.HashSet<>(selection.keys());
         var methods = new ArrayList<ProxyMethodShape>();
-        for (var current = beanClass; current != null; current = current.getSuperclass()) {
-            addDeclaredMethods(beanClass, current, proxyPackage, proxiedSeen, methods);
+        for (var forward : selection.forwards()) {
+            var method = ClassTypeView.method(forward.method());
+            methods.add(new ProxyMethodShape(
+                    method.getName(),
+                    TypeRef.fromClass(method.getReturnType()),
+                    typeRefs(method.getParameterTypes()),
+                    typeRefs(method.getExceptionTypes()),
+                    forward.needsMethodHandle()));
         }
         addInterfaceDefaults(beanClass, colocated, proxiedSeen, methods);
 
@@ -114,28 +116,6 @@ public final class RuntimeClientProxyGenerator {
                 typeRefs(superCtor.getParameterTypes()),
                 methods,
                 typeRefs(superCtor.getExceptionTypes()));
-    }
-
-    /** The methods {@code current}, the bean class or one of its superclasses, declares that the proxy forwards. */
-    private static void addDeclaredMethods(Class<?> beanClass, Class<?> current, String proxyPackage,
-                                           java.util.Set<String> proxiedSeen, List<ProxyMethodShape> methods) {
-        for (var method : BeanMembers.inStableOrder(current.getDeclaredMethods())) {
-            var key = method.getName() + java.util.Arrays.toString(method.getParameterTypes());
-            // A package-private method of a superclass in another runtime package is not a
-            // member of the bean (JLS 8.4.8), as the processor's shapes and the subclass
-            // generator already decide: forwarding it would reach a method the bean does not
-            // have, and an interface default with its descriptor — the bean's member — is
-            // shadowed by it, and forwarded through its interface below.
-            if (proxiedSeen.add(key) && shouldProxy(method)
-                    && (current == beanClass || BeanMembers.isBusinessMethodOf(beanClass, method))) {
-                methods.add(new ProxyMethodShape(
-                        method.getName(),
-                        TypeRef.fromClass(method.getReturnType()),
-                        typeRefs(method.getParameterTypes()),
-                        typeRefs(method.getExceptionTypes()),
-                        needsMethodHandleDispatch(method, proxyPackage)));
-            }
-        }
     }
 
     /**
@@ -205,25 +185,6 @@ public final class RuntimeClientProxyGenerator {
         if (method.getName().startsWith("$$")) return false;
         if (method.getName().equals("finalize") && method.getParameterCount() == 0) return false;
         return !(method.getName().equals("clone") && method.getParameterCount() == 0);
-    }
-
-    /**
-     * A protected method declared in a superclass in a different package cannot be
-     * invoked via {@code invokevirtual} when the stack-top receiver type is not assignable
-     * to the current class (JVMS §4.10.1.9). We route those through a {@link java.lang.invoke.MethodHandle}.
-     * A package-private method of another package is not forwarded at all: the bean does not
-     * inherit it, and the lookup would be refused.
-     */
-    private static boolean needsMethodHandleDispatch(Method method, String proxyPackage) {
-        int mods = method.getModifiers();
-        if (Modifier.isPublic(mods)) return false;
-        String declaringPackage = packageOf(method.getDeclaringClass().getName());
-        return !declaringPackage.equals(proxyPackage);
-    }
-
-    private static String packageOf(String fqn) {
-        int dot = fqn.lastIndexOf('.');
-        return dot < 0 ? "" : fqn.substring(0, dot);
     }
 
     public record GeneratedProxy(String className, byte[] bytecode) {

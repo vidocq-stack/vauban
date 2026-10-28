@@ -265,6 +265,69 @@ class ClientProxyInheritanceCrossCheckTest {
         assertEquals(expected, fromElements, "source and bytecode shapes disagree");
     }
 
+    /** A base of the bean's own package with a protected method. */
+    public static class SamePackageHookBase {
+        protected String hook() { return "base"; }
+    }
+
+    public static class SamePackageHookChild extends SamePackageHookBase {
+        public String own() { return "own"; }
+    }
+
+    @Test
+    @DisplayName("the source proxy of a bean forwards what it inherits from its own package, like the bytecode proxy")
+    void sourceShapeForwardsSamePackageInheritedMembers() throws Exception {
+        // The source proxy sits in the bean's package: a protected or package-private method a
+        // superclass of that package declares is reachable there. Left out, a class of the package
+        // calling it on the proxy runs the superclass body against the proxy's own empty state.
+        for (var fixture : List.of(HiddenChild.class, SamePackageHookChild.class)) {
+            assertEquals(runtimeShape(fixture), shapeFromElements(fixture),
+                    "source and bytecode shapes disagree on " + fixture.getSimpleName());
+        }
+    }
+
+    @Test
+    @DisplayName("a package-private method is no member across a package in between, on every path (JLS 8.4.8)")
+    void packagePrivateIsNoMemberAcrossAnotherPackage() throws Exception {
+        // PackagePrivateGrand (p) <- CrossingMiddle (q) <- ReturningChild (p): the co-located shape
+        // judged grand() by its declaring package alone and forwarded a method the bean does not have.
+        var fixture = io.vidocq.vauban.processor.fixture.colocated.ReturningChild.class;
+        var expected = Set.of("own()", "middle()");
+        assertEquals(expected, runtimeShape(fixture), "run-time shape");
+        assertEquals(expected, shapeFromElements(fixture), "source shape");
+        assertEquals(expected, colocatedShapeFromElements(fixture), "co-located shape");
+    }
+
+    @Test
+    @DisplayName("toString(), hashCode() and equals() reach the contextual instance on every path")
+    void objectMethodsAreForwardedOnEveryPath() throws Exception {
+        var expected = List.of("equals(java.lang.Object)", "hashCode()", "toString()");
+        var fromClass = RuntimeClientProxyGenerator.shapeOf(CleanChild.class).methods().stream()
+                .map(m -> m.name() + "(" + m.params().stream().map(Object::toString).collect(Collectors.joining(","))
+                        + ")")
+                .filter(OBJECT_METHODS::contains).sorted().toList();
+        assertEquals(expected, fromClass, "run-time shape");
+        var fromElements = capture(CleanChild.class, (element, env) ->
+                ClientProxyShapeFromElements.from(element, env.elements(), env.types()).methods().stream()
+                        .map(m -> m.name() + "(" + m.params().stream().map(Object::toString)
+                                .collect(Collectors.joining(",")) + ")")
+                        .filter(OBJECT_METHODS::contains).sorted().collect(Collectors.joining(";")));
+        assertEquals(String.join(";", expected), fromElements, "source shape");
+    }
+
+    @Test
+    @DisplayName("a bean proxy forwarding through a MethodHandle is not rendered as source")
+    void methodHandleForwardsLeaveTheSourceRoute() throws Exception {
+        // ForeignBase.foreignHook() is protected in another package: Java source cannot call it on
+        // the delegate (JLS 6.6.2), the processor emits the proxy as bytecode.
+        assertEquals("foreignHook()", capture(ForeignChild.class, (element, env) -> String.join(";",
+                ClientProxyShapeFromElements.methodHandleForwards(element, env.elements().getPackageOf(element),
+                        env.elements(), env.types()))));
+        assertEquals("", capture(HiddenChild.class, (element, env) -> String.join(";",
+                ClientProxyShapeFromElements.methodHandleForwards(element, env.elements().getPackageOf(element),
+                        env.elements(), env.types()))));
+    }
+
     /** Inherits a protected member from a superclass in another package. */
     public static class ForeignChild extends io.vidocq.vauban.processor.fixture.colocated.ForeignBase {
         public String own() { return "own"; }

@@ -139,7 +139,8 @@ public final class ProducerProxyEligibility {
     private static Reason methodsVerdict(TypeView type) {
         var seen = new HashSet<String>();
         var verdict = Reason.ELIGIBLE;
-        for (TypeView c = type; c != null; c = c.superclass()) {
+        // Object's methods are public, final or never forwarded: they judge nothing.
+        for (TypeView c = type; c != null && !c.isObject(); c = c.superclass()) {
             for (var m : c.methods()) {
                 // A private or static method overrides nothing; a signature already met is overridden.
                 if (m.is(Flag.STATIC) || m.is(Flag.PRIVATE) || !seen.add(m.overrideKey()) || !isForwarded(m)) {

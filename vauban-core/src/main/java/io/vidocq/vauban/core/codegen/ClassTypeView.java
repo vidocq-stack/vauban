@@ -63,12 +63,36 @@ public record ClassTypeView(Class<?> type) implements TypeView {
     @Override
     public TypeView superclass() {
         Class<?> superclass = type.getSuperclass();
-        return superclass == null || superclass == Object.class ? null : new ClassTypeView(superclass);
+        return superclass == null ? null : new ClassTypeView(superclass);
     }
 
     @Override
+    public boolean isObject() {
+        return type == Object.class;
+    }
+
+    @Override
+    public boolean isSameType(TypeView other) {
+        return other instanceof ClassTypeView(Class<?> otherType) && otherType == type;
+    }
+
+    @Override
+    public boolean isSamePackage(TypeView other) {
+        return other instanceof ClassTypeView(Class<?> otherType)
+                && otherType.getPackageName().equals(type.getPackageName())
+                && otherType.getClassLoader() == type.getClassLoader();
+    }
+
+    /** In {@link BeanMembers#STABLE_ORDER}: what is generated from them is the same from one build to the next. */
+    @Override
     public List<TypeView.Member> methods() {
-        return Arrays.stream(type.getDeclaredMethods()).<TypeView.Member>map(MethodMember::new).toList();
+        return Arrays.stream(BeanMembers.inStableOrder(type.getDeclaredMethods())).<TypeView.Member>map(MethodMember::new)
+                .toList();
+    }
+
+    /** The method {@code member}, a member of a {@code ClassTypeView}, stands for. */
+    public static Method method(TypeView.Member member) {
+        return ((MethodMember) member).method();
     }
 
     @Override
@@ -112,7 +136,7 @@ public record ClassTypeView(Class<?> type) implements TypeView {
         @Override public String name() { return method.getName(); }
         @Override public Set<Flag> flags() { return ClassTypeView.flags(method.getModifiers()); }
         @Override public List<String> parameterTypes() { return names(method); }
-        @Override public boolean isBridge() { return method.isBridge(); }
+        @Override public boolean isBridge() { return method.isBridge() || method.isSynthetic(); }
         @Override public boolean isProxyLinkConstructor() { return false; }
         @Override public String overrideKey() { return key(method); }
     }

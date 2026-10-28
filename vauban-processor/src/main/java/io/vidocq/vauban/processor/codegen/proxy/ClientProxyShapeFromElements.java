@@ -19,10 +19,11 @@
  */
 package io.vidocq.vauban.processor.codegen.proxy;
 
-import io.vidocq.vauban.processor.codegen.ElementTypeView;
 import io.vidocq.vauban.core.interceptor.TypeRef;
 import io.vidocq.vauban.core.proxy.ClientProxyShape;
 import io.vidocq.vauban.core.proxy.ClientProxyShape.ProxyMethodShape;
+import io.vidocq.vauban.core.proxy.ForwardedMethods;
+import io.vidocq.vauban.processor.codegen.ElementTypeView;
 import io.vidocq.vauban.processor.codegen.interceptor.InterceptedShapeFromElements;
 
 import javax.lang.model.element.ExecutableElement;
@@ -36,7 +37,6 @@ import javax.lang.model.util.Types;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.function.Consumer;
-import java.util.stream.Stream;
 
 /**
  * Builds a {@link ClientProxyShape} from a {@link TypeElement} — the APT
@@ -54,10 +54,9 @@ import java.util.stream.Stream;
  *       types become {@link ClientProxyShape#superCtorParams()} (default-value call);</li>
  *   <li>thrown types are kept (erased) so the rendered overrides preserve the bean
  *       method's checked-exception contract;</li>
- *   <li>{@link #from}: {@code needsMethodHandle} is always {@code false}: a forwarded method is
- *       either declared by the bean itself (same package as the proxy) or public, so plain
- *       forwarding always compiles — the bytecode path's MethodHandle fallback has no source
- *       equivalent;</li>
+ *   <li>the class methods forwarded are chosen by {@link ForwardedMethods}, the rule of every build path; a
+ *       method forwarded through a {@code MethodHandle} has no source form, so the processor emits such a proxy
+ *       as bytecode ({@link #methodHandleForwards});</li>
  *   <li>{@link #fromColocated}: the shape of a proxy placed in the bean's own package, emitted as
  *       bytecode — inherited non-public members are forwarded too, through a MethodHandle when
  *       they are protected members of a superclass in another package.</li>
@@ -105,7 +104,8 @@ public final class ClientProxyShapeFromElements {
             javax.lang.model.element.PackageElement proxyPackage, Elements elements, Types types) {
         var unnameable = new ArrayList<String>();
         var seen = new java.util.HashSet<String>();
-        for (ExecutableElement m : forwardedClassMethods(bean, types, seen)) {
+        for (var forward : forwardedClassMethods(bean, proxyPackage, elements, types, seen)) {
+            var m = ElementTypeView.method(forward.method());
             if (!InterceptedShapeFromElements.memberSignatureNameableFrom(bean, m, proxyPackage, elements, types,
                     false)) {
                 unnameable.add(InterceptedShapeFromElements.memberSignature(bean, m, types));
@@ -126,25 +126,32 @@ public final class ClientProxyShapeFromElements {
     }
 
     /**
-     * The class methods a source proxy of {@code bean} forwards: the proxyable members of the bean
-     * and its superclasses (below {@code java.lang.Object}), inherited ones only when public, the
-     * most derived declaration of a member signature deciding. {@code seen} receives every member
-     * signature met, forwarded or not.
+     * The class methods a proxy of {@code bean} rendered in {@code proxyPackage} forwards, by the rule of every build
+     * path ({@link ForwardedMethods}). {@code seen} receives every member signature met, forwarded or not.
      */
-    private static List<ExecutableElement> forwardedClassMethods(TypeElement bean, Types types,
+    private static List<ForwardedMethods.Forward> forwardedClassMethods(TypeElement bean,
+            javax.lang.model.element.PackageElement proxyPackage, Elements elements, Types types,
             java.util.Set<String> seen) {
-        var forwarded = new ArrayList<ExecutableElement>();
-        boolean declaring = true;
-        for (TypeElement c : classesBelowObject(bean)) {
-            for (ExecutableElement m : ElementFilter.methodsIn(c.getEnclosedElements())) {
-                if (seen.add(memberKey(bean, m, types)) && shouldProxy(m)
-                        && (declaring || m.getModifiers().contains(Modifier.PUBLIC))) {
-                    forwarded.add(m);
-                }
-            }
-            declaring = false;
-        }
-        return forwarded;
+        var placement = elements.getPackageOf(bean).equals(proxyPackage)
+                ? ForwardedMethods.Placement.TYPE_PACKAGE
+                : ForwardedMethods.Placement.OTHER_PACKAGE;
+        var selection = ForwardedMethods.select(ElementTypeView.of(bean, types), placement);
+        seen.addAll(selection.keys());
+        return selection.forwards();
+    }
+
+    /**
+     * The methods a proxy of {@code bean} rendered in {@code proxyPackage} forwards through a {@code MethodHandle},
+     * as {@code name(member parameter types)}: protected methods of a superclass in another package, which Java
+     * source cannot call on the delegate (JLS 6.6.2). Empty when the proxy can be rendered as source; otherwise the
+     * processor emits {@link #fromErased} as bytecode.
+     */
+    public static List<String> methodHandleForwards(TypeElement bean,
+            javax.lang.model.element.PackageElement proxyPackage, Elements elements, Types types) {
+        return forwardedClassMethods(bean, proxyPackage, elements, types, new java.util.HashSet<>()).stream()
+                .filter(ForwardedMethods.Forward::needsMethodHandle)
+                .map(f -> InterceptedShapeFromElements.memberSignature(bean, ElementTypeView.method(f.method()), types))
+                .toList();
     }
 
     /**
@@ -199,24 +206,21 @@ public final class ClientProxyShapeFromElements {
         String beanBinaryName = elements.getBinaryName(bean).toString();
 
         var methods = new ArrayList<ProxyMethodShape>();
-        // Walk the hierarchy, exactly like RuntimeClientProxyGenerator.shapeOf: a method inherited
-        // from a superclass is not declared here, and the proxy does not override it either — so
-        // leaving it out means invoking it on the proxy runs the superclass body against the
-        // proxy's own default-initialised state instead of the contextual instance.
-        //
-        // Inherited members are only forwarded when they are public: forwarding compiles to
-        // `delegate.m()` on an instance other than `this`, which JLS 6.6.2 forbids outside the
-        // declaring package for protected members, and which package-private members do not allow
-        // either. ProducerProxyEligibility rejects a produced type in exactly those cases, so an
-        // eligible cross-package proxy never loses a method here.
+        // The class methods of every build path (ForwardedMethods): a method inherited from a
+        // superclass is not declared here, and the proxy does not override it either — so leaving it
+        // out means invoking it on the proxy runs the superclass body against the proxy's own
+        // default-initialised state instead of the contextual instance. Rendered in the bean's
+        // package, the proxy forwards every member of the bean; in a producer's package, public
+        // methods only, which ProducerProxyEligibility guarantees are all there is.
         //
         // Each override is declared with the signature the bean sees (its type variables bound),
         // the only one Java source can override (BUG-20261004-06); javac adds the bridge. The walk
         // is keyed on that signature too: echo(String) overriding Base<String>.echo(T) is one
         // member, and the most derived declaration decides, a non-proxyable one included.
         var seen = new java.util.HashSet<String>();
-        for (ExecutableElement m : forwardedClassMethods(bean, types, seen)) {
-            methods.add(methodShape(bean, m, asMember, false, elements, types));
+        for (var forward : forwardedClassMethods(bean, proxyPackage, elements, types, seen)) {
+            methods.add(methodShape(bean, ElementTypeView.method(forward.method()), asMember,
+                    forward.needsMethodHandle(), elements, types));
         }
         addDefaultMethods(new ShapeRequest(bean, proxyPackage, elements, types, omitted, subject, asMember),
                 seen, methods);
@@ -399,53 +403,25 @@ public final class ClientProxyShapeFromElements {
 
     /**
      * The shape of a proxy <em>placed</em> in {@code bean}'s own package by the Vauban class loader
-     * (issue #42, Stage 4). Placement is what makes the non-public surface reachable, so this shape
-     * mirrors {@code RuntimeClientProxyGenerator.shapeOf} — the proxy it replaces — rather than
-     * {@link #from}:
-     * <ul>
-     *   <li>declared members, as in {@link #from};</li>
-     *   <li>inherited public members, and inherited protected or package-private members of a
-     *       superclass in the <em>same</em> package: plain forwarding, the proxy shares that
-     *       runtime package;</li>
-     *   <li>inherited protected members of a superclass in <em>another</em> package: forwarded
-     *       through a MethodHandle ({@code needsMethodHandle}), since {@code delegate.m()} on an
-     *       instance other than {@code this} is forbidden there (JLS 6.6.2);</li>
-     *   <li>inherited package-private members of a superclass in another package are left out: no
-     *       class outside that runtime package can override them, so no proxy can intercept them
-     *       wherever it lives, and the MethodHandle lookup would be refused.</li>
-     * </ul>
-     * The most-derived declaration of a signature decides, as in the bytecode generator.
+     * (issue #42, Stage 4), emitted as bytecode: every member of the bean is forwarded, as
+     * {@link ForwardedMethods} decides for that placement — an inherited protected member of a
+     * superclass in another package through a MethodHandle ({@code needsMethodHandle}), since
+     * {@code delegate.m()} on an instance other than {@code this} is forbidden there (JLS 6.6.2), and
+     * a package-private method only when the bean inherits it (JLS 8.4.8). The signatures are erased:
+     * the descriptors the bytecode overrides must have.
      */
     public static ClientProxyShape fromColocated(TypeElement bean, Elements elements, Types types) {
         String beanBinaryName = elements.getBinaryName(bean).toString();
-        var beanPackage = elements.getPackageOf(bean).getQualifiedName().toString();
         var methods = new ArrayList<ProxyMethodShape>();
         var seen = new java.util.HashSet<String>();
-        boolean declaring = true;
-        for (TypeElement c : classesBelowObject(bean)) {
-            boolean samePackage = elements.getPackageOf(c).getQualifiedName().contentEquals(beanPackage);
-            for (ExecutableElement m : ElementFilter.methodsIn(c.getEnclosedElements())) {
-                if (seen.add(memberKey(bean, m, types)) && shouldProxy(m)
-                        && colocatedForwardable(m, declaring, samePackage)) {
-                    boolean isPublic = m.getModifiers().contains(Modifier.PUBLIC);
-                    methods.add(methodShape(bean, m, false, !isPublic && !samePackage, elements, types));
-                }
-            }
-            declaring = false;
+        for (var forward : forwardedClassMethods(bean, elements.getPackageOf(bean), elements, types, seen)) {
+            methods.add(methodShape(bean, ElementTypeView.method(forward.method()), false,
+                    forward.needsMethodHandle(), elements, types));
         }
         addDefaultMethods(new ShapeRequest(bean, elements.getPackageOf(bean), elements, types, omitted -> {},
                 Subject.BEAN, false), seen, methods);
         return new ClientProxyShape(beanBinaryName, superCtorParams(bean, elements, types), methods,
                 superCtorThrown(bean, elements, types));
-    }
-
-    /**
-     * Whether a placed proxy forwards {@code m}: every member except an inherited package-private one
-     * of another runtime package, which is not overridable from the bean's package.
-     */
-    private static boolean colocatedForwardable(ExecutableElement m, boolean declaring, boolean samePackage) {
-        var mods = m.getModifiers();
-        return declaring || samePackage || mods.contains(Modifier.PUBLIC) || mods.contains(Modifier.PROTECTED);
     }
 
     /** Mirrors the bytecode generators: skip static/private/final/abstract/{@code $$}. */
@@ -501,22 +477,5 @@ public final class ClientProxyShapeFromElements {
 
     private static TypeRef typeRef(TypeMirror tm, Elements elements, Types types) {
         return InterceptedShapeFromElements.typeRefOf(tm, elements, types, 0);
-    }
-
-    /** {@code type} and its superclasses, most derived first, up to but excluding {@code java.lang.Object}. */
-    private static List<TypeElement> classesBelowObject(TypeElement type) {
-        return Stream.iterate(type, c -> c != null && !isObject(c), ClientProxyShapeFromElements::superclassOf)
-                .toList();
-    }
-
-    /** {@code true} when {@code t} is {@code java.lang.Object} — the walk stops there. */
-    private static boolean isObject(TypeElement t) {
-        return t.getQualifiedName().contentEquals("java.lang.Object");
-    }
-
-    /** The superclass element, or {@code null} at the top of the hierarchy. */
-    private static TypeElement superclassOf(TypeElement t) {
-        return t.getSuperclass() instanceof javax.lang.model.type.DeclaredType dt
-                && dt.asElement() instanceof TypeElement se ? se : null;
     }
 }

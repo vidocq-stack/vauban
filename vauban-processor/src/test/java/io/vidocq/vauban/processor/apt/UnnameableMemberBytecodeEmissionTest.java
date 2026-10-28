@@ -112,6 +112,20 @@ class UnnameableMemberBytecodeEmissionTest {
                         public lib.Refusing refusing() { throw new UnsupportedOperationException(); }
                     }
                     """,
+            "lib/Hooked.java", """
+                    package lib;
+                    public class Hooked {
+                        protected String hook() { return "hook on " + getClass().getSimpleName(); }
+                        public static String callHook(Hooked hooked) { return hooked.hook(); }
+                    }
+                    """,
+            "app/HookedService.java", """
+                    package app;
+                    @jakarta.enterprise.context.ApplicationScoped
+                    public class HookedService extends lib.Hooked {
+                        public String own() { return "own"; }
+                    }
+                    """,
             "app/LabeledService.java", """
                     package app;
                     @jakarta.enterprise.context.ApplicationScoped
@@ -152,6 +166,20 @@ class UnnameableMemberBytecodeEmissionTest {
                 "nothing left out: " + result.messages());
         assertEquals("LabeledService hidden", forwarded(result, "app.LabeledService_ClientProxy",
                 "app.LabeledService", "lib.HiddenDefaultBase", "callLabel"),
+                "forwarded to the contextual instance, not run on the proxy");
+    }
+
+    @Test
+    @DisplayName("a bean proxy forwarding an inherited protected method of another package is a class file (vauban#227)")
+    void methodHandleForward() throws Exception {
+        var result = compile();
+        assertTrue(result.success(), "compilation should succeed. Messages: " + result.messages());
+        assertFalse(Files.exists(result.genDir().resolve("app/HookedService_ClientProxy.java")), "no source proxy");
+        assertTrue(Files.exists(result.outputDir().resolve("app/HookedService_ClientProxy.class")), "a class-file proxy");
+        assertTrue(result.messages().stream().anyMatch(m -> m.contains("forwards hook() through a MethodHandle")),
+                String.valueOf(result.messages()));
+        assertEquals("hook on HookedService", forwarded(result, "app.HookedService_ClientProxy",
+                "app.HookedService", "lib.Hooked", "callHook"),
                 "forwarded to the contextual instance, not run on the proxy");
     }
 

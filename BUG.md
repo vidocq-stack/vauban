@@ -3146,3 +3146,21 @@ The same goes for a normal-scoped producer of such a class (`Dollar_Produced$$�
 - **Hypothèse de cause** : the selection was written twice, each keeping the first candidate of the lowest arity.
 - **Investigations** :
   - 2026-10-28 : `SuperConstructorTest` red on the old code (`StringFirst` chained to `(String)`). One rule now, `ClientProxyShape.superConstructor(TypeView)`: the `(ProxyLink)` constructor, else the fewest parameters, ties broken on the canonical parameter type names; `ProducerProxyEligibility`, `RuntimeClientProxyGenerator` and `ClientProxyShapeFromElements` all call it (vauban#227). `ClientProxyInheritanceCrossCheckTest.sameSuperConstructorOnBothPaths` checks both paths agree.
+
+## BUG-20261028-05 — The processor's client proxies forward other methods than the run-time and Maven plugin ones
+
+- **Date** : 2026-10-28
+- **Statut** : FIXED (branch `refactor/227-forwarded-methods`)
+- **Module touché** : `vauban-processor` `ClientProxyShapeFromElements` (`from`, `fromColocated`), `vauban-core` `RuntimeClientProxyGenerator`
+- **Symptôme** : for the same bean, the proxy the processor writes and the one the Maven plugin or the run-time fallback generates forward different methods:
+  - **F1** — a bean's source proxy forwarded inherited methods only when public: a protected or package-private method of a superclass in the bean's own package was left out, so a class of that package calling it on the proxy ran the superclass body against the proxy's empty state. The bytecode proxies forward it.
+  - **F2** — the co-located shape judged an inherited package-private method by its declaring package alone: for `A(p) <- B(q) <- C(p)` it forwarded `A`'s method, which `C` does not inherit (JLS 8.4.8).
+  - **F3** — the processor's proxies stopped below `java.lang.Object`: `toString()`, `hashCode()` and `equals(Object)` ran on the proxy, while the bytecode proxies forward them to the contextual instance.
+  - **F4** — a declared protected `clone()` or `finalize()` was forwarded by the processor's proxies, never by the bytecode ones.
+- **Reproduction minimale** :
+  ```
+  ./mvnw -pl vauban-processor test -Dtest='ClientProxyInheritanceCrossCheckTest#sourceShapeForwardsSamePackageInheritedMembers+packagePrivateIsNoMemberAcrossAnotherPackage+objectMethodsAreForwardedOnEveryPath'
+  ```
+- **Hypothèse de cause** : the class-method selection was written three times (`forwardedClassMethods`, `fromColocated`, `RuntimeClientProxyGenerator.addDeclaredMethods`), each with its own walk and predicates (vauban#227).
+- **Investigations** :
+  - 2026-10-28 : F1, F2 and F3 red on the old code. One rule now, `ForwardedMethods.select(TypeView, Placement)` in `vauban-core`: the walk includes `Object`; in the type's package every member is forwarded (a package-private one when inherited, JLS 8.4.8), an inherited protected one of another package through a `MethodHandle`; in another package, public methods only. Java source cannot forward through a `MethodHandle`, so such a bean proxy is now emitted as bytecode by the processor (`UnnameableMemberBytecodeEmissionTest#methodHandleForward`, red before: the source proxy left `hook()` out).

@@ -739,7 +739,9 @@ public class VaubanProcessor extends AbstractProcessor {
         var proxyPackage = processingEnv.getElementUtils().getPackageOf(proxyTypeElement);
         var unnameable = ClientProxyShapeFromElements.unnameableForwards(proxyTypeElement,
                 proxyPackage, processingEnv.getElementUtils(), processingEnv.getTypeUtils());
-        if (unnameable.isEmpty()) {
+        var throughHandles = ClientProxyShapeFromElements.methodHandleForwards(proxyTypeElement,
+                proxyPackage, processingEnv.getElementUtils(), processingEnv.getTypeUtils());
+        if (unnameable.isEmpty() && throughHandles.isEmpty()) {
             var proxyShape = ClientProxyShapeFromElements.from(proxyTypeElement, proxyPackage,
                     processingEnv.getElementUtils(), processingEnv.getTypeUtils(),
                     omitted -> warnOmitted(omitted, proxyTypeElement));
@@ -756,7 +758,7 @@ public class VaubanProcessor extends AbstractProcessor {
                     omitted -> warnOmitted(omitted, proxyTypeElement));
             generateClass(new GeneratedClass(proxyShape.proxyClassName(),
                     io.vidocq.vauban.core.proxy.ClientProxyEmitter.emit(proxyShape)));
-            noteBytecode(proxyShape.proxyClassName(), unnameable, proxyTypeElement);
+            noteBytecode(proxyShape.proxyClassName(), unnameable, throughHandles, proxyTypeElement);
         }
     }
 
@@ -909,7 +911,9 @@ public class VaubanProcessor extends AbstractProcessor {
         var proxyBinaryName = producerProxyName(producerPkg, producedSimple, producedFqn);
         var unnameable = ClientProxyShapeFromElements.unnameableForwards(producedType, proxyPackage,
                 processingEnv.getElementUtils(), processingEnv.getTypeUtils());
-        if (unnameable.isEmpty()) {
+        var throughHandles = ClientProxyShapeFromElements.methodHandleForwards(producedType, proxyPackage,
+                processingEnv.getElementUtils(), processingEnv.getTypeUtils());
+        if (unnameable.isEmpty() && throughHandles.isEmpty()) {
             var shape = ClientProxyShapeFromElements.fromProduced(producedType, proxyPackage,
                     processingEnv.getElementUtils(), processingEnv.getTypeUtils(),
                     omitted -> warnOmitted(omitted, producerSite));
@@ -925,7 +929,7 @@ public class VaubanProcessor extends AbstractProcessor {
                     omitted -> warnOmitted(omitted, producerSite));
             generateClass(new GeneratedClass(proxyBinaryName,
                     io.vidocq.vauban.core.proxy.ClientProxyEmitter.emitAt(shape, proxyBinaryName)));
-            noteBytecode(proxyBinaryName, unnameable, producerSite);
+            noteBytecode(proxyBinaryName, unnameable, throughHandles, producerSite);
         }
         var key = producedFqn + CLIENT_PROXY_SUFFIX;
         generation.addProducerProxy(producerPkg, key, proxyBinaryName);
@@ -2414,10 +2418,27 @@ public class VaubanProcessor extends AbstractProcessor {
      * listed in {@code unnameable} (BUG-20261004-09): said at build time, as a note.
      */
     private void noteBytecode(String className, List<String> unnameable, javax.lang.model.element.Element site) {
+        noteBytecode(className, unnameable, List.of(), site);
+    }
+
+    /**
+     * The same, for a client proxy that may also call {@code throughHandles} through a {@code MethodHandle}:
+     * protected methods of a superclass in another package, which Java source cannot call on the delegate.
+     */
+    private void noteBytecode(String className, List<String> unnameable, List<String> throughHandles,
+            javax.lang.model.element.Element site) {
         bytecodeClasses.add(className);
+        var why = new ArrayList<String>();
+        if (!unnameable.isEmpty()) {
+            why.add("Java source in its package cannot declare " + String.join(", ", unnameable)
+                    + ", whose signature names a type the package cannot name (BUG-20261004-09)");
+        }
+        if (!throughHandles.isEmpty()) {
+            why.add("it forwards " + String.join(", ", throughHandles)
+                    + " through a MethodHandle, protected in a superclass of another package (JLS 6.6.2)");
+        }
         processingEnv.getMessager().printMessage(Diagnostic.Kind.NOTE, "[Vauban] Generated " + className
-                + " as bytecode: Java source in its package cannot declare " + String.join(", ", unnameable)
-                + ", whose signature names a type the package cannot name (BUG-20261004-09).", site);
+                + " as bytecode: " + String.join("; ", why) + ".", site);
     }
 
     /**

@@ -43,8 +43,20 @@ public interface TypeView {
     /** Whether the type is declared inside another one. */
     boolean isNested();
 
-    /** The direct superclass, or {@code null} when it is {@code java.lang.Object} or there is none. */
+    /** The direct superclass, {@code java.lang.Object} included; {@code null} for {@code Object} itself. */
     TypeView superclass();
+
+    /** Whether this is {@code java.lang.Object}. */
+    boolean isObject();
+
+    /** Whether {@code other} is this very type. */
+    boolean isSameType(TypeView other);
+
+    /**
+     * Whether {@code other} is in the same runtime package: the same package name, and for a loaded class the same
+     * class loader.
+     */
+    boolean isSamePackage(TypeView other);
 
     /** The methods this type declares, bridges included where the model has them. */
     List<Member> methods();
@@ -69,7 +81,10 @@ public interface TypeView {
             return parameterTypes().size();
         }
 
-        /** A bridge method a compiler generated: it stands for the method it calls and overrides like it. */
+        /**
+         * A method a compiler generated, a bridge among them: a bridge stands for the method it calls and overrides
+         * like it.
+         */
         boolean isBridge();
 
         /** Whether this constructor is the opt-in {@code (ProxyLink)} client-proxy entry constructor. */

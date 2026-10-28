@@ -24,9 +24,11 @@ import io.vidocq.vauban.core.proxy.ClientProxyShape;
 import io.vidocq.vauban.processor.codegen.interceptor.InterceptedShapeFromElements;
 import io.vidocq.vauban.processor.codegen.proxy.ClientProxyShapeFromElements;
 
+import javax.lang.model.element.Element;
 import javax.lang.model.element.ExecutableElement;
 import javax.lang.model.element.Modifier;
 import javax.lang.model.element.NestingKind;
+import javax.lang.model.element.PackageElement;
 import javax.lang.model.element.TypeElement;
 import javax.lang.model.type.DeclaredType;
 import javax.lang.model.util.ElementFilter;
@@ -75,11 +77,39 @@ public record ElementTypeView(TypeElement type, TypeElement root, Types types) i
     @Override
     public TypeView superclass() {
         if (type.getSuperclass() instanceof DeclaredType declared
-                && declared.asElement() instanceof TypeElement superclass
-                && !superclass.getQualifiedName().contentEquals("java.lang.Object")) {
+                && declared.asElement() instanceof TypeElement superclass) {
             return new ElementTypeView(superclass, root, types);
         }
         return null;
+    }
+
+    @Override
+    public boolean isObject() {
+        return type.getQualifiedName().contentEquals("java.lang.Object");
+    }
+
+    @Override
+    public boolean isSameType(TypeView other) {
+        return other instanceof ElementTypeView view && view.type.equals(type);
+    }
+
+    @Override
+    public boolean isSamePackage(TypeView other) {
+        return other instanceof ElementTypeView view && packageOf(view.type).equals(packageOf(type));
+    }
+
+    /** The method {@code member}, a member of an {@code ElementTypeView}, stands for. */
+    public static ExecutableElement method(TypeView.Member member) {
+        return ((MethodMember) member).method();
+    }
+
+    /** The package {@code element} is declared in. */
+    private static PackageElement packageOf(Element element) {
+        var e = element;
+        while (!(e instanceof PackageElement)) {
+            e = e.getEnclosingElement();
+        }
+        return (PackageElement) e;
     }
 
     @Override
