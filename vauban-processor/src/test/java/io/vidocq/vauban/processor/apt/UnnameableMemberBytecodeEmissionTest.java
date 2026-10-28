@@ -44,6 +44,7 @@ import java.util.function.Supplier;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -169,7 +170,7 @@ class UnnameableMemberBytecodeEmissionTest {
             var proxy = provider.createClientProxy("lib.Taker_ClientProxy", () -> taker);
             assertEquals("took hidden on Taker", takerClass.getMethod("callTake", takerClass).invoke(null, proxy),
                     "the proxy forwards to its delegate");
-            assertTrue(proxy != provider.createClientProxy("lib.Taker_ClientProxy", () -> taker),
+            assertNotSame(proxy, provider.createClientProxy("lib.Taker_ClientProxy", () -> taker),
                     "a new proxy on every call, from the same handle");
 
             // The proxy's super constructor throws IOException: it propagates as from a `new`, unwrapped (vauban#145).
