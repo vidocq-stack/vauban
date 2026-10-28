@@ -60,6 +60,7 @@ public final class ClientProxyEmitter {
     private static final ClassDesc CD_MethodType = ClassDesc.of("java.lang.invoke.MethodType");
     private static final ClassDesc CD_Class = ConstantDescs.CD_Class;
     private static final ClassDesc CD_Throwable = ConstantDescs.CD_Throwable;
+    private static final ClassDesc CD_Vetoed = ClassDesc.of("jakarta.enterprise.inject.Vetoed");
     private static final ClassDesc CD_ExceptionInInitializerError = ClassDesc.of("java.lang.ExceptionInInitializerError");
 
     private ClientProxyEmitter() {}
@@ -84,8 +85,12 @@ public final class ClientProxyEmitter {
         List<String> mhFields = shape.methodHandleFieldNames();
 
         return GeneratedClassFile.build(proxyCD, clb -> {
-            clb.withFlags(ClassFile.ACC_PUBLIC | ClassFile.ACC_SUPER);
+            // final and @Vetoed, like the source proxy (vauban#227): nothing extends it, and a container that
+            // scans the archive never takes it for a bean.
+            clb.withFlags(ClassFile.ACC_PUBLIC | ClassFile.ACC_FINAL | ClassFile.ACC_SUPER);
             clb.withSuperclass(beanCD);
+            clb.with(java.lang.classfile.attribute.RuntimeVisibleAnnotationsAttribute.of(
+                    java.lang.classfile.Annotation.of(CD_Vetoed)));
 
             // Field: private final Supplier $$delegate, assigned once by the constructor
             clb.withField(ClientProxyShape.FIELD_DELEGATE, CD_Supplier,

@@ -2468,6 +2468,7 @@ and a proposed upstream assertion: `CDI_TCK_PROPOSALS.md` → `TCK-GAP-001`.
   - **Left as is.**
     - A *shadowed* default whose member signature, or carrying interface, the source cannot name is still left out of the source subclass and proxy (BUG-20261004-08 above), and the bytecode generators keep it. That divergence is unchanged.
     - A bytecode subclass or proxy has no `@Vetoed` and is not `final`, unlike the source one. Vauban never discovers it, since it is not in the index, but a container that scans the archive could.
+      - 2026-10-28 (vauban#227): a client proxy emitted as bytecode is now `final` and `@Vetoed`, like the source one (`ClientProxyEmitter`). A bytecode intercepted subclass still is neither.
     - `$$construct` and the `$$ti$` glue of a flagged method look up their handles on every call. These shapes are rare, so nothing is cached.
       - 2026-10-28 (vauban#227): the provider no longer looks a constructor up on every call. `$$construct` and `$$proxy` gave way to one holder class `$$Ctor<n>` per constructor, whose `MethodHandle` is looked up once, on first use, and called with `invokeExact`. A checked exception from such a constructor now propagates as is, as from a `new` (vauban#145), instead of wrapped in an `IllegalStateException`. The `$$ti$` glue still looks its handle up on every call.
 

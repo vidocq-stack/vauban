@@ -111,7 +111,8 @@ public final class RuntimeClientProxyGenerator {
         return new ClientProxyShape(
                 beanClass.getName(),
                 typeRefs(superCtor.getParameterTypes()),
-                methods);
+                methods,
+                typeRefs(superCtor.getExceptionTypes()));
     }
 
     /** The methods {@code current}, the bean class or one of its superclasses, declares that the proxy forwards. */

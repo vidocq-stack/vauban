@@ -19,6 +19,7 @@
  */
 package io.vidocq.vauban.processor.codegen.proxy;
 
+import io.vidocq.vauban.core.proxy.ClientProxyShape;
 import io.vidocq.vauban.core.proxy.ClientProxyShape.ProxyMethodShape;
 import io.vidocq.vauban.processor.codegen.interceptor.InterceptedShapeFromElements;
 
@@ -43,8 +44,6 @@ import java.util.List;
  */
 public final class InterfaceProxySourceRenderer {
 
-    private static final String SUPPLIER = "java.util.function.Supplier";
-
     private InterfaceProxySourceRenderer() {}
 
     /** Render the interface proxy at {@code proxyBinaryName}, implementing {@code iface}. */
@@ -64,13 +63,15 @@ public final class InterfaceProxySourceRenderer {
                 .append(ifaceSource).append(".\n");
         sb.append("// Forwards every method (abstract and default) to the contextual instance. Do not edit.\n");
         sb.append("@jakarta.enterprise.inject.Vetoed\n");
-        sb.append("@SuppressWarnings({\"unchecked\", \"rawtypes\"})\n");
+        sb.append(ClientProxySourceRenderer.SUPPRESS_ERASED);
         sb.append("public final class ").append(proxySimple).append(" implements ")
                 .append(ifaceSource).append(" {\n\n");
         // Final delegate, set once by the only constructor (vauban#227).
-        sb.append("    private final ").append(SUPPLIER).append(" $$delegate;\n\n");
-        sb.append("    public ").append(proxySimple).append("(").append(SUPPLIER)
-                .append(" d) { this.$$delegate = d; }\n\n");
+        var supplier = ClientProxySourceRenderer.supplierOf(ifaceSource);
+        sb.append("    private final ").append(supplier).append(" ")
+                .append(ClientProxyShape.FIELD_DELEGATE).append(";\n\n");
+        sb.append("    public ").append(proxySimple).append("(").append(supplier)
+                .append(" d) { this.").append(ClientProxyShape.FIELD_DELEGATE).append(" = d; }\n\n");
 
         for (ProxyMethodShape m : collectMethods(iface, elements, types)) {
             ClientProxySourceRenderer.renderForward(sb, ifaceSource, m);

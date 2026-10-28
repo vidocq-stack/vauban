@@ -48,11 +48,20 @@ import java.util.List;
  * <p>The override set is decided by {@link ClientProxyShapeFromElements}, the naming
  * ({@code _ClientProxy}, {@code $$delegate}) by {@link ClientProxyShape} —
  * this class only renders. Each override forwards the call to the contextual instance:
- * {@code return ((Bean) $$delegate.get()).method(args);}.
+ * {@code return $$delegate.get().method(args);}, the delegate being a {@code Supplier<? extends Bean>}.
  */
 public final class ClientProxySourceRenderer {
 
-    private static final String SUPPLIER = "java.util.function.Supplier";
+    /**
+     * Kept on the proxy class: a generic bean is extended raw, and its members are overridden with erased
+     * signatures, which javac reports as raw and unchecked.
+     */
+    static final String SUPPRESS_ERASED = "@SuppressWarnings({\"unchecked\", \"rawtypes\"})\n";
+
+    /** {@code java.util.function.Supplier<? extends T>}: the type of the delegate of a proxy of {@code type}. */
+    static String supplierOf(String type) {
+        return "java.util.function.Supplier<? extends " + type + ">";
+    }
 
     private ClientProxySourceRenderer() {}
 
@@ -110,24 +119,25 @@ public final class ClientProxySourceRenderer {
         sb.append("// Forwards every business method to the contextual instance. Do not edit.\n");
         // @Vetoed: the proxy is instantiated explicitly, never discovered as a bean.
         sb.append("@jakarta.enterprise.inject.Vetoed\n");
-        sb.append("@SuppressWarnings({\"unchecked\", \"rawtypes\"})\n");
+        sb.append(SUPPRESS_ERASED);
         sb.append("public final class ").append(proxySimple).append(" extends ").append(beanSource)
                 .append(" {\n\n");
 
         // Delegate supplier — final, set once by the constructor (same contract as the bytecode
         // emitter): nothing can rewire the proxy afterwards (vauban#227).
-        sb.append("    private final ").append(SUPPLIER).append(" ")
+        sb.append("    private final ").append(supplierOf(beanSource)).append(" ")
                 .append(ClientProxyShape.FIELD_DELEGATE).append(";\n\n");
 
         // The only constructor, (Supplier d): calls the simplest non-private super constructor with
         // default values (null / 0 / false) — the proxy never uses the super state, it forwards to
         // the delegate — then stores d. Mirrors the runtime front-end's findSimplestConstructor + the
         // emitter's pushDefault, so beans with only an injected (arg-bearing) constructor are still
-        // proxyable in-module. The super constructor may declare checked exceptions, and a super(...)
-        // call cannot sit in a try (vauban#145): the proxy constructor declares Throwable, and the
-        // generated provider's createClientProxy rethrows whatever it throws as is.
-        sb.append("    public ").append(proxySimple).append("(").append(SUPPLIER)
-                .append(" d) throws java.lang.Throwable {\n")
+        // proxyable in-module. A super(...) call cannot sit in a try (vauban#145): the proxy
+        // constructor declares what the super constructor declares, and the generated provider's
+        // createClientProxy rethrows it as is.
+        sb.append("    public ").append(proxySimple).append("(").append(supplierOf(beanSource)).append(" d)");
+        appendThrowsClause(sb, shape.superCtorThrown());
+        sb.append(" {\n")
                 .append("        super(").append(superDefaultArgs(shape.superCtorParams())).append(");\n")
                 .append("        this.").append(ClientProxyShape.FIELD_DELEGATE).append(" = d;\n")
                 .append("    }\n\n");
@@ -187,16 +197,22 @@ public final class ClientProxySourceRenderer {
         sb.append(")");
         appendThrowsClause(sb, m.thrownTypes());
         sb.append(" {\n");
-        // A shadowed default method goes through its interface: a call typed by the bean class
-        // resolves to the shadowing private method and is refused (BUG-20261004-08). The interface
-        // may be generic, so its result is cast back to the type this override declares.
+        // The delegate is typed by the bean, so the call needs no cast — except a shadowed default
+        // method, which goes through its interface: a call typed by the bean class resolves to the
+        // shadowing private method and is refused (BUG-20261004-08). The interface may be generic,
+        // so its result is cast back to the type this override declares.
         var owner = m.interfaceOwner();
         sb.append("        ").append(isVoid ? "" : "return ");
-        if (owner != null && !isVoid) {
-            sb.append("(").append(m.returnType().sourceName()).append(") ");
+        if (owner != null) {
+            if (!isVoid) {
+                sb.append("(").append(m.returnType().sourceName()).append(") ");
+            }
+            sb.append("((").append(owner.sourceName()).append(") ")
+                    .append(ClientProxyShape.FIELD_DELEGATE).append(".get()).");
+        } else {
+            sb.append(ClientProxyShape.FIELD_DELEGATE).append(".get().");
         }
-        sb.append("((").append(owner != null ? owner.sourceName() : beanSource).append(") ")
-                .append(ClientProxyShape.FIELD_DELEGATE).append(".get()).").append(m.name()).append("(");
+        sb.append(m.name()).append("(");
         for (int i = 0; i < params.size(); i++) {
             if (i > 0) sb.append(", ");
             sb.append("p").append(i);

@@ -457,7 +457,8 @@ public final class ComponentProviderGenerator {
             sb.append("                return ").append(constructors.call(proxyFqn,
                     List.of("java.util.function.Supplier"), "(Object) delegate")).append(";\n");
         } else {
-            sb.append("                return new ").append(proxyFqn).append("(delegate);\n");
+            // The proxy takes a Supplier of its bean; the SPI hands a Supplier<?> (unchecked, suppressed).
+            sb.append("                return new ").append(proxyFqn).append("((java.util.function.Supplier) delegate);\n");
         }
         sb.append(CLOSE_12);
     }

@@ -23,6 +23,10 @@ Reference: BENCH-20261028-01 (`GeneratedCodeBenchmark`). Hot path: PR #228 (`per
 - [x] Intercepted call handed to `InterceptorManager.intercept` (#233, BENCH-20261028-04).
 - [x] `$$construct` replaced by one cached constructor handle per class emitted as bytecode
       (BENCH-20261028-06). Branch `perf/227-construct-handle-cache`.
+- [x] Client proxy: bytecode proxy `final` and `@Vetoed`, delegate typed `Supplier<? extends Bean>` and
+      forwarded without a cast, constructor declaring the super constructor's exceptions instead of
+      `Throwable`. Branch `refactor/227-proxy-source-cleanup`.
+- [ ] Runtime generation fallback (beans built without the processor): kept, with a loud startup warning.
 - [ ] Next: constructor-passed state of the intercepted subclass, generated-source noise; then the
       duplication items of #227.
 

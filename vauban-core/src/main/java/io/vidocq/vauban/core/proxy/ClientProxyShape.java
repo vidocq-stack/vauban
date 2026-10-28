@@ -39,11 +39,14 @@ import java.util.List;
  * @param superCtorParams parameter types of the super constructor the {@code (Supplier)} proxy
  *        constructor calls with default values — empty means plain {@code super()}
  * @param methods the overridden methods, in emission order
+ * @param superCtorThrown the exceptions that super constructor declares: the source proxy constructor declares
+ *        them in turn (vauban#227); the bytecode emitter ignores them
  */
 public record ClientProxyShape(
         String beanBinaryName,
         List<TypeRef> superCtorParams,
-        List<ProxyMethodShape> methods) {
+        List<ProxyMethodShape> methods,
+        List<TypeRef> superCtorThrown) {
 
     /** Suffix of the generated proxy class: {@code <Bean>_ClientProxy}. */
     public static final String PROXY_SUFFIX = "_ClientProxy";
@@ -81,6 +84,12 @@ public record ClientProxyShape(
         java.util.Objects.requireNonNull(beanBinaryName, "beanBinaryName");
         superCtorParams = List.copyOf(superCtorParams);
         methods = List.copyOf(methods);
+        superCtorThrown = List.copyOf(superCtorThrown);
+    }
+
+    /** A shape whose super constructor declares no exception. */
+    public ClientProxyShape(String beanBinaryName, List<TypeRef> superCtorParams, List<ProxyMethodShape> methods) {
+        this(beanBinaryName, superCtorParams, methods, List.of());
     }
 
     /**

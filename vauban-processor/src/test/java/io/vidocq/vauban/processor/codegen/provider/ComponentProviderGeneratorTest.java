@@ -233,7 +233,7 @@ class ComponentProviderGeneratorTest {
         assertTrue(s.contains("case \"app.Foo\" -> new app.Foo();"), s);
         assertTrue(s.contains("case \"app.Foo$$Intercepted\" -> (Object) $$Ctor0.H.invokeExact();"), s);
         assertTrue(s.contains("case \"app.Svc$$Intercepted\" -> (Object) $$Ctor1.H.invokeExact(args[0], args[1]);"), s);
-        assertTrue(s.contains("return new app.Foo_ClientProxy(delegate);"), s);
+        assertTrue(s.contains("return new app.Foo_ClientProxy((java.util.function.Supplier) delegate);"), s);
         assertTrue(s.contains("return (Object) $$Ctor2.H.invokeExact((Object) delegate);"), s);
         assertTrue(s.contains("case \"lib.Thing_ClientProxy\" -> {\n                return (Object) $$Ctor3.H.invokeExact((Object) delegate);"), s);
         // One holder per constructor: each handle is looked up once, on first use (vauban#227).

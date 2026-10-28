@@ -220,7 +220,8 @@ public final class ClientProxyShapeFromElements {
         addDefaultMethods(new ShapeRequest(bean, proxyPackage, elements, types, omitted, subject, asMember),
                 seen, methods);
 
-        return new ClientProxyShape(beanBinaryName, superCtorParams(bean, elements, types), methods);
+        return new ClientProxyShape(beanBinaryName, superCtorParams(bean, elements, types), methods,
+                superCtorThrown(bean, elements, types));
     }
 
     /**
@@ -433,7 +434,8 @@ public final class ClientProxyShapeFromElements {
         }
         addDefaultMethods(new ShapeRequest(bean, elements.getPackageOf(bean), elements, types, omitted -> {},
                 Subject.BEAN, false), seen, methods);
-        return new ClientProxyShape(beanBinaryName, superCtorParams(bean, elements, types), methods);
+        return new ClientProxyShape(beanBinaryName, superCtorParams(bean, elements, types), methods,
+                superCtorThrown(bean, elements, types));
     }
 
     /**
@@ -465,6 +467,13 @@ public final class ClientProxyShapeFromElements {
         ExecutableElement chosen = superConstructor(bean);
         if (chosen == null) return List.of();
         return typeRefs(chosen.getParameters(), elements, types);
+    }
+
+    /** The exceptions the constructor of {@link #superCtorParams} declares: the proxy constructor declares them too. */
+    private static List<TypeRef> superCtorThrown(TypeElement bean, Elements elements, Types types) {
+        ExecutableElement chosen = superConstructor(bean);
+        if (chosen == null) return List.of();
+        return mirrorRefs(chosen.getThrownTypes(), elements, types);
     }
 
     /** The {@code (ProxyLink)} constructor if non-private, else the non-private one with the fewest parameters. */
