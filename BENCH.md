@@ -6,6 +6,69 @@ Every published number (README, commit, post) must point to an entry here.
 
 ---
 
+## BENCH-20261028-07 — Generated code hot paths after the build-path deduplication (vauban#227)
+
+- **Date**: 2026-10-28
+- **Commit**: f6c809c4 (`main`, after #237–#245: one rule per proxy decision for every build path, no `_Factory`
+  classes, `VaubanProcessor` split); A/B baseline ac5ca033 (`main` before the series, after BENCH-20261028-06)
+- **JVM**: Temurin 25+36-LTS, default flags
+- **Hardware**: Apple M5 Max / 18 cores (6 performance, 12 efficiency) / 128 GB RAM
+- **OS**: macOS 27.0.1 (arm64)
+- **Exact command**:
+  ```bash
+  ./mvnw -ntp clean install -DskipTests        # Maven 3.9.16
+  java -jar vauban-bench/target/benchmarks.jar 'GeneratedCodeBenchmark|QualifierResolutionBenchmark.interceptedCall' \
+      -f 3 -wi 5 -i 5 -w 2s -r 3s -prof gc
+  # A/B, each jar built from its commit, run one after the other:
+  java -jar vauban-bench/target/benchmarks.jar \
+      'GeneratedCodeBenchmark.(interceptedCall|proxiedInterceptedCall|clientProxyCall)$' -f 5 -wi 5 -i 5 -w 2s -r 3s
+  ```
+- **Results** (f6c809c4):
+  ```
+  Benchmark                                                              Mode  Cnt     Score     Error   Units
+  GeneratedCodeBenchmark.bytecodeInterceptedCreation                     avgt   15  2542,018 ±  38,474   ns/op
+  GeneratedCodeBenchmark.bytecodeInterceptedCreation:gc.alloc.rate.norm  avgt   15  8386,702 ±  30,093    B/op
+  GeneratedCodeBenchmark.clientProxyCall                                 avgt   15     5,032 ±   0,024   ns/op
+  GeneratedCodeBenchmark.clientProxyCall:gc.alloc.rate.norm              avgt   15    ≈ 10⁻⁴              B/op
+  GeneratedCodeBenchmark.interceptedCall                                 avgt   15    12,089 ±   0,099   ns/op
+  GeneratedCodeBenchmark.interceptedCall:gc.alloc.rate.norm              avgt   15    96,000 ±   0,001    B/op
+  GeneratedCodeBenchmark.interceptedCreation                             avgt   15  2487,490 ±  23,793   ns/op
+  GeneratedCodeBenchmark.interceptedCreation:gc.alloc.rate.norm          avgt   15  7845,362 ±   8,346    B/op
+  GeneratedCodeBenchmark.plainCall                                       avgt   15     0,308 ±   0,018   ns/op
+  GeneratedCodeBenchmark.plainCall:gc.alloc.rate.norm                    avgt   15    ≈ 10⁻⁶              B/op
+  GeneratedCodeBenchmark.proxiedInterceptedCall                          avgt   15    14,213 ±   0,103   ns/op
+  GeneratedCodeBenchmark.proxiedInterceptedCall:gc.alloc.rate.norm       avgt   15    96,000 ±   0,001    B/op
+  QualifierResolutionBenchmark.interceptedCall                           avgt   15    14,083 ±   0,286   ns/op
+  QualifierResolutionBenchmark.interceptedCall:gc.alloc.rate.norm        avgt   15    96,000 ±   0,001    B/op
+  ```
+  A/B, 5 forks:
+  ```
+  Benchmark                                      ac5ca033 (before)   f6c809c4 (after)
+  GeneratedCodeBenchmark.clientProxyCall          5,225 ± 0,081       5,067 ± 0,045   ns/op
+  GeneratedCodeBenchmark.interceptedCall         12,109 ± 0,088      12,086 ± 0,101   ns/op
+  GeneratedCodeBenchmark.proxiedInterceptedCall  14,705 ± 0,449      14,212 ± 0,491   ns/op
+  ```
+- **Comparison with the previous runs** (BENCH-20261028-04 for the calls, BENCH-20261028-06 for the creations):
+
+  | Benchmark | before | after | time | allocation |
+  |---|---|---|---|---|
+  | `bytecodeInterceptedCreation` | 2715 ns, 8437 B/op | 2542 ns, 8387 B/op | −6 % | within error |
+  | `interceptedCreation` | 2610 ns, 7870 B/op | 2487 ns, 7845 B/op | −5 % | within error |
+  | `clientProxyCall` | 5.10 ns | 5.03 ns | within error | — |
+  | `proxiedInterceptedCall` | 15.38 ns, 96 B/op | 14.21 ns, 96 B/op | −8 % | unchanged |
+  | `QualifierResolutionBenchmark.interceptedCall` | 15.22 ns, 96 B/op | 14.08 ns, 96 B/op | −7 % | unchanged |
+  | `interceptedCall` | 11.56 ns, 96 B/op | 12.09 ns, 96 B/op | +5 % | unchanged |
+  | `plainCall` | 0.31 ns | 0.31 ns | within error | — |
+
+- **Notes**: no regression from the series. The A/B on `main` before and after it puts the three calls within
+  error of each other. The deduplication changes which methods a proxy forwards on a path that disagreed, not how a
+  forwarded call runs; the `_Factory` classes were never loaded. The `interceptedCall` gap with
+  BENCH-20261028-04 predates the series: that run measured the branch `perf/227-intercepted-call-allocations`
+  (031c93c0), and `main` was already at 12.1 ns at ac5ca033. The creation gains are not attributed: they sit
+  between two `main` states several merges apart.
+
+---
+
 ## BENCH-20261028-06 — Classes emitted as bytecode instantiated through a cached constructor handle (vauban#227)
 
 - **Date**: 2026-10-28
