@@ -339,7 +339,42 @@ class ComponentProviderCompileTimeTest {
         assertTrue(subSrc.contains("public int[] compute(int[] p0, long[] p1, java.lang.String p2)"), subSrc);
         // params stored directly in Object[] (no Integer.valueOf on the array), unboxed by a cast.
         assertTrue(subSrc.contains("(int[]) $$params[0]"), subSrc);
-        assertTrue(subSrc.contains("getDeclaredMethod(\"$$super$compute\", int[].class, long[].class, java.lang.String.class)"), subSrc);
+        // The bridge Method is resolved once, by the class initializer, from the class literal (vauban#227).
+        assertTrue(subSrc.contains("private static final java.lang.reflect.Method $$method$0 = $$bridge("
+                + "\"$$super$compute\", int[].class, long[].class, java.lang.String.class);"), subSrc);
+    }
+
+    @Test
+    @DisplayName("an intercepted override resolves nothing per call: static bridge Method, chain kept per instance")
+    void interceptedOverrideResolvesNothingPerCall() throws Exception {
+        var result = compile("TalliedService", """
+                package app;
+
+                @jakarta.interceptor.InterceptorBinding
+                @java.lang.annotation.Retention(java.lang.annotation.RetentionPolicy.RUNTIME)
+                @java.lang.annotation.Target({java.lang.annotation.ElementType.TYPE,
+                        java.lang.annotation.ElementType.METHOD})
+                @interface Audited {}
+
+                @jakarta.enterprise.context.Dependent
+                @Audited
+                public class TalliedService {
+                    public long next(long value) { return value + 1; }
+                }
+                """);
+
+        assertTrue(result.success(), "compilation should succeed. Messages: " + result.messages());
+
+        var subSrc = Files.readString(result.genDir().resolve("app/TalliedService$$Intercepted.java"));
+        var override = subSrc.substring(subSrc.indexOf("public long next(long p0)"),
+                subSrc.indexOf("$$super$next(long p0)"));
+        assertFalse(override.contains("getDeclaredMethod"), override);
+        assertFalse(override.contains("getClass()"), override);
+        assertFalse(override.contains("resolveChainForMethod"), override);
+        assertFalse(override.contains("shareInstances"), override);
+        assertTrue(override.contains("this.$$manager.chainFor(this.$$chains, 0, this.$$bindings, $$method$0, this, "
+                + "this.$$context)"), override);
+        assertTrue(subSrc.contains("this.$$chains = new java.util.List[1];"), subSrc);
     }
 
     @Test

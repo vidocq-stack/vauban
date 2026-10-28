@@ -52,6 +52,10 @@ public record InterceptedShape(
     public static final String FIELD_BINDINGS = "$$bindings";
     public static final String FIELD_CONSTRUCTOR_BINDINGS = "$$constructorBindings";
     public static final String FIELD_CONTEXT = "$$context";
+    /** The instance's chain of each intercepted method, by {@link #methods()} index, kept from its first call. */
+    public static final String FIELD_CHAINS = "$$chains";
+    /** Prefix of the {@code static final Method} holding each method's {@code $$super$} bridge. */
+    public static final String METHOD_FIELD_PREFIX = "$$method$";
 
     public InterceptedShape {
         java.util.Objects.requireNonNull(beanBinaryName, "beanBinaryName");
@@ -87,6 +91,11 @@ public record InterceptedShape(
             if (m.defaultOwner() != null) owners.putIfAbsent(m.defaultOwner(), m.defaultOwnerSource());
         }
         return List.copyOf(owners.values());
+    }
+
+    /** Name of the static field holding the bridge {@code Method} of the method at {@code index} in {@link #methods()}. */
+    public static String methodFieldName(int index) {
+        return METHOD_FIELD_PREFIX + index;
     }
 
     /** Name of the {@code $$super$<name>} bridge for a bean method. */

@@ -3055,3 +3055,32 @@ The same goes for a normal-scoped producer of such a class (`Dollar_Produced$$�
     stand-alone class on the class path of `vauban-core`. With `@PostConstruct` holding each
     thread until both are creating: 2 instances created, 1 destroyed, the two subtasks got
     different ids. Without any forcing: 1972 rounds out of 2000 created two instances.
+
+## BUG-20261028-01 — A custom scope only the bean's class loader sees becomes `@Dependent`
+
+- **Date** : 2026-10-28
+- **Statut** : FIXED (0150bd7b, branch `perf/227-generated-hot-path`)
+- **Module touché** : vauban-core / `ManagedBean.getScope()` (`scopeAnnotationClass`)
+- **Symptôme** : `getScope()` loads the scope annotation with the one-argument
+  `Class.forName(name)`, that is through `vauban-core`'s own loader, and falls back on
+  `@Dependent` on `ClassNotFoundException` without a word. A custom scope declared in an
+  application module layer that `vauban-core`'s loader cannot see is reported as `@Dependent`,
+  so the client proxy looks up the `@Dependent` context instead of the scope's own. The same
+  call runs on every client-proxy invocation: about 95 % of `clientProxyCall` in
+  BENCH-20261028-01 (276 ns for a call that does nothing) is spent in `Class.forName`.
+- **Reproduction minimale** :
+  ```
+  ./mvnw -ntp test -pl vauban-core -Dtest=ManagedBeanScopeTest
+  # scopeVisibleOnlyToTheBeanLoader: expected <...isolated.IsolatedScope> but was <jakarta.enterprise.context.Dependent>
+  ```
+- **Hypothèse de cause** : the scope class is resolved by name on each call, through the
+  caller's loader instead of the bean's (`ManagedBean.classLoader`), and never cached.
+- **Investigations** :
+  - 2026-10-28 : found while profiling the client proxy for vauban#227 (`-prof stack`).
+    Confirmed by `ManagedBeanScopeTest` (red). About twenty other one-argument
+    `Class.forName` calls remain in `vauban-core` (discovery, `InterceptorManager`,
+    `VaubanInterceptor`, `QualifierResolver`, ...): same loader assumption, to review
+    separately.
+  - 2026-10-28 : fixed in 0150bd7b: the scope is resolved once, at construction, through the
+    bean's loader (falling back on `vauban-core`'s for the built-in scopes). `ManagedBeanScopeTest`
+    green; `clientProxyCall` 276 ns → 5.1 ns (BENCH-20261028-02).

@@ -40,9 +40,11 @@ import java.lang.constant.MethodTypeDesc;
  * {@code javax.lang.model.element.TypeElement}) produce byte-for-byte identical output.
  *
  * <p><strong>Field names generated:</strong>
- * {@code $$manager}, {@code $$bindings}, {@code $$constructorBindings}, {@code $$context}.
- * <strong>Special methods generated:</strong> {@code $$init}, one {@code $$super$name} bridge
- * and one override per interceptable method.
+ * {@code $$manager}, {@code $$bindings}, {@code $$constructorBindings}, {@code $$context}, {@code $$chains}
+ * (each method's chain, kept per instance), and one {@code static final Method $$method$<index>} per
+ * interceptable method (its {@code $$super$} bridge, looked up once by the class initializer).
+ * <strong>Special methods generated:</strong> {@code <clinit>}, {@code $$init}, one {@code $$super$name}
+ * bridge and one override per interceptable method.
  */
 @SuppressWarnings("java:S3776") // CDI container logic has inherent complexity
 public final class InterceptedEmitter {
@@ -72,6 +74,7 @@ public final class InterceptedEmitter {
     private static final String FIELD_BINDINGS = InterceptedShape.FIELD_BINDINGS;
     private static final String FIELD_CONSTRUCTOR_BINDINGS = InterceptedShape.FIELD_CONSTRUCTOR_BINDINGS;
     private static final String FIELD_CONTEXT = InterceptedShape.FIELD_CONTEXT;
+    private static final String FIELD_CHAINS = InterceptedShape.FIELD_CHAINS;
     private static final String METHOD_VALUEOF = "valueOf";
 
     /** Erased signature of {@code TargetInvoker.invoke} and of every generated {@code $$ti$<name>}. */
@@ -124,6 +127,29 @@ public final class InterceptedEmitter {
             clb.withField(FIELD_BINDINGS, CD_Set, ClassFile.ACC_PRIVATE);
             clb.withField(FIELD_CONSTRUCTOR_BINDINGS, CD_Set, ClassFile.ACC_PRIVATE);
             clb.withField(FIELD_CONTEXT, CD_CreationalContext, ClassFile.ACC_PRIVATE);
+            clb.withField(FIELD_CHAINS, CD_List.arrayType(), ClassFile.ACC_PRIVATE);
+            var methods = shape.methods();
+            for (int i = 0; i < methods.size(); i++) {
+                clb.withField(InterceptedShape.methodFieldName(i), CD_Method,
+                        ClassFile.ACC_PRIVATE | ClassFile.ACC_STATIC | ClassFile.ACC_FINAL);
+            }
+
+            // Class initializer: each method's $$super$ bridge, looked up once on the class itself
+            if (!methods.isEmpty()) {
+                clb.withMethodBody(ConstantDescs.CLASS_INIT_NAME, ConstantDescs.MTD_void, ClassFile.ACC_STATIC,
+                        cob -> {
+                            for (int i = 0; i < methods.size(); i++) {
+                                MethodShape method = methods.get(i);
+                                cob.ldc(subclassCD);
+                                cob.ldc(InterceptedShape.superBridgeName(method.name()));
+                                loadParameterClasses(cob, subclassCD, method);
+                                cob.invokevirtual(CD_Class, "getDeclaredMethod",
+                                        MethodTypeDesc.of(CD_Method, CD_String, CD_Class.arrayType()));
+                                cob.putstatic(subclassCD, InterceptedShape.methodFieldName(i), CD_Method);
+                            }
+                            cob.return_();
+                        });
+            }
 
             // Constructors: for each non-private constructor in super class, generate one here
             for (CtorShape ctor : shape.constructors()) {
@@ -166,6 +192,10 @@ public final class InterceptedEmitter {
                         cob.aload(0);
                         cob.aload(4);
                         cob.putfield(subclassCD, FIELD_CONTEXT, CD_CreationalContext);
+                        cob.aload(0);
+                        cob.loadConstant(methods.size());
+                        cob.anewarray(CD_List);
+                        cob.putfield(subclassCD, FIELD_CHAINS, CD_List.arrayType());
                         cob.return_();
                     });
 
@@ -173,12 +203,11 @@ public final class InterceptedEmitter {
             // glue erases to (Object,Object[])Object, so two overloaded methods would collide on the
             // bare $$ti$<name>; give each overload a unique name (the $$super$<name> bridges keep
             // distinct descriptors and need no suffix).
-            var methods = shape.methods();
             var tiNames = shape.targetInvokerNames();
             for (int i = 0; i < methods.size(); i++) {
                 MethodShape method = methods.get(i);
                 generateSuperBridge(clb, beanCD, method);
-                generateInterceptedMethod(clb, subclassCD, beanCD, method, tiNames.get(i));
+                generateInterceptedMethod(clb, subclassCD, beanCD, method, i, tiNames.get(i));
                 generateTargetInvokerGlue(clb, subclassCD, method, tiNames.get(i));
             }
         });
@@ -228,7 +257,7 @@ public final class InterceptedEmitter {
 
     private static void generateInterceptedMethod(
             java.lang.classfile.ClassBuilder clb,
-            ClassDesc subclassCD, ClassDesc beanCD, MethodShape method, String tiName) {
+            ClassDesc subclassCD, ClassDesc beanCD, MethodShape method, int index, String tiName) {
 
         ClassDesc returnCD = method.returnType().classDesc();
         var paramCDs = method.params().stream()
@@ -259,14 +288,8 @@ public final class InterceptedEmitter {
                     // Intercepted path
                     cob.labelBinding(intercepted);
 
-                    // Get $$super$ Method for target invocation (avoids infinite recursion)
-                    // this.getClass().getDeclaredMethod("$$super$name", paramTypes...)
-                    cob.aload(0);
-                    cob.invokevirtual(CD_Object, "getClass", MethodTypeDesc.of(CD_Class));
-                    cob.ldc(InterceptedShape.superBridgeName(method.name()));
-                    loadParameterClasses(cob, subclassCD, method);
-                    cob.invokevirtual(CD_Class, "getDeclaredMethod",
-                            MethodTypeDesc.of(CD_Method, CD_String, CD_Class.arrayType()));
+                    // The $$super$ bridge Method, looked up once by the class initializer
+                    cob.getstatic(subclassCD, InterceptedShape.methodFieldName(index), CD_Method);
                     // Compute the local-slot offset just past the parameter list. Each long/double
                     // parameter occupies TWO slots (JVMS §2.6.1), so a naive parameterCount + 1
                     // count under-allocates and lands the synthetic Method/args/chain locals on
@@ -291,17 +314,22 @@ public final class InterceptedEmitter {
                     int aSlot = mSlot + 1;
                     cob.astore(aSlot);
 
-                    // Resolve chain (with method-level bindings + target class @AroundInvoke)
+                    // The chain (method-level bindings + target class @AroundInvoke), kept per instance:
+                    // $$manager.chainFor($$chains, index, $$bindings, method, this, $$context)
                     cob.aload(0);
                     cob.getfield(subclassCD, FIELD_MANAGER, CD_InterceptorManager);
+                    cob.aload(0);
+                    cob.getfield(subclassCD, FIELD_CHAINS, CD_List.arrayType());
+                    cob.loadConstant(index);
                     cob.aload(0);
                     cob.getfield(subclassCD, FIELD_BINDINGS, CD_Set);
                     cob.aload(mSlot); // pass the $$super$ Method for binding resolution
                     cob.aload(0);     // pass this for target class @AroundInvoke
                     cob.aload(0);
                     cob.getfield(subclassCD, FIELD_CONTEXT, CD_CreationalContext);
-                    cob.invokevirtual(CD_InterceptorManager, "resolveChainForMethod",
-                            MethodTypeDesc.of(CD_List, CD_Set, CD_Method, CD_Object, CD_CreationalContext));
+                    cob.invokevirtual(CD_InterceptorManager, "chainFor",
+                            MethodTypeDesc.of(CD_List, CD_List.arrayType(), ConstantDescs.CD_int, CD_Set, CD_Method,
+                                    CD_Object, CD_CreationalContext));
                     int cSlot = aSlot + 1;
                     cob.astore(cSlot);
 
@@ -335,14 +363,6 @@ public final class InterceptedEmitter {
                     // ctx.proceed()
                     cob.invokevirtual(CD_VaubanInvocationContext, "proceed",
                             MethodTypeDesc.of(CD_Object));
-
-                    // Cache any interceptor instances created during AroundConstruct
-                    cob.aload(0);
-                    cob.getfield(subclassCD, FIELD_MANAGER, CD_InterceptorManager);
-                    cob.invokestatic(CD_InterceptorManager, "$$getAroundConstructContext",
-                            MethodTypeDesc.of(CD_CreationalContext));
-                    cob.invokevirtual(CD_InterceptorManager, "shareInstances",
-                            MethodTypeDesc.of(ConstantDescs.CD_void, CD_CreationalContext));
 
                     // Return
                     TypeRef ret = method.returnType();

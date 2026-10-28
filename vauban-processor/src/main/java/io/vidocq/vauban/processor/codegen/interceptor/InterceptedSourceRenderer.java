@@ -115,7 +115,9 @@ public final class InterceptedSourceRenderer {
         sb.append("    private ").append(IM).append(" ").append(InterceptedShape.FIELD_MANAGER).append(";\n");
         sb.append("    private java.util.Set ").append(InterceptedShape.FIELD_BINDINGS).append(";\n");
         sb.append("    private java.util.Set ").append(InterceptedShape.FIELD_CONSTRUCTOR_BINDINGS).append(";\n");
-        sb.append("    private ").append(CREATIONAL).append(" ").append(InterceptedShape.FIELD_CONTEXT).append(";\n\n");
+        sb.append("    private ").append(CREATIONAL).append(" ").append(InterceptedShape.FIELD_CONTEXT).append(";\n");
+        sb.append("    private java.util.List[] ").append(InterceptedShape.FIELD_CHAINS).append(";\n\n");
+        renderBridgeMethods(sb, subSimple, shape.methods());
         renderDefaultHandles(sb, subSimple, shape.methods());
 
         // Constructors mirroring each non-private super constructor
@@ -137,6 +139,8 @@ public final class InterceptedSourceRenderer {
         sb.append("        this.$$bindings = b;\n");
         sb.append("        this.$$constructorBindings = cb;\n");
         sb.append("        this.$$context = c;\n");
+        sb.append("        this.").append(InterceptedShape.FIELD_CHAINS).append(" = new java.util.List[")
+                .append(shape.methods().size()).append("];\n");
         sb.append(MEMBER_END);
 
         // The $$ti$ glue erases to (Object, Object[]) Object, so two overloaded methods would
@@ -147,7 +151,7 @@ public final class InterceptedSourceRenderer {
         for (int i = 0; i < methods.size(); i++) {
             MethodShape m = methods.get(i);
             String defaultHandle = m.defaultOwner() != null ? DEFAULT_HANDLE_PREFIX + i : null;
-            renderOverride(sb, subSimple, m, tiNames.get(i), defaultHandle);
+            renderOverride(sb, subSimple, m, i, tiNames.get(i), defaultHandle);
             renderSuperBridge(sb, m, defaultHandle);
             renderTargetInvokerGlue(sb, subSimple, m, tiNames.get(i));
         }
@@ -162,6 +166,27 @@ public final class InterceptedSourceRenderer {
 
         sb.append("}\n");
         return new Generated(subBinary, sb.toString());
+    }
+
+    /**
+     * One {@code static final Method} per intercepted method, its {@code $$super$} bridge looked up once on the class
+     * literal, so no call resolves it again (vauban#227) — the class initializer the bytecode emitter writes.
+     */
+    private static void renderBridgeMethods(StringBuilder sb, String subSimple, List<MethodShape> methods) {
+        if (methods.isEmpty()) return;
+        for (int i = 0; i < methods.size(); i++) {
+            MethodShape m = methods.get(i);
+            sb.append("    private static final java.lang.reflect.Method ").append(InterceptedShape.methodFieldName(i))
+                    .append(" = $$bridge(\"").append(InterceptedShape.superBridgeName(m.name())).append("\"")
+                    .append(classLiterals(m.params())).append(");\n");
+        }
+        sb.append("\n    private static java.lang.reflect.Method $$bridge(String name, Class<?>... parameterTypes) {\n")
+                .append(TRY_OPEN)
+                .append("            return ").append(subSimple).append(".class.getDeclaredMethod(name, parameterTypes);\n")
+                .append("        } catch (NoSuchMethodException e) {\n")
+                .append("            throw new IllegalStateException(e);\n")
+                .append(BLOCK_END)
+                .append(MEMBER_END);
     }
 
     /** Prefix of the static {@code MethodHandle} reaching a shadowed default method explicitly. */
@@ -212,7 +237,7 @@ public final class InterceptedSourceRenderer {
         return resultType == null || resultType.isVoid() ? call : "(" + sourceName(resultType) + ") " + call;
     }
 
-    private static void renderOverride(StringBuilder sb, String subSimple, MethodShape m, String tiName,
+    private static void renderOverride(StringBuilder sb, String subSimple, MethodShape m, int index, String tiName,
             String defaultHandle) {
         // Declared with the signature the bean sees: Java source cannot override echo(T) of a
         // Base<String> as echo(Object) (BUG-20261004-06); javac adds the bridge for the descriptor.
@@ -235,25 +260,19 @@ public final class InterceptedSourceRenderer {
         } else {
             sb.append("            if (this.$$manager == null) return ").append(original).append(";\n");
         }
-        sb.append("            java.lang.reflect.Method $$m = getClass().getDeclaredMethod(\"")
-                .append(InterceptedShape.superBridgeName(m.name())).append("\"")
-                .append(classLiterals(m.params())).append(");\n");
+        String method = InterceptedShape.methodFieldName(index);
         sb.append("            Object[] $$args = new Object[] {").append(boxedArgs(m.memberParams())).append("};\n");
-        sb.append("            java.util.List $$chain = this.$$manager.resolveChainForMethod(")
-                .append("this.$$bindings, $$m, this, this.$$context);\n");
+        sb.append("            java.util.List $$chain = this.$$manager.chainFor(this.").append(InterceptedShape.FIELD_CHAINS)
+                .append(", ").append(index).append(", this.$$bindings, ").append(method)
+                .append(", this, this.$$context);\n");
         sb.append("            ").append(CTX).append(" $$ctx = new ").append(CTX)
-                .append("(this, $$m, null, $$args, $$chain, ").append(subSimple).append("::")
+                .append("(this, ").append(method).append(", null, $$args, $$chain, ").append(subSimple).append("::")
                 .append(tiName).append(");\n");
         if (ret.isVoid()) {
             sb.append("            $$ctx.proceed();\n");
-            sb.append("            this.$$manager.shareInstances(").append(IM)
-                    .append(".$$getAroundConstructContext());\n");
             sb.append("            return;\n");
         } else {
-            sb.append("            Object $$r = $$ctx.proceed();\n");
-            sb.append("            this.$$manager.shareInstances(").append(IM)
-                    .append(".$$getAroundConstructContext());\n");
-            sb.append("            return ").append(unboxExpr(ret, "$$r")).append(";\n");
+            sb.append("            return ").append(unboxExpr(ret, "$$ctx.proceed()")).append(";\n");
         }
         sb.append("        } catch (Throwable $$t) {\n");
         sb.append("            throw sneaky($$t);\n");

@@ -44,6 +44,8 @@ public final class ManagedBean<T> implements Bean<T> {
     private final BeanDescriptor descriptor;
     private final BeanFactory<T> factory;
     private final Class<T> beanClass;
+    // Resolved once: every client-proxy call asks for it (BUG-20261028-01)
+    private final Class<? extends Annotation> scope;
     private final ClassLoader classLoader;
     private final VaubanLookup vaubanLookup;
     private BiConsumer<Object, CreationalContext<?>> injector;
@@ -79,6 +81,7 @@ public final class ManagedBean<T> implements Bean<T> {
         } catch (ClassNotFoundException e) {
             throw new IllegalArgumentException("Bean class not found: " + descriptor.beanClass(), e);
         }
+        this.scope = scopeAnnotationClass(descriptor.scope(), classLoader);
     }
 
     public BiConsumer<Object, CreationalContext<?>> getInjector() {
@@ -963,7 +966,7 @@ public final class ManagedBean<T> implements Bean<T> {
 
     @Override
     public Class<? extends Annotation> getScope() {
-        return scopeAnnotationClass(descriptor.scope());
+        return scope;
     }
 
     @Override
@@ -1190,14 +1193,22 @@ public final class ManagedBean<T> implements Bean<T> {
         return descriptor;
     }
 
-    private static Class<? extends Annotation> scopeAnnotationClass(ScopeInfo scope) {
+    /** The scope annotation type as the bean's own loader sees it: a custom scope may live in its layer only. */
+    private static Class<? extends Annotation> scopeAnnotationClass(ScopeInfo scope, ClassLoader classLoader) {
         var name = scope.annotationName().value();
         try {
             @SuppressWarnings("unchecked")
-            var clazz = (Class<? extends Annotation>) Class.forName(name);
+            var clazz = (Class<? extends Annotation>) Class.forName(name, false, classLoader);
             return clazz;
         } catch (ClassNotFoundException _) {
-            return jakarta.enterprise.context.Dependent.class;
+            // A loader that does not delegate to the CDI API's still lets the built-in scopes through.
+            try {
+                @SuppressWarnings("unchecked")
+                var clazz = (Class<? extends Annotation>) Class.forName(name);
+                return clazz;
+            } catch (ClassNotFoundException _) {
+                return jakarta.enterprise.context.Dependent.class;
+            }
         }
     }
 
