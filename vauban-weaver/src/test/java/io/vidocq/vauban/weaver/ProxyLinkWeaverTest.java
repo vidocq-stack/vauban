@@ -47,6 +47,20 @@ class ProxyLinkWeaverTest {
     }
 
     @Test
+    @DisplayName("retargetProxyConstructor keeps the delegate assignment of the (Supplier) constructor")
+    void retargetKeepsDelegate() {
+        var proxy = Fixtures.proxyWithDelegateCtor(BEAN + "_ClientProxy", BEAN);
+        assertTrue(Fixtures.constructorStoresDelegate(proxy));
+
+        var retargeted = ProxyLinkWeaver.retargetProxyConstructor(proxy);
+        assertTrue(Fixtures.constructorChainsToMarker(retargeted, BEAN));
+        assertTrue(Fixtures.constructorStoresDelegate(retargeted),
+                "the retargeted constructor must still wire $$delegate (vauban#227)");
+        assertTrue(Fixtures.constructorStoresDelegate(ProxyLinkWeaver.retargetProxyConstructor(retargeted)),
+                "idempotent");
+    }
+
+    @Test
     @DisplayName("hasNonPrivateNoArgConstructor sees through access flags")
     void noArgDetection() {
         assertFalse(ProxyLinkWeaver.hasNonPrivateNoArgConstructor(

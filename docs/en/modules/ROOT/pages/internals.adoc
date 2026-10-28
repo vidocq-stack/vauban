@@ -145,8 +145,8 @@ wins.
 
 |**Managed bean** — a bean class you compile
 |The APT emits `<Bean>_ClientProxy` as Java **source in the bean's own package**, and the
-per-package `_VaubanComponents` provider instantiates it in-module (`new …()` and
-`pass:[$$setDelegate]`). Same story for the `pass:[$$Intercepted]` subclass.
+per-package `_VaubanComponents` provider instantiates it in-module (`new …(delegate)`: the proxy's only constructor takes the delegate and keeps it in a
+`private final` field, so nothing can rewire it). Same story for the `pass:[$$Intercepted]` subclass.
 |Zero `opens`, zero `exports`, zero runtime class definition.
 
 |**Producer of a fully-public class** — `@Produces` returning a public, non-final class

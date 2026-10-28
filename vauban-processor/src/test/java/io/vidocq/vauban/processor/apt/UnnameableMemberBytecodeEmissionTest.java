@@ -141,9 +141,7 @@ class UnnameableMemberBytecodeEmissionTest {
                 UnnameableMemberBytecodeEmissionTest.class.getClassLoader())) {
             var contextual = loader.loadClass(bean).getDeclaredConstructor().newInstance();
             var proxyClass = loader.loadClass(proxyName);
-            var proxy = proxyClass.getDeclaredConstructor().newInstance();
-            proxyClass.getMethod(ClientProxyShape.SET_DELEGATE_METHOD, Supplier.class)
-                    .invoke(proxy, (Supplier<Object>) () -> contextual);
+            var proxy = proxyClass.getDeclaredConstructor(Supplier.class).newInstance((Supplier<Object>) () -> contextual);
             var callerClass = loader.loadClass(caller);
             return (String) callerClass.getMethod(method, callerClass).invoke(null, proxy);
         }

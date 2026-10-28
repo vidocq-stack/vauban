@@ -35,7 +35,7 @@ import java.util.List;
  *
  * <p>Emitting source (instead of Filer bytecode) lets the sibling generated source
  * {@code _VaubanComponents} reference {@code <Bean>_ClientProxy} by name and perform
- * {@code new <Bean>_ClientProxy()} in-module — so the container creates the proxy without reflection
+ * {@code new <Bean>_ClientProxy(delegate)} in-module — so the container creates the proxy without reflection
  * and the bean package needs no {@code opens}/{@code exports}. This dissolves the same
  * "generated source cannot see Filer-emitted bytecode" wall that moved {@code $$Intercepted} to
  * source. The bytecode emitter is kept for the runtime classpath fallback and
@@ -46,7 +46,7 @@ import java.util.List;
  * see the caller in {@code VaubanProcessor}.
  *
  * <p>The override set is decided by {@link ClientProxyShapeFromElements}, the naming
- * ({@code _ClientProxy}, {@code $$delegate}, {@code $$setDelegate}) by {@link ClientProxyShape} —
+ * ({@code _ClientProxy}, {@code $$delegate}) by {@link ClientProxyShape} —
  * this class only renders. Each override forwards the call to the contextual instance:
  * {@code return ((Bean) $$delegate.get()).method(args);}.
  */
@@ -114,24 +114,23 @@ public final class ClientProxySourceRenderer {
         sb.append("public final class ").append(proxySimple).append(" extends ").append(beanSource)
                 .append(" {\n\n");
 
-        // Delegate supplier — set lazily via $$setDelegate (same contract as the bytecode emitter).
-        sb.append("    private ").append(SUPPLIER).append(" ")
+        // Delegate supplier — final, set once by the constructor (same contract as the bytecode
+        // emitter): nothing can rewire the proxy afterwards (vauban#227).
+        sb.append("    private final ").append(SUPPLIER).append(" ")
                 .append(ClientProxyShape.FIELD_DELEGATE).append(";\n\n");
 
-        // No-arg constructor calling the simplest non-private super constructor with default values
-        // (null / 0 / false) — the proxy never uses the super state, it forwards to the delegate.
-        // Mirrors the runtime front-end's findSimplestConstructor + the emitter's pushDefault, so
-        // beans with only an injected (arg-bearing) constructor are still proxyable in-module.
-        // The super constructor may declare checked exceptions, and a super(...) call cannot sit in a
-        // try (vauban#145): the proxy constructor declares Throwable, and the generated provider's
-        // createClientProxy rethrows whatever it throws as is.
-        sb.append("    public ").append(proxySimple).append("() throws java.lang.Throwable { super(")
-                .append(superDefaultArgs(shape.superCtorParams())).append("); }\n\n");
-
-        // Setter.
-        sb.append("    public void ").append(ClientProxyShape.SET_DELEGATE_METHOD)
-                .append("(").append(SUPPLIER).append(" d) { this.")
-                .append(ClientProxyShape.FIELD_DELEGATE).append(" = d; }\n\n");
+        // The only constructor, (Supplier d): calls the simplest non-private super constructor with
+        // default values (null / 0 / false) — the proxy never uses the super state, it forwards to
+        // the delegate — then stores d. Mirrors the runtime front-end's findSimplestConstructor + the
+        // emitter's pushDefault, so beans with only an injected (arg-bearing) constructor are still
+        // proxyable in-module. The super constructor may declare checked exceptions, and a super(...)
+        // call cannot sit in a try (vauban#145): the proxy constructor declares Throwable, and the
+        // generated provider's createClientProxy rethrows whatever it throws as is.
+        sb.append("    public ").append(proxySimple).append("(").append(SUPPLIER)
+                .append(" d) throws java.lang.Throwable {\n")
+                .append("        super(").append(superDefaultArgs(shape.superCtorParams())).append(");\n")
+                .append("        this.").append(ClientProxyShape.FIELD_DELEGATE).append(" = d;\n")
+                .append("    }\n\n");
 
         // Forwarding overrides.
         for (ProxyMethodShape m : shape.methods()) {

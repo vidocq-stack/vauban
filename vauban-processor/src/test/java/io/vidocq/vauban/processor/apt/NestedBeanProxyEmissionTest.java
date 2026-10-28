@@ -119,17 +119,22 @@ class NestedBeanProxyEmissionTest {
         assertEquals("app.Holder$Counter", binaryName(model.superclass().orElseThrow().asInternalName()),
                 "the proxy extends the bean, so an injection point typed on the bean accepts it");
 
-        var fields = model.fields().stream().map(f -> f.fieldName().stringValue()).toList();
-        assertTrue(fields.contains(ClientProxyShape.FIELD_DELEGATE),
-                "the lazy contextual-instance supplier field must be there. Fields: " + fields);
+        var delegateField = model.fields().stream()
+                .filter(f -> f.fieldName().equalsString(ClientProxyShape.FIELD_DELEGATE))
+                .findFirst()
+                .orElseThrow(() -> new AssertionError("the contextual-instance supplier field must be there"));
+        assertTrue(delegateField.flags().has(java.lang.reflect.AccessFlag.PRIVATE)
+                        && delegateField.flags().has(java.lang.reflect.AccessFlag.FINAL),
+                "the delegate is private final, set once by the constructor (vauban#227)");
 
         var methods = model.methods().stream()
                 .map(m -> m.methodName().stringValue() + m.methodType().stringValue())
                 .toList();
-        assertTrue(methods.contains("<init>()V"),
-                "the runtime instantiates the proxy with a no-arg constructor. Methods: " + methods);
-        assertTrue(methods.contains(ClientProxyShape.SET_DELEGATE_METHOD + "(Ljava/util/function/Supplier;)V"),
-                "the container wires the delegate through $$setDelegate. Methods: " + methods);
+        var constructors = methods.stream().filter(m -> m.startsWith("<init>")).toList();
+        assertEquals(java.util.List.of("<init>(Ljava/util/function/Supplier;)V"), constructors,
+                "the only constructor takes the delegate. Methods: " + methods);
+        assertTrue(methods.stream().noneMatch(m -> m.startsWith("$$setDelegate")),
+                "no setter can rewire the delegate. Methods: " + methods);
         assertTrue(methods.contains("hit()Ljava/lang/String;") && methods.contains("hits()I"),
                 "every non-final public method of the bean must be overridden. Methods: " + methods);
     }
@@ -147,9 +152,8 @@ class NestedBeanProxyEmissionTest {
             assertSame(bean, proxy.getSuperclass(), "the proxy must extend the bean it stands for");
 
             Object contextual = bean.getDeclaredConstructor().newInstance();
-            Object instance = proxy.getDeclaredConstructor().newInstance();
-            proxy.getMethod(ClientProxyShape.SET_DELEGATE_METHOD, Supplier.class)
-                    .invoke(instance, (Supplier<Object>) () -> contextual);
+            Object instance = proxy.getDeclaredConstructor(Supplier.class)
+                    .newInstance((Supplier<Object>) () -> contextual);
 
             var hit = proxy.getMethod("hit");
             assertEquals("hit:1", hit.invoke(instance));

@@ -719,7 +719,7 @@ public class VaubanProcessor extends AbstractProcessor {
 
     /**
      * SOURCE proxy: the sibling _VaubanComponents provider does
-     * {@code new <Bean>_ClientProxy()} in-module (createClientProxy), so the bean package
+     * {@code new <Bean>_ClientProxy(delegate)} in-module (createClientProxy), so the bean package
      * needs no opens/exports for proxy creation. Source (not bytecode) so the
      * provider source can reference it by name (resolved in a later APT round).
      * The proxy ctor calls the simplest non-private super ctor with default values,

@@ -81,7 +81,7 @@ class ProxyLinkWeavingTest {
             assertTrue(marker.get().isSynthetic(), "the woven constructor must be ACC_SYNTHETIC");
 
             Class<?> proxy = loader.loadClass("com.myapp.Oidc_ClientProxy");
-            assertDoesNotThrow(() -> proxy.getDeclaredConstructor().newInstance(),
+            assertDoesNotThrow(() -> proxy.getDeclaredConstructor(java.util.function.Supplier.class).newInstance((Object) null),
                     "the proxy must chain to the woven marker, not dereference a null parameter");
         }
     }
@@ -109,7 +109,7 @@ class ProxyLinkWeavingTest {
 
         try (var loader = loaderOver(classes)) {
             Class<?> proxy = loader.loadClass("com.myapp.Oidc_ClientProxy");
-            assertDoesNotThrow(() -> proxy.getDeclaredConstructor().newInstance(),
+            assertDoesNotThrow(() -> proxy.getDeclaredConstructor(java.util.function.Supplier.class).newInstance((Object) null),
                     "the pre-existing proxy must be retargeted onto the woven marker");
         }
     }
@@ -135,7 +135,7 @@ class ProxyLinkWeavingTest {
                     "the business constructor must keep initializing real instances");
 
             Object proxy = loader.loadClass("com.myapp.Counted_ClientProxy")
-                    .getDeclaredConstructor().newInstance();
+                    .getDeclaredConstructor(java.util.function.Supplier.class).newInstance((Object) null);
             assertFalse(bean.getField("initialized").getBoolean(proxy),
                     "creating the proxy must not run the bean's business constructor");
         }

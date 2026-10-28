@@ -121,7 +121,7 @@ class WeavingJavacPluginTest {
             assertTrue(marker.get().isSynthetic(), "the woven constructor must be ACC_SYNTHETIC");
 
             Class<?> proxy = loader.loadClass("io.repro.app.Oidc_ClientProxy");
-            assertDoesNotThrow(() -> proxy.getDeclaredConstructor().newInstance(),
+            assertDoesNotThrow(() -> proxy.getDeclaredConstructor(java.util.function.Supplier.class).newInstance((Object) null),
                     "the proxy must chain to the woven marker, not dereference a null Config");
         }
     }

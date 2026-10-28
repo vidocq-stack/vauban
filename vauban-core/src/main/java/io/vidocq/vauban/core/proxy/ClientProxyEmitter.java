@@ -40,7 +40,8 @@ import java.util.List;
  *
  * <p>A client proxy is a subclass of the bean that delegates every eligible method to the
  * contextual instance obtained from a {@link java.util.function.Supplier} held in
- * {@code $$delegate} (wired via {@code $$setDelegate}).
+ * the {@code private final $$delegate}, handed over once to the proxy's only constructor,
+ * {@code (java.util.function.Supplier)} — nothing can rewire it afterwards.
  *
  * <p><b>Protected method handling (JVMS §4.10.1.9):</b> the verifier refuses
  * {@code invokevirtual} on a protected (or package-private) method declared in another
@@ -86,8 +87,9 @@ public final class ClientProxyEmitter {
             clb.withFlags(ClassFile.ACC_PUBLIC | ClassFile.ACC_SUPER);
             clb.withSuperclass(beanCD);
 
-            // Field: private Supplier $$delegate (lazy-set via $$setDelegate)
-            clb.withField(ClientProxyShape.FIELD_DELEGATE, CD_Supplier, ClassFile.ACC_PRIVATE);
+            // Field: private final Supplier $$delegate, assigned once by the constructor
+            clb.withField(ClientProxyShape.FIELD_DELEGATE, CD_Supplier,
+                    ClassFile.ACC_PRIVATE | ClassFile.ACC_FINAL);
 
             // Static final MethodHandle fields for protected/cross-package methods.
             for (String mhField : mhFields) {
@@ -97,16 +99,17 @@ public final class ClientProxyEmitter {
                 }
             }
 
-            // No-arg constructor calling the chosen super constructor with default values
-            // (null / 0 / false) — CDI 4.1: beans with only @Inject constructors must still
-            // be proxyable. An empty superCtorParams list means plain super().
+            // The only constructor, (Supplier d): calls the chosen super constructor with default
+            // values (null / 0 / false) — CDI 4.1: beans with only @Inject constructors must still
+            // be proxyable; an empty superCtorParams list means plain super() — then stores d in
+            // the final $$delegate.
             var superParamCDs = shape.superCtorParams().stream()
                     .map(TypeRef::classDesc)
                     .toArray(ClassDesc[]::new);
             var superCtorType = MethodTypeDesc.of(ConstantDescs.CD_void, superParamCDs);
             clb.withMethodBody(
                     ConstantDescs.INIT_NAME,
-                    MethodTypeDesc.of(ConstantDescs.CD_void),
+                    MethodTypeDesc.of(ConstantDescs.CD_void, CD_Supplier),
                     ClassFile.ACC_PUBLIC,
                     cob -> {
                         cob.aload(0);
@@ -114,15 +117,6 @@ public final class ClientProxyEmitter {
                             pushDefault(cob, param);
                         }
                         cob.invokespecial(beanCD, ConstantDescs.INIT_NAME, superCtorType);
-                        cob.return_();
-                    });
-
-            // The $$setDelegate setter stores the supplier of the contextual instance in $$delegate.
-            clb.withMethodBody(
-                    ClientProxyShape.SET_DELEGATE_METHOD,
-                    MethodTypeDesc.of(ConstantDescs.CD_void, CD_Supplier),
-                    ClassFile.ACC_PUBLIC,
-                    cob -> {
                         cob.aload(0);
                         cob.aload(1);
                         cob.putfield(proxyCD, ClientProxyShape.FIELD_DELEGATE, CD_Supplier);

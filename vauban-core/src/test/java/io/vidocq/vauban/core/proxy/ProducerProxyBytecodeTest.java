@@ -74,9 +74,7 @@ class ProducerProxyBytecodeTest {
         assertTrue(Greeter.class.isAssignableFrom(proxyClass),
                 "the producer proxy must be a subtype of the produced type");
 
-        var proxy = proxyClass.getDeclaredConstructor().newInstance();
-        proxyClass.getMethod("$$setDelegate", Supplier.class)
-                .invoke(proxy, (Supplier<?>) Greeter::new);
+        var proxy = proxyClass.getDeclaredConstructor(Supplier.class).newInstance((Supplier<?>) Greeter::new);
 
         // Forwarding: calling the produced-type method on the proxy runs on the delegate instance.
         assertEquals("hi", ((Greeter) proxy).greet());

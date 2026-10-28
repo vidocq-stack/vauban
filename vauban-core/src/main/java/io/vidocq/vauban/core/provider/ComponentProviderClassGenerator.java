@@ -77,7 +77,7 @@ public final class ComponentProviderClassGenerator {
     private static final ClassDesc CD_Supplier = ClassDesc.of("java.util.function.Supplier");
     private static final MethodTypeDesc MTD_createClientProxy =
             MethodTypeDesc.of(CD_Object, CD_String, CD_Supplier);
-    private static final MethodTypeDesc MTD_setDelegate =
+    private static final MethodTypeDesc MTD_proxyCtor =
             MethodTypeDesc.of(ConstantDescs.CD_void, CD_Supplier);
     private static final ClassDesc CD_Coverage = ClassDesc.of("io.vidocq.vauban.api.GeneratedCoverage");
     private static final ClassDesc CD_Generator = ClassDesc.of("io.vidocq.vauban.api.GeneratedCoverage$Generator");
@@ -172,7 +172,7 @@ public final class ComponentProviderClassGenerator {
      * @param methodInvokes     method invocation descriptors for in-package methods
      * @param clientProxyFqns   fully-qualified {@code <Bean>_ClientProxy} names (normal-scoped beans
      *                          of this package) the provider instantiates in-module — {@code new
-     *                          <Bean>_ClientProxy()} + {@code $$setDelegate(delegate)} — so the
+     *                          <Bean>_ClientProxy(delegate)} — so the
      *                          container creates the proxy without reflection and without exporting
      *                          the package (parity with the APT source generator)
      */
@@ -404,7 +404,7 @@ public final class ComponentProviderClassGenerator {
 
     /**
      * {@code createClientProxy(String proxyClassName, Supplier delegate)}: for each proxy, when the
-     * name matches, a new proxy whose {@code $$setDelegate(delegate)} was called; {@code null} when
+     * name matches, {@code new <Bean>_ClientProxy(delegate)}; {@code null} when
      * none does. The bytecode references the (bytecode) {@code <Bean>_ClientProxy} by binary name —
      * no javac wall here, so the plugin path needs no source proxy (unlike the APT). Slots: 0 this,
      * 1 proxyClassName, 2 delegate.
@@ -432,10 +432,8 @@ public final class ComponentProviderClassGenerator {
         emitEqualsTest(cob, 1, key, next);
         cob.new_(proxyCD);
         cob.dup();
-        cob.invokespecial(proxyCD, ConstantDescs.INIT_NAME, MTD_void); // new proxy()
-        cob.dup();
-        cob.aload(2);                                                  // delegate
-        cob.invokevirtual(proxyCD, "$$setDelegate", MTD_setDelegate);
+        cob.aload(2);                                                       // delegate
+        cob.invokespecial(proxyCD, ConstantDescs.INIT_NAME, MTD_proxyCtor); // new proxy(delegate)
         cob.areturn();
         cob.labelBinding(next);
     }

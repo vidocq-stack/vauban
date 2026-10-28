@@ -451,7 +451,7 @@ public final class VaubanGenerator {
         var provided = new ArrayList<ProvidedClass>();
         // Normal-scoped beans of this module get a <Bean>_ClientProxy (generated above via
         // RuntimeClientProxyGenerator); record them so the per-package provider can instantiate the
-        // proxy in-module (createClientProxy → new <Bean>_ClientProxy()), no opens/exports needed.
+        // proxy in-module (createClientProxy → new <Bean>_ClientProxy(delegate)), no opens/exports needed.
         var clientProxyFqns = new java.util.LinkedHashSet<String>();
         for (var bean : beans) {
             var ci = moduleBeanClass(bean, projectDir, index);

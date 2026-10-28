@@ -67,9 +67,9 @@ public final class InterfaceProxySourceRenderer {
         sb.append("@SuppressWarnings({\"unchecked\", \"rawtypes\"})\n");
         sb.append("public final class ").append(proxySimple).append(" implements ")
                 .append(ifaceSource).append(" {\n\n");
-        sb.append("    private ").append(SUPPLIER).append(" $$delegate;\n\n");
-        sb.append("    public ").append(proxySimple).append("() {}\n\n");
-        sb.append("    public void $$setDelegate(").append(SUPPLIER)
+        // Final delegate, set once by the only constructor (vauban#227).
+        sb.append("    private final ").append(SUPPLIER).append(" $$delegate;\n\n");
+        sb.append("    public ").append(proxySimple).append("(").append(SUPPLIER)
                 .append(" d) { this.$$delegate = d; }\n\n");
 
         for (ProxyMethodShape m : collectMethods(iface, elements, types)) {

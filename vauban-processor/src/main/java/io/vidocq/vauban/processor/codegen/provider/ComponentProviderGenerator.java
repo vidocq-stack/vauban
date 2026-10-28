@@ -148,7 +148,7 @@ public final class ComponentProviderGenerator {
      *                        (producers, observers, disposers, lifecycle callbacks, initializers)
      * @param clientProxyFqns fully-qualified {@code <Bean>_ClientProxy} names (top-level normal-scoped
      *                        beans of this package) the provider instantiates in-module — {@code new
-     *                        <Bean>_ClientProxy()} + {@code $$setDelegate(delegate)} — so the container
+     *                        <Bean>_ClientProxy(delegate)} — so the container
      *                        creates the proxy without reflection and without exporting the package
      */
     public static Generated generateFrom(String packageName, List<Component> components,
@@ -425,8 +425,8 @@ public final class ComponentProviderGenerator {
 
     /**
      * {@code createClientProxy(...)}: in-module client-proxy instantiation for this package's
-     * normal-scoped beans — {@code new <Bean>_ClientProxy()} + {@code $$setDelegate(delegate)}, both
-     * in-package, the proxy being a sibling generated source — so the container creates the proxy
+     * normal-scoped beans — {@code new <Bean>_ClientProxy(delegate)}, in-package, the proxy being
+     * a sibling generated source — so the container creates the proxy
      * without reflection and the bean package needs no {@code opens}/{@code exports}. Producer
      * proxies (issue #42) are keyed by the produced type but instantiated from this (the producer's)
      * package.
@@ -458,9 +458,7 @@ public final class ComponentProviderGenerator {
             return;
         }
         sb.append(CASE_OPEN).append(key).append(CASE_BLOCK);
-        sb.append("                var p = new ").append(proxyFqn).append(NO_ARG_CALL);
-        sb.append("                p.$$setDelegate(delegate);\n");
-        sb.append("                return p;\n");
+        sb.append("                return new ").append(proxyFqn).append("(delegate);\n");
         sb.append(CLOSE_12);
     }
 
@@ -519,17 +517,8 @@ public final class ComponentProviderGenerator {
                     }
 
                     private static Object $$proxy(String className, java.util.function.Supplier<?> delegate) {
-                        var proxy = $$construct(className, new Class<?>[0], new Object[0]);
-                        try {
-                            java.lang.invoke.MethodHandles.lookup().findVirtual(proxy.getClass(), "$$setDelegate",
-                                    java.lang.invoke.MethodType.methodType(void.class, java.util.function.Supplier.class))
-                                    .invokeWithArguments(proxy, delegate);
-                        } catch (RuntimeException | Error e) {
-                            throw e;
-                        } catch (Throwable t) {
-                            throw new IllegalStateException("[Vauban] Could not wire " + className, t);
-                        }
-                        return proxy;
+                        return $$construct(className, new Class<?>[] {java.util.function.Supplier.class},
+                                new Object[] {delegate});
                     }
                 """);
     }

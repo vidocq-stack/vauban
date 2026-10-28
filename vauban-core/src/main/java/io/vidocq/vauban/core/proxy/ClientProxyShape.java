@@ -36,7 +36,7 @@ import java.util.List;
  * bytecode rendering itself is done once by {@link ClientProxyEmitter}.
  *
  * @param beanBinaryName binary name of the proxied bean (e.g. {@code "com.example.MyService"})
- * @param superCtorParams parameter types of the super constructor the no-arg proxy
+ * @param superCtorParams parameter types of the super constructor the {@code (Supplier)} proxy
  *        constructor calls with default values — empty means plain {@code super()}
  * @param methods the overridden methods, in emission order
  */
@@ -47,10 +47,11 @@ public record ClientProxyShape(
 
     /** Suffix of the generated proxy class: {@code <Bean>_ClientProxy}. */
     public static final String PROXY_SUFFIX = "_ClientProxy";
-    /** The lazy contextual-instance supplier field. */
+    /**
+     * The contextual-instance supplier field: {@code private final}, assigned once by the proxy's
+     * only constructor, {@code (java.util.function.Supplier)} — no setter can rewire it (vauban#227).
+     */
     public static final String FIELD_DELEGATE = "$$delegate";
-    /** The delegate-supplier setter wired by the container after instantiation. */
-    public static final String SET_DELEGATE_METHOD = "$$setDelegate";
     /** Prefix of the static-final {@code MethodHandle} fields ({@code $$mh_<name>_<n>}). */
     public static final String MH_FIELD_PREFIX = "$$mh_";
     /** Marker parameter type of the opt-in client-proxy entry constructor (Vidocq/vauban#24). */

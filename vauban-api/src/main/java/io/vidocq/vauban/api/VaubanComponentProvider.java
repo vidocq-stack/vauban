@@ -152,11 +152,12 @@ public interface VaubanComponentProvider {
 
     /**
      * Instantiates the client proxy {@code <Bean>_ClientProxy} of a normal-scoped bean in-module and
-     * wires its delegate, so the container needs neither a reflective {@code newInstance}/
-     * {@code $$setDelegate} nor an {@code opens … to io.vidocq.vauban.core} — and crucially no
-     * {@code exports} of the bean package — to create the proxy. The generated implementation performs
-     * {@code new <Bean>_ClientProxy()} followed by {@code proxy.$$setDelegate(delegate)}, both
-     * in-package (a bytecode {@code new} + {@code invokevirtual}), so no reflection.
+     * wires its delegate, so the container needs neither a reflective {@code newInstance} nor an
+     * {@code opens … to io.vidocq.vauban.core} — and crucially no {@code exports} of the bean
+     * package — to create the proxy. The generated implementation performs
+     * {@code new <Bean>_ClientProxy(delegate)} in-package (a bytecode {@code new} +
+     * {@code invokespecial} of the proxy's only constructor, which stores the delegate in a final
+     * field), so no reflection.
      *
      * <p>{@code vauban-core} builds the {@code delegate} supplier (it resolves the contextual instance
      * of the bean per call) and only delegates the in-module instantiation + wiring. A provider must

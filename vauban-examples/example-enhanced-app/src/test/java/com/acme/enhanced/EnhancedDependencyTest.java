@@ -160,9 +160,7 @@ class EnhancedDependencyTest {
 
         // Wire it as the container would: a proxy instance, told where its contextual instance is.
         Object real = screen.getDeclaredConstructor(long.class).newInstance(10_000L);
-        Object instance = proxy.getDeclaredConstructor().newInstance();
-        proxy.getMethod("$$setDelegate", java.util.function.Supplier.class)
-                .invoke(instance, (java.util.function.Supplier<Object>) () -> real);
+        Object instance = proxy.getDeclaredConstructor(java.util.function.Supplier.class).newInstance((java.util.function.Supplier<Object>) () -> real);
 
         // The public surface forwards.
         assertEquals(true, proxy.getMethod("accepts", long.class).invoke(instance, 1_999L));

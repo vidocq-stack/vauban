@@ -415,8 +415,8 @@ final class InterceptorBeanWrapper {
         var delegate = contextualInstance(bean);
 
         // 1. In-module proxy creation via the component provider (zero-opens AND zero-export):
-        //    the APT-generated provider does `new <Bean>_ClientProxy()` + `$$setDelegate(delegate)`
-        //    in-package, so the container never reflects into the bean's package. Falls through to
+        //    the APT-generated provider does `new <Bean>_ClientProxy(delegate)` in-package, so the
+        //    container never reflects into the bean's package. Falls through to
         //    reflective generation when no provider owns this proxy (class path, runtime-only proxy,
         //    producer-bean proxy).
         String proxyClassName =
@@ -426,17 +426,12 @@ final class InterceptorBeanWrapper {
             return provided;
         }
 
-        // 2. Fallback: runtime-generate the proxy + reflective instantiation/wiring.
+        // 2. Fallback: runtime-generate the proxy + reflective instantiation through its only
+        //    constructor, (Supplier), which wires the delegate once and for all.
         var generated = io.vidocq.vauban.core.proxy.RuntimeClientProxyGenerator.generate(beanClass);
         var proxyClass = defineProxyClass(beanClass, generated.className(), generated.bytecode());
 
-        var proxy = proxyClass.getDeclaredConstructor().newInstance();
-
-        var setDelegate = proxyClass.getMethod("$$setDelegate",
-                java.util.function.Supplier.class);
-        setDelegate.invoke(proxy, delegate);
-
-        return proxy;
+        return proxyClass.getDeclaredConstructor(java.util.function.Supplier.class).newInstance(delegate);
     }
 
     private Class<?> defineProxyClass(Class<?> beanClass, String className, byte[] bytecode) {

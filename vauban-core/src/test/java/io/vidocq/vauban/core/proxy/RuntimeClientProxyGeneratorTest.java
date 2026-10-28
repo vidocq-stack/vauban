@@ -135,26 +135,27 @@ class RuntimeClientProxyGeneratorTest {
 
     /**
      * Defines the proxy class in the same classloader via MethodHandles.Lookup,
-     * then instantiates it via the no-arg constructor.
+     * then instantiates it via its single {@code (Supplier)} constructor, which wires the delegate.
      * Caches already-defined classes to avoid duplicate definition errors.
      */
+    private static Object instantiateProxy(RuntimeClientProxyGenerator.GeneratedProxy proxy,
+                                           Supplier<?> delegate) throws Exception {
+        return defineProxy(proxy).getDeclaredConstructor(Supplier.class).newInstance(delegate);
+    }
+
+    /** A proxy whose delegate is never called by the test (structural checks only). */
     private static Object instantiateProxy(RuntimeClientProxyGenerator.GeneratedProxy proxy) throws Exception {
-        Class<?> proxyClass = definedClasses.computeIfAbsent(proxy.className(), name -> {
+        return instantiateProxy(proxy, null);
+    }
+
+    private static Class<?> defineProxy(RuntimeClientProxyGenerator.GeneratedProxy proxy) {
+        return definedClasses.computeIfAbsent(proxy.className(), name -> {
             try {
                 return MethodHandles.lookup().defineClass(proxy.bytecode());
             } catch (IllegalAccessException e) {
                 throw new RuntimeException(e);
             }
         });
-        return proxyClass.getDeclaredConstructor().newInstance();
-    }
-
-    /**
-     * Calls $$setDelegate on the proxy instance.
-     */
-    private static void setDelegate(Object proxyInstance, Supplier<?> delegate) throws Exception {
-        Method setter = proxyInstance.getClass().getMethod("$$setDelegate", Supplier.class);
-        setter.invoke(proxyInstance, delegate);
     }
 
     // -----------------------------------------------------------------------
@@ -177,9 +178,8 @@ class RuntimeClientProxyGeneratorTest {
         @DisplayName("calling a protected method delegates to the contextual instance")
         void shouldDelegateProtectedEchoToContextualInstance() throws Exception {
             var proxy = RuntimeClientProxyGenerator.generate(ProtectedBean.class);
-            Object instance = instantiateProxy(proxy);
             var realBean = new ProtectedBean();
-            setDelegate(instance, () -> realBean);
+            Object instance = instantiateProxy(proxy, () -> realBean);
 
             Method echo = ProtectedBean.class.getDeclaredMethod("protectedEcho", String.class);
             echo.setAccessible(true);
@@ -191,9 +191,8 @@ class RuntimeClientProxyGeneratorTest {
         @DisplayName("calling a protected method with primitives works")
         void shouldHandlePrimitivesOnProtectedMethod() throws Exception {
             var proxy = RuntimeClientProxyGenerator.generate(ProtectedBean.class);
-            Object instance = instantiateProxy(proxy);
             var realBean = new ProtectedBean();
-            setDelegate(instance, () -> realBean);
+            Object instance = instantiateProxy(proxy, () -> realBean);
 
             Method sum = ProtectedBean.class.getDeclaredMethod("protectedSum", int.class, int.class);
             sum.setAccessible(true);
@@ -206,9 +205,8 @@ class RuntimeClientProxyGeneratorTest {
         @DisplayName("calling a public method of the same bean stays via invokevirtual (no regression)")
         void shouldStillUseInvokevirtualForPublicMethods() throws Exception {
             var proxy = RuntimeClientProxyGenerator.generate(ProtectedBean.class);
-            Object instance = instantiateProxy(proxy);
             var realBean = new ProtectedBean();
-            setDelegate(instance, () -> realBean);
+            Object instance = instantiateProxy(proxy, () -> realBean);
 
             Method greet = ProtectedBean.class.getMethod("publicGreeting", String.class);
             assertEquals("hello bob", greet.invoke(instance, "bob"));
@@ -303,10 +301,8 @@ class RuntimeClientProxyGeneratorTest {
         @DisplayName("the proxy with a parameterized constructor delegates method calls")
         void shouldDelegateMethodCallsWhenDelegateIsSet() throws Exception {
             var proxy = RuntimeClientProxyGenerator.generate(InjectOnlyService.class);
-            Object instance = instantiateProxy(proxy);
-
             InjectOnlyService real = new InjectOnlyService("injected");
-            setDelegate(instance, () -> real);
+            Object instance = instantiateProxy(proxy, () -> real);
 
             Method hello = instance.getClass().getMethod("hello");
             Object result = hello.invoke(instance);
@@ -346,10 +342,8 @@ class RuntimeClientProxyGeneratorTest {
         @DisplayName("the proxy delegates getCount to the real bean")
         void shouldDelegateGetCount() throws Exception {
             var proxy = RuntimeClientProxyGenerator.generate(PrimitiveCtorService.class);
-            Object instance = instantiateProxy(proxy);
-
             PrimitiveCtorService real = new PrimitiveCtorService(42, true);
-            setDelegate(instance, () -> real);
+            Object instance = instantiateProxy(proxy, () -> real);
 
             Method getCount = instance.getClass().getMethod("getCount");
             assertEquals(42, getCount.invoke(instance));
@@ -359,10 +353,8 @@ class RuntimeClientProxyGeneratorTest {
         @DisplayName("the proxy delegates isFlag to the real bean")
         void shouldDelegateIsFlag() throws Exception {
             var proxy = RuntimeClientProxyGenerator.generate(PrimitiveCtorService.class);
-            Object instance = instantiateProxy(proxy);
-
             PrimitiveCtorService real = new PrimitiveCtorService(0, true);
-            setDelegate(instance, () -> real);
+            Object instance = instantiateProxy(proxy, () -> real);
 
             Method isFlag = instance.getClass().getMethod("isFlag");
             assertEquals(true, isFlag.invoke(instance));
@@ -385,10 +377,8 @@ class RuntimeClientProxyGeneratorTest {
         @DisplayName("the proxy delegates methods returning long")
         void shouldDelegateLongReturnType() throws Exception {
             var proxy = RuntimeClientProxyGenerator.generate(LongDoubleCtorService.class);
-            Object instance = instantiateProxy(proxy);
-
             LongDoubleCtorService real = new LongDoubleCtorService(1L, 2.0, 3.0f);
-            setDelegate(instance, () -> real);
+            Object instance = instantiateProxy(proxy, () -> real);
 
             Method getValue = instance.getClass().getMethod("getValue");
             assertEquals(99L, getValue.invoke(instance));
@@ -417,10 +407,8 @@ class RuntimeClientProxyGeneratorTest {
         @DisplayName("delegates a simple method call to the delegate")
         void shouldDelegateSimpleMethodCall() throws Exception {
             var proxy = RuntimeClientProxyGenerator.generate(SimpleService.class);
-            Object instance = instantiateProxy(proxy);
-
             SimpleService real = new SimpleService();
-            setDelegate(instance, () -> real);
+            Object instance = instantiateProxy(proxy, () -> real);
 
             Method hello = instance.getClass().getMethod("hello");
             assertEquals("real", hello.invoke(instance));
@@ -430,10 +418,8 @@ class RuntimeClientProxyGeneratorTest {
         @DisplayName("delegates a method with primitive parameters")
         void shouldDelegateMethodWithPrimitiveParams() throws Exception {
             var proxy = RuntimeClientProxyGenerator.generate(SimpleService.class);
-            Object instance = instantiateProxy(proxy);
-
             SimpleService real = new SimpleService();
-            setDelegate(instance, () -> real);
+            Object instance = instantiateProxy(proxy, () -> real);
 
             Method add = instance.getClass().getMethod("add", int.class, int.class);
             assertEquals(7, add.invoke(instance, 3, 4));
@@ -443,10 +429,8 @@ class RuntimeClientProxyGeneratorTest {
         @DisplayName("delegates a void method")
         void shouldDelegateVoidMethod() throws Exception {
             var proxy = RuntimeClientProxyGenerator.generate(VoidService.class);
-            Object instance = instantiateProxy(proxy);
-
             VoidService real = new VoidService();
-            setDelegate(instance, () -> real);
+            Object instance = instantiateProxy(proxy, () -> real);
 
             Method update = instance.getClass().getMethod("update", String.class);
             update.invoke(instance, "updated");
@@ -459,11 +443,9 @@ class RuntimeClientProxyGeneratorTest {
         @DisplayName("the delegate supplier is called on each method invocation")
         void shouldCallSupplierOnEachInvocation() throws Exception {
             var proxy = RuntimeClientProxyGenerator.generate(SimpleService.class);
-            Object instance = instantiateProxy(proxy);
-
             int[] callCount = {0};
             SimpleService real = new SimpleService();
-            setDelegate(instance, () -> {
+            Object instance = instantiateProxy(proxy, () -> {
                 callCount[0]++;
                 return real;
             });
@@ -476,11 +458,10 @@ class RuntimeClientProxyGeneratorTest {
         }
 
         @Test
-        @DisplayName("throws NullPointerException if the delegate is not set")
+        @DisplayName("throws NullPointerException if the delegate is null")
         void shouldThrowWhenDelegateNotSet() throws Exception {
             var proxy = RuntimeClientProxyGenerator.generate(SimpleService.class);
-            Object instance = instantiateProxy(proxy);
-            // delegate is null by default
+            Object instance = instantiateProxy(proxy, null);
 
             Method hello = instance.getClass().getMethod("hello");
             assertThrows(Exception.class, () -> hello.invoke(instance),
@@ -527,20 +508,51 @@ class RuntimeClientProxyGeneratorTest {
         }
 
         @Test
-        @DisplayName("the $$setDelegate method is not itself proxied")
-        void shouldNotProxyDollarDollarMethods() throws Exception {
+        @DisplayName("no $$setDelegate method: the delegate cannot be rewired from outside")
+        void shouldNotDeclareSetDelegate() throws Exception {
             var proxy = RuntimeClientProxyGenerator.generate(SimpleService.class);
             Object instance = instantiateProxy(proxy);
 
-            // $$setDelegate must exist but must not be a delegation method
-            Method setDel = instance.getClass().getMethod("$$setDelegate", Supplier.class);
-            assertNotNull(setDel);
-            // Verify there is only a single declaration of $$setDelegate
-            long count = 0;
             for (Method m : instance.getClass().getDeclaredMethods()) {
-                if (m.getName().equals("$$setDelegate")) count++;
+                assertNotEquals("$$setDelegate", m.getName(),
+                        "the delegate is set once, by the constructor (vauban#227)");
             }
-            assertEquals(1, count, "$$setDelegate must be declared only once");
+        }
+    }
+
+    /** The delegate is handed over at construction and can never be replaced (vauban#227). */
+    @Nested
+    @DisplayName("immutable delegate")
+    class ImmutableDelegate {
+
+        @Test
+        @DisplayName("$$delegate is private final")
+        void delegateFieldIsPrivateFinal() throws Exception {
+            var proxyClass = defineProxy(RuntimeClientProxyGenerator.generate(SimpleService.class));
+            var field = proxyClass.getDeclaredField("$$delegate");
+            int mods = field.getModifiers();
+            assertTrue(java.lang.reflect.Modifier.isPrivate(mods), "$$delegate must be private");
+            assertTrue(java.lang.reflect.Modifier.isFinal(mods), "$$delegate must be final");
+        }
+
+        @Test
+        @DisplayName("the only constructor is public and takes the delegate Supplier")
+        void onlyConstructorTakesSupplier() {
+            var proxyClass = defineProxy(RuntimeClientProxyGenerator.generate(SimpleService.class));
+            var ctors = proxyClass.getDeclaredConstructors();
+            assertEquals(1, ctors.length, "exactly one constructor");
+            assertArrayEquals(new Class<?>[] {Supplier.class}, ctors[0].getParameterTypes());
+            assertTrue(java.lang.reflect.Modifier.isPublic(ctors[0].getModifiers()));
+        }
+
+        @Test
+        @DisplayName("a proxy built with the Supplier constructor forwards to the delegate")
+        void constructorWiresDelegate() throws Exception {
+            var proxyClass = defineProxy(RuntimeClientProxyGenerator.generate(InjectOnlyService.class));
+            var real = new InjectOnlyService("ctor");
+            Object instance = proxyClass.getDeclaredConstructor(Supplier.class)
+                    .newInstance((Supplier<?>) () -> real);
+            assertEquals("real:ctor", instance.getClass().getMethod("hello").invoke(instance));
         }
     }
 

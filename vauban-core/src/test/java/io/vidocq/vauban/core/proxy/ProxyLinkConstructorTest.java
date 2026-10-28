@@ -147,9 +147,7 @@ class ProxyLinkConstructorTest {
     }
 
     private static Object instantiate(Class<?> proxyClass, Supplier<Object> delegate) throws Exception {
-        Object proxy = proxyClass.getDeclaredConstructor().newInstance();
-        proxyClass.getMethod(ClientProxyShape.SET_DELEGATE_METHOD, Supplier.class)
-                .invoke(proxy, delegate);
+        Object proxy = proxyClass.getDeclaredConstructor(Supplier.class).newInstance(delegate);
         return proxy;
     }
 

@@ -65,6 +65,11 @@ public final class ProxyLinkWeaver {
     private static final MethodTypeDesc MTD_MARKER =
             MethodTypeDesc.of(ConstantDescs.CD_void, CD_PROXY_LINK);
     private static final MethodTypeDesc MTD_VOID = MethodTypeDesc.of(ConstantDescs.CD_void);
+    /** The client proxy's delegate field — mirror of {@code ClientProxyShape.FIELD_DELEGATE}. */
+    private static final String FIELD_DELEGATE = "$$delegate";
+    private static final ClassDesc CD_SUPPLIER = ClassDesc.of("java.util.function.Supplier");
+    private static final MethodTypeDesc MTD_DELEGATE_CTOR =
+            MethodTypeDesc.of(ConstantDescs.CD_void, CD_SUPPLIER);
 
     /** How the woven marker chains to the bean's superclass. */
     public enum SuperChain {
@@ -123,21 +128,33 @@ public final class ProxyLinkWeaver {
     }
 
     /**
-     * Rewrites the no-arg {@code <init>} of a generated client proxy to
-     * {@code super((ProxyLink) null)}. Idempotent: retargeting a proxy that already chains
-     * to the marker produces the same body. The bean class must carry the marker
+     * Rewrites the {@code <init>} of a generated client proxy to
+     * {@code super((ProxyLink) null)}. The proxy's only constructor takes its delegate,
+     * {@code (Supplier d)}, and stores it in the final {@code $$delegate} after the super call
+     * (vauban#227): the rewritten body keeps that assignment. Idempotent: retargeting a proxy that
+     * already chains to the marker produces the same body. The bean class must carry the marker
      * constructor (woven or manual) before the retargeted proxy is loaded.
      */
     public static byte[] retargetProxyConstructor(byte[] proxyClass) {
         var cf = ClassFile.of();
         var model = cf.parse(proxyClass);
+        var thisDesc = model.thisClass().asSymbol();
         var superDesc = model.superclass().orElseThrow().asSymbol();
+        boolean hasDelegateField = model.fields().stream()
+                .anyMatch(f -> f.fieldName().equalsString(FIELD_DELEGATE)
+                        && f.fieldTypeSymbol().equals(CD_SUPPLIER));
         return cf.transformClass(model, (clb, ce) -> {
             if (ce instanceof MethodModel mm && mm.methodName().equalsString(ConstantDescs.INIT_NAME)) {
+                boolean storesDelegate = hasDelegateField && mm.methodTypeSymbol().equals(MTD_DELEGATE_CTOR);
                 clb.withMethodBody(ConstantDescs.INIT_NAME, mm.methodTypeSymbol(), mm.flags().flagsMask(), cob -> {
                     cob.aload(0);
                     cob.aconst_null();
                     cob.invokespecial(superDesc, ConstantDescs.INIT_NAME, MTD_MARKER);
+                    if (storesDelegate) {
+                        cob.aload(0);
+                        cob.aload(1);
+                        cob.putfield(thisDesc, FIELD_DELEGATE, CD_SUPPLIER);
+                    }
                     cob.return_();
                 });
             } else {

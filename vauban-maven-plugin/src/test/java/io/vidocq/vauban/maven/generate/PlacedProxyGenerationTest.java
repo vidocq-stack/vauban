@@ -112,8 +112,8 @@ class PlacedProxyGenerationTest {
                 "a client proxy is a subclass of the produced type, or it forwards nothing");
         assertNotNull(proxy.getDeclaredField("$$delegate"),
                 "the container sets the contextual instance through this field");
-        assertNotNull(proxy.getDeclaredMethod("$$setDelegate", java.util.function.Supplier.class),
-                "the container hands the delegate over through this method");
+        assertNotNull(proxy.getDeclaredConstructor(java.util.function.Supplier.class),
+                "the container hands the delegate over through this constructor");
         assertNotNull(proxy.getDeclaredMethod("internalTag"),
                 "the package-private member is the whole reason this proxy is co-located");
     }

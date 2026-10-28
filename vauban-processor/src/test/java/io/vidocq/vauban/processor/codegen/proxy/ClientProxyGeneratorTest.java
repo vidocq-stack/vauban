@@ -110,8 +110,7 @@ class ClientProxyGeneratorTest {
             var realInstance = new GreetingService();
             Supplier<GreetingService> supplier = () -> realInstance;
 
-            var proxy = (GreetingService) proxyClass.getDeclaredConstructor().newInstance();
-            proxyClass.getMethod("$$setDelegate", Supplier.class).invoke(proxy, supplier);
+            var proxy = (GreetingService) proxyClass.getDeclaredConstructor(Supplier.class).newInstance(supplier);
 
             assertEquals("Hello, World!", proxy.greet("World"));
             assertEquals(5, proxy.add(2, 3));
@@ -128,11 +127,29 @@ class ClientProxyGeneratorTest {
             var proxyClass = cl.loadClass(generated.className());
 
             var realInstance = new GreetingService();
-            var proxy = (GreetingService) proxyClass.getDeclaredConstructor().newInstance();
-            proxyClass.getMethod("$$setDelegate", Supplier.class)
-                    .invoke(proxy, (Supplier<GreetingService>) () -> realInstance);
+            var proxy = (GreetingService) proxyClass.getDeclaredConstructor(Supplier.class)
+                    .newInstance((Supplier<GreetingService>) () -> realInstance);
 
             assertDoesNotThrow(proxy::doNothing);
+        }
+
+        @Test
+        @DisplayName("the delegate is private final, wired by the only constructor, with no setter (vauban#227)")
+        void delegateIsImmutable() throws Exception {
+            var generated = ClientProxyGenerator.generate(scanClass(GreetingService.class));
+            var cl = new ByteArrayClassLoader(getClass().getClassLoader(),
+                    Map.of(generated.className(), generated.bytecode()));
+            var proxyClass = cl.loadClass(generated.className());
+
+            int mods = proxyClass.getDeclaredField("$$delegate").getModifiers();
+            assertTrue(java.lang.reflect.Modifier.isPrivate(mods) && java.lang.reflect.Modifier.isFinal(mods),
+                    "$$delegate must be private final");
+            var ctors = proxyClass.getDeclaredConstructors();
+            assertEquals(1, ctors.length, "exactly one constructor");
+            assertArrayEquals(new Class<?>[] {Supplier.class}, ctors[0].getParameterTypes());
+            for (var m : proxyClass.getDeclaredMethods()) {
+                assertNotEquals("$$setDelegate", m.getName(), "no setter can rewire the delegate");
+            }
         }
     }
 }

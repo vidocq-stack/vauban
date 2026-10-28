@@ -277,7 +277,7 @@ class ComponentProviderClassGeneratorTest {
 
     /**
      * Verifies {@code createClientProxy} instantiates the listed {@code <Bean>_ClientProxy} in-module
-     * (new + $$setDelegate) and returns {@code null} for an unlisted proxy. Both the synthetic proxy
+     * ({@code new <Bean>_ClientProxy(delegate)}) and returns {@code null} for an unlisted proxy. Both the synthetic proxy
      * class and the generated provider are loaded in the same {@link ByteClassLoader} (same package),
      * mirroring the production named-module case.
      */
@@ -288,9 +288,9 @@ class ComponentProviderClassGeneratorTest {
         var proxyFqn = pkg + ".Bean_ClientProxy";
         var providerFqn = pkg + "._GenProxyComponents";
 
-        // Minimal proxy, Bean_ClientProxy: a package-private Supplier field "$$delegate" (read back in the
-        // test), a public no-argument constructor that only calls super, and a public $$setDelegate(Supplier)
-        // method that stores its argument in that field.
+        // Minimal proxy, Bean_ClientProxy: a private final Supplier field "$$delegate" (read back in the
+        // test) and a single public (Supplier) constructor that calls super and stores its argument
+        // in that field — the generated client-proxy shape (vauban#227).
         var cdProxy = ClassDesc.of(proxyFqn);
         var cdObject = ConstantDescs.CD_Object;
         var cdSupplier = ClassDesc.of("java.util.function.Supplier");
@@ -298,14 +298,11 @@ class ComponentProviderClassGeneratorTest {
         byte[] proxyBytes = ClassFile.of().build(cdProxy, clb -> {
             clb.withFlags(ClassFile.ACC_PUBLIC | ClassFile.ACC_SUPER | ClassFile.ACC_FINAL);
             clb.withSuperclass(cdObject);
-            clb.withField("$$delegate", cdSupplier, 0); // package-private
-            clb.withMethodBody(ConstantDescs.INIT_NAME, mtdVoid, ClassFile.ACC_PUBLIC, cob -> {
-                cob.aload(0);
-                cob.invokespecial(cdObject, ConstantDescs.INIT_NAME, mtdVoid);
-                cob.return_();
-            });
-            clb.withMethodBody("$$setDelegate", MethodTypeDesc.of(ConstantDescs.CD_void, cdSupplier),
+            clb.withField("$$delegate", cdSupplier, ClassFile.ACC_PRIVATE | ClassFile.ACC_FINAL);
+            clb.withMethodBody(ConstantDescs.INIT_NAME, MethodTypeDesc.of(ConstantDescs.CD_void, cdSupplier),
                     ClassFile.ACC_PUBLIC, cob -> {
+                        cob.aload(0);
+                        cob.invokespecial(cdObject, ConstantDescs.INIT_NAME, mtdVoid);
                         cob.aload(0);
                         cob.aload(1);
                         cob.putfield(cdProxy, "$$delegate", cdSupplier);
@@ -327,7 +324,7 @@ class ComponentProviderClassGeneratorTest {
 
         var delegateField = proxyClass.getDeclaredField("$$delegate");
         delegateField.setAccessible(true);
-        assertSame(delegate, delegateField.get(proxy), "$$setDelegate must have stored the delegate");
+        assertSame(delegate, delegateField.get(proxy), "the (Supplier) constructor must have stored the delegate");
 
         assertNotSame(proxy, provider.createClientProxy(proxyFqn, delegate),
                 "each createClientProxy call returns a fresh proxy");

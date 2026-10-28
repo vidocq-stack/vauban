@@ -20,6 +20,8 @@
 package io.vidocq.vauban.weaver;
 
 import java.lang.classfile.ClassFile;
+import java.lang.classfile.Opcode;
+import java.lang.classfile.instruction.FieldInstruction;
 import java.lang.classfile.instruction.InvokeInstruction;
 import java.lang.constant.ClassDesc;
 import java.lang.constant.ConstantDescs;
@@ -29,6 +31,7 @@ import java.lang.constant.MethodTypeDesc;
 final class Fixtures {
 
     private static final ClassDesc CD_STRING = ClassDesc.of("java.lang.String");
+    private static final ClassDesc CD_SUPPLIER = ClassDesc.of("java.util.function.Supplier");
     private static final ClassDesc CD_PROXY_LINK = ClassDesc.of(ProxyLinkWeaver.PROXY_LINK_CLASS);
 
     private Fixtures() {}
@@ -62,6 +65,47 @@ final class Fixtures {
                                     MethodTypeDesc.of(ConstantDescs.CD_void, CD_STRING));
                             cob.return_();
                         }));
+    }
+
+    /**
+     * The client-proxy shape of vauban#227: {@code public class <proxy> extends <bean> { private final
+     * Supplier $$delegate; public <proxy>(Supplier d) { super((String) null); this.$$delegate = d; } }}
+     */
+    static byte[] proxyWithDelegateCtor(String proxyName, String beanName) {
+        var proxyDesc = ClassDesc.of(proxyName);
+        var beanDesc = ClassDesc.of(beanName);
+        return ClassFile.of().build(proxyDesc, clb -> clb
+                .withSuperclass(beanDesc)
+                .withField("$$delegate", CD_SUPPLIER, ClassFile.ACC_PRIVATE | ClassFile.ACC_FINAL)
+                .withMethodBody(ConstantDescs.INIT_NAME, MethodTypeDesc.of(ConstantDescs.CD_void, CD_SUPPLIER),
+                        ClassFile.ACC_PUBLIC, cob -> {
+                            cob.aload(0);
+                            cob.aconst_null();
+                            cob.invokespecial(beanDesc, ConstantDescs.INIT_NAME,
+                                    MethodTypeDesc.of(ConstantDescs.CD_void, CD_STRING));
+                            cob.aload(0);
+                            cob.aload(1);
+                            cob.putfield(proxyDesc, "$$delegate", CD_SUPPLIER);
+                            cob.return_();
+                        }));
+    }
+
+    /** {@code true} when the {@code (Supplier)} constructor still stores its argument in {@code $$delegate}. */
+    static boolean constructorStoresDelegate(byte[] classBytes) {
+        for (var method : ClassFile.of().parse(classBytes).methods()) {
+            if (!method.methodName().equalsString(ConstantDescs.INIT_NAME)
+                    || !method.methodTypeSymbol().equals(MethodTypeDesc.of(ConstantDescs.CD_void, CD_SUPPLIER))) {
+                continue;
+            }
+            for (var element : method.code().orElseThrow()) {
+                if (element instanceof FieldInstruction fi
+                        && fi.opcode() == Opcode.PUTFIELD
+                        && fi.name().equalsString("$$delegate")) {
+                    return true;
+                }
+            }
+        }
+        return false;
     }
 
     /** {@code true} when the (single) constructor chains {@code super((ProxyLink) null)}. */

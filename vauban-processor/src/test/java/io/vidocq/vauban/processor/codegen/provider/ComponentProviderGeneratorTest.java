@@ -233,7 +233,7 @@ class ComponentProviderGeneratorTest {
         assertTrue(s.contains("case \"app.Foo\" -> new app.Foo();"), s);
         assertTrue(s.contains("case \"app.Foo$$Intercepted\" -> $$construct(\"app.Foo$$Intercepted\", new Class<?>[0], new Object[0]);"), s);
         assertTrue(s.contains("case \"app.Svc$$Intercepted\" -> $$construct(\"app.Svc$$Intercepted\", new Class<?>[] {app.Repo.class, int.class}, args);"), s);
-        assertTrue(s.contains("var p = new app.Foo_ClientProxy();"), s);
+        assertTrue(s.contains("return new app.Foo_ClientProxy(delegate);"), s);
         assertTrue(s.contains("return $$proxy(\"app.Bar_ClientProxy\", delegate);"), s);
         assertTrue(s.contains("case \"lib.Thing_ClientProxy\" -> {\n                return $$proxy(\"app.Thing$$1f_ClientProxy\", delegate);"), s);
         assertTrue(s.contains("private static Object $$construct(String className, Class<?>[] parameterTypes, Object[] args) {"), s);

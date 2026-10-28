@@ -136,11 +136,9 @@ class IndexProxyInheritedMethodsTest {
             var beanCtor = bean.getDeclaredConstructor();
             beanCtor.setAccessible(true);
             Object contextual = beanCtor.newInstance();
-            var proxyCtor = proxy.getDeclaredConstructor();
+            var proxyCtor = proxy.getDeclaredConstructor(Supplier.class);
             proxyCtor.setAccessible(true);
-            Object instance = proxyCtor.newInstance();
-            proxy.getMethod(ClientProxyShape.SET_DELEGATE_METHOD, Supplier.class)
-                    .invoke(instance, (Supplier<Object>) () -> contextual);
+            Object instance = proxyCtor.newInstance((Supplier<Object>) () -> contextual);
 
             assertEquals(beanName, proxy.getMethod("own").invoke(instance),
                     "a declared method runs on the contextual instance");

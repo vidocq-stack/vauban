@@ -247,9 +247,7 @@ class DependencyEnhancerTest {
         // Delegation works through the module boundary: the proxy answers from the contextual
         // instance, and holds nothing itself.
         Object contextual = widget.getDeclaredConstructor().newInstance();
-        Object instance = proxy.getDeclaredConstructor().newInstance();
-        proxy.getMethod("$$setDelegate", java.util.function.Supplier.class)
-                .invoke(instance, (java.util.function.Supplier<Object>) () -> contextual);
+        Object instance = proxy.getDeclaredConstructor(java.util.function.Supplier.class).newInstance((java.util.function.Supplier<Object>) () -> contextual);
         assertEquals("widget", proxy.getMethod("describe").invoke(instance));
 
         // The rewritten `provides` is what the container reads: the generated provider must be
