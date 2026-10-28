@@ -32,6 +32,7 @@ import java.lang.annotation.Annotation;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.lang.reflect.Type;
+import java.util.HashMap;
 import java.util.LinkedHashSet;
 import java.util.Set;
 import java.util.function.BiFunction;
@@ -67,31 +68,28 @@ public final class VaubanInterceptor<T> implements Interceptor<T> {
                              ClassLoader classLoader) {
         this.descriptor = descriptor;
         this.instanceFactory = instanceFactory;
-        var name = descriptor.interceptorClass().value();
         try {
-            this.interceptorClass = (Class<T>) (classLoader != null
-                    ? Class.forName(name, false, classLoader)
-                    : DeploymentClasses.load(name));
+            this.interceptorClass = (Class<T>) DeploymentClasses.load(descriptor.interceptorClass().value(), classLoader);
         } catch (ClassNotFoundException e) {
             throw new IllegalArgumentException("Interceptor class not found: " + descriptor.interceptorClass(), e);
         }
     }
 
+    /**
+     * The annotations of the interceptor class whose type is one of its bindings, in the descriptor's order. Read off
+     * the class itself: a binding type the interceptor does not carry, or whose class cannot be loaded, is not one.
+     */
     @Override
     public Set<Annotation> getInterceptorBindings() {
+        var carried = new HashMap<String, Annotation>();
+        for (var ann : interceptorClass.getAnnotations()) {
+            carried.put(ann.annotationType().getName(), ann);
+        }
         var result = new LinkedHashSet<Annotation>();
         for (var binding : descriptor.bindings()) {
-            try {
-                @SuppressWarnings("unchecked")
-                var annClass = (Class<? extends Annotation>) Class.forName(binding.value(), false,
-                        interceptorClass.getClassLoader());
-                // Get the annotation from the interceptor class itself
-                var ann = interceptorClass.getAnnotation(annClass);
-                if (ann != null) {
-                    result.add(ann);
-                }
-            } catch (ClassNotFoundException _) {
-                // a binding type the interceptor's class loader cannot see is not one of its bindings
+            var ann = carried.get(binding.value());
+            if (ann != null) {
+                result.add(ann);
             }
         }
         return result;

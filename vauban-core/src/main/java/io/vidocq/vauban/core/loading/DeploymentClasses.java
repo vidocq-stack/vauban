@@ -40,7 +40,17 @@ public final class DeploymentClasses {
      * @throws ClassNotFoundException when no loader visible from here defines it
      */
     public static Class<?> load(String name) throws ClassNotFoundException {
-        var loader = Thread.currentThread().getContextClassLoader();
-        return loader != null ? Class.forName(name, false, loader) : Class.forName(name);
+        return load(name, null);
+    }
+
+    /**
+     * The class the index names, through {@code loader} — the container's bean class loader, once the build has
+     * restored the caller's context loader — or, when it is {@code null}, the way {@link #load(String)} does.
+     *
+     * @throws ClassNotFoundException when no loader visible from here defines it
+     */
+    public static Class<?> load(String name, ClassLoader loader) throws ClassNotFoundException {
+        var effective = loader != null ? loader : Thread.currentThread().getContextClassLoader();
+        return effective != null ? Class.forName(name, false, effective) : Class.forName(name);
     }
 }
