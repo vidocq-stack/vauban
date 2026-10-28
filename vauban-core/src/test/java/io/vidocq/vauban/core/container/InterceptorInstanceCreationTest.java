@@ -153,7 +153,7 @@ class InterceptorInstanceCreationTest {
         private final Label label;
         private final Clock clock;
 
-        /** The no-arg constructor an interceptor must have; the container prefers the {@code @Inject} one. */
+        /** A no-arg constructor as well: the container prefers the {@code @Inject} one. */
         public CountingInterceptor() {
             this(() -> "none", new Clock());
         }

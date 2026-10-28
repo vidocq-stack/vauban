@@ -294,19 +294,31 @@ public final class DeploymentValidator {
         }
     }
 
-    /** CDI spec: Interceptors must have a non-private no-arg constructor. */
+    /**
+     * An interceptor is a managed bean, so it needs a bean constructor (CDI 4.1 "Declaring a bean constructor"):
+     * exactly one {@code @Inject} constructor, or else a non-private no-arg constructor (VAU-INT-009).
+     */
     private void validateInterceptorConstructors(List<ValidationError> errors) {
         for (var interceptor : resolver.getInterceptors()) {
             try {
                 var clazz = Class.forName(interceptor.interceptorClass().value());
-                boolean hasNoArgCtor = java.util.Arrays.stream(clazz.getDeclaredConstructors())
+                var constructors = clazz.getDeclaredConstructors();
+                long injectCtors = java.util.Arrays.stream(constructors)
+                        .filter(ctor -> ctor.isAnnotationPresent(jakarta.inject.Inject.class))
+                        .count();
+                boolean hasNoArgCtor = java.util.Arrays.stream(constructors)
                         .anyMatch(ctor -> ctor.getParameterCount() == 0
                                 && !java.lang.reflect.Modifier.isPrivate(ctor.getModifiers()));
-                if (!hasNoArgCtor) {
+                String problem = null;
+                if (injectCtors > 1) {
+                    problem = " declares more than one @Inject constructor";
+                } else if (injectCtors == 0 && !hasNoArgCtor) {
+                    problem = " must have a non-private no-arg constructor or an @Inject constructor";
+                }
+                if (problem != null) {
                     errors.add(new ValidationError(
                             ValidationError.Kind.DEFINITION_ERROR,
-                            "Interceptor " + interceptor.interceptorClass()
-                                    + " must have a non-private no-arg constructor",
+                            "Interceptor " + interceptor.interceptorClass() + problem,
                             null));
                 }
             } catch (ClassNotFoundException _) {

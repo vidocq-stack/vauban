@@ -30,6 +30,7 @@ import io.vidocq.vauban.core.types.AssignabilityRules;
 import io.vidocq.vauban.indexer.IndexBuilder;
 import io.vidocq.vauban.indexer.model.DotName;
 import io.vidocq.vauban.indexer.model.TypeInfo;
+import jakarta.inject.Inject;
 import jakarta.interceptor.Interceptor;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -97,6 +98,26 @@ class DeploymentValidatorReflectionChecksTest {
     public static class ArgumentConstructor {
         public ArgumentConstructor(String argument) {
             argument.length();
+        }
+    }
+
+    /** No no-arg constructor, but a bean constructor: CDI 4.1 "Declaring a bean constructor". */
+    public static class InjectConstructor {
+        @Inject
+        InjectConstructor(String argument) {
+            argument.length();
+        }
+    }
+
+    public static class TwoInjectConstructors {
+        @Inject
+        public TwoInjectConstructors(String argument) {
+            argument.length();
+        }
+
+        @Inject
+        public TwoInjectConstructors(Integer argument) {
+            argument.intValue();
         }
     }
 
@@ -204,7 +225,7 @@ class DeploymentValidatorReflectionChecksTest {
     }
 
     @Test
-    @DisplayName("an interceptor without a non-private no-arg constructor is a definition error")
+    @DisplayName("an interceptor with neither a non-private no-arg nor an @Inject constructor is a definition error")
     void interceptorConstructors() {
         var interceptors = List.of(
                 new InterceptorDescriptor(DotName.of(PrivateConstructor.class.getName()), Set.of(), "around", 10),
@@ -217,6 +238,20 @@ class DeploymentValidatorReflectionChecksTest {
         assertEquals(2, messages.size(), messages::toString);
         assertTrue(messages.stream().allMatch(m -> m.contains("must have a non-private no-arg constructor")),
                 messages::toString);
+    }
+
+    @Test
+    @DisplayName("an interceptor may have one @Inject constructor instead of a no-arg one, but not two")
+    void interceptorInjectConstructors() {
+        var interceptors = List.of(
+                new InterceptorDescriptor(DotName.of(InjectConstructor.class.getName()), Set.of(), "around", 10),
+                new InterceptorDescriptor(DotName.of(TwoInjectConstructors.class.getName()), Set.of(), "around", 10));
+
+        var messages = messages(List.of(), interceptors);
+
+        assertEquals(1, messages.size(), messages::toString);
+        assertTrue(messages.getFirst().contains(TwoInjectConstructors.class.getName()
+                + " declares more than one @Inject constructor"), messages::toString);
     }
 
     @Test

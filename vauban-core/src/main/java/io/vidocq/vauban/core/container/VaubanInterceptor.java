@@ -32,6 +32,7 @@ import java.lang.reflect.Method;
 import java.lang.reflect.Type;
 import java.util.LinkedHashSet;
 import java.util.Set;
+import java.util.function.BiFunction;
 
 /**
  * Vauban implementation of {@link Interceptor} backed by an {@link InterceptorDescriptor}.
@@ -41,9 +42,26 @@ public final class VaubanInterceptor<T> implements Interceptor<T> {
     private final InterceptorDescriptor descriptor;
     private final Class<T> interceptorClass;
 
-    @SuppressWarnings("unchecked")
+    /**
+     * How the container creates an instance of this interceptor, through its bean constructor, {@code @Inject} one
+     * included (VAU-INT-009); {@code null} outside a container, where only a no-arg constructor can be called.
+     */
+    private final BiFunction<InterceptorDescriptor, CreationalContext<?>, Object> instanceFactory;
+
     public VaubanInterceptor(InterceptorDescriptor descriptor) {
+        this(descriptor, null);
+    }
+
+    /**
+     * @param instanceFactory the container's own interceptor creation, the one interception uses, so that
+     *                        {@link #create} builds the instance the same way: constructor injection, field
+     *                        injection, {@code @PostConstruct}
+     */
+    @SuppressWarnings("unchecked")
+    public VaubanInterceptor(InterceptorDescriptor descriptor,
+                             BiFunction<InterceptorDescriptor, CreationalContext<?>, Object> instanceFactory) {
         this.descriptor = descriptor;
+        this.instanceFactory = instanceFactory;
         try {
             this.interceptorClass = (Class<T>) Class.forName(descriptor.interceptorClass().value());
         } catch (ClassNotFoundException e) {
@@ -147,8 +165,14 @@ public final class VaubanInterceptor<T> implements Interceptor<T> {
     }
 
     @Override
-    @SuppressWarnings("java:S112") // CDI spec: container exceptions propagate as RuntimeException
+    @SuppressWarnings({"unchecked", "java:S112"}) // CDI spec: container exceptions propagate as RuntimeException
     public T create(CreationalContext<T> creationalContext) {
+        if (instanceFactory != null) {
+            // A context of its own when the caller passes none: the instance is created, not looked up in one.
+            CreationalContext<?> ctx = creationalContext != null
+                    ? creationalContext : new io.vidocq.vauban.core.context.CreationalContextImpl<>();
+            return (T) instanceFactory.apply(descriptor, ctx);
+        }
         try {
             return interceptorClass.getDeclaredConstructor().newInstance();
         } catch (Exception e) {

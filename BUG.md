@@ -5,6 +5,39 @@ suspected cause, status. Updated on every investigation.
 
 ---
 
+## VAU-INT-009 — An interceptor with an `@Inject` constructor and no no-arg constructor fails deployment
+- **Date**: 2026-10-28 — **Status**: FIXED (fix/interceptor-inject-constructor)
+- **Severity**: medium (a valid CDI interceptor is refused at boot; the workaround is an extra no-arg constructor)
+
+### Symptom
+An interceptor declaring only an `@Inject` bean constructor, e.g.
+`@Inject GreetingInterceptor(@Formal Salutation salutation)`, failed the boot with a `DefinitionException`:
+`Interceptor … must have a non-private no-arg constructor`. CDI treats an interceptor as a managed bean, so its bean
+constructor may be an `@Inject` one (CDI 4.1 "Declaring a bean constructor"); the CDI TCK uses such interceptors
+(`builtin.metadata.broken.typeparam.interceptor.InterceptorConstructor`, `InterceptedBeanConstructor`). Besides, the
+`Interceptor` bean `BeanManager.resolveInterceptors` returns created its instance with `getDeclaredConstructor()`, so
+its `create` failed for such an interceptor, and skipped the injection and `@PostConstruct` the container performs.
+
+### Repro
+`InterceptorInjectConstructorTest`: boot a container with an interceptor whose only constructor is
+`@Inject GreetingInterceptor(@Formal Salutation)`, call an intercepted method, and create the interceptor through
+`resolveInterceptors(AROUND_INVOKE, …).getFirst().create(ctx)`. `DeploymentValidatorReflectionChecksTest
+.interceptorInjectConstructors` checks the rule on descriptors.
+
+### Cause
+`DeploymentValidator.validateInterceptorConstructors` required a non-private no-arg constructor and ignored
+`@Inject` constructors. The interception path (`InterceptorBeanWrapper.findConstructor`, the generated
+`_VaubanComponents` arm) already picked the `@Inject` constructor and resolved its parameters; `VaubanInterceptor`
+had its own reflective, no-arg creation.
+
+### Fix
+An interceptor needs exactly one `@Inject` constructor, or else a non-private no-arg constructor: two `@Inject`
+constructors, or neither, is a definition error. `VaubanInterceptor.create` goes through the container's own
+interceptor creation (`InterceptorManager.getOrCreateInstance`), with a creational context of its own when given
+none; the reflective no-arg creation stays only for an instance built outside a container.
+
+---
+
 ## VAU-APT-005 — Built by Eclipse's compiler (Eclipse, VS Code), an application loses its beans without a word
 - **Date**: 2026-10-25 — **Status**: FIXED (fix/eclipse-apt-file-object)
 - **Severity**: high (the application starts and answers 404 on its own REST resources; nothing says why)

@@ -161,6 +161,44 @@ class ComponentProviderCompileTimeTest {
     }
 
     @Test
+    @DisplayName("an interceptor with only an @Inject constructor is created in-module through it (VAU-INT-009)")
+    void interceptorWithInjectConstructorOnly() throws Exception {
+        var result = compile("AuditInterceptor", """
+                package app;
+
+                @jakarta.interceptor.InterceptorBinding
+                @java.lang.annotation.Retention(java.lang.annotation.RetentionPolicy.RUNTIME)
+                @java.lang.annotation.Target({java.lang.annotation.ElementType.TYPE, java.lang.annotation.ElementType.METHOD})
+                @interface Audited {
+                }
+
+                @Audited
+                @jakarta.interceptor.Interceptor
+                @jakarta.annotation.Priority(jakarta.interceptor.Interceptor.Priority.APPLICATION)
+                public class AuditInterceptor {
+                    private final Journal journal;
+                    @jakarta.inject.Inject
+                    public AuditInterceptor(Journal journal) { this.journal = journal; }
+                    @jakarta.interceptor.AroundInvoke
+                    public Object around(jakarta.interceptor.InvocationContext context) throws Exception {
+                        journal.record();
+                        return context.proceed();
+                    }
+                }
+
+                @jakarta.enterprise.context.Dependent
+                class Journal {
+                    void record() { }
+                }
+                """);
+
+        assertTrue(result.success(), "compilation should succeed. Messages: " + result.messages());
+        var src = Files.readString(result.genDir().resolve("app/_VaubanComponents.java"));
+        assertTrue(src.contains(
+                "case \"app.AuditInterceptor\" -> new app.AuditInterceptor((app.Journal) args[0]);"), src);
+    }
+
+    @Test
     @DisplayName("a nested bean is carried by the provider, keyed binary and built canonical")
     void nestedBeanIsCarriedByTheProvider() throws Exception {
         var result = compile("Outer", """
