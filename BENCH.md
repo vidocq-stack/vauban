@@ -6,6 +6,63 @@ Every published number (README, commit, post) must point to an entry here.
 
 ---
 
+## BENCH-20261028-06 — Classes emitted as bytecode instantiated through a cached constructor handle (vauban#227)
+
+- **Date**: 2026-10-28
+- **Commit**: branch `perf/227-construct-handle-cache` on a862f8f0: the provider calls one holder class `$$Ctor<n>`
+  per constructor, whose `MethodHandle` is looked up once, instead of `$$construct` (`Class.forName`,
+  `findConstructor`, `invokeWithArguments` on every call)
+- **JVM**: Temurin 25+36-LTS, default flags
+- **Hardware**: Apple M5 Max / 18 cores (6 performance, 12 efficiency) / 128 GB RAM
+- **OS**: macOS 27.0.1 (arm64)
+- **Exact command**:
+  ```bash
+  ./mvnw -ntp clean install -DskipTests        # Maven 3.9.16
+  java -jar vauban-bench/target/benchmarks.jar 'GeneratedCodeBenchmark.*Creation' \
+      -f 3 -wi 5 -i 5 -w 2s -r 3s -prof gc
+  ```
+- **Results**:
+  ```
+  Benchmark                                                              Mode  Cnt     Score    Error   Units
+  GeneratedCodeBenchmark.bytecodeInterceptedCreation                     avgt   15  2715,231 ± 25,821   ns/op
+  GeneratedCodeBenchmark.bytecodeInterceptedCreation:gc.alloc.rate.norm  avgt   15  8436,706 ± 32,035    B/op
+  GeneratedCodeBenchmark.interceptedCreation                             avgt   15  2609,686 ± 30,743   ns/op
+  GeneratedCodeBenchmark.interceptedCreation:gc.alloc.rate.norm          avgt   15  7870,085 ± 55,124    B/op
+  ```
+- **Comparison with the previous run** (BENCH-20261028-05, same day, same machine, same command):
+
+  | Benchmark | before | after | time | allocation |
+  |---|---|---|---|---|
+  | `bytecodeInterceptedCreation` | 3624 ns, 9208 B/op | 2715 ns, 8437 B/op | −25 % | −8 % |
+  | `interceptedCreation` | 2648 ns, 7923 B/op | 2610 ns, 7870 B/op | within error | within error |
+
+- **Notes**: the extra cost of a class emitted as bytecode over one the provider creates with `new` falls from
+  about 980 ns to about 105 ns per creation. The rest is the `invokeExact` through a handle adapted to
+  `(Object…)Object`, against a direct `new`.
+
+---
+
+## BENCH-20261028-05 — Reference before the constructor handle cache (vauban#227)
+
+- **Date**: 2026-10-28
+- **Commit**: a862f8f0 (branch `perf/227-construct-handle-cache`: `main` 68ce1820 plus the
+  `bytecodeInterceptedCreation` benchmark, whose bean `AuditedHiddenTally` inherits a method its package cannot
+  name, so its intercepted subclass is emitted as bytecode, BUG-20261004-09)
+- **JVM / Hardware / OS**: as BENCH-20261028-06
+- **Exact command**: as BENCH-20261028-06
+- **Results**:
+  ```
+  Benchmark                                                              Mode  Cnt     Score    Error   Units
+  GeneratedCodeBenchmark.bytecodeInterceptedCreation                     avgt   15  3624,156 ± 97,056   ns/op
+  GeneratedCodeBenchmark.bytecodeInterceptedCreation:gc.alloc.rate.norm  avgt   15  9208,061 ± 144,565   B/op
+  GeneratedCodeBenchmark.interceptedCreation                             avgt   15  2647,992 ± 32,049   ns/op
+  GeneratedCodeBenchmark.interceptedCreation:gc.alloc.rate.norm          avgt   15  7922,697 ± 134,323   B/op
+  ```
+- **Comparison with the previous run**: first run of `bytecodeInterceptedCreation`. `interceptedCreation` 2446 ns
+  in BENCH-20261028-04, on another branch.
+
+---
+
 ## BENCH-20261028-04 — Intercepted call handed to `InterceptorManager.intercept` (vauban#227)
 
 - **Date**: 2026-10-28

@@ -19,8 +19,12 @@ Reference: BENCH-20261028-01 (`GeneratedCodeBenchmark`). Hot path: PR #228 (`per
       deployment classes load through `DeploymentClasses` (now in the non-exported `loading`
       package) or the container's loader; `SingleArgumentForNameTest` lists the deliberate
       fallbacks. Branch `fix/227-class-for-name-loaders`.
-- [ ] Next: encapsulation (private bridges, constructor-passed state, final proxy delegate),
-      `$$construct` handle cache, generated-source noise; then the duplication items of #227.
+- [x] Encapsulation: private `$$super$` bridges (#231), final client-proxy delegate (#232).
+- [x] Intercepted call handed to `InterceptorManager.intercept` (#233, BENCH-20261028-04).
+- [x] `$$construct` replaced by one cached constructor handle per class emitted as bytecode
+      (BENCH-20261028-06). Branch `perf/227-construct-handle-cache`.
+- [ ] Next: constructor-passed state of the intercepted subclass, generated-source noise; then the
+      duplication items of #227.
 
 # BCE-added public field injection — 2026-10-09
 
