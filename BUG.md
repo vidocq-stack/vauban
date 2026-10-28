@@ -3116,3 +3116,18 @@ The same goes for a normal-scoped producer of such a class (`Dollar_Produced$$�
 - **Hypothèse de cause** : the rule is written twice (vauban#227, duplication), and the parity test (`ProducerProxyEligibilityParityTest`) compares only the two `Reason` enums, not verdicts; the verdict cross-check covered none of these shapes.
 - **Investigations** :
   - 2026-10-28 : found by the vauban#227 duplication survey; each fixture red on the old code (E1 on the bytecode path, E2 and E3 on the source path). Both copies now follow one rule: walking upwards, the most derived override of a signature decides (core: erased signature, a bridge marking the signature it stands for; processor: the signature as a member of the type, `InterceptedShapeFromElements.memberSignatureKey`); `private` and `static` methods override nothing; `finalize()` and `clone()` are never forwarded. The rules are to be merged into one over a shared type view (next step of vauban#227).
+
+## BUG-20261028-03 — A final method hidden behind a protected one makes an unproxyable produced type look placeable
+
+- **Date** : 2026-10-28
+- **Statut** : FIXED (branch `refactor/227-type-view`)
+- **Module touché** : `vauban-core` `io.vidocq.vauban.core.proxy.ProducerProxyEligibility` (and its former processor copy)
+- **Symptôme** : the methods verdict was the first obstacle met, in the order the model lists the methods. A type holding a `protected` method listed before a `public final` one got `PROTECTED_VIRTUALS` instead of `FINAL_VIRTUALS`; `PROTECTED_VIRTUALS` is placeable, so a co-located proxy was planned for a type CDI 4.1 §3.10 declares unproxyable. Likewise a package-private method after a protected one was reported as `PROTECTED_VIRTUALS`.
+- **Reproduction minimale** :
+  ```
+  ./mvnw -pl vauban-core test -Dtest=ProducerProxyEligibilityVerdictTest
+  # fixtures FinalAndProtected, ProtectedAndPackagePrivate
+  ```
+- **Hypothèse de cause** : early return on the first non-public method, with no ordering between obstacles; `getDeclaredMethods()` and `getEnclosedElements()` list methods in different orders, so the two build paths could also disagree.
+- **Investigations** :
+  - 2026-10-28 : both fixtures red on the old code (`PROTECTED_VIRTUALS` for each). The rule now keeps the worst verdict (final, then package-private, then protected), whatever the order; it is written once, over `TypeView` (`ClassTypeView` for a `Class`, `ElementTypeView` for a `TypeElement`), and the processor copy and its enum parity test are gone (vauban#227).

@@ -127,6 +127,27 @@ class ProducerProxyEligibilityVerdictTest {
         }
     }
 
+    /** A final method makes it unproxyable anywhere, whatever else it holds and in whatever order. */
+    public static class FinalAndProtected {
+        protected void hook() {
+        }
+
+        public final void pinned() {
+        }
+
+        protected void otherHook() {
+        }
+    }
+
+    /** A package-private method is the stronger of the two placeable obstacles. */
+    public static class ProtectedAndPackagePrivate {
+        protected void hook() {
+        }
+
+        void packageHook() {
+        }
+    }
+
     static Stream<Arguments> verdicts() {
         return Stream.of(
                 Arguments.of(PrivateConstructorOnly.class, Reason.NO_ACCESSIBLE_CTOR),
@@ -139,7 +160,9 @@ class ProducerProxyEligibilityVerdictTest {
                 Arguments.of(FinalMethod.class, Reason.FINAL_VIRTUALS),
                 Arguments.of(NeverForwarded.class, Reason.ELIGIBLE),
                 Arguments.of(FinalizeWithParameter.class, Reason.PROTECTED_VIRTUALS),
-                Arguments.of(CloneWithParameter.class, Reason.PROTECTED_VIRTUALS));
+                Arguments.of(CloneWithParameter.class, Reason.PROTECTED_VIRTUALS),
+                Arguments.of(FinalAndProtected.class, Reason.FINAL_VIRTUALS),
+                Arguments.of(ProtectedAndPackagePrivate.class, Reason.PACKAGE_PRIVATE_VIRTUALS));
     }
 
     @ParameterizedTest

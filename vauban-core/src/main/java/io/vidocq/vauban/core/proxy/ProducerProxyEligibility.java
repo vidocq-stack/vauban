@@ -19,15 +19,17 @@
  */
 package io.vidocq.vauban.core.proxy;
 
-import java.lang.reflect.Constructor;
-import java.lang.reflect.Method;
-import java.lang.reflect.Modifier;
+import io.vidocq.vauban.core.codegen.ClassTypeView;
+import io.vidocq.vauban.core.codegen.TypeView;
+import io.vidocq.vauban.core.codegen.TypeView.Flag;
+
+import java.util.HashSet;
+import java.util.List;
 
 /**
- * Reflection front-end of the "fully-public produced type" predicate (issue #42), used by the
- * Maven plugin / runtime bytecode path. Mirrors the compile-time
- * {@code io.vidocq.vauban.processor.codegen.proxy.ProducerProxyEligibility} (which works on
- * {@code javax.lang.model} elements): a produced class type can be proxied at build time in the
+ * The "fully-public produced type" predicate (issue #42), the one rule of every build path: the
+ * Maven plugin and the run-time fallback judge a {@link Class}, the annotation processor a
+ * {@code TypeElement}, both through a {@link TypeView}. A produced class type can be proxied at build time in the
  * producer's own package only when it is fully public, since a cross-package proxy forwards every
  * method through a cast to the external type (reaching only public members) and chains to a
  * public/protected super constructor.
@@ -71,6 +73,15 @@ public final class ProducerProxyEligibility {
 
     /** The verdict for {@code type}. */
     public static Reason of(Class<?> type) {
+        return of(ClassTypeView.of(type));
+    }
+
+    /**
+     * The verdict for {@code type}, whatever model it comes from: the same rule judges a {@link Class} (run-time
+     * fallback, Maven plugin) and a {@code TypeElement} (annotation processor), so both build paths agree
+     * (vauban#227, BUG-20261028-02).
+     */
+    public static Reason of(TypeView type) {
         var verdict = declarationVerdict(type);
         if (!verdict.eligible()) {
             return verdict;
@@ -83,25 +94,23 @@ public final class ProducerProxyEligibility {
     }
 
     /** What the declaration of {@code type} alone says: its kind, its modifiers, its nesting. */
-    private static Reason declarationVerdict(Class<?> type) {
-        if (type.isInterface() || type.isEnum() || type.isAnnotation()
-                || type.isArray() || type.isPrimitive() || type.isRecord()) {
+    private static Reason declarationVerdict(TypeView type) {
+        if (type.kind() != TypeView.Kind.CLASS) {
             return Reason.NOT_A_CLASS;
         }
-        int mods = type.getModifiers();
-        if (!Modifier.isPublic(mods)) {
+        if (!type.is(Flag.PUBLIC)) {
             return Reason.NOT_PUBLIC;
         }
-        if (Modifier.isFinal(mods)) {
+        if (type.is(Flag.FINAL)) {
             return Reason.FINAL_CLASS;
         }
-        if (type.isSealed()) {
+        if (type.is(Flag.SEALED)) {
             return Reason.SEALED_CLASS;
         }
-        if (Modifier.isAbstract(mods)) {
+        if (type.is(Flag.ABSTRACT)) {
             return Reason.ABSTRACT_CLASS;
         }
-        if (type.getEnclosingClass() != null && !Modifier.isStatic(mods)) {
+        if (type.isNested() && !type.is(Flag.STATIC)) {
             return Reason.INACCESSIBLE_NESTED;
         }
         return Reason.ELIGIBLE;
@@ -111,28 +120,26 @@ public final class ProducerProxyEligibility {
      * The constructor the shape chains super() to must be reachable from another package — public
      * or protected.
      */
-    private static Reason constructorVerdict(Class<?> type) {
+    private static Reason constructorVerdict(TypeView type) {
         var chosen = simplestConstructor(type);
         if (chosen == null) {
             return Reason.NO_ACCESSIBLE_CTOR;
         }
-        int cm = chosen.getModifiers();
-        return !Modifier.isPublic(cm) && !Modifier.isProtected(cm) ? Reason.NO_ACCESSIBLE_CTOR : Reason.ELIGIBLE;
+        return chosen.is(Flag.PUBLIC) || chosen.is(Flag.PROTECTED) ? Reason.ELIGIBLE : Reason.NO_ACCESSIBLE_CTOR;
     }
 
     /**
-     * Mirrors {@code RuntimeClientProxyGenerator.findSimplestConstructor}: the (ProxyLink)
-     * constructor first, else the one with the fewest parameters, among non-private constructors;
-     * {@code null} when there is none.
+     * The constructor a client proxy chains to: the (ProxyLink) constructor first, else the one with the fewest
+     * parameters, among non-private constructors; {@code null} when there is none.
      */
-    private static Constructor<?> simplestConstructor(Class<?> type) {
-        Constructor<?> chosen = null;
-        for (Constructor<?> c : type.getDeclaredConstructors()) {
-            if (!Modifier.isPrivate(c.getModifiers())) {
-                if (ClientProxyShape.isProxyLinkConstructor(c)) {
+    public static TypeView.Member simplestConstructor(TypeView type) {
+        TypeView.Member chosen = null;
+        for (var c : type.constructors()) {
+            if (!c.is(Flag.PRIVATE)) {
+                if (c.isProxyLinkConstructor()) {
                     return c;
                 }
-                if (chosen == null || c.getParameterCount() < chosen.getParameterCount()) {
+                if (chosen == null || c.parameterCount() < chosen.parameterCount()) {
                     chosen = c;
                 }
             }
@@ -144,54 +151,48 @@ public final class ProducerProxyEligibility {
      * Every overridable method the proxy would forward (walking the hierarchy, as the bytecode
      * shape does) must be public; a non-static final method makes the type unproxyable (§3.10).
      * Walking upwards, the most derived override of a signature decides: the method it overrides is
-     * not the one the proxy forwards. A bridge method marks the signature it stands for as overridden.
+     * not the one the proxy forwards. A bridge marks the signature it stands for as overridden. The
+     * worst obstacle is the verdict, whatever the order the model lists the methods in: a final
+     * method, then a package-private one, then a protected one.
      */
-    private static Reason methodsVerdict(Class<?> type) {
-        var seen = new java.util.HashSet<String>();
-        for (Class<?> c = type; c != null && c != Object.class; c = c.getSuperclass()) {
-            for (Method m : c.getDeclaredMethods()) {
-                int mm = m.getModifiers();
+    private static Reason methodsVerdict(TypeView type) {
+        var seen = new HashSet<String>();
+        var verdict = Reason.ELIGIBLE;
+        for (TypeView c = type; c != null; c = c.superclass()) {
+            for (var m : c.methods()) {
                 // A private or static method overrides nothing; a signature already met is overridden.
-                if (Modifier.isStatic(mm) || Modifier.isPrivate(mm) || !seen.add(signatureKey(m))) {
+                if (m.is(Flag.STATIC) || m.is(Flag.PRIVATE) || !seen.add(m.overrideKey()) || !isForwarded(m)) {
                     continue;
                 }
-                var verdict = methodVerdict(m);
-                if (!verdict.eligible()) {
-                    return verdict;
-                }
+                verdict = worse(verdict, methodVerdict(m));
             }
         }
-        return Reason.ELIGIBLE;
+        return verdict;
     }
 
-    /** Name plus erased parameter types: what a subclass method overrides. */
-    private static String signatureKey(Method m) {
-        return m.getName() + java.util.Arrays.toString(m.getParameterTypes());
-    }
-
-    private static Reason methodVerdict(Method m) {
-        if (!isForwarded(m)) {
-            return Reason.ELIGIBLE;
-        }
-        int mm = m.getModifiers();
-        if (Modifier.isFinal(mm)) {
+    private static Reason methodVerdict(TypeView.Member m) {
+        if (m.is(Flag.FINAL)) {
             return Reason.FINAL_VIRTUALS;
         }
-        if (Modifier.isAbstract(mm) || Modifier.isPublic(mm)) {
+        if (m.is(Flag.ABSTRACT) || m.is(Flag.PUBLIC)) {
             return Reason.ELIGIBLE;
         }
-        return Modifier.isProtected(mm) ? Reason.PROTECTED_VIRTUALS : Reason.PACKAGE_PRIVATE_VIRTUALS;
+        return m.is(Flag.PROTECTED) ? Reason.PROTECTED_VIRTUALS : Reason.PACKAGE_PRIVATE_VIRTUALS;
     }
 
-    /** Whether a proxy forwards {@code m}: an overridable method that is neither generated nor a finalizer or clone. */
-    private static boolean isForwarded(Method m) {
-        int mm = m.getModifiers();
-        if (Modifier.isStatic(mm) || Modifier.isPrivate(mm) || m.isSynthetic() || m.isBridge()) {
-            return false;
-        }
-        var name = m.getName();
-        return !(name.startsWith("$$")
-                || (name.equals("finalize") && m.getParameterCount() == 0)
-                || (name.equals("clone") && m.getParameterCount() == 0));
+    /** The worse of two method verdicts: a final method, then a package-private one, then a protected one. */
+    private static Reason worse(Reason a, Reason b) {
+        return METHOD_SEVERITY.indexOf(a) >= METHOD_SEVERITY.indexOf(b) ? a : b;
+    }
+
+    private static final List<Reason> METHOD_SEVERITY = List.of(Reason.ELIGIBLE, Reason.PROTECTED_VIRTUALS,
+            Reason.PACKAGE_PRIVATE_VIRTUALS, Reason.FINAL_VIRTUALS);
+
+    /** Whether a proxy forwards {@code m}: neither a bridge, nor generated plumbing, nor a finalizer or clone. */
+    private static boolean isForwarded(TypeView.Member m) {
+        var name = m.name();
+        return !(m.isBridge() || name.startsWith("$$")
+                || (name.equals("finalize") && m.parameterCount() == 0)
+                || (name.equals("clone") && m.parameterCount() == 0));
     }
 }

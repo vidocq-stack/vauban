@@ -27,7 +27,8 @@ import io.vidocq.vauban.processor.codegen.proxy.ClientProxyGenerator;
 import io.vidocq.vauban.processor.codegen.proxy.ClientProxyShapeFromElements;
 import io.vidocq.vauban.processor.codegen.proxy.ClientProxySourceRenderer;
 import io.vidocq.vauban.processor.codegen.proxy.InterfaceProxySourceRenderer;
-import io.vidocq.vauban.processor.codegen.proxy.ProducerProxyEligibility;
+import io.vidocq.vauban.core.proxy.ProducerProxyEligibility;
+import io.vidocq.vauban.processor.codegen.ElementTypeView;
 import io.vidocq.vauban.processor.codegen.provider.AnnotationArtefacts;
 import io.vidocq.vauban.processor.codegen.provider.ComponentProviderGenerator;
 import io.vidocq.vauban.processor.codegen.interceptor.InterceptedShapeFromElements;
@@ -818,7 +819,7 @@ public class VaubanProcessor extends AbstractProcessor {
         }
         var producedFqn =
                 processingEnv.getElementUtils().getBinaryName(producedType).toString();
-        var verdict = ProducerProxyEligibility.of(producedType, processingEnv.getTypeUtils());
+        var verdict = ProducerProxyEligibility.of(ElementTypeView.of(producedType, processingEnv.getTypeUtils()));
         if (verdict.eligible()) {
             generateClassProducerProxy(bean, producedType, producedFqn, generation);
         } else {

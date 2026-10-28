@@ -20,7 +20,9 @@
 package io.vidocq.vauban.processor.codegen.proxy;
 
 import io.vidocq.vauban.core.proxy.ClientProxyShape;
+import io.vidocq.vauban.core.proxy.ProducerProxyEligibility;
 import io.vidocq.vauban.core.proxy.RuntimeClientProxyGenerator;
+import io.vidocq.vauban.processor.codegen.ElementTypeView;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
@@ -51,8 +53,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * Cross-check between the two client-proxy code paths, which must not diverge: the APT/source path
- * ({@link ProducerProxyEligibility}, {@link ClientProxyShapeFromElements}) and the bytecode path
- * ({@link io.vidocq.vauban.core.proxy.ProducerProxyEligibility}, {@link RuntimeClientProxyGenerator}).
+ * ({@link ProducerProxyEligibility} over an {@link ElementTypeView}, {@link ClientProxyShapeFromElements}) and the bytecode path
+ * (the same rule over a {@code Class}, {@link RuntimeClientProxyGenerator}).
  *
  * <p>The bytecode path walks the superclass hierarchy; the source path historically looked only at
  * {@code getEnclosedElements()} — declared methods. That asymmetry silently produced a proxy which
@@ -140,6 +142,13 @@ class ClientProxyInheritanceCrossCheckTest {
         public String echo(String value) { return "child " + value; }
     }
 
+    /** Unproxyable anywhere: the final method decides, whatever protected methods come first. */
+    public static class FinalAmongProtected extends ProtectedHookBase {
+        protected String another() { return "another"; }
+
+        public final String pinned() { return "pinned"; }
+    }
+
     // ---- Eligibility parity ----
 
     @Test
@@ -172,17 +181,26 @@ class ClientProxyInheritanceCrossCheckTest {
     void overridesAndUnforwardedMethodsAreEligible(Class<?> fixture) throws Exception {
         assertEquals(ProducerProxyEligibility.Reason.ELIGIBLE.name(), eligibilityFromElements(fixture),
                 "source path");
-        assertEquals(io.vidocq.vauban.core.proxy.ProducerProxyEligibility.Reason.ELIGIBLE,
-                io.vidocq.vauban.core.proxy.ProducerProxyEligibility.of(fixture), "bytecode path");
+        assertEquals(ProducerProxyEligibility.Reason.ELIGIBLE,
+                ProducerProxyEligibility.of(fixture), "bytecode path");
+    }
+
+    @Test
+    @DisplayName("a final method decides over protected ones, on both paths")
+    void finalDecidesOverProtected() throws Exception {
+        assertEquals("FINAL_VIRTUALS", eligibilityFromElements(FinalAmongProtected.class));
+        assertEquals("FINAL_VIRTUALS",
+                ProducerProxyEligibility.of(FinalAmongProtected.class).name());
     }
 
     @Test
     @DisplayName("every verdict matches the bytecode path's verdict for the same type")
     void verdictsMatchTheBytecodePath() throws Exception {
         for (var fixture : List.of(CleanChild.class, FinalChild.class, HiddenChild.class,
-                WidenedHookChild.class, FinalizingCloneable.class, StringEchoChild.class)) {
+                WidenedHookChild.class, FinalizingCloneable.class, StringEchoChild.class,
+                FinalAmongProtected.class)) {
             assertEquals(
-                    io.vidocq.vauban.core.proxy.ProducerProxyEligibility.of(fixture).name(),
+                    ProducerProxyEligibility.of(fixture).name(),
                     eligibilityFromElements(fixture),
                     "source and bytecode eligibility disagree on " + fixture.getSimpleName());
         }
@@ -429,7 +447,7 @@ class ClientProxyInheritanceCrossCheckTest {
 
     private String eligibilityFromElements(Class<?> fixture) throws Exception {
         return capture(fixture, (element, env) ->
-                ProducerProxyEligibility.of(element, env.types()).name());
+                ProducerProxyEligibility.of(ElementTypeView.of(element, env.types())).name());
     }
 
     private Set<String> shapeFromElements(Class<?> fixture) throws Exception {
