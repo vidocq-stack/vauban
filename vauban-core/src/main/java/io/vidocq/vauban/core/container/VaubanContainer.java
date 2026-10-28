@@ -225,6 +225,8 @@ public final class VaubanContainer implements AutoCloseable {
 
         this.beanManager = new VaubanBeanManager(this, contexts, beans.values(), eventDispatcher, interceptorManager);
         requestContext.lifecycleEvents(requestContextEvents(beanManager));
+        // Warns about the classes generated at run time, before the startup events create the first proxies.
+        interceptorWrapper.bootCompleted(beans.values());
         this.running = true;
         CURRENT.set(this);
 
@@ -382,6 +384,11 @@ public final class VaubanContainer implements AutoCloseable {
     }
 
     @SuppressWarnings("unchecked")
+    /** The classes this container generated at run time, or will (vauban#227). */
+    RuntimeGeneration runtimeGeneration() {
+        return interceptorWrapper.runtimeGeneration();
+    }
+
     <T> T getOrCreateProxyForBean(ManagedBean<T> bean) {
         return interceptorWrapper.getOrCreateProxy(bean);
     }

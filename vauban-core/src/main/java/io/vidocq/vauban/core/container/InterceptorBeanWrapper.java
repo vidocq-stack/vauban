@@ -55,6 +55,8 @@ final class InterceptorBeanWrapper {
     private final InterceptorManager interceptorManager;
     private final ClassLoader classLoader;
     private final BiFunction<String, byte[], Class<?>> classDefiner;
+    /** The classes this container generates at run time, announced loudly (vauban#227). */
+    private final RuntimeGeneration runtimeGeneration = new RuntimeGeneration();
     private final java.util.Map<io.vidocq.vauban.core.bean.model.BeanId, Object> proxyCache = new java.util.concurrent.ConcurrentHashMap<>();
 
     /**
@@ -355,6 +357,7 @@ final class InterceptorBeanWrapper {
         }
 
         // Fallback: collect all interface types from the bean to implement via reflect.Proxy
+        runtimeGeneration.record(RuntimeGeneration.Kind.INTERFACE_PROXY, beanClass.getName());
         java.util.Set<Class<?>> ifaceSet = new java.util.LinkedHashSet<>();
         for (var t : bean.getTypes()) {
             if (t instanceof Class<?> c && c.isInterface() && c != Object.class) {
@@ -426,12 +429,74 @@ final class InterceptorBeanWrapper {
             return provided;
         }
 
-        // 2. Fallback: runtime-generate the proxy + reflective instantiation through its only
-        //    constructor, (Supplier), which wires the delegate once and for all.
+        // 2. Fallback: the proxy the build left next to the bean (Maven plugin), else one generated
+        //    now; then reflective instantiation through its only constructor, (Supplier), which
+        //    wires the delegate once and for all.
+        boolean preGenerated = isLoadable(beanClass, proxyClassName);
         var generated = io.vidocq.vauban.core.proxy.RuntimeClientProxyGenerator.generate(beanClass);
         var proxyClass = defineProxyClass(beanClass, generated.className(), generated.bytecode());
+        if (!preGenerated) {
+            runtimeGeneration.record(RuntimeGeneration.Kind.CLIENT_PROXY, generated.className());
+        }
 
         return proxyClass.getDeclaredConstructor(java.util.function.Supplier.class).newInstance(delegate);
+    }
+
+    /** Whether {@code className} loads, uninitialized, from {@code beanClass}'s loader: a class the build generated. */
+    private static boolean isLoadable(Class<?> beanClass, String className) {
+        try {
+            Class.forName(className, false, beanClass.getClassLoader());
+            return true;
+        } catch (ClassNotFoundException | LinkageError _) {
+            return false;
+        }
+    }
+
+    /**
+     * Ends the boot's report of the classes generated at run time (vauban#227). A client proxy is created on first
+     * use, so the boot adds the normal-scoped beans whose proxy no provider declares and no build output holds: they
+     * are announced with the intercepted subclasses the boot generated, not later one by one. Nothing is predicted
+     * while a provider predating {@code coverage()} is present, since it may serve any proxy.
+     */
+    void bootCompleted(java.util.Collection<ManagedBean<?>> beans) {
+        var providers = container.componentProviders();
+        var coverages = providers == null ? List.<io.vidocq.vauban.api.GeneratedCoverage>of()
+                : providers.providers().stream().map(io.vidocq.vauban.api.VaubanComponentProvider::coverage).toList();
+        if (!coverages.contains(null)) {
+            for (var bean : beans) {
+                try {
+                    predictProxy(bean, coverages);
+                } catch (RuntimeException | LinkageError e) {
+                    // A prediction only: the proxy, if it is generated, is still announced when it is.
+                    LOG.log(System.Logger.Level.DEBUG, () -> "Could not predict the client proxy of "
+                            + bean.getBeanClass().getName() + ": " + e);
+                }
+            }
+        }
+        runtimeGeneration.bootCompleted();
+    }
+
+    /** Records the proxy of {@code bean} as generated at run time when nothing the build produced supplies it. */
+    private void predictProxy(ManagedBean<?> bean, List<io.vidocq.vauban.api.GeneratedCoverage> coverages) {
+        var scope = bean.descriptor().scope();
+        if (scope == null || !scope.isNormal()) {
+            return;
+        }
+        Class<?> target = resolveProxyTargetClass(bean);
+        String key = io.vidocq.vauban.core.proxy.RuntimeClientProxyGenerator.proxyClassName(target);
+        if (coverages.stream().anyMatch(coverage -> coverage.clientProxies().contains(key))) {
+            return;
+        }
+        if (target.isInterface()) {
+            runtimeGeneration.record(RuntimeGeneration.Kind.INTERFACE_PROXY, target.getName());
+        } else if (!isLoadable(target, key)) {
+            runtimeGeneration.record(RuntimeGeneration.Kind.CLIENT_PROXY, key);
+        }
+    }
+
+    /** The classes this container generated at run time, or will. */
+    RuntimeGeneration runtimeGeneration() {
+        return runtimeGeneration;
     }
 
     private Class<?> defineProxyClass(Class<?> beanClass, String className, byte[] bytecode) {
@@ -813,6 +878,9 @@ final class InterceptorBeanWrapper {
             preGenerated = false;
             interceptedClass = defineInterceptedSubclass(beanClass);
         }
+        if (!preGenerated) {
+            runtimeGeneration.record(RuntimeGeneration.Kind.INTERCEPTED_SUBCLASS, interceptedClass.getName());
+        }
         installWrappedBean(descriptor, new InterceptedFactory(descriptor, beanClass, interceptedClass, classBindings),
                 preGenerated);
     }
@@ -856,6 +924,7 @@ final class InterceptorBeanWrapper {
             throw new DeploymentException(CANNOT_DEFINE_SUBCLASS, ex2);
         }
         DEFINED_AT_RUNTIME.add(interceptedClass2);
+        runtimeGeneration.record(RuntimeGeneration.Kind.INTERCEPTED_SUBCLASS, interceptedClass2.getName());
         installWrappedBean(descriptor, new FallbackInterceptedFactory(descriptor, beanClass, interceptedClass2, bindings),
                 false);
     }

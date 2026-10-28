@@ -764,6 +764,15 @@ What the container relies on at run time:
 * **Generated code** for everything that builds a bean — `_Factory` classes, the per-package
   `_VaubanComponents` provider, `_ClientProxy` and `$$Intercepted` subclasses — called directly. No
   bytecode is generated at run time on this path.
+* **A fallback, announced.** A bean compiled without the annotation processor, and not processed by
+  the Maven plugin, still runs: the container generates its `$$Intercepted` subclass or its
+  `_ClientProxy` at boot or on first use, and proxies an interface with a `java.lang.reflect.Proxy`.
+  That path is the exception. It slows the boot, needs deep access to the bean's package on the module
+  path, and has no ahead-of-time equivalent, so the container says so: a framed `WARNING`,
+  _VAUBAN — RUNTIME CODE GENERATION FALLBACK_, at the end of the boot lists every class it generated
+  there or will generate, and a class generated later that the boot did not foresee gets its own
+  warning (https://codefloe.com/Vidocq/vauban/issues/227[vauban#227^]). The fix is to put
+  `vauban-processor` on the annotation processor path of the module that declares those beans.
 * **`MethodHandles`**, through `VaubanLookup`, for `@PostConstruct`, `@PreDestroy`, observer and
   interceptor methods.
 * **`LambdaMetafactory`** to lift the generated interceptor glue into the invocation chain.
