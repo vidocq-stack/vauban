@@ -28,6 +28,7 @@ import jakarta.enterprise.inject.spi.Interceptor;
 import jakarta.interceptor.InvocationContext;
 
 import java.lang.annotation.Annotation;
+import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.lang.reflect.Type;
 import java.util.LinkedHashSet;
@@ -121,7 +122,25 @@ public final class VaubanInterceptor<T> implements Interceptor<T> {
             throw new IllegalStateException("AroundInvoke method not found: " + descriptor.aroundInvokeMethod());
         }
         makeAccessibleSafe(aroundInvoke);
-        return aroundInvoke.invoke(instance, ctx);
+        try {
+            return aroundInvoke.invoke(instance, ctx);
+        } catch (InvocationTargetException e) {
+            // The caller sees what the interceptor method or its chain threw, never the reflective wrapper
+            // (Jakarta Interceptors 2.2 "Exceptions", VAU-INT-010).
+            throw unwrapped(e.getCause());
+        }
+    }
+
+    /**
+     * {@code cause} as the exception to rethrow: an {@link Error} is thrown here, an {@link Exception} returned as is,
+     * and a bare {@link Throwable} (neither) returned wrapped, the only case left to wrap.
+     */
+    private static Exception unwrapped(Throwable cause) {
+        return switch (cause) {
+            case Error error -> throw error;
+            case Exception exception -> exception;
+            default -> new java.lang.reflect.UndeclaredThrowableException(cause);
+        };
     }
 
     @Override

@@ -5,6 +5,33 @@ suspected cause, status. Updated on every investigation.
 
 ---
 
+## VAU-INT-010 — `Interceptor.intercept` of the SPI wraps exceptions in `InvocationTargetException`
+- **Date**: 2026-10-28 — **Status**: FIXED (fix/interceptor-inject-constructor)
+- **Severity**: medium (a caller of the SPI sees the wrong exception type: exception mappers, `@Retry(retryOn)`,
+  `@Fallback(applyOn)`, rollback rules and plain `catch` blocks all miss it)
+
+### Symptom
+Through the `Interceptor` bean `BeanManager.resolveInterceptors` returns, `intercept(AROUND_INVOKE, instance, ctx)`
+threw a `java.lang.reflect.InvocationTargetException` whenever the interceptor method, or the chain it proceeds to,
+threw: a checked business exception, a `RuntimeException` or an `Error` never reached the caller as itself. Jakarta
+Interceptors 2.2 "Exceptions": interceptor methods throw runtime exceptions or the checked exceptions of the target
+method, which the caller must see; Weld and OpenWebBeans unwrap the reflective call.
+
+### Repro
+`VaubanInterceptorExceptionTest`: resolve a proceeding interceptor, `create` it and `intercept` with a context whose
+`proceed` throws a `BusinessException`, an `IllegalStateException` or an `AssertionError`: each came back as an
+`InvocationTargetException`.
+
+### Cause
+`VaubanInterceptor.intercept` called the `@AroundInvoke` method with `Method.invoke` and let its
+`InvocationTargetException` escape. The container's own interception path (`InterceptorBeanWrapper`) already unwrapped it.
+
+### Fix
+`intercept` rethrows the cause of the `InvocationTargetException`: an `Exception` or an `Error` as itself; only a bare
+`Throwable`, which `intercept` cannot declare, is wrapped in an `UndeclaredThrowableException`.
+
+---
+
 ## VAU-INT-009 — An interceptor with an `@Inject` constructor and no no-arg constructor fails deployment
 - **Date**: 2026-10-28 — **Status**: FIXED (fix/interceptor-inject-constructor)
 - **Severity**: medium (a valid CDI interceptor is refused at boot; the workaround is an extra no-arg constructor)
