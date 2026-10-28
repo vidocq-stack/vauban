@@ -2999,7 +2999,7 @@ The same goes for a normal-scoped producer of such a class (`Dollar_Produced$$�
 ## BUG-20261028-01 — A custom scope only the bean's class loader sees becomes `@Dependent`
 
 - **Date** : 2026-10-28
-- **Statut** : INVESTIGATING (fix in progress, branch `perf/227-generated-hot-path`)
+- **Statut** : FIXED (0150bd7b, branch `perf/227-generated-hot-path`)
 - **Module touché** : vauban-core / `ManagedBean.getScope()` (`scopeAnnotationClass`)
 - **Symptôme** : `getScope()` loads the scope annotation with the one-argument
   `Class.forName(name)`, that is through `vauban-core`'s own loader, and falls back on
@@ -3021,3 +3021,6 @@ The same goes for a normal-scoped producer of such a class (`Dollar_Produced$$�
     `Class.forName` calls remain in `vauban-core` (discovery, `InterceptorManager`,
     `VaubanInterceptor`, `QualifierResolver`, ...): same loader assumption, to review
     separately.
+  - 2026-10-28 : fixed in 0150bd7b: the scope is resolved once, at construction, through the
+    bean's loader (falling back on `vauban-core`'s for the built-in scopes). `ManagedBeanScopeTest`
+    green; `clientProxyCall` 276 ns → 5.1 ns (BENCH-20261028-02).
