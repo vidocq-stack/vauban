@@ -375,7 +375,7 @@ Generated via the Class-File API — no reflective access that needs an `opens` 
 | `VaubanProcessor` | APT entry point (`AbstractProcessor`) |
 | `ElementScanner` | Converts APT elements into `ClassInfo` |
 | `BeanFactoryGenerator` | Generates `BeanFactory<T>` implementations |
-| `ClientProxyGenerator` | Generates client proxies for normal scopes |
+| `ClientProxyShapeFromElements` | Builds the client proxy shapes of normal-scoped beans, rendered as source or emitted as bytecode |
 
 **Flow**:
 1. APT detects the CDI annotations

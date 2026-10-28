@@ -100,9 +100,9 @@ the same default methods to the contextual instance.
 
 Every client proxy the processor writes forwards these inherited methods, not only
 the source one. A bean with private constructors only gets a bytecode proxy built from its
-elements, which forwards the inherited and default methods as the source proxy does; the proxy
-built from the index alone, which forwards only what the bean class declares, is left for a bean the
-compiler cannot resolve. A top-level class whose own name contains `$` (`Dollar$Service`) is named
+elements, which forwards the inherited and default methods as the source proxy does. A bean the
+compiler cannot resolve gets no build-time proxy: the processor warns, and the container generates
+it at run time, announced at boot. A top-level class whose own name contains `$` (`Dollar$Service`) is named
 by its canonical name, so its intercepted subclass, its producers' proxies and its annotation
 artefacts compile, and a normal-scoped producer of a nested class or interface gets a build-time
 proxy like any other.

@@ -23,7 +23,6 @@ import io.vidocq.vauban.api.ExtensionPhase;
 import io.vidocq.vauban.processor.apt.ElementScanner;
 import io.vidocq.vauban.processor.codegen.GeneratedClass;
 import io.vidocq.vauban.processor.codegen.factory.BeanFactoryGenerator;
-import io.vidocq.vauban.processor.codegen.proxy.ClientProxyGenerator;
 import io.vidocq.vauban.processor.codegen.proxy.ClientProxyShapeFromElements;
 import io.vidocq.vauban.processor.codegen.proxy.ClientProxySourceRenderer;
 import io.vidocq.vauban.processor.codegen.proxy.InterfaceProxySourceRenderer;
@@ -649,7 +648,7 @@ public class VaubanProcessor extends AbstractProcessor {
         generateFactory(bean.beanClass().value(), classInfo);
 
         if (bean.scope().isNormal()) {
-            generateClientProxy(bean.beanClass().value(), classInfo, generation);
+            generateClientProxy(bean.beanClass().value(), generation);
         }
 
         var fqn = bean.beanClass().value();
@@ -694,7 +693,7 @@ public class VaubanProcessor extends AbstractProcessor {
     }
 
     /** The client proxy of a normal-scoped managed bean. */
-    private void generateClientProxy(String proxyBeanFqn, ClassInfo classInfo, Generation generation) {
+    private void generateClientProxy(String proxyBeanFqn, Generation generation) {
         // The index carries the binary name: a nested bean is app.Outer$Inner, and a
         // top-level class may have a '$' in its own name (BUG-20261004-11).
         var proxyTypeElement = typeElementByBinaryName(processingEnv.getElementUtils(), proxyBeanFqn);
@@ -712,9 +711,13 @@ public class VaubanProcessor extends AbstractProcessor {
             generateClass(new GeneratedClass(
                     shape.proxyClassName(), io.vidocq.vauban.core.proxy.ClientProxyEmitter.emit(shape)));
         } else {
-            // A type the compiler cannot resolve here: the bytecode proxy built from the
-            // index, which forwards the declared methods only.
-            generateClass(ClientProxyGenerator.generate(classInfo));
+            // The index is built from this compilation's elements, so its binary name always
+            // resolves; should it not, no build-time proxy is better than one forwarding the
+            // declared methods only, and the container generates it at run time, announced at boot
+            // (vauban#227).
+            processingEnv.getMessager().printMessage(Diagnostic.Kind.WARNING, LOG_PREFIX
+                    + "no type element for " + proxyBeanFqn
+                    + "; its client proxy is left to the run-time fallback.");
         }
     }
 
