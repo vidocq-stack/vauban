@@ -3098,3 +3098,21 @@ The same goes for a normal-scoped producer of such a class (`Dollar_Produced$$�
     (`mapScope` returned `null`), `ContainerBestEffortPathsTest.interceptorClassOnlyTheContainerLoaderSees`
     (`IllegalArgumentException`), and `SingleArgumentForNameTest`, a bytecode check that only the
     deliberate fallbacks it lists still call `Class.forName(String)`.
+
+## BUG-20261028-02 — The two producer-proxy eligibility checks disagree on overrides, `finalize()`/`clone()` and generic overrides
+
+- **Date** : 2026-10-28
+- **Statut** : FIXED (branch `fix/227-producer-proxy-eligibility-parity`)
+- **Module touché** : `vauban-core` `io.vidocq.vauban.core.proxy.ProducerProxyEligibility` (used by the Maven plugin) and `vauban-processor` `io.vidocq.vauban.processor.codegen.proxy.ProducerProxyEligibility` (used by the processor)
+- **Symptôme** : the same produced type gets a different verdict depending on which copy judges it, so a proxy for it is placed by one build path and refused by the other:
+  - **E1** — a `protected` method a subclass overrides as `public`: core judged the overridden method too (`PROTECTED_VIRTUALS`), the processor judged only the override (`ELIGIBLE`).
+  - **E2** — a protected `finalize()` or `clone()` override: core exempted them, as no proxy forwards them (`ELIGIBLE`); the processor did not (`PROTECTED_VIRTUALS`).
+  - **E3** — `echo(String)` overriding an inherited `protected echo(T)` with `T = String`: the processor keyed methods on unerased declared types, saw two methods and judged the overridden one (`PROTECTED_VIRTUALS`).
+- **Reproduction minimale** :
+  ```
+  ./mvnw -pl vauban-processor test -Dtest='ClientProxyInheritanceCrossCheckTest#overridesAndUnforwardedMethodsAreEligible'
+  # fixtures WidenedHookChild (E1), FinalizingCloneable (E2), StringEchoChild (E3)
+  ```
+- **Hypothèse de cause** : the rule is written twice (vauban#227, duplication), and the parity test (`ProducerProxyEligibilityParityTest`) compares only the two `Reason` enums, not verdicts; the verdict cross-check covered none of these shapes.
+- **Investigations** :
+  - 2026-10-28 : found by the vauban#227 duplication survey; each fixture red on the old code (E1 on the bytecode path, E2 and E3 on the source path). Both copies now follow one rule: walking upwards, the most derived override of a signature decides (core: erased signature, a bridge marking the signature it stands for; processor: the signature as a member of the type, `InterceptedShapeFromElements.memberSignatureKey`); `private` and `static` methods override nothing; `finalize()` and `clone()` are never forwarded. The rules are to be merged into one over a shared type view (next step of vauban#227).

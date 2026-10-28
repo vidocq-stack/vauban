@@ -102,6 +102,44 @@ class ClientProxyInheritanceCrossCheckTest {
         public String own() { return "own"; }
     }
 
+    /** A base with a protected method: alone, it would make a subtype unproxyable from another package. */
+    public static class ProtectedHookBase {
+        protected String hook() { return "base"; }
+    }
+
+    /** Eligible: it widens the protected method to public, and the proxy overrides that override (E1). */
+    public static class WidenedHookChild extends ProtectedHookBase {
+        @Override
+        public String hook() { return "widened"; }
+    }
+
+    /** Eligible: a proxy never forwards {@code finalize()} or {@code clone()}, protected or not (E2). */
+    public static class FinalizingCloneable implements Cloneable {
+        @Override
+        @SuppressWarnings({"deprecation", "removal"})
+        protected void finalize() {
+            // Nothing to release.
+        }
+
+        @Override
+        protected Object clone() throws CloneNotSupportedException {
+            return super.clone();
+        }
+
+        public String own() { return "own"; }
+    }
+
+    /** A generic base whose protected method the subtype overrides with the type argument (E3). */
+    public static class GenericEchoBase<T> {
+        protected String echo(T value) { return "base " + value; }
+    }
+
+    /** Eligible: {@code echo(String)} overrides {@code echo(T)} with {@code T = String}, and widens it. */
+    public static class StringEchoChild extends GenericEchoBase<String> {
+        @Override
+        public String echo(String value) { return "child " + value; }
+    }
+
     // ---- Eligibility parity ----
 
     @Test
@@ -127,10 +165,22 @@ class ClientProxyInheritanceCrossCheckTest {
                 eligibilityFromElements(CleanChild.class));
     }
 
+    @org.junit.jupiter.params.ParameterizedTest(name = "{0}")
+    @org.junit.jupiter.params.provider.ValueSource(classes = {
+            WidenedHookChild.class, FinalizingCloneable.class, StringEchoChild.class})
+    @DisplayName("an override decides, not the method it overrides, and finalize() and clone() are never forwarded")
+    void overridesAndUnforwardedMethodsAreEligible(Class<?> fixture) throws Exception {
+        assertEquals(ProducerProxyEligibility.Reason.ELIGIBLE.name(), eligibilityFromElements(fixture),
+                "source path");
+        assertEquals(io.vidocq.vauban.core.proxy.ProducerProxyEligibility.Reason.ELIGIBLE,
+                io.vidocq.vauban.core.proxy.ProducerProxyEligibility.of(fixture), "bytecode path");
+    }
+
     @Test
     @DisplayName("every verdict matches the bytecode path's verdict for the same type")
     void verdictsMatchTheBytecodePath() throws Exception {
-        for (var fixture : List.of(CleanChild.class, FinalChild.class, HiddenChild.class)) {
+        for (var fixture : List.of(CleanChild.class, FinalChild.class, HiddenChild.class,
+                WidenedHookChild.class, FinalizingCloneable.class, StringEchoChild.class)) {
             assertEquals(
                     io.vidocq.vauban.core.proxy.ProducerProxyEligibility.of(fixture).name(),
                     eligibilityFromElements(fixture),
@@ -379,7 +429,7 @@ class ClientProxyInheritanceCrossCheckTest {
 
     private String eligibilityFromElements(Class<?> fixture) throws Exception {
         return capture(fixture, (element, env) ->
-                ProducerProxyEligibility.of(element).name());
+                ProducerProxyEligibility.of(element, env.types()).name());
     }
 
     private Set<String> shapeFromElements(Class<?> fixture) throws Exception {

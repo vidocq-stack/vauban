@@ -143,10 +143,18 @@ public final class ProducerProxyEligibility {
     /**
      * Every overridable method the proxy would forward (walking the hierarchy, as the bytecode
      * shape does) must be public; a non-static final method makes the type unproxyable (§3.10).
+     * Walking upwards, the most derived override of a signature decides: the method it overrides is
+     * not the one the proxy forwards. A bridge method marks the signature it stands for as overridden.
      */
     private static Reason methodsVerdict(Class<?> type) {
+        var seen = new java.util.HashSet<String>();
         for (Class<?> c = type; c != null && c != Object.class; c = c.getSuperclass()) {
             for (Method m : c.getDeclaredMethods()) {
+                int mm = m.getModifiers();
+                // A private or static method overrides nothing; a signature already met is overridden.
+                if (Modifier.isStatic(mm) || Modifier.isPrivate(mm) || !seen.add(signatureKey(m))) {
+                    continue;
+                }
                 var verdict = methodVerdict(m);
                 if (!verdict.eligible()) {
                     return verdict;
@@ -154,6 +162,11 @@ public final class ProducerProxyEligibility {
             }
         }
         return Reason.ELIGIBLE;
+    }
+
+    /** Name plus erased parameter types: what a subclass method overrides. */
+    private static String signatureKey(Method m) {
+        return m.getName() + java.util.Arrays.toString(m.getParameterTypes());
     }
 
     private static Reason methodVerdict(Method m) {

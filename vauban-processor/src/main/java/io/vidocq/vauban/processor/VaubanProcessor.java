@@ -818,7 +818,7 @@ public class VaubanProcessor extends AbstractProcessor {
         }
         var producedFqn =
                 processingEnv.getElementUtils().getBinaryName(producedType).toString();
-        var verdict = ProducerProxyEligibility.of(producedType);
+        var verdict = ProducerProxyEligibility.of(producedType, processingEnv.getTypeUtils());
         if (verdict.eligible()) {
             generateClassProducerProxy(bean, producedType, producedFqn, generation);
         } else {

@@ -19,12 +19,15 @@
  */
 package io.vidocq.vauban.processor.codegen.proxy;
 
+import io.vidocq.vauban.processor.codegen.interceptor.InterceptedShapeFromElements;
+
 import javax.lang.model.element.ElementKind;
 import javax.lang.model.element.ExecutableElement;
 import javax.lang.model.element.Modifier;
 import javax.lang.model.element.NestingKind;
 import javax.lang.model.element.TypeElement;
 import javax.lang.model.util.ElementFilter;
+import javax.lang.model.util.Types;
 
 /**
  * Decides whether a normal-scoped producer's produced <em>class</em> type can be proxied at build
@@ -77,13 +80,13 @@ public final class ProducerProxyEligibility {
     }
 
     /** The verdict for {@code type}. */
-    public static Reason of(TypeElement type) {
+    public static Reason of(TypeElement type, Types types) {
         Reason verdict = classVerdict(type);
         if (verdict == null) {
             verdict = constructorVerdict(type);
         }
         if (verdict == null) {
-            verdict = methodsVerdict(type);
+            verdict = methodsVerdict(type, types);
         }
         return verdict == null ? Reason.ELIGIBLE : verdict;
     }
@@ -159,12 +162,15 @@ public final class ProducerProxyEligibility {
      *
      * @return the first obstacle met, or {@code null} when every method is forwardable
      */
-    private static Reason methodsVerdict(TypeElement type) {
+    private static Reason methodsVerdict(TypeElement type, Types types) {
         var seen = new java.util.HashSet<String>();
         for (TypeElement c = type; c != null && !isObject(c); c = superclassOf(c)) {
             for (ExecutableElement m : ElementFilter.methodsIn(c.getEnclosedElements())) {
-                // A subclass override already judged wins: it is the one the proxy overrides.
-                Reason verdict = isClientVisible(m) && seen.add(signatureKey(m)) ? methodVerdict(m) : null;
+                // A subclass override already judged wins: it is the one the proxy overrides. The key is
+                // the signature as a member of the type, so echo(String) overrides an inherited echo(T).
+                Reason verdict = isClientVisible(m)
+                        && seen.add(InterceptedShapeFromElements.memberSignatureKey(type, m, types))
+                        ? methodVerdict(m) : null;
                 if (verdict != null) {
                     return verdict;
                 }
@@ -173,11 +179,15 @@ public final class ProducerProxyEligibility {
         return null;
     }
 
-    /** A virtual method a client can call, other than the {@code $$} plumbing of a generated class. */
+    /**
+     * A virtual method a client can call, other than the {@code $$} plumbing of a generated class and
+     * {@code finalize()} or {@code clone()}, which no proxy forwards.
+     */
     private static boolean isClientVisible(ExecutableElement m) {
         var mm = m.getModifiers();
-        return !mm.contains(Modifier.STATIC) && !mm.contains(Modifier.PRIVATE)
-                && !m.getSimpleName().toString().startsWith("$$");
+        var name = m.getSimpleName().toString();
+        return !mm.contains(Modifier.STATIC) && !mm.contains(Modifier.PRIVATE) && !name.startsWith("$$")
+                && !((name.equals("finalize") || name.equals("clone")) && m.getParameters().isEmpty());
     }
 
     /** The obstacle one first-seen method raises, or {@code null} when it is forwardable. */
@@ -204,14 +214,5 @@ public final class ProducerProxyEligibility {
     private static TypeElement superclassOf(TypeElement t) {
         return t.getSuperclass() instanceof javax.lang.model.type.DeclaredType dt
                 && dt.asElement() instanceof TypeElement se ? se : null;
-    }
-
-    /** Name plus parameter types — enough to spot an override while walking upwards. */
-    private static String signatureKey(ExecutableElement m) {
-        var sb = new StringBuilder(m.getSimpleName().toString()).append('(');
-        for (var p : m.getParameters()) {
-            sb.append(p.asType().toString()).append(',');
-        }
-        return sb.append(')').toString();
     }
 }
