@@ -20,6 +20,7 @@
 package io.vidocq.vauban.core.bean.discovery;
 
 import io.vidocq.vauban.core.bean.model.QualifierInstance;
+import io.vidocq.vauban.core.loading.DeploymentClasses;
 import io.vidocq.vauban.indexer.model.AnnotationInfo;
 import io.vidocq.vauban.indexer.model.ClassInfo;
 import io.vidocq.vauban.indexer.model.DotName;

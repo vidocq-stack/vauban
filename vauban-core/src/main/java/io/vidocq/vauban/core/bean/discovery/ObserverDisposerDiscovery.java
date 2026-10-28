@@ -23,6 +23,7 @@ import io.vidocq.vauban.core.bean.model.DisposerDescriptor;
 import io.vidocq.vauban.core.bean.model.InjectionPointInfo;
 import io.vidocq.vauban.core.bean.model.ObserverDescriptor;
 import io.vidocq.vauban.core.bean.model.QualifierInstance;
+import io.vidocq.vauban.core.loading.DeploymentClasses;
 import io.vidocq.vauban.indexer.model.AnnotationInfo;
 import io.vidocq.vauban.indexer.model.ClassInfo;
 import io.vidocq.vauban.indexer.model.DotName;
@@ -78,7 +79,7 @@ final class ObserverDisposerDiscovery {
 
     private void discoverInheritedObservers(ClassInfo classInfo, List<ObserverDescriptor> result) {
         try {
-            var clazz = Class.forName(classInfo.name().value());
+            var clazz = DeploymentClasses.load(classInfo.name().value());
             for (var method : getAllInheritedMethods(clazz)) {
                 int observed = observedParameterIndex(method);
                 if (observed >= 0) {

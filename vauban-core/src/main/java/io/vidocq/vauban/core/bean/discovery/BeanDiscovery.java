@@ -20,6 +20,7 @@
 package io.vidocq.vauban.core.bean.discovery;
 
 import io.vidocq.vauban.core.bean.model.*;
+import io.vidocq.vauban.core.loading.DeploymentClasses;
 import io.vidocq.vauban.indexer.VaubanIndex;
 import io.vidocq.vauban.indexer.model.*;
 
@@ -722,7 +723,7 @@ public final class BeanDiscovery {
         // Build restricted types — use parameterized versions when available
         var allParamTypes = new LinkedHashSet<TypeInfo>();
         try {
-            for (java.lang.reflect.Type t : io.vidocq.vauban.core.types.TypeHierarchyResolver.resolveAllSupertypes(Class.forName(classInfo.name().value()))) {
+            for (java.lang.reflect.Type t : io.vidocq.vauban.core.types.TypeHierarchyResolver.resolveAllSupertypes(DeploymentClasses.load(classInfo.name().value()))) {
                 var typeInfo = reflectTypeToTypeInfo(t);
                 if (typeInfo != null) allParamTypes.add(typeInfo);
             }
@@ -1057,7 +1058,7 @@ public final class BeanDiscovery {
         }
         // Fallback: check via reflection if annotation is not in the index
         try {
-            var annType = Class.forName(annotationName.value());
+            var annType = DeploymentClasses.load(annotationName.value());
             if (annType.isAnnotationPresent(jakarta.enterprise.context.NormalScope.class)) {
                 return new ScopeInfo(annotationName, true);
             }
@@ -1284,7 +1285,7 @@ public final class BeanDiscovery {
                     if (stereotypeName != null) return stereotypeName;
                 } else {
                     try {
-                        var annType = Class.forName(ann.name().value());
+                        var annType = DeploymentClasses.load(ann.name().value());
                         if (annType.isAnnotationPresent(jakarta.inject.Named.class)) {
                             return defaultName;
                         }

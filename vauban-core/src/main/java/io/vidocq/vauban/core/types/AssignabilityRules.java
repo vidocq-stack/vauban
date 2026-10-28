@@ -19,6 +19,7 @@
  */
 package io.vidocq.vauban.core.types;
 
+import io.vidocq.vauban.core.loading.DeploymentClasses;
 import io.vidocq.vauban.indexer.VaubanIndex;
 import io.vidocq.vauban.indexer.model.DotName;
 import io.vidocq.vauban.indexer.model.TypeInfo;
@@ -356,9 +357,7 @@ public final class AssignabilityRules {
         if (classInfo.isEmpty()) {
             // Fallback to reflection if not in index (e.g. JDK classes like java.lang.Integer)
             try {
-                var cl = Thread.currentThread().getContextClassLoader();
-                var clazz = cl != null ? Class.forName(current.value(), false, cl)
-                        : Class.forName(current.value());
+                var clazz = DeploymentClasses.load(current.value());
                 var superClass = clazz.getSuperclass();
                 if (superClass != null && isSubtypeOfRecursive(DotName.of(superClass.getName()), target, visited)) {
                     return true;

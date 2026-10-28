@@ -26,6 +26,7 @@ import io.vidocq.vauban.core.bean.model.ObserverDescriptor;
 import io.vidocq.vauban.core.bean.model.QualifierInstance;
 import io.vidocq.vauban.core.langmodel.BuiltAnnotationInfo;
 import io.vidocq.vauban.core.langmodel.LangModelAnnotations;
+import io.vidocq.vauban.core.loading.DeploymentClasses;
 import io.vidocq.vauban.indexer.model.DotName;
 import jakarta.enterprise.lang.model.AnnotationInfo;
 import jakarta.enterprise.lang.model.AnnotationMember;
@@ -624,11 +625,8 @@ final class EnhancementApplier {
 
     private static boolean isQualifierAnnotationInfo(AnnotationInfo annInfo) {
         try {
-            var cl = Thread.currentThread().getContextClassLoader();
             @SuppressWarnings("unchecked")
-            var clazz = (Class<? extends Annotation>) (cl != null
-                    ? Class.forName(annInfo.name(), false, cl)
-                    : Class.forName(annInfo.name()));
+            var clazz = (Class<? extends Annotation>) DeploymentClasses.load(annInfo.name());
             return isQualifierAnnotation(clazz);
         } catch (ClassNotFoundException _) {
             // Unknown annotation: treat as qualifier to keep prior behaviour for cases
@@ -643,11 +641,8 @@ final class EnhancementApplier {
 
     private static boolean isInterceptorBindingAnnotationInfo(AnnotationInfo annInfo) {
         try {
-            var cl = Thread.currentThread().getContextClassLoader();
             @SuppressWarnings("unchecked")
-            var clazz = (Class<? extends Annotation>) (cl != null
-                    ? Class.forName(annInfo.name(), false, cl)
-                    : Class.forName(annInfo.name()));
+            var clazz = (Class<? extends Annotation>) DeploymentClasses.load(annInfo.name());
             return isInterceptorBindingAnnotation(clazz);
         } catch (ClassNotFoundException _) {
             // Unknown annotation on the runtime classpath: don't assume it is

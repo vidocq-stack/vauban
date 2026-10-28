@@ -20,6 +20,7 @@
 package io.vidocq.vauban.core.bean.discovery;
 
 import io.vidocq.vauban.core.bean.model.InterceptorDescriptor;
+import io.vidocq.vauban.core.loading.DeploymentClasses;
 import io.vidocq.vauban.indexer.model.ClassInfo;
 import io.vidocq.vauban.indexer.model.DotName;
 

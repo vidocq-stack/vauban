@@ -22,6 +22,7 @@ package io.vidocq.vauban.core.container;
 import io.vidocq.vauban.api.VaubanComponentProvider;
 import io.vidocq.vauban.api.ModuleLookupGrant;
 import io.vidocq.vauban.core.bean.model.InterceptorDescriptor;
+import io.vidocq.vauban.core.loading.IsolatedLoader;
 import io.vidocq.vauban.indexer.model.DotName;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.enterprise.context.RequestScoped;
@@ -131,6 +132,17 @@ class ContainerBestEffortPathsTest {
         var provider = new _VaubanComponents();
 
         assertEquals(List.of(provider), ComponentProviders.withTestCompanions(List.of(provider)));
+    }
+
+    @Test
+    @DisplayName("an interceptor class only the container's loader sees is loaded through that loader")
+    void interceptorClassOnlyTheContainerLoaderSees() throws ClassNotFoundException {
+        var loader = IsolatedLoader.ofClass("io.vidocq.vauban.core.container.isolated.LayerInterceptor");
+        var descriptor = new InterceptorDescriptor(DotName.of(loader.name()), Set.of(), "around", 10);
+
+        var interceptor = new VaubanInterceptor<>(descriptor, null, loader);
+
+        assertSame(loader.loadClass(loader.name()), interceptor.getBeanClass());
     }
 
     @Test

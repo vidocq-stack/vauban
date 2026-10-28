@@ -3084,3 +3084,15 @@ The same goes for a normal-scoped producer of such a class (`Dollar_Produced$$â€
   - 2026-10-28 : fixed in 0150bd7b: the scope is resolved once, at construction, through the
     bean's loader (falling back on `vauban-core`'s for the built-in scopes). `ManagedBeanScopeTest`
     green; `clientProxyCall` 276 ns â†’ 5.1 ns (BENCH-20261028-02).
+  - 2026-10-28 : the other one-argument calls reviewed (branch `fix/227-class-for-name-loaders`).
+    Fifteen methods loaded a deployment class through `vauban-core`'s loader: discovery
+    (`BeanDiscovery.mapScope`, `typedBeanTypes`, `extractNameWithStereotypesFromAnnotations`,
+    `StereotypeResolver` x2, `ObserverDisposerDiscovery`), `DeploymentValidator`, the BCE
+    `AnnotationBuilderFactory` and synthetic observer builder, and `VaubanInterceptor` (its class and
+    its binding types). They now go through `DeploymentClasses.load` (context loader of the build,
+    the composite deployment loader) or, for `VaubanInterceptor` created after the build, the
+    container's bean class loader; four hand-written copies of `DeploymentClasses.load` were folded
+    into it. Red then green: `BeanDiscoveryReflectionFallbackTest.scopeOnlyTheDeploymentLoaderSees`
+    (`mapScope` returned `null`), `ContainerBestEffortPathsTest.interceptorClassOnlyTheContainerLoaderSees`
+    (`IllegalArgumentException`), and `SingleArgumentForNameTest`, a bytecode check that only the
+    deliberate fallbacks it lists still call `Class.forName(String)`.

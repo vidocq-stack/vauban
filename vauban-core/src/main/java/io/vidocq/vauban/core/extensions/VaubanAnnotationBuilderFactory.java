@@ -19,6 +19,7 @@
  */
 package io.vidocq.vauban.core.extensions;
 
+import io.vidocq.vauban.core.loading.DeploymentClasses;
 import jakarta.enterprise.inject.build.compatible.spi.AnnotationBuilder;
 import jakarta.enterprise.inject.build.compatible.spi.AnnotationBuilderFactory;
 import jakarta.enterprise.lang.model.declarations.ClassInfo;
@@ -36,7 +37,7 @@ public final class VaubanAnnotationBuilderFactory implements AnnotationBuilderFa
     @SuppressWarnings("unchecked")
     public AnnotationBuilder create(ClassInfo annotationType) {
         try {
-            Class<?> clazz = Class.forName(annotationType.name());
+            Class<?> clazz = DeploymentClasses.load(annotationType.name());
             return new VaubanAnnotationBuilder((Class<? extends Annotation>) clazz);
         } catch (ClassNotFoundException e) {
             throw new IllegalArgumentException("Annotation type not found: " + annotationType.name(), e);

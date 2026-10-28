@@ -20,6 +20,7 @@
 package io.vidocq.vauban.core.container;
 
 import io.vidocq.vauban.core.bean.model.InterceptorDescriptor;
+import io.vidocq.vauban.core.loading.DeploymentClasses;
 import jakarta.enterprise.context.Dependent;
 import jakarta.enterprise.context.spi.CreationalContext;
 import jakarta.enterprise.inject.spi.InjectionPoint;
@@ -50,21 +51,27 @@ public final class VaubanInterceptor<T> implements Interceptor<T> {
     private final BiFunction<InterceptorDescriptor, CreationalContext<?>, Object> instanceFactory;
 
     public VaubanInterceptor(InterceptorDescriptor descriptor) {
-        this(descriptor, null);
+        this(descriptor, null, null);
     }
 
     /**
      * @param instanceFactory the container's own interceptor creation, the one interception uses, so that
      *                        {@link #create} builds the instance the same way: constructor injection, field
      *                        injection, {@code @PostConstruct}
+     * @param classLoader     the loader of the container's bean classes; {@code null} outside a container, where
+     *                        the interceptor class loads the way discovery loads the deployment's classes
      */
     @SuppressWarnings("unchecked")
     public VaubanInterceptor(InterceptorDescriptor descriptor,
-                             BiFunction<InterceptorDescriptor, CreationalContext<?>, Object> instanceFactory) {
+                             BiFunction<InterceptorDescriptor, CreationalContext<?>, Object> instanceFactory,
+                             ClassLoader classLoader) {
         this.descriptor = descriptor;
         this.instanceFactory = instanceFactory;
+        var name = descriptor.interceptorClass().value();
         try {
-            this.interceptorClass = (Class<T>) Class.forName(descriptor.interceptorClass().value());
+            this.interceptorClass = (Class<T>) (classLoader != null
+                    ? Class.forName(name, false, classLoader)
+                    : DeploymentClasses.load(name));
         } catch (ClassNotFoundException e) {
             throw new IllegalArgumentException("Interceptor class not found: " + descriptor.interceptorClass(), e);
         }
@@ -76,7 +83,8 @@ public final class VaubanInterceptor<T> implements Interceptor<T> {
         for (var binding : descriptor.bindings()) {
             try {
                 @SuppressWarnings("unchecked")
-                var annClass = (Class<? extends Annotation>) Class.forName(binding.value());
+                var annClass = (Class<? extends Annotation>) Class.forName(binding.value(), false,
+                        interceptorClass.getClassLoader());
                 // Get the annotation from the interceptor class itself
                 var ann = interceptorClass.getAnnotation(annClass);
                 if (ann != null) {

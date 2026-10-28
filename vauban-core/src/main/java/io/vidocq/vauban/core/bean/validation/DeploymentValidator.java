@@ -23,6 +23,7 @@ import io.vidocq.vauban.core.bean.model.BeanDescriptor;
 import io.vidocq.vauban.core.bean.model.InjectionPointInfo;
 import io.vidocq.vauban.core.bean.resolution.BeanResolver;
 import io.vidocq.vauban.core.bean.resolution.DependencyGraph;
+import io.vidocq.vauban.core.loading.DeploymentClasses;
 import io.vidocq.vauban.core.proxy.ClientProxyShape;
 import io.vidocq.vauban.indexer.VaubanIndex;
 import io.vidocq.vauban.indexer.model.DotName;
@@ -111,7 +112,7 @@ public final class DeploymentValidator {
             return false;
         }
         try {
-            var clazz = Class.forName(bean.beanClass().value(), false, Thread.currentThread().getContextClassLoader());
+            var clazz = DeploymentClasses.load(bean.beanClass().value());
             return clazz.isAnnotationPresent(jakarta.interceptor.Interceptor.class);
         } catch (Exception _) {
             return false;
@@ -202,7 +203,7 @@ public final class DeploymentValidator {
             return;
         }
         try {
-            var clazz = Class.forName(bean.beanClass().value(), false, Thread.currentThread().getContextClassLoader());
+            var clazz = DeploymentClasses.load(bean.beanClass().value());
             if (clazz.isAnnotationPresent(jakarta.interceptor.Interceptor.class)) {
                 return;
             }
@@ -301,7 +302,7 @@ public final class DeploymentValidator {
     private void validateInterceptorConstructors(List<ValidationError> errors) {
         for (var interceptor : resolver.getInterceptors()) {
             try {
-                var clazz = Class.forName(interceptor.interceptorClass().value());
+                var clazz = DeploymentClasses.load(interceptor.interceptorClass().value());
                 var constructors = clazz.getDeclaredConstructors();
                 long injectCtors = java.util.Arrays.stream(constructors)
                         .filter(ctor -> ctor.isAnnotationPresent(jakarta.inject.Inject.class))
@@ -427,7 +428,7 @@ public final class DeploymentValidator {
     private void validateProxyableByReflection(TypeInfo.ClassType ct, BeanDescriptor bean,
             List<ValidationError> errors, BeanDescriptor contextBean) {
         try {
-            var clazz = Class.forName(ct.name().value(), false, Thread.currentThread().getContextClassLoader());
+            var clazz = DeploymentClasses.load(ct.name().value());
             // Interfaces are always proxyable — skip class-level checks
             if (!clazz.isInterface()) {
                 validateProxyableClass(clazz, bean, errors, contextBean);

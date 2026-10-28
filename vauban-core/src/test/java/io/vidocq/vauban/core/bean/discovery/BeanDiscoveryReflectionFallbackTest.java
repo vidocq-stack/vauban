@@ -20,6 +20,8 @@
 package io.vidocq.vauban.core.bean.discovery;
 
 import io.vidocq.vauban.core.bean.model.BeanDescriptor;
+import io.vidocq.vauban.core.bean.model.ScopeInfo;
+import io.vidocq.vauban.core.loading.IsolatedLoader;
 import io.vidocq.vauban.indexer.IndexBuilder;
 import io.vidocq.vauban.indexer.model.AnnotationInfo;
 import io.vidocq.vauban.indexer.model.AnnotationValue;
@@ -32,6 +34,7 @@ import io.vidocq.vauban.indexer.model.TypeInfo;
 import io.vidocq.vauban.indexer.scanner.ClassFileScanner;
 import jakarta.annotation.Priority;
 import jakarta.enterprise.context.ApplicationScoped;
+import jakarta.enterprise.context.NormalScope;
 import jakarta.enterprise.inject.Produces;
 import jakarta.enterprise.inject.spi.DefinitionException;
 import org.junit.jupiter.api.DisplayName;
@@ -382,13 +385,17 @@ class BeanDiscoveryReflectionFallbackTest {
     }
 
     @Test
-    @DisplayName("without a thread context class loader, deployment classes load through the caller's loader")
-    void noContextClassLoader() throws ClassNotFoundException {
+    @DisplayName("a scope the index does not describe resolves through the deployment's loader, not vauban-core's")
+    void scopeOnlyTheDeploymentLoaderSees() {
+        var loader = IsolatedLoader.ofAnnotation("io.vidocq.vauban.core.bean.discovery.isolated.LayerScope",
+                NormalScope.class);
         var thread = Thread.currentThread();
         var previous = thread.getContextClassLoader();
-        thread.setContextClassLoader(null);
+        thread.setContextClassLoader(loader);
         try {
-            assertEquals(String.class, DeploymentClasses.load("java.lang.String"));
+            var scope = discovery().mapScope(DotName.of(loader.name()));
+
+            assertEquals(new ScopeInfo(DotName.of(loader.name()), true), scope);
         } finally {
             thread.setContextClassLoader(previous);
         }

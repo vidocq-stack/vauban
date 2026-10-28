@@ -573,7 +573,8 @@ public final class VaubanBeanManager implements BeanManager {
         var descriptors = interceptorManager.resolveInterceptors(java.util.Arrays.asList(interceptorBindings));
         var result = new ArrayList<Interceptor<?>>();
         for (var descriptor : descriptors) {
-            var vi = new VaubanInterceptor<>(descriptor, interceptorManager::getOrCreateInstance);
+            var vi = new VaubanInterceptor<>(descriptor, interceptorManager::getOrCreateInstance,
+                    container.classLoader());
             if (vi.intercepts(type)) {
                 result.add(vi);
             }

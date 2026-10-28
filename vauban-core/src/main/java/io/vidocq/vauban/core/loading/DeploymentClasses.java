@@ -17,7 +17,7 @@
  *
  * SPDX-License-Identifier: EPL-2.0 OR EUPL-1.2 OR GPL-2.0-or-later
  */
-package io.vidocq.vauban.core.bean.discovery;
+package io.vidocq.vauban.core.loading;
 
 /**
  * Loads a class of the deployment by the name the bean index gives it, the way discovery has always
@@ -29,7 +29,7 @@ package io.vidocq.vauban.core.bean.discovery;
  * reads the class only when the index does not describe what it needs, the reflective fallback the
  * AOT section of the internals page documents.
  */
-final class DeploymentClasses {
+public final class DeploymentClasses {
 
     private DeploymentClasses() {
     }
@@ -39,7 +39,7 @@ final class DeploymentClasses {
      *
      * @throws ClassNotFoundException when no loader visible from here defines it
      */
-    static Class<?> load(String name) throws ClassNotFoundException {
+    public static Class<?> load(String name) throws ClassNotFoundException {
         var loader = Thread.currentThread().getContextClassLoader();
         return loader != null ? Class.forName(name, false, loader) : Class.forName(name);
     }

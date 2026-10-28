@@ -20,6 +20,7 @@
 package io.vidocq.vauban.core.interceptor;
 
 import io.vidocq.vauban.core.bean.model.InterceptorDescriptor;
+import io.vidocq.vauban.core.loading.DeploymentClasses;
 import io.vidocq.vauban.indexer.model.DotName;
 
 import jakarta.enterprise.context.spi.CreationalContext;
@@ -391,9 +392,7 @@ public final class InterceptorManager {
 
     public boolean isInterceptorBinding(DotName name) {
         try {
-            var cl = Thread.currentThread().getContextClassLoader();
-            var clazz = cl != null ? Class.forName(name.value(), false, cl)
-                    : Class.forName(name.value());
+            var clazz = DeploymentClasses.load(name.value());
             return clazz.isAnnotationPresent(jakarta.interceptor.InterceptorBinding.class)
                     || io.vidocq.vauban.core.container.VaubanBeanManager.isCustomInterceptorBinding(clazz);
         } catch (Exception _) {

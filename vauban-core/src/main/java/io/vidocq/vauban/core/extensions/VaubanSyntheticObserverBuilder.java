@@ -20,6 +20,7 @@
 package io.vidocq.vauban.core.extensions;
 
 import io.vidocq.vauban.api.ExtensionPhase;
+import io.vidocq.vauban.core.loading.DeploymentClasses;
 import io.vidocq.vauban.indexer.model.DotName;
 import io.vidocq.vauban.indexer.model.TypeInfo;
 import jakarta.enterprise.inject.build.compatible.spi.InvokerInfo;
@@ -105,7 +106,7 @@ public final class VaubanSyntheticObserverBuilder<T> implements SyntheticObserve
 
     private static Class<?> loadClass(String name) {
         try {
-            return Class.forName(name);
+            return DeploymentClasses.load(name);
         } catch (ClassNotFoundException e) {
             throw new IllegalArgumentException("Cannot resolve type: " + name, e);
         }

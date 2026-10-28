@@ -20,6 +20,7 @@
 package io.vidocq.vauban.core.bean.discovery;
 
 import io.vidocq.vauban.core.bean.model.ScopeInfo;
+import io.vidocq.vauban.core.loading.DeploymentClasses;
 import io.vidocq.vauban.indexer.model.AnnotationInfo;
 import io.vidocq.vauban.indexer.model.ClassInfo;
 import io.vidocq.vauban.indexer.model.DotName;
@@ -223,7 +224,7 @@ final class StereotypeResolver {
 
     private boolean hasNamedInReflectedStereotype(DotName stereotypeName, Set<DotName> visited) {
         try {
-            var annType = Class.forName(stereotypeName.value());
+            var annType = DeploymentClasses.load(stereotypeName.value());
             if (annType.isAnnotationPresent(jakarta.inject.Named.class)) return true;
             for (var meta : annType.getAnnotations()) {
                 if (isReflectedStereotype(meta)
@@ -293,7 +294,7 @@ final class StereotypeResolver {
 
     private ScopeInfo reflectedStereotypeScope(DotName stereotypeName, Set<DotName> visited) {
         try {
-            var annType = Class.forName(stereotypeName.value());
+            var annType = DeploymentClasses.load(stereotypeName.value());
             for (var metaAnn : annType.getAnnotations()) {
                 var scope = host.mapScope(DotName.of(metaAnn.annotationType().getName()));
                 if (scope != null) return scope;
