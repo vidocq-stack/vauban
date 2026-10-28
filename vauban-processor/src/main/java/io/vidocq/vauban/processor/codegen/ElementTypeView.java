@@ -100,7 +100,7 @@ public record ElementTypeView(TypeElement type, TypeElement root, Types types) i
      * {@code null} when every constructor is private.
      */
     public ExecutableElement superConstructor() {
-        return ClientProxyShape.superConstructor(this) instanceof ConstructorMember(var constructor, var _) ? constructor : null;
+        return ClientProxyShape.superConstructor(this) instanceof ConstructorMember(var constructor, _) ? constructor : null;
     }
 
     /** Erased canonical names: an erased type variable is its bound, a nested type is dotted, an array ends in []. */
