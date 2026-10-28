@@ -98,6 +98,11 @@ public record ElementTypeView(TypeElement type, TypeElement root, Types types) i
         return other instanceof ElementTypeView view && packageOf(view.type).equals(packageOf(type));
     }
 
+    /** {@code method} as a member of {@code root}'s view: its override key is its signature as a member of {@code root}. */
+    public static TypeView.Member member(ExecutableElement method, TypeElement root, Types types) {
+        return new MethodMember(method, InterceptedShapeFromElements.memberSignatureKey(root, method, types), types);
+    }
+
     /** The method {@code member}, a member of an {@code ElementTypeView}, stands for. */
     public static ExecutableElement method(TypeView.Member member) {
         return ((MethodMember) member).method();
@@ -162,6 +167,7 @@ public record ElementTypeView(TypeElement type, TypeElement root, Types types) i
         @Override public String name() { return method.getSimpleName().toString(); }
         @Override public Set<Flag> flags() { return ElementTypeView.flags(method.getModifiers()); }
         @Override public List<String> parameterTypes() { return names(method, types); }
+        @Override public String returnType() { return types.erasure(method.getReturnType()).toString(); }
         @Override public boolean isBridge() { return false; }
         @Override public boolean isProxyLinkConstructor() { return false; }
     }
@@ -170,6 +176,7 @@ public record ElementTypeView(TypeElement type, TypeElement root, Types types) i
         @Override public String name() { return "<init>"; }
         @Override public Set<Flag> flags() { return ElementTypeView.flags(constructor.getModifiers()); }
         @Override public List<String> parameterTypes() { return names(constructor, types); }
+        @Override public String returnType() { return "void"; }
         @Override public boolean isBridge() { return false; }
         @Override public boolean isProxyLinkConstructor() {
             return ClientProxyShapeFromElements.isProxyLinkConstructor(constructor);

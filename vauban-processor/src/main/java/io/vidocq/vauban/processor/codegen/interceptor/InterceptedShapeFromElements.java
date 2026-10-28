@@ -20,10 +20,12 @@
 package io.vidocq.vauban.processor.codegen.interceptor;
 
 import io.vidocq.vauban.core.codegen.BeanMembers;
+import io.vidocq.vauban.core.codegen.TypeMembers;
 import io.vidocq.vauban.core.interceptor.CtorShape;
 import io.vidocq.vauban.core.interceptor.InterceptedShape;
 import io.vidocq.vauban.core.interceptor.MethodShape;
 import io.vidocq.vauban.core.interceptor.TypeRef;
+import io.vidocq.vauban.processor.codegen.ElementTypeView;
 
 import javax.lang.model.element.*;
 import javax.lang.model.type.*;
@@ -253,39 +255,8 @@ public final class InterceptedShapeFromElements {
      * {@code io.vidocq.vauban.core.codegen.ShadowedDefaults#isShadowed} (BUG-20261004-08).
      */
     public static boolean isShadowedDefault(TypeElement bean, ExecutableElement method, Types types) {
-        if (!method.getModifiers().contains(Modifier.DEFAULT)) return false;
-        var descriptor = erasedDescriptor(method, types);
-        boolean shadowed = false;
-        for (TypeElement c = bean; c != null && !isObject(c); c = superclassOf(c)) {
-            for (ExecutableElement declared : ElementFilter.methodsIn(c.getEnclosedElements())) {
-                if (!erasedDescriptor(declared, types).equals(descriptor)) continue;
-                if (isMemberOf(bean, declared, c)) return false;
-                shadowed = true;
-            }
-        }
-        return shadowed;
-    }
-
-    /**
-     * Whether {@code declared}, a method of {@code owner} — {@code bean} or one of its superclasses —
-     * is a member of {@code bean}: not private, and when package-private, inherited through classes
-     * of {@code owner}'s package only (JLS 8.4.8).
-     */
-    private static boolean isMemberOf(TypeElement bean, ExecutableElement declared, TypeElement owner) {
-        var modifiers = declared.getModifiers();
-        if (modifiers.contains(Modifier.PRIVATE)) return owner.equals(bean);
-        if (modifiers.contains(Modifier.PUBLIC) || modifiers.contains(Modifier.PROTECTED)) return true;
-        var ownerPackage = packageOf(owner);
-        for (TypeElement c = bean; c != null && !c.equals(owner); c = superclassOf(c)) {
-            if (!java.util.Objects.equals(packageOf(c), ownerPackage)) return false;
-        }
-        return true;
-    }
-
-    private static Element packageOf(TypeElement type) {
-        Element e = type;
-        while (e != null && e.getKind() != ElementKind.PACKAGE) e = e.getEnclosingElement();
-        return e;
+        return method.getModifiers().contains(Modifier.DEFAULT)
+                && TypeMembers.isShadowed(ElementTypeView.of(bean, types), ElementTypeView.member(method, bean, types));
     }
 
     /**
@@ -546,15 +517,6 @@ public final class InterceptedShapeFromElements {
             if (i instanceof DeclaredType dt && dt.asElement() instanceof TypeElement te) interfaces.add(te);
         }
         return interfaces;
-    }
-
-    /** Name, erased parameter types and erased return type: what the JVM resolves a call by. */
-    private static String erasedDescriptor(ExecutableElement method, Types types) {
-        var sb = new StringBuilder(method.getSimpleName()).append('(');
-        for (VariableElement p : method.getParameters()) {
-            sb.append(types.erasure(p.asType())).append(',');
-        }
-        return sb.append(')').append(types.erasure(method.getReturnType())).toString();
     }
 
     private static boolean isObject(TypeElement t) {

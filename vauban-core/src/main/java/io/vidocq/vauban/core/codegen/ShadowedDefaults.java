@@ -55,19 +55,8 @@ public final class ShadowedDefaults {
      * inherits is no shadow: it is the bean's member, and implements the default.
      */
     public static boolean isShadowed(Class<?> beanClass, Method defaultMethod) {
-        if (!defaultMethod.isDefault()) return false;
-        boolean shadowed = false;
-        for (Class<?> c = beanClass; c != null && c != Object.class; c = c.getSuperclass()) {
-            for (var declared : c.getDeclaredMethods()) {
-                if (declared.getName().equals(defaultMethod.getName())
-                        && declared.getReturnType() == defaultMethod.getReturnType()
-                        && java.util.Arrays.equals(declared.getParameterTypes(), defaultMethod.getParameterTypes())) {
-                    if (BeanMembers.isBusinessMethodOf(beanClass, declared)) return false;
-                    shadowed = true;
-                }
-            }
-        }
-        return shadowed;
+        return defaultMethod.isDefault()
+                && TypeMembers.isShadowed(ClassTypeView.of(beanClass), ClassTypeView.member(defaultMethod));
     }
 
     /**

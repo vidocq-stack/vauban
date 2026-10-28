@@ -90,6 +90,11 @@ public record ClassTypeView(Class<?> type) implements TypeView {
                 .toList();
     }
 
+    /** {@code method} as a member of the view of its declaring class. */
+    public static TypeView.Member member(Method method) {
+        return new MethodMember(method);
+    }
+
     /** The method {@code member}, a member of a {@code ClassTypeView}, stands for. */
     public static Method method(TypeView.Member member) {
         return ((MethodMember) member).method();
@@ -123,8 +128,12 @@ public record ClassTypeView(Class<?> type) implements TypeView {
 
     private static List<String> names(Executable executable) {
         return Arrays.stream(executable.getParameterTypes())
-                .map(p -> p.getCanonicalName() != null ? p.getCanonicalName() : p.getName())
+                .map(ClassTypeView::typeName)
                 .toList();
+    }
+
+    private static String typeName(Class<?> type) {
+        return type.getCanonicalName() != null ? type.getCanonicalName() : type.getName();
     }
 
     /** Name plus erased parameter types: a bridge carries the erased types of the signature it stands for. */
@@ -136,6 +145,7 @@ public record ClassTypeView(Class<?> type) implements TypeView {
         @Override public String name() { return method.getName(); }
         @Override public Set<Flag> flags() { return ClassTypeView.flags(method.getModifiers()); }
         @Override public List<String> parameterTypes() { return names(method); }
+        @Override public String returnType() { return typeName(method.getReturnType()); }
         @Override public boolean isBridge() { return method.isBridge() || method.isSynthetic(); }
         @Override public boolean isProxyLinkConstructor() { return false; }
         @Override public String overrideKey() { return key(method); }
@@ -145,6 +155,7 @@ public record ClassTypeView(Class<?> type) implements TypeView {
         @Override public String name() { return "<init>"; }
         @Override public Set<Flag> flags() { return ClassTypeView.flags(constructor.getModifiers()); }
         @Override public List<String> parameterTypes() { return names(constructor); }
+        @Override public String returnType() { return "void"; }
         @Override public boolean isBridge() { return false; }
         @Override public boolean isProxyLinkConstructor() { return ClientProxyShape.isProxyLinkConstructor(constructor); }
         @Override public String overrideKey() { return "<init>" + parameterTypes(); }

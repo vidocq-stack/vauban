@@ -73,25 +73,8 @@ public final class BeanMembers {
      * @param declaration a method a class of {@code beanClass}'s superclass chain declares
      */
     public static boolean isBusinessMethodOf(Class<?> beanClass, Method declaration) {
-        int modifiers = declaration.getModifiers();
-        if (Modifier.isStatic(modifiers) || Modifier.isPrivate(modifiers)) return false;
-        if (Modifier.isPublic(modifiers) || Modifier.isProtected(modifiers)) return true;
-        return packagePrivateInherited(beanClass, declaration.getDeclaringClass());
-    }
-
-    /**
-     * Whether a package-private member of {@code declaring} is inherited by {@code beanClass}: every
-     * class from the bean up to its declaring class shares that class's runtime package (JLS 8.4.8),
-     * the only case in which a subclass can override it.
-     */
-    public static boolean packagePrivateInherited(Class<?> beanClass, Class<?> declaring) {
-        for (Class<?> c = beanClass; c != null && c != declaring; c = c.getSuperclass()) {
-            if (!c.getPackageName().equals(declaring.getPackageName())
-                    || c.getClassLoader() != declaring.getClassLoader()) {
-                return false;
-            }
-        }
-        return true;
+        return TypeMembers.isMemberOf(ClassTypeView.of(beanClass), ClassTypeView.of(declaration.getDeclaringClass()),
+                ClassTypeView.member(declaration));
     }
 
     /**

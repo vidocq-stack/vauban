@@ -77,6 +77,9 @@ public interface TypeView {
          */
         List<String> parameterTypes();
 
+        /** The erased return type, as a canonical name; {@code void} for a constructor. */
+        String returnType();
+
         default int parameterCount() {
             return parameterTypes().size();
         }

@@ -19,6 +19,7 @@
  */
 package io.vidocq.vauban.core.proxy;
 
+import io.vidocq.vauban.core.codegen.TypeMembers;
 import io.vidocq.vauban.core.codegen.TypeView;
 import io.vidocq.vauban.core.codegen.TypeView.Flag;
 
@@ -104,27 +105,10 @@ public final class ForwardedMethods {
     }
 
     /**
-     * Whether {@code m}, declared by {@code declaring}, is a method of {@code type} the proxy reaches from where it
-     * lives. A package-private method is a member of {@code type} only when every class from {@code type} up to
-     * {@code declaring} shares that class's runtime package (JLS 8.4.8): {@code A(p) <- B(q) <- C(p)} does not
-     * give {@code C} the package-private methods of {@code A}.
+     * Whether {@code m}, declared by {@code declaring}, is a method of {@code type} ({@link TypeMembers#isMemberOf})
+     * the proxy reaches from where it lives.
      */
     private static boolean isForwarded(TypeView type, TypeView declaring, TypeView.Member m, Placement placement) {
-        if (m.is(Flag.PUBLIC)) {
-            return true;
-        }
-        if (placement == Placement.OTHER_PACKAGE) {
-            return false;
-        }
-        return m.is(Flag.PROTECTED) || packagePrivateInherited(type, declaring);
-    }
-
-    private static boolean packagePrivateInherited(TypeView type, TypeView declaring) {
-        for (TypeView c = type; c != null && !c.isSameType(declaring); c = c.superclass()) {
-            if (!c.isSamePackage(declaring)) {
-                return false;
-            }
-        }
-        return true;
+        return placement == Placement.TYPE_PACKAGE ? TypeMembers.isMemberOf(type, declaring, m) : m.is(Flag.PUBLIC);
     }
 }
