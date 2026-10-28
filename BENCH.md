@@ -6,6 +6,78 @@ Every published number (README, commit, post) must point to an entry here.
 
 ---
 
+## BENCH-20261028-04 — Intercepted call handed to `InterceptorManager.intercept` (vauban#227)
+
+- **Date**: 2026-10-28
+- **Commit**: 031c93c0 (branch `perf/227-intercepted-call-allocations`): one `intercept` call per generated
+  override, target called directly when the chain is empty, invocation context that keeps the override's
+  argument array instead of copying it, shared `NO_ARGUMENTS`, context-data map created on first use
+- **JVM**: Temurin 25+36-LTS, default flags
+- **Hardware**: Apple M5 Max / 18 cores (6 performance, 12 efficiency) / 128 GB RAM
+- **OS**: macOS 27.0.1 (arm64)
+- **Exact command**:
+  ```bash
+  ./mvnw -ntp clean install -DskipTests        # Maven 3.9.16
+  java -jar vauban-bench/target/benchmarks.jar 'GeneratedCodeBenchmark|QualifierResolutionBenchmark.interceptedCall' \
+      -f 3 -wi 5 -i 5 -w 2s -r 3s -prof gc
+  ```
+- **Results**:
+  ```
+  Benchmark                                                         Mode  Cnt     Score     Error   Units
+  GeneratedCodeBenchmark.clientProxyCall                            avgt   15     5,098 ±   0,052   ns/op
+  GeneratedCodeBenchmark.clientProxyCall:gc.alloc.rate.norm         avgt   15    ≈ 10⁻⁴              B/op
+  GeneratedCodeBenchmark.interceptedCall                            avgt   15    11,558 ±   0,110   ns/op
+  GeneratedCodeBenchmark.interceptedCall:gc.alloc.rate.norm         avgt   15    96,000 ±   0,001    B/op
+  GeneratedCodeBenchmark.interceptedCreation                        avgt   15  2445,835 ±  46,112   ns/op
+  GeneratedCodeBenchmark.interceptedCreation:gc.alloc.rate.norm     avgt   15  7032,040 ± 211,844    B/op
+  GeneratedCodeBenchmark.plainCall                                  avgt   15     0,306 ±   0,003   ns/op
+  GeneratedCodeBenchmark.plainCall:gc.alloc.rate.norm               avgt   15    ≈ 10⁻⁶              B/op
+  GeneratedCodeBenchmark.proxiedInterceptedCall                     avgt   15    15,377 ±   0,453   ns/op
+  GeneratedCodeBenchmark.proxiedInterceptedCall:gc.alloc.rate.norm  avgt   15    96,000 ±   0,001    B/op
+  QualifierResolutionBenchmark.interceptedCall                      avgt   15    15,216 ±   0,326   ns/op
+  QualifierResolutionBenchmark.interceptedCall:gc.alloc.rate.norm   avgt   15    96,000 ±   0,001    B/op
+  ```
+- **Comparison with the previous run** (BENCH-20261028-03, same day, same machine, same command):
+
+  | Benchmark | before | after | time | allocation |
+  |---|---|---|---|---|
+  | `interceptedCall` | 14.29 ns, 144 B/op | 11.56 ns, 96 B/op | −19 % | −33 % |
+  | `proxiedInterceptedCall` | 16.78 ns, 144 B/op | 15.38 ns, 96 B/op | −8 % | −33 % |
+  | `QualifierResolutionBenchmark.interceptedCall` | 15.92 ns, 144 B/op | 15.22 ns, 96 B/op | −4 % | −33 % |
+  | `interceptedCreation` | 2434 ns | 2446 ns | within error | within error |
+  | `clientProxyCall`, `plainCall` | 5.06 / 0.31 ns | 5.10 / 0.31 ns | within error | — |
+
+- **Notes**: the 48 B gone are the eager context-data `HashMap` and the copy of the argument array. What
+  remains (96 B/op with one interceptor) is the invocation context itself, the `ChainedContext` handed to the
+  interceptor, and the varargs array of `Method.invoke` that calls the `@AroundInvoke` method — the last one
+  goes with vauban#109 (interceptor methods called through generated code).
+
+## BENCH-20261028-03 — Reference before `InterceptorManager.intercept` (vauban#227)
+
+- **Date**: 2026-10-28
+- **Commit**: b3275e87 (`main`, after BENCH-20261028-02 and the VAU-INT-010 merge)
+- **JVM / Hardware / OS**: as BENCH-20261028-04
+- **Exact command**: as BENCH-20261028-04
+- **Results**:
+  ```
+  Benchmark                                                         Mode  Cnt     Score     Error   Units
+  GeneratedCodeBenchmark.clientProxyCall                            avgt   15     5,059 ±   0,023   ns/op
+  GeneratedCodeBenchmark.clientProxyCall:gc.alloc.rate.norm         avgt   15    ≈ 10⁻⁴              B/op
+  GeneratedCodeBenchmark.interceptedCall                            avgt   15    14,287 ±   0,065   ns/op
+  GeneratedCodeBenchmark.interceptedCall:gc.alloc.rate.norm         avgt   15   144,000 ±   0,001    B/op
+  GeneratedCodeBenchmark.interceptedCreation                        avgt   15  2433,543 ±  24,438   ns/op
+  GeneratedCodeBenchmark.interceptedCreation:gc.alloc.rate.norm     avgt   15  7125,373 ± 160,075    B/op
+  GeneratedCodeBenchmark.plainCall                                  avgt   15     0,305 ±   0,003   ns/op
+  GeneratedCodeBenchmark.plainCall:gc.alloc.rate.norm               avgt   15    ≈ 10⁻⁶              B/op
+  GeneratedCodeBenchmark.proxiedInterceptedCall                     avgt   15    16,783 ±   0,585   ns/op
+  GeneratedCodeBenchmark.proxiedInterceptedCall:gc.alloc.rate.norm  avgt   15   144,000 ±   0,001    B/op
+  QualifierResolutionBenchmark.interceptedCall                      avgt   15    15,922 ±   0,249   ns/op
+  QualifierResolutionBenchmark.interceptedCall:gc.alloc.rate.norm   avgt   15   144,000 ±   0,001    B/op
+  ```
+- **Comparison with the previous run** (BENCH-20261028-02): calls within error (`interceptedCall` 14.36 →
+  14.29 ns, 144 B/op unchanged); `interceptedCreation` 2560 → 2434 ns (−5 %), not attributed: `main` also
+  moved (VAU-INT-010).
+
 ## BENCH-20261028-02 — Generated code hot paths after vauban#227 (scope, callbacks, chain per instance)
 
 - **Date**: 2026-10-28
