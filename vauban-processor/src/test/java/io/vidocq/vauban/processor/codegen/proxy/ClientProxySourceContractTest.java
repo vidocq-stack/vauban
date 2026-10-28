@@ -62,9 +62,11 @@ class ClientProxySourceContractTest {
                 List.of(TypeRef.ofReference("java.lang.String")), List.of(LOAD),
                 List.of(TypeRef.ofReference("java.io.IOException"),
                         TypeRef.ofReference("java.util.concurrent.TimeoutException")))).source();
-        assertTrue(throwing.contains("(java.util.function.Supplier<? extends app.Store> d)"
-                + " throws java.io.IOException, java.util.concurrent.TimeoutException {\n"
-                + "        super((java.lang.String) null);\n"), throwing);
+        assertTrue(throwing.contains("""
+                (java.util.function.Supplier<? extends app.Store> d) \
+                throws java.io.IOException, java.util.concurrent.TimeoutException {
+                        super((java.lang.String) null);
+                """), throwing);
         assertFalse(throwing.contains("Throwable"), throwing);
     }
 }
