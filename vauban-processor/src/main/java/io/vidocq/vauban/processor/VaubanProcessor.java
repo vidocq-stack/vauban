@@ -176,10 +176,19 @@ public class VaubanProcessor extends AbstractProcessor {
         return SourceVersion.latestSupported();
     }
 
+    /** The processed types, found by the names the index carries. */
+    private TypeLookup typeLookup;
+    /** The generated artefacts, one class each. */
+    private InterceptedArtefacts intercepted;
+    private ClientProxyArtefacts clientProxies;
+    private ComponentProviderArtefacts componentProviders;
+
     @Override
     public synchronized void init(ProcessingEnvironment processingEnv) {
         super.init(processingEnv);
-        output = new GeneratedOutput(processingEnv);
+        // The artefacts share one output: the classes one emits as bytecode, the providers instantiate through
+        // their lookup (BUG-20261004-09).
+        var output = new GeneratedOutput(processingEnv);
         typeLookup = new TypeLookup(processingEnv);
         intercepted = new InterceptedArtefacts(processingEnv, output, typeLookup);
         clientProxies = new ClientProxyArtefacts(processingEnv, output);
@@ -1376,19 +1385,6 @@ public class VaubanProcessor extends AbstractProcessor {
     }
 
     // --- File writing ---
-
-    /**
-     * Where the generated classes go; the subclasses and proxies emitted as bytecode in place of
-     * source (BUG-20261004-09) are recorded there: the source provider instantiates them through its
-     * lookup, since javac does not read back class files generated in the last round.
-     */
-    private GeneratedOutput output;
-
-    /** The processed types, found by the names the index carries. */
-    private TypeLookup typeLookup;
-    private InterceptedArtefacts intercepted;
-    private ClientProxyArtefacts clientProxies;
-    private ComponentProviderArtefacts componentProviders;
 
     /**
      * Write {@code META-INF/vauban/required-opens.list} (issue #42, Stage 3b): the produced class
