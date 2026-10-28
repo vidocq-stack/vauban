@@ -44,7 +44,9 @@ import java.util.concurrent.TimeUnit;
  *   <li>{@code clientProxyCall}: an {@code @ApplicationScoped} bean, through its {@code _ClientProxy};</li>
  *   <li>{@code interceptedCall}: a {@code @Dependent} bean, through its {@code $$Intercepted} subclass;</li>
  *   <li>{@code proxiedInterceptedCall}: both, the client proxy forwarding to the intercepted subclass;</li>
- *   <li>{@code interceptedCreation}: a new intercepted {@code @Dependent} bean, created and destroyed.</li>
+ *   <li>{@code interceptedCreation}: a new intercepted {@code @Dependent} bean, created and destroyed;</li>
+ *   <li>{@code bytecodeInterceptedCreation}: the same, for a subclass the processor emits as bytecode, which the
+ *       provider instantiates through its lookup (BUG-20261004-09).</li>
  * </ul>
  *
  * <p>{@link #boot()} checks each path before the first iteration and fails the trial otherwise.
@@ -63,6 +65,7 @@ public class GeneratedCodeBenchmark {
     private AuditedTally tally;
     private Ledger ledger;
     private Instance<AuditedTally> tallies;
+    private Instance<AuditedHiddenTally> hiddenTallies;
 
     @Setup(Level.Trial)
     public void boot() {
@@ -70,6 +73,7 @@ public class GeneratedCodeBenchmark {
                 .addBeanClass(Plain.class)
                 .addBeanClass(Counter.class)
                 .addBeanClass(AuditedTally.class)
+                .addBeanClass(AuditedHiddenTally.class)
                 .addBeanClass(Ledger.class)
                 .addBeanClass(AuditInterceptor.class)
                 .build();
@@ -78,6 +82,7 @@ public class GeneratedCodeBenchmark {
         tally = CDI.current().select(AuditedTally.class).get();
         ledger = CDI.current().select(Ledger.class).get();
         tallies = CDI.current().select(AuditedTally.class);
+        hiddenTallies = CDI.current().select(AuditedHiddenTally.class);
         verify();
     }
 
@@ -87,6 +92,9 @@ public class GeneratedCodeBenchmark {
         expect(true, counter.getClass().getName().endsWith("_ClientProxy"), "counter is a client proxy");
         expect(true, tally.getClass().getName().endsWith("$$Intercepted"), "tally is intercepted");
         expect(true, ledger.getClass().getName().endsWith("_ClientProxy"), "ledger is a client proxy");
+        var hiddenTally = hiddenTallies.get();
+        expect(true, hiddenTally.getClass().getName().endsWith("$$Intercepted"), "hidden tally is intercepted");
+        hiddenTallies.destroy(hiddenTally);
         expect(42L, plainCall(), "plainCall");
         expect(42L, clientProxyCall(), "clientProxyCall");
 
@@ -94,7 +102,8 @@ public class GeneratedCodeBenchmark {
         expect(42L, interceptedCall(), "interceptedCall");
         expect(42L, proxiedInterceptedCall(), "proxiedInterceptedCall");
         expect(42L, interceptedCreation(), "interceptedCreation");
-        expect(3L, AuditInterceptor.CALLS.sum() - before, "interceptions");
+        expect(42L, bytecodeInterceptedCreation(), "bytecodeInterceptedCreation");
+        expect(4L, AuditInterceptor.CALLS.sum() - before, "interceptions");
     }
 
     private static void expect(Object expected, Object actual, String what) {
@@ -136,6 +145,16 @@ public class GeneratedCodeBenchmark {
             return created.next(41L);
         } finally {
             tallies.destroy(created);
+        }
+    }
+
+    @Benchmark
+    public long bytecodeInterceptedCreation() {
+        var created = hiddenTallies.get();
+        try {
+            return created.next(41L);
+        } finally {
+            hiddenTallies.destroy(created);
         }
     }
 }
