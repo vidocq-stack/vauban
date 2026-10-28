@@ -210,16 +210,24 @@ class ClientProxyInheritanceCrossCheckTest {
 
     /** Two one-parameter constructors, {@code (String)} declared first. */
     public static class StringFirstConstructors {
-        public StringFirstConstructors(String value) { }
+        public StringFirstConstructors(String value) {
+            // The signature is the fixture.
+        }
 
-        public StringFirstConstructors(Integer value) { }
+        public StringFirstConstructors(Integer value) {
+            // The signature is the fixture.
+        }
     }
 
     /** The same two constructors, {@code (Integer)} declared first. */
     public static class IntegerFirstConstructors {
-        public IntegerFirstConstructors(Integer value) { }
+        public IntegerFirstConstructors(Integer value) {
+            // The signature is the fixture.
+        }
 
-        public IntegerFirstConstructors(String value) { }
+        public IntegerFirstConstructors(String value) {
+            // The signature is the fixture.
+        }
     }
 
     @Test

@@ -91,8 +91,10 @@ public record ClassTypeView(Class<?> type) implements TypeView {
      * The constructor a client proxy of this type chains to ({@link ClientProxyShape#superConstructor}), or
      * {@code null} when every constructor is private.
      */
+    // The constructor of a type known only at run time: Constructor<?> is its only type.
+    @SuppressWarnings("java:S1452")
     public Constructor<?> superConstructor() {
-        return ClientProxyShape.superConstructor(this) instanceof ConstructorMember member ? member.constructor() : null;
+        return ClientProxyShape.superConstructor(this) instanceof ConstructorMember(var constructor) ? constructor : null;
     }
 
     private static List<String> names(Executable executable) {
