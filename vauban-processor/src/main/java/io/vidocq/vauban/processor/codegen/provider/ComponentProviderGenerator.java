@@ -221,10 +221,11 @@ public final class ComponentProviderGenerator {
         sb.append("public final class ").append(simpleName)
                 .append(" implements ").append(SPI).append(" {\n");
 
-        appendCreate(sb, components.stream().filter(Component::noArg).toList(), contents.bytecodeClasses());
+        var constructors = new BytecodeConstructors(contents.bytecodeClasses());
+        appendCreate(sb, components.stream().filter(Component::noArg).toList(), constructors);
         var withArgs = components.stream().filter(c -> !c.noArg()).toList();
         if (!withArgs.isEmpty()) {
-            appendCreateWithArgs(sb, withArgs, contents.bytecodeClasses());
+            appendCreateWithArgs(sb, withArgs, constructors);
         }
         if (!contents.fieldInjects().isEmpty()) {
             appendInjectField(sb, components, contents.fieldInjects());
@@ -233,7 +234,7 @@ public final class ComponentProviderGenerator {
             appendInvoke(sb, contents.methodInvokes());
         }
         if (!contents.clientProxyFqns().isEmpty() || !contents.producerProxies().isEmpty()) {
-            appendCreateClientProxy(sb, contents);
+            appendCreateClientProxy(sb, contents, constructors);
         }
 
         // grantModuleLookup(): the provider's own lookup, handed to the container through a grant only the
@@ -245,9 +246,7 @@ public final class ComponentProviderGenerator {
 
         appendCoverage(sb, contents);
 
-        if (!contents.bytecodeClasses().isEmpty()) {
-            appendBytecodeInstantiation(sb);
-        }
+        constructors.appendHolders(sb);
 
         sb.append(contents.annotations().methods());
         sb.append(contents.annotations().literals());
@@ -284,16 +283,16 @@ public final class ComponentProviderGenerator {
     private static final String COVERAGE_SEPARATOR = ",\n";
 
     /** {@code create(String)}: the no-arg components. */
-    private static void appendCreate(StringBuilder sb, List<Component> noArg, java.util.Set<String> bytecodeClasses) {
+    private static void appendCreate(StringBuilder sb, List<Component> noArg, BytecodeConstructors constructors) {
         sb.append(OVERRIDE);
         sb.append("    public Object create(String className) {\n");
         // A constructor may declare checked exceptions (vauban#145): see sneaky() below.
         sb.append(TRY_OPEN);
         sb.append("        return switch (className) {\n");
         for (var c : noArg) {
-            if (bytecodeClasses.contains(c.fqn())) {
-                sb.append(CASE_OPEN).append(c.fqn()).append("\" -> ").append(CONSTRUCT)
-                        .append("(\"").append(c.fqn()).append("\", new Class<?>[0], new Object[0]);\n");
+            if (constructors.contains(c.fqn())) {
+                sb.append(CASE_OPEN).append(c.fqn()).append("\" -> ")
+                        .append(constructors.call(c.fqn(), List.of(), "")).append(";\n");
             } else {
                 sb.append(CASE_OPEN).append(c.fqn()).append("\" -> new ")
                         .append(c.sourceFqn()).append(NO_ARG_CALL);
@@ -307,7 +306,7 @@ public final class ComponentProviderGenerator {
 
     /** {@code create(String, Object[])}: the components with an injected constructor. */
     private static void appendCreateWithArgs(StringBuilder sb, List<Component> withArgs,
-            java.util.Set<String> bytecodeClasses) {
+            BytecodeConstructors constructors) {
         sb.append(OVERRIDE);
         sb.append(SUPPRESS_RAW);
         sb.append("    public Object create(String className, Object[] args) {\n");
@@ -315,12 +314,11 @@ public final class ComponentProviderGenerator {
         sb.append(TRY_OPEN);
         sb.append("        return switch (className) {\n");
         for (var c : withArgs) {
-            if (bytecodeClasses.contains(c.fqn())) {
-                sb.append(CASE_OPEN).append(c.fqn()).append("\" -> ").append(CONSTRUCT)
-                        .append("(\"").append(c.fqn()).append("\", new Class<?>[] {")
-                        .append(c.ctorParamTypes().stream().map(t -> t + ".class")
-                                .collect(Collectors.joining(", ")))
-                        .append("}, args);\n");
+            if (constructors.contains(c.fqn())) {
+                var arguments = java.util.stream.IntStream.range(0, c.ctorParamTypes().size())
+                        .mapToObj(i -> "args[" + i + "]").collect(Collectors.joining(", "));
+                sb.append(CASE_OPEN).append(c.fqn()).append("\" -> ")
+                        .append(constructors.call(c.fqn(), c.ctorParamTypes(), arguments)).append(";\n");
             } else {
                 sb.append(CASE_OPEN).append(c.fqn()).append("\" -> new ")
                         .append(c.sourceFqn()).append("(").append(castArgs(c.ctorParamTypes())).append(");\n");
@@ -431,7 +429,8 @@ public final class ComponentProviderGenerator {
      * proxies (issue #42) are keyed by the produced type but instantiated from this (the producer's)
      * package.
      */
-    private static void appendCreateClientProxy(StringBuilder sb, Contents contents) {
+    private static void appendCreateClientProxy(StringBuilder sb, Contents contents,
+            BytecodeConstructors constructors) {
         sb.append(OVERRIDE);
         sb.append(SUPPRESS_RAW);
         sb.append("    public Object createClientProxy(String proxyClassName, java.util.function.Supplier<?> delegate) {\n");
@@ -439,10 +438,10 @@ public final class ComponentProviderGenerator {
         sb.append(TRY_OPEN);
         sb.append("        switch (proxyClassName) {\n");
         for (var proxyFqn : contents.clientProxyFqns()) {
-            appendProxyCase(sb, proxyFqn, proxyFqn, contents.bytecodeClasses());
+            appendProxyCase(sb, proxyFqn, proxyFqn, constructors);
         }
         for (var pp : contents.producerProxies()) {
-            appendProxyCase(sb, pp.key(), pp.proxyFqn(), contents.bytecodeClasses());
+            appendProxyCase(sb, pp.key(), pp.proxyFqn(), constructors);
         }
         sb.append("            default -> { return null; }\n");
         sb.append(CLOSE_8);
@@ -452,13 +451,14 @@ public final class ComponentProviderGenerator {
 
     /** One {@code case "<key>" -> { … }} of {@code createClientProxy}. */
     private static void appendProxyCase(StringBuilder sb, String key, String proxyFqn,
-            java.util.Set<String> bytecodeClasses) {
-        if (bytecodeClasses.contains(proxyFqn)) {
-            appendBytecodeProxyCase(sb, key, proxyFqn);
-            return;
-        }
+            BytecodeConstructors constructors) {
         sb.append(CASE_OPEN).append(key).append(CASE_BLOCK);
-        sb.append("                return new ").append(proxyFqn).append("(delegate);\n");
+        if (constructors.contains(proxyFqn)) {
+            sb.append("                return ").append(constructors.call(proxyFqn,
+                    List.of("java.util.function.Supplier"), "(Object) delegate")).append(";\n");
+        } else {
+            sb.append("                return new ").append(proxyFqn).append("(delegate);\n");
+        }
         sb.append(CLOSE_12);
     }
 
@@ -483,44 +483,67 @@ public final class ComponentProviderGenerator {
         sb.append(CLOSE_4);
     }
 
-    /** The provider's helper instantiating a class emitted as bytecode, by its binary name. */
-    private static final String CONSTRUCT = "$$construct";
-
-    /** {@code case "<key>" -> return $$proxy("<binary name>", delegate);}: a proxy emitted as bytecode. */
-    private static void appendBytecodeProxyCase(StringBuilder sb, String key, String proxyBinaryName) {
-        sb.append(CASE_OPEN).append(key).append(CASE_BLOCK);
-        sb.append("                return $$proxy(\"").append(proxyBinaryName).append("\", delegate);\n");
-        sb.append(CLOSE_12);
-    }
-
     /**
-     * The helpers instantiating, through the provider's own lookup, the classes emitted as bytecode:
-     * a full-privilege lookup in the provider's package, which needs no {@code opens}. The handle is
-     * looked up on every call — such a class is rare (BUG-20261004-09).
+     * The constructors of the classes this package's processor emitted as bytecode (BUG-20261004-09). Java
+     * source cannot name such a class, so the provider reaches its constructor through its own lookup: a
+     * full-privilege lookup in the provider's package, which needs no {@code opens}. Each constructor sits
+     * behind a holder class {@code $$Ctor<n>}, so its handle is looked up once, on first use (vauban#227).
      */
-    private static void appendBytecodeInstantiation(StringBuilder sb) {
-        sb.append("""
-                    // Classes this package's processor emitted as bytecode (BUG-20261004-09): this source
-                    // cannot name them, so they are instantiated through the provider's own lookup.
-                    private static Object $$construct(String className, Class<?>[] parameterTypes, Object[] args) {
-                        try {
-                            var lookup = java.lang.invoke.MethodHandles.lookup();
-                            var type = Class.forName(className, false, lookup.lookupClass().getClassLoader());
-                            return lookup.findConstructor(type,
-                                    java.lang.invoke.MethodType.methodType(void.class, parameterTypes))
-                                    .invokeWithArguments(args);
-                        } catch (RuntimeException | Error e) {
-                            throw e;
-                        } catch (Throwable t) {
-                            throw new IllegalStateException("[Vauban] Could not instantiate " + className, t);
-                        }
-                    }
+    private static final class BytecodeConstructors {
 
-                    private static Object $$proxy(String className, java.util.function.Supplier<?> delegate) {
-                        return $$construct(className, new Class<?>[] {java.util.function.Supplier.class},
-                                new Object[] {delegate});
-                    }
-                """);
+        private final java.util.Set<String> classes;
+        private final Map<String, List<String>> used = new java.util.LinkedHashMap<>();
+
+        BytecodeConstructors(java.util.Set<String> classes) {
+            this.classes = classes;
+        }
+
+        boolean contains(String binaryName) {
+            return classes.contains(binaryName);
+        }
+
+        /** {@code (Object) $$Ctor<n>.H.invokeExact(<arguments>)}: each argument typed {@code Object}. */
+        String call(String binaryName, List<String> parameterTypes, String arguments) {
+            used.putIfAbsent(binaryName, parameterTypes);
+            int index = List.copyOf(used.keySet()).indexOf(binaryName);
+            return "(Object) $$Ctor" + index + ".H.invokeExact(" + arguments + ")";
+        }
+
+        /** The holder of each constructor {@link #call} used, then the helper they look it up with. */
+        void appendHolders(StringBuilder sb) {
+            if (used.isEmpty()) {
+                return;
+            }
+            sb.append("""
+                        // Classes this package's processor emitted as bytecode (BUG-20261004-09): this source
+                        // cannot name them, so their constructors are looked up through the provider's own lookup,
+                        // once each, on first use.
+                    """);
+            int index = 0;
+            for (var entry : used.entrySet()) {
+                sb.append("    private static final class $$Ctor").append(index++).append(" {\n");
+                sb.append("        static final java.lang.invoke.MethodHandle H = $$constructor(\"")
+                        .append(entry.getKey()).append('"');
+                entry.getValue().forEach(type -> sb.append(", ").append(type).append(".class"));
+                sb.append(");\n");
+                sb.append(CLOSE_4);
+            }
+            sb.append("""
+
+                        /** The constructor of {@code className}, typed {@code (Object…)Object} for {@code invokeExact}. */
+                        private static java.lang.invoke.MethodHandle $$constructor(String className, Class<?>... parameterTypes) {
+                            try {
+                                var lookup = java.lang.invoke.MethodHandles.lookup();
+                                var type = Class.forName(className, false, lookup.lookupClass().getClassLoader());
+                                return lookup.findConstructor(type,
+                                        java.lang.invoke.MethodType.methodType(void.class, parameterTypes))
+                                        .asType(java.lang.invoke.MethodType.genericMethodType(parameterTypes.length));
+                            } catch (ReflectiveOperationException e) {
+                                throw new IllegalStateException("[Vauban] Could not instantiate " + className, e);
+                            }
+                        }
+                    """);
+        }
     }
 
     /** {@code new String[] {"a", "b"}}: the keys never hold a quote or a backslash (class and member names). */

@@ -19,6 +19,7 @@
  */
 package io.vidocq.vauban.processor.apt;
 
+import io.vidocq.vauban.api.VaubanComponentProvider;
 import io.vidocq.vauban.core.proxy.ClientProxyShape;
 import io.vidocq.vauban.processor.VaubanProcessor;
 import jakarta.enterprise.context.ApplicationScoped;
@@ -43,6 +44,7 @@ import java.util.function.Supplier;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -93,6 +95,22 @@ class UnnameableMemberBytecodeEmissionTest {
                         public lib.Taker taker() { return new lib.Taker(); }
                     }
                     """,
+            "lib/Refusing.java", """
+                    package lib;
+                    public class Refusing {
+                        public Refusing() throws java.io.IOException { throw new java.io.IOException("refused"); }
+                        public String take(HiddenArg argument) { return "took " + argument; }
+                    }
+                    """,
+            "app/RefusingProducer.java", """
+                    package app;
+                    @jakarta.enterprise.context.Dependent
+                    public class RefusingProducer {
+                        @jakarta.enterprise.inject.Produces
+                        @jakarta.enterprise.context.ApplicationScoped
+                        public lib.Refusing refusing() { throw new UnsupportedOperationException(); }
+                    }
+                    """,
             "app/LabeledService.java", """
                     package app;
                     @jakarta.enterprise.context.ApplicationScoped
@@ -111,8 +129,10 @@ class UnnameableMemberBytecodeEmissionTest {
         assertFalse(Files.exists(result.genDir().resolve(proxyPath + ".java")), "no source proxy");
         assertTrue(Files.exists(result.outputDir().resolve(proxyPath + ".class")), "a class-file proxy");
         var provider = Files.readString(result.genDir().resolve("app/_VaubanComponents.java"));
-        assertTrue(provider.contains("case \"lib.Taker_ClientProxy\" -> {\n                return $$proxy(\""
-                + proxyName + "\", delegate);"), provider);
+        assertTrue(provider.contains("case \"lib.Taker_ClientProxy\" -> {\n                return (Object) $$Ctor"),
+                provider);
+        assertTrue(provider.contains("H = $$constructor(\"" + proxyName + "\", java.util.function.Supplier.class);"),
+                provider);
         assertTrue(result.messages().stream().anyMatch(m -> m.contains("Generated " + proxyName + " as bytecode")),
                 String.valueOf(result.messages()));
 
@@ -132,6 +152,31 @@ class UnnameableMemberBytecodeEmissionTest {
         assertEquals("LabeledService hidden", forwarded(result, "app.LabeledService_ClientProxy",
                 "app.LabeledService", "lib.HiddenDefaultBase", "callLabel"),
                 "forwarded to the contextual instance, not run on the proxy");
+    }
+
+    @Test
+    @DisplayName("the provider creates a class-file proxy through a constructor handle, and lets its checked exception through (vauban#227)")
+    void providerCreatesThroughTheConstructorHandle() throws Exception {
+        var result = compile();
+        assertTrue(result.success(), "compilation should succeed. Messages: " + result.messages());
+        try (var loader = new URLClassLoader(new URL[] {result.outputDir().toUri().toURL()},
+                UnnameableMemberBytecodeEmissionTest.class.getClassLoader())) {
+            var provider = (VaubanComponentProvider) loader.loadClass("app._VaubanComponents")
+                    .getDeclaredConstructor().newInstance();
+            var takerClass = loader.loadClass("lib.Taker");
+            var taker = takerClass.getDeclaredConstructor().newInstance();
+
+            var proxy = provider.createClientProxy("lib.Taker_ClientProxy", () -> taker);
+            assertEquals("took hidden on Taker", takerClass.getMethod("callTake", takerClass).invoke(null, proxy),
+                    "the proxy forwards to its delegate");
+            assertTrue(proxy != provider.createClientProxy("lib.Taker_ClientProxy", () -> taker),
+                    "a new proxy on every call, from the same handle");
+
+            // The proxy's super constructor throws IOException: it propagates as from a `new`, unwrapped (vauban#145).
+            var thrown = assertThrows(IOException.class,
+                    () -> provider.createClientProxy("lib.Refusing_ClientProxy", () -> null));
+            assertEquals("refused", thrown.getMessage());
+        }
     }
 
     /** Calls {@code caller.method(proxy)} on a proxy wired to a fresh instance of {@code bean}. */

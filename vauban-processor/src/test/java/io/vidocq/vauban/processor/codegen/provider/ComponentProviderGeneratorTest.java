@@ -209,7 +209,7 @@ class ComponentProviderGeneratorTest {
     }
 
     @Test
-    @DisplayName("a class emitted as bytecode is instantiated through the provider's lookup, by name (BUG-20261004-09)")
+    @DisplayName("a class emitted as bytecode is instantiated through a constructor handle looked up once (BUG-20261004-09)")
     void bytecodeClassesThroughTheLookup() {
         var components = List.of(
                 new Component("app.Foo", List.of()),
@@ -224,19 +224,29 @@ class ComponentProviderGeneratorTest {
                 new ComponentProviderGenerator.Contents(components, List.of(), List.of(), proxies, producerProxies,
                         new AnnotationArtefacts.Rendered("", ""), java.util.Set.of())).source(),
                 "no bytecode class: the provider is unchanged");
-        assertFalse(plain.source().contains("$$construct"), plain.source());
+        assertFalse(plain.source().contains("$$Ctor"), plain.source());
 
         var s = ComponentProviderGenerator.generateFrom("app", ComponentProviderGenerator.SIMPLE_NAME,
                 new ComponentProviderGenerator.Contents(components, List.of(), List.of(), proxies, producerProxies,
                         new AnnotationArtefacts.Rendered("", ""), java.util.Set.of("app.Foo$$Intercepted", "app.Svc$$Intercepted", "app.Bar_ClientProxy",
                         "app.Thing$$1f_ClientProxy"))).source();
         assertTrue(s.contains("case \"app.Foo\" -> new app.Foo();"), s);
-        assertTrue(s.contains("case \"app.Foo$$Intercepted\" -> $$construct(\"app.Foo$$Intercepted\", new Class<?>[0], new Object[0]);"), s);
-        assertTrue(s.contains("case \"app.Svc$$Intercepted\" -> $$construct(\"app.Svc$$Intercepted\", new Class<?>[] {app.Repo.class, int.class}, args);"), s);
+        assertTrue(s.contains("case \"app.Foo$$Intercepted\" -> (Object) $$Ctor0.H.invokeExact();"), s);
+        assertTrue(s.contains("case \"app.Svc$$Intercepted\" -> (Object) $$Ctor1.H.invokeExact(args[0], args[1]);"), s);
         assertTrue(s.contains("return new app.Foo_ClientProxy(delegate);"), s);
-        assertTrue(s.contains("return $$proxy(\"app.Bar_ClientProxy\", delegate);"), s);
-        assertTrue(s.contains("case \"lib.Thing_ClientProxy\" -> {\n                return $$proxy(\"app.Thing$$1f_ClientProxy\", delegate);"), s);
-        assertTrue(s.contains("private static Object $$construct(String className, Class<?>[] parameterTypes, Object[] args) {"), s);
-        assertTrue(s.contains("private static Object $$proxy(String className, java.util.function.Supplier<?> delegate) {"), s);
+        assertTrue(s.contains("return (Object) $$Ctor2.H.invokeExact((Object) delegate);"), s);
+        assertTrue(s.contains("case \"lib.Thing_ClientProxy\" -> {\n                return (Object) $$Ctor3.H.invokeExact((Object) delegate);"), s);
+        // One holder per constructor: each handle is looked up once, on first use (vauban#227).
+        assertTrue(s.contains("private static final class $$Ctor0 {\n"
+                + "        static final java.lang.invoke.MethodHandle H = $$constructor(\"app.Foo$$Intercepted\");"), s);
+        assertTrue(s.contains("H = $$constructor(\"app.Svc$$Intercepted\", app.Repo.class, int.class);"), s);
+        assertTrue(s.contains("H = $$constructor(\"app.Bar_ClientProxy\", java.util.function.Supplier.class);"), s);
+        assertTrue(s.contains("H = $$constructor(\"app.Thing$$1f_ClientProxy\", java.util.function.Supplier.class);"), s);
+        assertFalse(s.contains("$$Ctor4"), s);
+        assertTrue(s.contains(
+                "private static java.lang.invoke.MethodHandle $$constructor(String className, Class<?>... parameterTypes) {"), s);
+        assertTrue(s.contains(".asType(java.lang.invoke.MethodType.genericMethodType(parameterTypes.length));"), s);
+        assertFalse(s.contains("$$construct("), s);
+        assertFalse(s.contains("invokeWithArguments"), s);
     }
 }
