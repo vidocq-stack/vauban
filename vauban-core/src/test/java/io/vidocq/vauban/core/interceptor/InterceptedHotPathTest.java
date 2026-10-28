@@ -96,6 +96,7 @@ class InterceptedHotPathTest {
 
     public static class Target {
         public void run() {
+            // Only its Method is used: no interceptor applies, the chain is what is checked.
         }
     }
 
