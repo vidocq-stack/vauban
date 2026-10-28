@@ -58,6 +58,16 @@ public final class InterceptorManager {
     /** The bean class carries its own class-level bindings, so it and the method determine the rest. */
     private record MethodChain(Class<?> beanClass, java.lang.reflect.Method method) {}
 
+    /**
+     * The {@code @AroundInvoke}, {@code @AroundConstruct}, ... methods of a class: its declarations alone decide them,
+     * and every intercepted call used to walk its hierarchy for them.
+     */
+    private final Map<LifecycleMethods, List<java.lang.reflect.Method>> lifecycleMethods =
+            new java.util.concurrent.ConcurrentHashMap<>();
+
+    private record LifecycleMethods(Class<?> declaringClass,
+            Class<? extends java.lang.annotation.Annotation> callback) {}
+
     public record InterceptionState(List<VaubanInvocationContext.InterceptorInvocation> chain, Set<DotName> bindings, CreationalContext<?> ctx) {}
 
     private static final ScopedValue<InterceptionState> INTERCEPTION = ScopedValue.newInstance();
@@ -186,18 +196,23 @@ public final class InterceptorManager {
         return ann.annotationType().isAnnotationPresent(jakarta.enterprise.inject.Stereotype.class);
     }
 
-    @SuppressWarnings("java:S3011") // CDI spec requires reflective access
     private void addLifecycleInvocations(Class<?> clazz, Object target, Class<? extends java.lang.annotation.Annotation> annotation, List<VaubanInvocationContext.InterceptorInvocation> chain) {
         if (clazz == null || clazz == Object.class) return;
 
-        // Collect lifecycle methods from hierarchy, respecting override rules
-        var methods = new java.util.ArrayList<java.lang.reflect.Method>();
-        collectLifecycleMethods(clazz, annotation, methods);
-
-        for (var method : methods) {
-            makeAccessibleSafe(method);
+        for (var method : lifecycleMethods.computeIfAbsent(new LifecycleMethods(clazz, annotation),
+                this::findLifecycleMethods)) {
             chain.add(new VaubanInvocationContext.InterceptorInvocation(target, method));
         }
+    }
+
+    /** The class's callbacks of one kind, in invocation order and made accessible: read once per class (vauban#227). */
+    @SuppressWarnings("java:S3011") // CDI spec requires reflective access
+    private List<java.lang.reflect.Method> findLifecycleMethods(LifecycleMethods key) {
+        // Collect lifecycle methods from hierarchy, respecting override rules
+        var methods = new java.util.ArrayList<java.lang.reflect.Method>();
+        collectLifecycleMethods(key.declaringClass(), key.callback(), methods);
+        methods.forEach(this::makeAccessibleSafe);
+        return List.copyOf(methods);
     }
 
     private void collectLifecycleMethods(Class<?> clazz, Class<? extends java.lang.annotation.Annotation> annotation,
