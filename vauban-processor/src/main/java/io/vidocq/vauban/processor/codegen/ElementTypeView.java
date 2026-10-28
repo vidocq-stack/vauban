@@ -20,6 +20,7 @@
 package io.vidocq.vauban.processor.codegen;
 
 import io.vidocq.vauban.core.codegen.TypeView;
+import io.vidocq.vauban.core.proxy.ClientProxyShape;
 import io.vidocq.vauban.processor.codegen.interceptor.InterceptedShapeFromElements;
 import io.vidocq.vauban.processor.codegen.proxy.ClientProxyShapeFromElements;
 
@@ -84,14 +85,27 @@ public record ElementTypeView(TypeElement type, TypeElement root, Types types) i
     @Override
     public List<TypeView.Member> methods() {
         return ElementFilter.methodsIn(type.getEnclosedElements()).stream()
-                .<TypeView.Member>map(m -> new MethodMember(m, InterceptedShapeFromElements.memberSignatureKey(root, m, types)))
+                .<TypeView.Member>map(m -> new MethodMember(m, InterceptedShapeFromElements.memberSignatureKey(root, m, types), types))
                 .toList();
     }
 
     @Override
     public List<TypeView.Member> constructors() {
         return ElementFilter.constructorsIn(type.getEnclosedElements()).stream()
-                .<TypeView.Member>map(ConstructorMember::new).toList();
+                .<TypeView.Member>map(c -> new ConstructorMember(c, types)).toList();
+    }
+
+    /**
+     * The constructor a client proxy of this type chains to ({@link ClientProxyShape#superConstructor}), or
+     * {@code null} when every constructor is private.
+     */
+    public ExecutableElement superConstructor() {
+        return ClientProxyShape.superConstructor(this) instanceof ConstructorMember member ? member.constructor() : null;
+    }
+
+    /** Erased canonical names: an erased type variable is its bound, a nested type is dotted, an array ends in []. */
+    private static List<String> names(ExecutableElement executable, Types types) {
+        return executable.getParameters().stream().map(p -> types.erasure(p.asType()).toString()).toList();
     }
 
     private static Set<Flag> flags(Set<Modifier> modifiers) {
@@ -114,22 +128,22 @@ public record ElementTypeView(TypeElement type, TypeElement root, Types types) i
     }
 
     /** A method; the language model has no bridge. */
-    private record MethodMember(ExecutableElement method, String overrideKey) implements TypeView.Member {
+    private record MethodMember(ExecutableElement method, String overrideKey, Types types) implements TypeView.Member {
         @Override public String name() { return method.getSimpleName().toString(); }
         @Override public Set<Flag> flags() { return ElementTypeView.flags(method.getModifiers()); }
-        @Override public int parameterCount() { return method.getParameters().size(); }
+        @Override public List<String> parameterTypes() { return names(method, types); }
         @Override public boolean isBridge() { return false; }
         @Override public boolean isProxyLinkConstructor() { return false; }
     }
 
-    private record ConstructorMember(ExecutableElement constructor) implements TypeView.Member {
+    private record ConstructorMember(ExecutableElement constructor, Types types) implements TypeView.Member {
         @Override public String name() { return "<init>"; }
         @Override public Set<Flag> flags() { return ElementTypeView.flags(constructor.getModifiers()); }
-        @Override public int parameterCount() { return constructor.getParameters().size(); }
+        @Override public List<String> parameterTypes() { return names(constructor, types); }
         @Override public boolean isBridge() { return false; }
         @Override public boolean isProxyLinkConstructor() {
             return ClientProxyShapeFromElements.isProxyLinkConstructor(constructor);
         }
-        @Override public String overrideKey() { return "<init>" + constructor.getParameters().size(); }
+        @Override public String overrideKey() { return "<init>" + parameterTypes(); }
     }
 }

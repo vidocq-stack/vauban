@@ -121,30 +121,11 @@ public final class ProducerProxyEligibility {
      * or protected.
      */
     private static Reason constructorVerdict(TypeView type) {
-        var chosen = simplestConstructor(type);
+        var chosen = ClientProxyShape.superConstructor(type);
         if (chosen == null) {
             return Reason.NO_ACCESSIBLE_CTOR;
         }
         return chosen.is(Flag.PUBLIC) || chosen.is(Flag.PROTECTED) ? Reason.ELIGIBLE : Reason.NO_ACCESSIBLE_CTOR;
-    }
-
-    /**
-     * The constructor a client proxy chains to: the (ProxyLink) constructor first, else the one with the fewest
-     * parameters, among non-private constructors; {@code null} when there is none.
-     */
-    public static TypeView.Member simplestConstructor(TypeView type) {
-        TypeView.Member chosen = null;
-        for (var c : type.constructors()) {
-            if (!c.is(Flag.PRIVATE)) {
-                if (c.isProxyLinkConstructor()) {
-                    return c;
-                }
-                if (chosen == null || c.parameterCount() < chosen.parameterCount()) {
-                    chosen = c;
-                }
-            }
-        }
-        return chosen;
     }
 
     /**

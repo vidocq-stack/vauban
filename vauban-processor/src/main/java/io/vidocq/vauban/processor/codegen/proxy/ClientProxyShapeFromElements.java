@@ -19,6 +19,7 @@
  */
 package io.vidocq.vauban.processor.codegen.proxy;
 
+import io.vidocq.vauban.processor.codegen.ElementTypeView;
 import io.vidocq.vauban.core.interceptor.TypeRef;
 import io.vidocq.vauban.core.proxy.ClientProxyShape;
 import io.vidocq.vauban.core.proxy.ClientProxyShape.ProxyMethodShape;
@@ -464,31 +465,16 @@ public final class ClientProxyShapeFromElements {
      * no-arg (or absent) constructor, meaning a plain {@code super()} call.
      */
     private static List<TypeRef> superCtorParams(TypeElement bean, Elements elements, Types types) {
-        ExecutableElement chosen = superConstructor(bean);
+        ExecutableElement chosen = ElementTypeView.of(bean, types).superConstructor();
         if (chosen == null) return List.of();
         return typeRefs(chosen.getParameters(), elements, types);
     }
 
     /** The exceptions the constructor of {@link #superCtorParams} declares: the proxy constructor declares them too. */
     private static List<TypeRef> superCtorThrown(TypeElement bean, Elements elements, Types types) {
-        ExecutableElement chosen = superConstructor(bean);
+        ExecutableElement chosen = ElementTypeView.of(bean, types).superConstructor();
         if (chosen == null) return List.of();
         return mirrorRefs(chosen.getThrownTypes(), elements, types);
-    }
-
-    /** The {@code (ProxyLink)} constructor if non-private, else the non-private one with the fewest parameters. */
-    private static ExecutableElement superConstructor(TypeElement bean) {
-        ExecutableElement simplest = null;
-        for (ExecutableElement c : ElementFilter.constructorsIn(bean.getEnclosedElements())) {
-            boolean accessible = !c.getModifiers().contains(Modifier.PRIVATE);
-            if (accessible && isProxyLinkConstructor(c)) {
-                return c;
-            }
-            if (accessible && (simplest == null || c.getParameters().size() < simplest.getParameters().size())) {
-                simplest = c;
-            }
-        }
-        return simplest;
     }
 
     /** True when {@code c} is the opt-in {@code (ProxyLink)} client-proxy entry constructor. */

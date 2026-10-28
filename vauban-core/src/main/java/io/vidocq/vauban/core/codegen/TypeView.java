@@ -59,7 +59,15 @@ public interface TypeView {
 
         Set<Flag> flags();
 
-        int parameterCount();
+        /**
+         * The erased parameter types, as canonical names ({@code java.lang.String[]}, {@code a.Outer.Inner}): the
+         * same strings whatever the model.
+         */
+        List<String> parameterTypes();
+
+        default int parameterCount() {
+            return parameterTypes().size();
+        }
 
         /** A bridge method a compiler generated: it stands for the method it calls and overrides like it. */
         boolean isBridge();

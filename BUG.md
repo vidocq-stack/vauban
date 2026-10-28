@@ -3131,3 +3131,18 @@ The same goes for a normal-scoped producer of such a class (`Dollar_Produced$$�
 - **Hypothèse de cause** : early return on the first non-public method, with no ordering between obstacles; `getDeclaredMethods()` and `getEnclosedElements()` list methods in different orders, so the two build paths could also disagree.
 - **Investigations** :
   - 2026-10-28 : both fixtures red on the old code (`PROTECTED_VIRTUALS` for each). The rule now keeps the worst verdict (final, then package-private, then protected), whatever the order; it is written once, over `TypeView` (`ClassTypeView` for a `Class`, `ElementTypeView` for a `TypeElement`), and the processor copy and its enum parity test are gone (vauban#227).
+
+## BUG-20261028-04 — The super constructor of a client proxy depends on the order a model lists the constructors in
+
+- **Date** : 2026-10-28
+- **Statut** : FIXED (branch `refactor/227-super-constructor`)
+- **Module touché** : `vauban-core` `RuntimeClientProxyGenerator`, `vauban-processor` `ClientProxyShapeFromElements`
+- **Symptôme** : with two non-private constructors of the same arity, the proxy chained to the first one listed: declaration order for the processor, `getDeclaredConstructors()` order (unspecified) for the bytecode path. `(String)` declared before `(Integer)` gave `(String)`, the reverse gave `(Integer)`, and the two build paths could pick different constructors, with different side effects on the default values passed.
+- **Reproduction minimale** :
+  ```
+  ./mvnw -pl vauban-core test -Dtest=SuperConstructorTest
+  # fixtures StringFirst, IntegerFirst
+  ```
+- **Hypothèse de cause** : the selection was written twice, each keeping the first candidate of the lowest arity.
+- **Investigations** :
+  - 2026-10-28 : `SuperConstructorTest` red on the old code (`StringFirst` chained to `(String)`). One rule now, `ClientProxyShape.superConstructor(TypeView)`: the `(ProxyLink)` constructor, else the fewest parameters, ties broken on the canonical parameter type names; `ProducerProxyEligibility`, `RuntimeClientProxyGenerator` and `ClientProxyShapeFromElements` all call it (vauban#227). `ClientProxyInheritanceCrossCheckTest.sameSuperConstructorOnBothPaths` checks both paths agree.

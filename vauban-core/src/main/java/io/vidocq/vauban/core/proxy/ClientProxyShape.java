@@ -19,9 +19,11 @@
  */
 package io.vidocq.vauban.core.proxy;
 
+import io.vidocq.vauban.core.codegen.TypeView;
 import io.vidocq.vauban.core.interceptor.TypeRef;
 
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
 
 /**
@@ -59,6 +61,22 @@ public record ClientProxyShape(
     public static final String MH_FIELD_PREFIX = "$$mh_";
     /** Marker parameter type of the opt-in client-proxy entry constructor (Vidocq/vauban#24). */
     public static final String PROXY_LINK_CLASS = io.vidocq.vauban.api.ProxyLink.CLASS_NAME;
+
+    /**
+     * The constructor a client proxy of {@code type} chains to, on every build path (vauban#227): the opt-in
+     * {@code (ProxyLink)} entry constructor (side-effect-free by contract, Vidocq/vauban#24), else the non-private
+     * constructor with the fewest parameters, called with default values. Two candidates with as many parameters are
+     * told apart by their parameter types, not by the order a model lists them in, which reflection does not
+     * guarantee. {@code null} when every constructor is private.
+     */
+    public static TypeView.Member superConstructor(TypeView type) {
+        return type.constructors().stream()
+                .filter(c -> !c.is(TypeView.Flag.PRIVATE))
+                .min(Comparator.comparing((TypeView.Member c) -> !c.isProxyLinkConstructor())
+                        .thenComparingInt(TypeView.Member::parameterCount)
+                        .thenComparing(c -> String.join(",", c.parameterTypes())))
+                .orElse(null);
+    }
 
     /**
      * {@code true} when {@code ctor} is the opt-in {@code (ProxyLink)} client-proxy entry

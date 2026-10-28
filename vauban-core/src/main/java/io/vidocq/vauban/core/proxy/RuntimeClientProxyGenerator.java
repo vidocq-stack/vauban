@@ -20,6 +20,7 @@
 package io.vidocq.vauban.core.proxy;
 
 import io.vidocq.vauban.core.codegen.BeanMembers;
+import io.vidocq.vauban.core.codegen.ClassTypeView;
 import io.vidocq.vauban.core.codegen.ShadowedDefaults;
 import io.vidocq.vauban.core.interceptor.TypeRef;
 import io.vidocq.vauban.core.proxy.ClientProxyShape.ProxyMethodShape;
@@ -186,24 +187,13 @@ public final class RuntimeClientProxyGenerator {
     }
 
     /**
-     * The super constructor the proxy chains to: the opt-in {@code (ProxyLink)} entry
-     * constructor when the bean declares one (side-effect-free by contract —
-     * Vidocq/vauban#24), else the simplest non-private constructor (no-arg first, then
-     * smallest parameter count) called with default values.
+     * The super constructor the proxy chains to ({@link ClientProxyShape#superConstructor}, the rule of every build
+     * path), else, when every constructor is private, the first one: no proxy can call it, and the generation fails
+     * as it always did.
      */
     private static java.lang.reflect.Constructor<?> findSimplestConstructor(Class<?> beanClass) {
-        java.lang.reflect.Constructor<?> best = null;
-        for (var ctor : beanClass.getDeclaredConstructors()) {
-            if (java.lang.reflect.Modifier.isPrivate(ctor.getModifiers())) continue;
-            if (ClientProxyShape.isProxyLinkConstructor(ctor)) return ctor;
-            if (best == null || ctor.getParameterCount() < best.getParameterCount()) {
-                best = ctor;
-            }
-        }
-        if (best != null) return best;
-        // All constructors are private — use the first one (proxy generation will still work
-        // since the proxy class is in the same package)
-        return beanClass.getDeclaredConstructors()[0];
+        var chosen = ClassTypeView.of(beanClass).superConstructor();
+        return chosen != null ? chosen : beanClass.getDeclaredConstructors()[0];
     }
 
     private static boolean shouldProxy(Method method) {

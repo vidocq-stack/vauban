@@ -208,6 +208,38 @@ class ClientProxyInheritanceCrossCheckTest {
 
     // ---- Shape parity ----
 
+    /** Two one-parameter constructors, {@code (String)} declared first. */
+    public static class StringFirstConstructors {
+        public StringFirstConstructors(String value) { }
+
+        public StringFirstConstructors(Integer value) { }
+    }
+
+    /** The same two constructors, {@code (Integer)} declared first. */
+    public static class IntegerFirstConstructors {
+        public IntegerFirstConstructors(Integer value) { }
+
+        public IntegerFirstConstructors(String value) { }
+    }
+
+    @Test
+    @DisplayName("both paths chain the proxy to the same super constructor, whatever the declaration order")
+    void sameSuperConstructorOnBothPaths() throws Exception {
+        for (var fixture : List.of(StringFirstConstructors.class, IntegerFirstConstructors.class, CleanChild.class)) {
+            var fromClass = RuntimeClientProxyGenerator.shapeOf(fixture).superCtorParams().stream()
+                    .map(Object::toString).collect(Collectors.joining(","));
+            var fromElements = capture(fixture, (element, env) ->
+                    ClientProxyShapeFromElements.from(element, env.elements(), env.types()).superCtorParams().stream()
+                            .map(Object::toString).collect(Collectors.joining(",")));
+            assertEquals(fromClass, fromElements, "source and bytecode super constructors disagree on "
+                    + fixture.getSimpleName());
+        }
+        assertEquals("java.lang.Integer", capture(StringFirstConstructors.class, (element, env) ->
+                ClientProxyShapeFromElements.from(element, env.elements(), env.types()).superCtorParams().getFirst()
+                        .toString()), "the parameter types decide, not the declaration order");
+    }
+
+
     @Test
     @DisplayName("the source shape forwards inherited public methods, like the bytecode shape")
     void shapeIncludesInheritedMethods() throws Exception {
