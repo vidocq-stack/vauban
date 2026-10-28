@@ -14,10 +14,10 @@ Three conditions are enough for a class to become a Vauban bean:
 . The class is visible from the `module-info.java` (`exports` or same module).
 . The class shows up in the bean index written at compile time by the annotation processor, or by the Maven plugin for archives it did not compile.
 
-At compile time, every bean receives two generated artefacts:
+At compile time, each package receives a generated `_VaubanComponents` provider, which instantiates and injects its beans, and each bean, when it needs them:
 
-* a `_Factory` — implements `io.vidocq.vauban.core.BeanFactory<T>` (a `vauban-core` type) and knows how to instantiate the bean;
-* a `_ClientProxy` — only for normal scopes; intercepts calls and delegates to the active context.
+* a `_ClientProxy` — only for normal scopes; intercepts calls and delegates to the active context;
+* a `$$Intercepted` subclass — only for a bean with interceptor bindings; runs its interceptor chains.
 
 == Scope
 
@@ -58,7 +58,7 @@ A _qualifier_ is a runtime annotation that discriminates beans of the same type.
 
 == Producer
 
-A `@Produces` method or field produces a bean whose instantiation is not controlled by the container but by user code. The associated _disposer_ (`@Disposes`) runs on destruction. No dedicated class is generated per producer: the container builds the producer bean at runtime from the declaring bean (created through its `_Factory`) and invokes the producer and disposer through the module's generated `_VaubanComponents` provider, falling back to reflection only when no provider arm exists.
+A `@Produces` method or field produces a bean whose instantiation is not controlled by the container but by user code. The associated _disposer_ (`@Disposes`) runs on destruction. No dedicated class is generated per producer: the container builds the producer bean at runtime from the declaring bean (created through the provider of its package) and invokes the producer and disposer through the module's generated `_VaubanComponents` provider, falling back to reflection only when no provider arm exists.
 
 == Observer
 
@@ -66,7 +66,7 @@ An _observer_ is a `@Observes` or `@ObservesAsync` method that reacts to an appl
 
 == Interceptor
 
-An _interceptor_ wraps a method invocation (`@AroundInvoke`) or constructor (`@AroundConstruct`). Interceptor chains are resolved at compile time and stored in the bean's `_Factory`.
+An _interceptor_ wraps a method invocation (`@AroundInvoke`) or constructor (`@AroundConstruct`). Interceptor chains are resolved at compile time and run by the bean's `$$Intercepted` subclass.
 
 == BeanManager
 
@@ -86,7 +86,7 @@ graph LR
   subgraph Compile["Compile time"]
     SRC[CDI-annotated<br/>source code] --> IDX[Indexer]
     IDX --> PROC[Processor APT]
-    PROC --> FAC[(_Factory<br/>_ClientProxy<br/>_VaubanComponents)]
+    PROC --> FAC[(_ClientProxy<br/>$$Intercepted<br/>_VaubanComponents)]
   end
   subgraph Runtime["Runtime"]
     BOOT[VaubanContainer.builder] --> BM[BeanManager]
@@ -96,7 +96,7 @@ graph LR
   FAC --> BM
 ....
 
-The user never touches the `_Factory` classes. They call `VaubanContainer.builder().build()`, select a root bean, and the container does the rest.
+The user never touches the generated classes. They call `VaubanContainer.builder().build()`, select a root bean, and the container does the rest.
 
 == Build Compatible Extensions
 

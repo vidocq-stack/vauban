@@ -29,7 +29,6 @@ module io.vidocq.vauban.processor {
     exports io.vidocq.vauban.processor;
     exports io.vidocq.vauban.processor.apt;
     exports io.vidocq.vauban.processor.codegen;
-    exports io.vidocq.vauban.processor.codegen.factory;
     exports io.vidocq.vauban.processor.codegen.proxy;
     exports io.vidocq.vauban.processor.codegen.interceptor;
 

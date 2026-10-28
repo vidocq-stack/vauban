@@ -22,7 +22,6 @@ package io.vidocq.vauban.processor;
 import io.vidocq.vauban.api.ExtensionPhase;
 import io.vidocq.vauban.processor.apt.ElementScanner;
 import io.vidocq.vauban.processor.codegen.GeneratedClass;
-import io.vidocq.vauban.processor.codegen.factory.BeanFactoryGenerator;
 import io.vidocq.vauban.processor.codegen.proxy.ClientProxyShapeFromElements;
 import io.vidocq.vauban.processor.codegen.proxy.ClientProxySourceRenderer;
 import io.vidocq.vauban.processor.codegen.proxy.InterfaceProxySourceRenderer;
@@ -110,7 +109,7 @@ public class VaubanProcessor extends AbstractProcessor {
             "jakarta.enterprise.inject.Produces",
             // @Interceptor classes are bean-defining too (BeanDiscovery treats them as @Dependent
             // managed beans). Including them here brings them into the APT round/index so they get a
-            // _Factory and a _VaubanComponents arm — the container then instantiates and field-injects
+            // _VaubanComponents arm — the container then instantiates and field-injects
             // them in-module on the module path, with no `opens … to io.vidocq.vauban.core` (their
             // public @AroundInvoke method is reachable without opens via the F3 public-member guard).
             "jakarta.interceptor.Interceptor"
@@ -158,7 +157,7 @@ public class VaubanProcessor extends AbstractProcessor {
     /**
      * DotNames of classes added via {@code ScannedClasses.add()} during a BCE @Discovery phase.
      * These classes originate from dependency jars, not from the module being compiled.
-     * Generating {@code _Factory} / {@code _ClientProxy} in the user module for such classes
+     * Generating a {@code _ClientProxy} in the user module for such classes
      * would create a split-package violation under Java Modules (the package is already exported by the
      * source jar). They are kept in the index and in {@code vauban-beans.list} so injection
      * resolution works, but no bytecode is emitted for them.
@@ -626,26 +625,27 @@ public class VaubanProcessor extends AbstractProcessor {
         return generation;
     }
 
-    /** The factory, the client proxy and the intercepted subclass of a managed bean, as it needs them. */
+    /**
+     * The client proxy and the intercepted subclass of a managed bean, as it needs them. No factory class: the
+     * container instantiates the bean through the module's {@code _VaubanComponents} provider (vauban#227).
+     */
     private void generateManagedBeanArtefacts(BeanDescriptor bean, io.vidocq.vauban.indexer.VaubanIndex index,
             Generation generation) {
         var classInfo = index.getClassByName(bean.beanClass()).orElse(null);
         if (classInfo == null) return;
 
-        // Skip factory/proxy generation for classes that originate from dependency jars
+        // Skip proxy generation for classes that originate from dependency jars
         // (added via ScannedClasses.add() during @Discovery). Generating artifacts in
         // the user module for such classes would create a Java Modules split-package violation
         // because the package is already exported by the source jar.
         // The class remains in vauban-beans.list for injection resolution.
         if (externalClassNames.contains(bean.beanClass())) {
             processingEnv.getMessager().printMessage(Diagnostic.Kind.NOTE,
-                    "[Vauban] Skipping factory/proxy generation for external class "
+                    "[Vauban] Skipping proxy generation for external class "
                             + bean.beanClass().value()
-                            + " (factory expected to be provided by the source jar)");
+                            + " (expected to be provided by the source jar)");
             return;
         }
-
-        generateFactory(bean.beanClass().value(), classInfo);
 
         if (bean.scope().isNormal()) {
             generateClientProxy(bean.beanClass().value(), generation);
@@ -666,30 +666,6 @@ public class VaubanProcessor extends AbstractProcessor {
                 ? beanElement.getQualifiedName().toString() : fqn;
         generation.providedClasses.add(new ProvidedClass(
                 fqn, sourceFqn, classInfo, true, interceptedGenerated));
-    }
-
-    /**
-     * SOURCE factory when possible (APT-first rule, CG-02): javac emits the
-     * erasure bridge itself and the artifact is readable/debuggable. Source is
-     * only viable when (a) the generated code can resolve BeanFactory at the
-     * user module's compile time (bytecode references resolve at load time
-     * instead — some consumers run this APT without a vauban-core compile
-     * dependency), and (b) the bean is top-level with an accessible no-arg
-     * constructor. Everything else keeps the bytecode fallback.
-     */
-    private void generateFactory(String factoryBeanFqn, ClassInfo classInfo) {
-        var factoryTypeElement = isTopLevelType(factoryBeanFqn)
-                ? processingEnv.getElementUtils().getTypeElement(factoryBeanFqn) : null;
-        boolean beanFactoryResolvable = processingEnv.getElementUtils()
-                .getTypeElement("io.vidocq.vauban.core.BeanFactory") != null;
-        if (factoryTypeElement != null && beanFactoryResolvable
-                && hasNonPrivateNoArgCtor(factoryTypeElement)) {
-            var factoryGen = io.vidocq.vauban.processor.codegen.factory.BeanFactorySourceRenderer
-                    .render(factoryTypeElement);
-            writeSourceFile(factoryGen.className(), factoryGen.source());
-        } else {
-            generateClass(BeanFactoryGenerator.generate(classInfo));
-        }
     }
 
     /** The client proxy of a normal-scoped managed bean. */
@@ -1626,7 +1602,7 @@ public class VaubanProcessor extends AbstractProcessor {
      * <p>No jar scanning is needed to fix it: {@code Elements} already sees the whole compile
      * classpath, so a missing required type is looked up there, scanned into the index, and bean
      * discovery is replayed to obtain its descriptor. Such a type is recorded in
-     * {@link #externalClassNames} so no {@code _Factory} / {@code _ClientProxy} is emitted for it
+     * {@link #externalClassNames} so no {@code _ClientProxy} is emitted for it
      * here — its own module already ships those, and emitting them again would split the package.
      *
      * @param beans           the discovered beans; grown in place with the dependency beans found
@@ -2165,25 +2141,6 @@ public class VaubanProcessor extends AbstractProcessor {
             if (found != null) return found;
         }
         return null;
-    }
-
-    /**
-     * True if the type has an accessible (non-private) no-arg constructor — explicit or
-     * implicit. Gates SOURCE factory generation: the rendered {@code new Bean()} must
-     * compile, whereas the bytecode factory defers resolution to load time.
-     */
-    private static boolean hasNonPrivateNoArgCtor(javax.lang.model.element.TypeElement te) {
-        var ctors = javax.lang.model.util.ElementFilter.constructorsIn(te.getEnclosedElements());
-        if (ctors.isEmpty()) {
-            return true; // implicit no-arg constructor
-        }
-        for (var c : ctors) {
-            if (c.getParameters().isEmpty()
-                    && !c.getModifiers().contains(javax.lang.model.element.Modifier.PRIVATE)) {
-                return true;
-            }
-        }
-        return false;
     }
 
     /**

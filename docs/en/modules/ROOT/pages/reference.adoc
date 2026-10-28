@@ -20,7 +20,7 @@ This page lists every artefact published by Vauban, the Java Modules packages th
 
 | `io.vidocq.vauban:vauban-processor:{project-version}`
 | `provided`
-| APT (emits `_Factory`, `_ClientProxy` at `process-classes`)
+| APT (emits `_ClientProxy`, `$$Intercepted` and `_VaubanComponents` at `process-classes`)
 
 | `io.vidocq.vauban:vauban-indexer:{project-version}`
 | `provided`

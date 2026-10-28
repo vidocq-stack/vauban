@@ -12,7 +12,7 @@ Vauban is a CDI 4.1 container that resolves injection at compile time. Native Ja
 
 Sébastien Le Prestre, marquis de Vauban (1633-1707), Marshal of France, military engineer to Louis XIV. Designer of the _ceinture de fer_, author of the _Treatise on the Attack and Defence of Fortresses_. See https://fr.wikipedia.org/wiki/S%C3%A9bastien_Le_Prestre_de_Vauban[the Wikipedia article].
 
-Vauban turned defence into a mathematical art: trajectories, sapping, counter-mining, all computed in advance. The Vauban container brings the same discipline to CDI. Every `@Inject` relationship is resolved at `process-classes`. An `Indexer` enumerates beans, a `Processor` emits `_Factory` bytecode via the Class-File API. At runtime, nothing is computed — only instantiation remains. The fortifications stand before the first request hits.
+Vauban turned defence into a mathematical art: trajectories, sapping, counter-mining, all computed in advance. The Vauban container brings the same discipline to CDI. Every `@Inject` relationship is resolved at `process-classes`. An `Indexer` enumerates beans, a `Processor` emits the code that builds them. At runtime, nothing is computed — only instantiation remains. The fortifications stand before the first request hits.
 
 == At a glance
 
@@ -53,7 +53,7 @@ graph TB
     CORE[vauban-core<br/>VaubanContainer.builder<br/>BeanManager, contexts, events]
     API --> CORE
   end
-  PROC -.generates.-> FACT[_Factory<br/>_ClientProxy]
+  PROC -.generates.-> FACT[_VaubanComponents<br/>_ClientProxy]
   FACT --> CORE
   CORE --> CASSINI[Cassini]
   CORE --> FOY[Foy]

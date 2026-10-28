@@ -307,9 +307,6 @@ class BceCompileTimeTest {
 
         assertTrue(result.success(), "Compilation should succeed. Messages: " + result.messages());
 
-        assertTrue(result.hasFile("EnhancedService_Factory.class"),
-                "Factory should be generated");
-
         var beansList = result.readBeansList();
         assertTrue(beansList.contains("EnhancedService"),
                 "Enhanced bean should appear in vauban-beans.list");
@@ -554,7 +551,7 @@ class BceCompileTimeTest {
         );
 
         assertTrue(result.success(), "Compilation with @Discovery BCE should succeed");
-        assertTrue(result.hasFile("MyHelper_Factory.class"),
+        assertTrue(result.readBeansList().contains("MyHelper"),
                 "Bean should still be discovered normally");
     }
 
@@ -584,8 +581,6 @@ class BceCompileTimeTest {
         assertTrue(beansList.contains("HelloResource"),
                 "Non-CDI class promoted by BCE should appear in vauban-beans.list. Beans: " + beansList);
 
-        assertTrue(result.hasFile("HelloResource_Factory.class"),
-                "Factory should be generated for promoted bean");
         assertTrue(result.hasFile("HelloResource_ClientProxy.class"),
                 "Client proxy should be generated (RequestScoped is normal-scoped)");
     }

@@ -38,13 +38,13 @@ import java.util.*;
 import static org.junit.jupiter.api.Assertions.*;
 
 /**
- * Tests that VaubanProcessor skips _Factory / _ClientProxy generation for classes
+ * Tests that VaubanProcessor skips _ClientProxy generation for classes
  * added via ScannedClasses.add() during a BCE @Discovery phase.
  *
  * <h2>Context</h2>
  * When a BCE calls {@code scanned.add("some.ExternalClass")} in {@code @Discovery},
  * the class is indexed from the dependency jar (via loadClassBytes). If VaubanProcessor
- * generated {@code ExternalClass_Factory.class} in the user module, it would create
+ * generated {@code ExternalClass_ClientProxy.class} in the user module, it would create
  * a Java Modules "split-package" violation: the package is already exported by the source jar.
  *
  * <h2>After the patch</h2>
@@ -71,7 +71,7 @@ class ExternalClassGenerationSkipTest {
      *
      * The class we declare as "external" here is
      * {@code jakarta.enterprise.context.ApplicationScoped} — it is not a valid CDI bean,
-     * but the goal of the test is solely to verify that no _Factory file is created
+     * but the goal of the test is solely to verify that no _ClientProxy file is created
      * for a class registered via scanned.add(), whatever the class.
      *
      * For a more realistic test, we use a real @Singleton class available on the
@@ -84,7 +84,7 @@ class ExternalClassGenerationSkipTest {
      *
      * Chosen approach: a local class annotated @ApplicationScoped + @jakarta.inject.Named
      * is compiled INSIDE the module. A BCE declares ANOTHER class known to the classpath (but
-     * not in the compiled sources) via scanned.add(). We verify that _Factory is not
+     * not in the compiled sources) via scanned.add(). We verify that _ClientProxy is not
      * generated for the external class, but that it is for the local class.
      */
 
@@ -92,7 +92,7 @@ class ExternalClassGenerationSkipTest {
      * BCE that adds the class {@code jakarta.enterprise.context.ApplicationScoped}
      * (a class known to the classpath) via scanned.add().
      * In practice this is not a valid CDI bean, but the test validates that the
-     * externalClassNames path is taken and that no _Factory is emitted for it.
+     * externalClassNames path is taken and that no _ClientProxy is emitted for it.
      * Presence in vauban-beans.list is not expected here because the class has no
      * indexable CDI scope — which is intended: we test the skip mechanism, not
      * the completeness of resolution.
@@ -102,7 +102,7 @@ class ExternalClassGenerationSkipTest {
          * The fully-qualified name of the «external» class we pretend was discovered from
          * a dependency jar. We use VaubanProcessor itself: it's always loadable by the APT
          * class loader but carries no CDI scope annotation, so it will not end up as a bean
-         * in vauban-beans.list — which is fine, we only care that no _Factory is emitted.
+         * in vauban-beans.list — which is fine, we only care that no _ClientProxy is emitted.
          */
         public static final String EXTERNAL_CLASS = VaubanProcessor.class.getName();
 
@@ -188,10 +188,10 @@ class ExternalClassGenerationSkipTest {
     // ---- Tests ----
 
     @Test
-    @DisplayName("local class generates _Factory; external class (scanned.add) does not generate _Factory")
-    void shouldSkipFactoryForExternalClassButGenerateForLocalClass() throws IOException {
-        // LocalBean is compiled in the user module — must get a _Factory.
-        // ExternalDiscoveryBce.EXTERNAL_CLASS is added via scanned.add() — must NOT get a _Factory.
+    @DisplayName("local class gets a _ClientProxy; external class (scanned.add) does not")
+    void shouldSkipProxyForExternalClassButGenerateForLocalClass() throws IOException {
+        // LocalBean is compiled in the user module — must get a _ClientProxy.
+        // ExternalDiscoveryBce.EXTERNAL_CLASS is added via scanned.add() — must NOT get one.
         var result = compileWithBce(
                 List.of(ExternalDiscoveryBce.class),
                 """
@@ -206,32 +206,25 @@ class ExternalClassGenerationSkipTest {
 
         assertTrue(result.success(), "Compilation should succeed. Messages: " + result.messages());
 
-        // Local bean: _Factory and _ClientProxy must be generated (ApplicationScoped = normal-scoped).
-        assertTrue(result.hasFile("LocalBean_Factory.class"),
-                "Factory must be generated for local @ApplicationScoped bean");
+        // Local bean: _ClientProxy must be generated (ApplicationScoped = normal-scoped).
         assertTrue(result.hasFile("LocalBean_ClientProxy.class"),
                 "ClientProxy must be generated for local @ApplicationScoped bean");
 
         // External class (VaubanProcessor, added via scanned.add):
-        // no _Factory, no _ClientProxy must appear in the output directory.
+        // no _ClientProxy must appear in the output directory.
         var externalSimpleName = ExternalDiscoveryBce.EXTERNAL_CLASS.replace('.', '/');
-        // The processor would generate e.g. io/vidocq/vauban/processor/VaubanProcessor_Factory.class
-        var externalFactoryRelative = externalSimpleName + "_Factory.class";
         var externalProxyRelative = externalSimpleName + "_ClientProxy.class";
 
-        assertFalse(result.hasFile(externalFactoryRelative),
-                "No _Factory must be emitted in user module for external class "
-                        + ExternalDiscoveryBce.EXTERNAL_CLASS);
         assertFalse(result.hasFile(externalProxyRelative),
                 "No _ClientProxy must be emitted in user module for external class "
                         + ExternalDiscoveryBce.EXTERNAL_CLASS);
     }
 
     @Test
-    @DisplayName("local class is listed in vauban-beans.list; no _Factory for the external class")
+    @DisplayName("local class is listed in vauban-beans.list; no _ClientProxy for the external class")
     void localBeanStillListedInBeansListNoExternalFactory() throws IOException {
-        // The local bean must appear in vauban-beans.list and get its _Factory.
-        // The external class must never have a _Factory emitted in the output dir.
+        // The local bean must appear in vauban-beans.list.
+        // The external class must never have a _ClientProxy emitted in the output dir.
         var result = compileWithBce(
                 List.of(ExternalDiscoveryBce.class),
                 """
@@ -250,11 +243,9 @@ class ExternalClassGenerationSkipTest {
         assertTrue(beansList.contains("ServiceA"),
                 "Local bean ServiceA must appear in vauban-beans.list. Actual list: " + beansList);
 
-        // Most importantly: no _Factory must be written for the external class, regardless of whether
-        // it ends up in vauban-beans.list (some bean archives may list it, but no bytecode is emitted).
+        // Most importantly: nothing is written for the external class, regardless of whether it ends
+        // up in vauban-beans.list (some bean archives may list it, but no bytecode is emitted).
         var externalSimpleName = ExternalDiscoveryBce.EXTERNAL_CLASS.replace('.', '/');
-        assertFalse(result.hasFile(externalSimpleName + "_Factory.class"),
-                "No _Factory must be emitted in user module for external class " + ExternalDiscoveryBce.EXTERNAL_CLASS);
         assertFalse(result.hasFile(externalSimpleName + "_ClientProxy.class"),
                 "No _ClientProxy must be emitted in user module for external class " + ExternalDiscoveryBce.EXTERNAL_CLASS);
     }
@@ -264,7 +255,7 @@ class ExternalClassGenerationSkipTest {
     void shouldLogInfoForSkippedExternalClass() throws IOException {
         // An external class that IS a valid CDI bean would produce the INFO log.
         // Here we use a simpler approach: we verify that a class added via scanned.add()
-        // does NOT cause the processor to emit a _Factory file, and no compilation error occurs.
+        // does NOT cause the processor to emit a _ClientProxy file, and no compilation error occurs.
         // The INFO message would only appear for classes that pass BeanDiscovery (have a CDI scope),
         // so we can't easily verify the log without a real external CDI bean.
         // What we DO verify: compilation succeeds, no factory for external class, no error in messages.

@@ -307,7 +307,7 @@ public class LoggingInterceptor {
 public class Service { /* intercepted methods */ }
 ----
 
-`@AroundConstruct` is also supported. Interceptor chains are resolved at compile time and stored in the generated `_Factory`.
+`@AroundConstruct` is also supported. Interceptor chains are resolved at compile time and run by the generated `$$Intercepted` subclass.
 
 == Programmatic `Instance<T>`
 

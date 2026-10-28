@@ -31,14 +31,13 @@ into whatever the processor already wrote in the same output directory.
 
 `vauban-indexer` underneath both is a library, not a tool: the class-file scanner, the bean model and the shared component collector. It walks nothing on its own and writes no file.
 
-The processor generates:
+The processor generates the classes below. It writes no per-bean factory class: the container
+instantiates every bean through the `_VaubanComponents` provider of its package. The `MyBean_Factory`
+classes earlier versions wrote were never loaded, and are no longer generated (vauban#227).
 
 [cols="1,3"]
 |===
 | Generated artefact | Role
-
-| `MyBean_Factory`
-| One per bean. Implements `io.vidocq.vauban.core.BeanFactory<MyBean>`. No-arg constructor. Instantiates the bean via direct constructor invocation — no reflection.
 
 | `MyBean_ClientProxy`
 | Subclass generated for normal scopes. Forwards every public method to the active context. Where the proxy is generated depends on who owns the proxied type — see <<proxy-strategies>>.
@@ -69,8 +68,8 @@ order `Class#getDeclaredMethods` happens to return, which depends on what the JV
 [#checked-exceptions]
 A bean method may declare checked exceptions, as CDI allows for constructors,
 initializers, observers, producers and disposers. The generated source calls those methods
-directly, so it rethrows whatever they throw without declaring it: `_VaubanComponents` and
-`MyBean_Factory` route the call through a small generic `sneaky` helper, and the constructors of
+directly, so it rethrows whatever they throw without declaring it: `_VaubanComponents`
+routes the call through a small generic `sneaky` helper, and the constructors of
 `MyBean_ClientProxy` and `MyBean$$Intercepted` declare `throws Throwable`. The exception reaches
 the container as thrown, unwrapped, which is what `VaubanComponentProvider#invoke` promises. The
 Class-File path needs nothing of the kind: bytecode has no checked exceptions (vauban#145).
@@ -500,7 +499,6 @@ IDX -> PROC : VaubanIndex\n(beans, scopes, qualifiers)
 PROC -> PROC : BeanDiscovery\n+ DeploymentValidator
 PROC -> PROC : BceProcessor\n(Build Compatible Extensions)
 PROC -> CFA : ClassBuilder\nper bean
-CFA -> F : write _Factory.class
 CFA -> F : write _ClientProxy.class
 CFA -> F : write $$Intercepted.class
 PROC -> F : write _VaubanComponents.java\n+ META-INF/vauban-beans.list
@@ -702,8 +700,8 @@ sequenceDiagram
   participant CTX as Contexts
 
   App->>Vauban: VaubanContainer.builder().build()
-  Vauban->>Loader: load BeanFactory<*>\n(through generated _Factory)
-  Loader-->>Vauban: list of _Factory
+  Vauban->>Loader: load VaubanComponentProvider<*>\n(the generated _VaubanComponents)
+  Loader-->>Vauban: one provider per package
   Vauban->>BM: instantiate VaubanBeanManager
   Vauban->>CTX: ApplicationContext.activate()
   Vauban->>BM: fire @Initialized(Application)
@@ -761,7 +759,7 @@ The `ThreadLocal` → `ScopedValue` move is documented in the Vauban repo's `CLA
 
 What the container relies on at run time:
 
-* **Generated code** for everything that builds a bean — `_Factory` classes, the per-package
+* **Generated code** for everything that builds a bean — the per-package
   `_VaubanComponents` provider, `_ClientProxy` and `$$Intercepted` subclasses — called directly. No
   bytecode is generated at run time on this path.
 * **A fallback, announced.** A bean compiled without the annotation processor, and not processed by

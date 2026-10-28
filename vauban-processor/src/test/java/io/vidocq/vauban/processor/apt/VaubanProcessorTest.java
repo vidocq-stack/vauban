@@ -168,8 +168,8 @@ class VaubanProcessorTest {
     }
 
     @Test
-    @DisplayName("compiles an @ApplicationScoped bean and generates a factory")
-    void shouldGenerateFactoryForApplicationScopedBean() throws IOException {
+    @DisplayName("compiles an @ApplicationScoped bean into the provider, with no _Factory (vauban#227)")
+    void shouldInstantiateThroughTheProviderWithoutAFactory() throws IOException {
         var success = compileWithProcessor("""
             import jakarta.enterprise.context.ApplicationScoped;
 
@@ -181,9 +181,9 @@ class VaubanProcessorTest {
 
         assertTrue(success, "Compilation should succeed");
 
-        // Check that the factory class file was generated
-        var factoryFile = tempDir.resolve("classes/MyService_Factory.class");
-        assertTrue(Files.exists(factoryFile), "Factory class should be generated");
+        // The container instantiates the bean through the module's provider: no factory class.
+        assertTrue(Files.exists(tempDir.resolve("classes/_VaubanComponents.class")), "the provider");
+        assertFalse(Files.exists(tempDir.resolve("classes/MyService_Factory.class")), "no factory class");
     }
 
     @Test
@@ -217,9 +217,6 @@ class VaubanProcessorTest {
             """);
 
         assertTrue(success, "Compilation should succeed");
-
-        var factoryFile = tempDir.resolve("classes/MyHelper_Factory.class");
-        assertTrue(Files.exists(factoryFile), "Factory should be generated");
 
         var proxyFile = tempDir.resolve("classes/MyHelper_ClientProxy.class");
         assertFalse(Files.exists(proxyFile), "No proxy for @Dependent bean");
