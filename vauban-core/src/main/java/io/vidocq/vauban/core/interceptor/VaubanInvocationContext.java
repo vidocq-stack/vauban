@@ -41,7 +41,8 @@ public final class VaubanInvocationContext implements InvocationContext {
     private final Method method;
     private Object[] parameters;
     private final List<InterceptorInvocation> chain;
-    private final Map<String, Object> contextData = new HashMap<>();
+    // Created on first use: most interceptors never read it, and every call would pay for an empty map.
+    private Map<String, Object> contextData;
     private final TargetInvoker targetInvoker;
     private Set<java.lang.annotation.Annotation> interceptorBindings;
     private Constructor<?> constructor;
@@ -73,12 +74,28 @@ public final class VaubanInvocationContext implements InvocationContext {
 
     public VaubanInvocationContext(Object target, Method method, Constructor<?> constructor, Object[] parameters,
                                    List<InterceptorInvocation> chain, TargetInvoker targetInvoker) {
+        this(parameters != null ? parameters.clone() : new Object[0], target, method, constructor, chain,
+                targetInvoker);
+    }
+
+    /** Keeps {@code parameters} as given. */
+    private VaubanInvocationContext(Object[] parameters, Object target, Method method, Constructor<?> constructor,
+                                    List<InterceptorInvocation> chain, TargetInvoker targetInvoker) {
         this.target = target;
         this.method = method;
         this.constructor = constructor;
-        this.parameters = parameters != null ? parameters.clone() : new Object[0];
+        this.parameters = parameters;
         this.chain = chain;
         this.targetInvoker = targetInvoker;
+    }
+
+    /**
+     * A context over an array the caller built for this invocation alone and never touches again: kept, not copied.
+     * The context never writes into it either ({@link #setParameters} replaces it), so a shared empty array is fine.
+     */
+    static VaubanInvocationContext owning(Object target, Method method, Object[] parameters,
+                                          List<InterceptorInvocation> chain, TargetInvoker targetInvoker) {
+        return new VaubanInvocationContext(parameters, target, method, null, chain, targetInvoker);
     }
 
     @Override
@@ -195,7 +212,12 @@ public final class VaubanInvocationContext implements InvocationContext {
 
     @Override
     public Map<String, Object> getContextData() {
-        return contextData;
+        var data = contextData;
+        if (data == null) {
+            data = new HashMap<>();
+            contextData = data;
+        }
+        return data;
     }
 
     @Override

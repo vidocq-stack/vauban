@@ -40,8 +40,8 @@ import java.util.List;
  *
  * <p>Generated shape, per interceptable method {@code work}:
  * <ul>
- *   <li>the override {@code work()} — builds the {@code VaubanInvocationContext}, resolves the chain
- *       at run time and drives it; a pre-init guard ({@code $$manager == null}) calls {@code super}
+ *   <li>the override {@code work()} — hands the call to {@code InterceptorManager.intercept}, which
+ *       keeps the chain per instance and drives it; a pre-init guard ({@code $$manager == null}) calls {@code super}
  *       directly during construction;</li>
  *   <li>a private bridge {@code $$super$work()} — {@code return super.work(...)}, the only way to reach the
  *       original body without re-entering interception;</li>
@@ -51,7 +51,7 @@ import java.util.List;
  * </ul>
  *
  * <p><strong>Checked exceptions.</strong> {@link MethodShape} carries no {@code throws} clause and
- * {@code VaubanInvocationContext.proceed()} is {@code throws Exception}, while the override must keep
+ * {@code InterceptorManager.intercept} is {@code throws Exception}, while the override must keep
  * the (narrow-or-none) throws of the bean method. The override therefore catches every
  * {@link Throwable} and re-throws the <em>real</em> one through a generic-erasure {@code sneaky}
  * helper — bytecode-faithful (the JVM never checks checked exceptions) and identity-preserving.
@@ -59,7 +59,8 @@ import java.util.List;
 public final class InterceptedSourceRenderer {
 
     private static final String IM = "io.vidocq.vauban.core.interceptor.InterceptorManager";
-    private static final String CTX = "io.vidocq.vauban.core.interceptor.VaubanInvocationContext";
+    /** The argument array of a method without parameters, shared: the container never writes into it. */
+    private static final String NO_ARGUMENTS = IM + ".NO_ARGUMENTS";
     private static final String CREATIONAL = "jakarta.enterprise.context.spi.CreationalContext";
     private static final String PUBLIC_MEMBER = "    public ";
     private static final String PRIVATE_MEMBER = "    private ";
@@ -262,18 +263,19 @@ public final class InterceptedSourceRenderer {
             sb.append("            if (this.$$manager == null) return ").append(original).append(";\n");
         }
         String method = InterceptedShape.methodFieldName(index);
-        sb.append("            Object[] $$args = new Object[] {").append(boxedArgs(m.memberParams())).append("};\n");
-        sb.append("            java.util.List $$chain = this.$$manager.chainFor(this.").append(InterceptedShape.FIELD_CHAINS)
-                .append(", ").append(index).append(", this.$$bindings, ").append(method)
-                .append(", this, this.$$context);\n");
-        sb.append("            ").append(CTX).append(" $$ctx = new ").append(CTX)
-                .append("(this, ").append(method).append(", null, $$args, $$chain, ").append(subSimple).append("::")
-                .append(tiName).append(");\n");
+        // One call into the container: the chain kept per instance, then the target directly when it is
+        // empty, else an invocation context that owns the argument array built here.
+        String arguments = m.memberParams().isEmpty()
+                ? NO_ARGUMENTS
+                : "new Object[] {" + boxedArgs(m.memberParams()) + "}";
+        String intercept = "this.$$manager.intercept(this." + InterceptedShape.FIELD_CHAINS + ", " + index
+                + ", this.$$bindings, " + method + ", this, this.$$context, " + arguments + ", "
+                + subSimple + "::" + tiName + ")";
         if (ret.isVoid()) {
-            sb.append("            $$ctx.proceed();\n");
+            sb.append("            ").append(intercept).append(";\n");
             sb.append("            return;\n");
         } else {
-            sb.append("            return ").append(unboxExpr(ret, "$$ctx.proceed()")).append(";\n");
+            sb.append("            return ").append(unboxExpr(ret, intercept)).append(";\n");
         }
         sb.append("        } catch (Throwable $$t) {\n");
         sb.append("            throw sneaky($$t);\n");

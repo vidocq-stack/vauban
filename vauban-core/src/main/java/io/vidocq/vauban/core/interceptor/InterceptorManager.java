@@ -436,6 +436,29 @@ public final class InterceptorManager {
         return chain;
     }
 
+    /** The argument array a generated override passes for a method without parameters: shared, never written. */
+    public static final Object[] NO_ARGUMENTS = new Object[0];
+
+    /**
+     * One call of an intercepted method, what a generated {@code $$Intercepted} override hands over (vauban#227): the
+     * chain {@link #chainFor} keeps, then the target directly when no interceptor applies, else an invocation context
+     * that runs the chain. The context takes {@code args} as it is — the override built that array for this call
+     * alone — instead of copying it.
+     *
+     * @param args          the call's arguments, boxed; {@link #NO_ARGUMENTS} for a method without parameters
+     * @param targetInvoker the subclass's {@code $$ti$} glue, which calls the {@code $$super$} bridge
+     */
+    @SuppressWarnings("java:S112") // CDI spec: what the target or an interceptor throws propagates as is
+    public Object intercept(List<?>[] chains, int index, Set<DotName> classBindings, java.lang.reflect.Method method,
+            Object target, CreationalContext<?> ctx, Object[] args,
+            VaubanInvocationContext.TargetInvoker targetInvoker) throws Exception {
+        var chain = chainFor(chains, index, classBindings, method, target, ctx);
+        if (chain.isEmpty()) {
+            return targetInvoker.invoke(target, args);
+        }
+        return VaubanInvocationContext.owning(target, method, args, chain, targetInvoker).proceed();
+    }
+
     /**
      * Resolve the interceptor chain for a method, including target class @AroundInvoke methods.
      *

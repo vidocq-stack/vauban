@@ -51,12 +51,9 @@ public final class InterceptedEmitter {
 
     private static final ClassDesc CD_InterceptorManager =
             ClassDesc.of("io.vidocq.vauban.core.interceptor.InterceptorManager");
-    private static final ClassDesc CD_VaubanInvocationContext =
-            ClassDesc.of("io.vidocq.vauban.core.interceptor.VaubanInvocationContext");
     private static final ClassDesc CD_Set = ClassDesc.of("java.util.Set");
     private static final ClassDesc CD_Object = ConstantDescs.CD_Object;
     private static final ClassDesc CD_Method = ClassDesc.of("java.lang.reflect.Method");
-    private static final ClassDesc CD_Constructor = ClassDesc.of("java.lang.reflect.Constructor");
     private static final ClassDesc CD_Class = ClassDesc.of("java.lang.Class");
     private static final ClassDesc CD_String = ClassDesc.of("java.lang.String");
     private static final ClassDesc CD_List = ClassDesc.of("java.util.List");
@@ -285,37 +282,11 @@ public final class InterceptedEmitter {
                     invokeOriginal(cob, beanCD, method, methodType);
                     emitReturn(cob, returnCD);
 
-                    // Intercepted path
+                    // Intercepted path: one call into the container,
+                    // $$manager.intercept($$chains, index, $$bindings, method, this, $$context, args, targetInvoker),
+                    // which keeps the chain per instance, calls the target directly when it is empty, and
+                    // otherwise runs it in an invocation context that owns the argument array built here.
                     cob.labelBinding(intercepted);
-
-                    // The $$super$ bridge Method, looked up once by the class initializer
-                    cob.getstatic(subclassCD, InterceptedShape.methodFieldName(index), CD_Method);
-                    // Compute the local-slot offset just past the parameter list. Each long/double
-                    // parameter occupies TWO slots (JVMS §2.6.1), so a naive parameterCount + 1
-                    // count under-allocates and lands the synthetic Method/args/chain locals on
-                    // top of the long's high half — surfacing as a VerifyError "Bad local
-                    // variable type" the first time the method body loads its long/double param.
-                    int mSlot = 1; // skip 'this' at slot 0
-                    for (TypeRef p : method.params()) {
-                        mSlot += p.isCategory2() ? 2 : 1;
-                    }
-                    cob.astore(mSlot);
-
-                    // Build Object[] args
-                    cob.loadConstant(paramCDs.length);
-                    cob.anewarray(CD_Object);
-                    int slot = 1;
-                    for (int i = 0; i < paramCDs.length; i++) {
-                        cob.dup();
-                        cob.loadConstant(i);
-                        slot = boxAndLoad(cob, method.params().get(i), slot);
-                        cob.aastore();
-                    }
-                    int aSlot = mSlot + 1;
-                    cob.astore(aSlot);
-
-                    // The chain (method-level bindings + target class @AroundInvoke), kept per instance:
-                    // $$manager.chainFor($$chains, index, $$bindings, method, this, $$context)
                     cob.aload(0);
                     cob.getfield(subclassCD, FIELD_MANAGER, CD_InterceptorManager);
                     cob.aload(0);
@@ -323,24 +294,27 @@ public final class InterceptedEmitter {
                     cob.loadConstant(index);
                     cob.aload(0);
                     cob.getfield(subclassCD, FIELD_BINDINGS, CD_Set);
-                    cob.aload(mSlot); // pass the $$super$ Method for binding resolution
-                    cob.aload(0);     // pass this for target class @AroundInvoke
+                    // The $$super$ bridge Method, looked up once by the class initializer
+                    cob.getstatic(subclassCD, InterceptedShape.methodFieldName(index), CD_Method);
+                    cob.aload(0);     // this, for target class @AroundInvoke
                     cob.aload(0);
                     cob.getfield(subclassCD, FIELD_CONTEXT, CD_CreationalContext);
-                    cob.invokevirtual(CD_InterceptorManager, "chainFor",
-                            MethodTypeDesc.of(CD_List, CD_List.arrayType(), ConstantDescs.CD_int, CD_Set, CD_Method,
-                                    CD_Object, CD_CreationalContext));
-                    int cSlot = aSlot + 1;
-                    cob.astore(cSlot);
 
-                    // new VaubanInvocationContext(this, method, constructor, args, chain, targetInvoker)
-                    cob.new_(CD_VaubanInvocationContext);
-                    cob.dup();
-                    cob.aload(0);
-                    cob.aload(mSlot);
-                    cob.aconst_null(); // constructor
-                    cob.aload(aSlot);
-                    cob.aload(cSlot);
+                    // Object[] args: the shared empty array for a method without parameters
+                    if (paramCDs.length == 0) {
+                        cob.getstatic(CD_InterceptorManager, "NO_ARGUMENTS", CD_Object.arrayType());
+                    } else {
+                        cob.loadConstant(paramCDs.length);
+                        cob.anewarray(CD_Object);
+                        int slot = 1;
+                        for (int i = 0; i < paramCDs.length; i++) {
+                            cob.dup();
+                            cob.loadConstant(i);
+                            slot = boxAndLoad(cob, method.params().get(i), slot);
+                            cob.aastore();
+                        }
+                    }
+
                     // targetInvoker: an in-module lambda (no captures) calling $$ti$<name> →
                     // $$super$<name> → super.<name>(…). So the chain end invokes the original method
                     // with no reflection (the $$super$ Method above is still used only for binding
@@ -355,14 +329,10 @@ public final class InterceptedEmitter {
                                     DirectMethodHandleDesc.Kind.STATIC,
                                     subclassCD, tiName, MTD_TARGET_INVOKER),
                             MTD_TARGET_INVOKER));
-                    cob.invokespecial(CD_VaubanInvocationContext, ConstantDescs.INIT_NAME,
-                            MethodTypeDesc.of(ConstantDescs.CD_void,
-                                    CD_Object, CD_Method, CD_Constructor, CD_Object.arrayType(), CD_List,
+                    cob.invokevirtual(CD_InterceptorManager, "intercept",
+                            MethodTypeDesc.of(CD_Object, CD_List.arrayType(), ConstantDescs.CD_int, CD_Set,
+                                    CD_Method, CD_Object, CD_CreationalContext, CD_Object.arrayType(),
                                     CD_TargetInvoker));
-
-                    // ctx.proceed()
-                    cob.invokevirtual(CD_VaubanInvocationContext, "proceed",
-                            MethodTypeDesc.of(CD_Object));
 
                     // Return
                     TypeRef ret = method.returnType();

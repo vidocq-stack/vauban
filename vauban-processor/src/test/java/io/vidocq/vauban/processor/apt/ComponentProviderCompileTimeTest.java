@@ -372,8 +372,10 @@ class ComponentProviderCompileTimeTest {
         assertFalse(override.contains("getClass()"), override);
         assertFalse(override.contains("resolveChainForMethod"), override);
         assertFalse(override.contains("shareInstances"), override);
-        assertTrue(override.contains("this.$$manager.chainFor(this.$$chains, 0, this.$$bindings, $$method$0, this, "
-                + "this.$$context)"), override);
+        assertTrue(override.contains("this.$$manager.intercept(this.$$chains, 0, this.$$bindings, $$method$0, this, "
+                + "this.$$context, new Object[] {java.lang.Long.valueOf(p0)}, TalliedService$$Intercepted::$$ti$next)"),
+                override);
+        assertFalse(override.contains("VaubanInvocationContext("), override);
         assertTrue(subSrc.contains("this.$$chains = new java.util.List[1];"), subSrc);
     }
 

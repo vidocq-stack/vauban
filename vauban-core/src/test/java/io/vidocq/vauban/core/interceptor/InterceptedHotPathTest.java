@@ -21,6 +21,7 @@ package io.vidocq.vauban.core.interceptor;
 
 import io.vidocq.vauban.core.context.CreationalContextImpl;
 import io.vidocq.vauban.core.interceptor.fixtures.GoldenBean;
+import jakarta.interceptor.InvocationContext;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
@@ -32,6 +33,7 @@ import java.lang.reflect.AccessFlag;
 import java.util.List;
 import java.util.Set;
 
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
@@ -65,7 +67,7 @@ class InterceptedHotPathTest {
     }
 
     @Test
-    @DisplayName("each override reads its bridge Method from a static final field and asks chainFor for its chain")
+    @DisplayName("each override reads its bridge Method from a static final field and hands the call to intercept")
     void overridesResolveNothingPerCall() {
         assertFalse(overrides().isEmpty());
         for (var override : overrides()) {
@@ -75,7 +77,9 @@ class InterceptedHotPathTest {
             assertFalse(calls.contains("getClass"), name + ": " + calls);
             assertFalse(calls.contains("resolveChainForMethod"), name + ": " + calls);
             assertFalse(calls.contains("shareInstances"), name + ": " + calls);
-            assertTrue(calls.contains("chainFor"), name + ": " + calls);
+            assertFalse(calls.contains("chainFor"), name + ": " + calls);
+            assertFalse(calls.contains("<init>"), name + " builds its own invocation context: " + calls);
+            assertTrue(calls.contains("intercept"), name + ": " + calls);
         }
     }
 
@@ -137,5 +141,53 @@ class InterceptedHotPathTest {
         manager.chainFor(chains, 0, Set.of(), Target.class.getDeclaredMethod("run"), new Target(), null);
 
         assertNull(chains[0]);
+    }
+
+    /** An {@code @AroundInvoke} body: records what it saw and wraps the result. */
+    public static class Recorder {
+        Object[] seen;
+        Object data;
+
+        public Object around(InvocationContext ctx) throws Exception {
+            seen = ctx.getParameters();
+            ctx.getContextData().put("by", "recorder");
+            var result = ctx.proceed();
+            data = ctx.getContextData().get("by");
+            return "wrapped:" + result;
+        }
+    }
+
+    @Test
+    @DisplayName("intercept with no interceptor calls the target directly, on the caller's arguments")
+    void interceptWithoutInterceptors() throws Exception {
+        var manager = new InterceptorManager(List.of());
+        List<?>[] chains = {List.of()};
+        Object[] args = {"x"};
+        var received = new Object[1][];
+
+        var result = manager.intercept(chains, 0, Set.of(), Target.class.getDeclaredMethod("run"), new Target(),
+                new CreationalContextImpl<>(), args, (target, params) -> {
+                    received[0] = params;
+                    return "done";
+                });
+
+        assertEquals("done", result);
+        assertSame(args, received[0]);
+    }
+
+    @Test
+    @DisplayName("intercept runs the chain on the caller's arguments and shares the context data along it")
+    void interceptRunsTheChain() throws Exception {
+        var manager = new InterceptorManager(List.of());
+        var recorder = new Recorder();
+        List<?>[] chains = {List.of(new VaubanInvocationContext.InterceptorInvocation(recorder,
+                Recorder.class.getDeclaredMethod("around", InvocationContext.class)))};
+
+        var result = manager.intercept(chains, 0, Set.of(), Target.class.getDeclaredMethod("run"), new Target(),
+                new CreationalContextImpl<>(), new Object[] {"x"}, (target, params) -> params[0]);
+
+        assertEquals("wrapped:x", result);
+        assertArrayEquals(new Object[] {"x"}, recorder.seen);
+        assertEquals("recorder", recorder.data);
     }
 }
