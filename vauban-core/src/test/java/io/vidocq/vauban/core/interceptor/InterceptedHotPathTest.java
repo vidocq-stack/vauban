@@ -94,6 +94,18 @@ class InterceptedHotPathTest {
         assertTrue(GOLDEN.fields().stream().anyMatch(f -> f.fieldName().equalsString(InterceptedShape.FIELD_CHAINS)));
     }
 
+    @Test
+    @DisplayName("the $$super$ bridges are private: nothing outside the subclass reaches a method past its interceptors")
+    void superBridgesArePrivate() {
+        var bridges = GOLDEN.methods().stream()
+                .filter(m -> m.methodName().stringValue().startsWith(InterceptedShape.SUPER_BRIDGE_PREFIX))
+                .toList();
+        assertEquals(overrides().size(), bridges.size());
+        for (var bridge : bridges) {
+            assertTrue(bridge.flags().has(AccessFlag.PRIVATE), bridge.methodName().stringValue());
+        }
+    }
+
     public static class Target {
         public void run() {
             // Only its Method is used: no interceptor applies, the chain is what is checked.

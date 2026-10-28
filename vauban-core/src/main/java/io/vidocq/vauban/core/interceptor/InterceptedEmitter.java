@@ -43,7 +43,7 @@ import java.lang.constant.MethodTypeDesc;
  * {@code $$manager}, {@code $$bindings}, {@code $$constructorBindings}, {@code $$context}, {@code $$chains}
  * (each method's chain, kept per instance), and one {@code static final Method $$method$<index>} per
  * interceptable method (its {@code $$super$} bridge, looked up once by the class initializer).
- * <strong>Special methods generated:</strong> {@code <clinit>}, {@code $$init}, one {@code $$super$name}
+ * <strong>Special methods generated:</strong> {@code <clinit>}, {@code $$init}, one private {@code $$super$name}
  * bridge and one override per interceptable method.
  */
 @SuppressWarnings("java:S3776") // CDI container logic has inherent complexity
@@ -228,7 +228,7 @@ public final class InterceptedEmitter {
         clb.withMethodBody(
                 InterceptedShape.superBridgeName(method.name()),
                 methodType,
-                ClassFile.ACC_PUBLIC,
+                ClassFile.ACC_PRIVATE,
                 cob -> {
                     cob.aload(0);
                     int s = 1;

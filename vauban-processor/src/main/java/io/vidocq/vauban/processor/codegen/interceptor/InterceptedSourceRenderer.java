@@ -43,7 +43,7 @@ import java.util.List;
  *   <li>the override {@code work()} — builds the {@code VaubanInvocationContext}, resolves the chain
  *       at run time and drives it; a pre-init guard ({@code $$manager == null}) calls {@code super}
  *       directly during construction;</li>
- *   <li>a bridge {@code $$super$work()} — {@code return super.work(...)}, the only way to reach the
+ *   <li>a private bridge {@code $$super$work()} — {@code return super.work(...)}, the only way to reach the
  *       original body without re-entering interception;</li>
  *   <li>a static glue {@code $$ti$work(Object, Object[])} lifted to a {@code TargetInvoker} by a
  *       method reference — javac emits the same {@code invokedynamic}/{@code LambdaMetafactory} the
@@ -287,7 +287,7 @@ public final class InterceptedSourceRenderer {
      */
     private static void renderSuperBridge(StringBuilder sb, MethodShape m, String defaultHandle) {
         TypeRef ret = m.returnType();
-        sb.append(PUBLIC_MEMBER).append(sourceName(ret)).append(" ")
+        sb.append("    private ").append(sourceName(ret)).append(" ")
                 .append(InterceptedShape.superBridgeName(m.name()))
                 .append("(").append(params(m.params())).append(") throws Exception {\n");
         if (defaultHandle != null) {

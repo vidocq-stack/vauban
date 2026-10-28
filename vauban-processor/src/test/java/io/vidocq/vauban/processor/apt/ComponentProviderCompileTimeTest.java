@@ -263,7 +263,7 @@ class ComponentProviderCompileTimeTest {
                         + result.messages());
         var subSrc = Files.readString(genSub);
         assertTrue(subSrc.contains("extends app.AuditedService"), subSrc);
-        assertTrue(subSrc.contains("public java.lang.String $$super$run() throws Exception"), subSrc);
+        assertTrue(subSrc.contains("private java.lang.String $$super$run() throws Exception"), subSrc);
         assertTrue(subSrc.contains("private static Object $$ti$run("), subSrc);
         assertTrue(subSrc.contains("AuditedService$$Intercepted::$$ti$run"), subSrc);
 
