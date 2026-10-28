@@ -62,6 +62,7 @@ public final class InterceptedSourceRenderer {
     private static final String CTX = "io.vidocq.vauban.core.interceptor.VaubanInvocationContext";
     private static final String CREATIONAL = "jakarta.enterprise.context.spi.CreationalContext";
     private static final String PUBLIC_MEMBER = "    public ";
+    private static final String PRIVATE_MEMBER = "    private ";
     private static final String MEMBER_END = "    }\n\n";
     private static final String CLASS_LITERAL = ".class";
     private static final String TRY_OPEN = "        try {\n";
@@ -112,10 +113,10 @@ public final class InterceptedSourceRenderer {
         sb.append(" {\n\n");
 
         // Fields — names come from the shared IR (single authority with the bytecode emitter)
-        sb.append("    private ").append(IM).append(" ").append(InterceptedShape.FIELD_MANAGER).append(";\n");
+        sb.append(PRIVATE_MEMBER).append(IM).append(" ").append(InterceptedShape.FIELD_MANAGER).append(";\n");
         sb.append("    private java.util.Set ").append(InterceptedShape.FIELD_BINDINGS).append(";\n");
         sb.append("    private java.util.Set ").append(InterceptedShape.FIELD_CONSTRUCTOR_BINDINGS).append(";\n");
-        sb.append("    private ").append(CREATIONAL).append(" ").append(InterceptedShape.FIELD_CONTEXT).append(";\n");
+        sb.append(PRIVATE_MEMBER).append(CREATIONAL).append(" ").append(InterceptedShape.FIELD_CONTEXT).append(";\n");
         sb.append("    private java.util.List[] ").append(InterceptedShape.FIELD_CHAINS).append(";\n\n");
         renderBridgeMethods(sb, subSimple, shape.methods());
         renderDefaultHandles(sb, subSimple, shape.methods());
@@ -287,7 +288,7 @@ public final class InterceptedSourceRenderer {
      */
     private static void renderSuperBridge(StringBuilder sb, MethodShape m, String defaultHandle) {
         TypeRef ret = m.returnType();
-        sb.append("    private ").append(sourceName(ret)).append(" ")
+        sb.append(PRIVATE_MEMBER).append(sourceName(ret)).append(" ")
                 .append(InterceptedShape.superBridgeName(m.name()))
                 .append("(").append(params(m.params())).append(") throws Exception {\n");
         if (defaultHandle != null) {
