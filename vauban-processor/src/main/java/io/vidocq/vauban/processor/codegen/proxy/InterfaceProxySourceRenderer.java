@@ -74,7 +74,7 @@ public final class InterfaceProxySourceRenderer {
                 .append(" d) { this.").append(ClientProxyShape.FIELD_DELEGATE).append(" = d; }\n\n");
 
         for (ProxyMethodShape m : collectMethods(iface, elements, types)) {
-            ClientProxySourceRenderer.renderForward(sb, ifaceSource, m);
+            ClientProxySourceRenderer.renderForward(sb, m);
         }
 
         sb.append("}\n");

@@ -33,7 +33,6 @@ import io.vidocq.vauban.core.extensions.VaubanClassConfig;
 import io.vidocq.vauban.core.langmodel.IndexLookup;
 import io.vidocq.vauban.core.types.AssignabilityRules;
 import io.vidocq.vauban.indexer.IndexBuilder;
-import io.vidocq.vauban.indexer.codegen.ComponentCollector;
 import io.vidocq.vauban.indexer.codegen.ProvidedClass;
 import io.vidocq.vauban.indexer.model.AnnotationInfo;
 import io.vidocq.vauban.indexer.model.AnnotationValue;

@@ -20,7 +20,6 @@
 package io.vidocq.vauban.processor.apt;
 
 import io.vidocq.vauban.api.VaubanComponentProvider;
-import io.vidocq.vauban.core.proxy.ClientProxyShape;
 import io.vidocq.vauban.processor.VaubanProcessor;
 import jakarta.enterprise.context.ApplicationScoped;
 import org.junit.jupiter.api.DisplayName;

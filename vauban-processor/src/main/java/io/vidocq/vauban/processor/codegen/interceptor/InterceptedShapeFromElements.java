@@ -519,10 +519,6 @@ public final class InterceptedShapeFromElements {
         return interfaces;
     }
 
-    private static boolean isObject(TypeElement t) {
-        return t.getQualifiedName().contentEquals(JAVA_LANG_OBJECT);
-    }
-
     private static TypeElement superclassOf(TypeElement t) {
         return t.getSuperclass() instanceof DeclaredType dt && dt.asElement() instanceof TypeElement se ? se : null;
     }

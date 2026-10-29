@@ -144,7 +144,7 @@ public final class ClientProxySourceRenderer {
 
         // Forwarding overrides.
         for (ProxyMethodShape m : shape.methods()) {
-            renderForward(sb, beanSource, m);
+            renderForward(sb, m);
         }
 
         sb.append("}\n");
@@ -183,7 +183,7 @@ public final class ClientProxySourceRenderer {
         };
     }
 
-    static void renderForward(StringBuilder sb, String beanSource, ProxyMethodShape m) {
+    static void renderForward(StringBuilder sb, ProxyMethodShape m) {
         boolean isVoid = m.returnType().isVoid();
         List<TypeRef> params = m.params();
 
