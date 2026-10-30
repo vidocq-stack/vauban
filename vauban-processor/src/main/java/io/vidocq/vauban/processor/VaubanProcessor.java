@@ -1503,7 +1503,7 @@ public class VaubanProcessor extends AbstractProcessor {
         for (var type : bean.types()) {
             DotName raw = switch (type) {
                 case TypeInfo.ClassType(DotName name) -> name;
-                case TypeInfo.ParameterizedType(DotName rawType, List<TypeInfo> _) -> rawType;
+                case TypeInfo.ParameterizedType(DotName rawType, _) -> rawType;
                 default -> null;
             };
             if (wanted.equals(raw)) {
