@@ -46,10 +46,10 @@ final class BceLogBridge implements AutoCloseable {
         previous = root.getHandlers();
         bridge = new Handler() {
             @Override
-            public void publish(LogRecord record) {
-                Diagnostic.Kind kind = kindOf(record.getLevel());
+            public void publish(LogRecord logRecord) {
+                Diagnostic.Kind kind = kindOf(logRecord.getLevel());
                 if (kind != null) {
-                    messager.printMessage(kind, prefix + message(record));
+                    messager.printMessage(kind, prefix + message(logRecord));
                 }
             }
 
@@ -92,9 +92,9 @@ final class BceLogBridge implements AutoCloseable {
         return null;
     }
 
-    private static String message(LogRecord record) {
-        String message = record.getMessage();
-        Object[] parameters = record.getParameters();
+    private static String message(LogRecord logRecord) {
+        String message = logRecord.getMessage();
+        Object[] parameters = logRecord.getParameters();
         if (message == null) {
             return "";
         }
@@ -103,7 +103,7 @@ final class BceLogBridge implements AutoCloseable {
         }
         try {
             return new MessageFormat(message, Locale.ROOT).format(parameters);
-        } catch (IllegalArgumentException e) {
+        } catch (IllegalArgumentException _) {
             return message;
         }
     }
