@@ -1134,14 +1134,14 @@ public final class BeanDiscovery {
     private static String erasedName(TypeInfo type) {
         return switch (type) {
             case TypeInfo.ClassType(var name) -> name.value();
-            case TypeInfo.ParameterizedType(var raw, var _) -> raw.value();
+            case TypeInfo.ParameterizedType(var raw, _) -> raw.value();
             case TypeInfo.PrimitiveType(var kind) -> kind.name().toLowerCase(java.util.Locale.ROOT);
             case TypeInfo.ArrayType(var component, var dimensions) -> {
                 var element = erasedName(component);
                 yield element == null ? null : element + "[]".repeat(dimensions);
             }
-            case TypeInfo.TypeVariable(var _, var bounds) ->
-                    bounds.isEmpty() ? "java.lang.Object" : erasedName(bounds.getFirst());
+            case TypeInfo.TypeVariable(_, var bounds) ->
+                    bounds.isEmpty() ? JAVA_LANG_OBJECT : erasedName(bounds.getFirst());
             default -> null;
         };
     }
