@@ -56,6 +56,38 @@ them is left to the container as a warning. A module on the class path, a bean a
 nobody provides stay deferred, with the same warning.
 
 ---
+## VAU-APT-006 — Every generated class costs javac's "created in the last round" warning; BCE logs print in JUL's format
+- **Date**: 2026-10-30 — **Status**: FIXED (fix/build-noise-26)
+- **Severity**: low (build noise: 17 warnings and raw two-line logs at every build of the vidocq tutorial)
+
+### Symptom
+Every build of an application printed `[WARNING] File for type '…_ClientProxy' / '…$$Intercepted' /
+'…._VaubanComponents' created in the last round will not be subject to annotation processing.`, one per generated
+class, and the Build Compatible Extensions run at build time logged through java.util.logging's console handler:
+two lines each, date and level in the machine's language (`oct. 30, 2026 … CassiniScopeExtension …` / `INFOS: …`).
+Reported by the vidocq tutorial (vidocq BUG-20261030-26).
+
+### Repro
+`GenerationRoundTest` (a companion processor writing a class in round 1, as Cassini does) and `BceLoggingTest`.
+
+### Cause
+The pipeline ran in javac's last round, on purpose: companion processors write their classes in the first round,
+and they surface in the second. javac warns, without any `-Xlint` switch (`JavacFiler`), for every file created in
+the last round. The BCEs ran with the JDK's default logging configuration.
+
+### Fix
+- The pipeline runs in the first round, from the second on, whose new classes brought no bean, before the last one.
+  Kept in the last round:
+  - when there is no second round;
+  - when an indexed class carries an `@Inherited` annotation that is not CDI's, JAX-RS's or MicroProfile OpenAPI's:
+    Vauban's subclasses inherit it, and the next round's processors would take them for their own (Dirac's
+    `@Counted`, Heisenberg's `@Retry`);
+  - with `-Avauban.generationRound=last`.
+
+  A bean another processor generates after the pipeline ran fails the build by name, instead of being missing from
+  `_VaubanComponents`.
+- While the BCEs run, java.util.logging goes to javac's messages: INFO a note, WARNING and SEVERE a warning, one line
+  each, prefixed `[Vauban BCE]`, parameters formatted in `Locale.ROOT` (`BceLogBridge`).
 
 ## VAU-INT-010 — `Interceptor.intercept` of the SPI wraps exceptions in `InvocationTargetException`
 - **Date**: 2026-10-28 — **Status**: FIXED (fix/interceptor-inject-constructor)

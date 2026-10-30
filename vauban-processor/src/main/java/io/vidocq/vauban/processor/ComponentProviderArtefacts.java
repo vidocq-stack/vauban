@@ -208,6 +208,7 @@ final class ComponentProviderArtefacts {
                 contents);
         try {
             var file = processingEnv.getFiler().createSourceFile(gen.className());
+            output.recordWritten(gen.className());
             try (var w = file.openWriter()) {
                 w.write(gen.source());
             }
