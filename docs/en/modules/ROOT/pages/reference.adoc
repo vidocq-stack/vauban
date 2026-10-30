@@ -379,6 +379,26 @@ original jars. Bind it to `process-classes` when dev mode must run against the p
 | Default `true`: the note on each generated `_VaubanComponents` tells the module to declare it, `provides io.vidocq.vauban.api.VaubanComponentProvider with <pkg>._VaubanComponents;`, which a named module needs for `ServiceLoader` to find it. A runtime that turns the module's `META-INF/services` entries into `provides` when it loads the module, as Vidocq does, needs no such declaration: `false` keeps the note and drops the advice (VAU-APT-004).
 |===
 
+[#beans-of-other-modules]
+=== Injection points satisfied by another module [.tag-new]#NEW#
+
+The static validation resolves an injection point against the beans of the compilation, and against the beans of the
+modules it depends on:
+
+* a dependency type that is itself a bean, found through `Elements` on the compile path (vauban#23);
+* since VAU-APT-006, a bean of a *bean archive module* on the module path, a named module that
+  `provides io.vidocq.vauban.api.VaubanComponentProvider`. Each implementation of that service is the
+  `_VaubanComponents` of one package of its beans. The processor reads those packages through `Elements`, from their
+  class files, without loading or running anything of theirs, and replays bean discovery on them. An application that
+  injects `JsonWebToken` now validates against the producer of `cervantes-cdi-vauban` instead of warning that the
+  type is unsatisfied.
+
+Those beans of other modules only take part in resolution: their own module validates their injection points,
+generates their artefacts and lists them in its `vauban-beans.list`. An ambiguity among them is the container's to
+decide, with every archive in view, and stays a warning. Still deferred to the container, with the
+_resolution deferred to the runtime container_ warning: a module on the class path, whose directives cannot be read;
+a bean a Build Compatible Extension adds when it runs at start-up only; a type no archive declares.
+
 [#system-properties]
 == System properties
 

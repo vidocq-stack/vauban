@@ -45,6 +45,7 @@ import jakarta.enterprise.inject.build.compatible.spi.BuildCompatibleExtension;
 import javax.annotation.processing.*;
 import javax.lang.model.SourceVersion;
 import javax.lang.model.element.*;
+import javax.lang.model.util.ElementFilter;
 import javax.lang.model.util.Elements;
 import javax.tools.Diagnostic;
 import javax.tools.StandardLocation;
@@ -150,6 +151,16 @@ public class VaubanProcessor extends AbstractProcessor {
      * resolution works, but no bytecode is emitted for them.
      */
     private final Set<DotName> externalClassNames = new LinkedHashSet<>();
+
+    /**
+     * Beans of the bean archive modules this compilation depends on, found while resolving the types it injects
+     * (VAU-APT-006). They only take part in resolution: never validated, generated or listed here, since
+     * their own module ships and validates them.
+     */
+    private final List<BeanDescriptor> archiveBeans = new ArrayList<>();
+
+    /** The service every Vauban bean archive provides, one implementation per package of beans. */
+    private static final String COMPONENT_PROVIDER = "io.vidocq.vauban.api.VaubanComponentProvider";
 
     private List<Class<?>> overrideBceClasses;
 
@@ -510,7 +521,9 @@ public class VaubanProcessor extends AbstractProcessor {
         // no part, exactly as when the container validates the same deployment again at boot.
         var annotationTypes = new io.vidocq.vauban.core.annotation.AnnotationTypes(
                 index, List.of(), nonbindingMembers(discoveryResult));
-        var resolver = new BeanResolver(beans, List.of(), assignability,
+        var candidates = new ArrayList<BeanDescriptor>(beans);
+        candidates.addAll(archiveBeans);
+        var resolver = new BeanResolver(candidates, List.of(), assignability,
                 new io.vidocq.vauban.core.bean.resolution.QualifierMatcher(annotationTypes));
         var validator = new DeploymentValidator(beans, resolver, index);
         return validator.validate();
@@ -1004,10 +1017,14 @@ public class VaubanProcessor extends AbstractProcessor {
      * @param deferredTypes fully-qualified names that exist on the compile classpath but did not
      *                      yield a bean in this compilation — a producer in the other module, say
      */
-    private record DependencyTypes(boolean indexGrew, Set<String> deferredTypes) {
+    private record DependencyTypes(boolean indexGrew, Set<String> deferredTypes, Set<String> archiveClasses) {
 
         /** Whether this error is about a type this compilation cannot see the whole story of. */
         boolean isDeferred(DeploymentValidator.ValidationError error) {
+            if (error.kind() == DeploymentValidator.ValidationError.Kind.AMBIGUOUS_DEPENDENCY) {
+                // A choice between beans of other modules is the container's to make, with every archive in view.
+                return archiveClasses.stream().anyMatch(fqn -> error.message().contains(fqn));
+            }
             if (error.kind() != DeploymentValidator.ValidationError.Kind.UNSATISFIED_DEPENDENCY) {
                 return false;
             }
@@ -1245,7 +1262,7 @@ public class VaubanProcessor extends AbstractProcessor {
         }
 
         if (added.isEmpty()) {
-            return new DependencyTypes(false, Set.of());
+            return new DependencyTypes(false, Set.of(), Set.of());
         }
 
         Set<DotName> becameBeans = addDependencyBeans(beans, added, indexBuilder, discoveryResult);
@@ -1255,7 +1272,113 @@ public class VaubanProcessor extends AbstractProcessor {
                 deferred.add(name.value());
             }
         }
-        return new DependencyTypes(true, deferred);
+        Set<String> archiveClasses = Set.of();
+        if (!deferred.isEmpty()) {
+            var archives = resolveFromBeanArchiveModules(deferred, indexBuilder, scanner, discoveryResult);
+            deferred.removeAll(archives.satisfied());
+            archiveClasses = archives.classes();
+        }
+        return new DependencyTypes(true, deferred, archiveClasses);
+    }
+
+    /** What the bean archive modules contributed: the deferred types they satisfy, and their classes. */
+    private record ArchiveResolution(Set<String> satisfied, Set<String> classes) {
+    }
+
+    /**
+     * Resolves the types still deferred against the beans of the <strong>bean archive modules</strong> on the
+     * module path (VAU-APT-006).
+     *
+     * <p>{@link #addDependencyBeans} only finds a dependency type that is itself a bean. An interface whose
+     * producer or implementation is another class of its module stayed deferred: an application injecting
+     * {@code JsonWebToken}, produced by a bean of cervantes-cdi-vauban, warned at every build. A named module
+     * that {@code provides VaubanComponentProvider} is a bean archive, and each implementation of that service
+     * is the {@code _VaubanComponents} of one package of its beans. Those packages are read through
+     * {@code Elements} — compiled classes on the module path, never loaded, nothing of theirs executed — then
+     * scanned into the index, and discovery is replayed to obtain their beans.</p>
+     *
+     * <p>Those beans join resolution only ({@link #archiveBeans}): their own module validates their injection
+     * points, generates their artefacts and lists them in its {@code vauban-beans.list}. What stays deferred:
+     * a module on the class path (no module directives to read), a bean a Build Compatible Extension adds when
+     * it runs at boot only, and a type no archive declares at all.</p>
+     */
+    private ArchiveResolution resolveFromBeanArchiveModules(Set<String> deferred, IndexBuilder indexBuilder,
+            ElementScanner scanner, BceProcessor.DiscoveryResult discoveryResult) {
+        archiveBeans.clear();
+        var elements = processingEnv.getElementUtils();
+        Set<DotName> scanned = new LinkedHashSet<>();
+        for (var module : elements.getAllModuleElements()) {
+            // The module being compiled: reading its directives now would resolve its `provides` too early.
+            if (module.isUnnamed() || compiledModuleNames.contains(module.getQualifiedName().toString())) {
+                continue;
+            }
+            for (var provides : ElementFilter.providesIn(module.getDirectives())) {
+                if (!COMPONENT_PROVIDER.equals(provides.getService().getQualifiedName().toString())) {
+                    continue;
+                }
+                for (var provider : provides.getImplementations()) {
+                    var pkg = elements.getPackageOf(provider);
+                    for (var type : ElementFilter.typesIn(pkg.getEnclosedElements())) {
+                        scanArchiveType(type, indexBuilder, scanner, scanned);
+                    }
+                }
+            }
+        }
+        if (scanned.isEmpty()) {
+            return new ArchiveResolution(Set.of(), Set.of());
+        }
+        indexAnnotationTypes(indexBuilder, scanner);
+
+        var discovery = new BeanDiscovery(indexBuilder.build());
+        if (discoveryResult != null) {
+            applyDiscoveryResult(discovery, discoveryResult);
+        }
+        Set<String> satisfied = new LinkedHashSet<>();
+        Set<String> classes = new LinkedHashSet<>();
+        for (var candidate : discovery.discoverBeans()) {
+            if (!scanned.contains(candidate.beanClass())) {
+                continue;
+            }
+            var matched = deferred.stream().filter(fqn -> hasBeanType(candidate, fqn)).toList();
+            if (!matched.isEmpty()) {
+                archiveBeans.add(candidate);
+                satisfied.addAll(matched);
+                classes.add(candidate.beanClass().value());
+                processingEnv.getMessager().printMessage(Diagnostic.Kind.NOTE,
+                        "[Vauban] Resolved " + String.join(", ", matched) + " with "
+                                + candidate.beanClass().value() + " from a bean archive module");
+            }
+        }
+        return new ArchiveResolution(satisfied, classes);
+    }
+
+    /** Scans {@code type} and its member types into the index, unless already there. */
+    private void scanArchiveType(TypeElement type, IndexBuilder indexBuilder, ElementScanner scanner,
+            Set<DotName> scanned) {
+        var name = DotName.of(processingEnv.getElementUtils().getBinaryName(type).toString());
+        if (!indexBuilder.contains(name)) {
+            indexBuilder.add(scanner.scan(type));
+            scanned.add(name);
+        }
+        for (var member : ElementFilter.typesIn(type.getEnclosedElements())) {
+            scanArchiveType(member, indexBuilder, scanner, scanned);
+        }
+    }
+
+    /** Whether {@code bean} has a bean type whose raw class is {@code fqn}. */
+    private static boolean hasBeanType(BeanDescriptor bean, String fqn) {
+        for (var type : bean.types()) {
+            var names = new LinkedHashSet<DotName>();
+            switch (type) {
+                case TypeInfo.ClassType(DotName name) -> names.add(name);
+                case TypeInfo.ParameterizedType(DotName rawType, List<TypeInfo> ignored) -> names.add(rawType);
+                default -> { /* no class to match */ }
+            }
+            if (names.contains(DotName.of(fqn))) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**
