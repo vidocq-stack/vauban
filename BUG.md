@@ -56,7 +56,7 @@ them is left to the container as a warning. A module on the class path, a bean a
 nobody provides stay deferred, with the same warning.
 
 ---
-## VAU-APT-006 — Every generated class costs javac's "created in the last round" warning; BCE logs print in JUL's format
+## VAU-APT-007 — Every generated class costs javac's "created in the last round" warning; BCE logs print in JUL's format
 - **Date**: 2026-10-30 — **Status**: FIXED (fix/build-noise-26)
 - **Severity**: low (build noise: 17 warnings and raw two-line logs at every build of the vidocq tutorial)
 
