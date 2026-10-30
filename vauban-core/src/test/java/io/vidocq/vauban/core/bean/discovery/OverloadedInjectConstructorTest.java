@@ -102,6 +102,7 @@ class OverloadedInjectConstructorTest {
 
     @SuppressWarnings("java:S1172") // the signatures are the cases under test
     static <T extends Number, U> void shapes(int count, String[][] grid, List<String> names, T number, U anything) {
+        // Never called: only its parameter types are read.
     }
 
     @Test
