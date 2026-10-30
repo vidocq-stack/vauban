@@ -27,6 +27,33 @@ number of parameters as the indexed one, and took the first: the overload `(Conf
 ### Fix
 The reflected executable must have the same erased parameter types as the indexed one (`sameErasedParameters`), for
 constructors and methods alike.
+## VAU-APT-006 — An injection point a dependency's producer satisfies warns at every build
+- **Date**: 2026-10-30 — **Status**: FIXED (feat/build-time-dependency-beans)
+- **Severity**: low (a false warning at every build; the injection works at start-up)
+
+### Symptom
+An application that injects a type produced by a bean of another module warned at each compilation:
+`[Vauban] Unsatisfied dependency: field LoanResource.caller of type …JsonWebToken … — the required type is not declared
+by this compilation unit; resolution deferred to the runtime container.` The Vidocq tutorial hit it with
+`@Inject JsonWebToken`, produced by `JsonWebTokenProducer` in cervantes-cdi-vauban.
+
+### Repro
+`BeanArchiveModuleInjectionTest`: a module `repro.core` with an interface `TokenService` and, in a non-exported
+package, an `@ApplicationScoped` bean producing it; an application module injecting `TokenService`, compiled on the
+module path: the warning above.
+
+### Cause
+`resolveDependencyBeans` (vauban#23) indexes the required type itself through `Elements`: a dependency type that is a
+bean resolves, an interface whose producer or implementation is another class of its module stays deferred, since the
+processor never looked at the rest of that module.
+
+### Fix
+For the types still deferred, the processor reads the bean archive modules on the module path: the named modules that
+`provides io.vidocq.vauban.api.VaubanComponentProvider`, one implementation per package of beans. It scans those
+packages through `Elements` (class files, nothing loaded or run), replays discovery, and adds the beans whose types match
+a deferred type to the resolver only: never validated, generated or listed by the application. An ambiguity among
+them is left to the container as a warning. A module on the class path, a bean a BCE adds at start-up only, and a type
+nobody provides stay deferred, with the same warning.
 
 ---
 
