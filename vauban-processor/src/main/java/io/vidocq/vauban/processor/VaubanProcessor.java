@@ -1305,25 +1305,7 @@ public class VaubanProcessor extends AbstractProcessor {
     private ArchiveResolution resolveFromBeanArchiveModules(Set<String> deferred, IndexBuilder indexBuilder,
             ElementScanner scanner, BceProcessor.DiscoveryResult discoveryResult) {
         archiveBeans.clear();
-        var elements = processingEnv.getElementUtils();
-        Set<DotName> scanned = new LinkedHashSet<>();
-        for (var module : elements.getAllModuleElements()) {
-            // The module being compiled: reading its directives now would resolve its `provides` too early.
-            if (module.isUnnamed() || compiledModuleNames.contains(module.getQualifiedName().toString())) {
-                continue;
-            }
-            for (var provides : ElementFilter.providesIn(module.getDirectives())) {
-                if (!COMPONENT_PROVIDER.equals(provides.getService().getQualifiedName().toString())) {
-                    continue;
-                }
-                for (var provider : provides.getImplementations()) {
-                    var pkg = elements.getPackageOf(provider);
-                    for (var type : ElementFilter.typesIn(pkg.getEnclosedElements())) {
-                        scanArchiveType(type, indexBuilder, scanner, scanned);
-                    }
-                }
-            }
-        }
+        Set<DotName> scanned = scanBeanArchiveModules(indexBuilder, scanner);
         if (scanned.isEmpty()) {
             return new ArchiveResolution(Set.of(), Set.of());
         }
@@ -1336,10 +1318,9 @@ public class VaubanProcessor extends AbstractProcessor {
         Set<String> satisfied = new LinkedHashSet<>();
         Set<String> classes = new LinkedHashSet<>();
         for (var candidate : discovery.discoverBeans()) {
-            if (!scanned.contains(candidate.beanClass())) {
-                continue;
-            }
-            var matched = deferred.stream().filter(fqn -> hasBeanType(candidate, fqn)).toList();
+            var matched = scanned.contains(candidate.beanClass())
+                    ? deferred.stream().filter(fqn -> hasBeanType(candidate, fqn)).toList()
+                    : List.<String>of();
             if (!matched.isEmpty()) {
                 archiveBeans.add(candidate);
                 satisfied.addAll(matched);
@@ -1350,6 +1331,36 @@ public class VaubanProcessor extends AbstractProcessor {
             }
         }
         return new ArchiveResolution(satisfied, classes);
+    }
+
+    /** Scans into the index the packages of beans of every bean archive module; returns the classes added. */
+    private Set<DotName> scanBeanArchiveModules(IndexBuilder indexBuilder, ElementScanner scanner) {
+        var elements = processingEnv.getElementUtils();
+        Set<DotName> scanned = new LinkedHashSet<>();
+        for (var provider : componentProvidersOfOtherModules()) {
+            for (var type : ElementFilter.typesIn(elements.getPackageOf(provider).getEnclosedElements())) {
+                scanArchiveType(type, indexBuilder, scanner, scanned);
+            }
+        }
+        return scanned;
+    }
+
+    /**
+     * The {@code VaubanComponentProvider} implementations the named modules on the module path provide, one per
+     * package of beans. The modules being compiled are skipped: reading their directives now would resolve their
+     * {@code provides} too early.
+     */
+    private List<TypeElement> componentProvidersOfOtherModules() {
+        var providers = new ArrayList<TypeElement>();
+        for (var module : processingEnv.getElementUtils().getAllModuleElements()) {
+            if (module.isUnnamed() || compiledModuleNames.contains(module.getQualifiedName().toString())) {
+                continue;
+            }
+            ElementFilter.providesIn(module.getDirectives()).stream()
+                    .filter(provides -> COMPONENT_PROVIDER.equals(provides.getService().getQualifiedName().toString()))
+                    .forEach(provides -> providers.addAll(provides.getImplementations()));
+        }
+        return providers;
     }
 
     /** Scans {@code type} and its member types into the index, unless already there. */
@@ -1367,14 +1378,14 @@ public class VaubanProcessor extends AbstractProcessor {
 
     /** Whether {@code bean} has a bean type whose raw class is {@code fqn}. */
     private static boolean hasBeanType(BeanDescriptor bean, String fqn) {
+        var wanted = DotName.of(fqn);
         for (var type : bean.types()) {
-            var names = new LinkedHashSet<DotName>();
-            switch (type) {
-                case TypeInfo.ClassType(DotName name) -> names.add(name);
-                case TypeInfo.ParameterizedType(DotName rawType, List<TypeInfo> ignored) -> names.add(rawType);
-                default -> { /* no class to match */ }
-            }
-            if (names.contains(DotName.of(fqn))) {
+            DotName raw = switch (type) {
+                case TypeInfo.ClassType(DotName name) -> name;
+                case TypeInfo.ParameterizedType(DotName rawType, List<TypeInfo> _) -> rawType;
+                default -> null;
+            };
+            if (wanted.equals(raw)) {
                 return true;
             }
         }
