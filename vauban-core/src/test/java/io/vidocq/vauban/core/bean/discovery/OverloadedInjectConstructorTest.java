@@ -19,6 +19,10 @@
  */
 package io.vidocq.vauban.core.bean.discovery;
 
+import io.vidocq.vauban.indexer.model.DotName;
+import io.vidocq.vauban.indexer.model.MethodInfo;
+import io.vidocq.vauban.indexer.model.ParameterInfo;
+import io.vidocq.vauban.indexer.model.TypeInfo;
 import jakarta.enterprise.context.Dependent;
 import jakarta.enterprise.inject.Instance;
 import jakarta.enterprise.inject.se.SeContainerInitializer;
@@ -29,6 +33,8 @@ import org.junit.jupiter.api.Test;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * The injection points of an {@code @Inject} constructor are typed from that constructor, not from another one with
@@ -79,6 +85,49 @@ class OverloadedInjectConstructorTest {
         public Holder(Config config, Instance<Part> parts) {
             this.ids = parts.stream().map(Part::id).sorted().toList();
         }
+    }
+
+    /** An executable of {@code types}, as the indexer describes it. */
+    private static MethodInfo indexed(TypeInfo... types) {
+        var parameters = new java.util.ArrayList<ParameterInfo>();
+        for (int i = 0; i < types.length; i++) {
+            parameters.add(new ParameterInfo("p" + i, types[i], List.of()));
+        }
+        return new MethodInfo("m", new TypeInfo.VoidType(), parameters, List.of(), 0, List.of());
+    }
+
+    private static TypeInfo.ClassType type(Class<?> c) {
+        return new TypeInfo.ClassType(DotName.of(c.getName()));
+    }
+
+    @SuppressWarnings("java:S1172") // the signatures are the cases under test
+    static <T extends Number, U> void shapes(int count, String[][] grid, List<String> names, T number, U anything) {
+    }
+
+    @Test
+    @DisplayName("every shape of parameter type is compared by its erasure")
+    void parametersAreComparedByTheirErasure() throws NoSuchMethodException {
+        Class<?>[] reflected = OverloadedInjectConstructorTest.class.getDeclaredMethod("shapes",
+                int.class, String[][].class, List.class, Number.class, Object.class).getParameterTypes();
+        var number = new TypeInfo.TypeVariable("T", List.of(type(Number.class)));
+        var unbounded = new TypeInfo.TypeVariable("U", List.of());
+
+        assertTrue(BeanDiscovery.sameErasedParameters(reflected, indexed(
+                new TypeInfo.PrimitiveType(TypeInfo.PrimitiveType.Kind.INT),
+                new TypeInfo.ArrayType(type(String.class), 2),
+                new TypeInfo.ParameterizedType(DotName.of(List.class.getName()), List.of(type(String.class))),
+                number, unbounded)));
+        assertFalse(BeanDiscovery.sameErasedParameters(reflected, indexed(
+                new TypeInfo.PrimitiveType(TypeInfo.PrimitiveType.Kind.LONG),
+                new TypeInfo.ArrayType(type(String.class), 2),
+                type(List.class), number, unbounded)), "a primitive of another kind");
+        assertFalse(BeanDiscovery.sameErasedParameters(reflected, indexed(
+                new TypeInfo.PrimitiveType(TypeInfo.PrimitiveType.Kind.INT),
+                new TypeInfo.ArrayType(type(String.class), 1),
+                type(List.class), number, unbounded)), "an array of another dimension");
+        assertFalse(BeanDiscovery.sameErasedParameters(reflected, indexed(type(String.class))), "another arity");
+        assertTrue(BeanDiscovery.sameErasedParameters(new Class<?>[] {Object.class},
+                indexed(new TypeInfo.WildcardType(null, null))), "a type it cannot tell is not held against it");
     }
 
     @Test
