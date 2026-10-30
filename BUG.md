@@ -3250,7 +3250,7 @@ The same goes for a normal-scoped producer of such a class (`Dollar_Produced$$�
   - 2026-10-28 : F1, F2 and F3 red on the old code. One rule now, `ForwardedMethods.select(TypeView, Placement)` in `vauban-core`: the walk includes `Object`; in the type's package every member is forwarded (a package-private one when inherited, JLS 8.4.8), an inherited protected one of another package through a `MethodHandle`; in another package, public methods only. Java source cannot forward through a `MethodHandle`, so such a bean proxy is now emitted as bytecode by the processor (`UnnameableMemberBytecodeEmissionTest#methodHandleForward`, red before: the source proxy left `hook()` out).
 
 ## VAU-INT-011 — Interceptor methods are called by reflection: a non-public one needs its package opened
-- **Date**: 2026-10-31 — **Status**: OPEN (analysed; Vidocq's build check covers it meanwhile)
+- **Date**: 2026-10-31 — **Status**: FIXED on `feat/generated-interceptor-invokers` (`PackagePrivateInterceptorModulePathTest`)
 - **Severity**: medium (the first intercepted call fails with an `IllegalAccessException` on the strict module path,
   unless the application opens the interceptor's package to `io.vidocq.vauban.core`)
 
@@ -3273,12 +3273,18 @@ does not: `InterceptorManager` builds each `VaubanInvocationContext.InterceptorI
 needs only a read edge for a public method of a public class in an exported package, and deep access (`opens`)
 otherwise. The lifecycle callbacks of interceptors (`addLifecycleInvocations`) go the same way.
 
-### Fix direction (not done here)
-The processor already writes a `_VaubanComponents` class in each package of the application. It can also emit, for
-each interceptor of the package, an invoker per interceptor method (`(instance, ctx) -> ((AuditedInterceptor)
-instance).audit(ctx)`): same package, so a package-private method needs neither `opens` nor reflection.
-`InterceptorInvocation` would carry that invoker and keep `Method.invoke` as the fallback for interceptors the
-processor did not see (a portable extension's, a library's without the processor). Touches the processor's
-component generation, `InterceptorManager` and both invocation paths, and the TCK interceptor suites must stay at
-774/774: not a quick fix. Until then, Vidocq's `vidocq:check-module-info` asks for the `opens` of every package
-holding an interceptor whose methods are not all public (Vidocq BUG-20261031-04).
+### Fix
+The processor's `_VaubanComponents` now lists the interceptor methods of its package among the methods it invokes:
+`ComponentCollector` collects `@AroundInvoke` and `@AroundConstruct` methods next to the `@PostConstruct` /
+`@PreDestroy` ones it already took (an interceptor's lifecycle callbacks among them), private ones excepted.
+`VaubanInvocationContext.callInterceptorMethod` asks that provider first (`VaubanLookup.invokeGenerated`, which
+returns `NOT_INVOKED` when no provider owns the method) and keeps `Method.invoke` as the fallback for the interceptors
+the processor did not see; `InterceptorInvocation.invoke`, the target-class callbacks of an `@AroundConstruct` chain
+and `VaubanInterceptor.intercept` all go through it. What an interceptor method throws still reaches the caller
+unchanged. `CodegenCoverage` reports these calls as covered when the provider declares them.
+
+Tests: `PackagePrivateInterceptorModulePathTest` (module path, package neither exported nor opened: `@AroundConstruct`,
+the interceptor's `@PostConstruct` and `@AroundInvoke`, plus a checked exception through the chain) failed with the
+tutorial's `IllegalAccessException` before the fix; `ComponentCollectorMemberSelectionTest.packagePrivateInterceptorMethodsAreCollected`;
+`CodegenCoverageTest.interceptorAroundInvokeDeclaredIsCovered`. Vidocq's `vidocq:check-module-info` still asks for the
+`opens` (Vidocq BUG-20261031-04) until it can tell a Vauban release with this fix on the module path.

@@ -121,4 +121,24 @@ class ComponentCollectorMemberSelectionTest {
                 "Skipping method app.Bean#onEvent: parameter erasure 'app.Outer$Event' contains '$' (nested type)"
                         + " — cast would not compile"), warnings);
     }
+
+    @Test
+    void packagePrivateInterceptorMethodsAreCollected() {
+        var context = new ParameterInfo("ctx", new TypeInfo.ClassType(DotName.of("jakarta.interceptor.InvocationContext")),
+                List.of());
+        var object = new TypeInfo.ClassType(DotName.of("java.lang.Object"));
+        var methods = List.of(
+                method("construct", object, 0, "jakarta.interceptor.AroundConstruct", context),
+                method("created", VOID, 0, "jakarta.annotation.PostConstruct", context),
+                method("guard", object, 0, "jakarta.interceptor.AroundInvoke", context),
+                method("hiddenGuard", object, PRIVATE, "jakarta.interceptor.AroundInvoke", context));
+        var warnings = new ArrayList<String>();
+
+        var collected = ComponentCollector.collectMethods(bean(List.of(), methods), warnings);
+
+        assertEquals(List.of("construct(jakarta.interceptor.InvocationContext)",
+                        "created(jakarta.interceptor.InvocationContext)", "guard(jakarta.interceptor.InvocationContext)"),
+                collected.stream().map(MethodInvoke::methodId).toList());
+        assertEquals(List.of(), warnings);
+    }
 }

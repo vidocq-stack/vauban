@@ -166,20 +166,34 @@ public final class CodegenCoverage {
         if (own != null) {
             ops.add(invoke(own, "@PostConstruct"));
         }
-        // VaubanInvocationContext.InterceptorInvocation calls these by Method.invoke: no provider runs them (#109).
+        // VaubanInvocationContext.callInterceptorMethod runs these through the provider that declares them, and by
+        // Method.invoke otherwise (VAU-INT-011).
         if (interceptor.aroundInvokeMethod() != null) {
-            ops.add(none("@AroundInvoke " + interceptor.aroundInvokeMethod() + "()", type));
+            ops.add(interceptorMethod(type, interceptor.aroundInvokeMethod(), "@AroundInvoke"));
         }
         if (interceptor.aroundConstructMethod() != null) {
-            ops.add(none("@AroundConstruct " + interceptor.aroundConstructMethod() + "()", type));
+            ops.add(interceptorMethod(type, interceptor.aroundConstructMethod(), "@AroundConstruct"));
         }
         for (Method method : lifecycleInterceptorMethods(type, PostConstruct.class)) {
-            ops.add(none("@PostConstruct " + method.getName() + "(InvocationContext)", type));
+            ops.add(invoke(method, "@PostConstruct"));
         }
         for (Method method : lifecycleInterceptorMethods(type, PreDestroy.class)) {
-            ops.add(none("@PreDestroy " + method.getName() + "(InvocationContext)", type));
+            ops.add(invoke(method, "@PreDestroy"));
         }
         return ops;
+    }
+
+    /** The call of the interceptor method {@code name(InvocationContext)} of {@code type} or of a superclass. */
+    private static Operation interceptorMethod(Class<?> type, String name, String what) {
+        for (Class<?> current = type; current != null && current != Object.class; current = current.getSuperclass()) {
+            for (Method method : current.getDeclaredMethods()) {
+                if (method.getName().equals(name) && method.getParameterCount() == 1
+                        && method.getParameterTypes()[0] == InvocationContext.class) {
+                    return invoke(method, what);
+                }
+            }
+        }
+        return none(what + " " + name + "()", type);
     }
 
     /** The class, loaded as the container loads it but never initialized: no static initializer of the application runs. */
