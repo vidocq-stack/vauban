@@ -62,6 +62,12 @@ final class ProcessorCompiler {
     /** As {@link #compile(Path, Map, List)}, with {@code processor} in place of a plain Vauban processor. */
     static Result compile(Path workDir, Map<String, String> sources, List<String> extraOptions, Processor processor)
             throws IOException {
+        return compile(workDir, sources, extraOptions, List.of(processor));
+    }
+
+    /** As {@link #compile(Path, Map, List)}, with {@code processors}, run in this order, in place of Vauban alone. */
+    static Result compile(Path workDir, Map<String, String> sources, List<String> extraOptions,
+            List<Processor> processors) throws IOException {
         var compiler = ToolProvider.getSystemJavaCompiler();
         var diagnostics = new DiagnosticCollector<JavaFileObject>();
         var sourceDir = Files.createDirectories(workDir.resolve("src"));
@@ -80,7 +86,7 @@ final class ProcessorCompiler {
         try (var fileManager = compiler.getStandardFileManager(diagnostics, null, null)) {
             var task = compiler.getTask(null, fileManager, diagnostics, options, null,
                     fileManager.getJavaFileObjectsFromFiles(files));
-            task.setProcessors(List.of(processor));
+            task.setProcessors(processors);
             boolean success = task.call();
             var messages = new ArrayList<String>();
             for (var diagnostic : diagnostics.getDiagnostics()) {

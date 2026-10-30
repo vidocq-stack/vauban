@@ -48,10 +48,24 @@ final class GeneratedOutput {
         return bytecodeClasses;
     }
 
+    /** Every class this processor wrote, source or bytecode: the classes a later round sees and must not index. */
+    private final Set<String> written = new LinkedHashSet<>();
+
+    /** Whether this processor wrote {@code className}. */
+    boolean wrote(String className) {
+        return written.contains(className);
+    }
+
+    /** Records a class written through the Filer by an artefact that does not go through this output. */
+    void recordWritten(String className) {
+        written.add(className);
+    }
+
     void generateClass(GeneratedClass generated) {
         try {
             var filer = processingEnv.getFiler();
             var fileObject = filer.createClassFile(generated.className());
+            written.add(generated.className());
             try (var os = fileObject.openOutputStream()) {
                 os.write(generated.bytecode());
             }
@@ -103,6 +117,7 @@ final class GeneratedOutput {
     void writeSourceFile(String className, String source) {
         try {
             var file = processingEnv.getFiler().createSourceFile(className);
+            written.add(className);
             try (var w = file.openWriter()) {
                 w.write(source);
             }

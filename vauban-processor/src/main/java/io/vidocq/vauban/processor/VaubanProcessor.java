@@ -88,7 +88,7 @@ import java.util.stream.Collectors;
  * </ul>
  */
 @javax.annotation.processing.SupportedOptions({"vauban.validation", "vauban.validation.scope",
-        "vauban.producerProxy", "vauban.providesHint"})
+        "vauban.producerProxy", "vauban.providesHint", "vauban.generationRound"})
 public class VaubanProcessor extends AbstractProcessor {
 
     private static final Set<String> CDI_ANNOTATIONS = Set.of(
@@ -127,6 +127,12 @@ public class VaubanProcessor extends AbstractProcessor {
     // round it was discovered in.
     private final IndexBuilder accumulatedIndex = new IndexBuilder();
     private boolean finalized = false;
+    /** The APT rounds seen so far. */
+    private int round;
+    /** Whether the pipeline ran before javac's last round, so that a later round may still bring a bean. */
+    private boolean generatedEarly;
+    /** The late beans already reported, once each whatever the number of their annotations. */
+    private final Set<String> reportedLateBeans = new HashSet<>();
     private List<Class<?>> discoveredBceClasses;
 
     /**
@@ -177,6 +183,8 @@ public class VaubanProcessor extends AbstractProcessor {
 
     /** The processed types, found by the names the index carries. */
     private TypeLookup typeLookup;
+    /** Where the generated classes go, and the record of their names. */
+    private GeneratedOutput output;
     /** The generated artefacts, one class each. */
     private InterceptedArtefacts intercepted;
     private ClientProxyArtefacts clientProxies;
@@ -187,7 +195,7 @@ public class VaubanProcessor extends AbstractProcessor {
         super.init(processingEnv);
         // The artefacts share one output: the classes one emits as bytecode, the providers instantiate through
         // their lookup (BUG-20261004-09).
-        var output = new GeneratedOutput(processingEnv);
+        output = new GeneratedOutput(processingEnv);
         typeLookup = new TypeLookup(processingEnv);
         intercepted = new InterceptedArtefacts(processingEnv, output, typeLookup);
         clientProxies = new ClientProxyArtefacts(processingEnv, output);
@@ -251,24 +259,128 @@ public class VaubanProcessor extends AbstractProcessor {
 
     @Override
     public boolean process(Set<? extends TypeElement> annotations, RoundEnvironment roundEnv) {
-        if (finalized) return false;
+        round++;
+        if (finalized) {
+            if (generatedEarly) {
+                reportLateBeans(annotations, roundEnv);
+            }
+            return false;
+        }
 
         recordCompiledModules(roundEnv);
 
         // Accumulate types annotated this round into the cross-round index.
         var scanner = new ElementScanner(processingEnv.getElementUtils(), processingEnv.getTypeUtils());
+        int indexedBefore = accumulatedIndex.size();
         for (var annotation : annotations) {
             if (isIndexTrigger(annotation)) {
                 indexAnnotatedTypes(roundEnv.getElementsAnnotatedWith(annotation), scanner);
             }
         }
 
-        // Wait for the final round so companion processors (mansart-data-processor and friends)
-        // have had a chance to emit their generated CDI classes — without this, beans appearing
-        // only in later rounds would be invisible to the deployment validator.
-        if (!roundEnv.processingOver()) return false;
+        // Companion processors (mansart-data-processor, cassini-processor and friends) emit their classes in the
+        // first round; they surface here in the second. The pipeline waits for them, then runs in the first round
+        // from the second on whose new classes brought no bean: before javac's last round, where every file written
+        // costs a "created in the last round will not be subject to annotation processing" warning
+        // (BUG-20261030-26 of vidocq). Without a second round, or with -Avauban.generationRound=last, it runs in
+        // the last round, as it always did.
+        boolean quietRound = round >= 2 && accumulatedIndex.size() == indexedBefore && accumulatedIndex.size() > 0;
+        if (!roundEnv.processingOver()
+                && !(quietRound && earlyGeneration() && !foreignInheritedAnnotationIndexed())) return false;
         finalized = true;
-        return processDeployment(scanner);
+        generatedEarly = !roundEnv.processingOver();
+        try (var _ = BceLogBridge.install(processingEnv.getMessager(), BCE_PREFIX)) {
+            return processDeployment(scanner);
+        }
+    }
+
+    /**
+     * Whether an indexed class carries, itself or through a superclass, an {@code @Inherited} annotation other than
+     * a scope, a stereotype or {@code @Vetoed}. The client proxies and intercepted subclasses inherit it, and written
+     * before the last round, they would reach the next round's processors as classes carrying it: Dirac's for
+     * {@code @Counted}, Heisenberg's for {@code @Retry} would generate companions for them.
+     */
+    private boolean foreignInheritedAnnotationIndexed() {
+        var elements = processingEnv.getElementUtils();
+        for (var classInfo : accumulatedIndex.build().getKnownClasses()) {
+            var name = classInfo.name();
+            var type = elements.getTypeElement(name.toString());
+            if (type == null) {
+                continue;
+            }
+            for (var mirror : elements.getAllAnnotationMirrors(type)) {
+                var annotation = (TypeElement) mirror.getAnnotationType().asElement();
+                if (annotation.getAnnotation(java.lang.annotation.Inherited.class) != null
+                        && !isCdiOwnedAnnotation(annotation)) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Packages of {@code @Inherited} annotations known to start no processor on Vauban's subclasses: JAX-RS's
+     * {@code @Produces} and {@code @Consumes}, MicroProfile OpenAPI's {@code @Tag} and friends. Cassini's and Grimm's
+     * processors start from {@code @Path}, which is not inherited.
+     */
+    private static final Set<String> INHERITED_SAFE_PACKAGES = Set.of("jakarta.ws.rs",
+            "org.eclipse.microprofile.openapi.annotations", "org.eclipse.microprofile.openapi.annotations.tags",
+            "org.eclipse.microprofile.openapi.annotations.media", "org.eclipse.microprofile.openapi.annotations.responses",
+            "org.eclipse.microprofile.openapi.annotations.parameters", "org.eclipse.microprofile.openapi.annotations.security");
+
+    /**
+     * A scope, a stereotype or {@code @Vetoed}, which only the CDI container reads, or an annotation of
+     * {@link #INHERITED_SAFE_PACKAGES}.
+     */
+    private boolean isCdiOwnedAnnotation(TypeElement annotation) {
+        if ("jakarta.enterprise.inject.Vetoed".contentEquals(annotation.getQualifiedName())
+                || INHERITED_SAFE_PACKAGES.contains(
+                        processingEnv.getElementUtils().getPackageOf(annotation).getQualifiedName().toString())) {
+            return true;
+        }
+        for (var meta : annotation.getAnnotationMirrors()) {
+            var metaName = ((TypeElement) meta.getAnnotationType().asElement()).getQualifiedName().toString();
+            if (BEAN_DEFINING_META_ANNOTATIONS.contains(metaName)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /** {@code -Avauban.generationRound}: {@code early} (the default) or {@code last}. */
+    private boolean earlyGeneration() {
+        return !"last".equalsIgnoreCase(processingEnv.getOptions().getOrDefault("vauban.generationRound", "early")
+                .strip());
+    }
+
+    /**
+     * A bean that another processor generated after the pipeline ran: the provider written before it cannot list
+     * it, so the build fails by name rather than the application at boot. Vauban's own classes, which inherit
+     * their bean's scope, are not beans of their own.
+     */
+    private void reportLateBeans(Set<? extends TypeElement> annotations, RoundEnvironment roundEnv) {
+        for (var annotation : annotations) {
+            if (!isIndexTrigger(annotation)) {
+                continue;
+            }
+            for (var element : roundEnv.getElementsAnnotatedWith(annotation)) {
+                var type = element instanceof TypeElement t ? t
+                        : element.getEnclosingElement() instanceof TypeElement enclosing ? enclosing : null;
+                if (type == null) {
+                    continue;
+                }
+                var name = type.getQualifiedName().toString();
+                if (accumulatedIndex.contains(DotName.of(name)) || output.wrote(name) || !reportedLateBeans.add(name)
+                        || type.getAnnotation(jakarta.enterprise.inject.Vetoed.class) != null) {
+                    continue;
+                }
+                processingEnv.getMessager().printMessage(Diagnostic.Kind.ERROR, LOG_PREFIX + name
+                        + " was generated by another annotation processor after Vauban wrote its classes, which"
+                        + " therefore do not list it. Compile with -Avauban.generationRound=last to have Vauban"
+                        + " wait for javac's last round.", type);
+            }
+        }
     }
 
     /**
