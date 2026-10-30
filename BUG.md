@@ -3248,3 +3248,37 @@ The same goes for a normal-scoped producer of such a class (`Dollar_Produced$$�
 - **Hypothèse de cause** : the class-method selection was written three times (`forwardedClassMethods`, `fromColocated`, `RuntimeClientProxyGenerator.addDeclaredMethods`), each with its own walk and predicates (vauban#227).
 - **Investigations** :
   - 2026-10-28 : F1, F2 and F3 red on the old code. One rule now, `ForwardedMethods.select(TypeView, Placement)` in `vauban-core`: the walk includes `Object`; in the type's package every member is forwarded (a package-private one when inherited, JLS 8.4.8), an inherited protected one of another package through a `MethodHandle`; in another package, public methods only. Java source cannot forward through a `MethodHandle`, so such a bean proxy is now emitted as bytecode by the processor (`UnnameableMemberBytecodeEmissionTest#methodHandleForward`, red before: the source proxy left `hook()` out).
+
+## VAU-INT-011 — Interceptor methods are called by reflection: a non-public one needs its package opened
+- **Date**: 2026-10-31 — **Status**: OPEN (analysed; Vidocq's build check covers it meanwhile)
+- **Severity**: medium (the first intercepted call fails with an `IllegalAccessException` on the strict module path,
+  unless the application opens the interceptor's package to `io.vidocq.vauban.core`)
+
+### Symptom
+The Vidocq tutorial (finding R3 of the vidocq-tutorial session) has `AuditedInterceptor` in `com.example.lib.support`,
+with a package-private `@AroundInvoke Object audit(InvocationContext)`. Without `opens com.example.lib.support;`,
+`GET /books` answered 500: `IllegalAccessException: class …VaubanInvocationContext$InterceptorInvocation (in module
+io.vidocq.vauban.core) cannot access class com.example.lib.support.AuditedInterceptor … does not export
+com.example.lib.support to module io.vidocq.vauban.core`.
+
+### Repro
+An application module with an interceptor whose `@AroundInvoke` is not public, in a package the module neither
+opens nor exports; call an intercepted method.
+
+### Cause
+The target method of an intercepted bean has a generated `TargetInvoker` (no reflection), but the interceptor chain
+does not: `InterceptorManager` builds each `VaubanInvocationContext.InterceptorInvocation(target, Method)` from the
+`java.lang.reflect.Method`, and `InterceptorInvocation.invoke` / `VaubanInvocationContext.proceedAt` (and
+`VaubanInterceptor.intercept`, the SPI path) call it with `Method.invoke` after `VaubanLookup.makeAccessible`. That
+needs only a read edge for a public method of a public class in an exported package, and deep access (`opens`)
+otherwise. The lifecycle callbacks of interceptors (`addLifecycleInvocations`) go the same way.
+
+### Fix direction (not done here)
+The processor already writes a `_VaubanComponents` class in each package of the application. It can also emit, for
+each interceptor of the package, an invoker per interceptor method (`(instance, ctx) -> ((AuditedInterceptor)
+instance).audit(ctx)`): same package, so a package-private method needs neither `opens` nor reflection.
+`InterceptorInvocation` would carry that invoker and keep `Method.invoke` as the fallback for interceptors the
+processor did not see (a portable extension's, a library's without the processor). Touches the processor's
+component generation, `InterceptorManager` and both invocation paths, and the TCK interceptor suites must stay at
+774/774: not a quick fix. Until then, Vidocq's `vidocq:check-module-info` asks for the `opens` of every package
+holding an interceptor whose methods are not all public (Vidocq BUG-20261031-04).
