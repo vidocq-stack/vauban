@@ -69,11 +69,13 @@ class OverloadedInjectConstructorTest {
         final List<String> ids;
 
         /** Same arity as the injected constructor, declared first: the one discovery used to pick. */
+        @SuppressWarnings("java:S1172") // the signature is the case under test
         public Holder(Config config, Part part) {
             this.ids = List.of(part.id());
         }
 
         @Inject
+        @SuppressWarnings("java:S1172") // the signature is the case under test
         public Holder(Config config, Instance<Part> parts) {
             this.ids = parts.stream().map(Part::id).sorted().toList();
         }
