@@ -117,7 +117,6 @@ public final class VaubanInterceptor<T> implements Interceptor<T> {
         return false;
     }
 
-    @SuppressWarnings("java:S3011") // CDI spec requires reflective access
     @Override
     public Object intercept(InterceptionType type, T instance, InvocationContext ctx) throws Exception {
         if (type != InterceptionType.AROUND_INVOKE || descriptor.aroundInvokeMethod() == null) {
@@ -127,9 +126,10 @@ public final class VaubanInterceptor<T> implements Interceptor<T> {
         if (aroundInvoke == null) {
             throw new IllegalStateException("AroundInvoke method not found: " + descriptor.aroundInvokeMethod());
         }
-        makeAccessibleSafe(aroundInvoke);
         try {
-            return aroundInvoke.invoke(instance, ctx);
+            // Through the generated provider of its package when one owns it, no reflection (VAU-INT-011).
+            return io.vidocq.vauban.core.interceptor.VaubanInvocationContext.callInterceptorMethod(aroundInvoke, instance,
+                    ctx);
         } catch (InvocationTargetException e) {
             // The caller sees what the interceptor method or its chain threw, never the reflective wrapper
             // (Jakarta Interceptors 2.2 "Exceptions", VAU-INT-010).
@@ -214,15 +214,6 @@ public final class VaubanInterceptor<T> implements Interceptor<T> {
 
     public InterceptorDescriptor descriptor() {
         return descriptor;
-    }
-
-    private static void makeAccessibleSafe(java.lang.reflect.AccessibleObject member) {
-        var mgr = io.vidocq.vauban.core.interceptor.InterceptorManager.currentInstance();
-        if (mgr != null && mgr.getVaubanLookup() != null) {
-            mgr.getVaubanLookup().makeAccessible(member);
-        } else {
-            member.trySetAccessible();
-        }
     }
 
     private Method findAroundInvokeMethod() {

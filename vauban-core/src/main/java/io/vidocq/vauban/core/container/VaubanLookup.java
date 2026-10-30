@@ -203,6 +203,19 @@ public final class VaubanLookup {
         }
     }
 
+    /**
+     * Calls {@code method} through the generated provider of its package when one owns it, with no reflection and
+     * no {@code opens}; returns {@link io.vidocq.vauban.api.VaubanComponentProvider#NOT_INVOKED} otherwise, so the
+     * caller keeps its own reflective fallback and its own exception contract. What the method throws propagates
+     * as is, checked exceptions included. The interceptor chain calls interceptor methods this way (VAU-INT-011).
+     */
+    public Object invokeGenerated(Object instance, Method method, Object... args) {
+        if (componentProviders == null) {
+            return io.vidocq.vauban.api.VaubanComponentProvider.NOT_INVOKED;
+        }
+        return invokeInModule(instance, method, args);
+    }
+
     /** The call a generated provider owning {@code method} makes in its module, or {@code NOT_INVOKED}. */
     private Object invokeInModule(Object instance, Method method, Object... args) {
         var callArgs = (args == null) ? new Object[0] : args;

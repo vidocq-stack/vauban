@@ -62,6 +62,8 @@ public final class ComponentCollector {
     private static final String OBSERVES      = "jakarta.enterprise.event.Observes";
     private static final String OBSERVES_ASYNC = "jakarta.enterprise.event.ObservesAsync";
     private static final String DISPOSES      = "jakarta.enterprise.inject.Disposes";
+    private static final String AROUND_INVOKE = "jakarta.interceptor.AroundInvoke";
+    private static final String AROUND_CONSTRUCT = "jakarta.interceptor.AroundConstruct";
     private static final String SKIPPING_METHOD = "Skipping method ";
 
     private ComponentCollector() {}
@@ -191,7 +193,9 @@ public final class ComponentCollector {
      *
      * <p>A method qualifies when it (or one of its parameters) carries one of the following
      * annotations: {@code @Produces}, {@code @PostConstruct}, {@code @PreDestroy},
-     * {@code @Inject} (initializer), {@code @Observes}, {@code @ObservesAsync}, {@code @Disposes}.
+     * {@code @Inject} (initializer), {@code @Observes}, {@code @ObservesAsync}, {@code @Disposes},
+     * {@code @AroundInvoke}, {@code @AroundConstruct} (interceptor methods, VAU-INT-011: the interceptor chain calls a
+     * non-public one without reflection, so its package needs no {@code opens}).
      *
      * <p>Methods are skipped (with a warning) when:
      * <ul>
@@ -225,7 +229,8 @@ public final class ComponentCollector {
         boolean annotated = m.annotations().stream().anyMatch(a -> {
             var n = a.name().value();
             return PRODUCES.equals(n) || POST_CONSTRUCT.equals(n)
-                    || PRE_DESTROY.equals(n) || INJECT.equals(n);
+                    || PRE_DESTROY.equals(n) || INJECT.equals(n)
+                    || AROUND_INVOKE.equals(n) || AROUND_CONSTRUCT.equals(n);
         });
         return annotated || m.parameters().stream()
                 .flatMap(p -> p.annotations().stream())

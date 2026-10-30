@@ -310,13 +310,26 @@ class CodegenCoverageTest {
     }
 
     @Test
-    @DisplayName("an interceptor's @AroundInvoke is always called by reflection, so the interceptor is partial")
-    void interceptorAroundInvokeIsReflection() {
+    @DisplayName("an interceptor's @AroundInvoke the provider does not declare is called by reflection")
+    void interceptorAroundInvokeNotDeclaredIsReflection() {
         try (var container = container(List.of(declaring(Generator.APT, Set.of(AUDIT),
                         Set.of(AUDIT + "#dependency"), Set.of(), Set.of())),
                 CoverageFixtures.Dependency.class, CoverageFixtures.AuditInterceptor.class,
                 CoverageFixtures.AuditedBean.class)) {
             assertEquals(new Coverage(Verdict.PARTIAL, List.of("initializer setUp()", "@AroundInvoke around()")),
+                    container.codegenCoverage().of(interceptor(container, AUDIT)));
+        }
+    }
+
+    @Test
+    @DisplayName("an interceptor's @AroundInvoke the provider declares is covered (VAU-INT-011)")
+    void interceptorAroundInvokeDeclaredIsCovered() {
+        try (var container = container(List.of(declaring(Generator.APT, Set.of(AUDIT),
+                        Set.of(AUDIT + "#dependency"), Set.of(AUDIT + "#around(jakarta.interceptor.InvocationContext)"),
+                        Set.of())),
+                CoverageFixtures.Dependency.class, CoverageFixtures.AuditInterceptor.class,
+                CoverageFixtures.AuditedBean.class)) {
+            assertEquals(new Coverage(Verdict.PARTIAL, List.of("initializer setUp()")),
                     container.codegenCoverage().of(interceptor(container, AUDIT)));
         }
     }

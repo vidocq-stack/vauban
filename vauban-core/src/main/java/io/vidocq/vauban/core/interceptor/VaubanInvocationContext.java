@@ -318,8 +318,7 @@ public final class VaubanInvocationContext implements InvocationContext {
                     if (target == null) {
                         return invocation.method().invoke(null, nextCtx);
                     } else {
-                        makeAccessibleSafe(invocation.method());
-                        invocation.method().invoke(target, nextCtx);
+                        callInterceptorMethod(invocation.method(), target, nextCtx);
                         return null;
                     }
                 }
@@ -373,8 +372,7 @@ public final class VaubanInvocationContext implements InvocationContext {
         @SuppressWarnings({"java:S3011", "java:S112"}) // CDI spec requires reflective access; container exceptions propagate as RuntimeException
         public Object invoke(InvocationContext ctx) throws Exception {
             try {
-                makeAccessibleSafe(method);
-                return method.invoke(target, ctx);
+                return callInterceptorMethod(method, target, ctx);
             } catch (java.lang.reflect.InvocationTargetException e) {
                 var cause = e.getCause();
                 if (cause instanceof Exception ex) throw ex;
@@ -382,6 +380,26 @@ public final class VaubanInvocationContext implements InvocationContext {
                 throw e;
             }
         }
+    }
+
+    /**
+     * Calls the interceptor method {@code method} on {@code instance} with {@code ctx}: through the generated provider
+     * of its package when one owns it (VAU-INT-011: no reflection, so a non-public interceptor method needs no
+     * {@code opens}), else by reflection. What the method throws propagates as is on the first path, wrapped in an
+     * {@link java.lang.reflect.InvocationTargetException} on the second, which the callers unwrap.
+     */
+    @SuppressWarnings("java:S3011") // the reflective fallback, for interceptors no generated provider owns
+    public static Object callInterceptorMethod(Method method, Object instance, InvocationContext ctx)
+            throws Exception {
+        var mgr = InterceptorManager.currentInstance();
+        if (mgr != null && mgr.getVaubanLookup() != null) {
+            var result = mgr.getVaubanLookup().invokeGenerated(instance, method, ctx);
+            if (result != io.vidocq.vauban.api.VaubanComponentProvider.NOT_INVOKED) {
+                return result;
+            }
+        }
+        makeAccessibleSafe(method);
+        return method.invoke(instance, ctx);
     }
     private static void makeAccessibleSafe(java.lang.reflect.AccessibleObject member) {
         var mgr = InterceptorManager.currentInstance();
