@@ -795,18 +795,19 @@ public class VaubanProcessor extends AbstractProcessor {
             mainOutput = mainOutputFromProvider;
             return mainOutput;
         }
-        var output = classOutput();
-        if (output == null) {
+        var roundOutput = classOutput();
+        if (roundOutput == null) {
             return null;
         }
-        var name = output.getFileName() == null ? "" : output.getFileName().toString();
-        if (name.equals("test-classes") && output.getParent() != null) {
-            mainOutput = existingDirectory(output.getParent().resolve("classes"));
-        } else if (name.equals("test") && output.getParent() != null && output.getParent().getFileName() != null
-                && output.getParent().getParent() != null
-                && output.getParent().getParent().getFileName() != null
-                && output.getParent().getParent().getFileName().toString().equals("classes")) {
-            mainOutput = existingDirectory(output.getParent().resolve("main"));
+        var name = roundOutput.getFileName() == null ? "" : roundOutput.getFileName().toString();
+        if (name.equals("test-classes") && roundOutput.getParent() != null) {
+            mainOutput = existingDirectory(roundOutput.getParent().resolve("classes"));
+        } else if (name.equals("test") && roundOutput.getParent() != null
+                && roundOutput.getParent().getFileName() != null
+                && roundOutput.getParent().getParent() != null
+                && roundOutput.getParent().getParent().getFileName() != null
+                && roundOutput.getParent().getParent().getFileName().toString().equals("classes")) {
+            mainOutput = existingDirectory(roundOutput.getParent().resolve("main"));
         }
         return mainOutput;
     }
@@ -846,19 +847,19 @@ public class VaubanProcessor extends AbstractProcessor {
      */
     private void mergeMainRoundIndexes() {
         var main = mainOutput();
-        var output = classOutput();
-        if (main == null || output == null || main.equals(output)) {
+        var roundOutput = classOutput();
+        if (main == null || roundOutput == null || main.equals(roundOutput)) {
             return;
         }
         for (var path : MERGED_INDEXES) {
-            var own = output.resolve(path);
+            var own = roundOutput.resolve(path);
             var theirs = main.resolve(path);
             if (java.nio.file.Files.isRegularFile(own) && java.nio.file.Files.isRegularFile(theirs)) {
                 mergeIndex(path, own, theirs);
             }
         }
         for (var path : UNMERGED_INDEXES) {
-            if (java.nio.file.Files.isRegularFile(output.resolve(path))
+            if (java.nio.file.Files.isRegularFile(roundOutput.resolve(path))
                     && java.nio.file.Files.isRegularFile(main.resolve(path))) {
                 processingEnv.getMessager().printMessage(Diagnostic.Kind.WARNING,
                         "[Vauban] The test compilation wrote " + path + " next to the main sources' one; when the"
@@ -1816,9 +1817,9 @@ public class VaubanProcessor extends AbstractProcessor {
         }
         try {
             var probe = processingEnv.getFiler().getResource(StandardLocation.CLASS_OUTPUT, "", "vauban-round-probe");
-            var output = java.nio.file.Path.of(probe.toUri()).getParent().toAbsolutePath().normalize();
+            var roundOutput = java.nio.file.Path.of(probe.toUri()).getParent().toAbsolutePath().normalize();
             var found = java.nio.file.Path.of(file.toUri()).toAbsolutePath().normalize();
-            if (found.startsWith(output)) {
+            if (found.startsWith(roundOutput)) {
                 return false;
             }
             // The main output is the class file's directory minus the package path.
