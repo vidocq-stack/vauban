@@ -5,6 +5,31 @@ suspected cause, status. Updated on every investigation.
 
 ---
 
+## VAU-DISC-003 — An `@Inject` constructor is typed from another constructor of the same arity
+- **Date**: 2026-10-30 — **Status**: FIXED (fix/overloaded-inject-constructor-type)
+- **Severity**: high (a valid deployment fails as ambiguous or unsatisfied, or an injection point gets the wrong type)
+
+### Symptom
+Grimm's `GrimmModelCache` declares `@Inject GrimmModelCache(GrimmConfig, Instance<ScannedTypes>)` and
+`GrimmModelCache(GrimmConfig, ScannedTypes)`. With two `ScannedTypes` beans (one frozen at build time, one registered
+at run time), the deployment failed: _Ambiguous dependency: parameter 1 of GrimmModelCache() (…GrimmConfig;…Instance;)V
+of type ClassType[name=io.vidocq.grimm.cdi.ScannedTypes]_. An `Instance` injection point is never validated (CDI 4.1
+"Unsatisfied and ambiguous dependencies").
+
+### Repro
+`OverloadedInjectConstructorTest`: a bean with `Holder(Config, Part)` declared before
+`@Inject Holder(Config, Instance<Part>)`, and two `Part` beans.
+
+### Cause
+`BeanDiscovery.resolveGenericTypeForMethodParameter` looked for the reflected constructor (or method) with the same
+number of parameters as the indexed one, and took the first: the overload `(Config, Part)` typed the second parameter.
+
+### Fix
+The reflected executable must have the same erased parameter types as the indexed one (`sameErasedParameters`), for
+constructors and methods alike.
+
+---
+
 ## VAU-INT-010 — `Interceptor.intercept` of the SPI wraps exceptions in `InvocationTargetException`
 - **Date**: 2026-10-28 — **Status**: FIXED (fix/interceptor-inject-constructor)
 - **Severity**: medium (a caller of the SPI sees the wrong exception type: exception mappers, `@Retry(retryOn)`,

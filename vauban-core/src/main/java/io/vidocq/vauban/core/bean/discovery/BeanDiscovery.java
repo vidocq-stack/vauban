@@ -1092,7 +1092,9 @@ public final class BeanDiscovery {
                     // same arity as many business constructors — matching it here would swap
                     // the injection-point type for ProxyLink (Vidocq/vauban#24).
                     if (io.vidocq.vauban.core.proxy.ClientProxyShape.isProxyLinkConstructor(ctor)) continue;
-                    if (ctor.getParameterCount() == method.parameters().size()) {
+                    // The erased types, not the arity alone: an overload of the same arity declared first would
+                    // type the injection points from the wrong constructor (VAU-DISC-003).
+                    if (sameErasedParameters(ctor.getParameterTypes(), method)) {
                         var reflType = ctor.getGenericParameterTypes()[paramIndex];
                         var typeInfo = reflectTypeToTypeInfo(reflType);
                         if (typeInfo != null) return typeInfo;
@@ -1100,7 +1102,7 @@ public final class BeanDiscovery {
                 }
             } else {
                 for (var m : clazz.getDeclaredMethods()) {
-                    if (m.getName().equals(method.name()) && m.getParameterCount() == method.parameters().size()) {
+                    if (m.getName().equals(method.name()) && sameErasedParameters(m.getParameterTypes(), method)) {
                         var reflType = m.getGenericParameterTypes()[paramIndex];
                         var typeInfo = reflectTypeToTypeInfo(reflType);
                         if (typeInfo != null) return typeInfo;
@@ -1111,6 +1113,37 @@ public final class BeanDiscovery {
             // fallback
         }
         return method.parameters().get(paramIndex).type();
+    }
+
+    /** Whether {@code reflected} are the erased parameter types of the indexed {@code method}. */
+    static boolean sameErasedParameters(Class<?>[] reflected, MethodInfo method) {
+        var parameters = method.parameters();
+        if (reflected.length != parameters.size()) {
+            return false;
+        }
+        for (int i = 0; i < reflected.length; i++) {
+            var erased = erasedName(parameters.get(i).type());
+            if (erased != null && !erased.equals(reflected[i].getTypeName())) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /** The erased type name, as {@link Class#getTypeName()} spells it, or {@code null} when it cannot be told. */
+    private static String erasedName(TypeInfo type) {
+        return switch (type) {
+            case TypeInfo.ClassType(var name) -> name.value();
+            case TypeInfo.ParameterizedType(var raw, var _) -> raw.value();
+            case TypeInfo.PrimitiveType(var kind) -> kind.name().toLowerCase(java.util.Locale.ROOT);
+            case TypeInfo.ArrayType(var component, var dimensions) -> {
+                var element = erasedName(component);
+                yield element == null ? null : element + "[]".repeat(dimensions);
+            }
+            case TypeInfo.TypeVariable(var _, var bounds) ->
+                    bounds.isEmpty() ? "java.lang.Object" : erasedName(bounds.getFirst());
+            default -> null;
+        };
     }
 
     List<InjectionPointInfo> discoverInjectionPoints(ClassInfo classInfo) {

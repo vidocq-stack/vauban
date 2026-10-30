@@ -4,4 +4,4 @@
 [.lead]
 New in the `{project-version}` development line — everything listed here landed **after the {release-version} release** and is not part of it. Every entry links to the section that documents it, and those sections carry the [.tag-new]#NEW# badge. Each brick of the suite keeps its own page of this kind; xref:home::whats-new.adoc[the ecosystem index] gathers them. When the next release train ships, this page is frozen with it and restarts empty on the dev line.
 
-_Nothing documented yet for this cycle. Add entries here (and place [.tag-new]#NEW# badges on the relevant pages) as features land on main._
+* xref:concepts.adoc#inject-constructor[Overloaded `@Inject` constructors] — the injection points of an `@Inject` constructor are typed from that constructor, not from another one with the same number of parameters: an `Instance<T>` parameter no longer fails the deployment as an ambiguous `T` (VAU-DISC-003).
