@@ -336,11 +336,6 @@ public class VaubanProcessor extends AbstractProcessor {
     }
 
     /**
-     * Packages of {@code @Inherited} annotations known to start no processor on Vauban's subclasses: JAX-RS's
-     * {@code @Produces} and {@code @Consumes}, MicroProfile OpenAPI's {@code @Tag} and friends. Cassini's and Grimm's
-     * processors start from {@code @Path}, which is not inherited.
-     */
-    /**
      * The packages of the annotations no companion processor acts on, see {@link #carriesOnlyInertAnnotations}:
      * the markers processors put on what they generate ({@code @Generated}, {@code @StaticMetamodel}) among them.
      */
@@ -348,6 +343,11 @@ public class VaubanProcessor extends AbstractProcessor {
             "jakarta.annotation", "jakarta.inject", "jakarta.enterprise.context", "jakarta.enterprise.inject",
             "jakarta.persistence.metamodel", "jakarta.data.metamodel");
 
+    /**
+     * Packages of {@code @Inherited} annotations known to start no processor on Vauban's subclasses: JAX-RS's
+     * {@code @Produces} and {@code @Consumes}, MicroProfile OpenAPI's {@code @Tag} and friends. Cassini's and Grimm's
+     * processors start from {@code @Path}, which is not inherited.
+     */
     private static final Set<String> INHERITED_SAFE_PACKAGES = Set.of("jakarta.ws.rs",
             "org.eclipse.microprofile.openapi.annotations", "org.eclipse.microprofile.openapi.annotations.tags",
             "org.eclipse.microprofile.openapi.annotations.media", "org.eclipse.microprofile.openapi.annotations.responses",
