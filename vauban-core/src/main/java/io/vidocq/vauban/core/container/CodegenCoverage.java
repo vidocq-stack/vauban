@@ -113,6 +113,8 @@ public final class CodegenCoverage {
     private enum Observation { MATCHING, OTHER_EVENT, NONE }
 
     private static final String CONSTRUCTOR = "constructor";
+    /** The label of a {@code @PostConstruct} call, on a bean or an interceptor. */
+    private static final String POST_CONSTRUCT = "@PostConstruct";
 
     private final VaubanContainer container;
     private final List<Declared> declared;
@@ -164,9 +166,9 @@ public final class CodegenCoverage {
         }
         Method own = ownPostConstruct(type);
         if (own != null) {
-            ops.add(invoke(own, "@PostConstruct"));
+            ops.add(invoke(own, POST_CONSTRUCT));
         }
-        // VaubanInvocationContext.callInterceptorMethod runs these through the provider that declares them, and by
+        // VaubanInvocationContext.InterceptorInvocation runs these through the provider that declares them, and by
         // Method.invoke otherwise (VAU-INT-011).
         if (interceptor.aroundInvokeMethod() != null) {
             ops.add(interceptorMethod(type, interceptor.aroundInvokeMethod(), "@AroundInvoke"));
@@ -175,7 +177,7 @@ public final class CodegenCoverage {
             ops.add(interceptorMethod(type, interceptor.aroundConstructMethod(), "@AroundConstruct"));
         }
         for (Method method : lifecycleInterceptorMethods(type, PostConstruct.class)) {
-            ops.add(invoke(method, "@PostConstruct"));
+            ops.add(invoke(method, POST_CONSTRUCT));
         }
         for (Method method : lifecycleInterceptorMethods(type, PreDestroy.class)) {
             ops.add(invoke(method, "@PreDestroy"));
@@ -299,7 +301,7 @@ public final class CodegenCoverage {
             ops.add(member instanceof Field field ? field(field) : invoke((Method) member, "initializer"));
         }
         for (Method method : BeanLifecycle.collectLifecycleMethodsInHierarchy(beanClass, PostConstruct.class)) {
-            ops.add(invoke(method, "@PostConstruct"));
+            ops.add(invoke(method, POST_CONSTRUCT));
         }
         for (Method method : BeanLifecycle.collectLifecycleMethodsInHierarchy(beanClass, PreDestroy.class)) {
             ops.add(invoke(method, "@PreDestroy"));

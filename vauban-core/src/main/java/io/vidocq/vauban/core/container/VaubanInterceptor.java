@@ -128,8 +128,8 @@ public final class VaubanInterceptor<T> implements Interceptor<T> {
         }
         try {
             // Through the generated provider of its package when one owns it, no reflection (VAU-INT-011).
-            return io.vidocq.vauban.core.interceptor.VaubanInvocationContext.callInterceptorMethod(aroundInvoke, instance,
-                    ctx);
+            return new io.vidocq.vauban.core.interceptor.VaubanInvocationContext.InterceptorInvocation(instance,
+                    aroundInvoke).invoke(ctx);
         } catch (InvocationTargetException e) {
             // The caller sees what the interceptor method or its chain threw, never the reflective wrapper
             // (Jakarta Interceptors 2.2 "Exceptions", VAU-INT-010).

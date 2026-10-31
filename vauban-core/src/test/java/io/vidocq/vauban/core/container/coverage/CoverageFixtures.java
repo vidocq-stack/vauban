@@ -28,6 +28,7 @@ import jakarta.enterprise.event.Observes;
 import jakarta.enterprise.inject.Disposes;
 import jakarta.enterprise.inject.Produces;
 import jakarta.inject.Inject;
+import jakarta.interceptor.AroundConstruct;
 import jakarta.interceptor.AroundInvoke;
 import jakarta.interceptor.Interceptor;
 import jakarta.interceptor.InterceptorBinding;
@@ -143,5 +144,31 @@ public final class CoverageFixtures {
     @Dependent
     public static class Pinger {
         void onPing(@Observes Ping ping) { /* no behaviour needed */ }
+    }
+
+    /** Declares the {@code @AroundInvoke} that {@link LifecycleInterceptor} inherits. */
+    public static class LifecycleBase {
+        @AroundInvoke
+        Object around(InvocationContext context) throws Exception {
+            return context.proceed();
+        }
+    }
+
+    /** An interceptor with every kind of interceptor method, package-private (VAU-INT-011). */
+    public static class LifecycleInterceptor extends LifecycleBase {
+        @AroundConstruct
+        Object construct(InvocationContext context) throws Exception {
+            return context.proceed();
+        }
+
+        @PostConstruct
+        void created(InvocationContext context) throws Exception {
+            context.proceed();
+        }
+
+        @PreDestroy
+        void destroyed(InvocationContext context) throws Exception {
+            context.proceed();
+        }
     }
 }

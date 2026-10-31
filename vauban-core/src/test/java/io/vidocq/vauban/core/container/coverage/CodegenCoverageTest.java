@@ -335,6 +335,37 @@ class CodegenCoverageTest {
     }
 
     @Test
+    @DisplayName("every interceptor method, an inherited one included, is reflection until a provider declares it")
+    void interceptorMethodsAreReflectionUntilDeclared() {
+        var lifecycle = PREFIX + "LifecycleInterceptor";
+        var descriptor = new InterceptorDescriptor(DotName.of(lifecycle), Set.of(), "around", "construct", 1);
+        try (var container = container(List.of(), CoverageFixtures.BareBean.class)) {
+            assertEquals(new Coverage(Verdict.REFLECTION, List.of("constructor", "@AroundInvoke around()",
+                            "@AroundConstruct construct()", "@PostConstruct created()", "@PreDestroy destroyed()")),
+                    container.codegenCoverage().of(descriptor));
+        }
+        var context = "(jakarta.interceptor.InvocationContext)";
+        var methods = Set.of(PREFIX + "LifecycleBase#around" + context, lifecycle + "#construct" + context,
+                lifecycle + "#created" + context, lifecycle + "#destroyed" + context);
+        try (var container = container(List.of(declaring(Generator.APT, Set.of(lifecycle), Set.of(), methods, Set.of())),
+                CoverageFixtures.BareBean.class)) {
+            assertEquals(new Coverage(Verdict.APT, List.of()), container.codegenCoverage().of(descriptor));
+        }
+    }
+
+    @Test
+    @DisplayName("an interceptor method the class does not declare is reported by name, as reflection")
+    void missingInterceptorMethodIsReflection() {
+        var descriptor = new InterceptorDescriptor(DotName.of(PREFIX + "LifecycleInterceptor"), Set.of(), "missing", null,
+                1);
+        try (var container = container(List.of(), CoverageFixtures.BareBean.class)) {
+            assertEquals(new Coverage(Verdict.REFLECTION, List.of("constructor", "@AroundInvoke missing()",
+                            "@PostConstruct created()", "@PreDestroy destroyed()")),
+                    container.codegenCoverage().of(descriptor));
+        }
+    }
+
+    @Test
     @DisplayName("reading a class's coverage never runs its static initializer")
     void readingCoverageInitializesNoClass() {
         var probe = new InterceptorDescriptor(DotName.of(PREFIX + "StaticInitProbe"), Set.of(), "around", 1);

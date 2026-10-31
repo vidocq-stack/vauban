@@ -322,6 +322,15 @@ class VaubanLookupTest {
     class InvokeMethod {
 
         @Test
+        @DisplayName("invokeGenerated leaves the call to the caller when no generated provider is registered")
+        void invokeGeneratedWithoutProvidersIsNotInvoked() throws Exception {
+            Method method = BeanWithMethods.class.getMethod("echo", String.class);
+
+            var result = lookup.invokeGenerated(new BeanWithMethods(), method, "test");
+            assertSame(io.vidocq.vauban.api.VaubanComponentProvider.NOT_INVOKED, result);
+        }
+
+        @Test
         @DisplayName("invokes an instance method with one argument")
         void shouldInvokeInstanceMethodWithArg() throws Exception {
             var instance = new BeanWithMethods();

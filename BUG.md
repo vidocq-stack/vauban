@@ -3277,10 +3277,10 @@ otherwise. The lifecycle callbacks of interceptors (`addLifecycleInvocations`) g
 The processor's `_VaubanComponents` now lists the interceptor methods of its package among the methods it invokes:
 `ComponentCollector` collects `@AroundInvoke` and `@AroundConstruct` methods next to the `@PostConstruct` /
 `@PreDestroy` ones it already took (an interceptor's lifecycle callbacks among them), private ones excepted.
-`VaubanInvocationContext.callInterceptorMethod` asks that provider first (`VaubanLookup.invokeGenerated`, which
+`VaubanInvocationContext.InterceptorInvocation.invoke` asks that provider first (`VaubanLookup.invokeGenerated`, which
 returns `NOT_INVOKED` when no provider owns the method) and keeps `Method.invoke` as the fallback for the interceptors
-the processor did not see; `InterceptorInvocation.invoke`, the target-class callbacks of an `@AroundConstruct` chain
-and `VaubanInterceptor.intercept` all go through it. What an interceptor method throws still reaches the caller
+the processor did not see; the interceptor chain, the target-class callbacks of an `@AroundConstruct` chain and
+`VaubanInterceptor.intercept` all go through it. What an interceptor method throws still reaches the caller
 unchanged. `CodegenCoverage` reports these calls as covered when the provider declares them.
 
 Tests: `PackagePrivateInterceptorModulePathTest` (module path, package neither exported nor opened: `@AroundConstruct`,
