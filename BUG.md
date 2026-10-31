@@ -27,6 +27,41 @@ number of parameters as the indexed one, and took the first: the overload `(Conf
 ### Fix
 The reflected executable must have the same erased parameter types as the indexed one (`sameErasedParameters`), for
 constructors and methods alike.
+## VAU-APT-008 — An application with Fault Tolerance and mansart-transactions no longer compiles
+- **Date**: 2026-10-31 — **Status**: FIXED (fix/apt-no-class-init)
+- **Severity**: high (the build fails; regression of VAU-APT-006)
+
+### Symptom
+With the Vidocq SNAPSHOT 0.4.0-20261031.015020-10, `./mvnw compile` of an application with
+`heisenberg-fault-tolerance` and `mansart-transactions` fails: `Fatal error compiling: java.lang.NoClassDefFoundError:
+io/opentelemetry/api/common/AttributeKey` at `io.vidocq.heisenberg.cdi.internal.OtelFtMetrics.<clinit>`, called from
+`QualifierResolver.loadWithFallback` ← `getInheritedAnnotations` ← `StereotypeResolver.isAlternativeWithStereotypes` ←
+`BeanDiscovery.discoverBeans` ← `VaubanProcessor.resolveDependencyBeans`. Reported by the vidocq-tutorial session
+(steps 06 to 11).
+
+### Repro
+`vidocq create --name m --group-id com.example -x cassini-rest`, `vidocq extension add heisenberg-fault-tolerance
+mansart-transactions`, `./mvnw compile`. Unit: `QualifierResolverLoadingTest`.
+
+### Cause
+Since VAU-APT-006 the processor discovers the beans of the dependencies' bean archives. `loadWithFallback` loads a
+class through the context class loader without initialising it, but its fallback, `Class.forName(name)`, initialises
+it. Under javac the context loader does not see the dependencies, so the fallback ran `OtelFtMetrics`' static
+initialiser inside the compiler, where the OpenTelemetry API is not on the processor path.
+
+Once that was fixed, the same path failed on `NoClassDefFoundError: org/eclipse/microprofile/metrics/annotation/RegistryScope`:
+a dependency's class whose supertypes or annotations are not on the processor path cannot even be linked under javac,
+and `getInheritedAnnotations` only caught `ClassNotFoundException`.
+
+### Fix
+The fallback loads through `QualifierResolver`'s loader with `initialize=false`; reading annotations does not need an
+initialised class. A class that cannot be loaded or linked (`LinkageError`, `TypeNotPresentException`) has no inherited
+annotations beyond those the index read; the runtime container discovers it again with its full module graph.
+`QualifierResolverLoadingTest` (both cases, red then green); the tutorial's repro (`cassini-rest`,
+`heisenberg-fault-tolerance`, `mansart-transactions`) compiles.
+
+---
+
 ## VAU-APT-006 — An injection point a dependency's producer satisfies warns at every build
 - **Date**: 2026-10-30 — **Status**: FIXED (feat/build-time-dependency-beans)
 - **Severity**: low (a false warning at every build; the injection works at start-up)

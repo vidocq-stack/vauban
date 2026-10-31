@@ -192,7 +192,9 @@ final class QualifierResolver {
 
     /**
      * Returns annotations inherited from superclasses (those NOT declared directly on classInfo).
-     * Uses Java reflection — Class.getAnnotations() handles @Inherited automatically per JLS.
+     * Uses Java reflection — Class.getAnnotations() handles @Inherited automatically per JLS. A class that cannot be
+     * loaded or linked here, such as a dependency's class under the annotation processor whose supertypes or annotations
+     * are not on the processor path, has none beyond what the index read (VAU-APT-008).
      */
     List<java.lang.annotation.Annotation> getInheritedAnnotations(ClassInfo classInfo) {
         try {
@@ -210,21 +212,23 @@ final class QualifierResolver {
                 }
             }
             return inherited;
-        } catch (ClassNotFoundException _) {
+        } catch (ClassNotFoundException | LinkageError | TypeNotPresentException _) {
             return List.of();
         }
     }
 
     /**
      * The class of the deployment the index names: through the thread context class loader first
-     * (the TCK sets it to its own loader), through {@link Class#forName(String)} when that fails.
+     * (the TCK sets it to its own loader), through this class's loader when that fails. Neither initialises the
+     * class: under the annotation processor its static initialiser would run inside javac, without the libraries it
+     * needs (VAU-APT-008).
      */
-    private static Class<?> loadWithFallback(String name) throws ClassNotFoundException {
+    static Class<?> loadWithFallback(String name) throws ClassNotFoundException {
         var cl = Thread.currentThread().getContextClassLoader();
         try {
             return Class.forName(name, false, cl);
         } catch (ClassNotFoundException _) {
-            return Class.forName(name);
+            return Class.forName(name, false, QualifierResolver.class.getClassLoader());
         }
     }
 
