@@ -1617,13 +1617,13 @@ public class VaubanProcessor extends AbstractProcessor {
 
     // --- Utility methods ---
 
-    private List<Class<?>> loadArchiveClasses(io.vidocq.vauban.indexer.VaubanIndex index, ClassLoader cl) {
+    static List<Class<?>> loadArchiveClasses(io.vidocq.vauban.indexer.VaubanIndex index, ClassLoader cl) {
         var classes = new ArrayList<Class<?>>();
         for (var classInfo : index.getKnownClasses()) {
             try {
                 classes.add(Class.forName(classInfo.name().value(), false, cl));
-            } catch (ClassNotFoundException _) {
-                // Class not on processor classpath — skip
+            } catch (ClassNotFoundException | LinkageError _) {
+                // Not on the processor path, or a supertype is not (VAU-APT-008): skip
             }
         }
         return classes;

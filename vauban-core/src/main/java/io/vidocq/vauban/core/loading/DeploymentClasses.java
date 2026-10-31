@@ -20,9 +20,13 @@
 package io.vidocq.vauban.core.loading;
 
 /**
- * Loads a class of the deployment by the name the bean index gives it, the way discovery has always
- * done: through the thread context class loader when there is one, without initializing the class,
- * and through {@link Class#forName(String)} otherwise.
+ * Loads a class of the deployment by the name the bean index gives it: through the thread context class
+ * loader when there is one, through this class's loader otherwise, and never initializing the class —
+ * under the annotation processor its static initializer would run inside javac (VAU-APT-008).
+ *
+ * <p>A class that cannot be linked here, such as a dependency's class under the annotation processor
+ * whose supertypes are not on the processor path, is reported like a missing one: every caller then
+ * keeps what the index read, and the runtime container discovers it again with its full module graph.
  *
  * <p>Every name passed here comes from the deployment itself (a class, an annotation type or a type
  * argument the index recorded), never from input the application receives at run time. Discovery
@@ -47,10 +51,15 @@ public final class DeploymentClasses {
      * The class the index names, through {@code loader} — the container's bean class loader, once the build has
      * restored the caller's context loader — or, when it is {@code null}, the way {@link #load(String)} does.
      *
-     * @throws ClassNotFoundException when no loader visible from here defines it
+     * @throws ClassNotFoundException when no loader visible from here defines it, or the class cannot be
+     *                                linked (its {@link LinkageError} as the cause)
      */
     public static Class<?> load(String name, ClassLoader loader) throws ClassNotFoundException {
         var effective = loader != null ? loader : Thread.currentThread().getContextClassLoader();
-        return effective != null ? Class.forName(name, false, effective) : Class.forName(name);
+        try {
+            return Class.forName(name, false, effective != null ? effective : DeploymentClasses.class.getClassLoader());
+        } catch (LinkageError e) {
+            throw new ClassNotFoundException(name + " cannot be linked here", e);
+        }
     }
 }

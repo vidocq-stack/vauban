@@ -60,6 +60,17 @@ annotations beyond those the index read; the runtime container discovers it agai
 `QualifierResolverLoadingTest` (both cases, red then green); the tutorial's repro (`cassini-rest`,
 `heisenberg-fault-tolerance`, `mansart-transactions`) compiles.
 
+### Follow-up (fix/apt-linkage-errors)
+The same hazard sat on the other loads discovery and the processor make under javac:
+- `DeploymentClasses.load`, used by about twenty discovery reads (`BeanDiscovery`, `InterceptorDiscovery`,
+  `QualifierResolver.isQualifier`, `DeploymentValidator`), let a `LinkageError` through its callers, which only catch
+  `ClassNotFoundException`; and without a context class loader it fell back on `Class.forName(name)`, which
+  initialises. It now loads through its own loader with `initialize=false`, and reports a class that cannot be linked
+  as a `ClassNotFoundException` whose cause is the `LinkageError`, so every caller keeps what the index read.
+- `VaubanProcessor.loadArchiveClasses`, which hands the archive's classes to the Build Compatible Extensions (reached
+  whenever a codegen bundle puts a BCE on the processor path), skips a class it cannot link instead of failing.
+`DeploymentClassesTest` (two tests) and `LoadArchiveClassesTest`, red then green.
+
 ---
 
 ## VAU-APT-006 — An injection point a dependency's producer satisfies warns at every build
@@ -149,6 +160,14 @@ method, which the caller must see; Weld and OpenWebBeans unwrap the reflective c
 `intercept` rethrows the cause of the `InvocationTargetException`: an `Exception` or an `Error` as itself; only a bare
 `Throwable`, which `intercept` cannot declare, is wrapped in an `UndeclaredThrowableException`.
 
+
+### Re-check (2026-10-31, tutorial finding S4)
+The tutorial session still saw 8 × `File for type '…_ClientProxy' / '…$$Intercepted' / '…_VaubanComponents' created
+in the last round` under `vidocq dev`, after a compile error. Its log was written at 00:29 CET, before the Vauban
+SNAPSHOT carrying this fix was published (`build-and-deploy` of `cf87e73d`, 23:46Z = 00:46 CET). Against the current
+SNAPSHOT, an application with `cassini-rest`, an intercepted `@RequestScoped` resource, the tutorial's extensions
+(mansart-data/pool/transactions, flyway, cervantes-jwt, humboldt-telemetry, fault tolerance), compiled cleanly and
+with a compile error (missing import), prints none of them.
 ---
 
 ## VAU-INT-009 — An interceptor with an `@Inject` constructor and no no-arg constructor fails deployment

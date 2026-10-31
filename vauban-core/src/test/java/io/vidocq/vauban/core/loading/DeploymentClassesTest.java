@@ -21,9 +21,21 @@ package io.vidocq.vauban.core.loading;
 
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
+
+import java.io.IOException;
+import java.lang.classfile.ClassFile;
+import java.lang.constant.ClassDesc;
+import java.net.URL;
+import java.net.URLClassLoader;
+import java.nio.file.Files;
+import java.nio.file.Path;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertSame;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 
 @DisplayName("DeploymentClasses: loading a class the index names")
 class DeploymentClassesTest {
@@ -50,6 +62,51 @@ class DeploymentClassesTest {
         thread.setContextClassLoader(null);
         try {
             assertEquals(String.class, DeploymentClasses.load("java.lang.String"));
+        } finally {
+            thread.setContextClassLoader(previous);
+        }
+    }
+
+    static boolean initialised;
+
+    static final class WithStaticInitialiser {
+        static {
+            initialised = true;
+        }
+    }
+
+    @Test
+    @DisplayName("without a thread context class loader, the class is loaded but not initialised")
+    void noContextClassLoaderDoesNotInitialise() throws ClassNotFoundException {
+        var thread = Thread.currentThread();
+        var previous = thread.getContextClassLoader();
+        thread.setContextClassLoader(null);
+        try {
+            assertEquals(WithStaticInitialiser.class, DeploymentClasses.load(WithStaticInitialiser.class.getName()));
+            assertFalse(initialised, "loading a deployment class ran its static initialiser");
+        } finally {
+            thread.setContextClassLoader(previous);
+        }
+    }
+
+    /**
+     * Under the annotation processor, a dependency's class whose supertypes are not on the processor path cannot be
+     * linked: discovery sees it as a class it cannot load, as for a missing one, instead of failing the compilation on
+     * a {@code NoClassDefFoundError} (VAU-APT-008).
+     */
+    @Test
+    @DisplayName("a class that cannot be linked is reported as not found, its linkage error as the cause")
+    void aClassThatCannotBeLinkedIsNotFound(@TempDir Path dir) throws IOException {
+        byte[] sub = ClassFile.of().build(ClassDesc.of("gen.Sub"),
+                cb -> cb.withFlags(ClassFile.ACC_PUBLIC).withSuperclass(ClassDesc.of("gen.Missing")));
+        Files.createDirectories(dir.resolve("gen"));
+        Files.write(dir.resolve("gen/Sub.class"), sub);
+        var thread = Thread.currentThread();
+        var previous = thread.getContextClassLoader();
+        try (var loader = new URLClassLoader(new URL[] {dir.toUri().toURL()}, getClass().getClassLoader())) {
+            thread.setContextClassLoader(loader);
+            var thrown = assertThrows(ClassNotFoundException.class, () -> DeploymentClasses.load("gen.Sub"));
+            assertInstanceOf(LinkageError.class, thrown.getCause());
         } finally {
             thread.setContextClassLoader(previous);
         }

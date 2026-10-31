@@ -54,10 +54,6 @@ class SingleArgumentForNameTest {
 
     /** Callers allowed to use {@code Class.forName(String)}, as {@code SimpleClassName.method}. */
     private static final Set<String> DELIBERATE = Set.of(
-            // No thread context class loader at all: the caller's loader is the only one left.
-            "DeploymentClasses.load",
-            // Tried the context loader first; the second attempt is the fallback.
-            "QualifierResolver.loadWithFallback",
             // The bean's loader first; vauban-core's own loader for the built-in scopes it ships.
             "ManagedBean.scopeAnnotationClass",
             // An optional module of the Vauban family, resolved next to vauban-core.
