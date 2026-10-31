@@ -161,13 +161,24 @@ method, which the caller must see; Weld and OpenWebBeans unwrap the reflective c
 `Throwable`, which `intercept` cannot declare, is wrapped in an `UndeclaredThrowableException`.
 
 
-### Re-check (2026-10-31, tutorial finding S4)
-The tutorial session still saw 8 × `File for type '…_ClientProxy' / '…$$Intercepted' / '…_VaubanComponents' created
-in the last round` under `vidocq dev`, after a compile error. Its log was written at 00:29 CET, before the Vauban
-SNAPSHOT carrying this fix was published (`build-and-deploy` of `cf87e73d`, 23:46Z = 00:46 CET). Against the current
-SNAPSHOT, an application with `cassini-rest`, an intercepted `@RequestScoped` resource, the tutorial's extensions
-(mansart-data/pool/transactions, flyway, cervantes-jwt, humboldt-telemetry, fault tolerance), compiled cleanly and
-with a compile error (missing import), prints none of them.
+### Re-check (2026-10-31, tutorial finding S4) — REOPENED, then FIXED (fix/apt-write-before-last-round)
+A first re-check, without a Jakarta Data repository, found no warning and wrongly blamed an older SNAPSHOT. The tutorial
+session reproduced it on the current SNAPSHOT (vauban-processor 0.4.0-20261031.025825-140): with `mansart-data` and a
+`@Repository`, `mvn compile` prints 3 × `created in the last round` (`HelloResource_ClientProxy` and both
+`_VaubanComponents`), 8 with the tutorial's step-03 code.
+
+**Cause**: the pipeline waited for a round whose new classes brought no bean. Mansart Data's processor writes
+`BookRepositoryImpl` (a `@Singleton` bean), `_Book` and `Book_` in the first round; they reach Vauban in the second,
+which therefore was not quiet, and nothing came after it: the next round was javac's last.
+
+**Fix**: a round whose newly indexed classes only carry annotations no companion processor acts on counts as quiet:
+`java.lang`, `javax.annotation.processing` (`@Generated`), `jakarta.annotation`, `jakarta.inject`,
+`jakarta.enterprise.context` / `.inject`, and the static metamodel markers (`jakarta.persistence.metamodel`,
+`jakarta.data.metamodel`). Such a class cannot make another processor generate more; a generated class with any
+other annotation still makes Vauban wait, and a bean generated after the pipeline ran still fails the build by name.
+`GenerationRoundTest.aBeanACompanionGeneratesWithInertAnnotationsIsListedBeforeTheLastRound` (red, then green) and
+`aBeanACompanionGeneratesWithAForeignAnnotationIsWaitedFor`; the tutorial's repro and step-03 code compile without
+the warning, `BookRepositoryImpl` still listed.
 ---
 
 ## VAU-INT-009 — An interceptor with an `@Inject` constructor and no no-arg constructor fails deployment

@@ -118,6 +118,63 @@ class GenerationRoundTest {
         assertTrue(Files.exists(result.classes().resolve("app/Greeter_ClientProxy.class")));
     }
 
+    /** A bean a companion generates in the first round, as Mansart Data does for a repository. */
+    private static final List<String> GENERATED_REPOSITORY = List.of("app.GreeterRepositoryImpl", """
+            package app;
+
+            @javax.annotation.processing.Generated("test.Companion")
+            @jakarta.inject.Singleton
+            public class GreeterRepositoryImpl {
+                @jakarta.inject.Inject
+                Greeter greeter;
+
+                @Override
+                public String toString() { return "repository"; }
+            }
+            """);
+
+    /**
+     * Mansart Data's {@code BookRepositoryImpl} reaches Vauban in the second round. It only carries annotations no
+     * companion acts on ({@code @Generated}, {@code @Singleton}, {@code @Inject}), so no further class can come from
+     * it: Vauban writes in that round, the repository listed, instead of waiting for the last round (VAU-APT-007,
+     * the tutorial's finding S4).
+     */
+    @Test
+    void aBeanACompanionGeneratesWithInertAnnotationsIsListedBeforeTheLastRound() throws IOException {
+        var result = ProcessorCompiler.compile(workDir, SOURCES, List.of(),
+                List.of(new Companion(Map.of(1, GENERATED_REPOSITORY)), new VaubanProcessor()));
+
+        assertTrue(result.success(), String.join("\n", result.messages()));
+        assertFalse(result.mentions(LAST_ROUND), String.join("\n", result.messages()));
+        assertTrue(Files.readString(result.generated().resolve("app/_VaubanComponents.java"))
+                .contains("app.GreeterRepositoryImpl"));
+    }
+
+    /** A generated bean carrying an annotation a companion may act on: Vauban waits, as before. */
+    @Test
+    void aBeanACompanionGeneratesWithAForeignAnnotationIsWaitedFor() throws IOException {
+        var result = ProcessorCompiler.compile(workDir, Map.of(
+                "app/Greeter.java", SOURCES.get("app/Greeter.java"),
+                "app/Tracked.java", """
+                        package app;
+
+                        @java.lang.annotation.Retention(java.lang.annotation.RetentionPolicy.RUNTIME)
+                        public @interface Tracked {
+                        }
+                        """), List.of(),
+                List.of(new Companion(Map.of(1, List.of("app.TrackedBean", """
+                        package app;
+
+                        @jakarta.enterprise.context.ApplicationScoped
+                        @Tracked
+                        public class TrackedBean {
+                        }
+                        """))), new VaubanProcessor()));
+
+        assertTrue(result.success(), String.join("\n", result.messages()));
+        assertTrue(Files.readString(result.generated().resolve("app/_VaubanComponents.java")).contains("app.TrackedBean"));
+    }
+
     @Test
     void aBeanAnotherProcessorGeneratesLaterFailsTheBuildByName() throws IOException {
         var result = ProcessorCompiler.compile(workDir, SOURCES, List.of(),
