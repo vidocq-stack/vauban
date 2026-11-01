@@ -593,23 +593,16 @@ public class VaubanProcessor extends AbstractProcessor {
         var elements = processingEnv.getElementUtils();
         var scanner = new ElementScanner(elements, processingEnv.getTypeUtils());
         var described = new HashMap<DotName, Optional<ClassInfo>>();
-        return name -> {
-            var known = described.get(name);
-            if (known != null) {
-                return known;
+        return name -> described.computeIfAbsent(name, n -> {
+            var type = elements.getTypeElement(n.value().replace('$', '.'));
+            if (type == null) {
+                return Optional.empty();
             }
-            var type = elements.getTypeElement(name.value().replace('$', '.'));
-            Optional<ClassInfo> result = Optional.empty();
-            if (type != null) {
-                var module = elements.getModuleOf(type);
-                var moduleName = module == null ? "" : module.getQualifiedName().toString();
-                if (!moduleName.startsWith("java.") && !moduleName.startsWith("jdk.")) {
-                    result = Optional.of(scanner.scan(type));
-                }
-            }
-            described.put(name, result);
-            return result;
-        };
+            var module = elements.getModuleOf(type);
+            var moduleName = module == null ? "" : module.getQualifiedName().toString();
+            return moduleName.startsWith("java.") || moduleName.startsWith("jdk.")
+                    ? Optional.empty() : Optional.of(scanner.scan(type));
+        });
     }
 
     private void indexScannedClass(IndexBuilder indexBuilder, String className, byte[] bytes) {

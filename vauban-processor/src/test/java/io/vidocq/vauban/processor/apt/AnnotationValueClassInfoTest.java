@@ -111,6 +111,7 @@ class AnnotationValueClassInfoTest {
 
         var messages = String.join("\n", result.messages());
         assertTrue(result.success(), messages);
-        assertEquals(List.of("field dependency", "method work", "injects true"), SEEN, messages);
+        var seen = List.copyOf(SEEN);
+        assertEquals(List.of("field dependency", "method work", "injects true"), seen, messages);
     }
 }
