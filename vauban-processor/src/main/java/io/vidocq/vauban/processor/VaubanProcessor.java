@@ -565,7 +565,8 @@ public class VaubanProcessor extends AbstractProcessor {
     private BceProcessor.DiscoveryResult runDiscoveryPhase(List<Class<?>> bceClasses,
             io.vidocq.vauban.indexer.VaubanIndex index, IndexBuilder indexBuilder, ClassLoader aptClassLoader) {
         var lookup = new IndexLookup(index);
-        var discoveryResult = ExtensionPhase.atBuildTime(() -> BceProcessor.processDiscovery(bceClasses, lookup));
+        var discoveryResult = IndexLookup.whereUnindexedDescribedBy(unindexedResolver(),
+                () -> ExtensionPhase.atBuildTime(() -> BceProcessor.processDiscovery(bceClasses, lookup)));
         // The contexts the extensions registered are runtime objects: write them down, since
         // the container skips the extensions of an application compiled here (vauban-webcontexts).
         writeFrozenContexts(discoveryResult.metaAnnotations().getCustomContexts());
@@ -580,6 +581,35 @@ public class VaubanProcessor extends AbstractProcessor {
             }
         }
         return discoveryResult;
+    }
+
+    /**
+     * Describes, for the extensions' language model, a class the index does not hold but the compilation sees — one an
+     * annotation value names, say ({@code @JsonbTypeAdapter(AmountAdapter.class)}): its members, as at boot, instead
+     * of an empty stub (VAU-BCE-008). Lazy and read-only; it never makes the class a bean. The JDK's classes stay
+     * stubs, as at boot, where the index does not hold them either.
+     */
+    private java.util.function.Function<DotName, Optional<ClassInfo>> unindexedResolver() {
+        var elements = processingEnv.getElementUtils();
+        var scanner = new ElementScanner(elements, processingEnv.getTypeUtils());
+        var described = new HashMap<DotName, Optional<ClassInfo>>();
+        return name -> {
+            var known = described.get(name);
+            if (known != null) {
+                return known;
+            }
+            var type = elements.getTypeElement(name.value().replace('$', '.'));
+            Optional<ClassInfo> result = Optional.empty();
+            if (type != null) {
+                var module = elements.getModuleOf(type);
+                var moduleName = module == null ? "" : module.getQualifiedName().toString();
+                if (!moduleName.startsWith("java.") && !moduleName.startsWith("jdk.")) {
+                    result = Optional.of(scanner.scan(type));
+                }
+            }
+            described.put(name, result);
+            return result;
+        };
     }
 
     private void indexScannedClass(IndexBuilder indexBuilder, String className, byte[] bytes) {
@@ -605,11 +635,12 @@ public class VaubanProcessor extends AbstractProcessor {
         var interceptors = discovery.discoverInterceptors();
 
         var bceInstances = discoveryResult.bceInstances();
-        var bceResult = ExtensionPhase.atBuildTime(() -> BceProcessor.process(bceClasses, beans,
-                observers, interceptors,
-                index, aptClassLoader,
-                bceInstances, archiveClasses,
-                name -> index.getClassByName(name).map(discovery::buildManagedBean).orElse(null)));
+        var bceResult = IndexLookup.whereUnindexedDescribedBy(unindexedResolver(),
+                () -> ExtensionPhase.atBuildTime(() -> BceProcessor.process(bceClasses, beans,
+                        observers, interceptors,
+                        index, aptClassLoader,
+                        bceInstances, archiveClasses,
+                        name -> index.getClassByName(name).map(discovery::buildManagedBean).orElse(null))));
 
         // Report BCE errors as compilation errors
         boolean hasErrors = false;

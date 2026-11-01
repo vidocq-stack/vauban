@@ -55,9 +55,10 @@ public final class VaubanClassType implements ClassType {
         // legitimately appear in injection-point types but are absent from the
         // index. Falling back to a synthetic stub keeps the spec contract
         // ({@code ClassType.declaration().name()} returns the FQN) without
-        // forcing every referenced type to be eagerly indexed. Cf. VAU-BCE-001.
+        // forcing every referenced type to be eagerly indexed. Cf. VAU-BCE-001. At build, a class the
+        // compilation sees is described by the processor instead (VAU-BCE-008).
         var indexClass = lookup == null ? syntheticClassInfo(name)
-                : lookup.getClass(name).orElseGet(() -> syntheticClassInfo(name));
+                : lookup.describe(name).orElseGet(() -> syntheticClassInfo(name));
         return new VaubanClassInfo(indexClass, lookup);
     }
 

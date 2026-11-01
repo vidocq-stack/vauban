@@ -731,6 +731,43 @@ the container indexes (passed to `addBeanClasses`, added by an extension) now fa
 
 ---
 
+## VAU-BCE-008 — At build, the `ClassInfo` of a class named only in an annotation value has no members
+
+- **Date**: 2026-11-01 — **Status**: FIXED (fix/vau-bce-008)
+- **Severity**: medium (a build compatible extension that inspects such a class at build sees an empty class, and
+  draws wrong conclusions without any error)
+
+### Symptom
+Champollion's extension takes the class `@JsonbTypeAdapter(AmountAdapter.class)` names
+(`annotation.value().asType().asClass().declaration()`) and checks whether it has `@Inject` members. At boot the
+answer is right; at build (Vauban's processor) `fields()`, `methods()` and `constructors()` are empty, so an adapter
+that injects without being a bean passed the validation. Found on JSON-B step C4 (Vidocq/champollion, CDI adapters).
+
+### Repro
+An application with `record Price(@JsonbTypeAdapter(AmountAdapter.class) BigDecimal amount)` and
+`class AmountAdapter implements JsonbAdapter<BigDecimal, String> { @Inject Rates rates; … }` (no bean-defining
+annotation), a BCE with `@Enhancement(types = Object.class, withSubtypes = true, withAnnotations = JsonbTypeAdapter.class)`
+that reads `value().asType().asClass().declaration().fields()` for `Price`'s annotation: empty at build
+(`VaubanClassInfo`, 0 fields), `[rates]` at boot.
+
+### Cause
+`VaubanClassType.declaration()` looks the class up in the index (`IndexLookup.getClass`) and, when it is absent,
+returns `syntheticClassInfo(name)`, a stub with no members (VAU-BCE-001). At build the index holds the beans and the
+classes carrying a trigger annotation; `AmountAdapter` carries none, so it is a stub, although the processor has its
+`TypeElement` in the very compilation.
+
+### Fix
+While the processor runs the extension phases, `IndexLookup.whereUnindexedDescribedBy` binds a resolver (a
+`ScopedValue`, unbound at run time) that describes a class the index lacks from its `TypeElement`, through
+`ElementScanner`, lazily and once per class. `VaubanClassType.declaration()` asks `IndexLookup.describe`, so the
+language model shows the class's members; nothing else reads the resolver, so the class never becomes a bean. The
+JDK's classes stay stubs, as at boot. `AnnotationValueClassInfoTest`: a BCE reads the fields, methods and the
+`@Inject` of a class named only in an annotation value (red before the fix: `injects false`, no member).
+
+### Workaround
+`champollion-jsonb-cdi` also records, through `@Enhancement(withAnnotations = Inject.class)`, the classes that inject:
+a trigger annotation puts them in the index.
+
 ## VAU-Q5-001 — `InterceptorManager.$$callIntercepted` wraps an `Error` in a `RuntimeException`
 - **Date**: 2026-10-23 — **Status**: FIXED (`refactor/zero-issues-5`, Vidocq/vidocq#285)
 - **Severity**: low (no caller in Vauban or the ecosystem today; the method is public in an exported package)
