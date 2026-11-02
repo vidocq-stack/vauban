@@ -114,6 +114,7 @@ public final class VaubanContainer implements AutoCloseable {
     private final ClassLoader classLoader;
     private final io.vidocq.vauban.core.bean.resolution.QualifierMatcher qualifierMatcher;
     private final Map<DotName, BeanDescriptor> managedDescriptors;
+    private final VaubanIndex index;
     private final VaubanLookup vaubanLookup;
     private final ComponentProviders componentProviders;
     final BeanLifecycle beanLifecycle;
@@ -145,6 +146,19 @@ public final class VaubanContainer implements AutoCloseable {
     }
 
     /**
+     * The names of the annotations declared on {@code type} as the deployment's index read them from its class file,
+     * or empty when the index does not know the class: a caller then reads them by reflection. Lets an integration
+     * such as a REST runtime sort bean classes by annotation without reflection.
+     */
+    public java.util.Optional<java.util.Set<String>> indexedAnnotationNames(Class<?> type) {
+        return index.getClassByName(DotName.of(type.getName())).map(info -> {
+            java.util.Set<String> names = new java.util.HashSet<>();
+            for (var annotation : info.annotations()) names.add(annotation.name().toString());
+            return java.util.Set.copyOf(names);
+        });
+    }
+
+    /**
      * Which code generator covers what each bean, observer and interceptor needs, and what falls back to reflection —
      * for diagnostics such as the Vidocq dev console. Asks every provider for its coverage once; creates no bean.
      */
@@ -169,6 +183,7 @@ public final class VaubanContainer implements AutoCloseable {
                             ComponentProviders componentProviders,
                             io.vidocq.vauban.core.bean.resolution.QualifierMatcher qualifierMatcher) {
         this.classLoader = classLoader;
+        this.index = index;
         this.qualifierMatcher = qualifierMatcher;
         this.managedDescriptors = descriptors.stream()
                 .filter(d -> d.kind() == BeanDescriptor.BeanKind.MANAGED)
