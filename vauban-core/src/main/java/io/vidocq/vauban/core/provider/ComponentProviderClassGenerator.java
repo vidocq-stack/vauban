@@ -321,10 +321,17 @@ public final class ComponentProviderClassGenerator {
                 Label next = cob.newLabel();
                 emitEqualsTest(cob, 2, fi.declaringClassFqn(), next);
                 emitEqualsTest(cob, 3, fi.fieldName(), next);
+                if (fieldTypeCD.isPrimitive()) {
+                    // A primitive field cannot take null: decline it, as the generated source does.
+                    cob.aload(4);
+                    cob.ifnull(next);
+                }
                 cob.aload(1);
                 cob.checkcast(declCD);
                 cob.aload(4);
-                if (!fieldTypeCD.equals(CD_Object)) {
+                if (fieldTypeCD.isPrimitive()) {
+                    emitUnbox(cob, fieldTypeCD);
+                } else if (!fieldTypeCD.equals(CD_Object)) {
                     cob.checkcast(fieldTypeCD);
                 }
                 cob.putfield(declCD, fi.fieldName(), fieldTypeCD);
@@ -527,7 +534,38 @@ public final class ComponentProviderClassGenerator {
      * Resolves a field type erasure (as stored in {@link FieldInject#fieldTypeErasure()}) to a
      * {@link ClassDesc}. Handles simple array types expressed as {@code "ComponentType[]"}.
      */
+    /** {@code ((Integer) value).intValue()} and its siblings: the wrapper's unboxing method for {@code primitive}. */
+    private static void emitUnbox(CodeBuilder cob, ClassDesc primitive) {
+        var wrapper = switch (primitive.descriptorString()) {
+            case "Z" -> ConstantDescs.CD_Boolean;
+            case "B" -> ConstantDescs.CD_Byte;
+            case "C" -> ConstantDescs.CD_Character;
+            case "S" -> ConstantDescs.CD_Short;
+            case "I" -> ConstantDescs.CD_Integer;
+            case "J" -> ConstantDescs.CD_Long;
+            case "F" -> ConstantDescs.CD_Float;
+            case "D" -> ConstantDescs.CD_Double;
+            default -> throw new IllegalArgumentException("not a primitive: " + primitive);
+        };
+        cob.checkcast(wrapper);
+        cob.invokevirtual(wrapper, primitive.displayName() + "Value", MethodTypeDesc.of(primitive));
+    }
+
     private static ClassDesc resolveFieldTypeDesc(String fqn) {
+        var primitive = switch (fqn) {
+            case "boolean" -> ConstantDescs.CD_boolean;
+            case "byte" -> ConstantDescs.CD_byte;
+            case "char" -> ConstantDescs.CD_char;
+            case "short" -> ConstantDescs.CD_short;
+            case "int" -> ConstantDescs.CD_int;
+            case "long" -> ConstantDescs.CD_long;
+            case "float" -> ConstantDescs.CD_float;
+            case "double" -> ConstantDescs.CD_double;
+            default -> null;
+        };
+        if (primitive != null) {
+            return primitive;
+        }
         if (fqn.endsWith("[]")) {
             return ClassDesc.of(fqn.substring(0, fqn.length() - 2)).arrayType();
         }

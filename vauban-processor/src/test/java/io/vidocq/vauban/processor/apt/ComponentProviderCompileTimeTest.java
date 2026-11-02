@@ -86,6 +86,38 @@ class ComponentProviderCompileTimeTest {
         assertEquals("app._VaubanComponents", Files.readString(svc).strip());
     }
 
+    /**
+     * A primitive {@code @Inject} field ({@code @Inject @ConfigProperty int port} in a REST resource)
+     * is assigned by the provider, unboxed, instead of by {@code Field.set} at each bean creation.
+     */
+    @Test
+    @DisplayName("the provider assigns a primitive @Inject field, declining null")
+    void providerAssignsPrimitiveInjectField() throws Exception {
+        var result = compile("Settings", """
+                package app;
+
+                @jakarta.enterprise.context.RequestScoped
+                public class Settings {
+                    @jakarta.inject.Inject int port;
+                    @jakarta.inject.Inject boolean verbose;
+                }
+
+                @jakarta.enterprise.context.ApplicationScoped
+                class Values {
+                    @jakarta.enterprise.inject.Produces int port() { return 8080; }
+                    @jakarta.enterprise.inject.Produces boolean verbose() { return true; }
+                }
+                """);
+
+        assertTrue(result.success(), "compilation should succeed. Messages: " + result.messages());
+        var src = Files.readString(result.genDir().resolve("app/_VaubanComponents.java"));
+        assertTrue(src.contains("case \"port\" -> { if (value == null) return false; b.port = (int) value; return true; }"),
+                src);
+        assertTrue(src.contains("case \"verbose\" -> { if (value == null) return false; b.verbose = (boolean) value; return true; }"),
+                src);
+        assertTrue(Files.exists(result.outputDir().resolve("app/_VaubanComponents.class")));
+    }
+
     @Test
     @DisplayName("generates a compiling args-overload casting resolved deps for an @Inject-ctor bean")
     void generatesArgAwareProviderForInjectConstructorBean() throws Exception {

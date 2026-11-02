@@ -161,7 +161,8 @@ public final class ComponentCollector {
      *
      * <p>Private fields are skipped; a warning is appended to {@code warningsOut}:
      * {@code "Field injection for private field <fqn>#<name> still needs opens to
-     * io.vidocq.vauban.core"}.  Fields whose erasure is {@code null} are silently skipped.
+     * io.vidocq.vauban.core"}.  A primitive field is kept under its keyword ({@code "int"}): the
+     * provider unboxes the value (VAU-PERF-002). Fields whose erasure is {@code null} are silently skipped.
      *
      * @param classInfo   the class to examine
      * @param warningsOut mutable list to accumulate diagnostic messages (never {@code null})
@@ -178,7 +179,9 @@ public final class ComponentCollector {
                 warningsOut.add("Field injection for private field " + beanFqn + "#" + field.name()
                         + " still needs opens to io.vidocq.vauban.core");
             } else {
-                var erasure = erasure(field.type());
+                var erasure = field.type() instanceof TypeInfo.PrimitiveType(var kind)
+                        ? kind.name().toLowerCase(java.util.Locale.ROOT)
+                        : erasure(field.type());
                 if (erasure != null) {
                     result.add(new FieldInject(beanFqn, field.name(), erasure));
                 }

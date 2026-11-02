@@ -263,6 +263,9 @@ public final class ComponentProviderGenerator {
     }
 
     private static final String OVERRIDE = "    @Override\n";
+    /** The keyword types a {@link FieldInject} may carry for a primitive field. */
+    private static final java.util.Set<String> PRIMITIVES =
+            java.util.Set.of("boolean", "byte", "char", "short", "int", "long", "float", "double");
     private static final String SUPPRESS_RAW = "    @SuppressWarnings({\"unchecked\", \"rawtypes\"})\n";
     private static final String TRY_OPEN = "        try {\n";
     private static final String CATCH_SNEAKY = """
@@ -358,8 +361,12 @@ public final class ComponentProviderGenerator {
             sb.append("                var b = (").append(ownerSourceName).append(") bean;\n");
             sb.append("                switch (fieldName) {\n");
             for (var fi : entry.getValue()) {
-                sb.append("                    case \"").append(fi.fieldName()).append("\" -> { ")
-                        .append("b.").append(fi.fieldName())
+                sb.append("                    case \"").append(fi.fieldName()).append("\" -> { ");
+                // A primitive field cannot take null: decline it, and the container reports it as before.
+                if (PRIMITIVES.contains(fi.fieldTypeErasure())) {
+                    sb.append("if (value == null) return false; ");
+                }
+                sb.append("b.").append(fi.fieldName())
                         .append(" = (").append(fi.fieldTypeErasure()).append(") value; return true; }\n");
             }
             sb.append("                    default -> { return false; }\n");

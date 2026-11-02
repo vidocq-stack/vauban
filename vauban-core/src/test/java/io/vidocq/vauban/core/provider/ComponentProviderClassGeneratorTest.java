@@ -170,6 +170,55 @@ class ComponentProviderClassGeneratorTest {
     }
 
     /**
+     * A primitive field ({@code @Inject @ConfigProperty int port}) is assigned by unboxing the value;
+     * a {@code null} value is declined ({@code false}), leaving the container's usual path to report it.
+     */
+    @Test
+    @DisplayName("injectField unboxes into primitive fields and declines null")
+    void injectFieldUnboxesIntoPrimitiveFields() throws Exception {
+        var pkg = "io.vidocq.vauban.core.provider.test.primitive";
+        var targetFqn = pkg + ".PrimitiveTarget";
+        byte[] targetBytes = ClassFile.of().build(ClassDesc.of(targetFqn), clb -> {
+            clb.withFlags(ClassFile.ACC_PUBLIC | ClassFile.ACC_SUPER);
+            clb.withSuperclass(ConstantDescs.CD_Object);
+            clb.withField("port", ConstantDescs.CD_int, 0);
+            clb.withField("enabled", ConstantDescs.CD_boolean, 0);
+            clb.withField("ratio", ConstantDescs.CD_double, 0);
+            clb.withMethodBody(ConstantDescs.INIT_NAME, MethodTypeDesc.of(ConstantDescs.CD_void),
+                    ClassFile.ACC_PUBLIC, cob -> {
+                        cob.aload(0);
+                        cob.invokespecial(ConstantDescs.CD_Object, ConstantDescs.INIT_NAME,
+                                MethodTypeDesc.of(ConstantDescs.CD_void));
+                        cob.return_();
+                    });
+        });
+        var gen = ComponentProviderClassGenerator.generate(pkg + "._GenPrimitiveComponents", List.of(),
+                List.of(new FieldInject(targetFqn, "port", "int"),
+                        new FieldInject(targetFqn, "enabled", "boolean"),
+                        new FieldInject(targetFqn, "ratio", "double")));
+        var loader = new ByteClassLoader(getClass().getClassLoader());
+        var targetClass = loader.define(targetFqn, targetBytes);
+        var provider = (VaubanComponentProvider) loader.define(gen.className(), gen.bytecode())
+                .getDeclaredConstructor().newInstance();
+        var bean = targetClass.getDeclaredConstructor().newInstance();
+
+        assertTrue(provider.injectField(bean, targetFqn, "port", 8080));
+        assertTrue(provider.injectField(bean, targetFqn, "enabled", true));
+        assertTrue(provider.injectField(bean, targetFqn, "ratio", 0.5));
+        assertFalse(provider.injectField(bean, targetFqn, "port", null), "null is declined, not unboxed");
+
+        var port = targetClass.getDeclaredField("port");
+        port.setAccessible(true);
+        var enabled = targetClass.getDeclaredField("enabled");
+        enabled.setAccessible(true);
+        var ratio = targetClass.getDeclaredField("ratio");
+        ratio.setAccessible(true);
+        assertEquals(8080, port.get(bean));
+        assertEquals(true, enabled.get(bean));
+        assertEquals(0.5, ratio.get(bean));
+    }
+
+    /**
      * Generates bytecode for a minimal bean class with two package-private fields:
      * {@code String service} and {@code Object dependency}.
      */

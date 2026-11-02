@@ -81,8 +81,13 @@ class ComponentCollectorMemberSelectionTest {
         assertEquals(erasure, ComponentCollector.erasure(type));
     }
 
+    /**
+     * A primitive {@code @Inject} field ({@code @Inject @ConfigProperty int port}) is assigned by the
+     * generated provider too, under its keyword type: it used to be left out, and the container then
+     * wrote it with {@code Field.set} on every bean creation.
+     */
     @Test
-    void staticAndPrimitiveInjectedFieldsAreLeftOut() {
+    void staticInjectedFieldsAreLeftOutPrimitiveOnesKept() {
         var fields = List.of(
                 new FieldInfo("shared", STRING, PUBLIC | STATIC, annotated("jakarta.inject.Inject")),
                 new FieldInfo("count", INT, PUBLIC, annotated("jakarta.inject.Inject")),
@@ -92,7 +97,8 @@ class ComponentCollectorMemberSelectionTest {
 
         var collected = ComponentCollector.collectFields(bean(fields, List.of()), warnings);
 
-        assertEquals(List.of(new FieldInject(BEAN, "name", "java.lang.String")), collected);
+        assertEquals(List.of(new FieldInject(BEAN, "count", "int"),
+                new FieldInject(BEAN, "name", "java.lang.String")), collected);
         assertEquals(List.of(), warnings);
     }
 

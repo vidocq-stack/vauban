@@ -5,6 +5,43 @@ suspected cause, status. Updated on every investigation.
 
 ---
 
+## VAU-PERF-001 — The request context's lifecycle events reach `AnnotationLiteral` by reflection
+- **Date**: 2026-11-02 — **Status**: FIXED (fix/no-reflection-per-request)
+- **Severity**: low (reflection on the request path, against the build-time-first rule)
+
+### Symptom
+The ecosystem reflection audit (an agent tracing reflective calls in an application with eleven extensions) saw
+`VaubanContainer.requestContextEvents` call `AnnotationLiteral.hashCode()`, which reads the annotation's members with
+`getDeclaredMethods` and `Method.invoke`: the observed-or-not cache was a `ConcurrentHashMap` keyed by the qualifier.
+`AnnotationLiteral` caches its hash, so in practice it ran on the first request; but the request path depended on
+reflection and on that cache.
+
+### Fix
+`ObservedQualifiers` matches the qualifiers by identity (the request context always passes the same three
+`Literal.REQUEST` constants), resolves each one's observers once, and fires only when observed. No `hashCode` or
+`equals` is called on the qualifier (`ObservedQualifiersTest`). Traced again: no reflective call left from this site.
+
+---
+
+## VAU-PERF-002 — A primitive `@Inject` field is written with `Field.set`
+- **Date**: 2026-11-02 — **Status**: FIXED (fix/no-reflection-per-request)
+- **Severity**: low (reflection at every creation of the bean)
+
+### Symptom
+`@Inject @ConfigProperty int times` in a REST resource was missing from the generated provider's `injectField`:
+`ComponentCollector.collectFields` dropped primitive fields, so the container wrote them through
+`VaubanLookup.setField` (unreflectSetter) at each creation of the bean, and the dev console's codegen coverage showed
+the field as *partial*.
+
+### Fix
+A primitive field is kept under its keyword type (`int`). The generated source assigns `b.times = (int) value`, and
+the bytecode generator unboxes the wrapper; a `null` value is declined (`false`), leaving the container's path to
+report it as before. Tests: `ComponentCollectorMemberSelectionTest`, `ComponentProviderClassGeneratorTest`
+(`injectFieldUnboxesIntoPrimitiveFields`), `ComponentProviderCompileTimeTest` (`providerAssignsPrimitiveInjectField`,
+red without the change). Traced again: no `VaubanLookup.setField` call left.
+
+---
+
 ## VAU-DISC-003 — An `@Inject` constructor is typed from another constructor of the same arity
 - **Date**: 2026-10-30 — **Status**: FIXED (fix/overloaded-inject-constructor-type)
 - **Severity**: high (a valid deployment fails as ambiguous or unsatisfied, or an injection point gets the wrong type)
