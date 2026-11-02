@@ -20,18 +20,27 @@
 package io.vidocq.vauban.indexer.codegen;
 
 /**
- * Describes an assignable instance field (non-private, non-static) that the generated
+ * Describes an assignable instance field (non-static) that the generated
  * {@code _VaubanComponents} provider can assign in-module without reflection.
  * A write case does not declare an injection point: APT also supplies public mutable fields
  * whose injection annotations may be added later by a runtime BCE.
  *
  * <p>Only fields in the same package as the generated provider are eligible: a {@code putfield}
  * to a package-private field only compiles (or executes without {@code opens}) from the same
- * package.
+ * package. A private field ({@code privateField}) is written through a {@code VarHandle} the provider
+ * finds once with its own lookup: same module, so no {@code opens} either (VAU-PERF-006).
  *
  * @param declaringClassFqn fully-qualified name of the bean class declaring the field
  * @param fieldName         simple name of the field
  * @param fieldTypeErasure  erased, nameable type of the field (e.g. {@code "app.Repo"},
- *                          {@code "java.lang.String[]"})
+ *                          {@code "java.lang.String[]"}, {@code "int"})
+ * @param privateField      whether the field is private
  */
-public record FieldInject(String declaringClassFqn, String fieldName, String fieldTypeErasure) {}
+public record FieldInject(String declaringClassFqn, String fieldName, String fieldTypeErasure,
+        boolean privateField) {
+
+    /** A non-private field. */
+    public FieldInject(String declaringClassFqn, String fieldName, String fieldTypeErasure) {
+        this(declaringClassFqn, fieldName, fieldTypeErasure, false);
+    }
+}

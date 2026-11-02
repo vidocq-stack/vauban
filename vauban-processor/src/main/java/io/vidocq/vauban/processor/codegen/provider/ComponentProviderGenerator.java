@@ -354,10 +354,17 @@ public final class ComponentProviderGenerator {
         sb.append(SUPPRESS_RAW);
         sb.append("    public boolean injectField(Object bean, String className, String fieldName, Object value) {\n");
         sb.append("        switch (className) {\n");
+        var holders = new StringBuilder();
+        int holderCount = 0;
         for (var entry : byClass.entrySet()) {
             sb.append(CASE_OPEN).append(entry.getKey()).append(CASE_BLOCK);
             var ownerSourceName = components.stream().filter(c -> c.fqn().equals(entry.getKey()))
                     .map(Component::sourceFqn).findFirst().orElse(entry.getKey());
+            var holder = "PrivateFields" + holderCount;
+            if (entry.getValue().stream().anyMatch(FieldInject::privateField)) {
+                holderCount++;
+                appendPrivateFieldHolder(holders, holder, ownerSourceName, entry.getValue());
+            }
             sb.append("                var b = (").append(ownerSourceName).append(") bean;\n");
             sb.append("                switch (fieldName) {\n");
             for (var fi : entry.getValue()) {
@@ -366,14 +373,55 @@ public final class ComponentProviderGenerator {
                 if (PRIMITIVES.contains(fi.fieldTypeErasure())) {
                     sb.append("if (value == null) return false; ");
                 }
-                sb.append("b.").append(fi.fieldName())
-                        .append(" = (").append(fi.fieldTypeErasure()).append(") value; return true; }\n");
+                if (fi.privateField()) {
+                    // null when the field was not found: declined, the container's reflective path takes over.
+                    sb.append("var h = ").append(holder).append('.').append(fi.fieldName())
+                            .append("; if (h == null) return false; h.set(b, (").append(fi.fieldTypeErasure())
+                            .append(") value); return true; }\n");
+                } else {
+                    sb.append("b.").append(fi.fieldName())
+                            .append(" = (").append(fi.fieldTypeErasure()).append(") value; return true; }\n");
+                }
             }
             sb.append("                    default -> { return false; }\n");
             sb.append(CLOSE_16);
             sb.append(CLOSE_12);
         }
         sb.append("            default -> { return false; }\n");
+        sb.append(CLOSE_8);
+        sb.append(CLOSE_4);
+        if (!holders.isEmpty()) {
+            sb.append(holders);
+            appendFieldHandle(sb);
+        }
+    }
+
+    /**
+     * One holder per class with private {@code @Inject} fields (VAU-PERF-006): a {@code VarHandle} per field,
+     * found on the first write to one of them, not when the provider loads.
+     */
+    private static void appendPrivateFieldHolder(StringBuilder holders, String holder, String ownerSourceName,
+            List<FieldInject> fields) {
+        holders.append("    private static final class ").append(holder).append(" {\n");
+        for (var fi : fields.stream().filter(FieldInject::privateField).toList()) {
+            holders.append("        static final java.lang.invoke.VarHandle ").append(fi.fieldName())
+                    .append(" = fieldHandle(").append(ownerSourceName).append(".class, \"").append(fi.fieldName())
+                    .append("\", ").append(fi.fieldTypeErasure()).append(".class);\n");
+        }
+        holders.append(CLOSE_4);
+    }
+
+    /**
+     * {@code fieldHandle(owner, name, type)}: {@code privateLookupIn} with the provider's own lookup — same
+     * module as {@code owner}, so no {@code opens} — or {@code null} when the field is not found.
+     */
+    private static void appendFieldHandle(StringBuilder sb) {
+        sb.append("    private static java.lang.invoke.VarHandle fieldHandle(Class<?> owner, String name, Class<?> type) {\n");
+        sb.append(TRY_OPEN);
+        sb.append("            return java.lang.invoke.MethodHandles.privateLookupIn(owner, java.lang.invoke.MethodHandles.lookup())\n");
+        sb.append("                    .findVarHandle(owner, name, type);\n");
+        sb.append("        } catch (ReflectiveOperationException e) {\n");
+        sb.append("            return null;\n");
         sb.append(CLOSE_8);
         sb.append(CLOSE_4);
     }

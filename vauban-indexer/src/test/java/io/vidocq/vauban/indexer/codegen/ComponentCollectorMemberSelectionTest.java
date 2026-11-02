@@ -93,13 +93,29 @@ class ComponentCollectorMemberSelectionTest {
                 new FieldInfo("count", INT, PUBLIC, annotated("jakarta.inject.Inject")),
                 new FieldInfo("label", STRING, PUBLIC, List.of()),
                 new FieldInfo("name", STRING, PUBLIC, annotated("jakarta.inject.Inject")));
-        var warnings = new ArrayList<String>();
 
-        var collected = ComponentCollector.collectFields(bean(fields, List.of()), warnings);
+        var collected = ComponentCollector.collectFields(bean(fields, List.of()));
 
         assertEquals(List.of(new FieldInject(BEAN, "count", "int"),
                 new FieldInject(BEAN, "name", "java.lang.String")), collected);
-        assertEquals(List.of(), warnings);
+    }
+
+    /**
+     * A private {@code @Inject} field is kept, marked private: the provider writes it through a
+     * {@code VarHandle} (VAU-PERF-006). It used to be left out with a "still needs opens" warning, and the
+     * container then wrote it with {@code Field.set} on every bean creation.
+     */
+    @Test
+    void privateInjectedFieldsAreKeptAndMarked() {
+        var fields = List.of(
+                new FieldInfo("secret", STRING, PRIVATE, annotated("jakarta.inject.Inject")),
+                new FieldInfo("port", INT, PRIVATE, annotated("jakarta.inject.Inject")),
+                new FieldInfo("plain", STRING, PRIVATE, List.of()));
+
+        var collected = ComponentCollector.collectFields(bean(fields, List.of()));
+
+        assertEquals(List.of(new FieldInject(BEAN, "secret", "java.lang.String", true),
+                new FieldInject(BEAN, "port", "int", true)), collected);
     }
 
     @Test

@@ -33,6 +33,9 @@ import java.lang.classfile.Label;
 import java.lang.classfile.attribute.RuntimeVisibleAnnotationsAttribute;
 import java.lang.constant.ClassDesc;
 import java.lang.constant.ConstantDescs;
+import java.lang.constant.DirectMethodHandleDesc;
+import java.lang.constant.DynamicConstantDesc;
+import java.lang.constant.MethodHandleDesc;
 import java.lang.constant.MethodTypeDesc;
 import java.util.ArrayList;
 import java.util.List;
@@ -92,6 +95,13 @@ public final class ComponentProviderClassGenerator {
     /** {@code invoke(Object target, String className, String methodId, Object[] args)}. */
     private static final MethodTypeDesc MTD_invoke =
             MethodTypeDesc.of(CD_Object, CD_Object, CD_String, CD_String, CD_Object.arrayType());
+    private static final ClassDesc CD_ReflectiveOperationException =
+            ClassDesc.of("java.lang.ReflectiveOperationException");
+    private static final String FIELD_HANDLE = "fieldHandle";
+    /** {@code fieldHandle(Lookup, String, Class, Class owner, Class fieldType)}: a condy bootstrap. */
+    private static final MethodTypeDesc MTD_fieldHandle = MethodTypeDesc.of(ConstantDescs.CD_VarHandle,
+            ConstantDescs.CD_MethodHandles_Lookup, CD_String, ConstantDescs.CD_Class, ConstantDescs.CD_Class,
+            ConstantDescs.CD_Class);
     private static final String EQUALS = "equals";
     private static final String CREATE = "create";
 
@@ -225,7 +235,7 @@ public final class ComponentProviderClassGenerator {
             if (!withArgs.isEmpty()) {
                 emitCreateWithArgs(clb, withArgs, providerCD);
             }
-            emitInjectField(clb, fieldInjects);
+            emitInjectField(clb, fieldInjects, providerCD);
             // Only when there are methods to dispatch, to keep the class minimal.
             if (!methodInvokes.isEmpty()) {
                 emitInvoke(clb, methodInvokes);
@@ -311,9 +321,10 @@ public final class ComponentProviderClassGenerator {
     /**
      * {@code injectField(Object bean, String className, String fieldName, Object value)}: for each
      * field, when both names match, {@code ((a.B) bean).f = (FieldType) value} and {@code true};
-     * {@code false} when none does.
+     * {@code false} when none does. A private field is written through a {@code VarHandle} loaded as a
+     * dynamic constant (VAU-PERF-006): resolved once, on the first write, by {@link #emitFieldHandle}.
      */
-    private static void emitInjectField(ClassBuilder clb, List<FieldInject> fieldInjects) {
+    private static void emitInjectField(ClassBuilder clb, List<FieldInject> fieldInjects, ClassDesc providerCD) {
         clb.withMethodBody("injectField", MTD_injectField, ClassFile.ACC_PUBLIC, cob -> {
             for (var fi : fieldInjects) {
                 var declCD = ClassDesc.of(fi.declaringClassFqn());
@@ -326,6 +337,15 @@ public final class ComponentProviderClassGenerator {
                     cob.aload(4);
                     cob.ifnull(next);
                 }
+                if (fi.privateField()) {
+                    // null when the field was not found: declined, the container's reflective path takes over.
+                    cob.loadConstant(DynamicConstantDesc.ofNamed(fieldHandleBootstrap(providerCD), fi.fieldName(),
+                            ConstantDescs.CD_VarHandle, declCD, fieldTypeCD));
+                    cob.astore(5);
+                    cob.aload(5);
+                    cob.ifnull(next);
+                    cob.aload(5);
+                }
                 cob.aload(1);
                 cob.checkcast(declCD);
                 cob.aload(4);
@@ -334,7 +354,12 @@ public final class ComponentProviderClassGenerator {
                 } else if (!fieldTypeCD.equals(CD_Object)) {
                     cob.checkcast(fieldTypeCD);
                 }
-                cob.putfield(declCD, fi.fieldName(), fieldTypeCD);
+                if (fi.privateField()) {
+                    cob.invokevirtual(ConstantDescs.CD_VarHandle, "set",
+                            MethodTypeDesc.of(ConstantDescs.CD_void, declCD, fieldTypeCD));
+                } else {
+                    cob.putfield(declCD, fi.fieldName(), fieldTypeCD);
+                }
                 cob.iconst_1();
                 cob.ireturn();
                 cob.labelBinding(next);
@@ -342,6 +367,43 @@ public final class ComponentProviderClassGenerator {
             cob.iconst_0();
             cob.ireturn();
         });
+        if (fieldInjects.stream().anyMatch(FieldInject::privateField)) {
+            emitFieldHandle(clb);
+        }
+    }
+
+    private static DirectMethodHandleDesc fieldHandleBootstrap(ClassDesc providerCD) {
+        return MethodHandleDesc.ofMethod(DirectMethodHandleDesc.Kind.STATIC, providerCD, FIELD_HANDLE,
+                MTD_fieldHandle);
+    }
+
+    /**
+     * {@code private static VarHandle fieldHandle(Lookup lookup, String name, Class<?> type, Class<?> owner,
+     * Class<?> fieldType)}: {@code privateLookupIn(owner, lookup).findVarHandle(owner, name, fieldType)}, or
+     * {@code null} when it fails. {@code lookup} is the provider's own, and the provider lives in the owner's
+     * module, so {@code privateLookupIn} needs no {@code opens}.
+     */
+    private static void emitFieldHandle(ClassBuilder clb) {
+        clb.withMethodBody(FIELD_HANDLE, MTD_fieldHandle,
+                ClassFile.ACC_PRIVATE | ClassFile.ACC_STATIC | ClassFile.ACC_SYNTHETIC, cob -> cob.trying(
+                        tb -> {
+                            tb.aload(3);
+                            tb.aload(0);
+                            tb.invokestatic(ConstantDescs.CD_MethodHandles, "privateLookupIn",
+                                    MethodTypeDesc.of(ConstantDescs.CD_MethodHandles_Lookup, ConstantDescs.CD_Class,
+                                            ConstantDescs.CD_MethodHandles_Lookup));
+                            tb.aload(3);
+                            tb.aload(1);
+                            tb.aload(4);
+                            tb.invokevirtual(ConstantDescs.CD_MethodHandles_Lookup, "findVarHandle",
+                                    MethodTypeDesc.of(ConstantDescs.CD_VarHandle, ConstantDescs.CD_Class, CD_String,
+                                            ConstantDescs.CD_Class));
+                            tb.areturn();
+                        },
+                        cb -> cb.catching(CD_ReflectiveOperationException, h -> {
+                            h.aconst_null();
+                            h.areturn();
+                        })));
     }
 
     /**

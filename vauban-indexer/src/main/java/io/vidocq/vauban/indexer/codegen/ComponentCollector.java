@@ -157,34 +157,28 @@ public final class ComponentCollector {
     }
 
     /**
-     * Collects non-private, non-static {@code @Inject} instance fields from {@code classInfo}.
+     * Collects non-static {@code @Inject} instance fields from {@code classInfo}.
      *
-     * <p>Private fields are skipped; a warning is appended to {@code warningsOut}:
-     * {@code "Field injection for private field <fqn>#<name> still needs opens to
-     * io.vidocq.vauban.core"}.  A primitive field is kept under its keyword ({@code "int"}): the
-     * provider unboxes the value (VAU-PERF-002). Fields whose erasure is {@code null} are silently skipped.
+     * <p>A private field is kept and marked {@link FieldInject#privateField()}: the provider writes it through a
+     * {@code VarHandle} found with its own lookup (VAU-PERF-006). A primitive field is kept under its keyword
+     * ({@code "int"}): the provider unboxes the value (VAU-PERF-002). Fields whose erasure is {@code null} are
+     * silently skipped.
      *
      * @param classInfo   the class to examine
-     * @param warningsOut mutable list to accumulate diagnostic messages (never {@code null})
      * @return the collected field injection descriptors
      */
-    public static List<FieldInject> collectFields(ClassInfo classInfo, List<String> warningsOut) {
+    public static List<FieldInject> collectFields(ClassInfo classInfo) {
         var beanFqn = classInfo.name().value();
         var result = new ArrayList<FieldInject>();
         for (FieldInfo field : classInfo.fields()) {
             boolean isInject = field.annotations().stream()
                     .anyMatch(a -> INJECT.equals(a.name().value()));
             if (!isInject || field.isStatic()) continue;
-            if (field.isPrivate()) {
-                warningsOut.add("Field injection for private field " + beanFqn + "#" + field.name()
-                        + " still needs opens to io.vidocq.vauban.core");
-            } else {
-                var erasure = field.type() instanceof TypeInfo.PrimitiveType(var kind)
-                        ? kind.name().toLowerCase(java.util.Locale.ROOT)
-                        : erasure(field.type());
-                if (erasure != null) {
-                    result.add(new FieldInject(beanFqn, field.name(), erasure));
-                }
+            var erasure = field.type() instanceof TypeInfo.PrimitiveType(var kind)
+                    ? kind.name().toLowerCase(java.util.Locale.ROOT)
+                    : erasure(field.type());
+            if (erasure != null) {
+                result.add(new FieldInject(beanFqn, field.name(), erasure, field.isPrivate()));
             }
         }
         return result;
@@ -338,7 +332,7 @@ public final class ComponentCollector {
                         });
             }
 
-            bundle.fields().addAll(collectFields(provided.classInfo(), warningsOut));
+            bundle.fields().addAll(collectFields(provided.classInfo()));
             bundle.methods().addAll(collectMethods(provided.classInfo(), warningsOut));
         }
 

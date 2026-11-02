@@ -118,6 +118,54 @@ class ComponentProviderCompileTimeTest {
         assertTrue(Files.exists(result.outputDir().resolve("app/_VaubanComponents.class")));
     }
 
+    /**
+     * VAU-PERF-006: a private {@code @Inject} field is written by the provider through a {@code VarHandle}
+     * found once with its own lookup, instead of by {@code Field.set} at each bean creation. A field whose
+     * type is nested is left to the container (its source name is not always reachable from the provider).
+     */
+    @Test
+    @DisplayName("the provider writes private @Inject fields through a VarHandle")
+    void providerWritesPrivateInjectFields() throws Exception {
+        var result = compile("Vault", """
+                package app;
+
+                @jakarta.enterprise.context.RequestScoped
+                public class Vault {
+                    @jakarta.inject.Inject private String secret;
+                    @jakarta.inject.Inject private int port;
+                    @jakarta.inject.Inject private Kind kind;
+                    public String secret() { return secret; }
+                    public int port() { return port; }
+                    public static class Kind {}
+                }
+
+                @jakarta.enterprise.context.ApplicationScoped
+                class Values {
+                    @jakarta.enterprise.inject.Produces String secret() { return "s"; }
+                    @jakarta.enterprise.inject.Produces int port() { return 8080; }
+                    @jakarta.enterprise.inject.Produces Vault.Kind kind() { return new Vault.Kind(); }
+                }
+                """);
+
+        assertTrue(result.success(), "compilation should succeed. Messages: " + result.messages());
+        var src = Files.readString(result.genDir().resolve("app/_VaubanComponents.java"));
+        assertFalse(src.contains("case \"kind\""), src);
+        try (var loader = new java.net.URLClassLoader(new java.net.URL[] {result.outputDir().toUri().toURL()},
+                getClass().getClassLoader())) {
+            var vaultClass = loader.loadClass("app.Vault");
+            var provider = (VaubanComponentProvider) loader.loadClass("app._VaubanComponents")
+                    .getDeclaredConstructor().newInstance();
+            var vault = vaultClass.getDeclaredConstructor().newInstance();
+
+            assertTrue(provider.injectField(vault, "app.Vault", "secret", "s3cr3t"));
+            assertTrue(provider.injectField(vault, "app.Vault", "port", 8080));
+            assertFalse(provider.injectField(vault, "app.Vault", "port", null), "null is declined, not unboxed");
+            assertFalse(provider.injectField(vault, "app.Vault", "kind", new Object()));
+            assertEquals("s3cr3t", vaultClass.getMethod("secret").invoke(vault));
+            assertEquals(8080, vaultClass.getMethod("port").invoke(vault));
+        }
+    }
+
     @Test
     @DisplayName("generates a compiling args-overload casting resolved deps for an @Inject-ctor bean")
     void generatesArgAwareProviderForInjectConstructorBean() throws Exception {

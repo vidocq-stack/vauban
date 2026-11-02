@@ -144,9 +144,13 @@ class ProducerAndProviderScenariosTest {
         assertFalse(Files.exists(result.generated().resolve("app/Locked_ClientProxy.java")));
     }
 
+    /** VAU-PERF-006: written through a VarHandle, so no longer reported as needing {@code opens}. */
     @Test
-    void aPrivateInjectedFieldIsReportedAsNeedingOpens() {
-        assertTrue(result.mentions("Field injection for private field app.Holder#hidden still needs opens"),
+    void aPrivateInjectedFieldIsWrittenByTheProvider() throws IOException {
+        var provider = provider("app");
+
+        assertTrue(provider.contains("case \"hidden\" -> { var h = "), provider);
+        assertFalse(result.mentions("Field injection for private field app.Holder#hidden"),
                 result.messages().toString());
     }
 

@@ -245,6 +245,54 @@ class ComponentProviderClassGeneratorTest {
     }
 
     /**
+     * VAU-PERF-006: a private {@code @Inject} field is written through a {@code VarHandle} the provider
+     * finds with its own lookup, so the container needs neither {@code Field.set} nor {@code opens}. A
+     * field the provider cannot find (the class changed after the build) is declined, not thrown: the
+     * container then takes its reflective path, as before.
+     */
+    @Test
+    @DisplayName("injectField writes private fields through a VarHandle and declines a missing one")
+    void injectFieldWritesPrivateFields() throws Exception {
+        var pkg = "io.vidocq.vauban.core.provider.test.privatefield";
+        var targetFqn = pkg + ".PrivateTarget";
+        byte[] targetBytes = ClassFile.of().build(ClassDesc.of(targetFqn), clb -> {
+            clb.withFlags(ClassFile.ACC_PUBLIC | ClassFile.ACC_SUPER);
+            clb.withSuperclass(ConstantDescs.CD_Object);
+            clb.withField("secret", ConstantDescs.CD_String, ClassFile.ACC_PRIVATE);
+            clb.withField("count", ConstantDescs.CD_int, ClassFile.ACC_PRIVATE);
+            clb.withMethodBody(ConstantDescs.INIT_NAME, MethodTypeDesc.of(ConstantDescs.CD_void),
+                    ClassFile.ACC_PUBLIC, cob -> {
+                        cob.aload(0);
+                        cob.invokespecial(ConstantDescs.CD_Object, ConstantDescs.INIT_NAME,
+                                MethodTypeDesc.of(ConstantDescs.CD_void));
+                        cob.return_();
+                    });
+        });
+        var gen = ComponentProviderClassGenerator.generate(pkg + "._GenPrivateComponents", List.of(),
+                List.of(new FieldInject(targetFqn, "secret", "java.lang.String", true),
+                        new FieldInject(targetFqn, "count", "int", true),
+                        new FieldInject(targetFqn, "renamed", "java.lang.String", true)));
+        var loader = new ByteClassLoader(getClass().getClassLoader());
+        var targetClass = loader.define(targetFqn, targetBytes);
+        var provider = (VaubanComponentProvider) loader.define(gen.className(), gen.bytecode())
+                .getDeclaredConstructor().newInstance();
+        var bean = targetClass.getDeclaredConstructor().newInstance();
+
+        assertTrue(provider.injectField(bean, targetFqn, "secret", "s3cr3t"));
+        assertTrue(provider.injectField(bean, targetFqn, "count", 3));
+        assertFalse(provider.injectField(bean, targetFqn, "count", null), "null is declined, not unboxed");
+        assertFalse(provider.injectField(bean, targetFqn, "renamed", "x"), "a field not found is declined");
+        assertFalse(provider.injectField(bean, targetFqn, "renamed", "x"), "and declined again, not thrown");
+
+        var secret = targetClass.getDeclaredField("secret");
+        secret.setAccessible(true);
+        var count = targetClass.getDeclaredField("count");
+        count.setAccessible(true);
+        assertEquals("s3cr3t", secret.get(bean));
+        assertEquals(3, count.get(bean));
+    }
+
+    /**
      * Generates bytecode for a minimal bean class with two package-private fields:
      * {@code String service} and {@code Object dependency}.
      */

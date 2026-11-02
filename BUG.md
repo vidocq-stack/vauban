@@ -5,6 +5,27 @@ suspected cause, status. Updated on every investigation.
 
 ---
 
+## VAU-PERF-006 — A private `@Inject` field is written by reflection at each creation of its bean
+- **Date**: 2026-11-02 — **Status**: FIXED (perf/private-inject-lookups)
+- **Severity**: low (reflection on the request path for `@RequestScoped` / `@Dependent` beans with private fields)
+
+### Symptom
+The generated `_VaubanComponents` assigned only non-private `@Inject` fields. For a private one the processor
+warned "still needs opens" and the container wrote it with `VaubanLookup.setField` — `privateLookupIn` and
+`unreflectSetter` on the `Field` — at every creation of the bean.
+
+### Fix
+The provider writes a private field through a `VarHandle` it finds once with its own lookup:
+`privateLookupIn(owner, lookup()).findVarHandle(...)`. The provider is in the owner's module, so no `opens` is
+needed. The generated source keeps the handles in one lazy holder per class; the bytecode generator loads each as a
+dynamic constant. A field the provider cannot find is declined, and the container's reflective path takes over, as
+before. A private field whose type is nested stays with the container in the generated source (its binary name is
+not its source name). Without a generated provider (Weld, Open Liberty, a module built without the processor)
+nothing changes: `PrivateFieldFallbackTest`. Tests: `ComponentCollectorMemberSelectionTest`,
+`ComponentProviderClassGeneratorTest`, `ComponentProviderCompileTimeTest`, `ProducerAndProviderScenariosTest`.
+
+---
+
 ## VAU-PERF-005 — Every boot replays the whole BCE lifecycle because no brick archive carries the BCE-processed marker
 - **Date**: 2026-11-02 — **Status**: OPEN (analysis; design decision needed)
 - **Severity**: medium (≈ 940 `Method.invoke` and a full discovery at every boot of a Vidocq application)

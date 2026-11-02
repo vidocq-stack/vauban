@@ -134,7 +134,11 @@ final class ComponentProviderArtefacts {
      */
     private List<FieldInject> fieldsWithPublicMutables(PackageProvider pkg,
             List<ProvidedClass> providedClasses) {
-        var fields = new ArrayList<>(pkg.fields());
+        // A private field is written through a VarHandle naming its type by a class literal; a nested type's
+        // binary name is not its source name, so such a field stays with the container (VAU-PERF-006).
+        var fields = new ArrayList<>(pkg.fields().stream()
+                .filter(f -> !f.privateField() || !f.fieldTypeErasure().contains("$"))
+                .toList());
         for (var provided : providedClasses.stream()
                 .sorted(Comparator.comparing(ProvidedClass::fqn)).toList()) {
             var owner = TypeLookup.typeElementByBinaryName(processingEnv.getElementUtils(), provided.fqn());
