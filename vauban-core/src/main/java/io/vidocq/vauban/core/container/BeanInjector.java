@@ -100,6 +100,38 @@ final class BeanInjector {
     }
 
     static List<java.lang.reflect.Member> injectionOrder(Class<?> beanClass, BeanDescriptor descriptor) {
+        Object key = descriptor == null ? NO_DESCRIPTOR : new DescriptorKey(descriptor);
+        return INJECTION_ORDERS.get(unwrapInterceptedSubclass(beanClass))
+                .computeIfAbsent(key, k -> List.copyOf(computeInjectionOrder(beanClass, descriptor)));
+    }
+
+    /**
+     * The injection order of each class, per descriptor: read once by reflection, then reused at every creation of
+     * a bean (VAU-PERF-003). A {@link ClassValue} ties it to the class, so a reloaded class gets its own.
+     */
+    private static final ClassValue<Map<Object, List<java.lang.reflect.Member>>> INJECTION_ORDERS =
+            new ClassValue<>() {
+                @Override
+                protected Map<Object, List<java.lang.reflect.Member>> computeValue(Class<?> type) {
+                    return new java.util.concurrent.ConcurrentHashMap<>();
+                }
+            };
+    private static final Object NO_DESCRIPTOR = new Object();
+
+    /** A descriptor as a cache key, by identity: hashing a descriptor record would walk all its injection points. */
+    private record DescriptorKey(BeanDescriptor descriptor) {
+        @Override
+        public boolean equals(Object o) {
+            return o instanceof DescriptorKey other && other.descriptor == descriptor;
+        }
+
+        @Override
+        public int hashCode() {
+            return System.identityHashCode(descriptor);
+        }
+    }
+
+    private static List<java.lang.reflect.Member> computeInjectionOrder(Class<?> beanClass, BeanDescriptor descriptor) {
         var hierarchy = hierarchySuperFirst(unwrapInterceptedSubclass(beanClass));
         var members = new ArrayList<java.lang.reflect.Member>();
         for (int i = 0; i < hierarchy.size(); i++) {

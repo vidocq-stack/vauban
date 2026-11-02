@@ -228,30 +228,7 @@ public final class ManagedBean<T> implements Bean<T> {
 
     private static java.util.List<java.lang.reflect.Method> collectLifecycleMethodsInHierarchy(
             Class<?> clazz, Class<? extends java.lang.annotation.Annotation> annotation) {
-        if (clazz.getName().contains(INTERCEPTED_SUFFIX) || clazz.getName().contains("$$Proxy")
-                || clazz.getName().contains("_ClientProxy")) {
-            clazz = clazz.getSuperclass();
-        }
-        var result = new java.util.ArrayList<java.lang.reflect.Method>();
-        collectLifecycleMethodsRecursive(clazz, annotation, result);
-        return result;
-    }
-
-    private static void collectLifecycleMethodsRecursive(Class<?> clazz,
-            Class<? extends java.lang.annotation.Annotation> annotation,
-            java.util.List<java.lang.reflect.Method> result) {
-        if (clazz == null || clazz == Object.class) return;
-        collectLifecycleMethodsRecursive(clazz.getSuperclass(), annotation, result);
-        for (var method : clazz.getDeclaredMethods()) {
-            if (method.isAnnotationPresent(annotation)) {
-                result.removeIf(m -> m.getName().equals(method.getName())
-                        && java.util.Arrays.equals(m.getParameterTypes(), method.getParameterTypes()));
-                result.add(method);
-            } else {
-                result.removeIf(m -> m.getName().equals(method.getName())
-                        && java.util.Arrays.equals(m.getParameterTypes(), method.getParameterTypes()));
-            }
-        }
+        return BeanLifecycle.collectLifecycleMethodsInHierarchy(clazz, annotation);
     }
 
     private Set<java.lang.annotation.Annotation> collectBindingAnnotations(Object instance) {
@@ -1048,7 +1025,23 @@ public final class ManagedBean<T> implements Bean<T> {
         }
     }
 
+    /**
+     * How the type variables of {@code beanClass}'s superclasses resolve: read once per class, then reused at every
+     * creation of a bean (VAU-PERF-003). Unmodifiable.
+     */
     public static Map<java.lang.reflect.TypeVariable<?>, Type> buildTypeVariableMapping(Class<?> beanClass) {
+        return TYPE_VARIABLE_MAPPINGS.get(beanClass);
+    }
+
+    private static final ClassValue<Map<java.lang.reflect.TypeVariable<?>, Type>> TYPE_VARIABLE_MAPPINGS =
+            new ClassValue<>() {
+                @Override
+                protected Map<java.lang.reflect.TypeVariable<?>, Type> computeValue(Class<?> type) {
+                    return Map.copyOf(computeTypeVariableMapping(type));
+                }
+            };
+
+    private static Map<java.lang.reflect.TypeVariable<?>, Type> computeTypeVariableMapping(Class<?> beanClass) {
         var mapping = new java.util.HashMap<java.lang.reflect.TypeVariable<?>, Type>();
         Class<?> cls = beanClass;
         while (cls != null && cls != Object.class) {

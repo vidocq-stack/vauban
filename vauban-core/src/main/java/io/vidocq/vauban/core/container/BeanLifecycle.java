@@ -133,15 +133,30 @@ final class BeanLifecycle {
         return true;
     }
 
+    /**
+     * The {@code annotation} callbacks of {@code clazz}'s hierarchy, superclass first, respecting overrides: read once
+     * per class and kind, then reused at every creation and destruction of a bean (VAU-PERF-003). An intercepted
+     * subclass, a proxy or a client proxy stands for the class it extends.
+     */
     static List<Method> collectLifecycleMethodsInHierarchy(
             Class<?> clazz, Class<? extends Annotation> annotation) {
-        if (clazz.getName().contains(INTERCEPTED_SUFFIX) || clazz.getName().contains("$$Proxy")) {
-            clazz = clazz.getSuperclass();
-        }
-        var result = new ArrayList<Method>();
-        collectLifecycleMethodsRecursive(clazz, annotation, result);
-        return result;
+        var name = clazz.getName();
+        var target = name.contains(INTERCEPTED_SUFFIX) || name.contains("$$Proxy") || name.contains("_ClientProxy")
+                ? clazz.getSuperclass() : clazz;
+        return LIFECYCLE_METHODS.get(target).computeIfAbsent(annotation, a -> {
+            var result = new ArrayList<Method>();
+            collectLifecycleMethodsRecursive(target, a, result);
+            return List.copyOf(result);
+        });
     }
+
+    private static final ClassValue<java.util.Map<Class<? extends Annotation>, List<Method>>> LIFECYCLE_METHODS =
+            new ClassValue<>() {
+                @Override
+                protected java.util.Map<Class<? extends Annotation>, List<Method>> computeValue(Class<?> type) {
+                    return new java.util.concurrent.ConcurrentHashMap<>();
+                }
+            };
 
     private static void collectLifecycleMethodsRecursive(Class<?> clazz,
             Class<? extends Annotation> annotation,

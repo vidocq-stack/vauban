@@ -70,6 +70,11 @@ public final class VaubanBeanManager implements BeanManager {
         return customQualifierTypes.contains(annotationType);
     }
 
+    /** The interceptor binding types a BCE declared; a new set replaces it as a whole. */
+    public static Set<Class<? extends Annotation>> customInterceptorBindingTypes() {
+        return customInterceptorBindingTypes;
+    }
+
     public static boolean isCustomInterceptorBinding(Class<?> annotationType) {
         return customInterceptorBindingTypes.contains(annotationType);
     }

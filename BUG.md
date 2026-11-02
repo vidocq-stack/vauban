@@ -5,6 +5,46 @@ suspected cause, status. Updated on every investigation.
 
 ---
 
+## VAU-PERF-003 — Every creation of a bean reads its class again by reflection
+- **Date**: 2026-11-02 — **Status**: FIXED (perf/creation-plan-cache)
+- **Severity**: medium (reflection on the request path: a `@RequestScoped` or `@Dependent` bean is created on every request)
+
+### Symptom
+The reflection audit's tracer counted 1,532 reflective calls from vauban-core while serving requests in an
+application with eleven extensions: at each creation of a bean, `BeanInjector.injectionOrder` walked the hierarchy
+with `getDeclaredFields`/`getDeclaredMethods` and `isAnnotationPresent(@Inject)` on every member,
+`BeanLifecycle`/`ManagedBean` collected the `@PostConstruct`/`@PreDestroy` methods the same way,
+`buildTypeVariableMapping` read the generic superclasses, the `@Inject` constructor and its parameters
+(`getDeclaredConstructors`, `getParameters`, qualifiers, `@TransientReference`) were looked up again, and the
+`@AroundConstruct` interceptors of an intercepted bean were matched from the class's and the constructor's
+annotations.
+
+### Fix
+What these read depends on the class alone (and the bean's descriptor), so it is worked out once and reused: the
+injection order per class and descriptor, the lifecycle callbacks per class and kind, the type-variable mapping per
+class (all in `ClassValue`s, so a reloaded class gets its own), the constructor plan per bean factory, and the
+`@AroundConstruct` interceptors per class, constructor and bindings (`InterceptorManager`, cleared like the method
+chains when an `@Enhancement` adds a binding). The reflective computation itself is unchanged; it runs once.
+`CreationPlanCacheTest`. Traced again: 6 reflective calls from vauban-core while serving the same requests
+(`ModuleLookups$Deployment.privateLookupIn`).
+
+---
+
+## VAU-PERF-004 — `InvocationContext.getInterceptorBindings()` reads the annotations on every intercepted call
+- **Date**: 2026-11-02 — **Status**: FIXED (perf/creation-plan-cache)
+- **Severity**: low (reflection on every call of an interceptor that asks for its bindings, e.g. Mansart's `@Transactional`)
+
+### Symptom
+For a business method, `VaubanInvocationContext.getInterceptorBindings()` derived the bindings from
+`beanClass.getAnnotations()`, `method.getAnnotations()` and the meta-bindings on each invocation.
+
+### Fix
+The derived set is computed once per class, method, container and set of custom binding types (a BCE may declare
+one after a first derivation) and shared, unmodifiable. `InterceptorBindingsCacheTest`;
+`CustomInterceptorBindingRegressionTest` still green.
+
+---
+
 ## VAU-PERF-001 — The request context's lifecycle events reach `AnnotationLiteral` by reflection
 - **Date**: 2026-11-02 — **Status**: FIXED (fix/no-reflection-per-request)
 - **Severity**: low (reflection on the request path, against the build-time-first rule)

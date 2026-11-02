@@ -790,16 +790,46 @@ public final class VaubanContainer implements AutoCloseable {
             }
         }
 
-        private Object construct(CreationalContext<Object> creationalCtx) throws ClassNotFoundException {
-            var beanClass = loadClass(descriptor.beanClass().value());
+        /** What {@link #construct} reads from the class, read once: the constructor and its parameters (VAU-PERF-003). */
+        private volatile CtorPlan plan;
 
-            var injectCtor = injectConstructor(beanClass, ctorParamCount, descriptor.injectionPoints());
-            if (injectCtor == null) {
-                throw new ContainerOperationException("No @Inject constructor found for " + descriptor.beanClass());
+        private record CtorPlan(java.lang.reflect.Constructor<?> ctor, Class<?>[] types,
+                                java.lang.reflect.Type[] genericTypes, java.lang.reflect.Parameter[] parameters,
+                                Annotation[][] qualifiers, boolean[] transientReference) {}
+
+        private CtorPlan plan() throws ClassNotFoundException {
+            var current = plan;
+            if (current == null) {
+                var beanClass = loadClass(descriptor.beanClass().value());
+                var injectCtor = injectConstructor(beanClass, ctorParamCount, descriptor.injectionPoints());
+                if (injectCtor == null) {
+                    throw new ContainerOperationException("No @Inject constructor found for " + descriptor.beanClass());
+                }
+                var parameters = injectCtor.getParameters();
+                var qualifiers = new Annotation[parameters.length][];
+                var transientReference = new boolean[parameters.length];
+                for (int i = 0; i < parameters.length; i++) {
+                    // The descriptor describes every constructor parameter; reading the
+                    // parameter back is only for one it does not (vauban#70).
+                    var described = QualifierHelper.parameterQualifiers(
+                            descriptor.injectionPoints(), injectCtor, i, qualifierMatcher().types());
+                    qualifiers[i] = described != null ? described : QualifierHelper.extractParamQualifiers(parameters[i]);
+                    transientReference[i] = parameters[i].isAnnotationPresent(
+                            jakarta.enterprise.inject.TransientReference.class);
+                }
+                current = new CtorPlan(injectCtor, injectCtor.getParameterTypes(),
+                        injectCtor.getGenericParameterTypes(), parameters, qualifiers, transientReference);
+                plan = current;
             }
+            return current;
+        }
+
+        private Object construct(CreationalContext<Object> creationalCtx) throws ClassNotFoundException {
+            var ctorPlan = plan();
+            var injectCtor = ctorPlan.ctor();
 
             var transientCtxs = new java.util.ArrayList<io.vidocq.vauban.core.context.CreationalContextImpl<?>>();
-            var args = constructorArgs(injectCtor, creationalCtx, transientCtxs);
+            var args = constructorArgs(ctorPlan, creationalCtx, transientCtxs);
 
             // Provider-first: let the owning module run `new X(args…)` in-module (no
             // opens); fall back to reflective construction when no provider owns it.
@@ -842,22 +872,18 @@ public final class VaubanContainer implements AutoCloseable {
          * The arguments of the injection constructor. A {@code @TransientReference} parameter gets a creational
          * context of its own, added to {@code transientCtxs} for the caller to release.
          */
-        private Object[] constructorArgs(java.lang.reflect.Constructor<?> injectCtor,
+        private Object[] constructorArgs(CtorPlan ctorPlan,
                                          CreationalContext<Object> creationalCtx,
                                          List<io.vidocq.vauban.core.context.CreationalContextImpl<?>> transientCtxs) {
-            var paramTypes = injectCtor.getParameterTypes();
-            var genericParamTypes = injectCtor.getGenericParameterTypes();
-            var ctorParamsRefl = injectCtor.getParameters();
+            var injectCtor = ctorPlan.ctor();
+            var paramTypes = ctorPlan.types();
+            var genericParamTypes = ctorPlan.genericTypes();
+            var ctorParamsRefl = ctorPlan.parameters();
             var ctorOwnerBean = beans.get(descriptor.id());
             var args = new Object[paramTypes.length];
             for (int i = 0; i < paramTypes.length; i++) {
-                // The descriptor describes every constructor parameter; reading the
-                // parameter back is only for one it does not (vauban#70).
-                var described = QualifierHelper.parameterQualifiers(
-                        descriptor.injectionPoints(), injectCtor, i, qualifierMatcher().types());
-                var pQuals = described != null
-                        ? described : QualifierHelper.extractParamQualifiers(ctorParamsRefl[i]);
-                if (ctorParamsRefl[i].isAnnotationPresent(jakarta.enterprise.inject.TransientReference.class)) {
+                var pQuals = ctorPlan.qualifiers()[i];
+                if (ctorPlan.transientReference()[i]) {
                     var transientCtx = new io.vidocq.vauban.core.context.CreationalContextImpl<>();
                     args[i] = resolveParameter(paramTypes[i], genericParamTypes[i], transientCtx, pQuals, injectCtor, ctorOwnerBean, ctorParamsRefl[i], i);
                     transientCtxs.add(transientCtx);

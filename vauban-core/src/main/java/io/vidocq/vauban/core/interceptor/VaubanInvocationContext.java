@@ -229,42 +229,68 @@ public final class VaubanInvocationContext implements InvocationContext {
             if (beanClass.getName().contains("$$Intercepted") || beanClass.getName().contains("$$Proxy")) {
                 beanClass = beanClass.getSuperclass();
             }
-            // Class-level bindings (indexed by annotation type for override logic)
-            var bindingsByType = new java.util.LinkedHashMap<Class<? extends java.lang.annotation.Annotation>,
-                    java.lang.annotation.Annotation>();
-            for (var ann : beanClass.getAnnotations()) {
-                if (isInterceptorBinding(ann)) {
-                    bindingsByType.put(ann.annotationType(), ann);
-                }
-            }
-            // Method-level bindings override class-level of the same type. They are read off the
-            // declaration getMethod() reports, the one InterceptorManager read them from to build
-            // the chain (BusinessMethods), inherited and interface default methods included.
             var resolvedMethod = getMethod();
-            if (resolvedMethod != null) {
-                // A method-level binding replaces the class-level binding of the same type.
-                for (var ann : resolvedMethod.getAnnotations()) {
-                    if (isInterceptorBinding(ann)) {
-                        bindingsByType.put(ann.annotationType(), ann);
-                    }
-                }
-            }
-            // Include enhanced bindings added via BCE Enhancement
             var mgr = InterceptorManager.currentInstance();
-            if (mgr != null) {
-                for (var ann : mgr.getEnhancedBindings(beanClass.getName())) {
-                    if (isInterceptorBinding(ann)) {
-                        bindingsByType.put(ann.annotationType(), ann);
-                    }
-                }
-            }
-            // Transitively resolve meta-bindings
-            var result = new java.util.LinkedHashSet<java.lang.annotation.Annotation>(bindingsByType.values());
-            addTransitiveBindings(result);
+            var declaring = beanClass;
+            var result = DERIVED_BINDINGS.get(beanClass).computeIfAbsent(
+                    new DerivedBindings(resolvedMethod, mgr,
+                            io.vidocq.vauban.core.container.VaubanBeanManager.customInterceptorBindingTypes()),
+                    key -> deriveBindings(declaring, key));
             interceptorBindings = result;
             return result;
         }
         return Set.of();
+    }
+
+    /**
+     * The bindings {@link #getInterceptorBindings()} derives, per class, method and container: worked out once, as
+     * they depend on declarations alone, instead of reading the annotations again on every intercepted call
+     * (VAU-PERF-004). The container is part of the key for the bindings an {@code @Enhancement} added.
+     */
+    private static final ClassValue<java.util.Map<DerivedBindings, Set<java.lang.annotation.Annotation>>>
+            DERIVED_BINDINGS = new ClassValue<>() {
+                @Override
+                protected java.util.Map<DerivedBindings, Set<java.lang.annotation.Annotation>> computeValue(
+                        Class<?> type) {
+                    return new java.util.concurrent.ConcurrentHashMap<>();
+                }
+            };
+
+    /** The custom binding types are part of the key: a BCE may declare one after a first derivation. */
+    private record DerivedBindings(Method method, InterceptorManager manager,
+            Set<Class<? extends java.lang.annotation.Annotation>> customBindingTypes) {}
+
+    private static Set<java.lang.annotation.Annotation> deriveBindings(Class<?> beanClass, DerivedBindings key) {
+        // Class-level bindings (indexed by annotation type for override logic)
+        var bindingsByType = new java.util.LinkedHashMap<Class<? extends java.lang.annotation.Annotation>,
+                java.lang.annotation.Annotation>();
+        for (var ann : beanClass.getAnnotations()) {
+            if (isInterceptorBinding(ann)) {
+                bindingsByType.put(ann.annotationType(), ann);
+            }
+        }
+        // Method-level bindings override class-level of the same type. They are read off the
+        // declaration getMethod() reports, the one InterceptorManager read them from to build
+        // the chain (BusinessMethods), inherited and interface default methods included.
+        if (key.method() != null) {
+            for (var ann : key.method().getAnnotations()) {
+                if (isInterceptorBinding(ann)) {
+                    bindingsByType.put(ann.annotationType(), ann);
+                }
+            }
+        }
+        // Include enhanced bindings added via BCE Enhancement
+        if (key.manager() != null) {
+            for (var ann : key.manager().getEnhancedBindings(beanClass.getName())) {
+                if (isInterceptorBinding(ann)) {
+                    bindingsByType.put(ann.annotationType(), ann);
+                }
+            }
+        }
+        // Transitively resolve meta-bindings
+        var result = new java.util.LinkedHashSet<java.lang.annotation.Annotation>(bindingsByType.values());
+        addTransitiveBindings(result);
+        return java.util.Collections.unmodifiableSet(result);
     }
 
     private static boolean isInterceptorBinding(java.lang.annotation.Annotation ann) {

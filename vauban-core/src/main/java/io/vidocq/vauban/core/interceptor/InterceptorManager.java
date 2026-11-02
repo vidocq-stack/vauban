@@ -60,6 +60,16 @@ public final class InterceptorManager {
     private record MethodChain(Class<?> beanClass, java.lang.reflect.Method method) {}
 
     /**
+     * Which interceptors apply to a constructor, worked out once: every creation of an intercepted bean used to read
+     * the class's and the constructor's annotations again (VAU-PERF-003). Only the instances are per creation.
+     */
+    private final Map<ConstructChain, List<InterceptorDescriptor>> constructChainCache =
+            new java.util.concurrent.ConcurrentHashMap<>();
+
+    private record ConstructChain(Class<?> beanClass, java.lang.reflect.Constructor<?> constructor,
+            Set<DotName> classBindings) {}
+
+    /**
      * The {@code @AroundInvoke}, {@code @AroundConstruct}, ... methods of a class: its declarations alone decide them,
      * and every intercepted call used to walk its hierarchy for them.
      */
@@ -82,6 +92,7 @@ public final class InterceptorManager {
             // Boot-time, before any invocation — but a binding added after a chain was worked out
             // would make it stale, and nothing else would say so.
             chainCache.clear();
+            constructChainCache.clear();
         }
     }
 
@@ -337,22 +348,38 @@ public final class InterceptorManager {
     /**
      * Resolve the interceptor chain for a constructor.
      */
-    @SuppressWarnings("java:S135")
     public List<VaubanInvocationContext.InterceptorInvocation> resolveAroundConstructChain(
             Set<DotName> classBindings, java.lang.reflect.Constructor<?> constructor, Class<?> beanClass, CreationalContext<?> ctx) {
         if (beanClass.getName().contains(INTERCEPTED_SUFFIX)) {
             beanClass = beanClass.getSuperclass();
         }
-        
+        var target = beanClass;
+        var matches = constructChainCache.computeIfAbsent(
+                new ConstructChain(target, constructor, classBindings == null ? Set.of() : Set.copyOf(classBindings)),
+                key -> aroundConstructInterceptors(key.classBindings(), key.constructor(), key.beanClass()));
+
+        var chain = new ArrayList<VaubanInvocationContext.InterceptorInvocation>();
+        for (var descriptor : matches) {
+            var instance = getOrCreateInstance(descriptor, ctx);
+            addLifecycleInvocations(instance.getClass(), instance, jakarta.interceptor.AroundConstruct.class, chain);
+        }
+
+        // Target class @AroundConstruct methods are invoked last
+        addLifecycleInvocations(target, null, jakarta.interceptor.AroundConstruct.class, chain);
+
+        return chain;
+    }
+
+    /** The interceptors bound to {@code constructor} of {@code beanClass}, in priority order. */
+    @SuppressWarnings("java:S135")
+    private List<InterceptorDescriptor> aroundConstructInterceptors(
+            Set<DotName> classBindings, java.lang.reflect.Constructor<?> constructor, Class<?> beanClass) {
         var bindingsMap = collectAllBindings(beanClass);
         if (constructor != null) {
             collectBindingsRecursively(constructor.getAnnotations(), bindingsMap, new java.util.HashSet<>());
         }
-        
-        var allBindings = new java.util.LinkedHashSet<DotName>();
-        if (classBindings != null) {
-            allBindings.addAll(classBindings);
-        }
+
+        var allBindings = new java.util.LinkedHashSet<DotName>(classBindings);
         for (var type : bindingsMap.keySet()) {
             allBindingNamesAdd(allBindings, type.getName());
         }
@@ -373,17 +400,7 @@ public final class InterceptorManager {
         // Sort by priority
         matches.sort(java.util.Comparator.comparingInt(InterceptorDescriptor::priority)
                 .thenComparing(d -> d.interceptorClass().toString()));
-
-        var chain = new ArrayList<VaubanInvocationContext.InterceptorInvocation>();
-        for (var descriptor : matches) {
-            var instance = getOrCreateInstance(descriptor, ctx);
-            addLifecycleInvocations(instance.getClass(), instance, jakarta.interceptor.AroundConstruct.class, chain);
-        }
-        
-        // Target class @AroundConstruct methods are invoked last
-        addLifecycleInvocations(beanClass, null, jakarta.interceptor.AroundConstruct.class, chain);
-
-        return chain;
+        return List.copyOf(matches);
     }
 
     private void allBindingNamesAdd(Set<DotName> allBindings, String name) {
