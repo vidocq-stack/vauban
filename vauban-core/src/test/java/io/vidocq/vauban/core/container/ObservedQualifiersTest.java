@@ -91,4 +91,28 @@ class ObservedQualifiersTest {
         assertEquals(List.of(Initialized.Literal.REQUEST, Destroyed.Literal.REQUEST), fired);
         assertFalse(fired.contains(BeforeDestroyed.Literal.REQUEST));
     }
+
+    @Test
+    void concurrentFirstRequestsResolveTheObserversOnce() throws Exception {
+        var qualifier = new CountingQualifier();
+        var resolutions = new AtomicInteger();
+        var fired = new AtomicInteger();
+        var events = new ObservedQualifiers(q -> { resolutions.incrementAndGet(); return true; },
+                q -> fired.incrementAndGet());
+        var start = new java.util.concurrent.CountDownLatch(1);
+        try (var executor = java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor()) {
+            for (int i = 0; i < 64; i++) {
+                executor.submit(() -> {
+                    start.await();
+                    events.accept(qualifier);
+                    return null;
+                });
+            }
+            start.countDown();
+        }
+
+        assertEquals(1, resolutions.get());
+        assertEquals(64, fired.get());
+        assertEquals(0, qualifier.calls.get());
+    }
 }

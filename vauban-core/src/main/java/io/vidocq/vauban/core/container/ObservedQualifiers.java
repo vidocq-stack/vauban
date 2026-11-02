@@ -36,8 +36,9 @@ final class ObservedQualifiers implements Consumer<Annotation> {
 
     private final Predicate<Annotation> hasObservers;
     private final Consumer<Annotation> fire;
-    /** Copy-on-write: read without locking on every request, written once per new qualifier. */
-    private volatile Entry[] entries = new Entry[0];
+    /** Copy-on-write: read without locking on every request, replaced as a whole once per new qualifier. */
+    private final java.util.concurrent.atomic.AtomicReference<Entry[]> entries =
+            new java.util.concurrent.atomic.AtomicReference<>(new Entry[0]);
 
     ObservedQualifiers(Predicate<Annotation> hasObservers, Consumer<Annotation> fire) {
         this.hasObservers = hasObservers;
@@ -52,25 +53,29 @@ final class ObservedQualifiers implements Consumer<Annotation> {
     }
 
     private boolean observed(Annotation qualifier) {
-        for (var entry : entries) {
-            if (entry.qualifier() == qualifier) {
-                return entry.observed();
-            }
-        }
-        return resolve(qualifier);
+        var known = find(entries.get(), qualifier);
+        return known != null ? known.observed() : resolve(qualifier);
     }
 
     private synchronized boolean resolve(Annotation qualifier) {
-        var current = entries;
-        for (var entry : current) {
-            if (entry.qualifier() == qualifier) {
-                return entry.observed();
-            }
+        var current = entries.get();
+        var known = find(current, qualifier); // another thread may have resolved it meanwhile
+        if (known != null) {
+            return known.observed();
         }
         var observed = hasObservers.test(qualifier);
         var next = java.util.Arrays.copyOf(current, current.length + 1);
         next[current.length] = new Entry(qualifier, observed);
-        entries = next;
+        entries.set(next);
         return observed;
+    }
+
+    private static Entry find(Entry[] entries, Annotation qualifier) {
+        for (var entry : entries) {
+            if (entry.qualifier() == qualifier) {
+                return entry;
+            }
+        }
+        return null;
     }
 }

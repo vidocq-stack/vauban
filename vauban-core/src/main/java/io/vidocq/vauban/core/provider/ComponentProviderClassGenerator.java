@@ -530,10 +530,6 @@ public final class ComponentProviderClassGenerator {
         }
     }
 
-    /**
-     * Resolves a field type erasure (as stored in {@link FieldInject#fieldTypeErasure()}) to a
-     * {@link ClassDesc}. Handles simple array types expressed as {@code "ComponentType[]"}.
-     */
     /** {@code ((Integer) value).intValue()} and its siblings: the wrapper's unboxing method for {@code primitive}. */
     private static void emitUnbox(CodeBuilder cob, ClassDesc primitive) {
         var wrapper = switch (primitive.descriptorString()) {
@@ -551,8 +547,13 @@ public final class ComponentProviderClassGenerator {
         cob.invokevirtual(wrapper, primitive.displayName() + "Value", MethodTypeDesc.of(primitive));
     }
 
+    /**
+     * Resolves a field type erasure (as stored in {@link FieldInject#fieldTypeErasure()}) to a
+     * {@link ClassDesc}: a primitive keyword ({@code "int"}), an array ({@code "ComponentType[]"})
+     * or a class name.
+     */
     private static ClassDesc resolveFieldTypeDesc(String fqn) {
-        var primitive = switch (fqn) {
+        return switch (fqn) {
             case "boolean" -> ConstantDescs.CD_boolean;
             case "byte" -> ConstantDescs.CD_byte;
             case "char" -> ConstantDescs.CD_char;
@@ -561,14 +562,9 @@ public final class ComponentProviderClassGenerator {
             case "long" -> ConstantDescs.CD_long;
             case "float" -> ConstantDescs.CD_float;
             case "double" -> ConstantDescs.CD_double;
-            default -> null;
+            default -> fqn.endsWith("[]")
+                    ? ClassDesc.of(fqn.substring(0, fqn.length() - 2)).arrayType()
+                    : ClassDesc.of(fqn);
         };
-        if (primitive != null) {
-            return primitive;
-        }
-        if (fqn.endsWith("[]")) {
-            return ClassDesc.of(fqn.substring(0, fqn.length() - 2)).arrayType();
-        }
-        return ClassDesc.of(fqn);
     }
 }

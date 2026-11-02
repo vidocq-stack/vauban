@@ -184,6 +184,11 @@ class ComponentProviderClassGeneratorTest {
             clb.withField("port", ConstantDescs.CD_int, 0);
             clb.withField("enabled", ConstantDescs.CD_boolean, 0);
             clb.withField("ratio", ConstantDescs.CD_double, 0);
+            clb.withField("b", ConstantDescs.CD_byte, 0);
+            clb.withField("c", ConstantDescs.CD_char, 0);
+            clb.withField("s", ConstantDescs.CD_short, 0);
+            clb.withField("l", ConstantDescs.CD_long, 0);
+            clb.withField("f", ConstantDescs.CD_float, 0);
             clb.withMethodBody(ConstantDescs.INIT_NAME, MethodTypeDesc.of(ConstantDescs.CD_void),
                     ClassFile.ACC_PUBLIC, cob -> {
                         cob.aload(0);
@@ -195,7 +200,12 @@ class ComponentProviderClassGeneratorTest {
         var gen = ComponentProviderClassGenerator.generate(pkg + "._GenPrimitiveComponents", List.of(),
                 List.of(new FieldInject(targetFqn, "port", "int"),
                         new FieldInject(targetFqn, "enabled", "boolean"),
-                        new FieldInject(targetFqn, "ratio", "double")));
+                        new FieldInject(targetFqn, "ratio", "double"),
+                        new FieldInject(targetFqn, "b", "byte"),
+                        new FieldInject(targetFqn, "c", "char"),
+                        new FieldInject(targetFqn, "s", "short"),
+                        new FieldInject(targetFqn, "l", "long"),
+                        new FieldInject(targetFqn, "f", "float")));
         var loader = new ByteClassLoader(getClass().getClassLoader());
         var targetClass = loader.define(targetFqn, targetBytes);
         var provider = (VaubanComponentProvider) loader.define(gen.className(), gen.bytecode())
@@ -206,6 +216,22 @@ class ComponentProviderClassGeneratorTest {
         assertTrue(provider.injectField(bean, targetFqn, "enabled", true));
         assertTrue(provider.injectField(bean, targetFqn, "ratio", 0.5));
         assertFalse(provider.injectField(bean, targetFqn, "port", null), "null is declined, not unboxed");
+        assertTrue(provider.injectField(bean, targetFqn, "b", (byte) 1));
+        assertTrue(provider.injectField(bean, targetFqn, "c", 'x'));
+        assertTrue(provider.injectField(bean, targetFqn, "s", (short) 2));
+        assertTrue(provider.injectField(bean, targetFqn, "l", 3L));
+        assertTrue(provider.injectField(bean, targetFqn, "f", 4.5f));
+        for (var name : new String[] {"b", "c", "s", "l", "f"}) {
+            var field = targetClass.getDeclaredField(name);
+            field.setAccessible(true);
+            assertEquals(switch (name) {
+                case "b" -> (Object) (byte) 1;
+                case "c" -> 'x';
+                case "s" -> (short) 2;
+                case "l" -> 3L;
+                default -> 4.5f;
+            }, field.get(bean), name);
+        }
 
         var port = targetClass.getDeclaredField("port");
         port.setAccessible(true);
