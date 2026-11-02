@@ -93,7 +93,7 @@ class ObservedQualifiersTest {
     }
 
     @Test
-    void concurrentFirstRequestsResolveTheObserversOnce() throws Exception {
+    void concurrentFirstRequestsResolveTheObserversOnce() {
         var qualifier = new CountingQualifier();
         var resolutions = new AtomicInteger();
         var fired = new AtomicInteger();
