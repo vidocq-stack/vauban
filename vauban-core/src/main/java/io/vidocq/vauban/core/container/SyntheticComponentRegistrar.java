@@ -260,14 +260,17 @@ final class SyntheticComponentRegistrar {
      * qualifiers, scope, name, creator and creation parameters. Two builders with
      * the same signature register indistinguishable beans.
      */
-    private static String syntheticSignature(
+    static String syntheticSignature(
             io.vidocq.vauban.core.extensions.VaubanSyntheticBeanBuilder<?> synBean) {
         var types = new java.util.TreeSet<String>();
         for (var type : synBean.getTypes()) {
             types.add(type.getTypeName());
         }
+        // Same notation for a type given as a class and as an index type (VAU-BCE-009): the build
+        // records a bean whose types are read back as classes, and the extension that made it may run
+        // again at boot naming them through the language model.
         for (var type : synBean.getIndexTypes()) {
-            types.add(type.toString());
+            types.add(typeName(type));
         }
         var qualifiers = new java.util.TreeSet<String>();
         for (var qualifier : synBean.getQualifiers()) {
@@ -284,6 +287,25 @@ final class SyntheticComponentRegistrar {
                 + "|name=" + synBean.getName()
                 + "|creator=" + (synBean.getCreatorClass() != null ? synBean.getCreatorClass().getName() : "")
                 + "|params=" + params;
+    }
+
+    /** An index type written as {@link java.lang.reflect.Type#getTypeName()} writes the same type. */
+    private static String typeName(io.vidocq.vauban.indexer.model.TypeInfo type) {
+        return switch (type) {
+            case io.vidocq.vauban.indexer.model.TypeInfo.ClassType(var name) -> name.value();
+            case io.vidocq.vauban.indexer.model.TypeInfo.ParameterizedType(var raw, var arguments) -> raw.value()
+                    + arguments.stream().map(SyntheticComponentRegistrar::typeName)
+                            .collect(java.util.stream.Collectors.joining(", ", "<", ">"));
+            case io.vidocq.vauban.indexer.model.TypeInfo.ArrayType(var component, var dimensions) ->
+                    typeName(component) + "[]".repeat(dimensions);
+            case io.vidocq.vauban.indexer.model.TypeInfo.PrimitiveType(var kind) ->
+                    kind.name().toLowerCase(java.util.Locale.ROOT);
+            case io.vidocq.vauban.indexer.model.TypeInfo.TypeVariable(var name, var bounds) -> name;
+            case io.vidocq.vauban.indexer.model.TypeInfo.WildcardType(var upper, var lower) -> lower != null
+                    ? "? super " + typeName(lower)
+                    : upper != null ? "? extends " + typeName(upper) : "?";
+            case io.vidocq.vauban.indexer.model.TypeInfo.VoidType() -> "void";
+        };
     }
 
     @SuppressWarnings({"unchecked", "rawtypes"})
