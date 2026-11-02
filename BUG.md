@@ -24,7 +24,7 @@ index when it holds them, otherwise the annotation type itself by reflection, on
 member types, a superclass or a `@Typed` supertype outside the index) is validated by reflection, unchanged.
 Verification: over the whole CDI Lite TCK and the module ITs, a temporary shadow run compared both validators on
 16,557 bean classes: 15,818 decided by the index, identical errors (39 with errors; 2 differed only in the order of
-a message, aligned), 737 left to reflection. Tests: `IndexClassValidatorTest`, `ClassFileScannerTest`.
+a message, aligned), 737 left to reflection. At build, `vauban-processor` checks the same rules on the compiler's elements and reports a broken rule as a warning ("the container rejects this deployment at start"): a warning, not an error, because a class an extension vetoes at run time never becomes a bean, which the compilation cannot tell. Tests: `IndexClassValidatorTest`, `ClassFileScannerTest`, `ComponentProviderCompileTimeTest#definitionErrorIsReportedAtBuild`.
 
 ---
 

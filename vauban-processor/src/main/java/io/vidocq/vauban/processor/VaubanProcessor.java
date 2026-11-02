@@ -533,6 +533,7 @@ public class VaubanProcessor extends AbstractProcessor {
         if (reportValidationErrors(validateDeployment(beans, index, discoveryResult), dependencyTypes)) {
             return true;
         }
+        reportDefinitionErrors(beans, index);
 
         var generated = generateArtefacts(beans, index);
         // What this compilation's own annotation types declare, rendered into their own package so a
@@ -712,6 +713,33 @@ public class VaubanProcessor extends AbstractProcessor {
                 new io.vidocq.vauban.core.bean.resolution.QualifierMatcher(annotationTypes));
         var validator = new DeploymentValidator(beans, resolver, index);
         return validator.validate();
+    }
+
+    /**
+     * The bean definition rules the container checks at boot (VAU-PERF-008), checked here on the compiler's
+     * elements and reported as warnings: the container rejects the deployment at start, unless the class never
+     * becomes a bean there (vetoed by an extension, say), which this compilation cannot tell. A class the index
+     * cannot decide is left to the container.
+     */
+    private void reportDefinitionErrors(List<BeanDescriptor> beans, io.vidocq.vauban.indexer.VaubanIndex index) {
+        if (!validationEnabled()) {
+            return;
+        }
+        var validator = io.vidocq.vauban.core.bean.validation.IndexClassValidator.forCompilerElements(index,
+                name -> {
+                    try {
+                        return Class.forName(name, false, VaubanProcessor.class.getClassLoader());
+                    } catch (ClassNotFoundException | LinkageError _) {
+                        return null;
+                    }
+                });
+        for (var beanClass : beans.stream().map(BeanDescriptor::beanClass).distinct().toList()) {
+            var errors = index.getClassByName(beanClass).flatMap(validator::validate).orElse(List.of());
+            for (var error : errors) {
+                processingEnv.getMessager().printMessage(Diagnostic.Kind.WARNING,
+                        LOG_PREFIX + error + " — the container rejects this deployment at start.");
+            }
+        }
     }
 
     /**

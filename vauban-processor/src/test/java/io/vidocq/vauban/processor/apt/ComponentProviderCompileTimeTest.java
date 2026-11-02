@@ -166,6 +166,31 @@ class ComponentProviderCompileTimeTest {
         }
     }
 
+    /**
+     * VAU-PERF-008: the bean definition rules the container checks at boot are checked at build too, on the
+     * compiler's elements, and reported as warnings: the build shows what the start of the application rejects.
+     */
+    @Test
+    @DisplayName("a bean definition error is reported at build")
+    void definitionErrorIsReportedAtBuild() throws Exception {
+        var result = compile("Broken", """
+                package app;
+
+                @jakarta.enterprise.context.Dependent
+                public class Broken {
+                    @SuppressWarnings("rawtypes")
+                    @jakarta.inject.Inject jakarta.enterprise.event.Event raw;
+                    @jakarta.enterprise.inject.Produces java.util.List<?> any() { return java.util.List.of(); }
+                }
+                """);
+
+        assertTrue(result.success(), result.messages().toString());
+        assertTrue(result.messages().stream().anyMatch(m -> m.contains("Raw Event type injected at app.Broken.raw")),
+                result.messages().toString());
+        assertTrue(result.messages().stream().anyMatch(m -> m.contains("Producer app.Broken.any has parameterized "
+                + "type with wildcard argument")), result.messages().toString());
+    }
+
     @Test
     @DisplayName("generates a compiling args-overload casting resolved deps for an @Inject-ctor bean")
     void generatesArgAwareProviderForInjectConstructorBean() throws Exception {
