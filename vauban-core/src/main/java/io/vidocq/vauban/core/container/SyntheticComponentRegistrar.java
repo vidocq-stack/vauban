@@ -300,7 +300,7 @@ final class SyntheticComponentRegistrar {
                     typeName(component) + "[]".repeat(dimensions);
             case io.vidocq.vauban.indexer.model.TypeInfo.PrimitiveType(var kind) ->
                     kind.name().toLowerCase(java.util.Locale.ROOT);
-            case io.vidocq.vauban.indexer.model.TypeInfo.TypeVariable(var name, var _) -> name;
+            case io.vidocq.vauban.indexer.model.TypeInfo.TypeVariable(var name, _) -> name;
             case io.vidocq.vauban.indexer.model.TypeInfo.WildcardType(var upper, var lower) -> wildcardName(upper, lower);
             case io.vidocq.vauban.indexer.model.TypeInfo.VoidType() -> "void";
         };
