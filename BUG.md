@@ -30,6 +30,7 @@ Decide where the "BCE effects baked in" fact lives for dependency archives (appl
 copies), then make `allSourcesProcessed` true for a Vidocq application built with the codegen bundles, keeping the
 runtime replay as the fallback for archives that were not processed. TCK 774/774 and the BUG-20261030-27 double-run
 lesson apply.
+Options and recommendation: `docs/design/vau-perf-005-bce-processed-dependencies.md`.
 
 ---
 
