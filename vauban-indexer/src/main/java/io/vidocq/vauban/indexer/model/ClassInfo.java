@@ -32,7 +32,8 @@ public record ClassInfo(
         List<AnnotationInfo> annotations,
         ClassKind kind,
         String simpleName,
-        List<TypeInfo.TypeVariable> typeParameters
+        List<TypeInfo.TypeVariable> typeParameters,
+        boolean genericMembers
 ) {
 
     public enum ClassKind {
@@ -47,6 +48,10 @@ public record ClassInfo(
      * @param typeParameters the type parameters the class declares, in declaration order, each with the bounds it
      *                       declares; like every {@link TypeInfo.TypeVariable} of the index, the implicit
      *                       {@code java.lang.Object} bound is left out. {@code null} means none.
+     * @param genericMembers whether the types of the fields, parameters and return types are the generic ones the
+     *                       source declares ({@code List<String>}), as reflection gives them, rather than their
+     *                       erasures: true when the index read them from the {@code Signature} attributes or from
+     *                       the compiler's elements (VAU-PERF-007).
      */
     public ClassInfo {
         interfaces = List.copyOf(interfaces);
@@ -57,6 +62,14 @@ public record ClassInfo(
             simpleName = name.simpleName();
         }
         typeParameters = typeParameters == null ? List.of() : List.copyOf(typeParameters);
+    }
+
+    /** A class info whose member types are erased (no {@code Signature} read). */
+    public ClassInfo(DotName name, DotName superName, List<DotName> interfaces, int accessFlags,
+                     List<FieldInfo> fields, List<MethodInfo> methods, List<AnnotationInfo> annotations,
+                     ClassKind kind, String simpleName, List<TypeInfo.TypeVariable> typeParameters) {
+        this(name, superName, interfaces, accessFlags, fields, methods, annotations, kind, simpleName, typeParameters,
+                false);
     }
 
     /** A class info that declares no type parameter. */
@@ -76,7 +89,7 @@ public record ClassInfo(
     /** The same class with other annotations, as an enrichment step adds them. */
     public ClassInfo withAnnotations(List<AnnotationInfo> newAnnotations) {
         return new ClassInfo(name, superName, interfaces, accessFlags, fields, methods, newAnnotations, kind,
-                simpleName, typeParameters);
+                simpleName, typeParameters, genericMembers);
     }
 
     public boolean isPublic() {

@@ -60,11 +60,13 @@ public final class ClassFileScanner {
         var annotations = new ArrayList<AnnotationInfo>();
         String simpleName = null;
         List<TypeVariable> typeParameters = List.of();
+        // Read first: the fields and methods resolve their type variables against the class's.
+        var classParameters = classTypeParameters(cm);
 
         for (var element : cm) {
             switch (element) {
-                case FieldModel fm -> fields.add(buildFieldInfo(fm));
-                case MethodModel mm -> methods.add(buildMethodInfo(mm));
+                case FieldModel fm -> fields.add(buildFieldInfo(fm, classParameters));
+                case MethodModel mm -> methods.add(buildMethodInfo(mm, classParameters));
                 case RuntimeVisibleAnnotationsAttribute rvaa ->
                         rvaa.annotations().forEach(a -> annotations.add(buildAnnotationInfo(a)));
                 case InnerClassesAttribute ica -> simpleName = innerSimpleName(cm, ica);
@@ -77,7 +79,7 @@ public final class ClassFileScanner {
 
         var kind = determineKind(cm, superName);
         return new ClassInfo(name, superName, interfaces, accessFlags, fields, methods, annotations, kind, simpleName,
-                typeParameters);
+                typeParameters, true);
     }
 
     /**
@@ -124,19 +126,65 @@ public final class ClassFileScanner {
         return ClassKind.CLASS;
     }
 
-    private static FieldInfo buildFieldInfo(FieldModel fm) {
+    /** The type parameters of the class signature, or none when it has none or it does not parse. */
+    private static List<Signature.TypeParam> classTypeParameters(ClassModel cm) {
+        try {
+            return cm.findAttribute(Attributes.signature())
+                    .map(sa -> sa.asClassSignature().typeParameters())
+                    .orElse(List.of());
+        } catch (IllegalArgumentException _) {
+            return List.of();
+        }
+    }
+
+    /**
+     * The generic type a field's {@code Signature} declares (VAU-PERF-007), or its erasure when it has none or it
+     * does not parse: reflection then fails on it too, and the container falls back to the same erasure.
+     */
+    private static TypeInfo fieldType(FieldModel fm, List<Signature.TypeParam> classParameters) {
+        var signature = fm.findAttribute(Attributes.signature());
+        if (signature.isPresent()) {
+            try {
+                return ClassTypeParameters.fieldType(classParameters, signature.get().asTypeSignature());
+            } catch (IllegalArgumentException _) {
+                // erased below
+            }
+        }
+        return parseTypeFromDesc(fm.fieldTypeSymbol());
+    }
+
+    /**
+     * The generic parameter types then the return type a method's {@code Signature} declares, or {@code null}
+     * when it has none or it does not parse. A constructor of an inner class or an enum has synthetic leading
+     * parameters its signature leaves out: the generic types line up with the last parameters.
+     */
+    private static List<TypeInfo> methodTypes(MethodModel mm, List<Signature.TypeParam> classParameters) {
+        var signature = mm.findAttribute(Attributes.signature());
+        if (signature.isEmpty()) {
+            return null;
+        }
+        try {
+            var types = ClassTypeParameters.methodTypes(classParameters, signature.get().asMethodSignature());
+            return types.size() - 1 <= mm.methodTypeSymbol().parameterCount() ? types : null;
+        } catch (IllegalArgumentException _) {
+            return null;
+        }
+    }
+
+    private static FieldInfo buildFieldInfo(FieldModel fm, List<Signature.TypeParam> classParameters) {
         var name = fm.fieldName().stringValue();
-        var type = parseTypeFromDesc(fm.fieldTypeSymbol());
+        var type = fieldType(fm, classParameters);
         var accessFlags = fm.flags().flagsMask();
         var annotations = extractAnnotations(fm);
         return new FieldInfo(name, type, accessFlags, annotations);
     }
 
-    private static MethodInfo buildMethodInfo(MethodModel mm) {
+    private static MethodInfo buildMethodInfo(MethodModel mm, List<Signature.TypeParam> classParameters) {
         var name = mm.methodName().stringValue();
         var methodType = mm.methodTypeSymbol();
-        var returnType = parseTypeFromDesc(methodType.returnType());
-        var parameters = buildParameters(mm, methodType);
+        var generic = methodTypes(mm, classParameters);
+        var returnType = generic != null ? generic.getLast() : parseTypeFromDesc(methodType.returnType());
+        var parameters = buildParameters(mm, methodType, generic);
         var exceptionTypes = extractExceptionTypes(mm);
         var accessFlags = mm.flags().flagsMask();
         var annotations = extractAnnotations(mm);
@@ -154,13 +202,16 @@ public final class ClassFileScanner {
         return null;
     }
 
-    private static List<ParameterInfo> buildParameters(MethodModel mm, MethodTypeDesc methodType) {
+    private static List<ParameterInfo> buildParameters(MethodModel mm, MethodTypeDesc methodType,
+            List<TypeInfo> generic) {
         var paramNames = extractParameterNames(mm);
         var paramAnnotations = extractParameterAnnotations(mm);
         var params = new ArrayList<ParameterInfo>();
+        // The signature leaves out a constructor's synthetic leading parameters: its types are the last ones.
+        int synthetic = generic == null ? methodType.parameterCount() : methodType.parameterCount() - (generic.size() - 1);
 
         for (int i = 0; i < methodType.parameterCount(); i++) {
-            var type = parseTypeFromDesc(methodType.parameterType(i));
+            var type = i < synthetic ? parseTypeFromDesc(methodType.parameterType(i)) : generic.get(i - synthetic);
             var paramName = i < paramNames.size() ? paramNames.get(i) : "arg" + i;
             var annots = i < paramAnnotations.size() ? paramAnnotations.get(i) : List.<AnnotationInfo>of();
             params.add(new ParameterInfo(paramName, type, annots));

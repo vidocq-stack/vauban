@@ -499,4 +499,79 @@ class ClassFileScannerTest {
             assertEquals(List.of(), List.copyOf(info.typeParameters()));
         }
     }
+
+    // --- VAU-PERF-007: member types read from their Signature attribute ---
+
+    static class GenericMembers<T extends Number> {
+        java.util.List<String> names;
+        T value;
+        java.util.Map<String, ? extends T>[] maps;
+        int count;
+        java.util.List<?> any;
+        java.util.List<? extends Object> anyObject;
+        String plain;
+
+        <U extends Comparable<U>> java.util.List<U> sorted(java.util.Set<? super T> in, int n) { return null; }
+
+        void plain(String s) { /* no behaviour needed */ }
+
+        class Inner {
+            Inner(java.util.List<String> names) { /* no behaviour needed */ }
+        }
+    }
+
+    @Nested
+    @DisplayName("generic member types (VAU-PERF-007)")
+    class GenericMemberTypes {
+
+        private static final DotName LIST = DotName.of("java.util.List");
+        private static final TypeInfo STRING = new ClassType(DotName.of("java.lang.String"));
+        private static final TypeInfo T = new TypeVariable("T", List.of(new ClassType(DotName.of("java.lang.Number"))));
+
+        private TypeInfo field(String name) throws IOException {
+            return scan(GenericMembers.class).fields().stream().filter(f -> f.name().equals(name)).findFirst()
+                    .orElseThrow().type();
+        }
+
+        private MethodInfo method(Class<?> owner, String name) throws IOException {
+            return scan(owner).methods().stream().filter(m -> m.name().equals(name)).findFirst().orElseThrow();
+        }
+
+        @Test
+        @DisplayName("fields keep their type arguments, type variables and wildcards")
+        void fieldTypes() throws IOException {
+            assertEquals(new ParameterizedType(LIST, List.of(STRING)), field("names"));
+            assertEquals(T, field("value"));
+            assertEquals(new ArrayType(new ParameterizedType(DotName.of("java.util.Map"),
+                    List.of(STRING, new WildcardType(T, null))), 1), field("maps"));
+            assertEquals(new PrimitiveType(PrimitiveType.Kind.INT), field("count"));
+            assertEquals(new ParameterizedType(LIST, List.of(new WildcardType(null, null))), field("any"));
+            assertEquals(new ParameterizedType(LIST, List.of(new WildcardType(null, null))), field("anyObject"),
+                    "? extends Object is the unbounded wildcard, as reflection gives it");
+            assertEquals(STRING, field("plain"));
+        }
+
+        @Test
+        @DisplayName("methods keep generic parameter and return types, with their own type variables")
+        void methodTypes() throws IOException {
+            var sorted = method(GenericMembers.class, "sorted");
+            var u = new TypeVariable("U", List.of(new ParameterizedType(DotName.of("java.lang.Comparable"),
+                    List.of(new TypeVariable("U", List.of())))));
+            assertEquals(new ParameterizedType(LIST, List.of(u)), sorted.returnType());
+            assertEquals(new ParameterizedType(DotName.of("java.util.Set"), List.of(new WildcardType(null, T))),
+                    sorted.parameters().get(0).type());
+            assertEquals(new PrimitiveType(PrimitiveType.Kind.INT), sorted.parameters().get(1).type());
+            assertEquals(new VoidType(), method(GenericMembers.class, "plain").returnType());
+            assertTrue(scan(GenericMembers.class).genericMembers());
+        }
+
+        @Test
+        @DisplayName("an inner class constructor's generic parameters line up after the outer instance")
+        void innerConstructor() throws IOException {
+            var ctor = method(GenericMembers.Inner.class, "<init>");
+            assertEquals(2, ctor.parameters().size());
+            assertEquals(new ClassType(DotName.of(GenericMembers.class.getName())), ctor.parameters().get(0).type());
+            assertEquals(new ParameterizedType(LIST, List.of(STRING)), ctor.parameters().get(1).type());
+        }
+    }
 }

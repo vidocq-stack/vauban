@@ -567,6 +567,9 @@ public final class BeanDiscovery {
      * bean class of the deployment; the index's erased type when the class cannot be read.
      */
     private static TypeInfo reflectedProducerMethodType(ClassInfo declaringClass, MethodInfo method) {
+        if (declaringClass.genericMembers()) {
+            return asReflected(method.returnType());
+        }
         try {
             var clazz = DeploymentClasses.load(declaringClass.name().value());
             for (var m : clazz.getDeclaredMethods()) {
@@ -652,6 +655,9 @@ public final class BeanDiscovery {
      * index's erased type when the class cannot be read.
      */
     private static TypeInfo reflectedProducerFieldType(ClassInfo declaringClass, FieldInfo field) {
+        if (declaringClass.genericMembers()) {
+            return asReflected(field.type());
+        }
         try {
             var clazz = DeploymentClasses.load(declaringClass.name().value());
             for (var f : clazz.getDeclaredFields()) {
@@ -775,6 +781,31 @@ public final class BeanDiscovery {
     /**
      * Convert a Java reflection ParameterizedType to our TypeInfo model.
      */
+    /**
+     * A member type the index read from its {@code Signature} (VAU-PERF-007), in the form
+     * {@link #reflectTypeToTypeInfo} gives the same type: a primitive is the class type of its keyword
+     * ({@code int}), as {@code Class.getName()} spells it. Everything else is already alike. The member's
+     * class then needs no reflection to type its producers and injection points; a class whose index did not
+     * read the signatures ({@link ClassInfo#genericMembers()} false) is read by reflection, as before.
+     */
+    static TypeInfo asReflected(TypeInfo type) {
+        return switch (type) {
+            case null -> null;
+            case TypeInfo.PrimitiveType(var kind) ->
+                    new TypeInfo.ClassType(DotName.of(kind.name().toLowerCase(java.util.Locale.ROOT)));
+            case TypeInfo.VoidType _ -> new TypeInfo.ClassType(DotName.of("void"));
+            case TypeInfo.ArrayType(var component, var dimensions) ->
+                    new TypeInfo.ArrayType(asReflected(component), dimensions);
+            case TypeInfo.ParameterizedType(var raw, var arguments) ->
+                    new TypeInfo.ParameterizedType(raw, arguments.stream().map(BeanDiscovery::asReflected).toList());
+            case TypeInfo.TypeVariable(var name, var bounds) ->
+                    new TypeInfo.TypeVariable(name, bounds.stream().map(BeanDiscovery::asReflected).toList());
+            case TypeInfo.WildcardType(var upper, var lower) ->
+                    new TypeInfo.WildcardType(asReflected(upper), asReflected(lower));
+            case TypeInfo.ClassType _ -> type;
+        };
+    }
+
     static TypeInfo reflectTypeToTypeInfo(java.lang.reflect.Type type) {
         return reflectTypeToTypeInfo(type, new java.util.HashSet<>());
     }
@@ -1072,6 +1103,9 @@ public final class BeanDiscovery {
     }
 
     private TypeInfo resolveGenericTypeForField(ClassInfo classInfo, FieldInfo field) {
+        if (classInfo.genericMembers()) {
+            return asReflected(field.type());
+        }
         try {
             var reflField = DeploymentClasses.load(classInfo.name().value()).getDeclaredField(field.name());
             var reflType = reflField.getGenericType();
@@ -1084,6 +1118,9 @@ public final class BeanDiscovery {
     }
 
     private TypeInfo resolveGenericTypeForMethodParameter(ClassInfo classInfo, MethodInfo method, int paramIndex) {
+        if (classInfo.genericMembers()) {
+            return asReflected(method.parameters().get(paramIndex).type());
+        }
         try {
             var clazz = DeploymentClasses.load(classInfo.name().value());
             if (method.isConstructor()) {

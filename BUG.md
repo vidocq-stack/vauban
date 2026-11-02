@@ -5,6 +5,29 @@ suspected cause, status. Updated on every investigation.
 
 ---
 
+## VAU-PERF-007 — Discovery reads every producer and injection point by reflection to get its generic type
+- **Date**: 2026-11-02 — **Status**: FIXED (perf/index-signatures)
+- **Severity**: low (boot time: `getDeclaredField`/`getDeclaredMethods`/`getGeneric*` for every injection point and producer)
+
+### Symptom
+The class-file index typed fields, parameters and return types from their descriptors, so `List<String>` was
+`List`. `BeanDiscovery` therefore loaded each bean class and read the member again by reflection
+(`resolveGenericTypeForField`, `resolveGenericTypeForMethodParameter`, `reflectedProducerFieldType`,
+`reflectedProducerMethodType`) to recover the type arguments. It also picked a producer method by name alone, so with
+an overload the return type could come from the wrong method.
+
+### Fix
+`ClassFileScanner` reads the `Signature` attribute of fields and methods: type arguments, wildcards, type variables
+with their bounds (the method's own, then the class's), and the leading synthetic parameters of an inner-class or
+enum constructor. `ClassInfo.genericMembers()` tells discovery that the member types are the generic ones, and it
+then takes them from the index, normalized to the form reflection gives (`BeanDiscovery.asReflected`). A signature
+that does not parse leaves the erased type, as the reflective path did when reflection failed on it. An index with
+erased types (`genericMembers` false) is still read by reflection, unchanged. Tests: `ClassFileScannerTest`
+(`GenericMemberTypes`), `IndexSignatureEquivalenceTest` (index = reflection for every shape and for the public
+methods of `ConcurrentHashMap`; index first; reflective fallback).
+
+---
+
 ## VAU-PERF-006 — A private `@Inject` field is written by reflection at each creation of its bean
 - **Date**: 2026-11-02 — **Status**: FIXED (perf/private-inject-lookups)
 - **Severity**: low (reflection on the request path for `@RequestScoped` / `@Dependent` beans with private fields)

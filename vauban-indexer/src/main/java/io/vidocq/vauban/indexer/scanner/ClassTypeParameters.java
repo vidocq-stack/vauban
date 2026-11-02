@@ -23,6 +23,7 @@ import io.vidocq.vauban.indexer.model.DotName;
 import io.vidocq.vauban.indexer.model.TypeInfo;
 
 import java.lang.classfile.ClassSignature;
+import java.lang.classfile.MethodSignature;
 import java.lang.classfile.Signature;
 import java.util.ArrayList;
 import java.util.HashSet;
@@ -46,14 +47,39 @@ final class ClassTypeParameters {
     private final Map<String, Signature.TypeParam> declared = new LinkedHashMap<>();
     private final Set<String> reading = new HashSet<>();
 
-    private ClassTypeParameters(ClassSignature signature) {
-        signature.typeParameters().forEach(parameter -> declared.put(parameter.identifier(), parameter));
+    private ClassTypeParameters(List<Signature.TypeParam> classParameters, List<Signature.TypeParam> methodParameters) {
+        classParameters.forEach(parameter -> declared.put(parameter.identifier(), parameter));
+        // A method's type parameter shadows the class's of the same name.
+        methodParameters.forEach(parameter -> declared.put(parameter.identifier(), parameter));
     }
 
     /** The type parameters the signature declares, in declaration order. */
     static List<TypeInfo.TypeVariable> of(ClassSignature signature) {
-        var reader = new ClassTypeParameters(signature);
+        var reader = new ClassTypeParameters(signature.typeParameters(), List.of());
         return reader.declared.keySet().stream().map(reader::typeVariable).toList();
+    }
+
+    /**
+     * The type a field's {@code Signature} declares, its type variables resolved against the class's type
+     * parameters (VAU-PERF-007).
+     */
+    static TypeInfo fieldType(List<Signature.TypeParam> classParameters, Signature signature) {
+        return new ClassTypeParameters(classParameters, List.of()).type(signature);
+    }
+
+    /**
+     * The parameter types and the return type a method's {@code Signature} declares, its type variables resolved
+     * against the method's own type parameters, then the class's. The return type is last; a {@code void} one is
+     * {@link TypeInfo.VoidType}.
+     */
+    static List<TypeInfo> methodTypes(List<Signature.TypeParam> classParameters, MethodSignature signature) {
+        var reader = new ClassTypeParameters(classParameters, signature.typeParameters());
+        var types = new ArrayList<TypeInfo>();
+        signature.arguments().forEach(argument -> types.add(reader.type(argument)));
+        types.add(signature.result() instanceof Signature.BaseTypeSig base && base.baseType() == 'V'
+                ? new TypeInfo.VoidType()
+                : reader.type(signature.result()));
+        return types;
     }
 
     private TypeInfo.TypeVariable typeVariable(String name) {
@@ -104,7 +130,10 @@ final class ClassTypeParameters {
             case Signature.TypeArg.Unbounded _ -> new TypeInfo.WildcardType(null, null);
             case Signature.TypeArg.Bounded bounded -> switch (bounded.wildcardIndicator()) {
                 case NONE -> type(bounded.boundType());
-                case EXTENDS -> new TypeInfo.WildcardType(type(bounded.boundType()), null);
+                // ? extends Object is the unbounded wildcard: reflection, the index's reference, leaves Object out.
+                case EXTENDS -> isObject(bounded.boundType())
+                        ? new TypeInfo.WildcardType(null, null)
+                        : new TypeInfo.WildcardType(type(bounded.boundType()), null);
                 case SUPER -> new TypeInfo.WildcardType(null, type(bounded.boundType()));
             };
         };
