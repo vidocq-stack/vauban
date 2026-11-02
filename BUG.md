@@ -5,6 +5,29 @@ suspected cause, status. Updated on every investigation.
 
 ---
 
+## VAU-PERF-008 — Every boot validates each bean class by reflecting on all its members
+- **Date**: 2026-11-02 — **Status**: FIXED (perf/index-validation)
+- **Severity**: low (boot time: `ReflectionValidator` read every field, method, constructor and parameter of every bean class)
+
+### Symptom
+After `ClassValidator` checked what the index could describe, `ReflectionValidator` loaded each bean class and read
+its declared members, generic types and annotations by reflection to check the remaining definition rules (raw
+`Event`/`Instance`, producer types with wildcards or type variables, generic initializers, `@Named` without value,
+public fields of normal-scoped beans, `@Typed` values, stereotype names/scopes/priorities, conflicting interceptor
+binding values).
+
+### Fix
+`IndexClassValidator` checks the same rules on the index, with the same messages: the generic member types
+(VAU-PERF-007), the method type parameters now read from the `Signature`, the annotations a class inherits through
+its indexed superclasses (in `Class.getAnnotations()` order), and `AnnotationTypes` for the annotation types — the
+index when it holds them, otherwise the annotation type itself by reflection, once. A class it cannot decide (erased
+member types, a superclass or a `@Typed` supertype outside the index) is validated by reflection, unchanged.
+Verification: over the whole CDI Lite TCK and the module ITs, a temporary shadow run compared both validators on
+16,557 bean classes: 15,818 decided by the index, identical errors (39 with errors; 2 differed only in the order of
+a message, aligned), 737 left to reflection. Tests: `IndexClassValidatorTest`, `ClassFileScannerTest`.
+
+---
+
 ## VAU-PERF-007 — Discovery reads every producer and injection point by reflection to get its generic type
 - **Date**: 2026-11-02 — **Status**: FIXED (perf/index-signatures)
 - **Severity**: low (boot time: `getDeclaredField`/`getDeclaredMethods`/`getGeneric*` for every injection point and producer)

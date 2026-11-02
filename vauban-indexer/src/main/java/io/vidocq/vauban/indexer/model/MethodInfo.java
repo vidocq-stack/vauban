@@ -24,8 +24,10 @@ import java.util.List;
 /**
  * A method of an indexed class.
  *
- * @param defaultValue the default value an annotation type member declares, or {@code null} for a
- *                     member without one and for every method that is not an annotation member
+ * @param defaultValue   the default value an annotation type member declares, or {@code null} for a
+ *                       member without one and for every method that is not an annotation member
+ * @param typeParameters the type parameters the method declares ({@code <U>} in {@code <U> U get()}), as its
+ *                       {@code Signature} gives them; empty when the index did not read it (VAU-PERF-008)
  */
 public record MethodInfo(
         String name,
@@ -34,13 +36,22 @@ public record MethodInfo(
         List<TypeInfo> exceptionTypes,
         int accessFlags,
         List<AnnotationInfo> annotations,
-        AnnotationValue defaultValue
+        AnnotationValue defaultValue,
+        List<TypeInfo.TypeVariable> typeParameters
 ) {
 
     public MethodInfo {
         parameters = List.copyOf(parameters);
         exceptionTypes = List.copyOf(exceptionTypes);
         annotations = List.copyOf(annotations);
+        typeParameters = typeParameters == null ? List.of() : List.copyOf(typeParameters);
+    }
+
+    /** A method whose type parameters are not recorded. */
+    public MethodInfo(String name, TypeInfo returnType, List<ParameterInfo> parameters,
+                      List<TypeInfo> exceptionTypes, int accessFlags, List<AnnotationInfo> annotations,
+                      AnnotationValue defaultValue) {
+        this(name, returnType, parameters, exceptionTypes, accessFlags, annotations, defaultValue, null);
     }
 
     /** A method with no annotation member default. */

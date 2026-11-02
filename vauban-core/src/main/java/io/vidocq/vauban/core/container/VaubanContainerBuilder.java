@@ -837,10 +837,42 @@ public final class VaubanContainerBuilder {
         if (!classErrors.isEmpty()) {
             throw new jakarta.enterprise.inject.spi.DefinitionException(failureMessage(DEFINITION_FAILED, classErrors));
         }
-        var reflectionErrors = ReflectionValidator.validateWithReflection(nonBceClasses);
+        var reflectionErrors = definitionErrors(index, nonBceClasses);
         if (!reflectionErrors.isEmpty()) {
             throw new jakarta.enterprise.inject.spi.DefinitionException(
                     failureMessage(DEFINITION_FAILED, reflectionErrors));
+        }
+    }
+
+    /**
+     * The definition errors of the bean classes: read from the index when it describes a class well enough
+     * (VAU-PERF-008), by reflection otherwise, as before.
+     */
+    private static List<String> definitionErrors(VaubanIndex index, List<Class<?>> beanClasses) {
+        var validator = new io.vidocq.vauban.core.bean.validation.IndexClassValidator(index,
+                VaubanContainerBuilder::annotationTypeOrNull,
+                name -> VaubanBeanManager.customInterceptorBindingTypes().stream()
+                        .anyMatch(type -> type.getName().equals(name.value())));
+        var errors = new java.util.ArrayList<String>();
+        var reflected = new java.util.ArrayList<Class<?>>();
+        for (var beanClass : beanClasses) {
+            var fromIndex = index.getClassByName(io.vidocq.vauban.indexer.model.DotName.of(beanClass.getName()))
+                    .flatMap(validator::validate);
+            if (fromIndex.isPresent()) {
+                errors.addAll(fromIndex.get());
+            } else {
+                reflected.add(beanClass);
+            }
+        }
+        errors.addAll(ReflectionValidator.validateWithReflection(reflected));
+        return errors;
+    }
+
+    private static Class<?> annotationTypeOrNull(String name) {
+        try {
+            return io.vidocq.vauban.core.loading.DeploymentClasses.load(name);
+        } catch (ClassNotFoundException | LinkageError _) {
+            return null;
         }
     }
 

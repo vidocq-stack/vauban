@@ -67,19 +67,24 @@ final class ClassTypeParameters {
         return new ClassTypeParameters(classParameters, List.of()).type(signature);
     }
 
+    /** The generic types a method's {@code Signature} declares. */
+    record MethodTypes(List<TypeInfo.TypeVariable> typeParameters, List<TypeInfo> parameters, TypeInfo result) {}
+
     /**
-     * The parameter types and the return type a method's {@code Signature} declares, its type variables resolved
-     * against the method's own type parameters, then the class's. The return type is last; a {@code void} one is
+     * The type parameters, the parameter types and the return type a method's {@code Signature} declares, its type
+     * variables resolved against the method's own type parameters, then the class's. A {@code void} return type is
      * {@link TypeInfo.VoidType}.
      */
-    static List<TypeInfo> methodTypes(List<Signature.TypeParam> classParameters, MethodSignature signature) {
+    static MethodTypes methodTypes(List<Signature.TypeParam> classParameters, MethodSignature signature) {
         var reader = new ClassTypeParameters(classParameters, signature.typeParameters());
-        var types = new ArrayList<TypeInfo>();
-        signature.arguments().forEach(argument -> types.add(reader.type(argument)));
-        types.add(signature.result() instanceof Signature.BaseTypeSig base && base.baseType() == 'V'
+        var typeParameters = signature.typeParameters().stream()
+                .map(parameter -> reader.typeVariable(parameter.identifier()))
+                .toList();
+        var parameters = signature.arguments().stream().map(reader::type).toList();
+        var result = signature.result() instanceof Signature.BaseTypeSig base && base.baseType() == 'V'
                 ? new TypeInfo.VoidType()
-                : reader.type(signature.result()));
-        return types;
+                : reader.type(signature.result());
+        return new MethodTypes(typeParameters, parameters, result);
     }
 
     private TypeInfo.TypeVariable typeVariable(String name) {

@@ -563,6 +563,8 @@ class ClassFileScannerTest {
                     sorted.parameters().get(0).type());
             assertEquals(new PrimitiveType(PrimitiveType.Kind.INT), sorted.parameters().get(1).type());
             assertEquals(new VoidType(), method(GenericMembers.class, "plain").returnType());
+            assertEquals(List.of(u), sorted.typeParameters(), "VAU-PERF-008: the method's own type parameters");
+            assertEquals(List.of(), method(GenericMembers.class, "plain").typeParameters());
             assertTrue(scan(GenericMembers.class).genericMembers());
         }
 
