@@ -243,7 +243,7 @@ final class BeanInjector {
                                      Map<java.lang.reflect.TypeVariable<?>, java.lang.reflect.Type> typeMapping,
                                      java.lang.annotation.Annotation[] describedQualifiers,
                                      java.util.Set<java.lang.annotation.Annotation> describedSet) {
-        var target = instanceTarget(ManagedBean.resolveType(field.getGenericType(), typeMapping));
+        var target = instanceTarget(ManagedBean.resolveType(ClassMetadataCache.genericTypeOf(field), typeMapping));
         var fieldQualifiers = describedQualifiers != null
                 ? describedQualifiers : QualifierHelper.extractFieldQualifiers(field);
         var ownerBean = container.findBeanForInstance(instance);
@@ -294,7 +294,7 @@ final class BeanInjector {
                                  Map<java.lang.reflect.TypeVariable<?>, java.lang.reflect.Type> typeMapping) {
         var fieldKeys = fieldQualifierKeys(field, descriptor);
         var bm = container.getBeanManager();
-        var fieldType = ManagedBean.resolveType(field.getGenericType(), typeMapping);
+        var fieldType = ManagedBean.resolveType(ClassMetadataCache.genericTypeOf(field), typeMapping);
         var resolvedBeans = bm.getBeans(fieldType, fieldKeys);
         Object value;
         if (resolvedBeans.isEmpty()) {

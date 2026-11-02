@@ -59,7 +59,7 @@ public final class VaubanInjectionPoint implements InjectionPoint {
      * descriptor describes.
      */
     public VaubanInjectionPoint(Field field, Bean<?> bean, Set<Annotation> described) {
-        Type t = field.getGenericType();
+        Type t = ClassMetadataCache.genericTypeOf(field);
         if ((field.getType() == jakarta.enterprise.inject.Instance.class
                 || field.getType() == jakarta.inject.Provider.class)
                 && t instanceof java.lang.reflect.ParameterizedType pt) {

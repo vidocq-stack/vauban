@@ -414,7 +414,7 @@ public final class VaubanBeanManager implements BeanManager {
 
     @Override
     public boolean isQualifier(Class<? extends Annotation> annotationType) {
-        return annotationType.isAnnotationPresent(jakarta.inject.Qualifier.class)
+        return ClassMetadataCache.isDeclaredQualifier(annotationType)
                 || annotationType == jakarta.enterprise.inject.Default.class
                 || annotationType == jakarta.enterprise.inject.Any.class
                 || annotationType == jakarta.inject.Named.class

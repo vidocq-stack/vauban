@@ -45,7 +45,7 @@ final class BeanLifecycle {
     }
 
     void callPostConstruct(Object instance, BeanDescriptor descriptor, CreationalContext<?> ctx) {
-        if (instance.getClass().isAnnotationPresent(jakarta.interceptor.Interceptor.class)) {
+        if (ClassMetadataCache.isInterceptorClass(instance.getClass())) {
             callInterceptorPostConstruct(instance);
             return;
         }
@@ -70,16 +70,11 @@ final class BeanLifecycle {
      * Calls the first no-argument {@code @PostConstruct} method declared by an interceptor instance, if any.
      */
     private void callInterceptorPostConstruct(Object instance) {
-        Method pc = null;
-        for (var m : instance.getClass().getDeclaredMethods()) {
-            if (m.isAnnotationPresent(jakarta.annotation.PostConstruct.class) && m.getParameterCount() == 0) {
-                pc = m;
-                break;
-            }
-        }
-        if (pc == null) {
+        var found = ClassMetadataCache.interceptorPostConstruct(instance.getClass());
+        if (found.isEmpty()) {
             return;
         }
+        var pc = found.get();
         try {
             vaubanLookup.invokeMethod(instance, pc);
         } catch (Exception e) {
@@ -190,8 +185,8 @@ final class BeanLifecycle {
     private static void collectTransitiveMeta(Class<? extends Annotation> annType,
             Set<Annotation> toAdd,
             Set<Annotation> existing, Set<DotName> dotNames) {
-        for (var meta : annType.getAnnotations()) {
-            if (meta.annotationType().isAnnotationPresent(jakarta.interceptor.InterceptorBinding.class)
+        for (var meta : ClassMetadataCache.annotationsOf(annType)) {
+            if (ClassMetadataCache.isDeclaredInterceptorBinding(meta.annotationType())
                     && !existing.contains(meta) && !toAdd.contains(meta)) {
                 toAdd.add(meta);
                 dotNames.add(DotName.of(meta.annotationType().getName()));
@@ -207,10 +202,9 @@ final class BeanLifecycle {
             clazz = clazz.getSuperclass();
         }
         var annotations = new LinkedHashSet<Annotation>();
-        for (var ann : clazz.getAnnotations()) {
+        for (var ann : ClassMetadataCache.annotationsOf(clazz)) {
             var t = ann.annotationType();
-            if (t.isAnnotationPresent(jakarta.interceptor.InterceptorBinding.class)
-                    || VaubanBeanManager.isCustomInterceptorBinding(t)) {
+            if (ClassMetadataCache.isInterceptorBinding(t)) {
                 bindings.add(DotName.of(t.getName()));
                 annotations.add(ann);
             }
@@ -226,10 +220,9 @@ final class BeanLifecycle {
         }
         var annotations = new LinkedHashSet<Annotation>();
         var dotNames = new LinkedHashSet<DotName>();
-        for (var ann : clazz.getAnnotations()) {
+        for (var ann : ClassMetadataCache.annotationsOf(clazz)) {
             var t = ann.annotationType();
-            if (t.isAnnotationPresent(jakarta.interceptor.InterceptorBinding.class)
-                    || VaubanBeanManager.isCustomInterceptorBinding(t)) {
+            if (ClassMetadataCache.isInterceptorBinding(t)) {
                 annotations.add(ann);
                 dotNames.add(DotName.of(t.getName()));
             }

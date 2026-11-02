@@ -5,6 +5,37 @@ suspected cause, status. Updated on every investigation.
 
 ---
 
+## VAU-PERF-009 — A request-scoped or dependent bean is read by reflection again at each request
+- **Date**: 2026-11-02 — **Status**: FIXED (perf/per-request-interceptors)
+- **Severity**: medium (steady-state cost: ~60 reflective calls per request on the tutorial application, linear in the number of requests)
+
+### Symptom
+The tutorial session (step 11, `vidocq build` dist, `rtrace` agent) counted 59.6 reflective calls per request, 36.6 of
+them from Vauban, nothing amortising. They came from creating a request-scoped resource and its dependents at every
+request, which the creation plan of VAU-PERF-003 does not cover: the interceptor bindings of the class
+(`getAnnotations`, `isAnnotationPresent` on each binding and meta-binding), the annotations of every declared method
+(`eagerCreateInterceptors`, `hasMethodOrClassInterceptors`), whether an instance is itself an interceptor, an
+interceptor's `@PostConstruct`, the constructors of the bean and of its `$$Intercepted` subclass, the `$$init` handle of
+that subclass (`Class.forName` while resolving the method type), the generic type of an injected field, the producer
+method (`getDeclaredMethods`, `@TransientReference` per parameter), `isQualifier`, and `loadClass`.
+
+### Repro
+`tmp` application of the audit with a `@RequestScoped @Logged` resource injecting an intercepted `@Dependent` helper and a
+`@Dependent` producer with a parameter; rtrace phase 2 over 2,500 requests: 20.0 reflective calls per request (80 for the
+request-scoped resource alone) before, 0 from Vauban after.
+
+### Fix
+`ClassMetadataCache` keeps what depends on a declaration alone, once per class (`ClassValue`: a class a hot reload
+replaces gets its own): class, method and constructor annotations, declared interceptor-binding and qualifier types,
+`@Interceptor` classes, declared constructors, field generic types, an interceptor's `@PostConstruct`. What an extension
+can change later (the custom interceptor binding types) is asked each time, not kept. The `$$init` handle is found once
+per intercepted class by the container; the constructor of an intercepted factory once per argument count; the producer
+method and its `@TransientReference` parameters once per factory; `loadClass` once per name. The reflective reading is
+unchanged: it is what runs the first time and when nothing describes the class. Tests: `ClassMetadataCacheTest`,
+`ContainerParameterResolutionTest#producerMethodServesRepeatedCalls`.
+
+---
+
 ## VAU-COV-001 — The codegen coverage reports a bean built by a supplied factory as reflection
 - **Date**: 2026-11-02 — **Status**: FIXED (fix/coverage-supplied-factories)
 - **Severity**: low (dev console: wrong verdict, no runtime effect)

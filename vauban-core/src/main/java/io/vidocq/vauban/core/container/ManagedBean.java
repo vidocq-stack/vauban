@@ -237,10 +237,9 @@ public final class ManagedBean<T> implements Bean<T> {
             clazz = clazz.getSuperclass();
         }
         var annotations = new java.util.LinkedHashSet<java.lang.annotation.Annotation>();
-        for (var ann : clazz.getAnnotations()) {
+        for (var ann : ClassMetadataCache.annotationsOf(clazz)) {
             var t = ann.annotationType();
-            if (t.isAnnotationPresent(jakarta.interceptor.InterceptorBinding.class)
-                    || VaubanBeanManager.isCustomInterceptorBinding(t)) {
+            if (ClassMetadataCache.isInterceptorBinding(t)) {
                 annotations.add(ann);
             }
         }
@@ -257,10 +256,9 @@ public final class ManagedBean<T> implements Bean<T> {
             Class<? extends java.lang.annotation.Annotation> annType,
             Set<java.lang.annotation.Annotation> toAdd,
             Set<java.lang.annotation.Annotation> existing) {
-        for (var meta : annType.getAnnotations()) {
+        for (var meta : ClassMetadataCache.annotationsOf(annType)) {
             var mt = meta.annotationType();
-            boolean isBinding = mt.isAnnotationPresent(jakarta.interceptor.InterceptorBinding.class)
-                    || VaubanBeanManager.isCustomInterceptorBinding(mt);
+            boolean isBinding = ClassMetadataCache.isInterceptorBinding(mt);
             if (isBinding && !existing.contains(meta) && !toAdd.contains(meta)) {
                 toAdd.add(meta);
                 collectTransitiveBindingAnnotations(mt, toAdd, existing);
@@ -272,10 +270,9 @@ public final class ManagedBean<T> implements Bean<T> {
         var bindings = new java.util.LinkedHashSet<io.vidocq.vauban.indexer.model.DotName>();
         var clazz = instance.getClass();
         if (clazz.getName().contains(INTERCEPTED_SUFFIX)) clazz = clazz.getSuperclass();
-        for (var ann : clazz.getAnnotations()) {
+        for (var ann : ClassMetadataCache.annotationsOf(clazz)) {
             var t = ann.annotationType();
-            if (t.isAnnotationPresent(jakarta.interceptor.InterceptorBinding.class)
-                    || VaubanBeanManager.isCustomInterceptorBinding(t)) {
+            if (ClassMetadataCache.isInterceptorBinding(t)) {
                 bindings.add(io.vidocq.vauban.indexer.model.DotName.of(t.getName()));
                 // Collect transitive bindings from meta-annotations
                 collectTransitiveInterceptorBindings(t, bindings);
@@ -286,10 +283,9 @@ public final class ManagedBean<T> implements Bean<T> {
 
     private static void collectTransitiveInterceptorBindings(Class<? extends java.lang.annotation.Annotation> annType,
             Set<io.vidocq.vauban.indexer.model.DotName> bindings) {
-        for (var meta : annType.getAnnotations()) {
+        for (var meta : ClassMetadataCache.annotationsOf(annType)) {
             var mt = meta.annotationType();
-            if (mt.isAnnotationPresent(jakarta.interceptor.InterceptorBinding.class)
-                    || VaubanBeanManager.isCustomInterceptorBinding(mt)) {
+            if (ClassMetadataCache.isInterceptorBinding(mt)) {
                 var name = io.vidocq.vauban.indexer.model.DotName.of(mt.getName());
                 if (bindings.add(name)) {
                     collectTransitiveInterceptorBindings(mt, bindings);
@@ -984,7 +980,7 @@ public final class ManagedBean<T> implements Bean<T> {
                 if (member instanceof java.lang.reflect.Field field) {
                     var described = QualifierHelper.fieldQualifiers(points, field, annotationTypes);
                     result.add(new VaubanInjectionPoint(
-                            resolveType(field.getGenericType(), typeMapping),
+                            resolveType(ClassMetadataCache.genericTypeOf(field), typeMapping),
                             described != null ? Set.of(described)
                                     : VaubanInjectionPoint.extractQualifiersStatic(field),
                             this, field));

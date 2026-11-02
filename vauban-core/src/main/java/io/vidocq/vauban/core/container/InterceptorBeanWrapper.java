@@ -36,6 +36,7 @@ import java.lang.annotation.Annotation;
 import java.lang.reflect.Constructor;
 import java.lang.reflect.Method;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.function.BiFunction;
 
@@ -530,8 +531,7 @@ final class InterceptorBeanWrapper {
 
     /** Whether {@code annotation} is an interceptor binding, declared as one or made one by an extension. */
     private static boolean isInterceptorBinding(Annotation annotation) {
-        return annotation.annotationType().isAnnotationPresent(jakarta.interceptor.InterceptorBinding.class)
-                || VaubanBeanManager.isCustomInterceptorBinding(annotation.annotationType());
+        return ClassMetadataCache.isInterceptorBinding(annotation.annotationType());
     }
 
     boolean hasMethodOrClassInterceptors(ManagedBean<?> mb) {
@@ -542,11 +542,9 @@ final class InterceptorBeanWrapper {
         }
         try {
             var beanClass = container.loadClass(mb.descriptor().beanClass().value());
-            for (var m : beanClass.getDeclaredMethods()) {
-                for (var ann : m.getAnnotations()) {
-                    if (isInterceptorBinding(ann)) {
-                        return true;
-                    }
+            for (var ann : ClassMetadataCache.methodAnnotationsOf(beanClass)) {
+                if (isInterceptorBinding(ann)) {
+                    return true;
                 }
             }
         } catch (ClassNotFoundException _) {
@@ -557,7 +555,7 @@ final class InterceptorBeanWrapper {
 
     void eagerCreateInterceptors(Object instance, BeanDescriptor descriptor, CreationalContext<?> parentCtx) {
         if (interceptorManager == null || !interceptorManager.hasInterceptors()) return;
-        if (instance.getClass().isAnnotationPresent(jakarta.interceptor.Interceptor.class)) return;
+        if (ClassMetadataCache.isInterceptorClass(instance.getClass())) return;
 
         var allBindings = new java.util.LinkedHashSet<DotName>();
         var beanBindings = (descriptor != null) ? descriptor.interceptorBindings() : container.beanLifecycle.findInterceptorBindings(instance);
@@ -582,11 +580,9 @@ final class InterceptorBeanWrapper {
 
     /** Adds the interceptor bindings the methods {@code beanClass} declares carry. */
     private static void addMethodBindings(Class<?> beanClass, Set<DotName> bindings) {
-        for (var m : beanClass.getDeclaredMethods()) {
-            for (var ann : m.getAnnotations()) {
-                if (isInterceptorBinding(ann)) {
-                    bindings.add(DotName.of(ann.annotationType().getName()));
-                }
+        for (var ann : ClassMetadataCache.methodAnnotationsOf(beanClass)) {
+            if (isInterceptorBinding(ann)) {
+                bindings.add(DotName.of(ann.annotationType().getName()));
             }
         }
     }
@@ -601,31 +597,50 @@ final class InterceptorBeanWrapper {
      * the package exported. A failure of {@code $$init} itself is wrapped in an
      * {@link java.lang.reflect.InvocationTargetException} on both paths.</p>
      */
-    private static void initIntercepted(Class<?> interceptedClass, Object instance, InterceptorManager manager,
-                                        Set<?> bindings, Set<?> constructorBindings,
-                                        CreationalContext<?> creationalContext) throws ReflectiveOperationException {
-        var moduleLookup = io.vidocq.vauban.core.access.ModuleLookups.lookupFor(interceptedClass.getSuperclass());
-        if (moduleLookup.isPresent()) {
-            java.lang.invoke.MethodHandle init = null;
-            try {
-                init = moduleLookup.get().findVirtual(interceptedClass,
-                        io.vidocq.vauban.core.interceptor.InterceptedShape.INIT_METHOD, INIT_TYPE);
-            } catch (NoSuchMethodException | IllegalAccessException _) {
-                // Fall back to reflection below.
-            }
+    private void initIntercepted(Class<?> interceptedClass, Object instance, InterceptorManager manager,
+                                  Set<?> bindings, Set<?> constructorBindings,
+                                  CreationalContext<?> creationalContext) throws ReflectiveOperationException {
+        var init = initHandles.get(interceptedClass);
+        if (init == null) {
+            init = findInitHandle(interceptedClass);
             if (init != null) {
-                try {
-                    init.invoke(instance, manager, bindings, constructorBindings, creationalContext);
-                } catch (Throwable t) {
-                    throw new java.lang.reflect.InvocationTargetException(t);
-                }
-                return;
+                initHandles.put(interceptedClass, init);
             }
+        }
+        if (init != null) {
+            try {
+                init.invoke(instance, manager, bindings, constructorBindings, creationalContext);
+            } catch (Throwable t) {
+                throw new java.lang.reflect.InvocationTargetException(t);
+            }
+            return;
         }
         interceptedClass.getMethod(io.vidocq.vauban.core.interceptor.InterceptedShape.INIT_METHOD,
                         INIT_TYPE.parameterArray())
                 .invoke(instance, manager, bindings, constructorBindings, creationalContext);
     }
+
+    /**
+     * The {@code $$init} handle of {@code interceptedClass} found with the bean module's own lookup, or {@code null}
+     * when the generated {@code _VaubanComponents} grants none. Found once per class: the lookup and the handle depend
+     * on the class alone, and a missing one is searched again, as the reflective call below it needs no handle.
+     */
+    private static java.lang.invoke.MethodHandle findInitHandle(Class<?> interceptedClass) {
+        var moduleLookup = io.vidocq.vauban.core.access.ModuleLookups.lookupFor(interceptedClass.getSuperclass());
+        if (moduleLookup.isPresent()) {
+            try {
+                return moduleLookup.get().findVirtual(interceptedClass,
+                        io.vidocq.vauban.core.interceptor.InterceptedShape.INIT_METHOD, INIT_TYPE);
+            } catch (NoSuchMethodException | IllegalAccessException _) {
+                // Fall back to reflection.
+            }
+        }
+        return null;
+    }
+
+    /** The {@code $$init} handles found so far, per intercepted class; they live and die with the container. */
+    private final Map<Class<?>, java.lang.invoke.MethodHandle> initHandles =
+            new java.util.concurrent.ConcurrentHashMap<>();
 
     /** {@code void $$init(InterceptorManager, Set, Set, CreationalContext)}. */
     private static final java.lang.invoke.MethodType INIT_TYPE = java.lang.invoke.MethodType.methodType(
@@ -1014,7 +1029,7 @@ final class InterceptorBeanWrapper {
                 }
 
                 var subclassCtor = constructorWithArity(interceptedClass, finalArgs.length);
-                if (subclassCtor == null) subclassCtor = interceptedClass.getDeclaredConstructors()[0];
+                if (subclassCtor == null) subclassCtor = ClassMetadataCache.constructorsOf(interceptedClass).get(0);
 
                 var instance = instantiatePreferProvider(subclassCtor, finalArgs);
 
@@ -1034,7 +1049,7 @@ final class InterceptorBeanWrapper {
 
         /** The first constructor of {@code type} with {@code parameterCount} parameters, or {@code null}. */
         private static Constructor<?> constructorWithArity(Class<?> type, int parameterCount) {
-            for (var c : type.getDeclaredConstructors()) {
+            for (var c : ClassMetadataCache.constructorsOf(type)) {
                 if (c.getParameterCount() == parameterCount) {
                     return c;
                 }
@@ -1048,20 +1063,30 @@ final class InterceptorBeanWrapper {
          * constructor injection points, else the first.
          */
         private Constructor<?> targetConstructor(Object[] args) {
-            if (args != null) {
-                var byArity = constructorWithArity(beanClass, args.length);
+            return targetConstructors.computeIfAbsent(args != null ? args.length : NO_ARGUMENTS, this::findTargetConstructor);
+        }
+
+        /** The constructors found so far, per number of arguments the {@code @AroundConstruct} chain passes. */
+        private final Map<Integer, Constructor<?>> targetConstructors = new java.util.concurrent.ConcurrentHashMap<>();
+
+        /** Stands for a creation that passes no arguments of its own, which no argument count can. */
+        private static final int NO_ARGUMENTS = -1;
+
+        private Constructor<?> findTargetConstructor(int argumentCount) {
+            if (argumentCount != NO_ARGUMENTS) {
+                var byArity = constructorWithArity(beanClass, argumentCount);
                 if (byArity != null) return byArity;
             }
             var ctorParamCount = descriptor.injectionPoints().stream()
                     .filter(ip -> ip.kind() == io.vidocq.vauban.core.bean.model.InjectionPointInfo.InjectionKind.CONSTRUCTOR_PARAMETER)
                     .count();
-            for (var c : beanClass.getDeclaredConstructors()) {
+            for (var c : ClassMetadataCache.constructorsOf(beanClass)) {
                 if (c.isAnnotationPresent(jakarta.inject.Inject.class)) {
                     return c;
                 }
             }
             var byPoints = constructorWithArity(beanClass, Math.toIntExact(ctorParamCount));
-            return byPoints != null ? byPoints : beanClass.getDeclaredConstructors()[0];
+            return byPoints != null ? byPoints : ClassMetadataCache.constructorsOf(beanClass).get(0);
         }
 
         /**
@@ -1070,12 +1095,12 @@ final class InterceptorBeanWrapper {
          */
         private Set<Annotation> bindingAnnotations(Constructor<?> targetCtor) {
             var bindingAnnotationsByType = new java.util.LinkedHashMap<Class<?>, Annotation>();
-            for (var ann : beanClass.getAnnotations()) {
+            for (var ann : ClassMetadataCache.annotationsOf(beanClass)) {
                 if (isInterceptorBinding(ann)) {
                     bindingAnnotationsByType.put(ann.annotationType(), ann);
                 }
             }
-            for (var ann : targetCtor.getAnnotations()) {
+            for (var ann : ClassMetadataCache.annotationsOf(targetCtor)) {
                 if (isInterceptorBinding(ann)) {
                     bindingAnnotationsByType.put(ann.annotationType(), ann);
                 }

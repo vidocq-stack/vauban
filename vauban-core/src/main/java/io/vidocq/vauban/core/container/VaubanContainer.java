@@ -462,8 +462,17 @@ public final class VaubanContainer implements AutoCloseable {
      * Prevents inter-test pollution from JVM class cache.
      */
     Class<?> loadClass(String name) throws ClassNotFoundException {
-        return Class.forName(name, true, classLoader);
+        var known = loadedClasses.get(name);
+        if (known != null) {
+            return known;
+        }
+        var loaded = Class.forName(name, true, classLoader);
+        loadedClasses.put(name, loaded);
+        return loaded;
     }
+
+    /** The classes {@link #loadClass} has loaded: one name, one class, for the life of this container's loader. */
+    private final Map<String, Class<?>> loadedClasses = new ConcurrentHashMap<>();
 
     /**
      * CDI spec: validate that observer method parameters (other than the observed event param,
@@ -995,9 +1004,37 @@ public final class VaubanContainer implements AutoCloseable {
                     ? ((ManagedBean<Object>) declBean).create(declCtx)
                     : selectByBeanClass(declaringClass);
 
+            var producer = producerOf(declaringClass);
+            return invoke(producer, declaringInstance, ctx, isDependent ? declBean : null, declCtx);
+        }
+
+        /** The producer method and what its parameters declare, found by the first call and kept for the next ones. */
+        private volatile Producer producer;
+
+        /** A producer method with the indexes of its {@code @TransientReference} parameters. */
+        private record Producer(java.lang.reflect.Method method, java.util.BitSet transientReferences) {
+        }
+
+        private Producer producerOf(Class<?> declaringClass) {
+            var known = producer;
+            if (known == null) {
+                known = findProducer(declaringClass);
+                producer = known;
+            }
+            return known;
+        }
+
+        private Producer findProducer(Class<?> declaringClass) {
             for (var method : declaringClass.getDeclaredMethods()) {
                 if (method.getName().equals(methodName)) {
-                    return invoke(method, declaringInstance, ctx, isDependent ? declBean : null, declCtx);
+                    var transientReferences = new java.util.BitSet();
+                    var params = method.getParameters();
+                    for (int i = 0; i < params.length; i++) {
+                        if (params[i].isAnnotationPresent(jakarta.enterprise.inject.TransientReference.class)) {
+                            transientReferences.set(i);
+                        }
+                    }
+                    return new Producer(method, transientReferences);
                 }
             }
             throw new ContainerOperationException("Producer method not found: " + methodName + " in " + descriptor.beanClass());
@@ -1008,9 +1045,10 @@ public final class VaubanContainer implements AutoCloseable {
          * a {@code @Dependent} declaring bean ({@code dependentDeclaringBean} not {@code null}).
          */
         @SuppressWarnings("unchecked")
-        private Object invoke(java.lang.reflect.Method method, Object declaringInstance,
+        private Object invoke(Producer producer, Object declaringInstance,
                               CreationalContext<Object> ctx, ManagedBean<?> dependentDeclaringBean,
                               CreationalContext<Object> declCtx) {
+            var method = producer.method();
             var transientCtx = new io.vidocq.vauban.core.context.CreationalContextImpl<>();
             try {
                 if (method.getParameterCount() == 0) {
@@ -1028,8 +1066,7 @@ public final class VaubanContainer implements AutoCloseable {
                     // A @TransientReference parameter, or any without a creational context, is resolved in the
                     // transient context released after the call.
                     CreationalContext<?> paramCtx =
-                            ctx == null || params[i].isAnnotationPresent(jakarta.enterprise.inject.TransientReference.class)
-                                    ? transientCtx : ctx;
+                            ctx == null || producer.transientReferences().get(i) ? transientCtx : ctx;
                     args[i] = resolveParameter(paramTypes[i], genericParamTypes[i], paramCtx, qualifiers, method);
                 }
                 return vaubanLookup.invokeMethod(declaringInstance, method, args);

@@ -68,6 +68,14 @@ warning, not an error: an extension may still veto the class at boot, which the 
 
 These classes, generated or not, mean nothing to another CDI container: on Weld or Open Liberty they are ignored.
 
+What the container does read by reflection, it reads once [.tag-new]#NEW#: the annotations of a bean class, of its
+methods and constructors, the declared interceptor-binding and qualifier types, the constructors of a bean and of its
+`$$Intercepted` subclass, the generic type of an injected field, an interceptor's `@PostConstruct`, the producer method
+and the `$$init` handle of an intercepted subclass are kept per class (or per factory) after a first reading. A
+request-scoped resource created at every request, with its dependents and interceptors, therefore costs no reflective
+call in Vauban once it has been served. The interceptor binding types an extension declares are not kept: they are
+asked each time.
+
 === Which path ran
 
 * A framed `WARNING`, _VAUBAN — RUNTIME CODE GENERATION FALLBACK_, at the end of the boot lists every class

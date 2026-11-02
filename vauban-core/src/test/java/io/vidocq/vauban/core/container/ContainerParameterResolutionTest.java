@@ -34,6 +34,7 @@ import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
+import static org.junit.jupiter.api.Assertions.assertNotSame;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
@@ -79,6 +80,19 @@ class ContainerParameterResolutionTest {
                 .addBeanClass(Clock.class)
                 .addBeanClass(ReportFactory.class)
                 .build();
+    }
+
+    @Test
+    @DisplayName("a producer method found by the first call serves the next ones, its parameters resolved each time")
+    void producerMethodServesRepeatedCalls() {
+        try (var container = boot()) {
+            var first = container.select(Report.class);
+            var second = container.select(Report.class);
+
+            assertEquals("now/now", first.text);
+            assertEquals("now/now", second.text);
+            assertNotSame(first, second);
+        }
     }
 
     @Test
