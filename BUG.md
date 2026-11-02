@@ -731,6 +731,36 @@ the container indexes (passed to `addBeanClasses`, added by an extension) now fa
 
 ---
 
+## VAU-BCE-009 — A synthetic bean recorded at build and synthesized again at boot is registered twice
+
+- **Date**: 2026-11-02 — **Status**: FIXED (fix/synthetic-signature-canonical-types)
+- **Severity**: high (the application does not start: every injection point of that bean is ambiguous)
+
+### Symptom
+A Vidocq application with `@ConfigProperties(prefix = "app") class AppSettings` injected as
+`@Inject @ConfigProperties AppSettings settings` fails at boot: `Ambiguous dependency: field HelloResource.settings
+of type ClassType[name=…AppSettings]. Matching beans: [java.lang.Object, java.lang.Object]`. Found by the reflection
+audit of 2026-11-02 (MicroProfile Config through Ravel's `ConfigCdiExtension`).
+
+### Repro
+`vidocq create -x cassini-rest -x ravel-config`, the class and the injection above, `app.greeting=…` in
+`vidocq.properties`, package and start. Unit: `SyntheticSignatureTest`.
+
+### Cause
+The build records the synthetic bean in `META-INF/vauban-synthetic-metadata.properties`; at boot its types are read
+back as classes (`io.example.AppSettings`). The extension runs again at boot (the application's dependencies are not
+all processed) and names the same type through the language model, kept as an index type whose `toString()` is
+`ClassType[name=io.example.AppSettings]`. The VAU-BCE-002 deduplication compares signatures built from those strings,
+so the two registrations of one bean did not collapse.
+
+### Fix
+`SyntheticComponentRegistrar.syntheticSignature` writes an index type the way `java.lang.reflect.Type#getTypeName()`
+writes the same type (class name, `Raw<Arg, …>`, `[]`, wildcards). Tested red then green (`SyntheticSignatureTest`);
+the application above starts and answers with its configured values. Still open, unrelated: the synthetic metadata
+has no notation for a parameterized type, so such a type is left out of the recorded bean.
+
+---
+
 ## VAU-BCE-008 — At build, the `ClassInfo` of a class named only in an annotation value has no members
 
 - **Date**: 2026-11-01 — **Status**: FIXED (fix/vau-bce-008)
