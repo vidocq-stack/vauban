@@ -791,14 +791,38 @@ public final class VaubanContainer implements AutoCloseable {
         }
 
         /** What {@link #construct} reads from the class, read once: the constructor and its parameters (VAU-PERF-003). */
-        private volatile CtorPlan plan;
+        private final java.util.concurrent.atomic.AtomicReference<CtorPlan> plan =
+                new java.util.concurrent.atomic.AtomicReference<>();
 
-        private record CtorPlan(java.lang.reflect.Constructor<?> ctor, Class<?>[] types,
-                                java.lang.reflect.Type[] genericTypes, java.lang.reflect.Parameter[] parameters,
-                                Annotation[][] qualifiers, boolean[] transientReference) {}
+        /** Read-only once built; a class rather than a record, as its arrays are compared by identity. */
+        private static final class CtorPlan {
+            private final java.lang.reflect.Constructor<?> ctor;
+            private final Class<?>[] types;
+            private final java.lang.reflect.Type[] genericTypes;
+            private final java.lang.reflect.Parameter[] parameters;
+            private final Annotation[][] qualifiers;
+            private final boolean[] transientReference;
+
+            CtorPlan(java.lang.reflect.Constructor<?> ctor, Class<?>[] types, java.lang.reflect.Type[] genericTypes,
+                    java.lang.reflect.Parameter[] parameters, Annotation[][] qualifiers, boolean[] transientReference) {
+                this.ctor = ctor;
+                this.types = types;
+                this.genericTypes = genericTypes;
+                this.parameters = parameters;
+                this.qualifiers = qualifiers;
+                this.transientReference = transientReference;
+            }
+
+            java.lang.reflect.Constructor<?> ctor() { return ctor; }
+            Class<?>[] types() { return types; }
+            java.lang.reflect.Type[] genericTypes() { return genericTypes; }
+            java.lang.reflect.Parameter[] parameters() { return parameters; }
+            Annotation[][] qualifiers() { return qualifiers; }
+            boolean[] transientReference() { return transientReference; }
+        }
 
         private CtorPlan plan() throws ClassNotFoundException {
-            var current = plan;
+            var current = plan.get();
             if (current == null) {
                 var beanClass = loadClass(descriptor.beanClass().value());
                 var injectCtor = injectConstructor(beanClass, ctorParamCount, descriptor.injectionPoints());
@@ -819,7 +843,9 @@ public final class VaubanContainer implements AutoCloseable {
                 }
                 current = new CtorPlan(injectCtor, injectCtor.getParameterTypes(),
                         injectCtor.getGenericParameterTypes(), parameters, qualifiers, transientReference);
-                plan = current;
+                // Two first creations may both build it: the same plan, and the first one kept.
+                plan.compareAndSet(null, current);
+                current = plan.get();
             }
             return current;
         }

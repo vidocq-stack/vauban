@@ -46,7 +46,7 @@ class InterceptorBindingsCacheTest {
     @Audited
     static class Service {
         @Audited
-        void work() { }
+        void work() { /* no behaviour needed */ }
     }
 
     @Test

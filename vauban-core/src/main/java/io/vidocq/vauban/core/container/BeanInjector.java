@@ -122,7 +122,7 @@ final class BeanInjector {
     private record DescriptorKey(BeanDescriptor descriptor) {
         @Override
         public boolean equals(Object o) {
-            return o instanceof DescriptorKey other && other.descriptor == descriptor;
+            return o instanceof DescriptorKey(var other) && other == descriptor;
         }
 
         @Override

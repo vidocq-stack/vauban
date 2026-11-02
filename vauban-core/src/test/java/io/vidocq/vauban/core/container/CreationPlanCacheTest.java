@@ -38,13 +38,13 @@ class CreationPlanCacheTest {
 
     static class Base<T> {
         @Inject String baseField;
-        @PostConstruct void baseInit() { }
+        @PostConstruct void baseInit() { /* no behaviour needed */ }
     }
 
     static class Leaf extends Base<Integer> {
         @Inject Object leafField;
-        @Inject void initializer(String value) { }
-        @PreDestroy void destroy() { }
+        @Inject void initializer(String value) { /* no behaviour needed */ }
+        @PreDestroy void destroy() { /* no behaviour needed */ }
     }
 
     @Test
@@ -62,9 +62,9 @@ class CreationPlanCacheTest {
         var postConstruct = BeanLifecycle.collectLifecycleMethodsInHierarchy(Leaf.class, PostConstruct.class);
 
         assertSame(postConstruct, BeanLifecycle.collectLifecycleMethodsInHierarchy(Leaf.class, PostConstruct.class));
-        assertEquals(List.of("baseInit"), postConstruct.stream().map(m -> m.getName()).toList());
+        assertEquals(List.of("baseInit"), postConstruct.stream().map(java.lang.reflect.Method::getName).toList());
         assertEquals(List.of("destroy"), BeanLifecycle.collectLifecycleMethodsInHierarchy(Leaf.class, PreDestroy.class)
-                .stream().map(m -> m.getName()).toList());
+                .stream().map(java.lang.reflect.Method::getName).toList());
     }
 
     @Test
