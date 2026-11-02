@@ -466,7 +466,10 @@ public final class VaubanContainer implements AutoCloseable {
         if (known != null) {
             return known;
         }
-        var loaded = Class.forName(name, true, classLoader);
+        return remember(name, Class.forName(name, true, classLoader));
+    }
+
+    private Class<?> remember(String name, Class<?> loaded) {
         loadedClasses.put(name, loaded);
         return loaded;
     }
