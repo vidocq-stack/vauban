@@ -75,4 +75,24 @@ class SyntheticSignatureTest {
         assertNotEquals(SyntheticComponentRegistrar.syntheticSignature(ofString),
                 SyntheticComponentRegistrar.syntheticSignature(ofInteger));
     }
+
+    @Test
+    @DisplayName("every index type is written as the reflection API writes the same type")
+    void indexTypesAreWrittenAsTypeNames() {
+        var string = new TypeInfo.ClassType(DotName.of("java.lang.String"));
+        assertEquals("java.lang.String[][]",
+                SyntheticComponentRegistrar.typeName(new TypeInfo.ArrayType(string, 2)));
+        assertEquals("int", SyntheticComponentRegistrar.typeName(
+                new TypeInfo.PrimitiveType(TypeInfo.PrimitiveType.Kind.INT)));
+        assertEquals("T", SyntheticComponentRegistrar.typeName(new TypeInfo.TypeVariable("T", List.of(string))));
+        assertEquals("? extends java.lang.String",
+                SyntheticComponentRegistrar.typeName(new TypeInfo.WildcardType(string, null)));
+        assertEquals("? super java.lang.String",
+                SyntheticComponentRegistrar.typeName(new TypeInfo.WildcardType(null, string)));
+        assertEquals("?", SyntheticComponentRegistrar.typeName(new TypeInfo.WildcardType(null, null)));
+        assertEquals("void", SyntheticComponentRegistrar.typeName(new TypeInfo.VoidType()));
+        assertEquals("java.util.Map<java.lang.String, ?>", SyntheticComponentRegistrar.typeName(
+                new TypeInfo.ParameterizedType(DotName.of("java.util.Map"),
+                        List.of(string, new TypeInfo.WildcardType(null, null)))));
+    }
 }

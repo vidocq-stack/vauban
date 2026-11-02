@@ -290,7 +290,7 @@ final class SyntheticComponentRegistrar {
     }
 
     /** An index type written as {@link java.lang.reflect.Type#getTypeName()} writes the same type. */
-    private static String typeName(io.vidocq.vauban.indexer.model.TypeInfo type) {
+    static String typeName(io.vidocq.vauban.indexer.model.TypeInfo type) {
         return switch (type) {
             case io.vidocq.vauban.indexer.model.TypeInfo.ClassType(var name) -> name.value();
             case io.vidocq.vauban.indexer.model.TypeInfo.ParameterizedType(var raw, var arguments) -> raw.value()
@@ -300,12 +300,21 @@ final class SyntheticComponentRegistrar {
                     typeName(component) + "[]".repeat(dimensions);
             case io.vidocq.vauban.indexer.model.TypeInfo.PrimitiveType(var kind) ->
                     kind.name().toLowerCase(java.util.Locale.ROOT);
-            case io.vidocq.vauban.indexer.model.TypeInfo.TypeVariable(var name, var bounds) -> name;
-            case io.vidocq.vauban.indexer.model.TypeInfo.WildcardType(var upper, var lower) -> lower != null
-                    ? "? super " + typeName(lower)
-                    : upper != null ? "? extends " + typeName(upper) : "?";
+            case io.vidocq.vauban.indexer.model.TypeInfo.TypeVariable(var name, var _) -> name;
+            case io.vidocq.vauban.indexer.model.TypeInfo.WildcardType(var upper, var lower) -> wildcardName(upper, lower);
             case io.vidocq.vauban.indexer.model.TypeInfo.VoidType() -> "void";
         };
+    }
+
+    private static String wildcardName(io.vidocq.vauban.indexer.model.TypeInfo upper,
+            io.vidocq.vauban.indexer.model.TypeInfo lower) {
+        if (lower != null) {
+            return "? super " + typeName(lower);
+        }
+        if (upper != null) {
+            return "? extends " + typeName(upper);
+        }
+        return "?";
     }
 
     @SuppressWarnings({"unchecked", "rawtypes"})
