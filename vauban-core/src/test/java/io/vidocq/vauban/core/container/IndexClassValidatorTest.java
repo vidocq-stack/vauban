@@ -150,7 +150,7 @@ class IndexClassValidatorTest {
         return new IndexClassValidator(index, name -> {
             try {
                 return Class.forName(name, false, IndexClassValidatorTest.class.getClassLoader());
-            } catch (ClassNotFoundException e) {
+            } catch (ClassNotFoundException _) {
                 return null;
             }
         }, name -> false);
