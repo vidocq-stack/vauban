@@ -78,7 +78,7 @@ final class IndexPlans {
             return Optional.empty();
         }
         var members = resolve(beanClass, plan.get());
-        if (members.isEmpty() || descriptor != null && !coversFieldPoints(members.get(), descriptor)) {
+        if (members.isEmpty() || (descriptor != null && !coversFieldPoints(members.get(), descriptor))) {
             return Optional.empty();
         }
         return members;

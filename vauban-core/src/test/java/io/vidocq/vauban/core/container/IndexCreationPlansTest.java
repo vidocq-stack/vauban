@@ -48,6 +48,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 @DisplayName("VAU-PERF-003 - creation plans from the index")
 class IndexCreationPlansTest {
 
+    @SuppressWarnings("java:S1172") // the parameters are the signatures under test
     public static class Base {
         @Inject String baseField;
         @Inject void overridden(String s) { /* no behaviour needed */ }
@@ -57,12 +58,14 @@ class IndexCreationPlansTest {
         @PreDestroy void destroy() { /* no behaviour needed */ }
     }
 
+    @SuppressWarnings("java:S1172")
     public static class Middle extends Base {
         @Inject Long middleField;
         @Override void overridden(String s) { /* not an initializer any more */ }
         @Override void init() { /* overrides the callback without the annotation */ }
     }
 
+    @SuppressWarnings("java:S1172")
     public static class Leaf extends Middle {
         @Inject Double leafField;
         @Inject <T extends Number> void generic(List<T> values, T[] array, int n) { /* no behaviour needed */ }
