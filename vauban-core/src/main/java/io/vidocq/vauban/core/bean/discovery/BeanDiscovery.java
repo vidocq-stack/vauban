@@ -779,9 +779,6 @@ public final class BeanDiscovery {
 
 
     /**
-     * Convert a Java reflection ParameterizedType to our TypeInfo model.
-     */
-    /**
      * A member type the index read from its {@code Signature} (VAU-PERF-007), in the form
      * {@link #reflectTypeToTypeInfo} gives the same type: a primitive is the class type of its keyword
      * ({@code int}), as {@code Class.getName()} spells it. Everything else is already alike. The member's
@@ -806,6 +803,9 @@ public final class BeanDiscovery {
         };
     }
 
+    /**
+     * Convert a Java reflection ParameterizedType to our TypeInfo model.
+     */
     static TypeInfo reflectTypeToTypeInfo(java.lang.reflect.Type type) {
         return reflectTypeToTypeInfo(type, new java.util.HashSet<>());
     }

@@ -502,6 +502,7 @@ class ClassFileScannerTest {
 
     // --- VAU-PERF-007: member types read from their Signature attribute ---
 
+    @SuppressWarnings("java:S1172") // the parameters are the shapes under test
     static class GenericMembers<T extends Number> {
         java.util.List<String> names;
         T value;

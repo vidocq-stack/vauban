@@ -154,20 +154,20 @@ public final class ClassFileScanner {
     }
 
     /**
-     * The generic parameter types then the return type a method's {@code Signature} declares, or {@code null}
-     * when it has none or it does not parse. A constructor of an inner class or an enum has synthetic leading
+     * The generic parameter types then the return type a method's {@code Signature} declares; empty when it has
+     * none or it does not parse. A constructor of an inner class or an enum has synthetic leading
      * parameters its signature leaves out: the generic types line up with the last parameters.
      */
-    private static List<TypeInfo> methodTypes(MethodModel mm, List<Signature.TypeParam> classParameters) {
+    private static Optional<List<TypeInfo>> methodTypes(MethodModel mm, List<Signature.TypeParam> classParameters) {
         var signature = mm.findAttribute(Attributes.signature());
         if (signature.isEmpty()) {
-            return null;
+            return Optional.empty();
         }
         try {
             var types = ClassTypeParameters.methodTypes(classParameters, signature.get().asMethodSignature());
-            return types.size() - 1 <= mm.methodTypeSymbol().parameterCount() ? types : null;
+            return types.size() - 1 <= mm.methodTypeSymbol().parameterCount() ? Optional.of(types) : Optional.empty();
         } catch (IllegalArgumentException _) {
-            return null;
+            return Optional.empty();
         }
     }
 
@@ -183,8 +183,8 @@ public final class ClassFileScanner {
         var name = mm.methodName().stringValue();
         var methodType = mm.methodTypeSymbol();
         var generic = methodTypes(mm, classParameters);
-        var returnType = generic != null ? generic.getLast() : parseTypeFromDesc(methodType.returnType());
-        var parameters = buildParameters(mm, methodType, generic);
+        var returnType = generic.map(List::getLast).orElseGet(() -> parseTypeFromDesc(methodType.returnType()));
+        var parameters = buildParameters(mm, methodType, generic.orElse(null));
         var exceptionTypes = extractExceptionTypes(mm);
         var accessFlags = mm.flags().flagsMask();
         var annotations = extractAnnotations(mm);
@@ -202,6 +202,7 @@ public final class ClassFileScanner {
         return null;
     }
 
+    /** {@code generic}: the method's generic types, return type last, or {@code null} to take the descriptor's. */
     private static List<ParameterInfo> buildParameters(MethodModel mm, MethodTypeDesc methodType,
             List<TypeInfo> generic) {
         var paramNames = extractParameterNames(mm);
@@ -211,7 +212,9 @@ public final class ClassFileScanner {
         int synthetic = generic == null ? methodType.parameterCount() : methodType.parameterCount() - (generic.size() - 1);
 
         for (int i = 0; i < methodType.parameterCount(); i++) {
-            var type = i < synthetic ? parseTypeFromDesc(methodType.parameterType(i)) : generic.get(i - synthetic);
+            var type = generic == null || i < synthetic
+                    ? parseTypeFromDesc(methodType.parameterType(i))
+                    : generic.get(i - synthetic);
             var paramName = i < paramNames.size() ? paramNames.get(i) : "arg" + i;
             var annots = i < paramAnnotations.size() ? paramAnnotations.get(i) : List.<AnnotationInfo>of();
             params.add(new ParameterInfo(paramName, type, annots));

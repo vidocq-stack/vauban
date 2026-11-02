@@ -54,6 +54,7 @@ class IndexSignatureEquivalenceTest {
 
     interface Repo<E> {}
 
+    @SuppressWarnings("java:S1172") // the parameters are the shapes under test
     static class Shapes<T extends Number & Comparable<T>, K> {
         String plain;
         int primitive;
