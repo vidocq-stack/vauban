@@ -23,6 +23,7 @@ import io.vidocq.vauban.core.annotation.AnnotationValues;
 import io.vidocq.vauban.indexer.VaubanIndex;
 import io.vidocq.vauban.indexer.model.AnnotationInfo;
 import io.vidocq.vauban.indexer.model.AnnotationValue;
+import io.vidocq.vauban.indexer.model.ClassInfo;
 import io.vidocq.vauban.indexer.model.DotName;
 
 import java.util.HashMap;
@@ -64,6 +65,7 @@ final class AnnotationTypes {
     }
 
     private final VaubanIndex index;
+    private final Function<DotName, Optional<ClassInfo>> describer;
     private final Function<String, Class<?>> loader;
     private final Predicate<DotName> customInterceptorBinding;
     private final Map<DotName, Optional<Meta>> metas = new HashMap<>();
@@ -74,7 +76,17 @@ final class AnnotationTypes {
      */
     AnnotationTypes(VaubanIndex index, Function<String, Class<?>> loader,
             Predicate<DotName> customInterceptorBinding) {
+        this(index, name -> Optional.empty(), loader, customInterceptorBinding);
+    }
+
+    /**
+     * @param describer describes an annotation type the index does not hold, without loading it — the processor
+     *                  reads the compiler's elements — or returns empty; {@code loader} is asked next
+     */
+    AnnotationTypes(VaubanIndex index, Function<DotName, Optional<ClassInfo>> describer,
+            Function<String, Class<?>> loader, Predicate<DotName> customInterceptorBinding) {
         this.index = index;
+        this.describer = describer;
         this.loader = loader;
         this.customInterceptorBinding = customInterceptorBinding;
     }
@@ -113,7 +125,7 @@ final class AnnotationTypes {
     }
 
     private Optional<Meta> read(DotName name) {
-        var indexed = index.getClassByName(name).filter(c -> c.isAnnotation());
+        var indexed = index.getClassByName(name).or(() -> describer.apply(name)).filter(ClassInfo::isAnnotation);
         if (indexed.isPresent()) {
             var type = indexed.get();
             var defaults = new LinkedHashMap<String, AnnotationValue>();

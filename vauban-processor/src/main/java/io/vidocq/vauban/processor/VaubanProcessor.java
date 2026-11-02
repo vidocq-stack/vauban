@@ -533,7 +533,7 @@ public class VaubanProcessor extends AbstractProcessor {
         if (reportValidationErrors(validateDeployment(beans, index, discoveryResult), dependencyTypes)) {
             return true;
         }
-        reportDefinitionErrors(beans, index);
+        reportDefinitionErrors(beans, index, scanner);
 
         var generated = generateArtefacts(beans, index);
         // What this compilation's own annotation types declare, rendered into their own package so a
@@ -721,18 +721,16 @@ public class VaubanProcessor extends AbstractProcessor {
      * becomes a bean there (vetoed by an extension, say), which this compilation cannot tell. A class the index
      * cannot decide is left to the container.
      */
-    private void reportDefinitionErrors(List<BeanDescriptor> beans, io.vidocq.vauban.indexer.VaubanIndex index) {
+    private void reportDefinitionErrors(List<BeanDescriptor> beans, io.vidocq.vauban.indexer.VaubanIndex index,
+            ElementScanner scanner) {
         if (!validationEnabled()) {
             return;
         }
+        // An annotation type the index does not hold (jakarta.*, say) is read from the compiler's elements.
         var validator = io.vidocq.vauban.core.bean.validation.IndexClassValidator.forCompilerElements(index,
-                name -> {
-                    try {
-                        return Class.forName(name, false, VaubanProcessor.class.getClassLoader());
-                    } catch (ClassNotFoundException | LinkageError _) {
-                        return null;
-                    }
-                });
+                name -> java.util.Optional.ofNullable(
+                                TypeLookup.typeElementByBinaryName(processingEnv.getElementUtils(), name.value()))
+                        .map(scanner::scan));
         for (var beanClass : beans.stream().map(BeanDescriptor::beanClass).distinct().toList()) {
             var errors = index.getClassByName(beanClass).flatMap(validator::validate).orElse(List.of());
             for (var error : errors) {

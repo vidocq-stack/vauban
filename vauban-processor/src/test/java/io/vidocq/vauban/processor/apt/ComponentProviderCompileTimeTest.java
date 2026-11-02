@@ -182,6 +182,10 @@ class ComponentProviderCompileTimeTest {
                     @jakarta.inject.Inject jakarta.enterprise.event.Event raw;
                     @jakarta.enterprise.inject.Produces java.util.List<?> any() { return java.util.List.of(); }
                 }
+
+                @jakarta.enterprise.context.ApplicationScoped
+                class Generic<T> {
+                }
                 """);
 
         assertTrue(result.success(), result.messages().toString());
@@ -189,6 +193,9 @@ class ComponentProviderCompileTimeTest {
                 result.messages().toString());
         assertTrue(result.messages().stream().anyMatch(m -> m.contains("Producer app.Broken.any has parameterized "
                 + "type with wildcard argument")), result.messages().toString());
+        // @ApplicationScoped is not in this compilation's index: the processor reads it from the compiler's elements.
+        assertTrue(result.messages().stream().anyMatch(m -> m.contains("Managed bean app.Generic has type parameters "
+                + "and is not @Dependent")), result.messages().toString());
     }
 
     @Test

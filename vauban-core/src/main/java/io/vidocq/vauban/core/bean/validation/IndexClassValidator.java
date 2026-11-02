@@ -92,22 +92,24 @@ public final class IndexClassValidator {
      */
     public IndexClassValidator(VaubanIndex index, Function<String, Class<?>> loader,
             Predicate<DotName> customInterceptorBinding) {
-        this(index, loader, customInterceptorBinding, false);
+        this(index, new AnnotationTypes(index, loader, customInterceptorBinding), false);
     }
 
-    private IndexClassValidator(VaubanIndex index, Function<String, Class<?>> loader,
-            Predicate<DotName> customInterceptorBinding, boolean compilerElements) {
+    private IndexClassValidator(VaubanIndex index, AnnotationTypes types, boolean compilerElements) {
         this.index = index;
-        this.types = new AnnotationTypes(index, loader, customInterceptorBinding);
+        this.types = types;
         this.compilerElements = compilerElements;
     }
 
     /**
      * For the processor: its index is built from the compiler's elements, whose member types are the generic ones
-     * the source declares, so it validates them at build.
+     * the source declares, so it validates them at build. An annotation type the index does not hold is described
+     * by {@code describer}, from the compiler's elements too: nothing is loaded.
      */
-    public static IndexClassValidator forCompilerElements(VaubanIndex index, Function<String, Class<?>> loader) {
-        return new IndexClassValidator(index, loader, name -> false, true);
+    public static IndexClassValidator forCompilerElements(VaubanIndex index,
+            Function<DotName, Optional<ClassInfo>> describer) {
+        return new IndexClassValidator(index, new AnnotationTypes(index, describer, name -> null, name -> false),
+                true);
     }
 
     /** The definition errors of {@code classInfo}, or empty when the index cannot decide them. */
