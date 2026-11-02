@@ -5,6 +5,26 @@ suspected cause, status. Updated on every investigation.
 
 ---
 
+## VAU-COV-001 — The codegen coverage reports a bean built by a supplied factory as reflection
+- **Date**: 2026-11-02 — **Status**: FIXED (fix/coverage-supplied-factories)
+- **Severity**: low (dev console: wrong verdict, no runtime effect)
+
+### Symptom
+A bean an extension registers with `VaubanContainerBuilder.addFactory(Class, BeanFactory)` is built by that factory,
+without reflection, but `CodegenCoverage` counted its instantiation as a constructor call the container makes, so the
+dev console listed it as `reflection` (`MansartPoolHolder`, `KnockHolder`, `HumboldtHolder` once Vidocq registers them
+that way).
+
+### Fix
+The builder records the classes given a factory; their instantiation is a `FACTORY` operation, covered with no
+generator. A bean with nothing else to cover gets the new `FACTORY` verdict; next to generated operations it counts
+as covered (`APT`, `CLASS_FILE`…). A managed bean with an `@Inject` constructor ignores a supplied factory, as the
+container does. `CodegenCoverageTest` (`suppliedFactory*`, `withoutSuppliedFactoryIsReflection`).
+**Downstream**: `CdiInventory.label` in vidocq switches exhaustively over `Verdict` and needs a `FACTORY` case
+(`"factory"`) before this reaches a Vidocq build.
+
+---
+
 ## VAU-PERF-008 — Every boot validates each bean class by reflecting on all its members
 - **Date**: 2026-11-02 — **Status**: FIXED (perf/index-validation)
 - **Severity**: low (boot time: `ReflectionValidator` read every field, method, constructor and parameter of every bean class)

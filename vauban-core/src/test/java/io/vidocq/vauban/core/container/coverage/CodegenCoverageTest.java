@@ -395,4 +395,49 @@ class CodegenCoverageTest {
                     coverage(container, LegacyBean.class));
         }
     }
+
+    // --- Beans an extension registers with addFactory ---
+
+    @jakarta.enterprise.context.Dependent
+    public static class Supplied {
+    }
+
+    @jakarta.enterprise.context.Dependent
+    public static class SuppliedWithField {
+        @jakarta.inject.Inject CoverageFixtures.Dependency dependency;
+    }
+
+    @Test
+    @DisplayName("a bean built by a supplied factory is FACTORY, not reflection")
+    void suppliedFactoryIsFactory() {
+        try (var container = VaubanContainer.builder().classLoader(CodegenCoverageTest.class.getClassLoader())
+                .addBeanClass(Supplied.class)
+                .addFactory(Supplied.class, Supplied::new)
+                .build()) {
+            assertEquals(new Coverage(Verdict.FACTORY, List.of()), coverage(container, Supplied.class));
+        }
+    }
+
+    @Test
+    @DisplayName("the same bean without a supplied factory is still built by reflection")
+    void withoutSuppliedFactoryIsReflection() {
+        try (var container = container(List.of(), Supplied.class)) {
+            assertEquals(Verdict.REFLECTION, coverage(container, Supplied.class).verdict());
+        }
+    }
+
+    @Test
+    @DisplayName("a supplied factory counts as covered next to generated operations")
+    void suppliedFactoryNextToGeneratedOperations() {
+        var owner = SuppliedWithField.class.getName();
+        try (var container = VaubanContainer.builder().classLoader(CodegenCoverageTest.class.getClassLoader())
+                .addComponentProvider(declaring(Generator.APT, Set.of(), Set.of(owner + "#dependency"), Set.of(),
+                        Set.of()))
+                .addBeanClass(CoverageFixtures.Dependency.class)
+                .addBeanClass(SuppliedWithField.class)
+                .addFactory(SuppliedWithField.class, SuppliedWithField::new)
+                .build()) {
+            assertEquals(new Coverage(Verdict.APT, List.of()), coverage(container, SuppliedWithField.class));
+        }
+    }
 }

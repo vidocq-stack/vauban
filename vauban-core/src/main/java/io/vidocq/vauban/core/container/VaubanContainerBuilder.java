@@ -61,6 +61,8 @@ public final class VaubanContainerBuilder {
     private final List<Class<?>> beanClasses = new ArrayList<>();
     final Set<String> bceProcessedSources = new java.util.HashSet<>();
     private final Map<DotName, BeanFactory<?>> factories = new LinkedHashMap<>();
+    /** The classes {@link #addFactory} was given a factory for: built without reflection. */
+    private final java.util.Set<DotName> suppliedFactories = new java.util.HashSet<>();
     private java.util.function.BiFunction<String, byte[], Class<?>> classDefiner;
     ClassLoader classLoader;
     private java.lang.invoke.MethodHandles.Lookup lookup;
@@ -210,6 +212,7 @@ public final class VaubanContainerBuilder {
 
     public <T> VaubanContainerBuilder addFactory(Class<T> beanClass, BeanFactory<T> factory) {
         factories.put(DotName.of(beanClass.getName()), factory);
+        suppliedFactories.add(DotName.of(beanClass.getName()));
         return this;
     }
 
@@ -727,6 +730,7 @@ public final class VaubanContainerBuilder {
             var beanClassLoader = discoveryClassLoader;
             var vaubanLookup = getBuilderLookup();
             var container = new VaubanContainer(index, descriptors, observers, interceptors, disposers, factories, syntheticDisposers, beanClassLoader, classDefiner, vaubanLookup, componentProviders, qualifierMatcher);
+            container.suppliedFactories(suppliedFactories);
 
             installContexts(container, contextRegistrations(discoveryResult, discoveryClassLoader), vaubanLookup);
 

@@ -81,7 +81,7 @@ class CodegenCoverageParityTest {
                 case INJECT_FIELD -> injectedFields;
                 case INVOKE -> invokedMethods;
                 case CLIENT_PROXY -> clientProxies;
-                case PRE_GENERATED, NONE -> Set.of();
+                case PRE_GENERATED, FACTORY, NONE -> Set.of();
             };
         }
     }

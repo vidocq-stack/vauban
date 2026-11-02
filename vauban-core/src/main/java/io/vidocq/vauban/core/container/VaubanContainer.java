@@ -167,6 +167,22 @@ public final class VaubanContainer implements AutoCloseable {
     }
 
     /** Whether the bean {@code id}'s intercepted subclass was pre-generated; {@code null} if it is not intercepted. */
+    /** Records the classes an extension gave a factory for ({@code addFactory}). */
+    void suppliedFactories(Set<DotName> classes) {
+        this.suppliedFactories = Set.copyOf(classes);
+    }
+
+    /**
+     * Whether the bean is instantiated by a factory an extension supplied ({@code addFactory}) rather than by the
+     * container: a managed bean without an {@code @Inject} constructor, as {@code createManagedBeanFactory} decides.
+     */
+    boolean builtBySuppliedFactory(BeanDescriptor descriptor) {
+        return suppliedFactories.contains(descriptor.beanClass()) && descriptor.injectionPoints().stream()
+                .noneMatch(ip -> ip.kind() == InjectionPointInfo.InjectionKind.CONSTRUCTOR_PARAMETER);
+    }
+
+    private volatile Set<DotName> suppliedFactories = Set.of();
+
     Boolean interceptedSubclassPreGenerated(BeanId id) {
         return interceptorWrapper == null ? null : interceptorWrapper.interceptedSubclassPreGenerated(id);
     }

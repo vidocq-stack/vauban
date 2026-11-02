@@ -67,6 +67,11 @@ public final class CodegenCoverage {
         PARTIAL,
         /** No operation runs generated code. */
         REFLECTION,
+        /**
+         * Built by a factory an extension supplied ({@code addFactory}), with nothing else to cover: no reflection,
+         * and no generator either.
+         */
+        FACTORY,
         /** A provider predating {@code coverage()} serves an uncovered operation: whether it runs it is unknown. */
         UNKNOWN,
         /** Nothing to cover: a synthetic or built-in bean, or a synthetic observer. */
@@ -91,6 +96,8 @@ public final class CodegenCoverage {
     /** How the container runs an operation: through which provider method, or none. */
     enum Kind {
         INSTANTIATE, INJECT_FIELD, INVOKE, CLIENT_PROXY,
+        /** An instance a factory an extension supplied builds: covered, with no generator of its own. */
+        FACTORY,
         /** A class generated at build time and loaded as is: covered, with no generator of its own. */
         PRE_GENERATED,
         /** No provider method runs it: always reflection or generation at boot. */
@@ -289,7 +296,9 @@ public final class CodegenCoverage {
         Class<?> beanClass = bean.getBeanClass();
         var ops = new ArrayList<Operation>();
         Boolean preGenerated = container.interceptedSubclassPreGenerated(bean.descriptor().id());
-        if (preGenerated == null) {
+        if (preGenerated == null && container.builtBySuppliedFactory(bean.descriptor())) {
+            ops.add(new Operation(Kind.FACTORY, beanClass.getName(), "supplied factory", beanClass));
+        } else if (preGenerated == null) {
             ops.add(new Operation(Kind.INSTANTIATE, beanClass.getName(), CONSTRUCTOR, beanClass));
         } else {
             String subclass = beanClass.getName() + InterceptedShape.SUBCLASS_SUFFIX;
@@ -395,9 +404,14 @@ public final class CodegenCoverage {
         var uncovered = new ArrayList<String>();
         var unknown = new ArrayList<String>();
         boolean anyCovered = false;
+        boolean factory = false;
         for (Operation op : ops) {
             switch (op.kind()) {
                 case PRE_GENERATED -> anyCovered = true;
+                case FACTORY -> {
+                    anyCovered = true;
+                    factory = true;
+                }
                 case NONE -> uncovered.add(op.label());
                 default -> anyCovered |= sortProviderOperation(op, generators, uncovered, unknown);
             }
@@ -407,6 +421,9 @@ public final class CodegenCoverage {
         }
         if (uncovered.isEmpty() && !generators.isEmpty()) {
             return new Coverage(generatedVerdict(generators), List.of());
+        }
+        if (uncovered.isEmpty() && factory) {
+            return new Coverage(Verdict.FACTORY, List.of());
         }
         return new Coverage(anyCovered ? Verdict.PARTIAL : Verdict.REFLECTION, uncovered);
     }
@@ -456,7 +473,7 @@ public final class CodegenCoverage {
             case INJECT_FIELD -> coverage.injectedFields();
             case INVOKE -> coverage.invokedMethods();
             case CLIENT_PROXY -> coverage.clientProxies();
-            case PRE_GENERATED, NONE -> Set.of();
+            case PRE_GENERATED, FACTORY, NONE -> Set.of();
         };
     }
 
