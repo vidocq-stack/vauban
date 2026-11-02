@@ -794,31 +794,24 @@ public final class VaubanContainer implements AutoCloseable {
         private final java.util.concurrent.atomic.AtomicReference<CtorPlan> plan =
                 new java.util.concurrent.atomic.AtomicReference<>();
 
-        /** Read-only once built; a class rather than a record, as its arrays are compared by identity. */
-        private static final class CtorPlan {
-            private final java.lang.reflect.Constructor<?> ctor;
-            private final Class<?>[] types;
-            private final java.lang.reflect.Type[] genericTypes;
-            private final java.lang.reflect.Parameter[] parameters;
-            private final Annotation[][] qualifiers;
-            private final boolean[] transientReference;
-
-            CtorPlan(java.lang.reflect.Constructor<?> ctor, Class<?>[] types, java.lang.reflect.Type[] genericTypes,
-                    java.lang.reflect.Parameter[] parameters, Annotation[][] qualifiers, boolean[] transientReference) {
-                this.ctor = ctor;
-                this.types = types;
-                this.genericTypes = genericTypes;
-                this.parameters = parameters;
-                this.qualifiers = qualifiers;
-                this.transientReference = transientReference;
+        /** Read-only once built; compared by identity, as only one is ever built per factory. */
+        private record CtorPlan(java.lang.reflect.Constructor<?> ctor, Class<?>[] types,
+                                java.lang.reflect.Type[] genericTypes, java.lang.reflect.Parameter[] parameters,
+                                Annotation[][] qualifiers, boolean[] transientReference) {
+            @Override
+            public boolean equals(Object o) {
+                return this == o;
             }
 
-            java.lang.reflect.Constructor<?> ctor() { return ctor; }
-            Class<?>[] types() { return types; }
-            java.lang.reflect.Type[] genericTypes() { return genericTypes; }
-            java.lang.reflect.Parameter[] parameters() { return parameters; }
-            Annotation[][] qualifiers() { return qualifiers; }
-            boolean[] transientReference() { return transientReference; }
+            @Override
+            public int hashCode() {
+                return System.identityHashCode(this);
+            }
+
+            @Override
+            public String toString() {
+                return "CtorPlan[" + ctor + "]";
+            }
         }
 
         private CtorPlan plan() throws ClassNotFoundException {
