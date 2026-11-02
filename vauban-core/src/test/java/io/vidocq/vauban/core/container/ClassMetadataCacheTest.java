@@ -70,10 +70,12 @@ class ClassMetadataCacheTest {
 
         @Bound
         void work() {
+            // Declaration only: the test reads the annotations.
         }
 
         @Plain
         void other() {
+            // Declaration only: the test reads the annotations.
         }
     }
 
@@ -83,9 +85,11 @@ class ClassMetadataCacheTest {
     static class SomeInterceptor {
         @PostConstruct
         void init() {
+            // Declaration only: the test reads the annotations.
         }
 
         void notACallback() {
+            // Declaration only: the test reads the annotations.
         }
     }
 

@@ -1004,22 +1004,22 @@ public final class VaubanContainer implements AutoCloseable {
                     ? ((ManagedBean<Object>) declBean).create(declCtx)
                     : selectByBeanClass(declaringClass);
 
-            var producer = producerOf(declaringClass);
-            return invoke(producer, declaringInstance, ctx, isDependent ? declBean : null, declCtx);
+            return invoke(producerOf(declaringClass), declaringInstance, ctx, isDependent ? declBean : null, declCtx);
         }
 
         /** The producer method and what its parameters declare, found by the first call and kept for the next ones. */
-        private volatile Producer producer;
+        private final java.util.concurrent.atomic.AtomicReference<Producer> found =
+                new java.util.concurrent.atomic.AtomicReference<>();
 
         /** A producer method with the indexes of its {@code @TransientReference} parameters. */
         private record Producer(java.lang.reflect.Method method, java.util.BitSet transientReferences) {
         }
 
         private Producer producerOf(Class<?> declaringClass) {
-            var known = producer;
+            var known = found.get();
             if (known == null) {
                 known = findProducer(declaringClass);
-                producer = known;
+                found.set(known);
             }
             return known;
         }
