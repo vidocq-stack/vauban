@@ -121,7 +121,7 @@ injection order per class and descriptor, the lifecycle callbacks per class and 
 class (all in `ClassValue`s, so a reloaded class gets its own), the constructor plan per bean factory, and the
 `@AroundConstruct` interceptors per class, constructor and bindings (`InterceptorManager`, cleared like the method
 chains when an `@Enhancement` adds a binding). The reflective computation itself is unchanged; it runs once.
-`CreationPlanCacheTest`. Traced again: 6 reflective calls from vauban-core while serving the same requests
+`CreationPlanCacheTest`. Step 2 (perf/creation-plan-build): the injection order and the lifecycle callbacks of a class come from the index (`IndexCreationPlans`, identical to the reflective computation over the CDI Lite TCK), and each planned member is looked up directly instead of scanning the hierarchy (`IndexPlans`); a class the index does not cover keeps the step-1 computation. `IndexCreationPlansTest`. Design and follow-up (members made only when `getMember()` asks): `docs/design/vau-perf-003-step2-build-time-plan.md`. Traced again: 6 reflective calls from vauban-core while serving the same requests
 (`ModuleLookups$Deployment.privateLookupIn`).
 
 ---

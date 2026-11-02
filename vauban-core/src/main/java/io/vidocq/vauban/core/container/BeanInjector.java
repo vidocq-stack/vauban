@@ -132,6 +132,10 @@ final class BeanInjector {
     }
 
     private static List<java.lang.reflect.Member> computeInjectionOrder(Class<?> beanClass, BeanDescriptor descriptor) {
+        var planned = IndexPlans.injectionOrder(unwrapInterceptedSubclass(beanClass), descriptor);
+        if (planned.isPresent()) {
+            return planned.get();
+        }
         var hierarchy = hierarchySuperFirst(unwrapInterceptedSubclass(beanClass));
         var members = new ArrayList<java.lang.reflect.Member>();
         for (int i = 0; i < hierarchy.size(); i++) {

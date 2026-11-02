@@ -837,6 +837,8 @@ public final class VaubanContainerBuilder {
         if (!classErrors.isEmpty()) {
             throw new jakarta.enterprise.inject.spi.DefinitionException(failureMessage(DEFINITION_FAILED, classErrors));
         }
+        // The index plans the creation of these classes (VAU-PERF-003 step 2), keyed by the Class itself.
+        nonBceClasses.forEach(beanClass -> IndexPlans.register(beanClass, index));
         var reflectionErrors = definitionErrors(index, nonBceClasses);
         if (!reflectionErrors.isEmpty()) {
             throw new jakarta.enterprise.inject.spi.DefinitionException(

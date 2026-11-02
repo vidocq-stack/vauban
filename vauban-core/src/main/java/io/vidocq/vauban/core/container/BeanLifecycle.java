@@ -144,6 +144,10 @@ final class BeanLifecycle {
         var target = name.contains(INTERCEPTED_SUFFIX) || name.contains("$$Proxy") || name.contains("_ClientProxy")
                 ? clazz.getSuperclass() : clazz;
         return LIFECYCLE_METHODS.get(target).computeIfAbsent(annotation, a -> {
+            var planned = IndexPlans.lifecycleCallbacks(target, a);
+            if (planned.isPresent()) {
+                return planned.get();
+            }
             var result = new ArrayList<Method>();
             collectLifecycleMethodsRecursive(target, a, result);
             return List.copyOf(result);

@@ -51,3 +51,34 @@ the same injection and callback order.
 1. `CreationPlan` record + SPI default (vauban-api), and the generator in both back ends (APT source, Class-File).
 2. Shadow comparison plan-vs-reflection over the TCK, then wire injection order and lifecycle.
 3. Constructor plan and interceptor bindings, same way.
+
+## What was built (option 1)
+
+CDI hands a `java.lang.reflect.Member` to `InjectionPoint.getMember()`, and the whole injection path of Vauban works
+on `Field`/`Method` objects, so a plan cannot do without them. Option 1, decided on 2026-11-02: the plan comes from
+the index (`IndexCreationPlans`; a side-by-side run over the CDI Lite TCK found no difference with the reflective
+computation), and each planned member is looked up directly — `getDeclaredField(name)`,
+`getDeclaredMethod(name, types)` — instead of scanning every member and annotation of the hierarchy
+(`IndexPlans`). The container registers at boot the index of each bean class, keyed by the `Class`, so a reloaded
+class never sees a stale plan. An unregistered class, a superclass outside the index, a member that cannot be found
+or an injection point an `@Enhancement` added sends the class to the step-1 reflective computation, unchanged.
+
+## Follow-up: option 2, the member made only when asked for
+
+What is left of the reflection is one lookup per injected member and callback, at the first creation of each class.
+Removing it means the container no longer needs a `Member` to inject:
+
+- **Injection** goes through the generated provider by name — `injectField(bean, class, field, value)` and
+  `invoke(target, class, methodId, args)` already exist — with the injection point's type and qualifiers taken from
+  the bean descriptor (the index), not from the member.
+- **`InjectionPoint.getMember()`** returns a `Member` created on first call, by the same direct lookup, and kept.
+  Only a bean that injects `InjectionPoint`, a portable or build-compatible extension, or the dev console asks for
+  it; most applications never do.
+- **Callbacks** are invoked through `invoke(...)` too; `Method` objects are made only for the interceptor
+  `InvocationContext.getMethod()`, lazily as well.
+
+Cost and risk: `VaubanInjectionPoint`, `BeanInjector`, `BeanLifecycle`, `ManagedBean` and `CodegenCoverage` take
+`Member`s today and would take a member *description* instead; the fallback (no provider, Weld/Open Liberty, a class
+the provider does not cover) keeps materializing the member up front, exactly as now. It is a larger refactor than
+everything in this note so far, for a one-time cost per class; worth it mainly for start-up time on large
+applications and for AOT images, where every reflective lookup must be declared.

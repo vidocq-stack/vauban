@@ -131,4 +131,41 @@ class IndexCreationPlansTest {
 
         assertTrue(IndexCreationPlans.injectionOrder(leaf, index).isEmpty());
     }
+
+    // --- Wiring: the registered index first, reflection behind it ---
+
+    public static class Registered extends Leaf {
+        @Inject Short registeredField;
+    }
+
+    public static class Unregistered extends Leaf {}
+
+    @Test
+    @DisplayName("a registered class gets its plan from the index, each member looked up directly")
+    void registeredClassUsesThePlan() {
+        var index = index(Base.class, Middle.class, Leaf.class, Registered.class);
+        IndexPlans.register(Registered.class, index);
+
+        var planned = IndexPlans.injectionOrder(Registered.class, null).orElseThrow();
+        var callbacks = IndexPlans.lifecycleCallbacks(Registered.class, PostConstruct.class).orElseThrow();
+
+        assertEquals(Set.copyOf(BeanInjector.injectionOrder(Leaf.class)).size() + 1, planned.size());
+        assertTrue(planned.stream().anyMatch(m -> m.getName().equals("registeredField")), planned::toString);
+        assertEquals(Set.of("leafInit"), Set.copyOf(callbacks.stream().map(Method::getName).toList()));
+    }
+
+    @Test
+    @DisplayName("an unregistered class, or one an extension enhanced, is left to reflection")
+    void otherClassesAreLeftToReflection() {
+        assertTrue(IndexPlans.injectionOrder(Unregistered.class, null).isEmpty());
+        assertTrue(IndexPlans.lifecycleCallbacks(Unregistered.class, PostConstruct.class).isEmpty());
+
+        var index = index(Base.class, Middle.class, Leaf.class, Registered.class);
+        IndexPlans.register(Registered.class, index);
+        var enhanced = new io.vidocq.vauban.core.bean.model.BeanDescriptor(null,
+                DotName.of(Registered.class.getName()), io.vidocq.vauban.core.bean.model.BeanDescriptor.BeanKind.MANAGED,
+                Set.of(), Set.of(), null, false, 0, List.of(), null, Set.of(), Set.of(), List.of(),
+                Set.of("an enhanced initializer"));
+        assertTrue(IndexPlans.injectionOrder(Registered.class, enhanced).isEmpty());
+    }
 }
