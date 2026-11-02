@@ -327,48 +327,58 @@ public final class ComponentProviderClassGenerator {
     private static void emitInjectField(ClassBuilder clb, List<FieldInject> fieldInjects, ClassDesc providerCD) {
         clb.withMethodBody("injectField", MTD_injectField, ClassFile.ACC_PUBLIC, cob -> {
             for (var fi : fieldInjects) {
-                var declCD = ClassDesc.of(fi.declaringClassFqn());
-                var fieldTypeCD = resolveFieldTypeDesc(fi.fieldTypeErasure());
-                Label next = cob.newLabel();
-                emitEqualsTest(cob, 2, fi.declaringClassFqn(), next);
-                emitEqualsTest(cob, 3, fi.fieldName(), next);
-                if (fieldTypeCD.isPrimitive()) {
-                    // A primitive field cannot take null: decline it, as the generated source does.
-                    cob.aload(4);
-                    cob.ifnull(next);
-                }
-                if (fi.privateField()) {
-                    // null when the field was not found: declined, the container's reflective path takes over.
-                    cob.loadConstant(DynamicConstantDesc.ofNamed(fieldHandleBootstrap(providerCD), fi.fieldName(),
-                            ConstantDescs.CD_VarHandle, declCD, fieldTypeCD));
-                    cob.astore(5);
-                    cob.aload(5);
-                    cob.ifnull(next);
-                    cob.aload(5);
-                }
-                cob.aload(1);
-                cob.checkcast(declCD);
-                cob.aload(4);
-                if (fieldTypeCD.isPrimitive()) {
-                    emitUnbox(cob, fieldTypeCD);
-                } else if (!fieldTypeCD.equals(CD_Object)) {
-                    cob.checkcast(fieldTypeCD);
-                }
-                if (fi.privateField()) {
-                    cob.invokevirtual(ConstantDescs.CD_VarHandle, "set",
-                            MethodTypeDesc.of(ConstantDescs.CD_void, declCD, fieldTypeCD));
-                } else {
-                    cob.putfield(declCD, fi.fieldName(), fieldTypeCD);
-                }
-                cob.iconst_1();
-                cob.ireturn();
-                cob.labelBinding(next);
+                emitInjectFieldCase(cob, fi, providerCD);
             }
             cob.iconst_0();
             cob.ireturn();
         });
         if (fieldInjects.stream().anyMatch(FieldInject::privateField)) {
             emitFieldHandle(clb);
+        }
+    }
+
+    /** One field of {@code injectField}: both names match, then the write and {@code true}; else on to the next. */
+    private static void emitInjectFieldCase(CodeBuilder cob, FieldInject fi, ClassDesc providerCD) {
+        var declCD = ClassDesc.of(fi.declaringClassFqn());
+        var fieldTypeCD = resolveFieldTypeDesc(fi.fieldTypeErasure());
+        Label next = cob.newLabel();
+        emitEqualsTest(cob, 2, fi.declaringClassFqn(), next);
+        emitEqualsTest(cob, 3, fi.fieldName(), next);
+        if (fieldTypeCD.isPrimitive()) {
+            // A primitive field cannot take null: decline it, as the generated source does.
+            cob.aload(4);
+            cob.ifnull(next);
+        }
+        if (fi.privateField()) {
+            // null when the field was not found: declined, the container's reflective path takes over.
+            cob.loadConstant(DynamicConstantDesc.ofNamed(fieldHandleBootstrap(providerCD), fi.fieldName(),
+                    ConstantDescs.CD_VarHandle, declCD, fieldTypeCD));
+            cob.astore(5);
+            cob.aload(5);
+            cob.ifnull(next);
+            cob.aload(5);
+        }
+        cob.aload(1);
+        cob.checkcast(declCD);
+        cob.aload(4);
+        emitFieldValue(cob, fieldTypeCD);
+        if (fi.privateField()) {
+            cob.invokevirtual(ConstantDescs.CD_VarHandle, "set",
+                    MethodTypeDesc.of(ConstantDescs.CD_void, declCD, fieldTypeCD));
+        } else {
+            cob.putfield(declCD, fi.fieldName(), fieldTypeCD);
+        }
+        cob.iconst_1();
+        cob.ireturn();
+        cob.labelBinding(next);
+    }
+
+    /** The value on the stack, unboxed into a primitive field or cast to the field's type. */
+    private static void emitFieldValue(CodeBuilder cob, ClassDesc fieldTypeCD) {
+        if (fieldTypeCD.isPrimitive()) {
+            emitUnbox(cob, fieldTypeCD);
+        } else if (!fieldTypeCD.equals(CD_Object)) {
+            cob.checkcast(fieldTypeCD);
         }
     }
 
