@@ -166,10 +166,9 @@ public final class VaubanContainer implements AutoCloseable {
         return new CodegenCoverage(this);
     }
 
-    /** Whether the bean {@code id}'s intercepted subclass was pre-generated; {@code null} if it is not intercepted. */
-    /** Records the classes an extension gave a factory for ({@code addFactory}). */
+    /** Records the classes an extension gave a factory for ({@code addFactory}): an immutable copy, published once. */
     void suppliedFactories(Set<DotName> classes) {
-        this.suppliedFactories = Set.copyOf(classes);
+        suppliedFactories.set(Set.copyOf(classes));
     }
 
     /**
@@ -177,12 +176,14 @@ public final class VaubanContainer implements AutoCloseable {
      * container: a managed bean without an {@code @Inject} constructor, as {@code createManagedBeanFactory} decides.
      */
     boolean builtBySuppliedFactory(BeanDescriptor descriptor) {
-        return suppliedFactories.contains(descriptor.beanClass()) && descriptor.injectionPoints().stream()
+        return suppliedFactories.get().contains(descriptor.beanClass()) && descriptor.injectionPoints().stream()
                 .noneMatch(ip -> ip.kind() == InjectionPointInfo.InjectionKind.CONSTRUCTOR_PARAMETER);
     }
 
-    private volatile Set<DotName> suppliedFactories = Set.of();
+    private final java.util.concurrent.atomic.AtomicReference<Set<DotName>> suppliedFactories =
+            new java.util.concurrent.atomic.AtomicReference<>(Set.of());
 
+    /** Whether the bean {@code id}'s intercepted subclass was pre-generated; {@code null} if it is not intercepted. */
     Boolean interceptedSubclassPreGenerated(BeanId id) {
         return interceptorWrapper == null ? null : interceptorWrapper.interceptedSubclassPreGenerated(id);
     }
