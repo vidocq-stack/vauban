@@ -4,6 +4,81 @@
 [.lead]
 Vauban rests on a simple principle: anything that can be computed at compile time is. No hot reflection, no dynamic proxies, no external bytecode library. This page documents the implementation choices that uphold that discipline.
 
+[#generated-code]
+== Generated code and reflective fallback [.tag-new]#NEW#
+
+Every brick of the suite documents, in a section of this name, what it generates, who generates it and when, what
+looks it up at run time, and what runs instead when it is missing. For Vauban the generated code *is* the
+container's normal path: the reflective path below it exists for classes no build step saw, and is kept unchanged.
+
+[cols="2,2,3,3"]
+|===
+| Generated | By, and when | Used at run time by | Without it
+
+| `META-INF/vauban-beans.list`, the bean index of an archive
+| `vauban-processor` in javac; `vauban:generate` (`process-classes`) for what javac did not compile
+| The container at boot: it loads each listed class without initialising it, then reads its class file into the
+  index (class-file parsing, not reflection). Injection order, lifecycle callbacks, generic types and the bean
+  definition rules all come from that index.
+| An archive with a `beans.xml` and no list is scanned at boot, every class file of it
+  (`scanUnprocessedBeanArchives`).
+
+| <<components-provider,`_VaubanComponents`>>, one per package
+| `vauban-processor` (Java source); `vauban:generate` (Class-File API bytecode); `vidocq:generate` for a dependency
+  jar, moved into an enriched copy of the jar
+| `ComponentProviders`, through `ServiceLoader` on `io.vidocq.vauban.api.VaubanComponentProvider` (the module's
+  `provides`): it creates the package's beans, injects them, calls producers, observers, disposers, lifecycle and
+  interceptor methods, and describes the package's annotation types
+| The container instantiates, injects and invokes by reflection, which on the module path needs the package
+  opened to `io.vidocq.vauban.core`.
+
+| `MyBean_ClientProxy`, for normal-scoped beans
+| `vauban-processor` or `vauban:generate`; for a type in another owner's package, shipped as a resource under
+  `META-INF/vauban/placed/` with `META-INF/vauban/required-opens.list` (<<proxy-strategies>>)
+| The container when it hands out a reference to the bean
+| Generated at boot or on first use with the Class-File API, or a `java.lang.reflect.Proxy` for an interface,
+  and announced (<<aot>>).
+
+| `MyBean$$Intercepted`, for beans with interceptor bindings
+| `vauban-processor` or `vauban:generate`
+| The container when it creates the bean (<<intercepted-methods>>)
+| Generated at boot with the Class-File API, and announced.
+
+| What Build Compatible Extensions produce: `vauban-synthetic-metadata.properties`, `vauban-enhancements.properties`,
+  `vauban-contexts.list`, `vauban-bce-runtime.list`, and the `vauban-bce-processed` marker
+| `vauban-processor`, which runs the extensions inside javac
+  (xref:concepts.adoc#_build_compatible_extensions[Build Compatible Extensions])
+| The container at boot: it applies the frozen enhancements and registers the synthetic beans, observers and
+  contexts instead of running the extensions again; `vauban-bce-runtime.list` names the (extension, class) pairs
+  whose `@Enhancement` it still replays when no frozen patch covers them
+| Unless every bean archive carries the marker, the extensions' whole lifecycle runs again at boot.
+|===
+
+`vauban-processor` also checks the bean definition rules on the compilation and reports a broken one as a compiler
+warning, not an error: an extension may still veto the class at boot, which the compiler cannot know.
+
+=== When the fallback runs
+
+* A class compiled without `vauban-processor` and never processed by `vauban:generate` or `vidocq:generate`: a jar
+  on the class path, an IDE run whose output the build never processed
+  (<<_7_an_ide_run_where_the_build_output_was_never_woven>>).
+* A type no generated provider covers: a producer only known at run time, a private interceptor method, an
+  interceptor compiled without the processor.
+* A live annotation the index does not describe (<<aot>>).
+
+These classes, generated or not, mean nothing to another CDI container: on Weld or Open Liberty they are ignored.
+
+=== Which path ran
+
+* A framed `WARNING`, _VAUBAN — RUNTIME CODE GENERATION FALLBACK_, at the end of the boot lists every class
+  generated at run time.
+* `VaubanContainer.codegenCoverage()` says, for each bean, observer and interceptor, which generator covers each
+  operation: `APT`, `CLASS_FILE`, `PARTIAL`, `REFLECTION`, `FACTORY`. The CDI panel of the Vidocq dev console
+  shows it.
+* A bean instantiated by reflection is logged once, at `DEBUG`, by `VaubanContainerBuilder`.
+* `-Dvauban.annotations.reflection=warn|forbid` logs or refuses each annotation read by reflection
+  (xref:reference.adoc#system-properties[Reference — system properties]).
+
 == Code generation via Class-File API and APT
 
 CDI 4.1 describes a richly reflective object model: `Bean<T>`, `BeanManager`, `InjectionPoint`, `AnnotatedType`. Vauban refuses to evaluate that model at runtime. It compiles it.
