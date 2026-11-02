@@ -5,6 +5,34 @@ suspected cause, status. Updated on every investigation.
 
 ---
 
+## VAU-PERF-005 — Every boot replays the whole BCE lifecycle because no brick archive carries the BCE-processed marker
+- **Date**: 2026-11-02 — **Status**: OPEN (analysis; design decision needed)
+- **Severity**: medium (≈ 940 `Method.invoke` and a full discovery at every boot of a Vidocq application)
+
+### Symptom
+The reflection audit traced `BceProcessor.invokeWithArg`/`invokeRegistrationMethod` running ≈ 940 reflective calls at
+boot. `VaubanContainerBuilder` skips the runtime BCE lifecycle only when every bean archive comes from a
+"BCE-processed" source (`allSourcesProcessed`: no class outside a source with `META-INF/vauban-bce-processed`). In the
+audit application (11 extensions), only the application jar carries the marker; none of the 18 brick bean archives
+does (cassini-core, cervantes-cdi-vauban, champollion-jsonb-cdi, dirac-cdi-vauban, grimm-cdi-vauban,
+heisenberg-cdi-vauban, mansart-data-cdi, ravel-cdi-vauban, …), so the full lifecycle runs again at runtime.
+
+### Analysis
+`VaubanProcessor` writes the marker only in the module whose compilation ran the BCEs. A brick's archive cannot carry
+it on its own: the BCEs of *other* bricks, present only in the final application, may enhance its classes. The
+application's build sees every BCE (codegen bundles) and, since VAU-APT-006, the dependency bean archives — so it is
+the application build that could record, per dependency archive, that the BCE effects on it are baked in (e.g. extend
+the replay list / frozen enhancement patch to dependency classes, or let `vidocq:generate`'s enriched copies carry a
+marker scoped to the application's BCE set).
+
+### Next
+Decide where the "BCE effects baked in" fact lives for dependency archives (application build output vs enriched
+copies), then make `allSourcesProcessed` true for a Vidocq application built with the codegen bundles, keeping the
+runtime replay as the fallback for archives that were not processed. TCK 774/774 and the BUG-20261030-27 double-run
+lesson apply.
+
+---
+
 ## VAU-PERF-003 — Every creation of a bean reads its class again by reflection
 - **Date**: 2026-11-02 — **Status**: FIXED (perf/creation-plan-cache)
 - **Severity**: medium (reflection on the request path: a `@RequestScoped` or `@Dependent` bean is created on every request)
