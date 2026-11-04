@@ -127,7 +127,9 @@ final class BuiltInReaders {
 
     static final class JarReader implements ArchiveReader, StandardUrls {
         private final Path path;
-        private final JarFile jar;
+        /** The jar file, {@code null} while released; opened again on the next use. */
+        private JarFile jar;
+        private boolean closed;
         private final String base;
         private final URLStreamHandler handler = new URLStreamHandler() {
             @Override
@@ -148,8 +150,8 @@ final class BuiltInReaders {
         }
 
         @Override
-        public List<String> classEntries() {
-            return jar.versionedStream()
+        public List<String> classEntries() throws IOException {
+            return jar().versionedStream()
                     .filter(entry -> !entry.isDirectory() && entry.getName().endsWith(".class"))
                     .map(JarEntry::getName)
                     .toList();
@@ -157,6 +159,7 @@ final class BuiltInReaders {
 
         @Override
         public byte[] readClass(String entryName) throws IOException {
+            var jar = jar();
             var entry = jar.getEntry(entryName);
             if (entry == null) throw new IOException("No such entry: " + entryName);
             try (var in = jar.getInputStream(entry)) {
@@ -166,6 +169,7 @@ final class BuiltInReaders {
 
         @Override
         public Optional<byte[]> readResource(String entryName) throws IOException {
+            var jar = jar();
             var entry = jar.getEntry(entryName);
             if (entry == null) return Optional.empty();
             try (var in = jar.getInputStream(entry)) {
@@ -180,6 +184,7 @@ final class BuiltInReaders {
          */
         @Override
         public URL resourceUrl(String name) throws IOException {
+            var jar = jar();
             if (jar.getEntry(name) == null) return null;
             var fragment = jar.isMultiRelease() ? "#runtime" : "";
             return URL.of(URI.create(base + encodePath(name) + fragment), handler);
@@ -189,14 +194,51 @@ final class BuiltInReaders {
             return new JarFile(path.toFile(), false, ZipFile.OPEN_READ, JarFile.runtimeVersion());
         }
 
+        /** The jar file, opened again when released; a closed reader keeps its closed jar file's failure. */
+        private synchronized JarFile jar() throws IOException {
+            if (jar == null) {
+                if (closed) {
+                    throw new IllegalStateException("The reader of " + path + " is closed");
+                }
+                jar = open(path);
+            }
+            return jar;
+        }
+
+        @Override
+        public synchronized void release() throws IOException {
+            var current = jar;
+            var sharedFile = shared;
+            jar = null;
+            shared = null;
+            try {
+                if (current != null) current.close();
+            } finally {
+                if (sharedFile != null) sharedFile.close();
+            }
+        }
+
+        @Override
+        public void reopen() throws IOException {
+            synchronized (this) {
+                if (closed) throw new IOException("The reader of " + path + " is closed");
+            }
+            jar();
+        }
+
         @Override
         public void close() throws IOException {
+            JarFile current;
+            JarFile sharedFile;
+            synchronized (this) {
+                closed = true;
+                current = jar;
+                sharedFile = shared;
+            }
             try {
-                jar.close();
+                if (current != null) current.close();
             } finally {
-                synchronized (this) {
-                    if (shared != null) shared.close();
-                }
+                if (sharedFile != null) sharedFile.close();
             }
         }
 
@@ -248,6 +290,7 @@ final class BuiltInReaders {
                 if (getEntryName() == null) throw new IOException("no entry name specified");
                 try {
                     // Not entry(): its null for a closed jar file would reach getInputStream as an NPE (VAU-CL-002).
+                    var jar = jar();
                     var entry = jar.getJarEntry(getEntryName());
                     if (entry == null) {
                         throw new FileNotFoundException("JAR entry " + getEntryName() + " not found in " + path);
@@ -271,8 +314,8 @@ final class BuiltInReaders {
 
             private JarEntry entry() {
                 try {
-                    return jar.getJarEntry(getEntryName());
-                } catch (IllegalStateException _) {
+                    return jar().getJarEntry(getEntryName());
+                } catch (IllegalStateException | IOException _) {
                     return null;
                 }
             }

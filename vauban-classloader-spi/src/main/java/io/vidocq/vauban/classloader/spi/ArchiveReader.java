@@ -61,6 +61,24 @@ public interface ArchiveReader extends AutoCloseable {
         return Optional.empty();
     }
 
+    /**
+     * Lets go of every operating-system resource this reader holds (an open file) while staying usable: a process
+     * snapshot (CRaC checkpoint, CRIU dump) refuses an open file. A read while released may take the resource
+     * again. Idempotent; a no-op for a reader that holds nothing between reads.
+     *
+     * @throws IOException if a resource cannot be released
+     */
+    default void release() throws IOException {
+    }
+
+    /**
+     * Takes back what {@link #release()} let go of. Idempotent.
+     *
+     * @throws IOException if the archive cannot be opened again, or this reader is closed
+     */
+    default void reopen() throws IOException {
+    }
+
     @Override
     void close() throws IOException;
 }

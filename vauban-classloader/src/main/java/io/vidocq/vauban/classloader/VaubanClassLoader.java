@@ -631,6 +631,43 @@ public class VaubanClassLoader extends ClassLoader implements AutoCloseable {
         return binaryName.replace('.', '/') + CLASS_SUFFIX;
     }
 
+    /**
+     * Lets go of the files this loader holds open, so that a process snapshot (a CRaC checkpoint, a CRIU dump) can
+     * be taken. The loader stays usable: a read while released opens the file again by itself, and
+     * {@link #reopenArchives()} does it at once. Idempotent.
+     *
+     * @throws IOException if a file cannot be released; the others still are, the first failure is thrown
+     */
+    public void releaseArchives() throws IOException {
+        IOException first = null;
+        for (var archive : archives) {
+            try {
+                archive.reader.release();
+            } catch (Exception e) {
+                if (first == null) first = new IOException("Failed releasing " + archive.path, e);
+            }
+        }
+        if (first != null) throw first;
+    }
+
+    /**
+     * Opens again the files {@link #releaseArchives()} let go of. Idempotent.
+     *
+     * @throws IOException if a file cannot be opened, or this loader is closed; the others still are, the first
+     *                     failure is thrown
+     */
+    public void reopenArchives() throws IOException {
+        IOException first = null;
+        for (var archive : archives) {
+            try {
+                archive.reader.reopen();
+            } catch (Exception e) {
+                if (first == null) first = new IOException("Failed reopening " + archive.path, e);
+            }
+        }
+        if (first != null) throw first;
+    }
+
     @Override
     public void close() throws IOException {
         IOException first = null;
