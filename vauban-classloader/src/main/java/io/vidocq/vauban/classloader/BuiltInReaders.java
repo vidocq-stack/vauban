@@ -159,20 +159,20 @@ final class BuiltInReaders {
 
         @Override
         public byte[] readClass(String entryName) throws IOException {
-            var jar = jar();
-            var entry = jar.getEntry(entryName);
+            var archive = jar();
+            var entry = archive.getEntry(entryName);
             if (entry == null) throw new IOException("No such entry: " + entryName);
-            try (var in = jar.getInputStream(entry)) {
+            try (var in = archive.getInputStream(entry)) {
                 return in.readAllBytes();
             }
         }
 
         @Override
         public Optional<byte[]> readResource(String entryName) throws IOException {
-            var jar = jar();
-            var entry = jar.getEntry(entryName);
+            var archive = jar();
+            var entry = archive.getEntry(entryName);
             if (entry == null) return Optional.empty();
-            try (var in = jar.getInputStream(entry)) {
+            try (var in = archive.getInputStream(entry)) {
                 return Optional.of(in.readAllBytes());
             }
         }
@@ -184,9 +184,9 @@ final class BuiltInReaders {
          */
         @Override
         public URL resourceUrl(String name) throws IOException {
-            var jar = jar();
-            if (jar.getEntry(name) == null) return null;
-            var fragment = jar.isMultiRelease() ? "#runtime" : "";
+            var archive = jar();
+            if (archive.getEntry(name) == null) return null;
+            var fragment = archive.isMultiRelease() ? "#runtime" : "";
             return URL.of(URI.create(base + encodePath(name) + fragment), handler);
         }
 
@@ -290,12 +290,12 @@ final class BuiltInReaders {
                 if (getEntryName() == null) throw new IOException("no entry name specified");
                 try {
                     // Not entry(): its null for a closed jar file would reach getInputStream as an NPE (VAU-CL-002).
-                    var jar = jar();
-                    var entry = jar.getJarEntry(getEntryName());
+                    var archive = jar();
+                    var entry = archive.getJarEntry(getEntryName());
                     if (entry == null) {
                         throw new FileNotFoundException("JAR entry " + getEntryName() + " not found in " + path);
                     }
-                    return jar.getInputStream(entry);
+                    return archive.getInputStream(entry);
                 } catch (IllegalStateException closed) {
                     throw new IOException("The loader of " + path + " is closed", closed);
                 }
