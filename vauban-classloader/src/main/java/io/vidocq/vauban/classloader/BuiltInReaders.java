@@ -296,8 +296,8 @@ final class BuiltInReaders {
                         throw new FileNotFoundException("JAR entry " + getEntryName() + " not found in " + path);
                     }
                     return archive.getInputStream(entry);
-                } catch (IllegalStateException closed) {
-                    throw new IOException("The loader of " + path + " is closed", closed);
+                } catch (IllegalStateException readerClosed) {
+                    throw new IOException("The loader of " + path + " is closed", readerClosed);
                 }
             }
 
