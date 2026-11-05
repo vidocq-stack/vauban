@@ -121,6 +121,23 @@ class ComponentProviderGeneratorTest {
     }
 
     @Test
+    @DisplayName("keys invoke by the binary name of a nested class and calls it by its source name")
+    void invokeCallsANestedClassByItsSourceName() {
+        var methodInvokes = List.of(
+                new MethodInvoke("app.Outer$Inner", "seen", List.of("java.lang.String"),
+                        false, true, null, "app.Outer.Inner"),
+                new MethodInvoke("app.Outer$Inner", "answer", List.of(),
+                        true, false, "java.lang.Integer", "app.Outer.Inner"));
+
+        var s = ComponentProviderGenerator.generateFrom("app", List.of(), List.of(), methodInvokes).source();
+
+        assertTrue(s.contains("case \"app.Outer$Inner\" -> {"), s);
+        assertTrue(s.contains("((app.Outer.Inner) target).seen((java.lang.String) args[0]);"), s);
+        assertTrue(s.contains("return app.Outer.Inner.answer();"), s);
+        assertFalse(s.contains("(app.Outer$Inner)"), s);
+    }
+
+    @Test
     @DisplayName("emits invoke switch for void, non-void, and static methods")
     void generatesInvokeSwitch() {
         var methodInvokes = List.of(

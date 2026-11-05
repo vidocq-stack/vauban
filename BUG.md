@@ -5,6 +5,38 @@ suspected cause, status. Updated on every investigation.
 
 ---
 
+## VAU-APT-009 — A nested bean with an observer, a producer or a lifecycle method no longer compiles
+- **Date**: 2026-11-05 — **Status**: FIXED (fix/nested-bean-invoke-cast)
+- **Severity**: high (the build of the application fails; the only way out is to make the bean a top-level class)
+
+### Symptom
+A static nested bean class with a non-private `@Observes`, `@Produces`, `@Disposes`, `@PostConstruct` or `@PreDestroy`
+method, or an `@Inject` initializer, made the generated `_VaubanComponents` fail to compile: `cannot find symbol` on
+`app.Outer$Inner`. `invoke()` cast the target, and called a static method, through the binary name of the class, which
+is not a name the Java source can use. `create()` and `injectField()` already named the class canonically. Found while
+writing a vidocq test with nested observers (Vidocq/vidocq#496).
+
+### Repro
+```java
+public class Holder {
+    @ApplicationScoped
+    public static class Observers {
+        void seen(@Observes String event) { }
+    }
+}
+```
+compiled with the processor: `ComponentProviderCompileTimeTest#nestedBeanMethodsAreCalledThroughItsCanonicalName`.
+
+### Fix
+`MethodInvoke` carries the canonical name of the declaring class next to its binary name, from
+`ProvidedClass.sourceFqn` through `ComponentCollector.collectMethods`. `invoke()` keeps the binary name as the key the
+container asks with, and casts and calls through the canonical name. A caller with no separate source name (the
+bytecode provider of the Maven plugin, which writes internal names) keeps the six-argument constructor. Tests:
+`ComponentProviderCompileTimeTest#nestedBeanMethodsAreCalledThroughItsCanonicalName`,
+`ComponentProviderGeneratorTest#invokeCallsANestedClassByItsSourceName`.
+
+---
+
 ## VAU-PERF-009 — A request-scoped or dependent bean is read by reflection again at each request
 - **Date**: 2026-11-02 — **Status**: FIXED (perf/per-request-interceptors)
 - **Severity**: medium (steady-state cost: ~60 reflective calls per request on the tutorial application, linear in the number of requests)

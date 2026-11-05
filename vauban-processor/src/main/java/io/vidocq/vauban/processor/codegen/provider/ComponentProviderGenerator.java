@@ -444,7 +444,7 @@ public final class ComponentProviderGenerator {
             sb.append(CASE_OPEN).append(declClass).append(CASE_BLOCK);
             sb.append("                switch (methodId) {\n");
             for (var mi : entry.getValue()) {
-                appendInvokeCase(sb, declClass, mi);
+                appendInvokeCase(sb, mi);
             }
             sb.append("                    default -> { return ").append(SPI).append(".NOT_INVOKED; }\n");
             sb.append(CLOSE_16);
@@ -456,8 +456,12 @@ public final class ComponentProviderGenerator {
         sb.append(CLOSE_4);
     }
 
-    /** One {@code case "<methodId>" -> { … }} of {@code invoke}: the direct call and its result. */
-    private static void appendInvokeCase(StringBuilder sb, String declClass, MethodInvoke mi) {
+    /**
+     * One {@code case "<methodId>" -> { … }} of {@code invoke}: the direct call and its result. The call names the
+     * declaring class by its source name: the binary name of a nested class ({@code Outer$Inner}) does not compile.
+     */
+    private static void appendInvokeCase(StringBuilder sb, MethodInvoke mi) {
+        var declClass = mi.declaringClassSourceFqn();
         sb.append("                    case \"").append(mi.methodId()).append(CASE_BLOCK);
         var call = new StringBuilder();
         if (mi.isStatic()) {

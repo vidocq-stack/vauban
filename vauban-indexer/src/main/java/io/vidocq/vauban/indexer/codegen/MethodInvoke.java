@@ -30,12 +30,15 @@ import java.util.List;
  * dimension), exactly matching the format produced by
  * {@code io.vidocq.vauban.core.container.VaubanLookup#methodId(Method)}.
  *
- * @param declaringClassFqn fully-qualified name of the class declaring the method
- * @param methodName        simple name of the method
- * @param paramErasures     erased parameter type names in declared order (empty for no-arg)
- * @param isStatic          {@code true} for a static method (no target cast needed)
- * @param isVoid            {@code true} when the return type is {@code void}
- * @param returnErasure     erased return type FQN, or {@code null} when {@code isVoid} is true
+ * @param declaringClassFqn       binary name of the class declaring the method ({@code app.Outer$Inner} for a nested
+ *                                class): what the container asks the provider for
+ * @param methodName              simple name of the method
+ * @param paramErasures           erased parameter type names in declared order (empty for no-arg)
+ * @param isStatic                {@code true} for a static method (no target cast needed)
+ * @param isVoid                  {@code true} when the return type is {@code void}
+ * @param returnErasure           erased return type FQN, or {@code null} when {@code isVoid} is true
+ * @param declaringClassSourceFqn canonical name of the declaring class ({@code app.Outer.Inner}): the only one a
+ *                                generated source can cast to or call a static method on
  */
 public record MethodInvoke(
         String declaringClassFqn,
@@ -43,10 +46,17 @@ public record MethodInvoke(
         List<String> paramErasures,
         boolean isStatic,
         boolean isVoid,
-        String returnErasure) {
+        String returnErasure,
+        String declaringClassSourceFqn) {
 
     public MethodInvoke {
         paramErasures = List.copyOf(paramErasures);
+    }
+
+    /** For a declaring class whose source name is its binary name: every top-level class. */
+    public MethodInvoke(String declaringClassFqn, String methodName, List<String> paramErasures,
+            boolean isStatic, boolean isVoid, String returnErasure) {
+        this(declaringClassFqn, methodName, paramErasures, isStatic, isVoid, returnErasure, declaringClassFqn);
     }
 
     /** The runtime-compatible method identity key: {@code name(erasure0,erasure1,…)}. */

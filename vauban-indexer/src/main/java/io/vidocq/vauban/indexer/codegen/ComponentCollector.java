@@ -206,11 +206,24 @@ public final class ComponentCollector {
      * @return the collected method invocation descriptors
      */
     public static List<MethodInvoke> collectMethods(ClassInfo classInfo, List<String> warningsOut) {
+        return collectMethods(classInfo, classInfo.name().value(), warningsOut);
+    }
+
+    /**
+     * {@link #collectMethods(ClassInfo, List)} for a class whose source name differs from its binary name, a nested
+     * class: {@code sourceFqn} is the name the generated source casts the target to.
+     *
+     * @param classInfo   the class to examine
+     * @param sourceFqn   the canonical name of the class
+     * @param warningsOut mutable list to accumulate diagnostic messages (never {@code null})
+     * @return the collected method invocation descriptors
+     */
+    public static List<MethodInvoke> collectMethods(ClassInfo classInfo, String sourceFqn, List<String> warningsOut) {
         var beanFqn = classInfo.name().value();
         var result = new ArrayList<MethodInvoke>();
         for (MethodInfo m : classInfo.methods()) {
             if (isInvocable(m) && qualifies(m)) {
-                methodInvoke(beanFqn, m, warningsOut).ifPresent(result::add);
+                methodInvoke(beanFqn, sourceFqn, m, warningsOut).ifPresent(result::add);
             }
         }
         return result;
@@ -238,7 +251,8 @@ public final class ComponentCollector {
     }
 
     /** The invocation descriptor of {@code m}, or empty (with a warning) when no invocation can be emitted. */
-    private static Optional<MethodInvoke> methodInvoke(String beanFqn, MethodInfo m, List<String> warningsOut) {
+    private static Optional<MethodInvoke> methodInvoke(String beanFqn, String sourceFqn, MethodInfo m,
+            List<String> warningsOut) {
         var paramErasures = paramErasures(beanFqn, m, warningsOut).orElse(null);
         if (paramErasures == null) {
             return Optional.empty();
@@ -251,7 +265,7 @@ public final class ComponentCollector {
         }
         String returnErasure = isVoid ? null : erasure(m.returnType());
         return Optional.of(new MethodInvoke(beanFqn, m.name(), List.copyOf(paramErasures),
-                m.isStatic(), isVoid, returnErasure));
+                m.isStatic(), isVoid, returnErasure, sourceFqn));
     }
 
     /** The parameter erasures of {@code m}, or empty (with a warning) when one cannot be cast to. */
@@ -333,7 +347,7 @@ public final class ComponentCollector {
             }
 
             bundle.fields().addAll(collectFields(provided.classInfo()));
-            bundle.methods().addAll(collectMethods(provided.classInfo(), warningsOut));
+            bundle.methods().addAll(collectMethods(provided.classInfo(), provided.sourceFqn(), warningsOut));
         }
 
         var result = new ArrayList<PackageProvider>();

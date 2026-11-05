@@ -347,6 +347,37 @@ class ComponentProviderCompileTimeTest {
     }
 
     @Test
+    @DisplayName("the methods of a nested bean are called through its canonical name (compiles)")
+    void nestedBeanMethodsAreCalledThroughItsCanonicalName() throws Exception {
+        var result = compile("Holder", """
+                package app;
+
+                public class Holder {
+                    @jakarta.enterprise.context.ApplicationScoped
+                    public static class Observers {
+                        void seen(@jakarta.enterprise.event.Observes String event) { }
+
+                        @jakarta.annotation.PostConstruct
+                        void ready() { }
+
+                        @jakarta.enterprise.inject.Produces
+                        static Integer answer() { return 42; }
+                    }
+                }
+                """);
+
+        assertTrue(result.success(), "the generated provider must compile. Messages: " + result.messages());
+
+        var src = Files.readString(result.genDir().resolve("app/_VaubanComponents.java"));
+        // The container asks by the binary name; the source can only name the type canonically.
+        assertTrue(src.contains("case \"app.Holder$Observers\" -> {"), src);
+        assertTrue(src.contains("((app.Holder.Observers) target).seen((java.lang.String) args[0]);"), src);
+        assertTrue(src.contains("((app.Holder.Observers) target).ready();"), src);
+        assertTrue(src.contains("return app.Holder.Observers.answer();"), src);
+        assertFalse(src.contains("(app.Holder$Observers)"), src);
+    }
+
+    @Test
     @DisplayName("pre-generates a <bean>$$Intercepted source subclass the provider can reference")
     void generatesInterceptedSubclassForBoundBean() throws Exception {
         var result = compile("AuditedService", """
