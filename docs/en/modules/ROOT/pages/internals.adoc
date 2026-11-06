@@ -5,7 +5,7 @@
 Vauban rests on a simple principle: anything that can be computed at compile time is. No hot reflection, no dynamic proxies, no external bytecode library. This page documents the implementation choices that uphold that discipline.
 
 [#generated-code]
-== Generated code and reflective fallback [.tag-new]#NEW#
+== Generated code and reflective fallback
 
 Every brick of the suite documents, in a section of this name, what it generates, who generates it and when, what
 looks it up at run time, and what runs instead when it is missing. For Vauban the generated code *is* the
@@ -68,7 +68,7 @@ warning, not an error: an extension may still veto the class at boot, which the 
 
 These classes, generated or not, mean nothing to another CDI container: on Weld or Open Liberty they are ignored.
 
-What the container does read by reflection, it reads once [.tag-new]#NEW#: the annotations of a bean class, of its
+What the container does read by reflection, it reads once: the annotations of a bean class, of its
 methods and constructors, the declared interceptor-binding and qualifier types, the constructors of a bean and of its
 `$$Intercepted` subclass, the generic type of an injected field, an interceptor's `@PostConstruct`, the producer method
 and the `$$init` handle of an intercepted subclass are kept per class (or per factory) after a first reading. A
@@ -129,7 +129,7 @@ classes earlier versions wrote were never loaded, and are no longer generated (v
 | Subclass generated for beans with interceptor bindings — routes the intercepted methods through the interceptor chain (see <<intercepted-methods,which methods it covers>>).
 
 | [[components-provider]]`_VaubanComponents`
-| One per package. Implements `io.vidocq.vauban.api.VaubanComponentProvider`: instantiates the package's components in-module (`new X(…)`), injects fields — a private one [.tag-new]#NEW# through a `VarHandle` it finds once with its own lookup, which needs no `opens` since it shares the field's module — creates client proxies and invokes producers, observers, disposers and lifecycle callbacks — no reflection, no `opens`. It also calls the interceptor methods of the package [.tag-new]#NEW#: `@AroundInvoke`, `@AroundConstruct`, and an interceptor's `@PostConstruct`/`@PreDestroy` taking an `InvocationContext`, so a package-private one needs no `opens` either; a private one, or one of an interceptor compiled without the processor, is still called by reflection.Its `coverage()` declares all of these, keyed as the container asks for them; `VaubanContainer.codegenCoverage()` reads it to tell, per bean, observer and interceptor, which generator covers each operation and which falls back to reflection — what the Vidocq dev console shows. For a scanned dependency jar, `vidocq:generate` asks the generator for the same providers (`VaubanGenerator.Config#dependencyProviders`) and moves them into an enriched copy of that jar, whose descriptor declares them.It builds a bean through its `@Inject` constructor when it has one, and through a no-arg constructor only otherwise, the constructor the container picks (CDI 4.1 §3.1.1). It used to pick the no-arg one whenever it existed, so the container fell back to reflection, which a named module refuses without an `opens`.
+| One per package. Implements `io.vidocq.vauban.api.VaubanComponentProvider`: instantiates the package's components in-module (`new X(…)`), injects fields — a private onethrough a `VarHandle` it finds once with its own lookup, which needs no `opens` since it shares the field's module — creates client proxies and invokes producers, observers, disposers and lifecycle callbacks — no reflection, no `opens`. It also calls the interceptor methods of the package: `@AroundInvoke`, `@AroundConstruct`, and an interceptor's `@PostConstruct`/`@PreDestroy` taking an `InvocationContext`, so a package-private one needs no `opens` either; a private one, or one of an interceptor compiled without the processor, is still called by reflection.Its `coverage()` declares all of these, keyed as the container asks for them; `VaubanContainer.codegenCoverage()` reads it to tell, per bean, observer and interceptor, which generator covers each operation and which falls back to reflection — what the Vidocq dev console shows. For a scanned dependency jar, `vidocq:generate` asks the generator for the same providers (`VaubanGenerator.Config#dependencyProviders`) and moves them into an enriched copy of that jar, whose descriptor declares them.It builds a bean through its `@Inject` constructor when it has one, and through a no-arg constructor only otherwise, the constructor the container picks (CDI 4.1 §3.1.1). It used to pick the no-arg one whenever it existed, so the container fell back to reflection, which a named module refuses without an `opens`.
 |===
 
 Every generated class file carries the *project's* Java release, never the release of the JDK that

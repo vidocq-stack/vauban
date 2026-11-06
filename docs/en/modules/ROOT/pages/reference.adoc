@@ -375,7 +375,7 @@ original jars. Bind it to `process-classes` when dev mode must run against the p
 | `-Avauban.producerProxy=error\|warn\|note`
 | Default `note`. Severity of the diagnostic emitted when a normal-scoped `@Produces` returns a class type that is not build-time proxyable across a module boundary (the runtime then falls back to reflective proxy generation, which needs an `opens`). Set to `error` to enforce zero fallback, `warn` to surface it without failing the build. See xref:internals.adoc#proxy-strategies[Internals — client-proxy strategies].
 
-| [[generation-round]]`-Avauban.generationRound=last` [.tag-new]#NEW#
+| [[generation-round]]`-Avauban.generationRound=last`
 | Default `early`: the processor writes its classes in the first round, from the second on, whose new classes brought no bean, instead of javac's last round, where each file created costs a "created in the last round will not be subject to annotation processing" warning. It still waits for the last round when there is no second round, or when a bean class carries an `@Inherited` annotation that is not CDI's, JAX-RS's or MicroProfile OpenAPI's, since its subclasses would reach the other processors. A bean another processor generates later fails the build by name; `last` restores the former behaviour.
 
 | `-Avauban.providesHint=false`
@@ -383,7 +383,7 @@ original jars. Bind it to `process-classes` when dev mode must run against the p
 |===
 
 [#beans-of-other-modules]
-=== Injection points satisfied by another module [.tag-new]#NEW#
+=== Injection points satisfied by another module
 
 The static validation resolves an injection point against the beans of the compilation, and against the beans of the
 modules it depends on:
