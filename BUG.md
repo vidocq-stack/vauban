@@ -3489,7 +3489,7 @@ The same goes for a normal-scoped producer of such a class (`Dollar_Produced$$â€
 ## BUG-20261013-03 â€” Threads sharing one request each create a `@RequestScoped` bean
 
 - **Date**: 2026-10-13
-- **Status**: OPEN â€” reproduced
+- **Status**: FIXED fae281ef (`fix/request-context-concurrent-create`, Vidocq/vauban#280)
 - **Module**: `vauban-core` (`RequestContext`)
 - **Surfaced by**: the concurrency review of Tassis M9 (`tassis-cdi-vauban`), 2026-10-10.
 - **Symptom**: when several threads work inside the same request, two of them using the same
@@ -3529,6 +3529,13 @@ The same goes for a normal-scoped producer of such a class (`Dollar_Produced$$â€
     stand-alone class on the class path of `vauban-core`. With `@PostConstruct` holding each
     thread until both are creating: 2 instances created, 1 destroyed, the two subtasks got
     different ids. Without any forcing: 1972 rounds out of 2000 created two instances.
+- **Fix** (2026-11-07, Vidocq/vauban#280): each `RequestContextState` carries a `ReentrantLock` guarding
+  `get` (lookup, create, put), `destroy`, `activate` and `deactivate`; `active` is `volatile`. Reentrant
+  because creating a bean can resolve another bean of the same scope. The regression test
+  `RequestContextConcurrencyTest` needs no preview feature: the package-private
+  `RequestContext.inCurrentRequest` binds plain virtual threads to the request. Red before (2 instances),
+  green after. `ApplicationContext` was not audited here.
+
 
 ## BUG-20261028-01 â€” A custom scope only the bean's class loader sees becomes `@Dependent`
 
