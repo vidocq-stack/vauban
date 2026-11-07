@@ -102,7 +102,7 @@ class RequestContextConcurrencyTest {
             for (var thread : threads) {
                 try {
                     thread.join();
-                } catch (InterruptedException e) {
+                } catch (InterruptedException _) {
                     Thread.currentThread().interrupt();
                 }
             }
