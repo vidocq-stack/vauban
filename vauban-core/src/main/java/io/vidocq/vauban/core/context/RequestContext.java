@@ -28,8 +28,11 @@ import jakarta.enterprise.context.spi.AlterableContext;
 import jakarta.enterprise.context.spi.Contextual;
 import jakarta.enterprise.context.spi.CreationalContext;
 import java.lang.annotation.Annotation;
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
+import java.util.concurrent.locks.ReentrantLock;
 import java.util.function.Consumer;
 
 /**
@@ -47,8 +50,14 @@ public final class RequestContext implements AlterableContext {
     private record ContextualInstance(Object instance, CreationalContext<?> ctx) {}
 
     static final class RequestContextState {
+        /**
+         * Guards {@link #instances}. Reentrant: creating a bean can resolve another bean of the
+         * same scope on the same thread. Threads sharing the request wait for one another, so a
+         * bean is created once.
+         */
+        final ReentrantLock lock = new ReentrantLock();
         final Map<Contextual<?>, ContextualInstance> instances = new HashMap<>();
-        boolean active = false;
+        volatile boolean active = false;
     }
 
     private static final ScopedValue<RequestContextState> STATE = ScopedValue.newInstance();
@@ -86,23 +95,34 @@ public final class RequestContext implements AlterableContext {
     @SuppressWarnings("unchecked")
     public <T> T get(Contextual<T> contextual, CreationalContext<T> creationalContext) {
         var state = activeState();
-        var ci = state.instances.get(contextual);
-        if (ci != null) {
-            return (T) ci.instance();
+        state.lock.lock();
+        try {
+            var ci = state.instances.get(contextual);
+            if (ci != null) {
+                return (T) ci.instance();
+            }
+            if (creationalContext == null) {
+                return null;
+            }
+            var instance = contextual.create(creationalContext);
+            state.instances.put(contextual, new ContextualInstance(instance, creationalContext));
+            return instance;
+        } finally {
+            state.lock.unlock();
         }
-        if (creationalContext == null) {
-            return null;
-        }
-        var instance = contextual.create(creationalContext);
-        state.instances.put(contextual, new ContextualInstance(instance, creationalContext));
-        return instance;
     }
 
     @Override
     @SuppressWarnings("unchecked")
     public <T> T get(Contextual<T> contextual) {
-        var ci = activeState().instances.get(contextual);
-        return ci != null ? (T) ci.instance() : null;
+        var state = activeState();
+        state.lock.lock();
+        try {
+            var ci = state.instances.get(contextual);
+            return ci != null ? (T) ci.instance() : null;
+        } finally {
+            state.lock.unlock();
+        }
     }
 
     @Override
@@ -121,7 +141,13 @@ public final class RequestContext implements AlterableContext {
 
     @SuppressWarnings("unchecked")
     private static void destroy(RequestContextState state, Contextual<?> contextual) {
-        var ci = state.instances.remove(contextual);
+        ContextualInstance ci;
+        state.lock.lock();
+        try {
+            ci = state.instances.remove(contextual);
+        } finally {
+            state.lock.unlock();
+        }
         if (ci != null) {
             ((Contextual<Object>) contextual).destroy(ci.instance(), (CreationalContext<Object>) ci.ctx());
             ci.ctx().release();
@@ -140,9 +166,23 @@ public final class RequestContext implements AlterableContext {
                 threadState.set(state);
             }
         }
-        state.active = true;
-        state.instances.clear();
+        state.lock.lock();
+        try {
+            state.active = true;
+            state.instances.clear();
+        } finally {
+            state.lock.unlock();
+        }
         lifecycleEvents.accept(Initialized.Literal.REQUEST);
+    }
+
+    private static List<Contextual<?>> instancesOf(RequestContextState state) {
+        state.lock.lock();
+        try {
+            return new ArrayList<>(state.instances.keySet());
+        } finally {
+            state.lock.unlock();
+        }
     }
 
     /** Destroys the instances of the current request and deactivates the context. */
@@ -155,13 +195,18 @@ public final class RequestContext implements AlterableContext {
             if (state.active) {
                 lifecycleEvents.accept(BeforeDestroyed.Literal.REQUEST);
             }
-            for (var contextual : new HashMap<>(state.instances).keySet()) {
+            for (var contextual : instancesOf(state)) {
                 destroy(state, contextual);
             }
         } finally {
             boolean wasActive = state.active;
-            state.instances.clear();
-            state.active = false;
+            state.lock.lock();
+            try {
+                state.instances.clear();
+                state.active = false;
+            } finally {
+                state.lock.unlock();
+            }
             if (!STATE.isBound()) {
                 threadState.remove();
             }
@@ -169,6 +214,16 @@ public final class RequestContext implements AlterableContext {
                 lifecycleEvents.accept(Destroyed.Literal.REQUEST);
             }
         }
+    }
+
+    /**
+     * Wraps an action so that it runs bound to the request of the calling thread, whichever thread
+     * runs it: the way a thread that is not a subtask of a {@code StructuredTaskScope} joins the
+     * request (the subtasks inherit it on their own).
+     */
+    Runnable inCurrentRequest(Runnable action) {
+        var state = activeState();
+        return () -> ScopedValue.where(STATE, state).run(action);
     }
 
     public void runInScope(Runnable action) {
