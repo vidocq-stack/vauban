@@ -830,7 +830,7 @@ The `ApplicationContext` is built in memory, without opening any package.
 Vauban uses **virtual threads** (https://openjdk.org/jeps/444[JEP 444]) in two places:
 
 . **Async observers** — every `@ObservesAsync` is dispatched on an `Executors.newVirtualThreadPerTaskExecutor()` internal to the `EventDispatcher`. No platform-thread pool, no bounded queue.
-. **Request context** — when Vauban is embedded in Cassini or Foy, the `RequestContext` is carried by a `ScopedValue` (https://openjdk.org/jeps/487[JEP 487]) rather than a `ThreadLocal`. That lets structured virtual threads propagate the context without leaks.
+. **Request context** — when Vauban is embedded in Cassini or Foy, the `RequestContext` is carried by a `ScopedValue` (https://openjdk.org/jeps/487[JEP 487]) rather than a `ThreadLocal`. That lets structured virtual threads propagate the context without leaks. A `ThreadLocal` remains in three places, where a scoped value cannot do the job: the imperative activation of the `RequestContext` (`activate` / `deactivate`), and the session and web contexts of `vauban-webcontexts`, which a web container binds and unbinds from separate request-listener callbacks. The architecture tests allow these three classes and no other (xref:reference.adoc#architecture-rules[Reference, Architecture rules]).
 
 [NOTE]
 ====

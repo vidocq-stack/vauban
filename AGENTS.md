@@ -50,3 +50,16 @@ Provide `modules/ROOT/images/<project>-logo.png` (PNG), referenced from `index.a
 Use **Java Modules** (or **Java module** for a single module) when referring to
 the Java Platform Module System. Do **not** use the abbreviation **JPMS** — in
 prose, identifiers, or documentation.
+
+## Architecture rules
+
+Test-scope libraries are never shipped: JUnit, and **ArchUnit**
+(`com.tngtech.archunit:archunit`, Apache-2.0, through the shared `vidocq-archrules`
+library of `vidocq-parent`), used only by the test-only module `vauban-architecture-tests`
+(Vidocq/vidocq#289). Its `ArchitectureRules` turns the workspace rules into
+tests on the classes of the ten shipped modules: allowed dependencies per module, layers,
+foundational bricks independent, no platform thread, no `ThreadLocal`, no reflection. The reflective
+fallbacks (`REFLECTIVE_FALLBACKS`) and the `ThreadLocal` holders are listed class by class with
+their reason, and checked for staleness by `ArchitectureRulesSelfTest`: add a class there only with
+a reason documented in `internals.adoc`, never to silence a violation. Reference page:
+"Architecture rules".

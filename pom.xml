@@ -81,6 +81,7 @@
         <module>vauban-module-it</module>
         <module>vauban-producer-module-it</module>
         <module>vauban-bench</module>
+        <module>vauban-architecture-tests</module>
         <module>vauban-examples</module>
     </modules>
 

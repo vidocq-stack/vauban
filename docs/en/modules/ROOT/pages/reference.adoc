@@ -65,6 +65,10 @@ This page lists every artefact published by Vauban, the Java Modules packages th
 | `io.vidocq.vauban:vauban-bench`
 | not published
 | JMH benchmarks of qualifier resolution on injection, lookups, events and interceptors, run from `vauban-bench/target/benchmarks.jar`; results in `BENCH.md`, read in xref:performance.adoc[Performance]. JMH is build tooling: no published artefact depends on it.
+
+| `io.vidocq.vauban:vauban-architecture-tests`
+| not published
+| **Test only**, never released. Runs Vauban's architecture rules on the classes of every shipped module, see <<architecture-rules>>. The rules come from `io.vidocq:vidocq-archrules`, the shared build and test library of `vidocq-parent`, in test scope; it brings ArchUnit (Apache-2.0), also test scope. No published artefact depends on either.
 |===
 
 == Exported Java modules
@@ -541,6 +545,40 @@ Vauban needs no application configuration file. Bean selection happens via:
 * the bootstrap strategy (`scanLocal()`, `scanClasspath()`, `addBeanClass()`).
 
 For dynamic application configuration, use MicroProfile Config through xref:vidocq::index.adoc[Vidocq Runtime].
+
+[#architecture-rules]
+== Architecture rules
+
+`vauban-architecture-tests` turns the workspace rules into tests on the classes of the ten shipped modules
+(Vidocq/vidocq#289). A failure names each class and the dependency or call that breaks a rule, and a self-test shows
+that each rule fails on a fixture that breaks it.
+
+* **Allowed dependencies**, per module, read from its `module-info.java`: the JDK, the Jakarta APIs the module
+  implements or reads, and the Vauban modules it requires, nothing else.
+* **Layers**: `vauban-api`, `vauban-classloader-spi` and `vauban-weaver` read no other Vauban module;
+  `vauban-api` never depends on `vauban-core`; `vauban-core` is reached by `vauban-processor` alone; nothing reads
+  `vauban-processor`, `vauban-sjar`, `vauban-webcontexts` or `vauban-naming`.
+* **Foundational bricks**: no class of Vauban depends on Chappe or Champollion.
+* **No platform thread**: no platform-thread pool, `Thread` or `Thread.ofPlatform()`; asynchronous observers run on
+  a virtual thread per task (xref:internals.adoc#virtual-threads[Threading model]).
+* **No `ThreadLocal`**, except three documented holders. `RequestContext` is carried by a `ScopedValue` inside
+  Cassini and Foy and keeps a `ThreadLocal` for imperative activation (`activate` / `deactivate`) outside such a
+  scope; `SessionContext` and `WebContexts` bind the session and the web contexts of the current thread from separate
+  request-listener callbacks, which a scoped value cannot span.
+* **No reflection outside the documented fallbacks.** Vauban generates what it can at build time, and reads by
+  reflection only what no generated provider or build-time index covers (xref:internals.adoc#aot[AOT compatibility]).
+  The fallbacks are listed class by class, with the reason, in `ArchitectureRules.REFLECTIVE_FALLBACKS`, in
+  eight groups: loading a class by name from a name recorded at build time; annotation reads that
+  `-Dvauban.annotations.reflection` governs; discovery and validation of a bean class that no index describes, and
+  the CDI metadata API (`AnnotatedType`, `InjectionPoint`, `BeanManager`) the specification hands out as
+  `java.lang.reflect` objects; the reflective tier that instantiates, injects and invokes when no
+  `_VaubanComponents` provider covers a type; the Build Compatible Extensions and Invokers API; the run-time
+  generators of the `$$Intercepted` subclass and the client proxy; `java.lang.reflect.Type`, the type model of the
+  CDI API, used as data; and the build-time processor. A self-test fails on an entry whose class no longer uses
+  reflection, so the list only shrinks as the reflective tier does.
+
+The test tooling is named here as the zero-dependency rule asks: `io.vidocq:vidocq-archrules` and ArchUnit
+(Apache-2.0, with `slf4j-api`), both test scope, in the one test-only module.
 
 == Bugs
 
