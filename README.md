@@ -23,14 +23,12 @@
 
 Vauban is an implementation of [Jakarta CDI 4.1](https://jakarta.ee/specifications/cdi/4.1/) designed from the ground up for the Java Platform Module System (Java Modules). It generates all the required code (factories, proxies, interceptors) at compile time using the JDK 25 Class-File API, with no external bytecode dependency.
 
-### Why Vauban?
+### What Vauban guarantees
 
-| | Weld | ArC (Quarkus) | **Vauban** |
-|---|---|---|---|
-| Approach | Runtime / reflection | Build-time / Jandex + ASM | **Build-time / Class-File API** |
-| Java Modules | No | No | **Native** |
-| Bytecode dependencies | ASM / ByteBuddy | ASM | **None** (pure JDK) |
-| CDI Lite TCK | ~100% | ~100% | **100% (774/774)** |
+- **Build-time generation**: factories, proxies and interceptors are generated at compile time with the JDK 25 Class-File API.
+- **Java Modules native**: every component is a named Java module.
+- **No bytecode dependency**: no ASM, no ByteBuddy, only the JDK.
+- **CDI Lite TCK**: 774/774 tests of the CDI 4.1 Lite TCK pass (see the [TCK status](docs/en/modules/ROOT/pages/tck.adoc)).
 
 ### Philosophy
 
