@@ -150,6 +150,44 @@ public final class SyntheticParamCodec {
         return readAnnotation(new Frames(encoded));
     }
 
+    /**
+     * The text form of several annotations, one frame of {@link #encodeAnnotation} each;
+     * {@link #decodeAnnotations} reads it back. The form of the frozen {@code @Enhancement} patch and of
+     * the qualifiers of a synthetic bean or observer (BUG-20261111-01).
+     */
+    public static String encodeAnnotations(Iterable<AnnotationInfo> annotations) {
+        var out = new StringBuilder();
+        annotations.forEach(info -> out.append(frame(annotation(info))));
+        return out.toString();
+    }
+
+    /**
+     * The annotations {@link #encodeAnnotations} wrote. The form earlier versions wrote, annotation names
+     * separated by commas, still reads, each annotation with no member: a frame starts with a digit, a
+     * name never does.
+     */
+    public static java.util.List<AnnotationInfo> decodeAnnotations(String encoded) {
+        var out = new ArrayList<AnnotationInfo>();
+        var text = encoded == null ? "" : encoded.strip();
+        if (text.isEmpty()) {
+            return out;
+        }
+        if (!Character.isDigit(text.charAt(0))) {
+            for (var part : text.split(",")) {
+                var name = part.strip();
+                if (!name.isEmpty()) {
+                    out.add(new AnnotationInfo(DotName.of(name), Map.of()));
+                }
+            }
+            return out;
+        }
+        var frames = new Frames(text);
+        while (frames.hasNext()) {
+            out.add(readAnnotation(new Frames(frames.next())));
+        }
+        return out;
+    }
+
     private static String annotation(AnnotationInfo info) {
         var out = new StringBuilder(frame(info.name().value()));
         for (var member : new TreeMap<>(info.members()).entrySet()) {

@@ -5,6 +5,71 @@ suspected cause, status. Updated on every investigation.
 
 ---
 
+## BUG-20261111-01 — A synthetic bean or observer registered at build time loses the member values of its qualifiers
+
+- **Date**: 2026-11-11
+- **Status**: FIXED (branch `fix/build-time-synthetic-qualifier-members`)
+- **Module**: `vauban-core` (`SyntheticMetadataSerializer`, `SyntheticBeanDescriptor`, `SyntheticObserverDescriptor`,
+  `SyntheticComponentRegistrar`, `SyntheticParamCodec`)
+- **Surfaced by**: the Noether audit, Vidocq/noether#45 finding F9 (`noether-jpa-cdi` on the processor path).
+- **Symptom**: an extension run by the processor registers synthetic beans qualified `@PersistenceBinding("unit:explicit")`,
+  `@PersistenceBinding("unit:container")`, ... The application compiles, and the boot fails:
+  `Unsatisfied dependency: field Repository.factory of type ...EntityManagerFactory with qualifiers
+  [...PersistenceBinding, members={value=StringVal[value=unit:container]}]`. A synthetic observer qualified the same way
+  receives no event. The build wrote the qualifier's type name alone:
+  ```
+  bean.0.qualifiers=io.vidocq.noether.jpa.cdi.PersistenceBinding
+  ```
+- **Minimal reproduction**:
+  ```
+  ./mvnw -ntp -pl vauban-processor -am package -Dsurefire.failIfNoSpecifiedTests=false \
+    -Dtest='SyntheticMetadataSerializerTest*,BceCompileTimeTest#buildTimeSyntheticQualifierKeepsItsMembers'
+  ```
+- **Root cause**: the build-time counterpart of BUG-20260914-15, which fixed the builders and the run-time path only.
+  `SyntheticMetadataSerializer.writeBeanBuilder` and `writeObserverBuilder` wrote `q.annotationType().getName()`;
+  `readBeans` and `readObservers` read a list of names; `SyntheticComponentRegistrar` rebuilt each qualifier from its
+  type, every member at its default. The injection points keep their members (the index, and the frozen patch since
+  BUG-20261008-05), so no synthetic bean matched.
+- **Investigations**:
+  - 2026-11-11: red on `origin/main` `07cd8206`: `SyntheticMetadataSerializerTest.shouldRoundTripBeanQualifierMembers`
+    and `shouldRoundTripObserverQualifierMembers` read `members={}`; `BceCompileTimeTest.buildTimeSyntheticQualifierKeepsItsMembers`
+    (the extension run by the processor, then a boot from the processed archive) fails with the two
+    `Unsatisfied dependency` of the symptom.
+- **Fix**: the qualifiers are written with their members in the form the frozen patch already uses
+  (`SyntheticParamCodec.encodeAnnotations`, one frame of `encodeAnnotation` each, now shared by both files). The
+  descriptors carry them in index form (`qualifierAnnotations()`, next to the names), and the registrar builds each
+  qualifier instance from it. The comma-separated names of an archive built by an earlier version still read, members
+  empty (`shouldReadTheQualifierNamesOfAnEarlierVersion`). Not covered: a qualifier type the compilation is still
+  producing cannot be loaded by the builders at build time and is still skipped (`SyntheticQualifiers.instanceOf`).
+
+## BUG-20261111-02 — A frozen member patch of a class outside the deployment fails the boot
+
+- **Date**: 2026-11-11
+- **Status**: FIXED (branch `fix/build-time-synthetic-qualifier-members`)
+- **Module**: `vauban-core` (`EnhancementPatchSerializer.memberConfigurations`)
+- **Surfaced by**: Vidocq/noether#45, while reproducing BUG-20261111-01 in `noether-jpa-cdi-module-it`.
+- **Symptom**: with an extension on the processor path that adds annotations to members, a container built from some
+  of the classes of the processed archive fails:
+  `IllegalStateException: Enhanced class is missing from the index: ...SetterRepository`.
+  Seen with `VaubanContainer.builder().addBeanClass(Services.class).addBeanClass(Repository.class).build()`, and with
+  `scanLocal()` from a test class, which deploys the caller's package only.
+- **Minimal reproduction**:
+  ```
+  ./mvnw -ntp -pl vauban-processor -am package -Dsurefire.failIfNoSpecifiedTests=false \
+    -Dtest='EnhancementPatchSerializerTest*,BceCompileTimeTest#frozenMemberPatchOfAClassOutsideTheDeploymentIsIgnored'
+  ```
+- **Root cause**: `VaubanContainerBuilder.loadEnhancementPatch` merges `META-INF/vauban-enhancements.properties` of
+  every archive the class loader sees, while the index holds the classes of the deployment. `enrichIndex` applies the
+  class entries to the indexed classes and passes over the others; `memberConfigurations`, added with the member
+  entries (BUG-20261009-03, `e7daa793`), threw for an owner the index does not hold. No test or note asked for that
+  failure: the check guards against a patch that no longer matches its class, which the two member checks
+  (`Enhanced field is missing`, `Enhanced method is missing`) do for a deployed class.
+- **Investigations**:
+  - 2026-11-11: red on `origin/main` `07cd8206`: `EnhancementPatchSerializerTest.memberAdditionsOfAClassOutsideTheIndexAreLeftOut`
+    and `BceCompileTimeTest.frozenMemberPatchOfAClassOutsideTheDeploymentIsIgnored` fail with the exception of the symptom.
+- **Fix**: a member entry whose owner is not in the index is left out, as its class entries are. A field or a method
+  the patch names and a deployed class does not have still fails (`aMissingMemberOfADeployedClassStillFails`).
+
 ## VAU-APT-009 — A nested bean with an observer, a producer or a lifecycle method no longer compiles
 - **Date**: 2026-11-05 — **Status**: FIXED (fix/nested-bean-invoke-cast)
 - **Severity**: high (the build of the application fails; the only way out is to make the bean a top-level class)

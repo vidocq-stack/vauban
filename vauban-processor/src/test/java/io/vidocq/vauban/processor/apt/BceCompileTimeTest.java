@@ -990,6 +990,120 @@ class BceCompileTimeTest {
         assertEquals(RecordingRegistrationBce.SEEN, List.of("Unscoped@jakarta.enterprise.context.Dependent"));
     }
 
+    /**
+     * Test BCE that registers two synthetic beans and an observer told apart by the member of their
+     * qualifier, as Noether's extension does with {@code @PersistenceBinding("unit:...")}.
+     */
+    public static class QualifiedSyntheticBce implements BuildCompatibleExtension {
+        @Synthesis
+        public void synthesis(SyntheticComponents components) {
+            for (var channel : List.of("alpha", "beta")) {
+                components.addBean(String.class)
+                        .type(String.class)
+                        .qualifier(AnnotationBuilder.of(io.vidocq.vauban.processor.apt.testfixtures.Channel.class)
+                                .member("value", channel).build())
+                        .createWith(TestStringCreator.class)
+                        .withParam("value", channel + "-bean");
+            }
+            components.addObserver(Object.class)
+                    .qualifier(AnnotationBuilder.of(io.vidocq.vauban.processor.apt.testfixtures.Channel.class)
+                            .member("value", "alpha").build())
+                    .observeWith(ShapeObserver.class).withParam(SHAPE, "@Channel(alpha)");
+        }
+    }
+
+    @Test
+    @DisplayName("a synthetic bean or observer registered at build time keeps the members of its qualifier (BUG-20261111-01)")
+    void buildTimeSyntheticQualifierKeepsItsMembers() throws Exception {
+        ShapeObserver.OBSERVED.clear();
+        var fixtures = Path.of(io.vidocq.vauban.processor.apt.testfixtures.Channel.class
+                .getProtectionDomain().getCodeSource().getLocation().toURI());
+        var result = compileWithBce(List.of(QualifiedSyntheticBce.class), List.of(fixtures), """
+                package app;
+
+                import io.vidocq.vauban.processor.apt.testfixtures.Channel;
+                import jakarta.enterprise.context.Dependent;
+                import jakarta.enterprise.event.Event;
+                import jakarta.inject.Inject;
+
+                @Dependent
+                public class Client {
+                    @Inject @Channel("alpha") public String alpha;
+                    @Inject @Channel("beta") public String beta;
+                    @Inject @Channel("alpha") Event<String> alphaEvents;
+                    @Inject @Channel("beta") Event<String> betaEvents;
+
+                    public void fire() {
+                        betaEvents.fire("to-beta");
+                        alphaEvents.fire("to-alpha");
+                    }
+                }
+                """);
+        assertTrue(result.success(), "Compilation should succeed. Messages: " + result.messages());
+
+        try (var loader = new java.net.URLClassLoader(
+                new java.net.URL[] {result.outputDir().toUri().toURL()}, getClass().getClassLoader());
+             var container = bootReadingTheFixtures(loader)) {
+            var clientClass = loader.loadClass("app.Client");
+            var client = container.select(clientClass);
+            assertEquals("alpha-bean", clientClass.getField("alpha").get(client));
+            assertEquals("beta-bean", clientClass.getField("beta").get(client));
+            clientClass.getMethod("fire").invoke(client);
+        }
+        assertEquals(List.of("@Channel(alpha) got to-alpha"), List.copyOf(ShapeObserver.OBSERVED),
+                "the observer qualified @Channel(\"alpha\") receives that event and no other");
+    }
+
+    /**
+     * Boots the archive {@code loader} holds. The compiled application is in the loader's unnamed module and
+     * names the fixture qualifier, which a library would export: the tests' module exports it to that module.
+     */
+    private static io.vidocq.vauban.core.container.VaubanContainer bootReadingTheFixtures(ClassLoader loader) {
+        var fixtures = io.vidocq.vauban.processor.apt.testfixtures.Channel.class;
+        if (fixtures.getModule().isNamed()) {
+            fixtures.getModule().addExports(fixtures.getPackageName(), loader.getUnnamedModule());
+        }
+        return io.vidocq.vauban.core.container.VaubanContainer.builder()
+                .classLoader(loader).scanClasspath().build();
+    }
+
+    @Test
+    @DisplayName("a deployment that leaves out a class the frozen patch enhances still boots (BUG-20261111-02)")
+    void frozenMemberPatchOfAClassOutsideTheDeploymentIsIgnored() throws Exception {
+        var result = compileWithBce(List.of(MemberEnhancementBce.class), """
+                package app;
+                @jakarta.enterprise.context.Dependent
+                @jakarta.inject.Named("selected")
+                public class FrozenDependency {}
+                """, """
+                package app;
+                @jakarta.inject.Named("target")
+                @jakarta.enterprise.context.Dependent
+                public class FrozenTarget {
+                    public FrozenDependency field;
+                    @jakarta.inject.Inject
+                    public FrozenTarget(FrozenDependency dependency) { }
+                    private void initialize(@jakarta.inject.Named("selected") FrozenDependency dependency) { }
+                }
+                """);
+        assertTrue(result.success(), "Compilation should succeed. Messages: " + result.messages());
+        try (var patch = Files.newInputStream(result.outputDir().resolve(
+                io.vidocq.vauban.core.extensions.EnhancementPatchSerializer.PATCH_PATH))) {
+            assertTrue(io.vidocq.vauban.core.extensions.EnhancementPatchSerializer.read(patch)
+                    .containsKey("app.FrozenTarget#field#field"), "Precondition: the patch enhances members of FrozenTarget");
+        }
+
+        try (var loader = new java.net.URLClassLoader(
+                new java.net.URL[] {result.outputDir().toUri().toURL()}, getClass().getClassLoader())) {
+            var dependencyClass = loader.loadClass("app.FrozenDependency");
+            // FrozenTarget is on the class path, with its patch, and not in this deployment.
+            try (var container = io.vidocq.vauban.core.container.VaubanContainer.builder()
+                    .classLoader(loader).addBeanClass(dependencyClass).build()) {
+                assertNotNull(container.select(dependencyClass));
+            }
+        }
+    }
+
     // ---- Utility methods (same as VaubanProcessorTest) ----
 
     private String extractClassName(String source) {

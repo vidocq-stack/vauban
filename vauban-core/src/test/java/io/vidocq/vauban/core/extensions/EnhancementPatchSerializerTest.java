@@ -127,6 +127,42 @@ class EnhancementPatchSerializerTest {
                 patch);
     }
 
+    /** A class whose members a patch may target. */
+    static class Enhanced {
+        String dependency;
+    }
+
+    private static io.vidocq.vauban.indexer.VaubanIndex indexOfEnhanced() throws IOException {
+        try (var in = Enhanced.class.getResourceAsStream("EnhancementPatchSerializerTest$Enhanced.class")) {
+            return new io.vidocq.vauban.indexer.IndexBuilder()
+                    .add(io.vidocq.vauban.indexer.scanner.ClassFileScanner.scan(in.readAllBytes())).build();
+        }
+    }
+
+    @Test
+    @DisplayName("member additions of a class outside the deployment are left out (BUG-20261111-02)")
+    void memberAdditionsOfAClassOutsideTheIndexAreLeftOut() throws IOException {
+        var patch = Map.of(
+                DotName.of("com.example.NotDeployed#field#dependency"), List.of(ann("jakarta.inject.Inject")),
+                DotName.of(Enhanced.class.getName() + "#field#dependency"), List.of(ann("jakarta.inject.Inject")));
+
+        var configs = EnhancementPatchSerializer.memberConfigurations(patch, indexOfEnhanced());
+
+        assertEquals(java.util.Set.of(DotName.of(Enhanced.class.getName())), configs.keySet());
+    }
+
+    @Test
+    @DisplayName("a member the patch names and a deployed class no longer has still fails the boot")
+    void aMissingMemberOfADeployedClassStillFails() throws IOException {
+        var patch = Map.of(
+                DotName.of(Enhanced.class.getName() + "#field#renamed"), List.of(ann("jakarta.inject.Inject")));
+        var index = indexOfEnhanced();
+
+        var failure = org.junit.jupiter.api.Assertions.assertThrows(IllegalStateException.class,
+                () -> EnhancementPatchSerializer.memberConfigurations(patch, index));
+        assertTrue(failure.getMessage().contains("Enhanced field is missing"), failure.getMessage());
+    }
+
     @Test
     @DisplayName("written form is UTF-8 text naming the target and the annotation")
     void writtenFormIsText() throws IOException {

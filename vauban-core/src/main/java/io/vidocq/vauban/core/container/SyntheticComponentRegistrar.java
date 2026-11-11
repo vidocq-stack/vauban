@@ -105,8 +105,8 @@ final class SyntheticComponentRegistrar {
             for (var typeName : synDesc.types()) {
                 resolveOptionalClass(typeName, cl, builder::type);
             }
-            for (var qualName : synDesc.qualifiers()) {
-                resolveOptionalClass(qualName, cl, builder::qualifier);
+            for (var qualifier : synDesc.qualifierAnnotations()) {
+                qualifierInstance(qualifier, cl).ifPresent(builder::qualifier);
             }
             if (synDesc.name() != null) builder.name(synDesc.name());
             builder.alternative(synDesc.alternative());
@@ -129,8 +129,8 @@ final class SyntheticComponentRegistrar {
             if (synDesc.observerClassName() != null) {
                 builder.observeWith(Class.forName(synDesc.observerClassName(), false, cl));
             }
-            for (var qualName : synDesc.qualifiers()) {
-                resolveOptionalClass(qualName, cl, builder::qualifier);
+            for (var qualifier : synDesc.qualifierAnnotations()) {
+                qualifierInstance(qualifier, cl).ifPresent(builder::qualifier);
             }
             builder.priority(synDesc.priority());
             builder.async(synDesc.async());
@@ -166,6 +166,17 @@ final class SyntheticComponentRegistrar {
                     Class.forName(synDesc.eventTypeName(), false, cl));
         }
         return new io.vidocq.vauban.core.extensions.VaubanSyntheticObserverBuilder<>(eventType);
+    }
+
+    /**
+     * The qualifier the build recorded, member values included: the synthetic bean or observer answers the
+     * injection points and events that name those values, and no other (BUG-20261111-01). Empty when the
+     * qualifier type is not on this class path, as a type of a partial class path is skipped.
+     */
+    private static java.util.Optional<Annotation> qualifierInstance(
+            io.vidocq.vauban.indexer.model.AnnotationInfo qualifier, ClassLoader cl) {
+        return io.vidocq.vauban.core.annotation.AnnotationInstances.typeNamed(qualifier.name().value(), cl)
+                .map(type -> io.vidocq.vauban.core.annotation.AnnotationInstances.create(type, qualifier, cl));
     }
 
     private static void resolveOptionalClass(String fqn, ClassLoader cl, java.util.function.Consumer<Class<?>> sink) {

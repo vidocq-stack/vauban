@@ -126,7 +126,13 @@ public final class EnhancementPatchSerializer {
         return separator < 0 ? target : DotName.of(target.value().substring(0, separator));
     }
 
-    /** Restores member additions for the descriptor enhancer; class additions are applied to the index. */
+    /**
+     * Restores member additions for the descriptor enhancer; class additions are applied to the index.
+     *
+     * <p>The patch is the one of every archive the class loader sees, the index the classes of this
+     * deployment: an entry of a class the index does not hold is left out, as its class additions are
+     * (BUG-20261111-02). A member the patch names and the indexed class does not have still fails.
+     */
     public static Map<DotName, List<VaubanClassConfig>> memberConfigurations(
             Map<DotName, List<AnnotationInfo>> patch, VaubanIndex index) {
         var configs = new LinkedHashMap<DotName, VaubanClassConfig>();
@@ -135,8 +141,9 @@ public final class EnhancementPatchSerializer {
             var parts = target.value().split("#", -1);
             if (parts.length == 1) return;
             var name = owner(target);
-            var indexedClass = index.getClassByName(name).orElseThrow(() ->
-                    new IllegalStateException("Enhanced class is missing from the index: " + name));
+            var indexed = index.getClassByName(name);
+            if (indexed.isEmpty()) return;
+            var indexedClass = indexed.get();
             var config = configs.computeIfAbsent(name, _ -> new VaubanClassConfig(
                     new io.vidocq.vauban.core.langmodel.declarations.VaubanClassInfo(indexedClass, lookup)));
             if (parts[1].equals("field")) {
@@ -176,12 +183,7 @@ public final class EnhancementPatchSerializer {
         for (var entry : new TreeMap<>(patch).entrySet()) {
             var annotations = entry.getValue();
             if (annotations == null || annotations.isEmpty()) continue;
-            var value = new StringBuilder();
-            for (var annotation : annotations) {
-                var encoded = SyntheticParamCodec.encodeAnnotation(annotation);
-                value.append(encoded.length()).append(':').append(encoded);
-            }
-            writer.write(line(entry.getKey(), value.toString()));
+            writer.write(line(entry.getKey(), SyntheticParamCodec.encodeAnnotations(annotations)));
         }
         writer.flush();
     }
@@ -212,33 +214,12 @@ public final class EnhancementPatchSerializer {
         props.load(new InputStreamReader(is, StandardCharsets.UTF_8));
         var patch = new LinkedHashMap<String, List<AnnotationInfo>>();
         for (var name : props.stringPropertyNames()) {
-            var annotations = parse(props.getProperty(name).strip());
+            // The names-only form of earlier versions still reads.
+            var annotations = SyntheticParamCodec.decodeAnnotations(props.getProperty(name));
             if (!annotations.isEmpty()) {
                 patch.put(name, annotations);
             }
         }
         return patch;
-    }
-
-    private static List<AnnotationInfo> parse(String value) {
-        var out = new ArrayList<AnnotationInfo>();
-        if (value.isEmpty()) return out;
-        if (!Character.isDigit(value.charAt(0))) {
-            // The form of earlier versions: names only, comma-separated.
-            for (var part : value.split(",")) {
-                var stripped = part.strip();
-                if (!stripped.isEmpty()) out.add(new AnnotationInfo(DotName.of(stripped), Map.of()));
-            }
-            return out;
-        }
-        int position = 0;
-        while (position < value.length()) {
-            int colon = value.indexOf(':', position);
-            int start = colon + 1;
-            int end = start + Integer.parseInt(value.substring(position, colon));
-            out.add(SyntheticParamCodec.decodeAnnotation(value.substring(start, end)));
-            position = end;
-        }
-        return out;
     }
 }

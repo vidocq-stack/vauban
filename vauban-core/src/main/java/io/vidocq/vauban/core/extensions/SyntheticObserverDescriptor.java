@@ -19,6 +19,7 @@
  */
 package io.vidocq.vauban.core.extensions;
 
+import io.vidocq.vauban.indexer.model.AnnotationInfo;
 import io.vidocq.vauban.indexer.model.TypeInfo;
 
 import java.util.List;
@@ -26,6 +27,10 @@ import java.util.Map;
 
 /**
  * Serializable descriptor for a synthetic observer created by a {@code @Synthesis} BCE phase.
+ *
+ * @param qualifiers           the names of the qualifiers
+ * @param qualifierAnnotations the qualifiers with their member values (BUG-20261111-01); {@code null}
+ *                             stands for {@code qualifiers} with no member, the form earlier versions wrote
  */
 public record SyntheticObserverDescriptor(
         String eventTypeName,
@@ -33,11 +38,20 @@ public record SyntheticObserverDescriptor(
         List<String> qualifiers,
         Map<String, String> params,
         int priority,
-        boolean async
+        boolean async,
+        List<AnnotationInfo> qualifierAnnotations
 ) {
     public SyntheticObserverDescriptor {
         qualifiers = qualifiers != null ? List.copyOf(qualifiers) : List.of();
         params = params != null ? Map.copyOf(params) : Map.of();
+        qualifierAnnotations = qualifierAnnotations != null
+                ? List.copyOf(qualifierAnnotations) : SyntheticQualifiers.memberless(qualifiers);
+    }
+
+    /** A descriptor whose qualifiers have no member. */
+    public SyntheticObserverDescriptor(String eventTypeName, String observerClassName, List<String> qualifiers,
+                                       Map<String, String> params, int priority, boolean async) {
+        this(eventTypeName, observerClassName, qualifiers, params, priority, async, null);
     }
 
     /**

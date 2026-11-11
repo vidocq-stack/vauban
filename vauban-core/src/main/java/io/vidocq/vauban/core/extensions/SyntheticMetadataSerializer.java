@@ -19,6 +19,9 @@
  */
 package io.vidocq.vauban.core.extensions;
 
+import io.vidocq.vauban.core.annotation.AnnotationValues;
+import io.vidocq.vauban.indexer.model.AnnotationInfo;
+
 import java.io.*;
 import java.lang.annotation.Annotation;
 import java.nio.charset.StandardCharsets;
@@ -34,13 +37,16 @@ import java.util.*;
  * bean.0.creator=com.example.MyCreator
  * bean.0.scope=jakarta.enterprise.context.ApplicationScoped
  * bean.0.types=com.example.MyBean,java.lang.Object
+ * bean.0.qualifiers=38:19:com.example.Channel5:value7:s:alpha
  * bean.0.param.key=S:hello
  * observer.0.eventType=com.example.MyEvent
  * observer.0.observer=com.example.MyObserver
  * observer.1.eventType=java.util.List&lt;? extends java.lang.Number&gt;
  * </pre>
  *
- * <p>An observed type is written in the notation of {@code ObservedTypeNotation}.</p>
+ * <p>An observed type is written in the notation of {@code ObservedTypeNotation}. The qualifiers of a bean
+ * or an observer are written with their member values, as {@link SyntheticParamCodec#encodeAnnotations}
+ * writes them (BUG-20261111-01); the comma-separated names earlier versions wrote still read.</p>
  *
  * <h2>Param encoding</h2>
  * See {@link SyntheticParamCodec}.
@@ -108,13 +114,7 @@ public final class SyntheticMetadataSerializer {
         }
         props.setProperty(prefix + ".types", String.join(",", typeNames));
 
-        var qualifierNames = new ArrayList<String>();
-        for (var q : builder.getQualifiers()) {
-            qualifierNames.add(q.annotationType().getName());
-        }
-        if (!qualifierNames.isEmpty()) {
-            props.setProperty(prefix + QUALIFIERS, String.join(",", qualifierNames));
-        }
+        writeQualifiers(props, prefix, builder.getQualifiers());
 
         if (builder.getName() != null) {
             props.setProperty(prefix + ".name", builder.getName());
@@ -135,18 +135,37 @@ public final class SyntheticMetadataSerializer {
             props.setProperty(prefix + ".observer", builder.getObserverClass().getName());
         }
 
-        var qualifierNames = new ArrayList<String>();
-        for (var q : builder.getQualifiers()) {
-            qualifierNames.add(q.annotationType().getName());
-        }
-        if (!qualifierNames.isEmpty()) {
-            props.setProperty(prefix + QUALIFIERS, String.join(",", qualifierNames));
-        }
+        writeQualifiers(props, prefix, builder.getQualifiers());
 
         props.setProperty(prefix + PRIORITY, String.valueOf(builder.getPriority()));
         props.setProperty(prefix + ".async", String.valueOf(builder.isAsync()));
 
         writeParams(props, prefix, "synthetic observer of " + builder.getEventType().getTypeName(), builder.getParams());
+    }
+
+    /**
+     * The qualifiers with their member values, in the form of {@link SyntheticParamCodec#encodeAnnotations}:
+     * {@code @PersistenceBinding("unit:a")} and {@code @PersistenceBinding("unit:b")} are two qualifiers, and
+     * the type name alone matches no injection point (BUG-20261111-01).
+     */
+    private static void writeQualifiers(Properties props, String prefix, Set<Annotation> qualifiers) {
+        if (qualifiers.isEmpty()) {
+            return;
+        }
+        var infos = new ArrayList<AnnotationInfo>();
+        for (var qualifier : qualifiers) {
+            infos.add(AnnotationValues.infoOf(qualifier));
+        }
+        props.setProperty(prefix + QUALIFIERS, SyntheticParamCodec.encodeAnnotations(infos));
+    }
+
+    /** The qualifiers of {@code prefix}; the names an earlier version wrote read as qualifiers with no member. */
+    private static List<AnnotationInfo> readQualifiers(Properties props, String prefix) {
+        return SyntheticParamCodec.decodeAnnotations(props.getProperty(prefix + QUALIFIERS, ""));
+    }
+
+    private static List<String> names(List<AnnotationInfo> annotations) {
+        return annotations.stream().map(annotation -> annotation.name().value()).toList();
     }
 
     /**
@@ -181,17 +200,19 @@ public final class SyntheticMetadataSerializer {
 
         for (int i = 0; i < count; i++) {
             var prefix = "bean." + i;
+            var qualifiers = readQualifiers(props, prefix);
             beans.add(new SyntheticBeanDescriptor(
                     props.getProperty(prefix + ".beanClass"),
                     props.getProperty(prefix + ".creator"),
                     props.getProperty(prefix + ".disposer"),
                     props.getProperty(prefix + ".scope"),
                     parseList(props.getProperty(prefix + ".types", "")),
-                    parseList(props.getProperty(prefix + QUALIFIERS, "")),
+                    names(qualifiers),
                     readParams(props, prefix),
                     Boolean.parseBoolean(props.getProperty(prefix + ".alternative", "false")),
                     Integer.parseInt(props.getProperty(prefix + PRIORITY, "0")),
-                    props.getProperty(prefix + ".name")
+                    props.getProperty(prefix + ".name"),
+                    qualifiers
             ));
         }
 
@@ -204,14 +225,16 @@ public final class SyntheticMetadataSerializer {
 
         for (int i = 0; i < count; i++) {
             var prefix = "observer." + i;
+            var qualifiers = readQualifiers(props, prefix);
             observers.add(new SyntheticObserverDescriptor(
                     props.getProperty(prefix + EVENT_TYPE),
                     props.getProperty(prefix + ".observer"),
-                    parseList(props.getProperty(prefix + QUALIFIERS, "")),
+                    names(qualifiers),
                     readParams(props, prefix),
                     Integer.parseInt(props.getProperty(prefix + PRIORITY,
                             String.valueOf(jakarta.interceptor.Interceptor.Priority.APPLICATION))),
-                    Boolean.parseBoolean(props.getProperty(prefix + ".async", "false"))
+                    Boolean.parseBoolean(props.getProperty(prefix + ".async", "false")),
+                    qualifiers
             ));
         }
 

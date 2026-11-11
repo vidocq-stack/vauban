@@ -156,5 +156,64 @@ class SyntheticMetadataSerializerTest {
             assertTrue(beans.getFirst().types().contains("com.example.NotYetCompiledApi"),
                     beans.getFirst().types().toString());
         }
+
+        private static final io.vidocq.vauban.indexer.model.AnnotationInfo NAMED_ALPHA =
+                new io.vidocq.vauban.indexer.model.AnnotationInfo(
+                        io.vidocq.vauban.indexer.model.DotName.of("jakarta.inject.Named"),
+                        java.util.Map.of("value", new io.vidocq.vauban.indexer.model.AnnotationValue.StringVal("a,b=c")));
+
+        @Test
+        @DisplayName("the qualifier of a synthetic bean keeps its member values (BUG-20261111-01)")
+        void shouldRoundTripBeanQualifierMembers() throws IOException {
+            var builder = new VaubanSyntheticBeanBuilder<>(String.class);
+            builder.qualifier(jakarta.enterprise.inject.literal.NamedLiteral.of("a,b=c"));
+            builder.qualifier(jakarta.enterprise.inject.Any.class);
+            var baos = new ByteArrayOutputStream();
+            SyntheticMetadataSerializer.write(List.of(builder), List.of(), baos);
+
+            var bean = SyntheticMetadataSerializer.readBeans(new ByteArrayInputStream(baos.toByteArray())).getFirst();
+
+            assertEquals(List.of(NAMED_ALPHA, new io.vidocq.vauban.indexer.model.AnnotationInfo(
+                            io.vidocq.vauban.indexer.model.DotName.of("jakarta.enterprise.inject.Any"), java.util.Map.of())),
+                    bean.qualifierAnnotations());
+            assertEquals(List.of("jakarta.inject.Named", "jakarta.enterprise.inject.Any"), bean.qualifiers());
+        }
+
+        @Test
+        @DisplayName("the qualifier of a synthetic observer keeps its member values (BUG-20261111-01)")
+        void shouldRoundTripObserverQualifierMembers() throws IOException {
+            var builder = new VaubanSyntheticObserverBuilder<>(String.class);
+            builder.qualifier(jakarta.enterprise.inject.literal.NamedLiteral.of("a,b=c"));
+            var baos = new ByteArrayOutputStream();
+            SyntheticMetadataSerializer.write(List.of(), List.of(builder), baos);
+            var props = new Properties();
+            props.load(new ByteArrayInputStream(baos.toByteArray()));
+
+            var observer = SyntheticMetadataSerializer.readObservers(props).getFirst();
+
+            assertEquals(List.of(NAMED_ALPHA), observer.qualifierAnnotations());
+            assertEquals(List.of("jakarta.inject.Named"), observer.qualifiers());
+        }
+
+        @Test
+        @DisplayName("the qualifier names an earlier version wrote still read, members empty")
+        void shouldReadTheQualifierNamesOfAnEarlierVersion() {
+            var props = new Properties();
+            props.setProperty("bean.count", "1");
+            props.setProperty("bean.0.beanClass", "java.lang.String");
+            props.setProperty("bean.0.qualifiers", "com.example.Channel, jakarta.inject.Named");
+            props.setProperty("observer.count", "1");
+            props.setProperty("observer.0.eventType", "java.lang.String");
+            props.setProperty("observer.0.qualifiers", "com.example.Channel");
+
+            var bean = SyntheticMetadataSerializer.readBeans(props).getFirst();
+            var observer = SyntheticMetadataSerializer.readObservers(props).getFirst();
+
+            assertEquals(List.of("com.example.Channel", "jakarta.inject.Named"), bean.qualifiers());
+            assertEquals(List.of(java.util.Map.of(), java.util.Map.of()),
+                    bean.qualifierAnnotations().stream().map(io.vidocq.vauban.indexer.model.AnnotationInfo::members).toList());
+            assertEquals(List.of("com.example.Channel"), observer.qualifiers());
+            assertEquals(java.util.Map.of(), observer.qualifierAnnotations().getFirst().members());
+        }
     }
 }

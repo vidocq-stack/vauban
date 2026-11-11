@@ -91,7 +91,9 @@ class SyntheticMetadataWriteTest {
         var props = written(List.of(), List.of(observer));
 
         assertEquals("java.util.List<java.lang.String>", props.getProperty("observer.0.eventType"));
-        assertEquals(Tagged.class.getName(), props.getProperty("observer.0.qualifiers"));
+        // Written with its members, of which a marker has none (BUG-20261111-01).
+        assertEquals(List.of(Tagged.class.getName()),
+                SyntheticMetadataSerializer.readObservers(props).getFirst().qualifiers());
     }
 
     @Test

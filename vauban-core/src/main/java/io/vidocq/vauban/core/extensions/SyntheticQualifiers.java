@@ -25,6 +25,7 @@ import io.vidocq.vauban.indexer.model.AnnotationInfo;
 import io.vidocq.vauban.indexer.model.DotName;
 
 import java.lang.annotation.Annotation;
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -35,6 +36,11 @@ import java.util.Map;
 final class SyntheticQualifiers {
 
     private SyntheticQualifiers() {
+    }
+
+    /** The qualifiers of these names, in index form, with no member. */
+    static List<AnnotationInfo> memberless(List<String> names) {
+        return names.stream().map(name -> new AnnotationInfo(DotName.of(name), Map.of())).toList();
     }
 
     /** An instance of {@code type} with every member at its default. */
