@@ -8,7 +8,7 @@ suspected cause, status. Updated on every investigation.
 ## BUG-20261111-01 — A synthetic bean or observer registered at build time loses the member values of its qualifiers
 
 - **Date**: 2026-11-11
-- **Status**: FIXED (branch `fix/build-time-synthetic-qualifier-members`)
+- **Status**: FIXED 816d2c8f (branch `fix/build-time-synthetic-qualifier-members`)
 - **Module**: `vauban-core` (`SyntheticMetadataSerializer`, `SyntheticBeanDescriptor`, `SyntheticObserverDescriptor`,
   `SyntheticComponentRegistrar`, `SyntheticParamCodec`)
 - **Surfaced by**: the Noether audit, Vidocq/noether#45 finding F9 (`noether-jpa-cdi` on the processor path).
@@ -45,7 +45,7 @@ suspected cause, status. Updated on every investigation.
 ## BUG-20261111-02 — A frozen member patch of a class outside the deployment fails the boot
 
 - **Date**: 2026-11-11
-- **Status**: FIXED (branch `fix/build-time-synthetic-qualifier-members`)
+- **Status**: FIXED 816d2c8f (branch `fix/build-time-synthetic-qualifier-members`)
 - **Module**: `vauban-core` (`EnhancementPatchSerializer.memberConfigurations`)
 - **Surfaced by**: Vidocq/noether#45, while reproducing BUG-20261111-01 in `noether-jpa-cdi-module-it`.
 - **Symptom**: with an extension on the processor path that adds annotations to members, a container built from some
