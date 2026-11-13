@@ -34,12 +34,28 @@
                     <editable>true</editable>
                     <description>Output directory for generated files (default: target/classes)</description>
                 </parameter>
+                <parameter>
+                    <name>freezeExtensions</name>
+                    <type>boolean</type>
+                    <required>false</required>
+                    <editable>true</editable>
+                    <description>Freeze the build compatible extensions of the application, so that the container start loads what they did instead of running them (default: false)</description>
+                </parameter>
+                <parameter>
+                    <name>startExtensions</name>
+                    <type>java.util.List</type>
+                    <required>false</required>
+                    <editable>true</editable>
+                    <description>Class names of build compatible extensions the container start runs again even when they are frozen</description>
+                </parameter>
             </parameters>
             <configuration>
                 <project implementation="org.apache.maven.project.MavenProject"
                          default-value="${project}"/>
                 <outputDirectory implementation="java.io.File"
                                  default-value="${project.build.outputDirectory}"/>
+                <freezeExtensions implementation="boolean" default-value="false">${vauban.freezeExtensions}</freezeExtensions>
+                <startExtensions implementation="java.util.List">${vauban.startExtensions}</startExtensions>
             </configuration>
             <requirements>
                 <requirement>

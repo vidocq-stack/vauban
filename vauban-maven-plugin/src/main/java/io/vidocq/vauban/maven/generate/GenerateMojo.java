@@ -48,6 +48,10 @@ import java.util.List;
  *   </executions>
  * </plugin>
  * }</pre>
+ *
+ * <p>With {@code freezeExtensions}, the goal then freezes the build compatible extensions of the application
+ * (VAU-PERF-005): it runs them on the path the application starts with and writes what they did in the output
+ * directory, so that the container start loads it instead of running them. See {@link ExtensionFreezer}.
  */
 @Mojo(name = "generate",
       defaultPhase = LifecyclePhase.PROCESS_CLASSES,
@@ -60,6 +64,18 @@ public class GenerateMojo extends AbstractMojo {
 
     @Parameter(defaultValue = "${project.build.outputDirectory}", required = true)
     private File outputDirectory;
+
+    /**
+     * Whether to freeze the build compatible extensions of the application, so that the container start does not
+     * run them again. Off by default: an extension that checks the environment the application starts in must have
+     * moved that check out of its phases, or ask {@code ExtensionPhase.isBuildTime()}, before its result is frozen.
+     */
+    @Parameter(property = "vauban.freezeExtensions", defaultValue = "false")
+    private boolean freezeExtensions;
+
+    /** Class names of build compatible extensions the container start runs again even when they are frozen. */
+    @Parameter(property = "vauban.startExtensions")
+    private List<String> startExtensions;
 
     @Override
     public void execute() throws MojoExecutionException {
@@ -99,8 +115,35 @@ public class GenerateMojo extends AbstractMojo {
                 }
             }
 
+            freezeExtensions(projectClasses);
+
         } catch (Exception e) {
             throw new MojoExecutionException("Vauban generation failed", e);
+        }
+    }
+
+    /**
+     * Freezes the extensions on the runtime class path of the project, or removes the record of an earlier build
+     * when the parameter is off.
+     */
+    private void freezeExtensions(Path projectClasses)
+            throws org.apache.maven.artifact.DependencyResolutionRequiredException {
+        if (!freezeExtensions) {
+            io.vidocq.vauban.core.extensions.FrozenExtensions.delete(projectClasses);
+            return;
+        }
+        var deploymentPath = new ArrayList<Path>();
+        for (String element : project.getRuntimeClasspathElements()) {
+            deploymentPath.add(Path.of(element));
+        }
+        var outcome = ExtensionFreezer.freeze(deploymentPath, getClass().getClassLoader(), projectClasses,
+                startExtensions == null ? List.of() : startExtensions);
+        for (String line : ExtensionFreezer.report(outcome)) {
+            if (outcome.frozen() || outcome.nothingToFreeze()) {
+                getLog().info(line);
+            } else {
+                getLog().warn(line);
+            }
         }
     }
 

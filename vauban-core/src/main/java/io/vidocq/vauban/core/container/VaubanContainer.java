@@ -291,9 +291,26 @@ public final class VaubanContainer implements AutoCloseable {
         }
     }
 
+    private ExtensionsAtStart extensionsAtStart = new ExtensionsAtStart(false, java.util.List.of(), java.util.List.of(),
+            null);
+
+    /**
+     * What this start did with the build compatible extensions of the deployment: ran them, or loaded what the
+     * build froze (VAU-PERF-005).
+     */
+    public ExtensionsAtStart extensionsAtStart() {
+        return extensionsAtStart;
+    }
+
+    void extensionsAtStart(ExtensionsAtStart extensionsAtStart) {
+        this.extensionsAtStart = extensionsAtStart;
+    }
+
     /**
      * CDI lifecycle events: fires {@code @Initialized(ApplicationScoped.class)} and {@code @Startup}. An observer
-     * that throws fails the boot, and no half-built container is left behind (vauban#97).
+     * that throws fails the boot, and no half-built container is left behind (vauban#97). A
+     * {@code DeploymentException} or a {@code DefinitionException} it throws is the failure itself, unwrapped and
+     * without a warning: that is how a check of the start environment refuses a deployment.
      */
     private void fireStartupEvents() {
         String event = "@Initialized(ApplicationScoped.class)";
@@ -305,6 +322,15 @@ public final class VaubanContainer implements AutoCloseable {
             eventDispatcher.fireLifecycle(new jakarta.enterprise.event.Startup());
             started = true;
         } catch (io.vidocq.vauban.core.event.EventDispatcher.LifecycleObserverFailure failure) {
+            // An observer that says the deployment or a definition is wrong stops the start with what it says: a
+            // check of the environment the application starts in is written as an observer of Startup, since an
+            // extension the build froze does not run at start (VAU-PERF-005).
+            if (failure.getCause() instanceof jakarta.enterprise.inject.spi.DeploymentException refused) {
+                throw refused;
+            }
+            if (failure.getCause() instanceof jakarta.enterprise.inject.spi.DefinitionException wrong) {
+                throw wrong;
+            }
             logObserverFailure(failure, event, "the container does not start");
             throw new jakarta.enterprise.inject.spi.DeploymentException("Observer " + failure.observer() + " of "
                     + event + " threw " + failure.getCause().getClass().getName() + "; the container does not start",

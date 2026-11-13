@@ -57,4 +57,39 @@ class ExtensionPhaseTest {
 
         assertFalse(ExtensionPhase.isBuildTime());
     }
+
+    @Test
+    void theContainerIsToldEachTimeAnExtensionAsks() {
+        var asked = new java.util.concurrent.atomic.AtomicInteger();
+
+        var answer = ExtensionPhase.tellWhenAsked(asked::incrementAndGet, () -> {
+            ExtensionPhase.isBuildTime();
+            return ExtensionPhase.atBuildTime(ExtensionPhase::isBuildTime);
+        });
+
+        assertTrue(answer, "being told does not change the answer");
+        assertEquals(2, asked.get());
+    }
+
+    @Test
+    void nobodyIsToldOnceTheCallReturned() {
+        var asked = new java.util.concurrent.atomic.AtomicInteger();
+        ExtensionPhase.tellWhenAsked(asked::incrementAndGet, () -> null);
+
+        ExtensionPhase.isBuildTime();
+
+        assertEquals(0, asked.get());
+    }
+
+    @Test
+    void anInnerListenerHidesTheOuterOne() {
+        var outer = new java.util.concurrent.atomic.AtomicInteger();
+        var inner = new java.util.concurrent.atomic.AtomicInteger();
+
+        ExtensionPhase.tellWhenAsked(outer::incrementAndGet,
+                () -> ExtensionPhase.tellWhenAsked(inner::incrementAndGet, ExtensionPhase::isBuildTime));
+
+        assertEquals(0, outer.get(), "the container's own question is not an extension's");
+        assertEquals(1, inner.get());
+    }
 }

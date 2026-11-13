@@ -67,9 +67,11 @@ public final class BceProcessor {
 
         for (var bceClass : bceClasses) {
             try {
-                var bce = instantiateBce(bceClass);
-                processEnhancement(bce, bceClass, List.of(), archiveClasses, lookup, classLoader, errors,
-                        errorCauses, modifications);
+                ExtensionAsks.<Exception>of(bceClass, () -> {
+                    var bce = instantiateBce(bceClass);
+                    processEnhancement(bce, bceClass, List.of(), archiveClasses, lookup, classLoader, errors,
+                            errorCauses, modifications);
+                });
             } catch (Exception _) {
                 // Enhancement-only errors are non-fatal
             }
@@ -102,13 +104,15 @@ public final class BceProcessor {
             var bceClass = pair.getKey();
             var targetName = DotName.of(pair.getValue().getName());
             try {
-                var bce = instantiateBce(bceClass);
-                for (var method : getDeclaredMethodsSafe(bceClass)) {
-                    if (method.getAnnotation(Enhancement.class) == null) continue;
-                    makeAccessibleSafe(method);
-                    var paramKind = detectEnhancementParamKind(method);
-                    invokeEnhancement(method, bce, paramKind, targetName, lookup, sink);
-                }
+                ExtensionAsks.<Exception>of(bceClass, () -> {
+                    var bce = instantiateBce(bceClass);
+                    for (var method : getDeclaredMethodsSafe(bceClass)) {
+                        if (method.getAnnotation(Enhancement.class) == null) continue;
+                        makeAccessibleSafe(method);
+                        var paramKind = detectEnhancementParamKind(method);
+                        invokeEnhancement(method, bce, paramKind, targetName, lookup, sink);
+                    }
+                });
             } catch (Exception _) {
                 // Replay errors are non-fatal — skip pair
             }
@@ -149,24 +153,26 @@ public final class BceProcessor {
 
         for (var bceClass : bceClasses) {
             try {
-                var bce = instantiateBce(bceClass);
-                bceInstances.put(bceClass, bce);
-                for (var method : getDeclaredMethodsSafe(bceClass)) {
-                    if (method.getAnnotation(Discovery.class) == null) continue;
-                    makeAccessibleSafe(method);
+                ExtensionAsks.<Exception>of(bceClass, () -> {
+                    var bce = instantiateBce(bceClass);
+                    bceInstances.put(bceClass, bce);
+                    for (var method : getDeclaredMethodsSafe(bceClass)) {
+                        if (method.getAnnotation(Discovery.class) == null) continue;
+                        makeAccessibleSafe(method);
 
-                    var params = method.getParameters();
-                    var args = new Object[params.length];
-                    for (int i = 0; i < params.length; i++) {
-                        var paramType = params[i].getType();
-                        if (MetaAnnotations.class.isAssignableFrom(paramType)) {
-                            args[i] = metaAnnotations;
-                        } else if (ScannedClasses.class.isAssignableFrom(paramType)) {
-                            args[i] = scannedClasses;
+                        var params = method.getParameters();
+                        var args = new Object[params.length];
+                        for (int i = 0; i < params.length; i++) {
+                            var paramType = params[i].getType();
+                            if (MetaAnnotations.class.isAssignableFrom(paramType)) {
+                                args[i] = metaAnnotations;
+                            } else if (ScannedClasses.class.isAssignableFrom(paramType)) {
+                                args[i] = scannedClasses;
+                            }
                         }
+                        method.invoke(bce, args);
                     }
-                    method.invoke(bce, args);
-                }
+                });
             } catch (Exception _) {
                 // Discovery phase errors are silently ignored per spec
             }
@@ -251,6 +257,8 @@ public final class BceProcessor {
         // Phase: @Synthesis
         runPhase(extensions, deploymentErrors, deploymentErrorCauses, (bceClass, bce) -> {
             var synthesisResult = processSynthesis(bce, bceClass, types, deploymentErrors);
+            synthesisResult.beans().forEach(bean -> bean.setSourceExtension(bceClass));
+            synthesisResult.observers().forEach(observer -> observer.setSourceExtension(bceClass));
             allSyntheticBeans.addAll(synthesisResult.beans());
             allSyntheticObservers.addAll(synthesisResult.observers());
         });
@@ -278,7 +286,7 @@ public final class BceProcessor {
     private static boolean runPhase(Class<?> bceClass, List<String> deploymentErrors,
                                     List<Throwable> deploymentErrorCauses, PhaseAction action) {
         try {
-            action.run();
+            ExtensionAsks.of(bceClass, action::run);
             return true;
         } catch (Exception e) {
             deploymentErrors.add("BCE processing failed for " + bceClass.getName() + ": " + e.getMessage());

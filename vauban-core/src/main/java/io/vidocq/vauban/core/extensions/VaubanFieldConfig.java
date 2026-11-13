@@ -102,6 +102,11 @@ public final class VaubanFieldConfig implements FieldConfig {
         return allAnnotationsRemoved;
     }
 
+    /** Whether this configuration takes annotations away from the field. */
+    boolean removesAnnotations() {
+        return allAnnotationsRemoved || !removePredicates.isEmpty();
+    }
+
     public List<Predicate<AnnotationInfo>> getRemovePredicates() {
         return List.copyOf(removePredicates);
     }

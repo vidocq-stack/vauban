@@ -111,6 +111,12 @@ public final class VaubanMethodConfig implements MethodConfig {
         return allAnnotationsRemoved;
     }
 
+    /** Whether this configuration takes annotations away from the method or from one of its parameters. */
+    boolean removesAnnotations() {
+        return allAnnotationsRemoved || !removePredicates.isEmpty()
+                || getParameterConfigs().stream().anyMatch(VaubanParameterConfig::removesAnnotations);
+    }
+
     public List<Predicate<AnnotationInfo>> getRemovePredicates() {
         return List.copyOf(removePredicates);
     }

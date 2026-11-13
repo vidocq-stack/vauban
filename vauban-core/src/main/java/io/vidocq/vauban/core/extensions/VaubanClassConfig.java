@@ -217,6 +217,16 @@ public final class VaubanClassConfig implements ClassConfig {
         this.sourceBce = sourceBce;
     }
 
+    /**
+     * Whether this configuration takes annotations away, from the class, a field, a method or a parameter. A build
+     * that freezes what the extensions did records the annotations they add; it cannot say what they remove.
+     */
+    public boolean removesAnnotations() {
+        return allAnnotationsRemoved || !removePredicates.isEmpty()
+                || fieldConfigs.stream().anyMatch(VaubanFieldConfig::removesAnnotations)
+                || methodConfigs.stream().anyMatch(VaubanMethodConfig::removesAnnotations);
+    }
+
     public boolean isModified() {
         if (!addedAnnotations.isEmpty() || !addedAnnotationInfos.isEmpty()
                 || allAnnotationsRemoved || !removePredicates.isEmpty()) {

@@ -191,6 +191,35 @@ class BceRuntimeSkipTest {
         }
 
         @Test
+        @DisplayName("a parameterized bean type keeps its arguments; metadata that names none still reads")
+        void shouldPreserveParameterizedTypes() throws IOException {
+            var optionalOfString = new io.vidocq.vauban.indexer.model.TypeInfo.ParameterizedType(
+                    io.vidocq.vauban.indexer.model.DotName.of("java.util.Optional"),
+                    List.of(new io.vidocq.vauban.indexer.model.TypeInfo.ClassType(
+                            io.vidocq.vauban.indexer.model.DotName.of("java.lang.String"))));
+            var listOfOptionals = new io.vidocq.vauban.indexer.model.TypeInfo.ParameterizedType(
+                    io.vidocq.vauban.indexer.model.DotName.of("java.util.List"), List.of(optionalOfString));
+            var builder = new VaubanSyntheticBeanBuilder<>(Object.class);
+            builder.indexType(optionalOfString);
+            builder.indexType(listOfOptionals);
+            builder.indexType(new io.vidocq.vauban.indexer.model.TypeInfo.ClassType(
+                    io.vidocq.vauban.indexer.model.DotName.of("com.example.Api")));
+
+            var baos = new ByteArrayOutputStream();
+            SyntheticMetadataSerializer.write(List.of(builder), List.of(), baos);
+            var bean = SyntheticMetadataSerializer.readBeans(new ByteArrayInputStream(baos.toByteArray())).getFirst();
+
+            assertEquals(List.of(optionalOfString, listOfOptionals), bean.genericTypes());
+            assertTrue(bean.types().contains("com.example.Api"), "a class type stays among the names: " + bean.types());
+
+            var earlier = new Properties();
+            earlier.setProperty("bean.count", "1");
+            earlier.setProperty("bean.0.beanClass", "java.lang.Object");
+            earlier.setProperty("bean.0.types", "java.lang.Object");
+            assertEquals(List.of(), SyntheticMetadataSerializer.readBeans(earlier).getFirst().genericTypes());
+        }
+
+        @Test
         @DisplayName("a bean without a scope has a null scopeAnnotation")
         void shouldHandleNullScope() throws IOException {
             var builder = new VaubanSyntheticBeanBuilder<>(String.class);

@@ -240,4 +240,30 @@ class LifecycleObserverFailureTest {
         assertEquals("", logged());
         assertNull(VaubanContainer.current());
     }
+
+    static final DeploymentException REFUSED = new DeploymentException("the configuration lacks a required value");
+
+    /** A check of the environment the application starts in, written as an observer of {@code Startup}. */
+    @ApplicationScoped
+    public static class StartCheck {
+        void check(@Observes @Priority(1) Startup event) {
+            CALLS.add("StartCheck");
+            throw REFUSED;
+        }
+    }
+
+    @Test
+    @DisplayName("a Startup observer that throws a DeploymentException stops the start with that exception")
+    void aStartupObserverThatRefusesTheDeploymentStopsTheStartWithItsException() {
+        var builder = VaubanContainer.builder()
+                .addBeanClass(StartCheck.class)
+                .addBeanClass(StartupObserver.class);
+
+        DeploymentException failure = assertThrows(DeploymentException.class, builder::build);
+
+        assertSame(REFUSED, failure, "what the observer says is the report: no wrapper around it");
+        assertEquals(List.of("StartCheck"), List.copyOf(CALLS), "the observers after it are not notified");
+        assertEquals(0, count(logged(), MARK), "no warning about a throwing observer: the exception says it all");
+        assertNull(VaubanContainer.current(), "no half-built container is left behind");
+    }
 }

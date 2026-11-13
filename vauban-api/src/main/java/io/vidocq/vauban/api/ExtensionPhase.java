@@ -30,6 +30,11 @@ package io.vidocq.vauban.api;
  * resource the application will open — would find the build machine's at compile time, not the one
  * the application will run on: it asks {@link #isBuildTime()} and leaves that check to the start.
  *
+ * <p>A build that freezes what the extensions produce (the container start then loads it instead of
+ * running them) takes the question as the extension saying it left work for the start: an extension
+ * that asked runs again at each start, the others do not. So an extension asks only where its work
+ * depends on where the application starts, and keeps everything else out of that path.
+ *
  * <p>The answer belongs to the thread, for the duration of the call that opened the phase: an
  * extension running anywhere else, or after that call returns, runs at container start.
  */
@@ -37,11 +42,27 @@ public final class ExtensionPhase {
 
     private static final ScopedValue<Boolean> BUILD_TIME = ScopedValue.newInstance();
 
+    /** Told each time an extension asks {@link #isBuildTime()}, while {@link #tellWhenAsked} runs. */
+    private static final ScopedValue<Runnable> ASKED = ScopedValue.newInstance();
+
     private ExtensionPhase() {}
 
     /** {@code true} while Vauban runs extensions as part of compiling the application. */
     public static boolean isBuildTime() {
+        if (ASKED.isBound()) {
+            ASKED.get().run();
+        }
         return BUILD_TIME.orElse(false);
+    }
+
+    /**
+     * Runs {@code operation} and calls {@code asked} each time {@link #isBuildTime()} is asked on this
+     * thread meanwhile. For the container, which runs one extension at a time this way and so learns
+     * which of them left work for the start.
+     */
+    public static <R, X extends Throwable> R tellWhenAsked(Runnable asked,
+            ScopedValue.CallableOp<? extends R, X> operation) throws X {
+        return ScopedValue.where(ASKED, asked).call(operation);
     }
 
     /**

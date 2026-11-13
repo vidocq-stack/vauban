@@ -32,6 +32,8 @@ import java.util.Map;
  * @param qualifiers           the names of the qualifiers
  * @param qualifierAnnotations the qualifiers with their member values (BUG-20261111-01); {@code null}
  *                             stands for {@code qualifiers} with no member, the form earlier versions wrote
+ * @param genericTypes         the bean types that are no class, a parameterized type first, in their index form
+ *                             (VAU-PERF-005); {@code null} stands for none, as earlier versions wrote
  */
 public record SyntheticBeanDescriptor(
         String beanClassName,
@@ -44,9 +46,11 @@ public record SyntheticBeanDescriptor(
         boolean alternative,
         int priority,
         String name,
-        List<AnnotationInfo> qualifierAnnotations
+        List<AnnotationInfo> qualifierAnnotations,
+        List<io.vidocq.vauban.indexer.model.TypeInfo> genericTypes
 ) {
     public SyntheticBeanDescriptor {
+        genericTypes = genericTypes != null ? List.copyOf(genericTypes) : List.of();
         types = types != null ? List.copyOf(types) : List.of();
         qualifiers = qualifiers != null ? List.copyOf(qualifiers) : List.of();
         params = params != null ? Map.copyOf(params) : Map.of();
@@ -59,6 +63,15 @@ public record SyntheticBeanDescriptor(
                                    String scopeAnnotation, List<String> types, List<String> qualifiers,
                                    Map<String, String> params, boolean alternative, int priority, String name) {
         this(beanClassName, creatorClassName, disposerClassName, scopeAnnotation, types, qualifiers, params,
-                alternative, priority, name, null);
+                alternative, priority, name, null, null);
+    }
+
+    /** A descriptor whose bean types are all classes. */
+    public SyntheticBeanDescriptor(String beanClassName, String creatorClassName, String disposerClassName,
+                                   String scopeAnnotation, List<String> types, List<String> qualifiers,
+                                   Map<String, String> params, boolean alternative, int priority, String name,
+                                   List<AnnotationInfo> qualifierAnnotations) {
+        this(beanClassName, creatorClassName, disposerClassName, scopeAnnotation, types, qualifiers, params,
+                alternative, priority, name, qualifierAnnotations, null);
     }
 }

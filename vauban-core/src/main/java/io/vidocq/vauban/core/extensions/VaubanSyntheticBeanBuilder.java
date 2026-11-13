@@ -47,6 +47,9 @@ public final class VaubanSyntheticBeanBuilder<T> implements SyntheticBeanBuilder
     private Class<? extends SyntheticBeanCreator<T>> creatorClass;
     private Class<? extends SyntheticBeanDisposer<T>> disposerClass;
 
+    /** The extension whose {@code @Synthesis} registered this component; {@code null} when none ran, as for metadata. */
+    private Class<?> sourceExtension;
+
     public VaubanSyntheticBeanBuilder(Class<T> beanClass) {
         this.beanClass = beanClass;
         this.types.add(beanClass);
@@ -185,12 +188,26 @@ public final class VaubanSyntheticBeanBuilder<T> implements SyntheticBeanBuilder
 
     /** Bean types added via {@link #type(Type)} — already converted to Vauban's TypeInfo. */
     public Set<io.vidocq.vauban.indexer.model.TypeInfo> getIndexTypes() { return indexTypes; }
+
+    /**
+     * Adds a bean type in its index form, as the synthetic metadata records a type only the language model can
+     * name: a parameterized type, an array of one.
+     */
+    public VaubanSyntheticBeanBuilder<T> indexType(io.vidocq.vauban.indexer.model.TypeInfo type) {
+        indexTypes.add(type);
+        return this;
+    }
     public Set<Annotation> getQualifiers() { return qualifiers; }
     public Class<? extends Annotation> getScopeAnnotation() { return scopeAnnotation; }
     public String getName() { return name; }
     public boolean isAlternative() { return alternative; }
     public int getPriority() { return priority; }
     public Map<String, Object> getParams() { return params; }
+
+    /** The extension whose {@code @Synthesis} registered this component, or {@code null}. */
+    public Class<?> getSourceExtension() { return sourceExtension; }
+
+    void setSourceExtension(Class<?> sourceExtension) { this.sourceExtension = sourceExtension; }
     public Class<? extends SyntheticBeanCreator<T>> getCreatorClass() { return creatorClass; }
     public Class<? extends SyntheticBeanDisposer<T>> getDisposerClass() { return disposerClass; }
 }

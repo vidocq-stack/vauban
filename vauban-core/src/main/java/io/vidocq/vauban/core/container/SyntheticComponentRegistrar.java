@@ -70,15 +70,29 @@ final class SyntheticComponentRegistrar {
         try (var is = url.openStream()) {
             var props = new java.util.Properties();
             props.load(new java.io.InputStreamReader(is, java.nio.charset.StandardCharsets.UTF_8));
-
-            for (var synDesc : io.vidocq.vauban.core.extensions.SyntheticMetadataSerializer.readBeans(props)) {
-                registerAptBean(synDesc, cl, descriptors, factories, syntheticDisposers, seenSyntheticSignatures);
-            }
-            for (var synDesc : io.vidocq.vauban.core.extensions.SyntheticMetadataSerializer.readObservers(props)) {
-                registerAptObserver(synDesc, cl, observers);
-            }
+            registerSyntheticMetadata(props, cl, descriptors, factories, syntheticDisposers, observers,
+                    seenSyntheticSignatures);
         } catch (java.io.IOException _) {
             // unreadable resource — skip
+        }
+    }
+
+    /**
+     * Registers the synthetic beans and observers {@code props} describes, in the form
+     * {@link io.vidocq.vauban.core.extensions.SyntheticMetadataSerializer} writes: the metadata of an archive, or
+     * the synthetic components of a deployment whose extensions the build froze.
+     */
+    static void registerSyntheticMetadata(java.util.Properties props, ClassLoader cl,
+                                          List<BeanDescriptor> descriptors,
+                                          Map<DotName, BeanFactory<?>> factories,
+                                          Map<DotName, java.util.function.BiConsumer<Object, CreationalContext<?>>> syntheticDisposers,
+                                          List<io.vidocq.vauban.core.bean.model.ObserverDescriptor> observers,
+                                          java.util.Set<String> seenSyntheticSignatures) {
+        for (var synDesc : io.vidocq.vauban.core.extensions.SyntheticMetadataSerializer.readBeans(props)) {
+            registerAptBean(synDesc, cl, descriptors, factories, syntheticDisposers, seenSyntheticSignatures);
+        }
+        for (var synDesc : io.vidocq.vauban.core.extensions.SyntheticMetadataSerializer.readObservers(props)) {
+            registerAptObserver(synDesc, cl, observers);
         }
     }
 
@@ -104,6 +118,9 @@ final class SyntheticComponentRegistrar {
             }
             for (var typeName : synDesc.types()) {
                 resolveOptionalClass(typeName, cl, builder::type);
+            }
+            for (var genericType : synDesc.genericTypes()) {
+                builder.indexType(genericType);
             }
             for (var qualifier : synDesc.qualifierAnnotations()) {
                 qualifierInstance(qualifier, cl).ifPresent(builder::qualifier);

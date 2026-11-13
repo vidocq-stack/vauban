@@ -92,6 +92,11 @@ public final class VaubanParameterConfig implements ParameterConfig {
         return allAnnotationsRemoved;
     }
 
+    /** Whether this configuration takes annotations away from the parameter. */
+    boolean removesAnnotations() {
+        return allAnnotationsRemoved || !removePredicates.isEmpty();
+    }
+
     public List<Predicate<AnnotationInfo>> getRemovePredicates() {
         return List.copyOf(removePredicates);
     }

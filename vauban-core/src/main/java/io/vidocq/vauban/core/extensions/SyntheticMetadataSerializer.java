@@ -59,6 +59,8 @@ public final class SyntheticMetadataSerializer {
     private static final String QUALIFIERS = ".qualifiers";
     private static final String PRIORITY = ".priority";
     private static final String EVENT_TYPE = ".eventType";
+    /** {@code bean.N.genericType.I}: a bean type that is no class, in the notation of {@link ObservedTypeNotation}. */
+    private static final String GENERIC_TYPE = ".genericType.";
 
     private SyntheticMetadataSerializer() {}
 
@@ -104,12 +106,18 @@ public final class SyntheticMetadataSerializer {
         }
         // Types given through the language model: at build time, the only way to name a class the
         // compilation is still producing. A class type is written by name and loaded at run time like
-        // the others (BUG-20261008-01); this format has no notation for a parameterized type yet.
+        // the others (BUG-20261008-01). Any other one, a parameterized type first, keeps its shape in the
+        // notation the observed types use: a bean typed Optional<String> must still be one when no
+        // extension runs at start to say it again (VAU-PERF-005).
+        int generic = 0;
         for (var type : builder.getIndexTypes()) {
             if (type instanceof io.vidocq.vauban.indexer.model.TypeInfo.ClassType(
-                    io.vidocq.vauban.indexer.model.DotName(var className))
-                    && !typeNames.contains(className)) {
-                typeNames.add(className);
+                    io.vidocq.vauban.indexer.model.DotName(var className))) {
+                if (!typeNames.contains(className)) {
+                    typeNames.add(className);
+                }
+            } else {
+                props.setProperty(prefix + GENERIC_TYPE + generic++, ObservedTypeNotation.write(type));
             }
         }
         props.setProperty(prefix + ".types", String.join(",", typeNames));
@@ -194,6 +202,18 @@ public final class SyntheticMetadataSerializer {
         return readBeans(props);
     }
 
+    /** The bean types that are no class, in their index form; none in the metadata of an earlier version. */
+    private static List<io.vidocq.vauban.indexer.model.TypeInfo> readGenericTypes(Properties props, String prefix) {
+        var types = new ArrayList<io.vidocq.vauban.indexer.model.TypeInfo>();
+        for (int i = 0; ; i++) {
+            String notation = props.getProperty(prefix + GENERIC_TYPE + i);
+            if (notation == null) {
+                return types;
+            }
+            types.add(ObservedTypeNotation.read(notation));
+        }
+    }
+
     public static List<SyntheticBeanDescriptor> readBeans(Properties props) {
         int count = Integer.parseInt(props.getProperty("bean.count", "0"));
         var beans = new ArrayList<SyntheticBeanDescriptor>();
@@ -212,7 +232,8 @@ public final class SyntheticMetadataSerializer {
                     Boolean.parseBoolean(props.getProperty(prefix + ".alternative", "false")),
                     Integer.parseInt(props.getProperty(prefix + PRIORITY, "0")),
                     props.getProperty(prefix + ".name"),
-                    qualifiers
+                    qualifiers,
+                    readGenericTypes(props, prefix)
             ));
         }
 

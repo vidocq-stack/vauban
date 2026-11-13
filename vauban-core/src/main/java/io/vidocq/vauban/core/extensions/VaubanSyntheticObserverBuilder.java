@@ -19,7 +19,6 @@
  */
 package io.vidocq.vauban.core.extensions;
 
-import io.vidocq.vauban.api.ExtensionPhase;
 import io.vidocq.vauban.core.loading.DeploymentClasses;
 import io.vidocq.vauban.indexer.model.DotName;
 import io.vidocq.vauban.indexer.model.TypeInfo;
@@ -49,6 +48,9 @@ public final class VaubanSyntheticObserverBuilder<T> implements SyntheticObserve
     private final Map<String, Object> params = new LinkedHashMap<>();
     private Class<? extends SyntheticObserver<T>> observerClass;
 
+    /** The extension whose {@code @Synthesis} registered this component; {@code null} when none ran, as for metadata. */
+    private Class<?> sourceExtension;
+
     public VaubanSyntheticObserverBuilder(Class<T> eventType) {
         this.eventType = eventType;
         this.eventTypeInfo = new TypeInfo.ClassType(DotName.of(eventType.getName()));
@@ -66,7 +68,7 @@ public final class VaubanSyntheticObserverBuilder<T> implements SyntheticObserve
      */
     public VaubanSyntheticObserverBuilder(Type eventType) {
         this.eventTypeInfo = LangModelTypeMapper.toIndexType(eventType);
-        this.eventType = ExtensionPhase.isBuildTime()
+        this.eventType = ExtensionAsks.isBuildTime()
                 ? new NamedType(ObservedTypeNotation.write(eventTypeInfo))
                 : toReflectType(eventType);
     }
@@ -207,6 +209,11 @@ public final class VaubanSyntheticObserverBuilder<T> implements SyntheticObserve
     public int getPriority() { return priority; }
     public boolean isAsync() { return async; }
     public Map<String, Object> getParams() { return params; }
+
+    /** The extension whose {@code @Synthesis} registered this component, or {@code null}. */
+    public Class<?> getSourceExtension() { return sourceExtension; }
+
+    void setSourceExtension(Class<?> sourceExtension) { this.sourceExtension = sourceExtension; }
     public Class<? extends SyntheticObserver<T>> getObserverClass() { return observerClass; }
 
     private record SimpleParameterizedType(
