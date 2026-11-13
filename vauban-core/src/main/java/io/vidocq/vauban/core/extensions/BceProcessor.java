@@ -347,27 +347,41 @@ public final class BceProcessor {
     public static ScopeInfo enhancedScope(List<VaubanClassConfig> configs) {
         for (var config : configs) {
             for (var ann : config.getAddedAnnotations()) {
-                if (ann.isAnnotationPresent(jakarta.enterprise.context.NormalScope.class)) {
-                    return new ScopeInfo(DotName.of(ann.getName()), true);
-                }
-                if (ann.isAnnotationPresent(jakarta.inject.Scope.class)) {
-                    return new ScopeInfo(DotName.of(ann.getName()), false);
-                }
-                // Explicit well-known scope check (for annotations without meta-annotations)
-                String name = ann.getName();
-                if (name.equals("jakarta.enterprise.context.RequestScoped")
-                        || name.equals("jakarta.enterprise.context.ApplicationScoped")
-                        || name.equals("jakarta.enterprise.context.SessionScoped")
-                        || name.equals("jakarta.enterprise.context.ConversationScoped")) {
-                    return new ScopeInfo(DotName.of(name), true);
-                }
-                if (name.equals("jakarta.enterprise.context.Dependent")) {
-                    return ScopeInfo.DEPENDENT;
-                }
-                if (name.equals("jakarta.inject.Singleton")) {
-                    return ScopeInfo.SINGLETON;
+                var scope = scopeOf(ann);
+                if (scope != null) {
+                    return scope;
                 }
             }
+        }
+        return null;
+    }
+
+    /**
+     * The scope an extension hands over through the Build Compatible Extensions API, as an annotation class: a scope
+     * of an extension (such as {@code jakarta.transaction.TransactionScoped}) keeps its name and its normality, read
+     * from its {@code @NormalScope} or {@code @Scope} meta-annotation (BUG-20261113-01); {@code null} when the
+     * annotation is no scope.
+     */
+    public static ScopeInfo scopeOf(Class<? extends Annotation> ann) {
+        if (ann.isAnnotationPresent(jakarta.enterprise.context.NormalScope.class)) {
+            return new ScopeInfo(DotName.of(ann.getName()), true);
+        }
+        if (ann.isAnnotationPresent(jakarta.inject.Scope.class)) {
+            return new ScopeInfo(DotName.of(ann.getName()), false);
+        }
+        // Explicit well-known scope check (for annotations without meta-annotations)
+        String name = ann.getName();
+        if (name.equals("jakarta.enterprise.context.RequestScoped")
+                || name.equals("jakarta.enterprise.context.ApplicationScoped")
+                || name.equals("jakarta.enterprise.context.SessionScoped")
+                || name.equals("jakarta.enterprise.context.ConversationScoped")) {
+            return new ScopeInfo(DotName.of(name), true);
+        }
+        if (name.equals("jakarta.enterprise.context.Dependent")) {
+            return ScopeInfo.DEPENDENT;
+        }
+        if (name.equals("jakarta.inject.Singleton")) {
+            return ScopeInfo.SINGLETON;
         }
         return null;
     }

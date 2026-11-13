@@ -48,6 +48,15 @@ class InterfaceClientProxyTest {
     /** An interface bean type (mirrors org.eclipse.microprofile.jwt.JsonWebToken). */
     public interface Identity {
         String name();
+
+        /** What the contextual instance throws must reach the caller as it is (BUG-20261113-02). */
+        default String refuse() {
+            throw new IllegalStateException("refused by the contextual instance");
+        }
+
+        default void check() throws java.io.IOException {
+            throw new java.io.IOException("checked by the contextual instance");
+        }
     }
 
     @ApplicationScoped
@@ -71,6 +80,30 @@ class InterfaceClientProxyTest {
 
         public String who() {
             return identity.name();
+        }
+    }
+
+    /**
+     * BUG-20261113-02: the proxy called the contextual instance through reflection and let its
+     * {@code InvocationTargetException} escape, so the caller got an {@code UndeclaredThrowableException}
+     * instead of the exception the instance threw.
+     */
+    @Test
+    @DisplayName("an exception of the contextual instance reaches the caller of the interface proxy unwrapped")
+    void anExceptionOfTheContextualInstanceReachesTheCallerUnwrapped() {
+        try (var container = VaubanContainer.builder()
+                .addBeanClass(IdentityProducer.class)
+                .addBeanClass(IdentityConsumer.class)
+                .build()) {
+
+            Identity identity = container.select(IdentityConsumer.class).identity();
+
+            container.requestContext().runInScope(() -> {
+                var unchecked = assertThrows(IllegalStateException.class, identity::refuse);
+                assertEquals("refused by the contextual instance", unchecked.getMessage());
+                var checked = assertThrows(java.io.IOException.class, identity::check);
+                assertEquals("checked by the contextual instance", checked.getMessage());
+            });
         }
     }
 

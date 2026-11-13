@@ -5,6 +5,54 @@ suspected cause, status. Updated on every investigation.
 
 ---
 
+## BUG-20261113-01 — A synthetic bean in a scope of an extension becomes `@Dependent`
+
+- **Date**: 2026-11-13
+- **Status**: FIXED (branch `feat/cdi-qualifier-scope`)
+- **Module**: `vauban-core` (`SyntheticBeanConverter.scopeOf`, `BceProcessor.scopeOf`)
+- **Surfaced by**: Vidocq/noether#72. Jakarta EE 11 Platform §13.12.1 puts a persistence unit's `EntityManager` bean
+  in `jakarta.transaction.TransactionScoped`, a scope that `mansart-transactions-cdi` registers with
+  `MetaAnnotations.addContext`.
+- **Symptom**: `components.addBean(EntityManager.class).scope(TransactionScoped.class)` gives a bean whose
+  `getScope()` is `Dependent`. It has no client proxy, each lookup creates a new instance, and a call outside a
+  transaction does not throw `ContextNotActiveException`. In `noether-jpa-cdi-module-it`:
+  `expected: jakarta.transaction.TransactionScoped but was: jakarta.enterprise.context.Dependent`.
+- **Minimal reproduction**:
+  ```
+  ./mvnw -ntp -pl vauban-core -am install -Dsurefire.failIfNoSpecifiedTests=false \
+    -Dtest='SyntheticBeanConverterScopeTest,SyntheticBeanExtensionScopeTest'
+  ```
+- **Root cause**: `SyntheticBeanConverter.scopeOf` compared the scope with the five built-in scopes and
+  `@Singleton`, and returned `DEPENDENT` for every other one. The run time and the processor both convert synthetic
+  beans through it. A class bean was not affected: `BeanDiscovery.mapScope` reads the `@NormalScope` or `@Scope`
+  meta-annotation.
+- **Fix**: `BceProcessor.scopeOf` reads a scope annotation an extension hands over, with the meta-annotation check
+  that `enhancedScope` already made. `enhancedScope` and `SyntheticBeanConverter.scopeOf` share it. A scope of an
+  extension keeps its name and its normality, and a class that is not a scope still gives `@Dependent`.
+  `BceProcessor` is already a documented reflective fallback of the Build Compatible Extensions API.
+
+## BUG-20261113-02 — The interface client proxy wraps what the contextual instance throws
+
+- **Date**: 2026-11-13
+- **Status**: FIXED (branch `feat/cdi-qualifier-scope`)
+- **Module**: `vauban-core` (`InterceptorBeanWrapper.interfaceProxy`)
+- **Surfaced by**: Vidocq/noether#72. `close()` on an `@ApplicationScoped` `EntityManagerFactory` bean must throw
+  `IllegalStateException`; the caller got `java.lang.reflect.UndeclaredThrowableException`.
+- **Symptom**: a normal-scoped bean whose type is an interface, with no proxy generated at build time, gets a
+  `java.lang.reflect.Proxy`. Any exception its contextual instance throws, checked or not, reaches the caller as an
+  `UndeclaredThrowableException` that wraps an `InvocationTargetException`.
+- **Minimal reproduction**:
+  ```
+  ./mvnw -ntp -pl vauban-core -am install -Dsurefire.failIfNoSpecifiedTests=false \
+    -Dtest='InterfaceClientProxyTest#anExceptionOfTheContextualInstanceReachesTheCallerUnwrapped'
+  ```
+- **Root cause**: the invocation handler returned `method.invoke(target, args)` and let `InvocationTargetException`
+  escape. `Proxy` wraps a checked exception that the interface method does not declare.
+- **Investigations**:
+  - 2026-11-13: red on `origin/main` `aeb44388`: `expected: <java.lang.IllegalStateException> but was:
+    <java.lang.reflect.UndeclaredThrowableException>`.
+- **Fix**: the handler rethrows the cause of the `InvocationTargetException`.
+
 ## BUG-20261111-01 — A synthetic bean or observer registered at build time loses the member values of its qualifiers
 
 - **Date**: 2026-11-11

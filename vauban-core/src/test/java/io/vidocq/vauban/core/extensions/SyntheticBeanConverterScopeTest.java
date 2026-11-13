@@ -20,12 +20,17 @@
 package io.vidocq.vauban.core.extensions;
 
 import io.vidocq.vauban.core.bean.model.ScopeInfo;
+import io.vidocq.vauban.indexer.model.DotName;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.enterprise.context.ConversationScoped;
 import jakarta.enterprise.context.Dependent;
+import jakarta.enterprise.context.NormalScope;
 import jakarta.enterprise.context.RequestScoped;
 import jakarta.enterprise.context.SessionScoped;
+import jakarta.inject.Scope;
 import jakarta.inject.Singleton;
+import java.lang.annotation.Retention;
+import java.lang.annotation.RetentionPolicy;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
@@ -46,7 +51,23 @@ class SyntheticBeanConverterScopeTest {
                 Arguments.of(SessionScoped.class, ScopeInfo.SESSION),
                 Arguments.of(ConversationScoped.class, ScopeInfo.CONVERSATION),
                 Arguments.of(Dependent.class, ScopeInfo.DEPENDENT),
-                Arguments.of(null, ScopeInfo.DEPENDENT));
+                Arguments.of(null, ScopeInfo.DEPENDENT),
+                // BUG-20261113-01: a scope of an extension, such as jakarta.transaction.TransactionScoped,
+                // kept its annotation and its normality instead of falling back to @Dependent.
+                Arguments.of(ExtensionNormalScope.class,
+                        new ScopeInfo(DotName.of(ExtensionNormalScope.class.getName()), true)),
+                Arguments.of(ExtensionPseudoScope.class,
+                        new ScopeInfo(DotName.of(ExtensionPseudoScope.class.getName()), false)));
+    }
+
+    @NormalScope
+    @Retention(RetentionPolicy.RUNTIME)
+    @interface ExtensionNormalScope {
+    }
+
+    @Scope
+    @Retention(RetentionPolicy.RUNTIME)
+    @interface ExtensionPseudoScope {
     }
 
     @ParameterizedTest

@@ -372,7 +372,14 @@ final class InterceptorBeanWrapper {
                 ifaces,
                 (proxy, method, args) -> {
                     Object target = delegate.get();
-                    return method.invoke(target, args);
+                    try {
+                        return method.invoke(target, args);
+                    } catch (java.lang.reflect.InvocationTargetException e) {
+                        // The caller gets what the contextual instance threw, not the reflective wrapper
+                        // that java.lang.reflect.Proxy turns into an UndeclaredThrowableException
+                        // (BUG-20261113-02).
+                        throw e.getCause();
+                    }
                 });
     }
 

@@ -129,19 +129,17 @@ final class SyntheticBeanConverter {
     }
 
     /** The scope a synthetic bean declares, {@code @Dependent} when it declares none or one of its own. */
+    /**
+     * The scope the bean declares, or {@code @Dependent} when it declares none. A scope of an extension, such as
+     * {@code jakarta.transaction.TransactionScoped}, is kept with its normality: it fell back to {@code @Dependent}
+     * before, so the bean got no client proxy and a new instance on each injection (BUG-20261113-01).
+     */
     private static ScopeInfo scopeOf(Class<? extends Annotation> scopeAnn) {
-        if (scopeAnn == jakarta.enterprise.context.ApplicationScoped.class) {
-            return ScopeInfo.APPLICATION;
-        } else if (scopeAnn == jakarta.enterprise.context.RequestScoped.class) {
-            return ScopeInfo.REQUEST;
-        } else if (scopeAnn == jakarta.inject.Singleton.class) {
-            return ScopeInfo.SINGLETON;
-        } else if (scopeAnn == jakarta.enterprise.context.SessionScoped.class) {
-            return ScopeInfo.SESSION;
-        } else if (scopeAnn == jakarta.enterprise.context.ConversationScoped.class) {
-            return ScopeInfo.CONVERSATION;
+        if (scopeAnn == null) {
+            return ScopeInfo.DEPENDENT;
         }
-        return ScopeInfo.DEPENDENT;
+        var scope = BceProcessor.scopeOf(scopeAnn);
+        return scope != null ? scope : ScopeInfo.DEPENDENT;
     }
 
     /**

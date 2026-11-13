@@ -512,6 +512,39 @@ implementation is green.
   which can cause ambiguous or unsatisfied dependencies in applications that never asked for those
   classes.
 
+## TCK-GAP-010 — the scope of a synthetic bean in a custom normal scope is never checked
+
+- **Date**: 2026-11-13 — **Status**: DRAFT (not yet reported upstream)
+- **Spec**: CDI 4.1 Lite.
+  - `SyntheticBeanBuilder.scope(Class<? extends Annotation>)` sets the scope of a synthetic bean.
+  - `MetaAnnotations.addContext` registers a custom scope and its context. A bean of a normal scope gets a client
+    proxy, and every reference to it in one active context reaches the same contextual instance.
+- **Existing coverage that nearly covers it**: `build/compatible/extensions/customNormalScope/CustomNormalScopeTest`.
+  - The extension declares the synthetic bean `CommandExecution` with `scope(CommandScoped.class)`.
+  - Its creator, `CommandExecutionCreator`, returns `ctx.getCurrentCommandExecution()`: the one object the active
+    `CommandContext` holds.
+  - So a container that gives the bean `@Dependent` creates it again on each injection, and gets the same object
+    each time. `commandExecutor()` passes: the `CommandExecution` the test looks up and the one `MyService` injects
+    are one object either way.
+  - Neither test reads `Bean.getScope()` of `CommandExecution`.
+  - The other synthetic beans of the suite are `@Dependent` or `@ApplicationScoped`. Checked on 2026-11-13 in
+    `cdi-tck-core-impl-4.1.0.jar`: the only calls to `SyntheticBeanBuilder.scope` are in
+    `CustomNormalScopeExtension` (`Dependent`, `CommandScoped`), `SyntheticBeanWithLookupExtension` (`Dependent`) and
+    `SyntheticBeanInjectionPointExtension` (`Dependent`, `ApplicationScoped`).
+- **Proposed TCK change**: in `CustomNormalScopeTest`,
+  1. assert that `BeanManager.resolve(getBeans(CommandExecution.class)).getScope()` is `CommandScoped.class`;
+  2. add a synthetic bean `@CommandScoped Tally` whose creator returns a new object, and assert two things. Within
+     one command, two lookups share its count. Outside a command, a call on the reference throws
+     `ContextNotActiveException`.
+- **Exposed by**: Vauban `BUG.md` → `BUG-20261113-01`. `SyntheticBeanConverter` mapped every scope except the
+  built-in ones to `@Dependent`, and the whole CDI Lite TCK stayed green (774/774). It surfaced with
+  Vidocq/noether#72. Local regressions: `SyntheticBeanConverterScopeTest` (a custom normal and a custom pseudo
+  scope) and `SyntheticBeanExtensionScopeTest` (an extension's context and a synthetic bean of an interface type).
+- **Why it matters**: Jakarta EE 11 Platform §13.12.1 makes the `EntityManager` of each persistence unit a bean in
+  `jakarta.transaction.TransactionScoped`, or in the scope that `persistence.xml` names. That bean is typically
+  synthetic, and the scope comes from an extension. As `@Dependent`, the bean gives a new entity manager to each
+  injection point, and a call outside a transaction does not throw `ContextNotActiveException`.
+
 ---
 
 ## Not TCK gaps: bugs the TCK covers on a path Vauban's runner does not exercise
