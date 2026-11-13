@@ -33,6 +33,7 @@ import io.vidocq.vauban.core.types.AssignabilityRules;
 import io.vidocq.vauban.indexer.IndexBuilder;
 import io.vidocq.vauban.indexer.VaubanIndex;
 import io.vidocq.vauban.indexer.model.AnnotationInfo;
+import io.vidocq.vauban.indexer.model.ClassInfo;
 import io.vidocq.vauban.indexer.model.DotName;
 import jakarta.enterprise.context.spi.CreationalContext;
 
@@ -1085,12 +1086,18 @@ public final class VaubanContainerBuilder {
         for (var clazz : beanClasses) {
             byte[] classFile = classFileOf(clazz);
             // A class with no class file among the resources (e.g. dynamic or some test classes) is not indexed.
-            if (classFile.length > 0) {
-                indexBuilder.add(io.vidocq.vauban.indexer.scanner.ClassFileScanner.scan(classFile));
+            ClassInfo model = classFile.length > 0
+                    ? io.vidocq.vauban.indexer.scanner.ClassFileScanner.scan(classFile) : null;
+            if (model != null) {
+                indexBuilder.add(model);
             }
             // The fingerprint of the deployment as a build sees it: without the runtime's own beans.
             if (!hostBeanClasses.contains(clazz.getName()) || deploymentClasses.contains(clazz.getName())) {
-                fingerprint.add(clazz.getName(), classFile);
+                if (ReflectionValidator.isBuildCompatibleExtension(clazz)) {
+                    fingerprint.addExtension(clazz.getName(), model, classFile);
+                } else {
+                    fingerprint.add(clazz.getName(), model);
+                }
             }
 
             // Auto-register factory — will be replaced with constructor-aware

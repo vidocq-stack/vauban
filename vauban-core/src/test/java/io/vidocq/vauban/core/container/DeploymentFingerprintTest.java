@@ -19,57 +19,196 @@
  */
 package io.vidocq.vauban.core.container;
 
+import static java.lang.constant.ConstantDescs.CD_Object;
+import static java.lang.constant.ConstantDescs.CD_String;
+import static java.lang.constant.ConstantDescs.INIT_NAME;
+import static java.lang.constant.ConstantDescs.MTD_void;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 
+import io.vidocq.vauban.indexer.model.ClassInfo;
+import io.vidocq.vauban.indexer.scanner.ClassFileScanner;
+import java.lang.classfile.Annotation;
+import java.lang.classfile.AnnotationElement;
+import java.lang.classfile.ClassFile;
+import java.lang.classfile.CodeBuilder;
+import java.lang.classfile.attribute.MethodParameterInfo;
+import java.lang.classfile.attribute.MethodParametersAttribute;
+import java.lang.classfile.attribute.RuntimeVisibleAnnotationsAttribute;
+import java.lang.classfile.attribute.SourceFileAttribute;
+import java.lang.constant.ClassDesc;
+import java.lang.constant.MethodTypeDesc;
+import java.util.Optional;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 @DisplayName("The fingerprint of a deployment")
 class DeploymentFingerprintTest {
 
-    private static final byte[] ONE = {1, 2, 3};
-    private static final byte[] OTHER = {1, 2, 4};
+    private static final ClassDesc NAMED = ClassDesc.of("jakarta.inject.Named");
+    private static final ClassDesc TAG = ClassDesc.of("a.Tag");
 
-    private static String of(String settings, Object... namesAndFiles) {
-        var fingerprint = new DeploymentFingerprint(settings);
-        for (int i = 0; i < namesAndFiles.length; i += 2) {
-            fingerprint.add((String) namesAndFiles[i], (byte[]) namesAndFiles[i + 1]);
+    /**
+     * A class as javac writes it with its debug information: an annotation with a value, another with two members,
+     * a method whose body returns a constant, and the source file, line numbers, local variables and parameter names.
+     */
+    private record Sample(String name, String named, String answer, boolean extraMethod, boolean membersReversed) {
+
+        static Sample of(String name) {
+            return new Sample(name, "one", "forty-two", false, false);
         }
+
+        Sample named(String value) {
+            return new Sample(name, value, answer, extraMethod, membersReversed);
+        }
+
+        Sample answering(String value) {
+            return new Sample(name, named, value, extraMethod, membersReversed);
+        }
+
+        Sample withExtraMethod() {
+            return new Sample(name, named, answer, true, membersReversed);
+        }
+
+        Sample withMembersReversed() {
+            return new Sample(name, named, answer, extraMethod, true);
+        }
+
+        byte[] classFile() {
+            ClassDesc self = ClassDesc.of(name);
+            var x = AnnotationElement.ofInt("x", 1);
+            var y = AnnotationElement.ofInt("y", 2);
+            return ClassFile.of().build(self, type -> {
+                type.withFlags(ClassFile.ACC_PUBLIC | ClassFile.ACC_SUPER)
+                        .with(SourceFileAttribute.of("Sample.java"))
+                        .with(RuntimeVisibleAnnotationsAttribute.of(
+                                Annotation.of(NAMED, AnnotationElement.ofString("value", named)),
+                                membersReversed ? Annotation.of(TAG, y, x) : Annotation.of(TAG, x, y)))
+                        .withMethodBody(INIT_NAME, MTD_void, ClassFile.ACC_PUBLIC, code -> {
+                            var start = code.newBoundLabel();
+                            code.lineNumber(10).aload(0).invokespecial(CD_Object, INIT_NAME, MTD_void).return_();
+                            code.localVariable(0, "this", self, start, code.newBoundLabel());
+                        })
+                        .withMethod("answer", MethodTypeDesc.of(CD_String, CD_String), ClassFile.ACC_PUBLIC,
+                                method -> method
+                                        .with(MethodParametersAttribute.of(
+                                                MethodParameterInfo.ofParameter(Optional.of("question"), 0)))
+                                        .withCode(code -> {
+                                            var start = code.newBoundLabel();
+                                            code.lineNumber(20).ldc(answer).areturn();
+                                            var end = code.newBoundLabel();
+                                            code.localVariable(0, "this", self, start, end);
+                                            code.localVariable(1, "question", CD_String, start, end);
+                                        }));
+                if (extraMethod) {
+                    type.withMethodBody("other", MTD_void, ClassFile.ACC_PUBLIC, CodeBuilder::return_);
+                }
+            });
+        }
+
+        ClassInfo model() {
+            return ClassFileScanner.scan(classFile());
+        }
+    }
+
+    private static String beans(String settings, Sample... samples) {
+        var fingerprint = new DeploymentFingerprint(settings);
+        for (Sample sample : samples) {
+            fingerprint.add(sample.name(), sample.model());
+        }
+        return fingerprint.value();
+    }
+
+    private static String bean(byte[] classFile) {
+        var fingerprint = new DeploymentFingerprint("s");
+        fingerprint.add("a.A", ClassFileScanner.scan(classFile));
+        return fingerprint.value();
+    }
+
+    private static String extension(byte[] classFile) {
+        var fingerprint = new DeploymentFingerprint("s");
+        fingerprint.addExtension("a.A", ClassFileScanner.scan(classFile), classFile);
         return fingerprint.value();
     }
 
     @Test
     @DisplayName("the same classes give the same fingerprint, whatever their order")
     void theOrderDoesNotCount() {
-        assertEquals(of("s", "a.A", ONE, "b.B", OTHER), of("s", "b.B", OTHER, "a.A", ONE));
+        assertEquals(beans("s", Sample.of("a.A"), Sample.of("b.B")), beans("s", Sample.of("b.B"), Sample.of("a.A")));
     }
 
     @Test
-    @DisplayName("a class added, removed, recompiled or renamed gives another fingerprint")
-    void anyChangeCounts() {
-        String reference = of("s", "a.A", ONE, "b.B", OTHER);
+    @DisplayName("a class added, removed or renamed gives another fingerprint")
+    void anyClassCounts() {
+        String reference = beans("s", Sample.of("a.A"), Sample.of("b.B"));
 
-        assertNotEquals(reference, of("s", "a.A", ONE, "b.B", OTHER, "c.C", ONE), "added");
-        assertNotEquals(reference, of("s", "a.A", ONE), "removed");
-        assertNotEquals(reference, of("s", "a.A", OTHER, "b.B", OTHER), "recompiled");
-        assertNotEquals(reference, of("s", "a.A2", ONE, "b.B", OTHER), "renamed");
+        assertNotEquals(reference, beans("s", Sample.of("a.A"), Sample.of("b.B"), Sample.of("c.C")), "added");
+        assertNotEquals(reference, beans("s", Sample.of("a.A")), "removed");
+        assertNotEquals(reference, beans("s", Sample.of("a.A2"), Sample.of("b.B")), "renamed");
+    }
+
+    @Test
+    @DisplayName("what the extensions see of a bean class counts: its annotations, its members")
+    void whatTheExtensionsSeeCounts() {
+        byte[] reference = Sample.of("a.A").classFile();
+
+        assertNotEquals(bean(reference), bean(Sample.of("a.A").named("two").classFile()), "an annotation value");
+        assertNotEquals(bean(reference), bean(Sample.of("a.A").withExtraMethod().classFile()), "a method");
+    }
+
+    @Test
+    @DisplayName("the body of a bean's method does not count: no extension sees it")
+    void aBeanMethodBodyDoesNotCount() {
+        assertEquals(bean(Sample.of("a.A").classFile()), bean(Sample.of("a.A").answering("forty-three").classFile()));
+    }
+
+    @Test
+    @DisplayName("the body of an extension's method counts: it is what the extension does")
+    void anExtensionMethodBodyCounts() {
+        assertNotEquals(extension(Sample.of("a.A").classFile()),
+                extension(Sample.of("a.A").answering("forty-three").classFile()));
+    }
+
+    @Test
+    @DisplayName("the order the members of an annotation were written in does not count")
+    void theOrderOfAnnotationMembersDoesNotCount() {
+        assertEquals(bean(Sample.of("a.A").classFile()), bean(Sample.of("a.A").withMembersReversed().classFile()));
+    }
+
+    @Test
+    @DisplayName("a class stripped of its debug information, as jlink does, keeps its fingerprint (BUG-20261113-17)")
+    void debugInformationDoesNotCount() {
+        byte[] built = Sample.of("a.A").classFile();
+        byte[] linked = JlinkStripping.strip(built);
+        assertNotEquals(built.length, linked.length, "jlink's stripping changes the bytes");
+
+        assertEquals(bean(built), bean(linked), "a bean class");
+        assertEquals(extension(built), extension(linked), "an extension");
     }
 
     @Test
     @DisplayName("a class without a class file counts by its name")
     void aClassWithoutClassFile() {
-        byte[] none = new byte[0];
+        var none = new DeploymentFingerprint("s");
+        none.add("a.A", null);
+        var again = new DeploymentFingerprint("s");
+        again.add("a.A", null);
+        var other = new DeploymentFingerprint("s");
+        other.add("b.B", null);
 
-        assertEquals(of("s", "a.A", none), of("s", "a.A", none));
-        assertNotEquals(of("s", "a.A", none), of("s", "b.B", none), "another name");
-        assertNotEquals(of("s", "a.A", none), of("s"), "no class at all");
-        assertNotEquals(of("s", "a.A", none), of("s", "a.A", ONE), "the same class with a class file");
+        assertEquals(none.value(), again.value());
+        assertNotEquals(none.value(), other.value(), "another name");
+        assertNotEquals(none.value(), new DeploymentFingerprint("s").value(), "no class at all");
+        assertNotEquals(none.value(), beans("s", Sample.of("a.A")), "the same class with a class file");
+
+        var extension = new DeploymentFingerprint("s");
+        extension.addExtension("a.A", null, new byte[0]);
+        assertEquals(none.value(), extension.value(), "an extension without a class file counts by its name too");
     }
 
     @Test
     @DisplayName("other discovery settings give another fingerprint")
     void theSettingsCount() {
-        assertNotEquals(of("beanArchive=true", "a.A", ONE), of("beanArchive=false", "a.A", ONE));
+        assertNotEquals(beans("beanArchive=true", Sample.of("a.A")), beans("beanArchive=false", Sample.of("a.A")));
     }
 }

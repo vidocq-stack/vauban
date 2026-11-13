@@ -19,27 +19,29 @@
  */
 package io.vidocq.vauban.core.container;
 
+import io.vidocq.vauban.indexer.model.ClassInfo;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.HexFormat;
 import java.util.TreeMap;
-import java.util.zip.CRC32C;
 
 /**
  * What tells one deployment from another, for the extensions frozen at build (VAU-PERF-005): the bean classes, by
- * name and by the content of their class file, the build compatible extensions among them included, and the
- * discovery settings of the builder. The build writes it beside what the extensions did; a start loads that only
- * for the same fingerprint, so a class added, removed or recompiled since sends the start back to running the
- * extensions.
+ * name and by what the extensions see of them, the build compatible extensions among them by their code as well, and
+ * the discovery settings of the builder. The build writes it beside what the extensions did; a start loads that only
+ * for the same fingerprint, so a class added or removed since, a change an extension could see, or a change to an
+ * extension, sends the start back to running the extensions.
  *
- * <p>The class files are the ones the builder reads to index the classes: checksumming them costs a pass over bytes
- * already in memory. The beans the embedding runtime adds itself are left out by the builder, which never gives them
- * here.
+ * <p>The body of a bean's method and the debug information of a class file do not count (see {@link ClassChecksums}):
+ * a {@code jlink} image, whose classes lost their debug information, keeps the record of its build
+ * (BUG-20261113-17). The models are the ones the builder scans to index the classes, so the fingerprint costs a pass
+ * over what is already in memory. The beans the embedding runtime adds itself are left out by the builder, which
+ * never gives them here.
  */
 final class DeploymentFingerprint {
 
-    private final TreeMap<String, Long> classes = new TreeMap<>();
+    private final TreeMap<String, String> classes = new TreeMap<>();
     private final String settings;
 
     /** @param settings the builder settings that change what discovery finds, as one line */
@@ -47,11 +49,22 @@ final class DeploymentFingerprint {
         this.settings = settings;
     }
 
-    /** One bean class; {@code classFile} is empty for a class without a class file among the resources. */
-    void add(String className, byte[] classFile) {
-        var crc = new CRC32C();
-        crc.update(classFile);
-        classes.put(className, crc.getValue());
+    /**
+     * One bean class, by what the extensions see of it; {@code model} is null for a class without a class file among
+     * the resources, which counts by its name.
+     */
+    void add(String className, ClassInfo model) {
+        classes.put(className, model == null ? "-" : Long.toHexString(ClassChecksums.ofModel(model)));
+    }
+
+    /** One build compatible extension, by what the extensions see of it and by its code. */
+    void addExtension(String className, ClassInfo model, byte[] classFile) {
+        if (model == null) {
+            add(className, null);
+        } else {
+            classes.put(className, Long.toHexString(ClassChecksums.ofModel(model)) + "+"
+                    + Long.toHexString(ClassChecksums.ofCode(classFile)));
+        }
     }
 
     /** The fingerprint: the same for the same classes whatever the order they came in. */

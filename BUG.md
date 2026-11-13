@@ -8,8 +8,9 @@ suspected cause, status. Updated on every investigation.
 ## BUG-20261113-17 — A jlink image finds its record of the frozen extensions twice and refuses it
 
 - **Date**: 2026-11-13
-- **Status**: FIXED (`fix/frozen-record-found-twice`)
-- **Module**: `vauban-classloader` (`VaubanClassLoader.findResources`), `vauban-core` (`FrozenExtensions.find`)
+- **Status**: FIXED (`fix/frozen-record-found-twice`, then `fix/fingerprint-strip-debug` for the stripped classes)
+- **Module**: `vauban-classloader` (`VaubanClassLoader.findResources`), `vauban-core` (`FrozenExtensions.find`,
+  `DeploymentFingerprint`)
 - **Surfaced by**: Vidocq's `CreateThenBuildIT`, extended to start what a created application packages. The zip
   distribution starts on the record (`cdi extensions  2 extensions frozen at build`); the image of `vidocq:jlink`
   reports `2 extensions run at start (the record of the build is not this deployment's)`, also with
@@ -26,9 +27,16 @@ suspected cause, status. Updated on every investigation.
   already left out what its parent gives; `VaubanClassLoader` did not.
 - **Fix**: `VaubanClassLoader.findResources` leaves out what its parent already gives, with `file:///x` and `file:/x`
   taken for the same file; `FrozenExtensions.find` counts distinct files.
-- **Left**: with jlink's default `--strip-debug` the image's class bytes differ from the build's, and the
-  fingerprint, a CRC32C of the bytes, differs too. Not fixed here (a choice between the fingerprint and
-  `vidocq:jlink`).
+- **Second cause**: with jlink's default `--strip-debug` the image's class bytes differ from the build's, and the
+  fingerprint, a CRC32C of the bytes, differed too. jlink removes `SourceFile`, `LineNumberTable`,
+  `LocalVariableTable`, `LocalVariableTypeTable` and `MethodParameters`, and computes some `StackMapTable`s again. It
+  keeps the constant pool and the bytecode: over the 322 classes of `vauban-core`, the pool, the code arrays,
+  `max_stack`, `max_locals` and the exception tables are identical in the image, and 202 stack map tables differ.
+- **Second fix**: a bean class counts by what the extensions see of it, its model without the parameter names
+  (`ClassChecksums.ofModel`); an extension counts by its code as well, the constant pool and each method's bytecode
+  and exception table (`ClassChecksums.ofCode`). A method body of a bean no longer invalidates the record. Repro:
+  `DeploymentFingerprintTest.debugInformationDoesNotCount` (red on the model as its `toString` gives it, which holds
+  the parameter names), `ClassChecksumsTest.realClassesKeepTheirChecksumsOnceStripped`.
 
 ---
 
