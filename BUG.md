@@ -5,16 +5,59 @@ suspected cause, status. Updated on every investigation.
 
 ---
 
+## BUG-20261113-15 — An alternative or an interceptor whose `@Priority` an `@Enhancement` removes stays enabled
+
+- **Date**: 2026-11-13
+- **Status**: FIXED (`fix/alternative-priority-zero`), found while testing BUG-20261113-14
+- **Module**: `vauban-core` (`EnhancementApplier.applyClassConfigs`, `EnhancementApplier.withEnhancedPriority`)
+- **Symptom**: an extension that removes `@Priority` with `ClassConfig.removeAnnotation` changes nothing:
+  - from an `@Alternative` class, the alternative stays selected: lookups and injection points still get it;
+  - from an `@Interceptor` class, the interceptor stays enabled and still runs (CDI 4.1, 9.4: an interceptor
+    without `@Priority` and not listed in a `beans.xml` is not enabled).
+
+  Adding a priority the same way works, as expected.
+- **Repro**:
+  - `AlternativePriorityZeroTest.anAlternativeWhosePriorityAnExtensionRemovesIsNotSelected`, "expected: <plain>
+    but was: <zero>";
+  - `DeclaredPriorityTest.anInterceptorWhosePriorityAnExtensionRemovesIsNotEnabled`, "expected: <[fixed]> but
+    was: <[moved, fixed]>".
+- **Cause**: the enriched index that discovery reads carries the annotations an `@Enhancement` adds, never the ones
+  it removes. `EnhancementApplier` applies the removals to the qualifiers and the interceptor bindings of the
+  descriptors only: it copied the priority of a bean unchanged, and for an interceptor it read the added
+  `@Priority` alone (BUG-20261113-12). Before BUG-20261113-14 an alternative at `@Priority(0)` looked unselected
+  anyway, which hid the case the alternative test uses.
+- **Fix**: `applyClassConfigs` (beans) and `withEnhancedPriority` (interceptors) run the configs over the priority
+  in their order: a removal predicate that matches the `@Priority` (or `removeAllAnnotations`) takes it away,
+  which unselects the alternative or disables the interceptor, and an added `@Priority` in any form gives its value.
+  A frozen deployment is not concerned: the freeze already refuses an extension that removes annotations, which is
+  replayed at start. A priority a bean takes from a stereotype is not on the class: a predicate removing
+  `@Priority` from the class leaves it (`AlternativePriorityZeroTest.removingThePriorityOfTheClassLeavesTheOneOfItsStereotype`),
+  and only `removeAllAnnotations`, which takes the stereotype as well, removes it.
+
+---
+
 ## BUG-20261113-14 — An alternative enabled with `@Priority(0)` is taken for one without a priority
 
 - **Date**: 2026-11-13
-- **Status**: OPEN, found by reading while fixing BUG-20261113-11; not reproduced by a test yet
-- **Module**: `vauban-core` (`BeanDescriptor.priority`, `BeanResolver`, `BeanDiscovery`, `StereotypeResolver`)
-- **Symptom (expected)**: `@Alternative @Priority(0)` is not selected over the bean it replaces. A bean descriptor
-  holds `priority` as an `int` where 0 means "not set", and `BeanResolver` keeps the alternatives with
-  `priority() > 0`; the producer and stereotype fallbacks of `BeanDiscovery` test `priority == 0` the same way.
-- **To do**: a test first (an alternative at priority 0 against a default bean), then carry "declared or not" beside
-  the value, as `InterceptorDescriptor.enabled` does for interceptors.
+- **Status**: FIXED (`fix/alternative-priority-zero`), found by reading while fixing BUG-20261113-11
+- **Module**: `vauban-core` (`BeanDescriptor`, `BeanDiscovery`, `StereotypeResolver`, `BeanResolver`,
+  `VaubanBeanManager`, `DeploymentValidator`, the synthetic bean builder and its metadata)
+- **Symptom**: `@Alternative @Priority(0)` is not selected over the bean it replaces: a lookup and an injection point
+  both get the default bean. The same for an alternative stereotype declaring `@Priority(0)`, a producer declared an
+  alternative at priority 0, and a synthetic bean given `alternative(true).priority(0)`, run at start or frozen at
+  build.
+- **Repro**: `AlternativePriorityZeroTest`, 4 of the first 5 tests red before the fix ("expected: <zero> but was:
+  <plain>"), then the synthetic one ("expected: <synthetic> but was: <plain>").
+- **Cause**: a bean descriptor held `priority` as an `int` where 0 meant "not set". `VaubanBeanManager.getBeans` and
+  `BeanResolver` took an alternative at `priority() <= 0` for a disabled one; the producer and stereotype fallbacks
+  of `BeanDiscovery` and `StereotypeResolver` went on looking while the value was 0; the synthetic bean builder did
+  not know whether `priority(int)` was called, and its metadata wrote 0 for none.
+- **Fix**: `BeanDescriptor.priorityDeclared` and `SyntheticBeanDescriptor.priorityDeclared` say whether a priority was
+  found, as `InterceptorDescriptor.enabled` does for interceptors. Discovery works on `OptionalInt` from the
+  annotation to the descriptor; the resolution, the name validation and `BeanInfo.priority()` read the flag
+  (`InterceptorInfo.priority()` reads `enabled`). The synthetic metadata writes `bean.N.priorityDeclared`; metadata of
+  an earlier version, without it, reads a priority of 0 as none, as it meant. The constructors without the flag
+  still take 0 for none, so a caller that is not updated behaves as before.
 
 ---
 

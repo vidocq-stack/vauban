@@ -30,6 +30,8 @@ import java.util.Map;
  * avoiding re-execution of the BCE.
  *
  * @param qualifiers           the names of the qualifiers
+ * @param priorityDeclared     whether the extension gave the bean a priority: {@code priority(0)} is one, and selects
+ *                             an alternative (BUG-20261113-14); the constructors without it take 0 for none
  * @param qualifierAnnotations the qualifiers with their member values (BUG-20261111-01); {@code null}
  *                             stands for {@code qualifiers} with no member, the form earlier versions wrote
  * @param genericTypes         the bean types that are no class, a parameterized type first, in their index form
@@ -45,6 +47,7 @@ public record SyntheticBeanDescriptor(
         Map<String, String> params,
         boolean alternative,
         int priority,
+        boolean priorityDeclared,
         String name,
         List<AnnotationInfo> qualifierAnnotations,
         List<io.vidocq.vauban.indexer.model.TypeInfo> genericTypes
@@ -63,7 +66,7 @@ public record SyntheticBeanDescriptor(
                                    String scopeAnnotation, List<String> types, List<String> qualifiers,
                                    Map<String, String> params, boolean alternative, int priority, String name) {
         this(beanClassName, creatorClassName, disposerClassName, scopeAnnotation, types, qualifiers, params,
-                alternative, priority, name, null, null);
+                alternative, priority, priority != 0, name, null, null);
     }
 
     /** A descriptor whose bean types are all classes. */
@@ -72,6 +75,6 @@ public record SyntheticBeanDescriptor(
                                    Map<String, String> params, boolean alternative, int priority, String name,
                                    List<AnnotationInfo> qualifierAnnotations) {
         this(beanClassName, creatorClassName, disposerClassName, scopeAnnotation, types, qualifiers, params,
-                alternative, priority, name, qualifierAnnotations, null);
+                alternative, priority, priority != 0, name, qualifierAnnotations, null);
     }
 }

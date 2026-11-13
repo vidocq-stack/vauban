@@ -148,7 +148,7 @@ public final class BeanResolver {
 
         // Separate alternatives and non-alternatives
         var alternatives = candidates.stream()
-                .filter(b -> b.isAlternative() && b.priority() > 0)
+                .filter(b -> b.isAlternative() && b.priorityDeclared())
                 .toList();
         
         var nonAlternatives = candidates.stream()

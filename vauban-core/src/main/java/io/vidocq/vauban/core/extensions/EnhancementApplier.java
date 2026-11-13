@@ -37,6 +37,7 @@ import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.OptionalInt;
 import java.util.Set;
 import java.util.function.Predicate;
 
@@ -66,31 +67,39 @@ final class EnhancementApplier {
         var result = new ArrayList<InterceptorDescriptor>(interceptors.size());
         for (var descriptor : interceptors) {
             var configs = modifications.get(descriptor.interceptorClass());
-            result.add(configs == null || configs.isEmpty() ? descriptor : withAddedPriority(descriptor, configs));
+            result.add(configs == null || configs.isEmpty() ? descriptor : withEnhancedPriority(descriptor, configs));
         }
         return result;
     }
 
     /**
-     * The interceptor with the priority the last {@code @Priority} an enhancement added gives it, if any: added as
-     * an annotation type, a language-model annotation or an annotation instance alike. Only the language-model
+     * The interceptor with the priority the enhancements leave it, in their order: one that removes its
+     * {@code @Priority} disables it (BUG-20261113-15), and the last {@code @Priority} added gives it its value, added
+     * as an annotation type, a language-model annotation or an annotation instance alike. Only the language-model
      * form was read, so an extension that replaced the priority with an annotation instance, as a portable
      * extension would, changed nothing (BUG-20261113-12).
      */
-    private static InterceptorDescriptor withAddedPriority(InterceptorDescriptor descriptor,
-                                                           List<VaubanClassConfig> configs) {
-        var updated = descriptor;
+    private static InterceptorDescriptor withEnhancedPriority(InterceptorDescriptor descriptor,
+                                                              List<VaubanClassConfig> configs) {
+        int priority = descriptor.priority();
+        boolean enabled = descriptor.enabled();
         for (var config : configs) {
+            if (enabled && removesPriority(config, priority)) {
+                enabled = false;
+            }
             for (var annotation : config.getAddedAnnotationsIndexed()) {
                 if (PRIORITY.equals(annotation.name())) {
-                    updated = new InterceptorDescriptor(
-                            updated.interceptorClass(), updated.bindings(),
-                            updated.aroundInvokeMethod(), updated.aroundConstructMethod(),
-                            priorityValue(annotation), true, updated.bindingAnnotations());
+                    priority = priorityValue(annotation);
+                    enabled = true;
                 }
             }
         }
-        return updated;
+        if (priority == descriptor.priority() && enabled == descriptor.enabled()) {
+            return descriptor;
+        }
+        return new InterceptorDescriptor(descriptor.interceptorClass(), descriptor.bindings(),
+                descriptor.aroundInvokeMethod(), descriptor.aroundConstructMethod(), priority, enabled,
+                descriptor.bindingAnnotations());
     }
 
     /** The {@code int} value of an added {@code @Priority}, or {@code 0} when it carries none. */
@@ -328,13 +337,51 @@ final class EnhancementApplier {
                     Map.of(VALUE, new io.vidocq.vauban.indexer.model.AnnotationValue.StringVal(addedName))));
         }
 
+        var priority = priorityAfter(bean, configs);
         return new BeanDescriptor(
                 bean.id(), bean.beanClass(), bean.kind(), bean.types(),
-                qualifiers, bean.scope(), bean.isAlternative(), bean.priority(),
+                qualifiers, bean.scope(), bean.isAlternative(), priority.orElse(0), priority.isPresent(),
                 enhanced.injectionPoints(), name, enhanced.interceptorBindings(),
                 bean.constructorBindings(), enhanced.interceptorBindingAnnotations(),
                 enhanced.enhancedInjectionMethods()
         );
+    }
+
+    /**
+     * The priority of the bean once the configs ran, in their order: a {@code @Priority} one removes is gone unless a
+     * later call adds one again, and one added in any form gives its value (BUG-20261113-15). Discovery reads the
+     * added ones from the enriched index already; a removal exists only here.
+     *
+     * <p>A priority the bean takes from a stereotype is not on the class: a predicate that removes {@code @Priority}
+     * from the class leaves it, and only {@code removeAllAnnotations}, which removes the stereotype as well, takes it.
+     */
+    private static OptionalInt priorityAfter(BeanDescriptor bean, List<VaubanClassConfig> configs) {
+        var priority = bean.priorityDeclared() ? OptionalInt.of(bean.priority()) : OptionalInt.empty();
+        var target = configs.getFirst().info();
+        boolean onTheClass = target == null || target.hasAnnotation(annotation -> PRIORITY.value().equals(annotation.name()));
+        for (var config : configs) {
+            if (priority.isPresent() && (config.isAllAnnotationsRemoved()
+                    || onTheClass && removesPriority(config, priority.getAsInt()))) {
+                priority = OptionalInt.empty();
+            }
+            for (var added : config.getAddedAnnotationsIndexed()) {
+                if (PRIORITY.equals(added.name())) {
+                    priority = OptionalInt.of(priorityValue(added));
+                    onTheClass = true;
+                }
+            }
+        }
+        return priority;
+    }
+
+    /** Whether the config removes a {@code @Priority(value)} from its class. */
+    private static boolean removesPriority(VaubanClassConfig config, int value) {
+        if (config.isAllAnnotationsRemoved()) {
+            return true;
+        }
+        var priority = new SimpleAnnotationInfo(PRIORITY.value(),
+                Map.of(VALUE, io.vidocq.vauban.core.langmodel.BuiltAnnotationMember.ofInt(value)));
+        return config.getRemovePredicates().stream().anyMatch(predicate -> predicate.test(priority));
     }
 
     /** The class-level removals and additions of one config: qualifiers and interceptor bindings. */

@@ -167,7 +167,7 @@ class IndexCreationPlansTest {
         IndexPlans.register(Registered.class, index);
         var enhanced = new io.vidocq.vauban.core.bean.model.BeanDescriptor(null,
                 DotName.of(Registered.class.getName()), io.vidocq.vauban.core.bean.model.BeanDescriptor.BeanKind.MANAGED,
-                Set.of(), Set.of(), null, false, 0, List.of(), null, Set.of(), Set.of(), List.of(),
+                Set.of(), Set.of(), null, false, 0, false, List.of(), null, Set.of(), Set.of(), List.of(),
                 Set.of("an enhanced initializer"));
         assertTrue(IndexPlans.injectionOrder(Registered.class, enhanced).isEmpty());
     }

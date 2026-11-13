@@ -346,7 +346,7 @@ public final class BceProcessor {
         return Optional.of(new BeanDescriptor(
                 bean.id(), bean.beanClass(), bean.kind(), bean.types(),
                 bean.qualifiers(), enhancedScope, bean.isAlternative(),
-                bean.priority(), bean.injectionPoints(), bean.name(),
+                bean.priority(), bean.priorityDeclared(), bean.injectionPoints(), bean.name(),
                 bean.interceptorBindings(), bean.constructorBindings(),
                 bean.interceptorBindingAnnotations(), bean.enhancedInjectionMethods()));
     }

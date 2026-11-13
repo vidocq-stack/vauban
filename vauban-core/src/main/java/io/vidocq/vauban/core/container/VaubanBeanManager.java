@@ -246,7 +246,7 @@ public final class VaubanBeanManager implements BeanManager {
         for (var bean : beans) {
             // CDI spec: disabled alternatives (no @Priority) are excluded from resolution
             if (bean.isAlternative() && bean instanceof ManagedBean<?> mb
-                    && mb.descriptor().priority() <= 0) {
+                    && !mb.descriptor().priorityDeclared()) {
                 continue;
             }
 
@@ -304,7 +304,7 @@ public final class VaubanBeanManager implements BeanManager {
             if (Objects.equals(name, bean.getName())) {
                 // CDI spec: disabled alternatives (no @Priority) are excluded from resolution
                 if (bean.isAlternative() && bean instanceof ManagedBean<?> mb
-                        && mb.descriptor().priority() <= 0) {
+                        && !mb.descriptor().priorityDeclared()) {
                     continue;
                 }
                 result.add(bean);

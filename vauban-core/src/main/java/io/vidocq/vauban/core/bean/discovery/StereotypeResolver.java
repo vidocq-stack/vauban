@@ -26,6 +26,7 @@ import io.vidocq.vauban.indexer.model.ClassInfo;
 import io.vidocq.vauban.indexer.model.DotName;
 
 import java.util.List;
+import java.util.OptionalInt;
 import java.util.Set;
 
 /**
@@ -117,69 +118,72 @@ final class StereotypeResolver {
         return annotation.annotationType().isAnnotationPresent(jakarta.enterprise.inject.Stereotype.class);
     }
 
-    int extractPriorityWithStereotypes(ClassInfo classInfo) {
-        int priority = host.extractPriority(classInfo.annotations());
-        if (priority > 0) return priority;
+    /**
+     * The {@code @Priority} the class declares, directly or through its stereotypes, empty when none is declared: 0 is
+     * a priority, and an alternative declared at 0 is selected (BUG-20261113-14).
+     */
+    OptionalInt declaredPriorityWithStereotypes(ClassInfo classInfo) {
+        var priority = host.declaredPriority(classInfo.annotations());
+        if (priority.isPresent()) return priority;
         // Check via reflection (more reliable for annotation member values)
         try {
             var clazz = DeploymentClasses.load(classInfo.name().value());
             if (clazz.isAnnotationPresent(jakarta.annotation.Priority.class)) {
-                return clazz.getAnnotation(jakarta.annotation.Priority.class).value();
+                return OptionalInt.of(clazz.getAnnotation(jakarta.annotation.Priority.class).value());
             }
         } catch (Exception _) { /* skip */ }
         // Search through stereotypes (including transitive)
         var allAnnotationNames = host.getAllAnnotationNames(classInfo);
         for (var annName : allAnnotationNames) {
             if (isStereotype(annName)) {
-                int stereotypePriority = extractPriorityFromStereotypeRecursive(annName, new java.util.HashSet<>());
-                if (stereotypePriority > 0) return stereotypePriority;
+                var stereotypePriority = stereotypePriority(annName, new java.util.HashSet<>());
+                if (stereotypePriority.isPresent()) return stereotypePriority;
             }
         }
-        return 0;
+        return OptionalInt.empty();
     }
 
-    private int extractPriorityFromStereotypeRecursive(DotName stereotypeName, Set<DotName> visited) {
-        if (!visited.add(stereotypeName)) return 0;
+    private OptionalInt stereotypePriority(DotName stereotypeName, Set<DotName> visited) {
+        if (!visited.add(stereotypeName)) return OptionalInt.empty();
         // Check index
         var stereotypeClass = host.index.getClassByName(stereotypeName);
         if (stereotypeClass.isPresent()) {
-            int p = indexedStereotypePriority(stereotypeClass.get(), visited);
-            if (p > 0) return p;
+            var p = indexedStereotypePriority(stereotypeClass.get(), visited);
+            if (p.isPresent()) return p;
         }
         // Reflection fallback
         return reflectedStereotypePriority(stereotypeName, visited);
     }
 
-    /** The first positive {@code @Priority} the indexed stereotype or its own stereotypes declare, or 0. */
-    private int indexedStereotypePriority(ClassInfo stereotypeClass, Set<DotName> visited) {
-        int p = host.extractPriority(stereotypeClass.annotations());
-        if (p > 0) return p;
+    /** The {@code @Priority} the indexed stereotype or its own stereotypes declare first, empty when none does. */
+    private OptionalInt indexedStereotypePriority(ClassInfo stereotypeClass, Set<DotName> visited) {
+        var p = host.declaredPriority(stereotypeClass.annotations());
+        if (p.isPresent()) return p;
         // Check transitive stereotypes
         for (var ann : stereotypeClass.annotations()) {
             if (isStereotype(ann.name())) {
-                int tp = extractPriorityFromStereotypeRecursive(ann.name(), visited);
-                if (tp > 0) return tp;
+                var tp = stereotypePriority(ann.name(), visited);
+                if (tp.isPresent()) return tp;
             }
         }
-        return 0;
+        return OptionalInt.empty();
     }
 
-    private int reflectedStereotypePriority(DotName stereotypeName, Set<DotName> visited) {
+    private OptionalInt reflectedStereotypePriority(DotName stereotypeName, Set<DotName> visited) {
         try {
             var annType = DeploymentClasses.load(stereotypeName.value());
             if (annType.isAnnotationPresent(jakarta.annotation.Priority.class)) {
-                return annType.getAnnotation(jakarta.annotation.Priority.class).value();
+                return OptionalInt.of(annType.getAnnotation(jakarta.annotation.Priority.class).value());
             }
             // Transitive via reflection
             for (var metaAnn : annType.getAnnotations()) {
                 if (isReflectedStereotype(metaAnn)) {
-                    int tp = extractPriorityFromStereotypeRecursive(
-                            DotName.of(metaAnn.annotationType().getName()), visited);
-                    if (tp > 0) return tp;
+                    var tp = stereotypePriority(DotName.of(metaAnn.annotationType().getName()), visited);
+                    if (tp.isPresent()) return tp;
                 }
             }
         } catch (Exception _) { /* skip */ }
-        return 0;
+        return OptionalInt.empty();
     }
 
     String extractNameWithStereotypes(ClassInfo classInfo) {

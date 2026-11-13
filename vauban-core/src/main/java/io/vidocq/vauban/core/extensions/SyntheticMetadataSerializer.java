@@ -58,6 +58,11 @@ public final class SyntheticMetadataSerializer {
 
     private static final String QUALIFIERS = ".qualifiers";
     private static final String PRIORITY = ".priority";
+    /**
+     * {@code bean.N.priorityDeclared}: whether the bean was given a priority, 0 included (BUG-20261113-14). Metadata of
+     * an earlier version has none, and its {@code .priority} of 0 stood for no priority.
+     */
+    private static final String PRIORITY_DECLARED = ".priorityDeclared";
     private static final String EVENT_TYPE = ".eventType";
     /** {@code bean.N.genericType.I}: a bean type that is no class, in the notation of {@link ObservedTypeNotation}. */
     private static final String GENERIC_TYPE = ".genericType.";
@@ -129,6 +134,7 @@ public final class SyntheticMetadataSerializer {
         }
         props.setProperty(prefix + ".alternative", String.valueOf(builder.isAlternative()));
         props.setProperty(prefix + PRIORITY, String.valueOf(builder.getPriority()));
+        props.setProperty(prefix + PRIORITY_DECLARED, String.valueOf(builder.isPriorityDeclared()));
 
         writeParams(props, prefix, "synthetic bean " + builder.getBeanClass().getName(), builder.getParams());
     }
@@ -221,6 +227,8 @@ public final class SyntheticMetadataSerializer {
         for (int i = 0; i < count; i++) {
             var prefix = "bean." + i;
             var qualifiers = readQualifiers(props, prefix);
+            int priority = Integer.parseInt(props.getProperty(prefix + PRIORITY, "0"));
+            String declared = props.getProperty(prefix + PRIORITY_DECLARED);
             beans.add(new SyntheticBeanDescriptor(
                     props.getProperty(prefix + ".beanClass"),
                     props.getProperty(prefix + ".creator"),
@@ -230,7 +238,8 @@ public final class SyntheticMetadataSerializer {
                     names(qualifiers),
                     readParams(props, prefix),
                     Boolean.parseBoolean(props.getProperty(prefix + ".alternative", "false")),
-                    Integer.parseInt(props.getProperty(prefix + PRIORITY, "0")),
+                    priority,
+                    declared == null ? priority != 0 : Boolean.parseBoolean(declared),
                     props.getProperty(prefix + ".name"),
                     qualifiers,
                     readGenericTypes(props, prefix)

@@ -113,7 +113,7 @@ public final class VaubanBceBeanInfo implements BeanInfo {
 
     @Override
     public Integer priority() {
-        return descriptor.priority() > 0 ? descriptor.priority() : null;
+        return descriptor.priorityDeclared() ? descriptor.priority() : null;
     }
 
     @Override

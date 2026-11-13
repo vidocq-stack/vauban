@@ -127,7 +127,9 @@ final class SyntheticComponentRegistrar {
             }
             if (synDesc.name() != null) builder.name(synDesc.name());
             builder.alternative(synDesc.alternative());
-            builder.priority(synDesc.priority());
+            if (synDesc.priorityDeclared()) {
+                builder.priority(synDesc.priority());
+            }
 
             applyParams(builder.getParams(), synDesc.params(), cl, "synthetic bean " + synDesc.beanClassName());
 

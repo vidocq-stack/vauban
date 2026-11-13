@@ -128,7 +128,7 @@ public final class VaubanBceInterceptorInfo implements InterceptorInfo {
 
     @Override
     public Integer priority() {
-        return descriptor.priority() > 0 ? descriptor.priority() : null;
+        return descriptor.enabled() ? descriptor.priority() : null;
     }
 
     @Override

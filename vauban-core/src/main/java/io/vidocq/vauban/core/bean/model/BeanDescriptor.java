@@ -37,6 +37,7 @@ public record BeanDescriptor(
         ScopeInfo scope,
         boolean isAlternative,
         int priority,                      // @Priority value, 0 if not set
+        boolean priorityDeclared,          // whether a @Priority was found: 0 is a priority (BUG-20261113-14)
         List<InjectionPointInfo> injectionPoints,
         String name,                       // @Named value, null if not named
         Set<DotName> interceptorBindings,   // interceptor bindings on this bean class
@@ -59,13 +60,16 @@ public record BeanDescriptor(
         enhancedInjectionMethods = enhancedInjectionMethods != null ? Set.copyOf(enhancedInjectionMethods) : Set.of();
     }
 
-    /** Backward-compatible constructor with interceptor metadata but no BCE-added initializer methods. */
+    /**
+     * Backward-compatible constructor with interceptor metadata but no BCE-added initializer methods. Like the other
+     * constructors without {@code priorityDeclared}, it takes a priority of 0 for none declared.
+     */
     public BeanDescriptor(BeanId id, DotName beanClass, BeanKind kind,
             Set<TypeInfo> types, Set<QualifierInstance> qualifiers, ScopeInfo scope,
             boolean isAlternative, int priority, List<InjectionPointInfo> injectionPoints,
             String name, Set<DotName> interceptorBindings, Set<DotName> constructorBindings,
             List<java.lang.annotation.Annotation> interceptorBindingAnnotations) {
-        this(id, beanClass, kind, types, qualifiers, scope, isAlternative, priority,
+        this(id, beanClass, kind, types, qualifiers, scope, isAlternative, priority, priority != 0,
                 injectionPoints, name, interceptorBindings, constructorBindings,
                 interceptorBindingAnnotations, Set.of());
     }

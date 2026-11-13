@@ -360,8 +360,8 @@ public final class BeanDiscovery {
         return stereotypes.isAlternativeWithStereotypes(classInfo);
     }
 
-    private int extractPriorityWithStereotypes(ClassInfo classInfo) {
-        return stereotypes.extractPriorityWithStereotypes(classInfo);
+    private java.util.OptionalInt declaredPriorityWithStereotypes(ClassInfo classInfo) {
+        return stereotypes.declaredPriorityWithStereotypes(classInfo);
     }
 
     /** Stereotype detection — delegated to {@link StereotypeResolver}. */
@@ -379,7 +379,7 @@ public final class BeanDiscovery {
         var qualifiers = qualifierResolver.computeQualifiersWithStereotypes(classInfo);
         var scope = computeScope(classInfo);
         var isAlternative = isAlternativeWithStereotypes(classInfo);
-        var priority = extractPriorityWithStereotypes(classInfo);
+        var priority = declaredPriorityWithStereotypes(classInfo);
         var injectionPoints = discoverInjectionPoints(classInfo);
         var name = extractNameWithStereotypes(classInfo);
         var interceptorBindings = extractInterceptorBindings(classInfo);
@@ -392,8 +392,8 @@ public final class BeanDiscovery {
         }
 
         return new BeanDescriptor(id, classInfo.name(), BeanDescriptor.BeanKind.MANAGED,
-                types, qualifiers, scope, isAlternative, priority, injectionPoints, name,
-                interceptorBindings, constructorBindings, interceptorBindingAnnotations);
+                types, qualifiers, scope, isAlternative, priority.orElse(0), priority.isPresent(), injectionPoints,
+                name, interceptorBindings, constructorBindings, interceptorBindingAnnotations, Set.of());
     }
 
     private List<java.lang.annotation.Annotation> extractInterceptorBindingAnnotations(ClassInfo classInfo) {
@@ -471,8 +471,7 @@ public final class BeanDiscovery {
     boolean isDisabledAlternative(ClassInfo classInfo) {
         boolean isAlt = isAlternativeWithStereotypes(classInfo);
         if (!isAlt) return false;
-        int priority = extractPriorityWithStereotypes(classInfo);
-        return priority <= 0;
+        return declaredPriorityWithStereotypes(classInfo).isEmpty();
     }
 
     /**
@@ -535,17 +534,17 @@ public final class BeanDiscovery {
         var qualifiers = computeQualifiers(method.annotations());
         var scope = computeScopeWithStereotypes(method.annotations());
         var isAlternative = isAlternativeProducer(declaringClass, method.annotations());
-        var priority = extractPriority(method.annotations());
+        var priority = declaredPriority(method.annotations());
         // Fallback: check @Priority via reflection on the producer method
-        if (priority == 0) {
+        if (priority.isEmpty()) {
             priority = reflectedProducerMethodPriority(declaringClass, method);
         }
-        if (priority == 0) {
+        if (priority.isEmpty()) {
             priority = producerStereotypePriority(method.annotations());
         }
         // Fallback to declaring class priority
-        if (priority == 0) {
-            priority = extractPriorityWithStereotypes(declaringClass);
+        if (priority.isEmpty()) {
+            priority = declaredPriorityWithStereotypes(declaringClass);
         }
         var name = extractNameWithStereotypesFromAnnotations(method.annotations(),
                 deriveProducerMethodName(method.name()));
@@ -559,7 +558,8 @@ public final class BeanDiscovery {
         }
 
         return new BeanDescriptor(id, declaringClass.name(), BeanDescriptor.BeanKind.PRODUCER_METHOD,
-                types, qualifiers, scope, isAlternative, priority, injectionPoints, name);
+                types, qualifiers, scope, isAlternative, priority.orElse(0), priority.isPresent(), injectionPoints,
+                name, Set.of(), Set.of(), List.of(), Set.of());
     }
 
     /**
@@ -582,18 +582,18 @@ public final class BeanDiscovery {
         return method.returnType();
     }
 
-    /** The {@code @Priority} of the first declared method named like the producer, or 0. */
-    private static int reflectedProducerMethodPriority(ClassInfo declaringClass, MethodInfo method) {
+    /** The {@code @Priority} of the first declared method named like the producer, empty when none declares one. */
+    private static java.util.OptionalInt reflectedProducerMethodPriority(ClassInfo declaringClass, MethodInfo method) {
         try {
             var clazz = DeploymentClasses.load(declaringClass.name().value());
             for (var m : clazz.getDeclaredMethods()) {
                 if (m.getName().equals(method.name())
                         && m.isAnnotationPresent(jakarta.annotation.Priority.class)) {
-                    return m.getAnnotation(jakarta.annotation.Priority.class).value();
+                    return java.util.OptionalInt.of(m.getAnnotation(jakarta.annotation.Priority.class).value());
                 }
             }
         } catch (ClassNotFoundException _) { /* skip */ }
-        return 0;
+        return java.util.OptionalInt.empty();
     }
 
     /**
@@ -608,20 +608,19 @@ public final class BeanDiscovery {
     }
 
     /**
-     * The {@code @Priority} a producer takes from its indexed stereotypes: the first positive one,
-     * otherwise what the last indexed stereotype declares (0 when none does).
+     * The {@code @Priority} a producer takes from its indexed stereotypes: the one the first declares, empty when none
+     * does.
      */
-    private int producerStereotypePriority(List<AnnotationInfo> annotations) {
-        int priority = 0;
+    private java.util.OptionalInt producerStereotypePriority(List<AnnotationInfo> annotations) {
         for (var ann : annotations) {
             var stereotype = isStereotype(ann.name())
                     ? index.getClassByName(ann.name()) : Optional.<ClassInfo>empty();
             if (stereotype.isPresent()) {
-                priority = extractPriority(stereotype.get().annotations());
-                if (priority > 0) return priority;
+                var priority = declaredPriority(stereotype.get().annotations());
+                if (priority.isPresent()) return priority;
             }
         }
-        return priority;
+        return java.util.OptionalInt.empty();
     }
 
     private BeanDescriptor buildProducerFieldBean(ClassInfo declaringClass, FieldInfo field) {
@@ -631,23 +630,24 @@ public final class BeanDiscovery {
         var qualifiers = computeQualifiers(field.annotations());
         var scope = computeScopeWithStereotypes(field.annotations());
         var isAlternative = isAlternativeProducer(declaringClass, field.annotations());
-        var priority = extractPriority(field.annotations());
+        var priority = declaredPriority(field.annotations());
         // Fallback: check @Priority via reflection on the producer field
-        if (priority == 0) {
+        if (priority.isEmpty()) {
             priority = reflectedProducerFieldPriority(declaringClass, field);
         }
         // Fallback: stereotypes on field
-        if (priority == 0) {
+        if (priority.isEmpty()) {
             priority = producerStereotypePriority(field.annotations());
         }
         // Fallback to declaring class priority
-        if (priority == 0) {
-            priority = extractPriorityWithStereotypes(declaringClass);
+        if (priority.isEmpty()) {
+            priority = declaredPriorityWithStereotypes(declaringClass);
         }
         var name = extractNameWithStereotypesFromAnnotations(field.annotations(), field.name());
 
         return new BeanDescriptor(id, declaringClass.name(), BeanDescriptor.BeanKind.PRODUCER_FIELD,
-                types, qualifiers, scope, isAlternative, priority, List.of(), name);
+                types, qualifiers, scope, isAlternative, priority.orElse(0), priority.isPresent(), List.of(),
+                name, Set.of(), Set.of(), List.of(), Set.of());
     }
 
     /**
@@ -670,15 +670,15 @@ public final class BeanDiscovery {
         return field.type();
     }
 
-    /** The {@code @Priority} the producer field declares, or 0. */
-    private static int reflectedProducerFieldPriority(ClassInfo declaringClass, FieldInfo field) {
+    /** The {@code @Priority} the producer field declares, empty when it declares none. */
+    private static java.util.OptionalInt reflectedProducerFieldPriority(ClassInfo declaringClass, FieldInfo field) {
         try {
             var f = DeploymentClasses.load(declaringClass.name().value()).getDeclaredField(field.name());
             if (f.isAnnotationPresent(jakarta.annotation.Priority.class)) {
-                return f.getAnnotation(jakarta.annotation.Priority.class).value();
+                return java.util.OptionalInt.of(f.getAnnotation(jakarta.annotation.Priority.class).value());
             }
         } catch (Exception _) { /* skip */ }
-        return 0;
+        return java.util.OptionalInt.empty();
     }
 
     /**

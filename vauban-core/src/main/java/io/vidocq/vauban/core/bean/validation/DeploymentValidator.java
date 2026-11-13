@@ -277,7 +277,7 @@ public final class DeploymentValidator {
         var allNames = new ArrayList<String>();
         for (var bean : beans) {
             // Only consider enabled beans (skip disabled alternatives)
-            if (bean.name() != null && !(bean.isAlternative() && bean.priority() <= 0)) {
+            if (bean.name() != null && !(bean.isAlternative() && !bean.priorityDeclared())) {
                 allNames.add(bean.name());
             }
         }

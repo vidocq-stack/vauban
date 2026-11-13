@@ -43,6 +43,8 @@ public final class VaubanSyntheticBeanBuilder<T> implements SyntheticBeanBuilder
     private String name;
     private boolean alternative;
     private int priority;
+    /** Whether {@link #priority(int)} was called: {@code priority(0)} selects an alternative (BUG-20261113-14). */
+    private boolean priorityDeclared;
     private final Map<String, Object> params = new LinkedHashMap<>();
     private Class<? extends SyntheticBeanCreator<T>> creatorClass;
     private Class<? extends SyntheticBeanDisposer<T>> disposerClass;
@@ -125,6 +127,7 @@ public final class VaubanSyntheticBeanBuilder<T> implements SyntheticBeanBuilder
     @Override
     public SyntheticBeanBuilder<T> priority(int priority) {
         this.priority = priority;
+        this.priorityDeclared = true;
         return this;
     }
 
@@ -202,6 +205,7 @@ public final class VaubanSyntheticBeanBuilder<T> implements SyntheticBeanBuilder
     public String getName() { return name; }
     public boolean isAlternative() { return alternative; }
     public int getPriority() { return priority; }
+    public boolean isPriorityDeclared() { return priorityDeclared; }
     public Map<String, Object> getParams() { return params; }
 
     /** The extension whose {@code @Synthesis} registered this component, or {@code null}. */

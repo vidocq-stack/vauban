@@ -47,7 +47,8 @@ import org.junit.jupiter.api.Test;
 /**
  * A priority that is declared is the priority: 0 on an observer (BUG-20261113-11), and the one an {@code @Enhancement}
  * puts on an interceptor in place of the declared one, whichever {@code addAnnotation} overload it uses
- * (BUG-20261113-12).
+ * (BUG-20261113-12). An interceptor whose {@code @Priority} an {@code @Enhancement} removes has none, and is not
+ * enabled (BUG-20261113-15).
  */
 @DisplayName("A declared priority is the priority")
 class DeclaredPriorityTest {
@@ -197,5 +198,19 @@ class DeclaredPriorityTest {
     @DisplayName("a @Priority an extension adds through the language model moves the interceptor")
     void aPriorityAddedAsAnAnnotationInfoMovesTheInterceptor() {
         assertEquals(List.of("fixed", "moved"), orderWith(MoveWithAnAnnotationInfo.class));
+    }
+
+    /** Takes the priority away: an interceptor without one is not enabled (CDI 4.1, 9.4). */
+    public static class Disable implements BuildCompatibleExtension {
+        @Enhancement(types = Moved.class)
+        public void disable(ClassConfig moved) {
+            moved.removeAnnotation(annotation -> Priority.class.getName().equals(annotation.name()));
+        }
+    }
+
+    @Test
+    @DisplayName("an interceptor whose @Priority an extension removes is not enabled")
+    void anInterceptorWhosePriorityAnExtensionRemovesIsNotEnabled() {
+        assertEquals(List.of("fixed"), orderWith(Disable.class));
     }
 }
