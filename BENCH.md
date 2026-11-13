@@ -6,6 +6,65 @@ Every published number (README, commit, post) must point to an entry here.
 
 ---
 
+## BENCH-20261113-01 — Start of a Vidocq application with its extensions run at start or frozen at build (VAU-PERF-005, vauban#288)
+
+- **Date**: 2026-11-13
+- **Commit**: 79f88d26 (`perf/frozen-extensions`) for the series "final"; the series "quiet" ran earlier the same day
+  on the same change before `build()` was split into helper methods (no behaviour changed). Vidocq
+  `perf/frozen-extensions` (`vidocq:generate` calls the freeze), Ravel `fix/config-start-check` and Cervantes
+  `fix/jwt-config-start-check` (their start checks are `Startup` observers, so no extension is left for the start),
+  the other bricks at their 0.4.0-SNAPSHOT of the day.
+- **JVM**: Temurin 25+36-LTS, default flags
+- **Hardware**: Apple M5 Max / 18 cores (6 performance, 12 efficiency) / 128 GB RAM
+- **OS**: macOS 27.2.1 (arm64)
+- **Application**: `vidocq create --name bceapp -x cassini-rest`, then `vidocq extension add ravel-config knock-health
+  dirac-metrics grimm-openapi cervantes-jwt cyrano-rest-client heisenberg-fault-tolerance humboldt-telemetry
+  mansart-transactions` (ten build compatible extensions, 52 bean classes), a resource with `@Counted` and a required
+  `@ConfigProperty`, a `@Retry` bean and an injected `@RegisterRestClient` interface. Packaged twice with
+  `./mvnw package`: as it is (the record is written: "froze 10 build compatible extension(s)") and with
+  `-Dvidocq.freezeExtensions=false` (no record: the ten extensions run at start).
+- **Exact command**, one fresh JVM per start, the time taken from the launch of the process to the line
+  `Vidocq - Started in`, 15 starts per series, the two distributions one after the other, three rounds:
+  ```bash
+  java -Dbce.required=ok --module-path <dist>/lib --add-modules ALL-MODULE-PATH -Dvidocq.app.layer=all \
+      -Dvidocq.app.path=<dist>/app -Dvidocq.http.port=18480 -Dotel.sdk.disabled=true \
+      --module io.vidocq.runtime.core/io.vidocq.runtime.core.Vidocq
+  ```
+- **Results**, wall time in ms, median (min–max) of 15 starts:
+
+  | Series | Round | Extensions run at start | Extensions frozen at build |
+  |---|---|---|---|
+  | quiet (load average 4.3) | 1 | 422 (415–448) | 391 (364–396) |
+  | quiet | 2 | 430 (403–522) | 400 (365–435) |
+  | quiet | 3 | 431 (406–477) | 389 (372–432) |
+  | final, 79f88d26 (load average 7.5, another session's virtual machine at 4 cores) | 1 | 547 (424–606) | 478 (421–562) |
+  | final | 2 | 500 (441–548) | 480 (389–537) |
+  | final | 3 | 561 (473–597) | 463 (390–545) |
+
+  The `build` phase of the startup report, one start each on 79f88d26: 227 ms with the extensions run at start,
+  172 ms frozen (`cdi extensions  10 extensions frozen at build`); an earlier pair read 192 ms and 148 ms.
+
+  Raw series "quiet":
+  ```
+  run at start  416 415 418 418 419 421 423 426 448 418 423 426 422 423 426
+  frozen        364 393 394 389 393 385 393 396 393 389 383 393 391 391 390
+  run at start  403 425 423 403 430 416 433 440 420 430 430 430 406 431 522
+  frozen        386 400 408 410 410 401 394 395 365 395 435 409 420 397 392
+  run at start  433 406 453 431 440 423 466 425 425 477 469 432 425 418 421
+  frozen        372 404 392 388 395 385 386 381 389 373 387 412 432 398 390
+  ```
+- **Before the change**, the same application with a `vauban-core` that timed the cycle (throwaway instrumentation,
+  never committed), one start: `@Discovery` 15 ms, `@Enhancement` 30 ms, `@Registration`, `@Synthesis` and
+  `@Validation` 17 ms, 62 ms in all for 10 extensions and 42 classes of unmarked archives. With the two extensions
+  that still asked `ExtensionPhase.isBuildTime()` then (Ravel, Cervantes) run at start and the eight others frozen:
+  median 400, 402 and 428 ms in the three rounds of the series "quiet".
+- **Reading**: frozen, the start is 30 to 40 ms shorter in the quiet series, about 8 % of 425 ms; the gain is
+  smaller than the 62 ms of the cycle because the start still loads the record and the classes the cycle would
+  have loaded. The series "final" has the same sign and too much noise to quote a figure from.
+- **Delta vs previous run**: none, first measurement of a start time in this file.
+
+---
+
 ## BENCH-20261028-07 — Generated code hot paths after the build-path deduplication (vauban#227)
 
 - **Date**: 2026-10-28

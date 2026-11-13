@@ -271,9 +271,13 @@ What Vauban does next (vauban#97):
 * **At startup**, the boot fails. `build()` throws a `DeploymentException` that names the observer and the event,
   with the observer's exception as its cause, and `VaubanContainer.current()` stays `null`: no half-initialized
   container is left behind. An `Error` thrown by an observer propagates as it is, with the same clean-up.
+* [.tag-new]#NEW# **At startup, an observer that throws a `DeploymentException` or a `DefinitionException`** stops
+  the start with that very exception: no wrapper around it, no warning logged, the same clean-up. This is how a
+  check of the environment the application starts in refuses a deployment, now that an extension the build froze
+  does not run at start (xref:concepts.adoc#writing-a-frozen-extension[Writing an extension the build can freeze]).
 * **At shutdown**, `close()` goes on to the end, so the contexts are always destroyed.
 
-In both cases one line is logged at `WARNING` on `io.vidocq.vauban.core.container.VaubanContainer`, with the stack
+In the other cases one line is logged at `WARNING` on `io.vidocq.vauban.core.container.VaubanContainer`, with the stack
 trace. It names the event and the observer (`declaring.Class.method`) and says that the remaining observers of the
 event were not notified. Up to now the exception was discarded without a trace, and the application started
 half-initialized.

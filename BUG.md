@@ -341,7 +341,9 @@ nothing changes: `PrivateFieldFallbackTest`. Tests: `ComponentCollectorMemberSel
 ---
 
 ## VAU-PERF-005 — Every boot replays the whole BCE lifecycle because no brick archive carries the BCE-processed marker
-- **Date**: 2026-11-02 — **Status**: OPEN (analysis; design decision needed)
+- **Date**: 2026-11-02 — **Status**: FIXED on `perf/frozen-extensions` (vauban#288): a build step that sees the whole
+  deployment freezes what the extensions did, and the start of that deployment loads it instead of running them. See
+  "Fix" below; the measurements are BENCH-20261113-01.
 - **Severity**: medium (≈ 940 `Method.invoke` and a full discovery at every boot of a Vidocq application)
 
 ### Symptom
@@ -366,6 +368,38 @@ copies), then make `allSourcesProcessed` true for a Vidocq application built wit
 runtime replay as the fallback for archives that were not processed. TCK 774/774 and the BUG-20261030-27 double-run
 lesson apply.
 Options and recommendation: `docs/design/vau-perf-005-bce-processed-dependencies.md`.
+
+### What skipping the cycle as it was would have lost (2026-11-13)
+Measured before any change, on an application with eleven extensions, the cycle forced off:
+- a `@Counted` method answered 500, "Counter metric was removed from registry": the processor had frozen Dirac's
+  synthetic bean with an empty class list, the application classes not being loadable inside javac;
+- a missing required `@ConfigProperty` and an invalid JWT key no longer stopped the start (500 at each request): Ravel
+  and Cervantes check them in their phases, guarded by `ExtensionPhase.isBuildTime()`;
+- Humboldt's extension was not on the processor path at all (vidocq#546): nothing of it was frozen.
+So "mark the archives" was not enough: what is frozen must be what the start computes, on the same deployment.
+
+### Fix
+Neither option A nor B of the design note as written. No brick jar has an enriched copy to mark (the test
+distribution had none: sixteen bean archives used as published), and a per-archive answer cannot say what an extension
+of another archive did. The record is the deployment's:
+- `VaubanContainerBuilder.freezeExtensions(output)` runs the extension cycle the way `build()` does, at build time, and
+  writes `META-INF/vauban-frozen-extensions.properties` (fingerprint, extensions, those that run at start, what
+  `@Discovery` registered), `vauban-frozen-enhancements.properties` and `vauban-frozen-synthetic.properties`;
+  `vauban:generate` calls it with `freezeExtensions` (`ExtensionFreezer`), on the runtime class path alone.
+- `build()` loads a record whose fingerprint is the deployment's (`DeploymentFingerprint`: bean class names, the
+  checksum of their class files, the discovery settings) instead of running the extensions; anything else is the
+  former path, untouched, which is the one every TCK deployment takes.
+- An extension that asked `ExtensionPhase.isBuildTime()` runs again at start (`ExtensionPhase.tellWhenAsked`,
+  `ExtensionAsks`); the build can name others. Its results are left out of the record.
+- No record when an extension fails, removes annotations, or registers what the metadata cannot write.
+- `addHostBean` keeps the beans of the embedding runtime out of the fingerprint.
+- A synthetic bean keeps a parameterized type in the metadata (`bean.N.genericType.I`), which the replay at start
+  used to hide (the rest of BUG-20261008-01).
+- A `Startup` observer that throws a `DeploymentException` or a `DefinitionException` stops the start with it: the
+  place for a check of the start environment once the extensions are frozen.
+Tests: `FrozenExtensionsTest` (each case boots with and without the record; two mutations checked: record never
+used, asks ignored), `FrozenExtensionsRecordTest`, `DeploymentFingerprintTest`, `ExtensionFreezerTest`,
+`LifecycleObserverFailureTest`, `ExtensionPhaseTest`.
 
 ---
 

@@ -105,7 +105,7 @@ which the container never validates as ambiguous or unsatisfied.
 
 == Build Compatible Extensions
 
-CDI 4.1 introduces Build Compatible Extensions (BCEs): `@Discovery`, `@Enhancement`, `@Registration`, `@Synthesis` and `@Validation` hooks. Vauban runs them in the annotation processor at build time and records the result.Each phase runs for every extension before the next one starts, so an extension's `@Registration` sees the beans as every `@Enhancement` left them, including the classes an enhancement made beans (vauban#131).The recorded result keeps the member values of the annotations an `@Enhancement` adds, so an added `@Named("x")` or a qualifier member reaches the container (vauban#135). At boot, the container runs them only for archives the build did not process, and replays the enhancements the recorded patch does not cover. The tests under `vauban-core/src/test/java/io/vidocq/vauban/core/extensions/` exercise each hook — `BceEnhancementTest`, `BceRegistrationSynthesisTest` and `BceRuntimeReplayTest` among them.
+CDI 4.1 introduces Build Compatible Extensions (BCEs): `@Discovery`, `@Enhancement`, `@Registration`, `@Synthesis` and `@Validation` hooks. Vauban runs them in the annotation processor at build time and records the result.Each phase runs for every extension before the next one starts, so an extension's `@Registration` sees the beans as every `@Enhancement` left them, including the classes an enhancement made beans (vauban#131).The recorded result keeps the member values of the annotations an `@Enhancement` adds, so an added `@Named("x")` or a qualifier member reaches the container (vauban#135). At boot, the container runs them only for archives the build did not process, and replays the enhancements the recorded patch does not cover; a build that sees the whole deployment goes further and spares the start the extensions altogether (<<frozen-extensions>>). The tests under `vauban-core/src/test/java/io/vidocq/vauban/core/extensions/` exercise each hook — `BceEnhancementTest`, `BceRegistrationSynthesisTest` and `BceRuntimeReplayTest` among them.
 
 [[classes-outside-the-index]]An extension that follows a class from a type or an annotation value — `@JsonbTypeAdapter(AmountAdapter.class)`, say, read through `annotation.value().asType().asClass().declaration()` — sees that class's fields, methods and constructors at build time too, even when it is neither a bean nor carries an annotation an extension asked for: the processor describes it from the compilation, as the container does at boot (VAU-BCE-008). Describing it does not make it a bean. The JDK's classes stay names without members, as at boot.
 
@@ -127,7 +127,7 @@ The patch of an archive applies to the classes a deployment holds: a container b
 processed archive (`addBeanClass`, `scanLocal`, `scanPackage`) leaves out the entries of the others. Member entries of
 a class outside the deployment used to fail the boot with _Enhanced class is missing from the index_ (BUG-20261111-02).
 
-The beans an extension synthesises in the processor travel in `META-INF/vauban-synthetic-metadata.properties`, never in `META-INF/vauban-beans.list`: a synthetic bean has no class of its own for the container to discover.The bean list used to name them too, so an application whose extension synthesised a bean of a JDK type (Ravel's, typed `java.lang.String`) failed to boot with a `NullPointerException` (ravel#21).A bean type given as a language-model type — `addBean(...).type(types.ofClass(info))`, for a class the compilation is still producing — is written into that metadata by name, like a `Class` type, and loaded at run time. Only the `Class` types used to be written, so the bean was typed `Object` alone at run time and its injection points were unsatisfied. A *parameterized* language-model type is still not written: the format has no notation for it (BUG-20261008-01).
+The beans an extension synthesises in the processor travel in `META-INF/vauban-synthetic-metadata.properties`, never in `META-INF/vauban-beans.list`: a synthetic bean has no class of its own for the container to discover.The bean list used to name them too, so an application whose extension synthesised a bean of a JDK type (Ravel's, typed `java.lang.String`) failed to boot with a `NullPointerException` (ravel#21).A bean type given as a language-model type — `addBean(...).type(types.ofClass(info))`, for a class the compilation is still producing — is written into that metadata by name, like a `Class` type, and loaded at run time. Only the `Class` types used to be written, so the bean was typed `Object` alone at run time and its injection points were unsatisfied. A *parameterized* language-model type, `Optional<String>` say, is written in the notation of the observed types described below and keeps its arguments at boot; it used not to be written at all, which went unnoticed as long as the extension ran again at each start and declared the bean anew (BUG-20261008-01, VAU-PERF-005).
 
 The qualifiers of a synthetic bean or observer are written into that metadata with their member values, so `@Channel("alpha")` and `@Channel("beta")` stay two qualifiers at boot. Only the qualifier's type name used to be written when the processor ran the extension: the bean matched no injection point that names a member value, and the deployment failed with _Unsatisfied dependency_ (BUG-20261111-01). An archive built by an earlier version, which names the types only, still reads.
 
@@ -140,9 +140,48 @@ The language model an extension reads comes from the Vauban index, which the pro
 [#extension-phase]
 === Build time or container start
 
-CDI Lite lets an implementation run an extension at either moment and does not tell the extension which. Most extensions do the same work both times. One that checks the deployment's environment — a configuration value, a resource the application will open — would find the build machine's in the processor. `io.vidocq.vauban.api.ExtensionPhase.isBuildTime()` tells it: `true` while the annotation processor or the Maven plugin runs it, `false` when the container does. Such an extension leaves the check to the container start. Ravel does this for the values `@ConfigProperty` injects (ravel#21).
+CDI Lite lets an implementation run an extension at either moment and does not tell the extension which. Most extensions do the same work both times. One that checks the deployment's environment — a configuration value, a resource the application will open — would find the build machine's in the processor. `io.vidocq.vauban.api.ExtensionPhase.isBuildTime()` tells it: `true` while the annotation processor or the Maven plugin runs it, `false` when the container does. Such an extension leaves the check to the container start.
 
 The answer belongs to the calling thread, for the duration of the call that opened the phase (`ExtensionPhase.atBuildTime(...)`, a `ScopedValue` binding). A build tool that runs extensions itself opens it the same way.
+
+Asking has a cost once the build freezes the extensions (<<frozen-extensions>>): an extension that asked left work for the start, so the container runs it again at each start, where every other extension is loaded from the build's record. <<writing-a-frozen-extension>> says how to keep an extension out of that case.
+
+[#frozen-extensions]
+=== Extensions frozen at build [.tag-new]#NEW#
+
+The annotation processor runs the extensions on one module, while it compiles. It cannot answer for the whole deployment: the classes it compiles are not loadable yet, the dependency archives hold beans other extensions act on, and an extension of another archive may not be on the processor path at all. So, until now, the container ran every extension again at each start as soon as one bean archive carried no `vauban-bce-processed` marker, which is every application assembled from several jars. On an application with ten extensions that cycle took about 60 ms of a 430 ms start (BENCH-20261113-01).
+
+A build step that runs after compilation and sees the deployment as the start will see it — `vauban:generate` with `freezeExtensions`, or the build of a runtime that embeds Vauban — closes the gap. It runs the extension cycle once more, the way the container start does, at build time (`ExtensionPhase.isBuildTime()` answers `true`), and writes what the extensions did in the application's output:
+
+* `META-INF/vauban-frozen-extensions.properties`: a fingerprint of the deployment, the extensions that ran, those that run again at start, and what `@Discovery` registered — qualifiers, interceptor bindings, stereotypes, non-binding members, contexts, scanned classes;
+* `META-INF/vauban-frozen-enhancements.properties`: the annotations `@Enhancement` added, in the format of the frozen patch;
+* `META-INF/vauban-frozen-synthetic.properties`: the synthetic beans and observers, in the format of the synthetic metadata.
+
+At start, the container computes the fingerprint of its deployment: the bean classes by name and by the checksum of their class files, the extensions among them, and the builder's discovery settings. With a record of that fingerprint on its path it loads the record instead of running the extensions; `VaubanContainer.extensionsAtStart()` says which it did. Anything else runs the extensions as before, and the record is left alone: no record, a class added, removed or recompiled since, an archive added to the path (a development console, a test class path), two records. The files the processor wrote in each archive are read as before in both cases.
+
+No brick jar is copied or marked: the record is the application's, one per deployment.
+
+The build writes no record, removes a stale one and says why, when the result cannot be frozen faithfully:
+
+* an extension failed or reported an error: the start reports it, in the environment it belongs to;
+* an `@Enhancement` removed annotations, which a record of additions cannot say;
+* a synthetic bean or observer holds a parameter the metadata cannot express.
+
+Two things keep a record from saying too much. An extension that asked `ExtensionPhase.isBuildTime()` during the build is recorded as running again at each start, and what it did is left out of the record; `startExtensions` names more of them, for an extension that depends on its start environment without asking. And a bean the embedding runtime adds itself, with `VaubanContainerBuilder.addHostBean(type, factory)`, stays out of the fingerprint: such a bean may depend on the start configuration (a holder for a connection pool that is configured or not), so it must not invalidate the record; in return, the frozen extensions never saw it.
+
+[#writing-a-frozen-extension]
+=== Writing an extension the build can freeze [.tag-new]#NEW#
+
+An extension is frozen when its work depends on the classes of the deployment and on nothing else. Four rules get it there; each of them also makes the extension behave the same on a container that runs extensions at build only.
+
+. *Compute from the deployment only.* What a phase reads — classes, annotations, the beans `@Registration` shows — is the same on the build machine and where the application starts. A configuration value, an environment variable, a file outside the application, a network resource is not: keep them out of the phases.
+. *Check the start environment in an observer of `Startup`, not in a phase.* A required configuration value, a key that must parse: collect at build what must be checked, hand it to the start as the parameters of a synthetic observer (`SyntheticComponents.addObserver(Startup.class).withParam(…).observeWith(…)`) or of a synthetic bean an ordinary observer injects, and do the check when `Startup` fires. To refuse the deployment, throw a `DeploymentException`: the container start fails with that very exception (xref:usage.adoc#lifecycle-observer-failures[When a lifecycle observer throws]). Give the observer an early `@Priority` so that it runs before the application's own `Startup` observers.
+. *Add, never remove.* `ClassConfig.addAnnotation` freezes; `removeAnnotation` and `removeAllAnnotations` do not, and send the whole deployment back to running its extensions at start. To replace an annotation's effect, add the one that wins.
+. *Carry data in parameters the metadata can write.* Primitives, `String`, `Class`, enums, annotations, `ClassInfo`, `AnnotationInfo`, `InvokerInfo` and their arrays; state the extension keeps in a field is gone at start, since no extension instance exists there.
+
+When a phase cannot avoid the start environment, ask `ExtensionPhase.isBuildTime()` and skip that part at build time: the container then runs the extension again at each start, and only it. That is the slow path. It is worth moving the part that asks into a class of its own, so that the rest of the extension stays frozen.
+
+Test both ways: a container that runs the extension, and one built from `freezeExtensions` output, where the extension must not be instantiated (`extensionsAtStart().ranAtStart()` is empty) and the application behaves the same.
 
 == Differences from CDI Full
 

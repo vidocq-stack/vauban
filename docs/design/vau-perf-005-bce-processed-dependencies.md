@@ -1,6 +1,7 @@
 # VAU-PERF-005 — Where does "BCE effects baked in" live for dependency archives?
 
-Status: design note for a decision, nothing implemented. See `BUG.md` VAU-PERF-005.
+Status: decided and implemented on 2026-11-13 (vauban#288), with neither option as written: see "Decision" at the
+end and `BUG.md` VAU-PERF-005.
 
 ## Problem
 
@@ -61,3 +62,21 @@ or touch the jars Weld/Liberty load. Option B's fingerprint requirement makes it
 Constraints to carry into the implementation: CDI Lite TCK 774/774; the BUG-20261030-27 lesson (BCE run twice when
 the codegen bundle is on the processor path → check boot with the bundles, not only unit tests); a test proving
 the replay still runs when the manifest is missing or stale.
+
+## Decision (2026-11-13)
+
+The maintainer leaned towards option B. Measuring first changed the question.
+
+- Option B has nothing to mark: in an application built from the published bricks, `vidocq:generate` makes no
+  enriched copy (sixteen bean archives used as they are). Marking them would mean copying every brick jar.
+- Options A and B both answer per archive. What an extension does depends on the whole deployment, and the processor
+  had frozen incomplete results (an empty class list for Dirac, application classes not being loadable in javac).
+- Some extensions check the environment the application starts in (Ravel, Cervantes): they must keep running at
+  start, or move that check out of their phases.
+
+What was built keeps the moment of option B, the build step after compilation, and the place of option A, the
+application's output, with one record for the deployment: its fingerprint, what the extensions did, and the
+extensions that run again at start because they asked `ExtensionPhase.isBuildTime()`. The record stands for what
+the container start would have computed, on the same classes; a deployment with another fingerprint runs its
+extensions as before. Documentation: `concepts.adoc`, "Extensions frozen at build" and "Writing an extension the
+build can freeze".

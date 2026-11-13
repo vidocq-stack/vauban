@@ -52,6 +52,14 @@ container's normal path: the reflective path below it exists for classes no buil
   contexts instead of running the extensions again; `vauban-bce-runtime.list` names the (extension, class) pairs
   whose `@Enhancement` it still replays when no frozen patch covers them
 | Unless every bean archive carries the marker, the extensions' whole lifecycle runs again at boot.
+
+| What the extensions did on the whole deployment: `vauban-frozen-extensions.properties`,
+  `vauban-frozen-enhancements.properties`, `vauban-frozen-synthetic.properties`
+| `vauban:generate` with `freezeExtensions`, or the build of the runtime that embeds Vauban, once the classes are
+  compiled (xref:concepts.adoc#frozen-extensions[Extensions frozen at build])
+| The container at boot, when its deployment has the fingerprint the record names: it loads the record and runs
+  only the extensions that left work for the start
+| Any other deployment, or no record: the extensions run at boot, as above.
 |===
 
 `vauban-processor` also checks the bean definition rules on the compilation and reports a broken one as a compiler

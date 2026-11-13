@@ -1,3 +1,42 @@
+# Extensions frozen at build (VAU-PERF-005, vauban#288) — 2026-11-13
+
+Measured first (BENCH entry to write): cycle replayed 431 ms, cycle skipped 393 ms on an application with eleven
+extensions; skipping as things were lost a `@Counted` metric and the start-time checks of Ravel and Cervantes.
+
+Design: the build that sees the whole deployment (`vauban:generate`, `vidocq:generate`) runs the extension cycle once
+more, as the container start does today, and writes its result in the application's output; a start whose deployment
+has the record's fingerprint loads it instead of running the cycle.
+
+- [x] `ExtensionPhase.tellWhenAsked`: the container learns which extension asked `isBuildTime()`.
+- [x] `FrozenExtensions`: the record (fingerprint, extensions, those that run at start, what `@Discovery` registered,
+      `@Enhancement` additions, synthetic beans and observers), written and read; one record per deployment.
+- [x] `DeploymentFingerprint`: names and class files of the bean classes, the builder's discovery settings.
+- [x] `VaubanContainerBuilder.freezeExtensions(Path)`: the cycle at build time, captured; no record when an extension
+      fails, removes annotations or registers what the serializer cannot write. An extension that asked runs at start.
+- [x] `build()`: a matching record replaces the cycle; extensions marked for the start run as today; anything else is
+      today's path, untouched (TCK deployments never have a record).
+- [x] `addHostBean`: a bean of the embedding runtime leaves the record valid.
+- [x] `VaubanContainer.extensionsAtStart()`: what the start did, for reports and tests.
+- [x] A `Startup` observer that throws a `DeploymentException` or a `DefinitionException` stops the start with it.
+- [x] `vauban:generate`: `freezeExtensions` / `startExtensions` parameters (off by default until the bricks moved
+      their environment checks: ravel#50, cervantes#52, heisenberg#66), plugin.xml included.
+- [x] Tests first, each proven by its failure; then the full reactor and `./run-tck.sh -ntp` (lesson 17): CDI Lite
+      TCK 774 run, 0 failures, 0 errors; AtInject TCK green; `vauban-core` 1270 tests.
+- [x] Docs: usage (writing an extension that can be frozen), internals, reference of the plugin; BUG.md
+      VAU-PERF-005, the design note, BENCH.md.
+
+Review (2026-11-13):
+- The design changed while measuring: no archive is marked or copied, the record is the deployment's, with a
+  fingerprint; an extension that asked `isBuildTime()` runs again at start, found by `ExtensionPhase.tellWhenAsked`
+  without any annotation.
+- Found on the way and fixed here: a synthetic bean lost its parameterized type in the metadata (the replay at start
+  hid it). Found and fixed apart (`fix/priority-zero-and-enhanced`): an observer at priority 0, a `@Priority` an
+  `@Enhancement` adds as an annotation instance. Left open in BUG.md: no `$$Intercepted` subclass at build for a
+  binding an `@Enhancement` adds; an alternative at priority 0.
+- End to end on a Vidocq application with eleven extensions: 8 extensions frozen, Ravel and Cervantes run at start
+  (they asked), same answers and same start failures as without the record.
+- `vauban:generate` freezes only with `freezeExtensions`, off by default; Vidocq turns it on in `vidocq:generate`.
+
 # Generated code hot paths (vauban#227) — 2026-10-28
 
 Reference: BENCH-20261028-01 (`GeneratedCodeBenchmark`). Hot path: PR #228 (`perf/227-generated-hot-path`), merged.
