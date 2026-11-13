@@ -58,14 +58,16 @@ final class InterceptedArtefacts {
      * builds the shape from javac Elements instead of a loaded Class. Top-level,
      * non-final targets only; anything else falls back to runtime generation.
      *
+     * @param boundByEnhancement whether an {@code @Enhancement} gives the bean an interceptor binding, which the
+     *                           source does not show (BUG-20261113-13)
      * @return whether the subclass was generated
      */
-    boolean generate(String fqn) {
+    boolean generate(String fqn, boolean boundByEnhancement) {
         if (!typeLookup.isTopLevelType(fqn)) {
             return false;
         }
         var typeElement = processingEnv.getElementUtils().getTypeElement(fqn);
-        if (typeElement == null || !isInterceptedTarget(typeElement)) {
+        if (typeElement == null || !isInterceptedTarget(typeElement, boundByEnhancement)) {
             return false;
         }
         try {
@@ -110,9 +112,13 @@ final class InterceptedArtefacts {
      * {@code InterceptionTargets}, including those of an inherited method: a superclass method or an
      * interface default method the bean does not override (CDI 4.1 §4.2) — the container intercepts such a bean, and on the strict
      * module path it cannot define the subclass itself.
+     *
+     * <p>A binding an {@code @Enhancement} adds is not in the compiler's model: {@code boundByEnhancement} says the
+     * bean has one (BUG-20261113-13).
      */
-    private boolean isInterceptedTarget(TypeElement beanElement) {
+    private boolean isInterceptedTarget(TypeElement beanElement, boolean boundByEnhancement) {
         if (beanElement.getModifiers().contains(Modifier.FINAL) || isInterceptorClass(beanElement)) return false;
+        if (boundByEnhancement) return true;
         for (var am : processingEnv.getElementUtils().getAllAnnotationMirrors(beanElement)) {
             if (isInterceptorBinding(am)) return true;
         }

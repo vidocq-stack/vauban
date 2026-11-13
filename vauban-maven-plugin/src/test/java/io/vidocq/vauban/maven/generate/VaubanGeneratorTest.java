@@ -285,6 +285,45 @@ class VaubanGeneratorTest {
         return VaubanGenerator.generate(config);
     }
 
+    /** An interceptor binding no class carries: only {@link TestBindingBce} adds it. */
+    @jakarta.interceptor.InterceptorBinding
+    @java.lang.annotation.Retention(java.lang.annotation.RetentionPolicy.RUNTIME)
+    @java.lang.annotation.Target({java.lang.annotation.ElementType.TYPE, java.lang.annotation.ElementType.METHOD})
+    public @interface Bound {
+    }
+
+    /** Makes a {@code @Named} class a request-scoped bean bound to {@link Bound}. */
+    public static class TestBindingBce
+            implements jakarta.enterprise.inject.build.compatible.spi.BuildCompatibleExtension {
+        @jakarta.enterprise.inject.build.compatible.spi.Enhancement(
+                types = Object.class,
+                withAnnotations = jakarta.inject.Named.class)
+        public void bind(jakarta.enterprise.inject.build.compatible.spi.ClassConfig clazz) {
+            clazz.addAnnotation(jakarta.enterprise.context.RequestScoped.class);
+            clazz.addAnnotation(Bound.class);
+        }
+    }
+
+    @Test
+    @DisplayName("an interceptor binding an @Enhancement adds gets its $$Intercepted subclass (BUG-20261113-13)")
+    void anInterceptorBindingAnExtensionAddsGetsItsSubclass() throws Exception {
+        var classesDir = tempDir.resolve("classes");
+        writeClassToDir(classesDir, "com.myapp.Traced", ClassDesc.of("jakarta.inject.Named"));
+        var svcDir = classesDir.resolve("META-INF/services");
+        Files.createDirectories(svcDir);
+        Files.writeString(svcDir.resolve(
+                "jakarta.enterprise.inject.build.compatible.spi.BuildCompatibleExtension"),
+                TestBindingBce.class.getName());
+        var testClassesUrl = TestBindingBce.class.getProtectionDomain().getCodeSource().getLocation();
+        var cl = new java.net.URLClassLoader(new java.net.URL[]{classesDir.toUri().toURL(), testClassesUrl});
+
+        var result = VaubanGenerator.generate(
+                new VaubanGenerator.Config(List.of(), classesDir, tempDir.resolve("output"), cl));
+
+        assertTrue(result.generatedInterceptors().stream().anyMatch(name -> name.contains("Traced")),
+                () -> "interceptors: " + result.generatedInterceptors() + ", warnings: " + result.warnings());
+    }
+
     @Test
     @DisplayName("generates a _VaubanComponents provider .class + service file for project no-arg beans")
     void shouldGenerateComponentProviderForProjectBeans() throws Exception {

@@ -200,6 +200,8 @@ public class VaubanProcessor extends AbstractProcessor {
     private GeneratedOutput output;
     /** The generated artefacts, one class each. */
     private InterceptedArtefacts intercepted;
+    /** The classes the {@code @Enhancement} phase gives an interceptor binding (BUG-20261113-13). */
+    private Set<DotName> boundByEnhancement = Set.of();
     private ClientProxyArtefacts clientProxies;
     private ComponentProviderArtefacts componentProviders;
 
@@ -651,6 +653,9 @@ public class VaubanProcessor extends AbstractProcessor {
 
         if (hasErrors) return false;
 
+        // The bindings they add are not in the compiler's model the subclasses are decided from
+        boundByEnhancement = BceProcessor.boundByEnhancement(bceResult.enhancementModifications());
+
         // Apply enhancement modifications
         if (!bceResult.enhancementModifications().isEmpty()) {
             // Modified beans, plus the non-beans that gained a scope via Enhancement
@@ -849,7 +854,7 @@ public class VaubanProcessor extends AbstractProcessor {
         }
 
         var fqn = bean.beanClass().value();
-        boolean interceptedGenerated = intercepted.generate(fqn);
+        boolean interceptedGenerated = intercepted.generate(fqn, boundByEnhancement.contains(bean.beanClass()));
 
         // Accumulate for the provider: only top-level types get an in-module entry. The
         // instantiable flag lets ComponentCollector attempt constructor-param extraction, and

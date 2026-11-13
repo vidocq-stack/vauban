@@ -330,6 +330,19 @@ public final class BceProcessor {
     }
 
     /**
+     * The classes the {@code @Enhancement} modifications give an interceptor binding, on the class, a method or a
+     * constructor. The build generates their {@code $$Intercepted} subclass as it does for a binding the source
+     * declares: deciding from the source alone left them to the container, which defined the subclass at start
+     * (BUG-20261113-13).
+     */
+    public static Set<DotName> boundByEnhancement(Map<DotName, List<VaubanClassConfig>> modifications) {
+        return modifications.entrySet().stream()
+                .filter(entry -> EnhancementApplier.addsInterceptorBinding(entry.getValue()))
+                .map(Map.Entry::getKey)
+                .collect(Collectors.toUnmodifiableSet());
+    }
+
+    /**
      * The managed bean a class that was no bean becomes once an {@code @Enhancement} gave it a scope,
      * or empty when it gained none or cannot be a managed bean.
      */

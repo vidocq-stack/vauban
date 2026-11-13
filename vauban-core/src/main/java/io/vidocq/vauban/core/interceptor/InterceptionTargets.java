@@ -132,8 +132,7 @@ public final class InterceptionTargets {
      * strict module path the container never has to define it (BUG-20261004-10).
      */
     public static boolean carriesInterception(Class<?> beanClass) {
-        if (Modifier.isFinal(beanClass.getModifiers())
-                || beanClass.isAnnotationPresent(jakarta.interceptor.Interceptor.class)) {
+        if (!isWrappable(beanClass)) {
             return false;
         }
         return causeOf(beanClass, new Bindings() {
@@ -157,5 +156,14 @@ public final class InterceptionTargets {
                 return !found.isEmpty();
             }
         }) != null;
+    }
+
+    /**
+     * Whether the container can wrap {@code beanClass} at all: a non-final class, not itself an {@code @Interceptor}.
+     * The bindings its members carry aside, as for a class an {@code @Enhancement} binds (BUG-20261113-13).
+     */
+    public static boolean isWrappable(Class<?> beanClass) {
+        return !Modifier.isFinal(beanClass.getModifiers())
+                && !beanClass.isAnnotationPresent(jakarta.interceptor.Interceptor.class);
     }
 }

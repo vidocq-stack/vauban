@@ -160,15 +160,24 @@ suspected cause, status. Updated on every investigation.
 ## BUG-20261113-13 — No `$$Intercepted` subclass is generated at build for a binding an `@Enhancement` adds
 
 - **Date**: 2026-11-13
-- **Status**: OPEN
-- **Module**: `vauban-processor` / `vauban-maven-plugin` (`InterceptedArtefacts.isInterceptedTarget`)
+- **Status**: FIXED (`fix/enhanced-binding-intercepted`)
+- **Module**: `vauban-processor` (`InterceptedArtefacts.isInterceptedTarget`), `vauban-maven-plugin`
+  (`VaubanGenerator.pregenerate`)
 - **Surfaced by**: Vidocq/vidocq#546. With Humboldt's extension on the processor path, the build freezes the
   `@SpanBinding` it adds to a `@WithSpan` method (`META-INF/vauban-enhancements.properties` names it), yet the compiled
   output holds `TracedGreeter_ClientProxy.class` and no `TracedGreeter$$Intercepted.class`.
-- **Cause (by reading)**: `isInterceptedTarget` reads the interceptor bindings the source declares, not those the
-  enhancement patch adds. The container then generates the subclass at start with the Class-File API, and announces
-  it: the application works, but not from generated code alone.
-- **To do**: decide the intercepted targets after the `@Enhancement` phase, from the enriched index.
+- **Repro**: `BceCompileTimeTest.anInterceptorBindingAnExtensionAddsGetsItsSubclassAtBuild` (a binding added to a
+  method, then to a class: no `$$Intercepted.class`) and
+  `VaubanGeneratorTest.anInterceptorBindingAnExtensionAddsGetsItsSubclass` ("interceptors: []").
+- **Cause**: both build front-ends decide the intercepted targets from what the class carries: the processor from
+  javac's model of the source, the plugin by reflection on the compiled class. Neither holds what an `@Enhancement`
+  adds, and the plugin's enriched index holds the class-level additions only. The container then generated the
+  subclass at start with the Class-File API, and announced it: the application worked, but not from generated code
+  alone.
+- **Fix**: `BceProcessor.boundByEnhancement` lists the classes the `@Enhancement` modifications give an interceptor
+  binding, on the class, a method or a constructor, whichever `addAnnotation` added it. The processor and the plugin
+  generate the subclass of such a class when the container can wrap it (non-final, not an `@Interceptor`,
+  `InterceptionTargets.isWrappable`), as for a binding the source declares.
 
 ---
 

@@ -315,6 +315,67 @@ class BceCompileTimeTest {
                 "BCE processed marker should be written");
     }
 
+    // ---- an interceptor binding an @Enhancement adds (BUG-20261113-13) ----
+
+    /** An interceptor binding no source carries: only {@link BindingBce} puts it on a class or a method. */
+    @jakarta.interceptor.InterceptorBinding
+    @java.lang.annotation.Retention(java.lang.annotation.RetentionPolicy.RUNTIME)
+    @java.lang.annotation.Target({java.lang.annotation.ElementType.TYPE, java.lang.annotation.ElementType.METHOD})
+    public @interface Bound {
+    }
+
+    /**
+     * Binds every {@code traced} method of a {@code @Named} class, as Humboldt binds a {@code @WithSpan} method, and
+     * the class {@code BoundClass} as a whole.
+     */
+    public static class BindingBce implements BuildCompatibleExtension {
+        @Enhancement(types = Object.class, withAnnotations = jakarta.inject.Named.class)
+        public void bind(ClassConfig clazz) {
+            if (clazz.info().simpleName().equals("BoundClass")) {
+                clazz.addAnnotation(Bound.class);
+            }
+            clazz.methods().stream().filter(method -> method.info().name().equals("traced"))
+                    .forEach(method -> method.addAnnotation(Bound.class));
+        }
+    }
+
+    @Test
+    @DisplayName("an interceptor binding an @Enhancement adds gets its $$Intercepted subclass at build (BUG-20261113-13)")
+    void anInterceptorBindingAnExtensionAddsGetsItsSubclassAtBuild() throws IOException {
+        var result = compileWithBce(List.of(BindingBce.class),
+                """
+                package t;
+                @jakarta.enterprise.context.ApplicationScoped
+                @jakarta.inject.Named
+                public class BoundMethod {
+                    public String traced() { return "traced"; }
+                }
+                """,
+                """
+                package t;
+                @jakarta.enterprise.context.ApplicationScoped
+                @jakarta.inject.Named
+                public class BoundClass {
+                    public String hello() { return "hello"; }
+                }
+                """,
+                """
+                package t;
+                @jakarta.enterprise.context.ApplicationScoped
+                @jakarta.inject.Named
+                public class Unbound {
+                    public String hello() { return "hello"; }
+                }
+                """);
+
+        assertTrue(result.success(), () -> "compilation failed: " + result.messages());
+        assertTrue(result.hasFile("t/BoundMethod$$Intercepted.class"),
+                () -> "a binding added to a method: " + result.messages());
+        assertTrue(result.hasFile("t/BoundClass$$Intercepted.class"),
+                () -> "a binding added to the class: " + result.messages());
+        assertFalse(result.hasFile("t/Unbound$$Intercepted.class"), "no binding, no subclass");
+    }
+
     @Test
     @DisplayName("a broken extension service entry is skipped with a warning and the other extensions still run (vauban#199)")
     void aBrokenExtensionServiceEntryIsSkippedWithAWarningAndTheOthersStillRun() throws IOException {

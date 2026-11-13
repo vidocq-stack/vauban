@@ -100,6 +100,13 @@ public final class VaubanGenerator {
     }
 
     /**
+     * The index with the annotations the {@code @Enhancement} phase adds, and the classes it gives an interceptor
+     * binding, on the class or a member: the index carries the class-level additions only (BUG-20261113-13).
+     */
+    private record Enhanced(VaubanIndex index, Set<DotName> boundByEnhancement) {
+    }
+
+    /**
      * Configuration for the generator.
      *
      * @param dependencyJars      JAR files to scan for CDI beans
@@ -169,8 +176,11 @@ public final class VaubanGenerator {
         }
 
         // 3b. Run BCE @Enhancement for non-pre-processed classes (if ClassLoader available)
+        var boundByEnhancement = Set.<DotName>of();
         if (config.classLoader() != null) {
-            index = applyEnhancements(config, index, warnings);
+            var enhanced = applyEnhancements(config, index, warnings);
+            index = enhanced.index();
+            boundByEnhancement = enhanced.boundByEnhancement();
         }
 
         // 5. Run CDI bean discovery on enriched index
@@ -206,7 +216,7 @@ public final class VaubanGenerator {
                 : newBeans;
         var pregenerated = config.classLoader() == null
                 ? Pregenerated.NONE
-                : pregenerate(config, beansToProcess, alreadyKnownBeans, warnings);
+                : pregenerate(config, beansToProcess, alreadyKnownBeans, boundByEnhancement, warnings);
 
         // 8b. Point the proxies of woven beans at the marker — APT-emitted proxies predate it
         //     and still chain a business constructor; freshly generated ones already target it
@@ -287,12 +297,13 @@ public final class VaubanGenerator {
 
     /**
      * Runs the {@code @Enhancement} phase of the build compatible extensions {@code config}'s class loader finds, and
-     * returns the index with the annotations they add, or {@code index} itself when they change nothing.
+     * returns the index with the annotations they add, or {@code index} itself when they change nothing, with the
+     * classes they bind.
      */
-    private static VaubanIndex applyEnhancements(Config config, VaubanIndex index, List<String> warnings) {
+    private static Enhanced applyEnhancements(Config config, VaubanIndex index, List<String> warnings) {
         var bceClasses = discoverBceClasses(config.classLoader(), warnings);
         if (bceClasses.isEmpty()) {
-            return index;
+            return new Enhanced(index, Set.of());
         }
         var archiveClasses = loadArchiveClasses(index, config.classLoader());
         var enhMods = io.vidocq.vauban.api.ExtensionPhase.atBuildTime(() ->
@@ -306,7 +317,7 @@ public final class VaubanGenerator {
         writeEnhancementsPatch(config.outputDir(), enhMods, warnings);
 
         if (enhMods.isEmpty()) {
-            return index;
+            return new Enhanced(index, Set.of());
         }
         // Rebuild index with synthetic scope annotations from Enhancement
         var enrichedBuilder = new IndexBuilder();
@@ -323,7 +334,8 @@ public final class VaubanGenerator {
                 enrichedBuilder.add(classInfo);
             }
         }
-        return enrichedBuilder.build();
+        return new Enhanced(enrichedBuilder.build(),
+                io.vidocq.vauban.core.extensions.BceProcessor.boundByEnhancement(enhMods));
     }
 
     /** The beans not in {@code alreadyKnownBeans}; adds every bean's class name to {@code allBeanClassNames}. */
@@ -340,9 +352,13 @@ public final class VaubanGenerator {
         return newBeans;
     }
 
-    /** Writes the client proxies and interceptor subclasses of {@code beansToProcess} not yet on disk. */
+    /**
+     * Writes the client proxies and interceptor subclasses of {@code beansToProcess} not yet on disk.
+     *
+     * @param boundByEnhancement the classes an {@code @Enhancement} gives an interceptor binding
+     */
     private static Pregenerated pregenerate(Config config, List<BeanDescriptor> beansToProcess,
-            Set<String> alreadyKnownBeans, List<String> warnings) {
+            Set<String> alreadyKnownBeans, Set<DotName> boundByEnhancement, List<String> warnings) {
         var generatedProxies = new ArrayList<String>();
         var generatedInterceptors = new ArrayList<String>();
         for (var bean : beansToProcess) {
@@ -364,9 +380,12 @@ public final class VaubanGenerator {
 
             // Interceptor subclass for every managed bean the container would wrap — a class-
             // level binding, a method-level binding on a business method it declares or inherits,
-            // a constructor binding, or an @AroundInvoke method of its own (BUG-20261004-10) —
-            // unless already on disk: on the strict module path the container cannot define it.
-            if (bean.kind() == BeanKind.MANAGED && carriesInterception(clazz, warnings)) {
+            // a constructor binding, or an @AroundInvoke method of its own (BUG-20261004-10), or
+            // a binding an @Enhancement adds (BUG-20261113-13) — unless already on disk: on the
+            // strict module path the container cannot define it.
+            if (bean.kind() == BeanKind.MANAGED && (boundByEnhancement.contains(bean.beanClass())
+                    ? InterceptionTargets.isWrappable(clazz)
+                    : carriesInterception(clazz, warnings))) {
                 generateInterceptorSubclass(config.outputDir(), className, clazz, warnings)
                         .ifPresent(generatedInterceptors::add);
             }

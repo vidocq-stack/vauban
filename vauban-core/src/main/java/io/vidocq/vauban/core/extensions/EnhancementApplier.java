@@ -688,6 +688,26 @@ final class EnhancementApplier {
         }
     }
 
+    /** Whether the configs of a class add an interceptor binding to it, to one of its methods or constructors. */
+    static boolean addsInterceptorBinding(List<VaubanClassConfig> configs) {
+        for (var config : configs) {
+            if (addsBinding(config.getAddedAnnotations(), config.getAddedAnnotationInfos())) {
+                return true;
+            }
+            for (var method : config.getMethodConfigs()) {
+                if (addsBinding(method.getAddedAnnotations(), method.getAddedAnnotationInfos())) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    private static boolean addsBinding(Set<Class<? extends Annotation>> types, List<AnnotationInfo> infos) {
+        return types.stream().anyMatch(EnhancementApplier::isInterceptorBindingAnnotation)
+                || infos.stream().anyMatch(EnhancementApplier::isInterceptorBindingAnnotationInfo);
+    }
+
     private static boolean isInterceptorBindingAnnotation(Class<? extends Annotation> ann) {
         return ann.isAnnotationPresent(jakarta.interceptor.InterceptorBinding.class);
     }
