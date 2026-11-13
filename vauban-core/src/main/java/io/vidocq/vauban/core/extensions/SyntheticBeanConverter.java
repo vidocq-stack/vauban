@@ -128,7 +128,6 @@ final class SyntheticBeanConverter {
         );
     }
 
-    /** The scope a synthetic bean declares, {@code @Dependent} when it declares none or one of its own. */
     /**
      * The scope the bean declares, or {@code @Dependent} when it declares none. A scope of an extension, such as
      * {@code jakarta.transaction.TransactionScoped}, is kept with its normality: it fell back to {@code @Dependent}
