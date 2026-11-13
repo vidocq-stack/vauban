@@ -580,13 +580,29 @@ public class VaubanClassLoader extends ClassLoader implements AutoCloseable {
     }
 
     @Override
-    protected Enumeration<URL> findResources(String name) {
-        var urls = new ArrayList<URL>();
+    protected Enumeration<URL> findResources(String name) throws IOException {
+        var urls = new LinkedHashMap<String, URL>();
         for (var archive : archives) {
             var url = resourceUrl(archive, name);
-            if (url != null) urls.add(url);
+            if (url != null) urls.putIfAbsent(sameResource(url), url);
         }
-        return Collections.enumeration(urls);
+        // getResources gives the parent's resources, then these: leave out what the parent already gives, as for
+        // the application module of a jlink image, in the boot layer and again in this one (BUG-20261113-17).
+        var parent = getParent();
+        if (parent != null && !urls.isEmpty()) {
+            for (var url : Collections.list(parent.getResources(name))) {
+                urls.remove(sameResource(url));
+            }
+        }
+        return Collections.enumeration(urls.values());
+    }
+
+    /**
+     * One key for the URLs of one resource. {@code file:///x} and {@code file:/x} name the same file: the first is
+     * how a module reader and this loader write it, the second how the class path does.
+     */
+    private static String sameResource(URL url) {
+        return url.toExternalForm().replace("file:///", "file:/");
     }
 
     /**

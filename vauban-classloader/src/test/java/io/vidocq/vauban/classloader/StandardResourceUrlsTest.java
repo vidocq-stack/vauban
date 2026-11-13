@@ -67,6 +67,21 @@ class StandardResourceUrlsTest {
     }
 
     @Test
+    @DisplayName("a jar the parent also holds gives each resource once")
+    void aJarTheParentAlsoHoldsGivesEachResourceOnce(@TempDir Path dir) throws Exception {
+        // BUG-20261113-17: in a jlink image, Vidocq layers the application module again over the boot layer that
+        // holds it; getResources returned the parent's URL and this loader's, the same one, and a reader counting
+        // the results (the record of the frozen extensions) saw two files.
+        var jar = jar(dir.resolve("lib.jar"));
+        try (var parent = new java.net.URLClassLoader(new URL[] {jar.toUri().toURL()}, null);
+             var loader = VaubanClassLoader.of(List.of(jar), parent, PluginContext.empty())) {
+            var resources = Collections.list(loader.getResources("a/b/c.txt"));
+            assertEquals(1, resources.size(), resources::toString);
+            assertEquals("c", read(resources.getFirst()));
+        }
+    }
+
+    @Test
     @DisplayName("a plain-jar folder can be listed through its jar: URL")
     void plainJarFolderCanBeListed(@TempDir Path dir) throws Exception {
         var jar = jar(dir.resolve("lib.jar"));

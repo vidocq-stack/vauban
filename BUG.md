@@ -5,6 +5,33 @@ suspected cause, status. Updated on every investigation.
 
 ---
 
+## BUG-20261113-17 — A jlink image finds its record of the frozen extensions twice and refuses it
+
+- **Date**: 2026-11-13
+- **Status**: FIXED (`fix/frozen-record-found-twice`)
+- **Module**: `vauban-classloader` (`VaubanClassLoader.findResources`), `vauban-core` (`FrozenExtensions.find`)
+- **Surfaced by**: Vidocq's `CreateThenBuildIT`, extended to start what a created application packages. The zip
+  distribution starts on the record (`cdi extensions  2 extensions frozen at build`); the image of `vidocq:jlink`
+  reports `2 extensions run at start (the record of the build is not this deployment's)`, also with
+  `-Dvidocq.stripDebug=false`, whose classes are byte for byte those of the build.
+- **Repro**: `FrozenExtensionsRecordTest.oneRecordSeenThroughTwoLoaders` (a loader and its parent over the same
+  directory: "2 records of frozen extensions on the path") and
+  `StandardResourceUrlsTest.aJarTheParentAlsoHoldsGivesEachResourceOnce` (the same jar as `jar:file:/…` from the
+  parent and `jar:file:///…` from this loader).
+- **Cause**: the fingerprint was right: the same settings, the same four classes, the same value at build and in the
+  image. In an image, Vidocq finds the application module in the boot layer and layers it again in
+  `vauban-app-layer` (boot-layer detection). `getResources` gives the parent's resources and then the loader's own,
+  so `VaubanClassLoader` returned `jrt:/com.acme.demo.app/META-INF/vauban-frozen-extensions.properties` twice, and
+  `FrozenExtensions.find` took two results for two records, none of them this deployment's. `CompositeClassLoader`
+  already left out what its parent gives; `VaubanClassLoader` did not.
+- **Fix**: `VaubanClassLoader.findResources` leaves out what its parent already gives, with `file:///x` and `file:/x`
+  taken for the same file; `FrozenExtensions.find` counts distinct files.
+- **Left**: with jlink's default `--strip-debug` the image's class bytes differ from the build's, and the
+  fingerprint, a CRC32C of the bytes, differs too. Not fixed here (a choice between the fingerprint and
+  `vidocq:jlink`).
+
+---
+
 ## BUG-20261113-16 — A host bean the deployment also holds changes its fingerprint: the frozen record is refused
 
 - **Date**: 2026-11-13

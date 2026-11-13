@@ -134,6 +134,22 @@ class FrozenExtensionsRecordTest {
     }
 
     @Test
+    @DisplayName("one record a loader and its parent both see is one record")
+    void oneRecordSeenThroughTwoLoaders() throws IOException {
+        // BUG-20261113-17: in a jlink image, Vidocq layers the application module again over the boot layer that
+        // holds it, and the layer's loader returns the parent's URL and its own, the same one.
+        aRecord("abc123").write(output);
+        URL root = output.toUri().toURL();
+        var layer = new URLClassLoader(new URL[] {root}, new URLClassLoader(new URL[] {root}, null));
+
+        var found = FrozenExtensions.find(layer);
+
+        assertNull(found.note());
+        assertNotNull(found.frozen());
+        assertEquals("abc123", found.frozen().fingerprint());
+    }
+
+    @Test
     @DisplayName("a record of another format, or without one of its files, is not used and the note says why")
     void anUnreadableRecord() throws IOException {
         aRecord("abc123").write(output);

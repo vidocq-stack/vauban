@@ -148,12 +148,17 @@ public record FrozenExtensions(String fingerprint, List<String> extensions, Set<
 
     /**
      * The record {@code loader} sees. A deployment has one application, so one record: with several, none can be
-     * told to be this deployment's and none is used.
+     * told to be this deployment's and none is used. One file that two loaders of the chain both see, as the boot
+     * layer of a jlink image and the layer above it that holds the application again, is one record.
      */
     public static Found find(ClassLoader loader) {
         List<URL> records;
         try {
-            records = Collections.list(loader.getResources(PATH));
+            var distinct = new LinkedHashMap<String, URL>();
+            for (URL url : Collections.list(loader.getResources(PATH))) {
+                distinct.putIfAbsent(url.toExternalForm(), url);
+            }
+            records = List.copyOf(distinct.values());
         } catch (IOException e) {
             return new Found(null, "the record of the frozen extensions cannot be looked up: " + e);
         }
