@@ -199,10 +199,12 @@ final class ObserverDisposerDiscovery {
         var qualifiers = host.computeObserverQualifiers(param.annotations().stream()
                 .filter(a -> !isObservesAnnotation(a))
                 .toList());
-        // CDI spec: @Priority on observer is on the @Observes parameter, not the method
-        var priority = host.extractPriority(param.annotations());
-        if (priority == 0) priority = host.extractPriority(method.annotations());
-        if (priority == 0) priority = jakarta.enterprise.inject.spi.ObserverMethod.DEFAULT_PRIORITY;
+        // CDI spec: @Priority on observer is on the @Observes parameter, not the method. A declared 0 is a
+        // priority (Interceptor.Priority.PLATFORM_BEFORE), not "none": it used to fall back to the default
+        // (BUG-20261113-11).
+        var declared = host.declaredPriority(param.annotations());
+        if (declared.isEmpty()) declared = host.declaredPriority(method.annotations());
+        var priority = declared.orElse(jakarta.enterprise.inject.spi.ObserverMethod.DEFAULT_PRIORITY);
 
         // Extract reception and transactionPhase from @Observes annotation
         var reception = DEFAULT_RECEPTION;

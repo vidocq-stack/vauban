@@ -5,6 +5,78 @@ suspected cause, status. Updated on every investigation.
 
 ---
 
+## BUG-20261113-14 — An alternative enabled with `@Priority(0)` is taken for one without a priority
+
+- **Date**: 2026-11-13
+- **Status**: OPEN, found by reading while fixing BUG-20261113-11; not reproduced by a test yet
+- **Module**: `vauban-core` (`BeanDescriptor.priority`, `BeanResolver`, `BeanDiscovery`, `StereotypeResolver`)
+- **Symptom (expected)**: `@Alternative @Priority(0)` is not selected over the bean it replaces. A bean descriptor
+  holds `priority` as an `int` where 0 means "not set", and `BeanResolver` keeps the alternatives with
+  `priority() > 0`; the producer and stereotype fallbacks of `BeanDiscovery` test `priority == 0` the same way.
+- **To do**: a test first (an alternative at priority 0 against a default bean), then carry "declared or not" beside
+  the value, as `InterceptorDescriptor.enabled` does for interceptors.
+
+---
+
+## BUG-20261113-13 — No `$$Intercepted` subclass is generated at build for a binding an `@Enhancement` adds
+
+- **Date**: 2026-11-13
+- **Status**: OPEN
+- **Module**: `vauban-processor` / `vauban-maven-plugin` (`InterceptedArtefacts.isInterceptedTarget`)
+- **Surfaced by**: Vidocq/vidocq#546. With Humboldt's extension on the processor path, the build freezes the
+  `@SpanBinding` it adds to a `@WithSpan` method (`META-INF/vauban-enhancements.properties` names it), yet the compiled
+  output holds `TracedGreeter_ClientProxy.class` and no `TracedGreeter$$Intercepted.class`.
+- **Cause (by reading)**: `isInterceptedTarget` reads the interceptor bindings the source declares, not those the
+  enhancement patch adds. The container then generates the subclass at start with the Class-File API, and announces
+  it: the application works, but not from generated code alone.
+- **To do**: decide the intercepted targets after the `@Enhancement` phase, from the enriched index.
+
+---
+
+## BUG-20261113-12 — A `@Priority` an `@Enhancement` adds as an annotation instance does not move the interceptor
+
+- **Date**: 2026-11-13
+- **Status**: FIXED (branch `fix/priority-zero-and-enhanced`)
+- **Module**: `vauban-core` (`EnhancementApplier.withAddedPriority`)
+- **Surfaced by**: Vidocq/heisenberg#66. `mp.fault.tolerance.interceptor.priority=5000` left
+  `FaultToleranceInterceptor` at 4010 in the container: Heisenberg's extension removes `@Priority` and adds
+  `new PriorityLiteral(5000)`. Under Weld SE the same jars apply the priority.
+- **Symptom**: `ClassConfig.addAnnotation(Annotation)` with a `@Priority` on an interceptor class changes nothing;
+  `addAnnotation(AnnotationInfo)` with the same value moves it.
+- **Minimal reproduction**:
+  ```
+  ./mvnw -ntp -pl vauban-core -am package -Dsurefire.failIfNoSpecifiedTests=false -Dtest=DeclaredPriorityTest
+  ```
+  `aPriorityAddedAsAnAnnotationMovesTheInterceptor`: `expected: <[fixed, moved]> but was: <[moved, fixed]>`.
+- **Root cause**: `withAddedPriority` read `VaubanClassConfig.getAddedAnnotationInfos()`, the language-model form
+  only. An annotation instance is kept apart (`addedAnnotationInstances`); `getAddedAnnotationsIndexed()` gives the
+  three forms. The enriched index could not make up for it: it appends the added annotation after the declared one,
+  the removal is not applied to it, and `BeanDiscovery.extractPriority` returns the first `@Priority`.
+- **Fix**: `withAddedPriority` reads `getAddedAnnotationsIndexed()`.
+- **Left open**: a removal is still not applied to the enriched index, so a class-level annotation an enhancement
+  replaces is read from the declared one wherever only the index is read. The frozen patch records additions only
+  (see `concepts.adoc`).
+
+---
+
+## BUG-20261113-11 — An observer declared at `@Priority(0)` is notified as if it declared no priority
+
+- **Date**: 2026-11-13
+- **Status**: FIXED (branch `fix/priority-zero-and-enhanced`)
+- **Module**: `vauban-core` (`ObserverDisposerDiscovery`, `BeanDiscovery.declaredPriority`)
+- **Surfaced by**: Vidocq/cervantes#52. A `Startup` observer at `Interceptor.Priority.PLATFORM_BEFORE`, which is 0,
+  ran after an observer at `LIBRARY_BEFORE`.
+- **Symptom**: three observers of one event at 0, at 100 and without `@Priority` are notified in the order 100,
+  default, 0: the one at 0 gets the default priority, 2500.
+- **Minimal reproduction**: `DeclaredPriorityTest.anObserverAtPriorityZeroIsNotifiedFirst`:
+  `expected: <[zero, hundred, undeclared]> but was: <[hundred, undeclared, zero]>`.
+- **Root cause**: `BeanDiscovery.extractPriority` returns 0 when no `@Priority` is there, and the observer discovery
+  took 0 for "none" and fell back to the method's annotations, then to the default.
+- **Fix**: `BeanDiscovery.declaredPriority` returns an `OptionalInt`; the observer discovery falls back only when
+  nothing is declared. The same convention on bean descriptors is BUG-20261113-14.
+
+---
+
 ## BUG-20261113-01 — A synthetic bean in a scope of an extension becomes `@Dependent`
 
 - **Date**: 2026-11-13

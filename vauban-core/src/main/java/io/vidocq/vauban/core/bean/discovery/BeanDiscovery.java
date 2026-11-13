@@ -1330,13 +1330,21 @@ public final class BeanDiscovery {
     }
 
     int extractPriority(List<AnnotationInfo> annotations) {
+        return declaredPriority(annotations).orElse(0);
+    }
+
+    /**
+     * The priority {@code annotations} declare, empty when they declare none: 0 is a priority like any other, the
+     * earliest a library asks for ({@code Interceptor.Priority.PLATFORM_BEFORE}), not the absence of one.
+     */
+    java.util.OptionalInt declaredPriority(List<AnnotationInfo> annotations) {
         for (var ann : annotations) {
             if (ann.name().equals(PRIORITY)) {
                 var value = ann.member(MEMBER_VALUE);
-                if (value instanceof AnnotationValue.IntVal(var priority)) return priority;
+                if (value instanceof AnnotationValue.IntVal(var priority)) return java.util.OptionalInt.of(priority);
             }
         }
-        return 0;
+        return java.util.OptionalInt.empty();
     }
 
     /**

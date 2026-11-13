@@ -53,6 +53,7 @@ import java.util.function.Predicate;
 final class EnhancementApplier {
 
     private static final String VALUE = "value";
+    private static final DotName PRIORITY = DotName.of("jakarta.annotation.Priority");
 
     private EnhancementApplier() {
     }
@@ -70,17 +71,22 @@ final class EnhancementApplier {
         return result;
     }
 
-    /** The interceptor with the priority the last {@code @Priority} an enhancement added gives it, if any. */
+    /**
+     * The interceptor with the priority the last {@code @Priority} an enhancement added gives it, if any: added as
+     * an annotation type, a language-model annotation or an annotation instance alike. Only the language-model
+     * form was read, so an extension that replaced the priority with an annotation instance, as a portable
+     * extension would, changed nothing (BUG-20261113-12).
+     */
     private static InterceptorDescriptor withAddedPriority(InterceptorDescriptor descriptor,
                                                            List<VaubanClassConfig> configs) {
         var updated = descriptor;
         for (var config : configs) {
-            for (var annInfo : config.getAddedAnnotationInfos()) {
-                if ("jakarta.annotation.Priority".equals(annInfo.name())) {
+            for (var annotation : config.getAddedAnnotationsIndexed()) {
+                if (PRIORITY.equals(annotation.name())) {
                     updated = new InterceptorDescriptor(
                             updated.interceptorClass(), updated.bindings(),
                             updated.aroundInvokeMethod(), updated.aroundConstructMethod(),
-                            priorityValue(annInfo), true, updated.bindingAnnotations());
+                            priorityValue(annotation), true, updated.bindingAnnotations());
                 }
             }
         }
@@ -88,9 +94,9 @@ final class EnhancementApplier {
     }
 
     /** The {@code int} value of an added {@code @Priority}, or {@code 0} when it carries none. */
-    private static int priorityValue(AnnotationInfo priority) {
-        var valueMember = priority.hasMember(VALUE) ? priority.member(VALUE) : null;
-        return valueMember != null && valueMember.isInt() ? valueMember.asInt() : 0;
+    private static int priorityValue(io.vidocq.vauban.indexer.model.AnnotationInfo priority) {
+        return priority.member(VALUE) instanceof io.vidocq.vauban.indexer.model.AnnotationValue.IntVal(var value)
+                ? value : 0;
     }
 
     /**
