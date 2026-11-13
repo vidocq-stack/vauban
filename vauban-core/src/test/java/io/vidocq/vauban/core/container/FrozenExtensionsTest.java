@@ -468,6 +468,27 @@ class FrozenExtensionsTest {
     }
 
     @Test
+    @DisplayName("a host bean the deployment also holds stays in its fingerprint, in either order (BUG-20261113-16)")
+    void aHostBeanTheDeploymentAlsoHoldsKeepsTheRecordValid() {
+        List<Class<?>> classes = List.of(Promoted.class, Plain.class, StaticExtension.class, HostHolder.class);
+        assertTrue(deployment(classes).freezeExtensions(output).frozen());
+
+        StaticExtension.RUNS.set(0);
+        try (VaubanContainer container = deployment(classes).addHostBean(HostHolder.class, HostHolder::new).build()) {
+            assertEquals(0, StaticExtension.RUNS.get(), container.extensionsAtStart().note());
+            assertTrue(container.extensionsAtStart().frozen());
+        }
+
+        VaubanContainerBuilder hostFirst = VaubanContainer.builder().classLoader(outputLoader())
+                .addHostBean(HostHolder.class, HostHolder::new);
+        classes.forEach(hostFirst::addBeanClass);
+        try (VaubanContainer container = hostFirst.build()) {
+            assertEquals(0, StaticExtension.RUNS.get(), container.extensionsAtStart().note());
+            assertEquals("host", container.select(HostHolder.class).id());
+        }
+    }
+
+    @Test
     @DisplayName("an extension that removes annotations leaves no record, and a stale one goes")
     void anExtensionThatRemovesAnnotationsIsNotFrozen() throws Exception {
         assertTrue(deployment(STATIC_DEPLOYMENT).freezeExtensions(output).frozen());

@@ -5,6 +5,27 @@ suspected cause, status. Updated on every investigation.
 
 ---
 
+## BUG-20261113-16 — A host bean the deployment also holds changes its fingerprint: the frozen record is refused
+
+- **Date**: 2026-11-13
+- **Status**: FIXED (`fix/host-bean-also-scanned`)
+- **Module**: `vauban-core` (`VaubanContainerBuilder.addHostBean`, `indexBeanClasses`)
+- **Surfaced by**: the tutorial replay of the frozen extensions (Vidocq). An application with `mansart-pool` starts
+  frozen without a pool, and with `VIDOCQ_POOL_URL` set reports _N extensions run at start (the record of the build
+  is not this deployment's)_; the log gives two fingerprints. The same with `mansart-data` or Flyway next to the pool.
+- **Repro**: `FrozenExtensionsTest.aHostBeanTheDeploymentAlsoHoldsKeepsTheRecordValid`: a deployment holding
+  `HostHolder` is frozen, then started with `addHostBean(HostHolder.class, …)` as well: "the record … has the
+  fingerprint 64cd4ea4…, this deployment bdefdc9e…".
+- **Cause**: `addHostBean` left its class out of the fingerprint, whether or not the deployment held it. Vidocq's
+  `MansartPoolHolder` is a `@Singleton` bean the pool extension's `vauban-beans.list` names: the build counts it, and
+  a start counts it too unless a pool is configured, when `MansartPoolExtension.beforeStart` also adds it with
+  `addHostBean`.
+- **Fix**: the builder keeps the classes of the deployment (`addBeanClass`, a scan included) apart from those only
+  `addHostBean` adds; a host bean leaves the fingerprint only when it is not the deployment's, in either order of the
+  calls.
+
+---
+
 ## BUG-20261113-15 — An alternative or an interceptor whose `@Priority` an `@Enhancement` removes stays enabled
 
 - **Date**: 2026-11-13

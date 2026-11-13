@@ -62,6 +62,11 @@ public final class VaubanContainerBuilder {
     private final List<Class<?>> beanClasses = new ArrayList<>();
     /** The beans the embedding runtime added itself ({@link #addHostBean}), by class name. */
     private final Set<String> hostBeanClasses = new java.util.HashSet<>();
+    /**
+     * The bean classes of the deployment ({@link #addBeanClass}, a scan included), by class name: a host bean among
+     * them is the deployment's too, and stays in its fingerprint (BUG-20261113-16).
+     */
+    private final Set<String> deploymentClasses = new java.util.HashSet<>();
     final Set<String> bceProcessedSources = new java.util.HashSet<>();
     private final Map<DotName, BeanFactory<?>> factories = new LinkedHashMap<>();
     /** The classes {@link #addFactory} was given a factory for: built without reflection. */
@@ -161,6 +166,11 @@ public final class VaubanContainerBuilder {
      * Add a bean class. The container will scan it and create a default factory.
      */
     public VaubanContainerBuilder addBeanClass(Class<?> beanClass) {
+        deploymentClasses.add(beanClass.getName());
+        return addClass(beanClass);
+    }
+
+    private VaubanContainerBuilder addClass(Class<?> beanClass) {
         // Idempotent by class name (not identity) — same class from different ClassLoaders is deduplicated
         if (beanClasses.stream().noneMatch(c -> c.getName().equals(beanClass.getName()))) {
             beanClasses.add(beanClass);
@@ -228,9 +238,12 @@ public final class VaubanContainerBuilder {
      * {@link #addBeanClass} matters: a host bean leaves the build's record valid, where one more bean class makes
      * the start run every extension again. In return the frozen extensions never saw the bean; give it nothing an
      * extension would have to act on. Without a record the extensions run on it as on any class.
+     *
+     * <p>A class the deployment holds as well, one a scan finds for instance, stays the deployment's: whether the
+     * runtime also adds it leaves the fingerprint as the build computed it (BUG-20261113-16).
      */
     public <T> VaubanContainerBuilder addHostBean(Class<T> beanClass, BeanFactory<T> factory) {
-        addBeanClass(beanClass);
+        addClass(beanClass);
         addFactory(beanClass, factory);
         hostBeanClasses.add(beanClass.getName());
         return this;
@@ -1076,7 +1089,7 @@ public final class VaubanContainerBuilder {
                 indexBuilder.add(io.vidocq.vauban.indexer.scanner.ClassFileScanner.scan(classFile));
             }
             // The fingerprint of the deployment as a build sees it: without the runtime's own beans.
-            if (!hostBeanClasses.contains(clazz.getName())) {
+            if (!hostBeanClasses.contains(clazz.getName()) || deploymentClasses.contains(clazz.getName())) {
                 fingerprint.add(clazz.getName(), classFile);
             }
 
