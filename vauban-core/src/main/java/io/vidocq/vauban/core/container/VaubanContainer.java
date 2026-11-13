@@ -261,7 +261,13 @@ public final class VaubanContainer implements AutoCloseable {
         interceptorWrapper.bootCompleted(beans.values());
         this.running = true;
         CURRENT.set(this);
+    }
 
+    /**
+     * Starts the container its builder finished: fires the startup events, once the builder installed the contexts
+     * build compatible extensions register, so that an observer of those events reaches a bean of every scope.
+     */
+    void start() {
         fireStartupEvents();
     }
 

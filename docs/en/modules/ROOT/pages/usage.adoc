@@ -260,6 +260,16 @@ public class OrderListener {
 
 Async observers (`@ObservesAsync`) are dispatched on the `EventDispatcher`'s internal `Executors.newVirtualThreadPerTaskExecutor()`. See xref:internals.adoc#virtual-threads[the threading model].
 
+[[startup-events]]
+=== The startup events [.tag-new]#NEW#
+
+The container fires `@Initialized(ApplicationScoped.class)`, then `Startup`, once it is complete: every bean is
+registered and every context is installed, including the contexts build compatible extensions register with
+`MetaAnnotations.addContext`. An observer of these events can call a bean of any scope, such as a `@TransactionScoped`
+bean of Mansart Transactions within a `@Transactional` method. Up to now the contexts of the extensions were installed
+after these events, and such a call failed the start with `ContextNotActiveException: No context registered for
+scope …`.
+
 [[lifecycle-observer-failures]]
 === When a lifecycle observer throws
 

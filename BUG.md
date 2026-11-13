@@ -5,6 +5,46 @@ suspected cause, status. Updated on every investigation.
 
 ---
 
+## BUG-20261113-19 — A synthetic bean of an interface type always takes the run-time client proxy, with advice that does not apply
+
+- **Date**: 2026-11-13
+- **Status**: OPEN
+- **Module**: `vauban-core` (`RuntimeGeneration`, `InterceptorBeanWrapper.interfaceProxy`), `vauban-maven-plugin`
+  (`ExtensionFreezer`)
+- **Symptom**: every Noether application on Vidocq starts with the framed warning _VAUBAN — RUNTIME CODE GENERATION
+  FALLBACK_, listing `interface client proxy (java.lang.reflect.Proxy) jakarta.persistence.EntityManagerFactory` and
+  `… jakarta.persistence.EntityManager`: the `@ApplicationScoped` and `@TransactionScoped` synthetic beans
+  `noether-jpa-cdi` registers for each unit. The warning says the beans "were compiled without the Vauban annotation
+  processor" and advises adding it, which the application already has: no processor sees a synthetic bean.
+- **Minimal repro**: Vidocq `vidocq-runtime-it-noether-units-per-module`, `units-run.log`, even with the extensions
+  frozen at build ("Vauban: froze 2 build compatible extension(s)").
+- **Hypothesised cause**: client proxies are generated at build for the bean classes the processor sees; a synthetic
+  bean has no class, and the build that freezes the extensions (VAU-PERF-005) records the synthetic beans without
+  generating a proxy for their normal-scoped interface types.
+- **Investigations**:
+  - 2026-11-13: found by the Vidocq IT of BUG-20261113-18; not investigated further yet.
+
+## BUG-20261113-18 — A `Startup` observer cannot reach a bean of a scope an extension registered
+
+- **Date**: 2026-11-13
+- **Status**: FIXED on `fix/contexts-before-startup`
+- **Module**: `vauban-core` (`VaubanContainer`, `VaubanContainerBuilder.build`)
+- **Symptom**: an observer of `Startup` or `@Initialized(ApplicationScoped.class)` that calls a bean of a scope a
+  build compatible extension registers (`MetaAnnotations.addContext`) fails the start with
+  `ContextNotActiveException: No context registered for scope …`. Found by a Vidocq IT: a `Startup` observer
+  persisting through `@Inject @Archived EntityManager`, a `@TransactionScoped` bean of `noether-jpa-cdi`, inside a
+  `@Transactional` method, under `vidocq:run`.
+- **Minimal repro**: `ExtensionContextsAtStartupTest`: an extension registers the normal scope `@Ledgered`, and an
+  `@ApplicationScoped` bean reads a `@Ledgered` bean from its startup observers.
+- **Cause**: the `VaubanContainer` constructor fired the startup events, and the builder installed the extensions'
+  contexts on the container it returned (`installContexts`), so after them. The factories an extension supplied
+  (`suppliedFactories`) and the module lookups to withdraw on close were set after them too.
+- **Fix**: the constructor no longer fires the events; the builder calls `VaubanContainer.start()` last, once the
+  contexts, the supplied factories, the extensions' report and the module lookups are set. A start that fails closes
+  the module lookups twice, which `ModuleLookups.Registration.close` allows.
+
+---
+
 ## BUG-20261113-17 — A jlink image finds its record of the frozen extensions twice and refuses it
 
 - **Date**: 2026-11-13

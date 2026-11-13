@@ -1040,6 +1040,9 @@ public final class VaubanContainerBuilder {
             container.extensionsAtStart(extensionsAtStart(plan));
 
             container.withdrawOnClose(moduleLookups);
+            // The startup events last: their observers reach the contexts the extensions registered, Mansart's
+            // @TransactionScoped among them (BUG-20261113-18).
+            container.start();
             scope.built();
             return container;
         }
