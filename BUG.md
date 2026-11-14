@@ -5,6 +5,35 @@ suspected cause, status. Updated on every investigation.
 
 ---
 
+## BUG-20261114-03 — `vauban:generate` writes a client proxy for the `@Dependent` holder of a normal-scoped producer
+
+- **Date**: 2026-11-14
+- **Status**: FIXED on `fix/dependent-holder-proxy`
+- **Module**: `vauban-maven-plugin` (`VaubanGenerator.pregenerate`)
+- **Symptom**: found while fixing BUG-20261114-02. `vauban:generate` over a module holding
+  `@Dependent public class Instruments { @Produces @ApplicationScoped Clock clock() { … } }` writes
+  `Instruments_ClientProxy.class` next to `Instruments` and lists it in `GenerationResult.generatedProxies()`, the
+  "generated N proxies" count of the goal. Nothing ever loads it: the container does not proxy a `@Dependent` bean, it
+  proxies a producer through the produced class, and the provider names the proxies of normal-scoped managed beans
+  only. Dead generated code in the archive, and a wrong count.
+- **Minimal repro**: `VaubanGenerator.generate` over the package of the `abstractproduced.Instruments` fixture (two
+  normal-scoped producers, of `Clock` and of `Meter`): `generatedProxies()` was
+  `[io.vidocq.vauban.maven.generate.abstractproduced.Instruments_ClientProxy]`.
+- **Cause**: `pregenerate` wrote `<bean class>_ClientProxy` for every descriptor of a normal scope, whatever its kind.
+  A producer method or field descriptor carries the producer's scope, and its holder as bean class; the proxied type
+  is the produced one, whose proxy `collectProducerProxies` writes under `ClientProxyShape.producerProxyName`. A
+  normal-scoped holder got its proxy from its own managed descriptor anyway, so only a holder of another scope was
+  affected. The plugin's other proxy steps (`ProxyLinkWeaving`, the providers) already required a managed bean, and
+  the processor sends a producer to `ClientProxyArtefacts.generateForProducer` only: it has no such flaw.
+- **Fix**: `pregenerate` writes a bean-class client proxy for a normal-scoped managed bean only. The producer proxies,
+  and the proxy of a normal-scoped holder, are unchanged.
+- **Tests**: `ProducerProxyAndProviderGenerationTest.aDependentHolderOfNormalScopedProducersGetsNoProxyOfItsOwn`
+  (plugin, red before: `expected: <[]> but was: <[…Instruments_ClientProxy]>`); `eachProducerGetsTheProxyItsTypeAllows`
+  still checks that the `@ApplicationScoped` holder `Workshop` keeps its `Workshop_ClientProxy`.
+  `ProducerAndProviderScenariosTest.aDependentHolderOfNormalScopedProducersGetsNoProxyOfItsOwn` (processor) guards
+  that the processor writes none for the `@Dependent` holders `app.Producers` and `DefaultProducer`; it passed before
+  the fix, as the processor never had the flaw.
+
 ## BUG-20261114-01 — A no-arg bean class recompiled without Vauban under its woven client proxy is not woven at load, and its first client proxy throws `NoSuchMethodError`
 
 - **Date**: 2026-11-14

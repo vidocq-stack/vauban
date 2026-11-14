@@ -374,8 +374,10 @@ public final class VaubanGenerator {
                 continue;
             }
 
-            // Client proxy for normal-scoped beans (skip if already exists)
-            if (bean.scope().isNormal() && !alreadyKnownBeans.contains(className)) {
+            // Client proxy for normal-scoped managed beans (skip if already exists). A producer's
+            // bean class is its holder, which is not the proxied type: its proxy, named after the
+            // produced type, is written with the providers (BUG-20261114-03).
+            if (bean.kind() == BeanKind.MANAGED && bean.scope().isNormal() && !alreadyKnownBeans.contains(className)) {
                 generateClientProxy(config.outputDir(), className, clazz, warnings).ifPresent(generatedProxies::add);
             }
 

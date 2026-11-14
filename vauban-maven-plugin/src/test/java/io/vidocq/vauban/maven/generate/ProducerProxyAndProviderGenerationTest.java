@@ -153,6 +153,24 @@ class ProducerProxyAndProviderGenerationTest {
         }
     }
 
+    /**
+     * BUG-20261114-03: a normal-scoped producer is proxied through its produced type. Its {@code @Dependent} holder
+     * is no normal-scoped bean, so it gets no client proxy of its own; the plugin used to write one, for nothing.
+     */
+    @Test
+    void aDependentHolderOfNormalScopedProducersGetsNoProxyOfItsOwn() throws IOException {
+        var classes = copyPackage(Instruments.class, tmp.resolve("classes"));
+        var output = tmp.resolve("output");
+
+        var result = VaubanGenerator.generate(new VaubanGenerator.Config(List.of(), classes, output, withoutHidden()));
+
+        assertEquals(List.of(), result.generatedProxies());
+        var proxies = proxyFiles(packageDir(output, Instruments.class));
+        assertEquals(2, proxies.size(), proxies.toString());
+        assertTrue(proxies.stream().allMatch(name -> name.startsWith("Clock$$") || name.startsWith("Meter$$")),
+                proxies.toString());
+    }
+
     @Test
     void aSecondRunWritesNothingAgain() throws IOException {
         var output = tmp.resolve("output");

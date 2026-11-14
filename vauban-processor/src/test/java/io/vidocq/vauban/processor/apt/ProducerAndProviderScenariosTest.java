@@ -138,6 +138,15 @@ class ProducerAndProviderScenariosTest {
         assertTrue(proxies.getFirst().endsWith("_ClientProxy.java"), proxies.toString());
     }
 
+    /** BUG-20261114-03: the {@code @Dependent} holder of normal-scoped producers gets no client proxy of its own. */
+    @Test
+    void aDependentHolderOfNormalScopedProducersGetsNoProxyOfItsOwn() {
+        for (var holder : List.of("app/Producers", "DefaultProducer")) {
+            assertFalse(Files.exists(result.generated().resolve(holder + "_ClientProxy.java")), holder);
+            assertFalse(Files.exists(result.classes().resolve(holder + "_ClientProxy.class")), holder);
+        }
+    }
+
     @Test
     void aBeanWithPrivateConstructorsOnlyGetsABytecodeProxy() {
         assertTrue(Files.isRegularFile(result.classes().resolve("app/Locked_ClientProxy.class")));
