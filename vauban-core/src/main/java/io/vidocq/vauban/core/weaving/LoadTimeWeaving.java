@@ -72,7 +72,8 @@ import java.util.concurrent.TimeUnit;
  * agent jar (embedded in this artifact, extracted to a temporary file). The JDK prints its
  * standard dynamic-agent warning; disable this tier with
  * {@code -Dvauban.weaving.loadtime=disabled} (no agent is attached, and the beans that
- * needed it then fail deployment validation).
+ * needed it then fail deployment validation, unless an agent given with
+ * {@code -javaagent:vauban-weaver.jar=<plan>} weaves them).
  *
  * <p>A class with a non-private no-arg constructor needs no marker, unless the client proxy
  * shipped next to it chains to one: a woven build wrote that proxy, and the class was
@@ -130,7 +131,8 @@ public final class LoadTimeWeaving {
      * declarations visible from {@code loader} and, if any, installs the load-time weaving
      * agent. Must run before those classes are loaded. Idempotent per JVM and per class.
      * With {@value #MODE_PROPERTY}{@code =disabled}, no agent is attached, and the beans that
-     * needed one are reported {@linkplain Result#unwoven() unwoven}.
+     * needed one are reported {@linkplain Result#unwoven() unwoven}, unless an agent was given at
+     * JVM start with {@code -javaagent:vauban-weaver.jar=<plan>}: they are that agent's.
      */
     public static synchronized Result prepare(ClassLoader loader) {
         try {
@@ -169,6 +171,11 @@ public final class LoadTimeWeaving {
             return new Result(beans.keySet(), null, Set.of());
         }
         if ("disabled".equalsIgnoreCase(System.getProperty(MODE_PROPERTY, ""))) {
+            if ("true".equals(System.getProperty(WeavingAgent.STARTUP_PROPERTY))) {
+                // -javaagent:vauban-weaver.jar=<plan>: that agent weaves what its plan lists. Attach
+                // nothing and report nothing: the beans are its own.
+                return Result.NONE;
+            }
             return Result.notWoven(beans.keySet(), "Load-time weaving is disabled (-D" + MODE_PROPERTY
                     + "=disabled). Either build with Maven/Gradle (build-time weaving), remove the property,"
                     + " or add the (ProxyLink) constructors manually.");

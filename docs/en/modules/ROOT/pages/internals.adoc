@@ -703,7 +703,8 @@ Details worth knowing about the load-time tier:
   that needed one fails the start [.tag-new]#NEW#, named with the reason, as when the agent cannot
   be attached; a bean nothing injects included, where its first client proxy used to fail at run
   time. In a Vauban layer the class loader still weaves, so nothing fails there. Explicit
-  `-javaagent:vauban-weaver.jar=<plan>` is also supported (`Premain-Class`).
+  `-javaagent:vauban-weaver.jar=<plan>` is also supported (`Premain-Class`): with the opt-out,
+  the beans are that agent's, and the start does not fail on them.
 
 [#module-descriptor]
 == Giving a dependency a module descriptor

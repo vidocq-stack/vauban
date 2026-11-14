@@ -414,7 +414,7 @@ a bean a Build Compatible Extension adds when it runs at start-up only; a type n
 | Property | Effect
 
 | `-Dvauban.weaving.loadtime=disabled`
-| Turns off the load-time weaving agent. A bean whose build output lacks the `ProxyLink` entry constructor it needs then fails the start, named with this reason, instead of being woven at class definition; inside a Vauban layer, the class loader still weaves. See xref:internals.adoc#weaving-tiers[Internals — weaving tiers].
+| Turns off the load-time weaving agent. A bean whose build output lacks the `ProxyLink` entry constructor it needs then fails the start, named with this reason, instead of being woven at class definition; inside a Vauban layer, the class loader still weaves, and with `-javaagent:vauban-weaver.jar=<plan>` the beans are that agent's. See xref:internals.adoc#weaving-tiers[Internals — weaving tiers].
 
 | `-Dvauban.opens.auto=true`
 | Lets the container open a third-party module's package to itself at boot (`Instrumentation.redefineModule`) when a producer's type is not build-time proxyable. **Off by default, deliberately**: opening another module behind the user's back is what this project faults runtime CDI implementations for needing, and it makes the application silently depend on dynamic agent attachment — a defect that surfaces late, on a locked-down JVM. Left off, the container refuses and logs every way to avoid it. A last resort: integrity by default is closing dynamic agent attachment, so prefer a fully-public produced type or `vauban:enhance-dependencies`. See xref:internals.adoc#proxy-strategies[Internals — client-proxy strategies].

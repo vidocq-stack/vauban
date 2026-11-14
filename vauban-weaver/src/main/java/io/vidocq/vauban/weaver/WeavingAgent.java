@@ -39,29 +39,39 @@ public final class WeavingAgent {
     /** Set to {@code "true"} in the target JVM once at least one plan is installed. */
     public static final String ATTACHED_PROPERTY = "io.vidocq.vauban.weaver.attached";
 
+    /**
+     * Set to {@code "true"} once a plan given with {@code -javaagent:vauban-weaver.jar=<plan>} is installed at JVM
+     * start: that agent weaves what its plan lists, so the container leaves those beans to it.
+     */
+    public static final String STARTUP_PROPERTY = "io.vidocq.vauban.weaver.startup";
+
     private WeavingAgent() {}
 
     public static void premain(String agentArgs, Instrumentation inst) {
-        install(agentArgs, inst);
+        if (install(agentArgs, inst)) {
+            System.setProperty(STARTUP_PROPERTY, "true");
+        }
     }
 
     public static void agentmain(String agentArgs, Instrumentation inst) {
         install(agentArgs, inst);
     }
 
-    private static synchronized void install(String agentArgs, Instrumentation inst) {
+    /** Installs the plan named by {@code agentArgs}; {@code false} when there is none and the agent stays inactive. */
+    private static synchronized boolean install(String agentArgs, Instrumentation inst) {
         // Capture the Instrumentation first, so it is available even for an empty plan — an
         // empty-plan attach is exactly how vauban-core obtains it to open a third-party module's
         // package at boot (issue #42, Stage 3b) without weaving anything.
         AgentAccess.set(inst);
         if (agentArgs == null || agentArgs.isBlank()) {
             System.err.println("[vauban-weaver] missing agent argument (weaving plan path) — agent inactive");
-            return;
+            return false;
         }
         var plan = WeavingPlan.load(Path.of(agentArgs.strip()));
         if (!plan.isEmpty()) {
             inst.addTransformer(new WeavingTransformer(plan));
         }
         System.setProperty(ATTACHED_PROPERTY, "true");
+        return true;
     }
 }

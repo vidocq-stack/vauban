@@ -20,6 +20,7 @@
 package io.vidocq.vauban.core.weaving;
 
 import io.vidocq.vauban.api.ProxyLink;
+import io.vidocq.vauban.weaver.WeavingAgent;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -61,6 +62,7 @@ class LoadTimeWeavingTest {
     @AfterEach
     void clearOptOut() {
         System.clearProperty(LoadTimeWeaving.MODE_PROPERTY);
+        System.clearProperty(WeavingAgent.STARTUP_PROPERTY);
     }
 
     @Test
@@ -192,6 +194,20 @@ class LoadTimeWeavingTest {
                     "deployment validation must fail the start on them, not their first client proxy");
             assertNotNull(result.failure());
             assertTrue(result.failure().contains(LoadTimeWeaving.MODE_PROPERTY), result.failure());
+        }
+    }
+
+    @Test
+    @DisplayName("-Dvauban.weaving.loadtime=disabled leaves the beans to an agent given with -javaagent")
+    void optOutLeavesTheBeansToAnAgentGivenAtStart(@TempDir Path dir) throws Exception {
+        var fixture = "com.example.idebuild.UnwovenBeanI";
+        var classes = fixtureDir(dir, fixture, businessCtorOnlyFixture(fixture, true));
+        System.setProperty(LoadTimeWeaving.MODE_PROPERTY, "disabled");
+        System.setProperty(WeavingAgent.STARTUP_PROPERTY, "true");
+        try (var loader = new URLClassLoader(new URL[] {classes.toUri().toURL()},
+                getClass().getClassLoader())) {
+            assertEquals(LoadTimeWeaving.Result.NONE, LoadTimeWeaving.prepare(loader),
+                    "the agent weaves what its plan lists: the start must not fail on the beans");
         }
     }
 
