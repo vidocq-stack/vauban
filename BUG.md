@@ -38,6 +38,11 @@ suspected cause, status. Updated on every investigation.
     proxies in `vauban:generate` after the freeze was set aside: it would miss every deployment that runs its
     extensions at start (tests, an IDE build). Noether's case is closed by Vidocq's Noether extension listing
     `EntityManager` and `EntityManagerFactory`, which keeps `noether-jpa-cdi` free of Vauban.
+  - 2026-11-14: the first downstream Vidocq build of the fix failed in `vidocq-runtime-dirac-metrics-extension`,
+    "Provider io.vidocq.vauban.processor.VaubanProcessor could not be instantiated": the processor read the
+    annotation's name from `ClientProxies.class`, and that module's processor path held the published `vauban-api`,
+    without it, through a codegen bundle. The processor now names the type as the other `vauban-api` types it looks
+    for; `OlderApiOnProcessorPathTest` loads it without `ClientProxies`, red before.
 
 ## BUG-20261113-18 — A `Startup` observer cannot reach a bean of a scope an extension registered
 

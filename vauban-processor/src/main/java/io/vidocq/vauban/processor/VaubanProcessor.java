@@ -175,7 +175,8 @@ public class VaubanProcessor extends AbstractProcessor {
     /** The service every Vauban bean archive provides, one implementation per package of beans. */
     private static final String COMPONENT_PROVIDER = "io.vidocq.vauban.api.VaubanComponentProvider";
     /** The interfaces whose client proxies a module asks for, for the synthetic beans of its extension. */
-    private static final String CLIENT_PROXIES = io.vidocq.vauban.api.ClientProxies.class.getName();
+    // Named, never loaded: the processor path may hold an older vauban-api without it (OlderApiOnProcessorPathTest).
+    private static final String CLIENT_PROXIES = "io.vidocq.vauban.api.ClientProxies";
 
     private List<Class<?>> overrideBceClasses;
 
