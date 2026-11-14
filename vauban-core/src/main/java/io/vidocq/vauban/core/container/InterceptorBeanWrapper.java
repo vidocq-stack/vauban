@@ -767,15 +767,19 @@ final class InterceptorBeanWrapper {
 
     Class<?> loadOrDefineClassRobustly(Class<?> targetClass, String className, byte[] bytecode)
             throws IllegalAccessException {
-        try {
-            // Class.forName takes the boot class loader's null as is (BUG-20261114-02).
-            return Class.forName(className, false, targetClass.getClassLoader());
-        } catch (ClassNotFoundException _) {
-            // Use the container's VaubanLookup which has the user-provided root Lookup
-            // (no sun.misc.Unsafe needed — addReads + privateLookupIn handles Java Modules)
-            var lookup = vaubanLookup.lookupFor(targetClass);
-            return lookup.defineClass(bytecode);
+        // The boot class loader is null, and no build puts a class next to a class of the JDK (BUG-20261114-02).
+        var loader = targetClass.getClassLoader();
+        if (loader != null) {
+            try {
+                return loader.loadClass(className);
+            } catch (ClassNotFoundException _) {
+                // Not generated at build: defined below.
+            }
         }
+        // Use the container's VaubanLookup which has the user-provided root Lookup
+        // (no sun.misc.Unsafe needed — addReads + privateLookupIn handles Java Modules)
+        var lookup = vaubanLookup.lookupFor(targetClass);
+        return lookup.defineClass(bytecode);
     }
 
     /**
