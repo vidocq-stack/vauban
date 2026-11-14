@@ -358,7 +358,7 @@ final class InterceptorBeanWrapper {
         }
 
         // Fallback: collect all interface types from the bean to implement via reflect.Proxy
-        runtimeGeneration.generated(RuntimeGeneration.Kind.INTERFACE_PROXY, beanClass.getName());
+        runtimeGeneration.generated(interfaceProxyKind(bean), beanClass.getName());
         java.util.Set<Class<?>> ifaceSet = new java.util.LinkedHashSet<>();
         for (var t : bean.getTypes()) {
             if (t instanceof Class<?> c && c.isInterface() && c != Object.class) {
@@ -496,10 +496,20 @@ final class InterceptorBeanWrapper {
             return;
         }
         if (target.isInterface()) {
-            runtimeGeneration.generated(RuntimeGeneration.Kind.INTERFACE_PROXY, target.getName());
+            runtimeGeneration.generated(interfaceProxyKind(bean), target.getName());
         } else if (!isLoadable(target, key)) {
             runtimeGeneration.generated(RuntimeGeneration.Kind.CLIENT_PROXY, key);
         }
+    }
+
+    /**
+     * The run-time interface proxy of {@code bean}: a synthetic bean's apart, as no processor sees one, and the
+     * extension that registers it lists the interface in {@code @ClientProxies} instead (BUG-20261113-19).
+     */
+    private static RuntimeGeneration.Kind interfaceProxyKind(ManagedBean<?> bean) {
+        return bean.descriptor().kind() == io.vidocq.vauban.core.bean.model.BeanDescriptor.BeanKind.SYNTHETIC
+                ? RuntimeGeneration.Kind.SYNTHETIC_INTERFACE_PROXY
+                : RuntimeGeneration.Kind.INTERFACE_PROXY;
     }
 
     /** The classes this container generated at run time, or will. */

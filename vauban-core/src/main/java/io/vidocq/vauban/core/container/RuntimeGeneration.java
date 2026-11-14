@@ -30,7 +30,8 @@ import java.util.function.Consumer;
 /**
  * The classes a container generates at run time because the build did not (vauban#227): an intercepted subclass or a
  * client proxy for a bean compiled without the Vauban annotation processor and not processed by the Maven plugin, or a
- * {@code java.lang.reflect.Proxy} for an interface no provider proxies. That fallback is kept for such beans, but it
+ * {@code java.lang.reflect.Proxy} for an interface no provider proxies, a synthetic bean's among them unless its
+ * extension lists the interface in {@code @ClientProxies}. That fallback is kept for such beans, but it
  * is the exception: it costs boot time, needs deep access to the bean's package on the module path, and has no
  * ahead-of-time equivalent. So it is announced loudly: one warning at the end of the boot for everything the boot
  * generated or knows it will, then one warning for each class generated later that the boot did not announce.
@@ -45,7 +46,8 @@ final class RuntimeGeneration {
     enum Kind {
         INTERCEPTED_SUBCLASS("intercepted subclass"),
         CLIENT_PROXY("client proxy"),
-        INTERFACE_PROXY("interface client proxy (java.lang.reflect.Proxy)");
+        INTERFACE_PROXY("interface client proxy (java.lang.reflect.Proxy)"),
+        SYNTHETIC_INTERFACE_PROXY("interface client proxy (java.lang.reflect.Proxy) of a synthetic bean");
 
         private final String label;
 
@@ -126,11 +128,22 @@ final class RuntimeGeneration {
                 .append(" generated ").append(when).append(" instead of at build time:\n");
         generated.forEach(g -> sb.append(g.line()).append('\n'));
         sb.append("""
-                Their beans were compiled without the Vauban annotation processor (vauban-processor) and not
-                processed by the vauban-maven-plugin. This fallback is exceptional: it slows the boot, needs deep
-                access to the bean's package on the module path, and cannot run ahead of time (native image, CDS).
-                Fix: add vauban-processor to the annotation processor path of the module that declares these beans.
+                This fallback is exceptional: it slows the boot, may need deep access to the bean's package on the
+                module path, and cannot run ahead of time (native image, CDS).
                 """);
+        if (generated.stream().anyMatch(g -> g.kind() != Kind.SYNTHETIC_INTERFACE_PROXY)) {
+            sb.append("""
+                    A bean class compiled without the Vauban annotation processor (vauban-processor), and not processed
+                    by the vauban-maven-plugin: add vauban-processor to the annotation processor path of the module
+                    that declares it.
+                    """);
+        }
+        if (generated.stream().anyMatch(g -> g.kind() == Kind.SYNTHETIC_INTERFACE_PROXY)) {
+            sb.append("""
+                    A synthetic bean, which no processor sees: the extension that registers it lists the interface in
+                    @io.vidocq.vauban.api.ClientProxies, on a class of a module compiled with vauban-processor.
+                    """);
+        }
         return sb.append(RULE).toString();
     }
 }

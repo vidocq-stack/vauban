@@ -8,9 +8,9 @@ suspected cause, status. Updated on every investigation.
 ## BUG-20261113-19 — A synthetic bean of an interface type always takes the run-time client proxy, with advice that does not apply
 
 - **Date**: 2026-11-13
-- **Status**: OPEN
-- **Module**: `vauban-core` (`RuntimeGeneration`, `InterceptorBeanWrapper.interfaceProxy`), `vauban-maven-plugin`
-  (`ExtensionFreezer`)
+- **Status**: FIXED (branch `fix/synthetic-interface-proxies`)
+- **Module**: `vauban-core` (`RuntimeGeneration`, `InterceptorBeanWrapper.interfaceProxy`), `vauban-processor`,
+  `vauban-api`
 - **Symptom**: every Noether application on Vidocq starts with the framed warning _VAUBAN — RUNTIME CODE GENERATION
   FALLBACK_, listing `interface client proxy (java.lang.reflect.Proxy) jakarta.persistence.EntityManagerFactory` and
   `… jakarta.persistence.EntityManager`: the `@ApplicationScoped` and `@TransactionScoped` synthetic beans
@@ -18,11 +18,26 @@ suspected cause, status. Updated on every investigation.
   processor" and advises adding it, which the application already has: no processor sees a synthetic bean.
 - **Minimal repro**: Vidocq `vidocq-runtime-it-noether-units-per-module`, `units-run.log`, even with the extensions
   frozen at build ("Vauban: froze 2 build compatible extension(s)").
-- **Hypothesised cause**: client proxies are generated at build for the bean classes the processor sees; a synthetic
-  bean has no class, and the build that freezes the extensions (VAU-PERF-005) records the synthetic beans without
-  generating a proxy for their normal-scoped interface types.
+- **Cause**: the processor generates the client proxy of a bean it sees, a producer of an interface included (a class
+  `implements` it, #42). A synthetic bean has no class it sees, so `InterceptorBeanWrapper.interfaceProxy` found no
+  provider owning the interface's key and fell back to `java.lang.reflect.Proxy`, every call through
+  `Method.invoke`. The warning counted it as a bean compiled without the processor.
+- **Fix**: `io.vidocq.vauban.api.ClientProxies` lists the interfaces of an extension's synthetic beans, on any class of
+  a module compiled with `vauban-processor`. The processor generates for each the class `implements` it that a
+  producer of the interface gets, in the package of the annotated class, registered under the interface's key in the
+  package's `_VaubanComponents`, written even for a module without a bean; once per interface and package, a producer
+  of the same interface sharing it. A listed type that is not a public interface fails the compilation. The boot
+  warning lists a synthetic bean's proxy apart (`SYNTHETIC_INTERFACE_PROXY`) with the `@ClientProxies` advice, and
+  the advice to add `vauban-processor` only when another kind of class is listed.
+- **Tests**: `ClientProxiesDeclarationTest` (vauban-processor): the provider creates the proxy and covers its key, a
+  default method goes to the contextual instance, a producer of the same interface shares one proxy, a class is
+  refused. `RuntimeGenerationTest`: the boot predicts the synthetic kind, and its warning gives the advice that applies.
 - **Investigations**:
-  - 2026-11-13: found by the Vidocq IT of BUG-20261113-18; not investigated further yet.
+  - 2026-11-13: found by the Vidocq IT of BUG-20261113-18.
+  - 2026-11-14: the extensions frozen at build do not help, as they freeze descriptors, not proxies. Generating the
+    proxies in `vauban:generate` after the freeze was set aside: it would miss every deployment that runs its
+    extensions at start (tests, an IDE build). Noether's case is closed by Vidocq's Noether extension listing
+    `EntityManager` and `EntityManagerFactory`, which keeps `noether-jpa-cdi` free of Vauban.
 
 ## BUG-20261113-18 — A `Startup` observer cannot reach a bean of a scope an extension registered
 

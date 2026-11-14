@@ -25,7 +25,13 @@ import jakarta.annotation.Priority;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.enterprise.context.Dependent;
 import jakarta.enterprise.context.RequestScoped;
+import jakarta.enterprise.inject.Instance;
 import jakarta.enterprise.inject.Produces;
+import jakarta.enterprise.inject.build.compatible.spi.BuildCompatibleExtension;
+import jakarta.enterprise.inject.build.compatible.spi.Parameters;
+import jakarta.enterprise.inject.build.compatible.spi.Synthesis;
+import jakarta.enterprise.inject.build.compatible.spi.SyntheticBeanCreator;
+import jakarta.enterprise.inject.build.compatible.spi.SyntheticComponents;
 import jakarta.inject.Inject;
 import jakarta.interceptor.AroundInvoke;
 import jakarta.interceptor.Interceptor;
@@ -43,6 +49,7 @@ import java.util.List;
 import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -169,6 +176,57 @@ class RuntimeGenerationTest {
                   - client proxy app.Late_ClientProxy
                 """), late);
         assertEquals(List.of(new Generated(Kind.CLIENT_PROXY, "app.Early_ClientProxy")), generation.recordedAtBoot());
+    }
+
+    public interface Ledger {
+        String name();
+    }
+
+    /** Registers an application-scoped synthetic bean of an interface type, as noether-jpa-cdi does for its units. */
+    public static class LedgerExtension implements BuildCompatibleExtension {
+        @Synthesis
+        public void synthesize(SyntheticComponents components) {
+            components.addBean(Ledger.class).type(Ledger.class).scope(ApplicationScoped.class)
+                    .createWith(LedgerCreator.class);
+        }
+    }
+
+    public static class LedgerCreator implements SyntheticBeanCreator<Ledger> {
+        @Override
+        public Ledger create(Instance<Object> lookup, Parameters params) {
+            return () -> "main";
+        }
+    }
+
+    @Test
+    @DisplayName("the boot lists the interface proxy of a synthetic bean apart (BUG-20261113-19)")
+    void bootListsTheInterfaceProxyOfASyntheticBean() {
+        try (var container = VaubanContainer.builder().addBeanClass(LedgerExtension.class).build()) {
+            var generation = container.runtimeGeneration();
+            assertEquals(List.of(new Generated(Kind.SYNTHETIC_INTERFACE_PROXY, Ledger.class.getName())),
+                    generation.recordedAtBoot());
+
+            assertEquals("main", container.select(Ledger.class).name());
+            assertEquals(Set.copyOf(generation.recordedAtBoot()), generation.announced(), "announced once, at boot");
+        }
+    }
+
+    @Test
+    @DisplayName("the warning tells the extension of a synthetic bean to list its interface in @ClientProxies")
+    void syntheticBeanWarning() {
+        var warnings = new ArrayList<String>();
+        var generation = new RuntimeGeneration(warnings::add);
+        generation.generated(Kind.SYNTHETIC_INTERFACE_PROXY, "jakarta.persistence.EntityManager");
+        generation.bootCompleted();
+
+        var warning = warnings.getFirst();
+        assertTrue(warning.contains("""
+                1 class is generated at boot instead of at build time:
+                  - interface client proxy (java.lang.reflect.Proxy) of a synthetic bean jakarta.persistence.EntityManager
+                """), warning);
+        assertTrue(warning.contains("@io.vidocq.vauban.api.ClientProxies"), warning);
+        assertFalse(warning.contains("add vauban-processor to the annotation processor path"),
+                "a synthetic bean has no class to compile: " + warning);
     }
 
     @Test

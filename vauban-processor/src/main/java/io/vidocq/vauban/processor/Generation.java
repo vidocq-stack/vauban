@@ -53,6 +53,12 @@ final class Generation {
      */
     final Set<String> requiredOpens = new LinkedHashSet<>();
 
+    /** Whether the provider of {@code producerPackage} already creates the proxy keyed {@code key}. */
+    boolean hasProducerProxy(String producerPackage, String key) {
+        return producerProxiesByPackage.getOrDefault(producerPackage, List.of()).stream()
+                .anyMatch(proxy -> proxy.key().equals(key));
+    }
+
     void addProducerProxy(String producerPackage, String key, String proxyBinaryName) {
         producerProxiesByPackage.computeIfAbsent(producerPackage, k -> new ArrayList<>())
                 .add(new ComponentProviderGenerator.ProducerProxy(key, proxyBinaryName));

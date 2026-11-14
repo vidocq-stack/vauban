@@ -136,6 +136,11 @@ public class VaubanProcessor extends AbstractProcessor {
     private boolean generatedEarly;
     /** The late beans already reported, once each whatever the number of their annotations. */
     private final Set<String> reportedLateBeans = new HashSet<>();
+    /**
+     * The interfaces {@code @ClientProxies} lists, by binary name, per package of the class listing them: the proxied
+     * types of the normal-scoped synthetic beans an extension registers, which no processor sees (BUG-20261113-19).
+     */
+    private final Map<String, Set<String>> declaredInterfaceProxies = new TreeMap<>();
     private List<Class<?>> discoveredBceClasses;
 
     /**
@@ -169,6 +174,8 @@ public class VaubanProcessor extends AbstractProcessor {
 
     /** The service every Vauban bean archive provides, one implementation per package of beans. */
     private static final String COMPONENT_PROVIDER = "io.vidocq.vauban.api.VaubanComponentProvider";
+    /** The interfaces whose client proxies a module asks for, for the synthetic beans of its extension. */
+    private static final String CLIENT_PROXIES = io.vidocq.vauban.api.ClientProxies.class.getName();
 
     private List<Class<?>> overrideBceClasses;
 
@@ -292,6 +299,7 @@ public class VaubanProcessor extends AbstractProcessor {
                 indexAnnotatedTypes(roundEnv.getElementsAnnotatedWith(annotation), scanner);
             }
         }
+        collectDeclaredInterfaceProxies(annotations, roundEnv);
 
         // Companion processors (mansart-data-processor, cassini-processor and friends) emit their classes in the
         // first round; they surface here in the second. The pipeline waits for them, then runs in the first round
@@ -301,7 +309,7 @@ public class VaubanProcessor extends AbstractProcessor {
         // as Mansart Data's repository implementations (@Generated, @Singleton, @Inject), counts as quiet too: no
         // further class can come from them (VAU-APT-007). Without a second round, or with
         // -Avauban.generationRound=last, it runs in the last round, as it always did.
-        boolean quietRound = round >= 2 && accumulatedIndex.size() > 0
+        boolean quietRound = round >= 2 && (accumulatedIndex.size() > 0 || !declaredInterfaceProxies.isEmpty())
                 && indexedThisRound.stream().allMatch(this::carriesOnlyInertAnnotations);
         if (!roundEnv.processingOver()
                 && !(quietRound && earlyGeneration() && !foreignInheritedAnnotationIndexed())) return false;
@@ -491,7 +499,7 @@ public class VaubanProcessor extends AbstractProcessor {
         // Class.forName for it, and would ignore it on both sides (BUG-20260914-13).
         indexAnnotationTypes(indexBuilder, scanner);
         var index = indexBuilder.build();
-        if (index.size() == 0) return false;
+        if (index.size() == 0) return writeDeclaredInterfaceProxiesAlone();
 
         // --- BCE: Use extensions discovered in init() ---
         var aptClassLoader = VaubanProcessor.class.getClassLoader();
@@ -513,7 +521,7 @@ public class VaubanProcessor extends AbstractProcessor {
 
         var beans = new ArrayList<>(discovery.discoverBeans());
 
-        if (beans.isEmpty() && bceClasses.isEmpty()) return false;
+        if (beans.isEmpty() && bceClasses.isEmpty()) return writeDeclaredInterfaceProxiesAlone();
 
         // --- BCE: remaining phases (@Enhancement → @Validation) ---
         boolean bceProcessed = !bceClasses.isEmpty();
@@ -824,7 +832,97 @@ public class VaubanProcessor extends AbstractProcessor {
                 clientProxies.generateForProducer(bean, generation);
             }
         }
+        generateDeclaredInterfaceProxies(generation);
         return generation;
+    }
+
+    /**
+     * Reads the {@code @ClientProxies} of this round's classes: each listed type must be a public interface, as
+     * its proxy lives in the package of the class that lists it.
+     */
+    private void collectDeclaredInterfaceProxies(Set<? extends TypeElement> annotations, RoundEnvironment roundEnv) {
+        annotations.stream()
+                .filter(annotation -> annotation.getQualifiedName().contentEquals(CLIENT_PROXIES))
+                .flatMap(annotation -> roundEnv.getElementsAnnotatedWith(annotation).stream())
+                .forEach(this::collectDeclaredInterfaceProxies);
+    }
+
+    /** Records the interfaces the {@code @ClientProxies} of {@code element} lists, or reports why one cannot be. */
+    private void collectDeclaredInterfaceProxies(Element element) {
+        var elements = processingEnv.getElementUtils();
+        var pkg = elements.getPackageOf(element).getQualifiedName().toString();
+        for (var listed : listedTypes(element)) {
+            var name = elements.getBinaryName(listed).toString();
+            var problem = interfaceProxyProblem(listed);
+            if (problem != null) {
+                processingEnv.getMessager().printMessage(Diagnostic.Kind.ERROR,
+                        "@ClientProxies lists " + name + problem, element);
+            } else {
+                declaredInterfaceProxies.computeIfAbsent(pkg, k -> new TreeSet<>()).add(name);
+            }
+        }
+    }
+
+    /** The types the {@code @ClientProxies} of {@code element} lists. */
+    private static List<TypeElement> listedTypes(Element element) {
+        return element.getAnnotationMirrors().stream()
+                .filter(mirror -> ((TypeElement) mirror.getAnnotationType().asElement()).getQualifiedName()
+                        .contentEquals(CLIENT_PROXIES))
+                .flatMap(mirror -> mirror.getElementValues().values().stream())
+                .<TypeElement>mapMulti((value, listed) -> {
+                    if (value.getValue() instanceof List<?> types) {
+                        types.stream().map(VaubanProcessor::namedType).flatMap(Optional::stream).forEach(listed);
+                    }
+                })
+                .toList();
+    }
+
+    /** The type a {@code Class} member value names; none for a class the compilation cannot resolve. */
+    private static Optional<TypeElement> namedType(Object value) {
+        return value instanceof javax.lang.model.element.AnnotationValue member
+                && member.getValue() instanceof javax.lang.model.type.DeclaredType declared
+                ? Optional.of((TypeElement) declared.asElement())
+                : Optional.empty();
+    }
+
+    /** Why {@code listed} cannot have a proxy {@code implements} it in another package, or {@code null}. */
+    private static String interfaceProxyProblem(TypeElement listed) {
+        if (listed.getKind() != ElementKind.INTERFACE) {
+            return ", which is not an interface: a synthetic bean of a class type gets the client proxy of that class";
+        }
+        for (Element type = listed; type instanceof TypeElement; type = type.getEnclosingElement()) {
+            if (!type.getModifiers().contains(Modifier.PUBLIC)) {
+                return ", which is not public: its proxy implements it from another package";
+            }
+        }
+        return null;
+    }
+
+    /** The proxies of the interfaces {@code @ClientProxies} lists, each in the package of the class listing it. */
+    private void generateDeclaredInterfaceProxies(Generation generation) {
+        var elements = processingEnv.getElementUtils();
+        declaredInterfaceProxies.forEach((pkg, names) -> names.forEach(name -> {
+            var iface = TypeLookup.typeElementByBinaryName(elements, name);
+            if (iface != null) {
+                clientProxies.generateDeclaredInterfaceProxy(pkg, iface, generation);
+            }
+        }));
+    }
+
+    /**
+     * A module without a bean of its own may still list interfaces in {@code @ClientProxies}, an extension's module
+     * for one: their proxies, and the providers that create them.
+     *
+     * @return what {@link #process} returns
+     */
+    private boolean writeDeclaredInterfaceProxiesAlone() {
+        if (declaredInterfaceProxies.isEmpty()) {
+            return false;
+        }
+        var generation = new Generation();
+        generateDeclaredInterfaceProxies(generation);
+        componentProviders.writeAll(generation, Map.of());
+        return true;
     }
 
     /**

@@ -161,17 +161,36 @@ final class ClientProxyArtefacts {
     /** The static proxy {@code implements <Iface>} of a producer of a public interface (issue #42). */
     private void generateInterfaceProducerProxy(BeanDescriptor bean, TypeElement producedIface,
             Generation generation) {
-        var producerPkg = TypeLookup.packageOfFqn(bean.beanClass().value());
+        generateInterfaceProxy(TypeLookup.packageOfFqn(bean.beanClass().value()), producedIface, generation);
+    }
+
+    /**
+     * The static proxy {@code implements <Iface>} of an interface a class of {@code pkg} lists in
+     * {@code @ClientProxies}: the proxied type of a normal-scoped synthetic bean, which no processor sees
+     * (BUG-20261113-19).
+     */
+    void generateDeclaredInterfaceProxy(String pkg, TypeElement iface, Generation generation) {
+        generateInterfaceProxy(pkg, iface, generation);
+    }
+
+    /**
+     * The static proxy {@code implements <Iface>}, in {@code pkg}, registered in its provider under the key the
+     * container looks up; once per interface and package, a producer and a {@code @ClientProxies} sharing it.
+     */
+    private void generateInterfaceProxy(String pkg, TypeElement iface, Generation generation) {
         var ifaceFqn = processingEnv.getElementUtils()
-                .getBinaryName(producedIface).toString();
+                .getBinaryName(iface).toString();
+        var key = ifaceFqn + CLIENT_PROXY_SUFFIX;
+        if (generation.hasProducerProxy(pkg, key)) {
+            return;
+        }
         var ifaceSimple = ifaceFqn.substring(ifaceFqn.lastIndexOf('.') + 1)
                 .replace('$', '_');
-        var proxyBinaryName = producerProxyName(producerPkg, ifaceSimple, ifaceFqn);
-        var gen = InterfaceProxySourceRenderer.render(producedIface, proxyBinaryName,
+        var proxyBinaryName = producerProxyName(pkg, ifaceSimple, ifaceFqn);
+        var gen = InterfaceProxySourceRenderer.render(iface, proxyBinaryName,
                 processingEnv.getElementUtils(), processingEnv.getTypeUtils());
         output.writeSourceFile(gen.className(), gen.source());
-        var key = ifaceFqn + CLIENT_PROXY_SUFFIX;
-        generation.addProducerProxy(producerPkg, key, proxyBinaryName);
+        generation.addProducerProxy(pkg, key, proxyBinaryName);
         processingEnv.getMessager().printMessage(Diagnostic.Kind.NOTE,
                 "[Vauban] Generated build-time interface proxy " + proxyBinaryName
                         + " for " + ifaceFqn + " (key " + key + ") — no reflect.Proxy.");

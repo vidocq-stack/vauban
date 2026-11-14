@@ -185,6 +185,30 @@ When a phase cannot avoid the start environment, ask `ExtensionPhase.isBuildTime
 
 Test both ways: a container that runs the extension, and one built from `freezeExtensions` output, where the extension must not be instantiated (`extensionsAtStart().ranAtStart()` is empty) and the application behaves the same.
 
+[#synthetic-interface-proxies]
+=== Client proxies of synthetic beans [.tag-new]#NEW#
+
+A bean of a normal scope is injected through a client proxy, which the processor generates for the beans it sees: a class, or a producer, an interface-typed one included (a class that `implements` the interface, in the producer's package). A synthetic bean has no class the processor sees. The container used to proxy one of an interface type with a `java.lang.reflect.Proxy` at boot, every call going through reflection, with the boot warning of xref:internals.adoc#aot[AOT compatibility], whose advice to add `vauban-processor` did not apply (BUG-20261113-19).
+
+The extension that registers such a bean lists its interface in `@io.vidocq.vauban.api.ClientProxies`, on any class of a module compiled with `vauban-processor`:
+
+[source,java]
+----
+@ClientProxies({EntityManager.class, EntityManagerFactory.class})
+public class PersistenceExtension implements BuildCompatibleExtension {
+
+    @Synthesis
+    public void synthesize(SyntheticComponents components) {
+        components.addBean(EntityManagerFactory.class).type(EntityManagerFactory.class)
+                .scope(ApplicationScoped.class).createWith(FactoryCreator.class);
+    }
+}
+----
+
+The processor generates a class that `implements` each listed interface, in the package of the annotated class, forwarding every method, abstract or `default`, to the contextual instance. The module's `_VaubanComponents` provider creates it, and the processor writes that provider even for a module with no bean of its own; the module declares it, `provides io.vidocq.vauban.api.VaubanComponentProvider with <package>._VaubanComponents;`. The container looks the proxy up by its interface, so it serves every synthetic bean of that interface, whichever extension registers it. A listed type that is not a public interface fails the compilation.
+
+A brick that stays container-neutral, without a dependency on Vauban, leaves the list to the module that assembles it with Vauban, such as its Vidocq runtime extension. The boot warning names the proxy of a synthetic bean apart, _interface client proxy (java.lang.reflect.Proxy) of a synthetic bean_, with this advice.
+
 == Differences from CDI Full
 
 Vauban implements the _Lite_ profile. The following are absent:

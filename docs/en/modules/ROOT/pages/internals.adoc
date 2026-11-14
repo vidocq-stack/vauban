@@ -259,6 +259,13 @@ contextual instance. No dynamic proxy, no reflection. On the class path (non-APT
 |Zero `opens`; zero reflection on the build-time path (a `reflect.Proxy` only as the class-path
 fallback).
 
+|**Synthetic bean of an interface** [.tag-new]#NEW#
+|No class for the APT to see: the extension's module lists the interface in `@ClientProxies`, and the
+APT emits the same static class `implements <Iface>` in the package of the annotated class, registered
+under the interface's key (xref:concepts.adoc#synthetic-interface-proxies[Client proxies of synthetic
+beans]). Unlisted, the container falls back to a `java.lang.reflect.Proxy` at boot, announced apart.
+|Zero `opens`; zero reflection once listed (BUG-20261113-19).
+
 |**Producer of a class whose proxy must live in its own package** — a package-private or
 protected overridable member (declared or inherited), or no accessible constructor — *when a
 Vauban loader defines the library*
@@ -861,7 +868,10 @@ What the container relies on at run time:
   _VAUBAN — RUNTIME CODE GENERATION FALLBACK_, at the end of the boot lists every class it generated
   there or will generate, and a class generated later that the boot did not foresee gets its own
   warning (https://codefloe.com/Vidocq/vauban/issues/227[vauban#227^]). The fix is to put
-  `vauban-processor` on the annotation processor path of the module that declares those beans.
+  `vauban-processor` on the annotation processor path of the module that declares those beans. A
+  synthetic bean of an interface type has no class to compile: the warning lists its proxy apart, and
+  the fix is for its extension to list the interface in `@ClientProxies`
+  (xref:concepts.adoc#synthetic-interface-proxies[Client proxies of synthetic beans]).
 * **`MethodHandles`**, through `VaubanLookup`, for `@PostConstruct`, `@PreDestroy`, observer and
   interceptor methods.
 * **`LambdaMetafactory`** to lift the generated interceptor glue into the invocation chain.

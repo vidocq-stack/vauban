@@ -12,7 +12,7 @@ This page lists every artefact published by Vauban, the Java Modules packages th
 
 | `io.vidocq.vauban:vauban-api:{project-version}`
 | `compile`
-| Version marker (`Vauban.VERSION`), the generated-code SPI (`ProxyLink`, `VaubanComponentProvider`), and `AnnotationInstanceFactory`, which builds an annotation instance from members written as text (provided by `vauban-core`)
+| Version marker (`Vauban.VERSION`), the generated-code SPI (`ProxyLink`, `VaubanComponentProvider`), `ClientProxies`, which asks the processor for the client proxies of the interfaces synthetic beans have (xref:concepts.adoc#synthetic-interface-proxies[Client proxies of synthetic beans]), and `AnnotationInstanceFactory`, which builds an annotation instance from members written as text (provided by `vauban-core`)
 
 | `io.vidocq.vauban:vauban-core:{project-version}`
 | `runtime`
