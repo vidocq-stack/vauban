@@ -37,6 +37,7 @@ import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.nio.file.attribute.FileAttribute;
 import java.nio.file.attribute.PosixFilePermissions;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
@@ -97,6 +98,9 @@ public final class LoadTimeWeaving {
 
     /** Classes already handed to the agent in this JVM — repeated boots must not re-attach. */
     private static final Set<String> plannedSoFar = new LinkedHashSet<>();
+
+    /** Classes already announced as woven by a Vauban class loader in this JVM — said once, not at each boot. */
+    private static final Set<String> announcedSoFar = new LinkedHashSet<>();
 
     /** What to do when the beans need weaving and this tier cannot weave them. */
     private static final String REMEDY = "Either build with Maven/Gradle (build-time weaving),"
@@ -166,8 +170,7 @@ public final class LoadTimeWeaving {
         // the cdi-proxifier transformer weaves them at definition — no agent needed. The
         // planned set is still reported so deployment validation stands down.
         if (definedByVaubanClassLoader(loader)) {
-            LOG.log(System.Logger.Level.INFO, () -> "Unwoven normal-scoped bean(s) "
-                    + beans.keySet() + " will be woven by the Vauban class loader");
+            announceClassLoaderWeaving(beans.keySet());
             return new Result(beans.keySet(), null, Set.of());
         }
         if ("disabled".equalsIgnoreCase(System.getProperty(MODE_PROPERTY, ""))) {
@@ -250,6 +253,23 @@ public final class LoadTimeWeaving {
         } catch (IllegalArgumentException _) {
             // Unparseable superclass bytes (an encrypted sjar entry): the bean cannot be woven safely.
             return null;
+        }
+    }
+
+    /**
+     * Says once per JVM that the Vauban class loader weaves each of {@code beans}: a Vidocq start prepares twice, in
+     * its bootstrap and in the container builder, and both calls report the same plan (BUG-20261114-04).
+     */
+    private static void announceClassLoaderWeaving(Set<String> beans) {
+        var unannounced = new ArrayList<String>();
+        for (var bean : beans) {
+            if (announcedSoFar.add(bean)) {
+                unannounced.add(bean);
+            }
+        }
+        if (!unannounced.isEmpty()) {
+            LOG.log(System.Logger.Level.INFO, () -> "Unwoven normal-scoped bean(s) "
+                    + unannounced + " will be woven by the Vauban class loader");
         }
     }
 

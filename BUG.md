@@ -5,6 +5,29 @@ suspected cause, status. Updated on every investigation.
 
 ---
 
+## BUG-20261114-04 — In a Vauban class loader, each Vidocq start says twice that it will weave the same beans
+
+- **Date**: 2026-11-14
+- **Status**: FIXED on `fix/dependent-holder-proxy`
+- **Module**: `vauban-core` (`LoadTimeWeaving`)
+- **Symptom**: found while checking the Vidocq tutorial. One start of the application, from an IDE build in a Vauban
+  layer, prints the INFO line `Unwoven normal-scoped bean(s) [com.example.library.book.BookResource] will be woven by
+  the Vauban class loader` twice.
+- **Minimal repro**: a loader under a `VaubanClassLoader` whose `META-INF/vauban-beans.list` declares one
+  `@ApplicationScoped` class with a `String` constructor only; `LoadTimeWeaving.prepare(loader)` twice: the line is
+  logged at each call.
+- **Cause**: `prepare` runs twice per Vidocq start, by design: in `VidocqBootstrap`, before any extension can load an
+  application class, then in `VaubanContainerBuilder.build()`, the backstop of a plain Vauban start. Both calls must
+  return the planned beans, for deployment validation. The agent branch says what it attaches only for the beans no
+  earlier call planned (`plannedSoFar`), but the Vauban class loader branch logged on every call.
+- **Fix**: that branch names only the beans it has not announced yet in this JVM (`announcedSoFar`, apart from
+  `plannedSoFar`, so that an agent is still attached for those beans under a loader without a Vauban layer). The
+  returned `Result` is unchanged: both calls report the bean planned.
+- **Tests**: `LoadTimeWeavingCandidateSelectionTest.aVaubanLoaderAnnouncesEachBeanOnceAcrossRepeatedPreparations`
+  (two calls, the bean planned on both, its name logged once), red before: `expected: <1> but was: <2>`.
+- **Not covered**: the announcement is once per JVM and per class name. A second Vauban class loader in the same JVM
+  that weaves the same bean again, after a restart in development mode, says nothing more.
+
 ## BUG-20261114-03 — `vauban:generate` writes a client proxy for the `@Dependent` holder of a normal-scoped producer
 
 - **Date**: 2026-11-14

@@ -25,6 +25,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.lang.classfile.ClassFile;
@@ -126,5 +127,41 @@ class LoadTimeWeavingCandidateSelectionTest {
             assertNull(result.failure());
             assertEquals(Set.of(GOOD, CHILD), result.planned());
         }
+    }
+
+    /**
+     * BUG-20261114-04: a Vidocq start prepares twice, in its bootstrap and in the container builder. Both calls report
+     * the bean planned, for deployment validation, but the Vauban class loader's weaving is announced once.
+     */
+    @Test
+    void aVaubanLoaderAnnouncesEachBeanOnceAcrossRepeatedPreparations(@TempDir Path dir) throws IOException {
+        var bean = PACKAGE + "Announced";
+        var list = dir.resolve("vauban-beans.list");
+        Files.writeString(list, bean + "\n");
+        // The tests run inside io.vidocq.vauban.core, which does not read java.logging, the backend of
+        // System.Logger here: read it for the capture (as LifecycleObserverFailureTest does).
+        getClass().getModule().addReads(ModuleLayer.boot().findModule("java.logging").orElseThrow());
+        var out = new ByteArrayOutputStream();
+        var handler = new java.util.logging.StreamHandler(out, new java.util.logging.SimpleFormatter());
+        var logger = java.util.logging.Logger.getLogger(LoadTimeWeaving.class.getName());
+        var level = logger.getLevel();
+        logger.setLevel(java.util.logging.Level.INFO);
+        logger.addHandler(handler);
+        try (var vaubanLoader = VaubanClassLoader.of(List.of(), getClass().getClassLoader(), PluginContext.empty())) {
+            var loader = new Fixtures(vaubanLoader, list.toUri().toURL(),
+                    Map.of(bean, unwovenBean(bean, "java.lang.Object")));
+
+            var bootstrap = LoadTimeWeaving.prepare(loader);
+            var backstop = LoadTimeWeaving.prepare(loader);
+
+            assertEquals(Set.of(bean), bootstrap.planned());
+            assertEquals(Set.of(bean), backstop.planned(), "deployment validation needs the plan on both calls");
+        } finally {
+            logger.removeHandler(handler);
+            logger.setLevel(level);
+        }
+        handler.flush();
+        var logged = out.toString(StandardCharsets.UTF_8);
+        assertEquals(1, logged.split(java.util.regex.Pattern.quote(bean), -1).length - 1, logged);
     }
 }
