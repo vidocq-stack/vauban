@@ -60,8 +60,12 @@ writes classes to disk after javac finishes, which defeats the javac plugin — 
 container detects it at boot, before any bean class is loaded, and attaches the
 `vauban-weaver` agent to the current JVM: the same transformation is applied when the
 class is defined. You will see a Vauban warning listing the affected beans plus the JDK's
-standard dynamic-agent notice; behaviour is otherwise identical to a woven build. Disable
-this tier with `-Dvauban.weaving.loadtime=disabled`, or avoid it entirely in IntelliJ by
+standard dynamic-agent notice; behaviour is otherwise identical to a woven build. The same
+goes for a class your IDE recompiled over a Maven build, even with a no-arg constructor: the
+client proxy Maven shipped for it calls the woven constructor
+(xref:internals.adoc#recompiled-under-woven-proxy[a class recompiled under a woven proxy]). Disable
+this tier with `-Dvauban.weaving.loadtime=disabled` (the beans it would weave then fail the
+start, each named with the reason), or avoid it entirely in IntelliJ by
 enabling _Delegate IDE build/run actions to Maven_. See
 xref:internals.adoc#weaving-tiers[Internals — client-proxy weaving tiers] for the full
 mechanics.

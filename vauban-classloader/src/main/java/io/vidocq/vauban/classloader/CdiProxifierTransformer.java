@@ -107,7 +107,7 @@ public final class CdiProxifierTransformer implements ClassTransformerPlugin {
                 return null; // already woven (build tier, or an earlier definition)
             }
             boolean placed = placedChain(archive).contains(className);
-            if (!placed && !isWovenBean(bytes, archive)) {
+            if (!placed && !isWovenBean(className, bytes, archive)) {
                 return null;
             }
             // A placed type gets the marker whenever it lacks one: its constructor is third-party
@@ -153,15 +153,19 @@ public final class CdiProxifierTransformer implements ClassTransformerPlugin {
     /** Whether {@code name} carries the marker, or will once {@link #transform} has seen it. */
     private boolean willHaveMarker(String name, byte[] bytes, ArchiveContext archive) {
         if (ProxyLinkWeaver.hasMarkerConstructor(bytes)) return true;
-        if (!placedChain(archive).contains(name) && !isWovenBean(bytes, archive)) return false;
+        if (!placedChain(archive).contains(name) && !isWovenBean(name, bytes, archive)) return false;
         return BeanWeavingAnalysis.superChain(bytes, archive::classBytes, candidates(archive),
                 new HashMap<>()) != null;
     }
 
-    /** The load-time gate for a declared bean: normal-scoped, without a usable no-arg constructor. */
-    private boolean isWovenBean(byte[] bytes, ArchiveContext archive) {
-        return BeanWeavingAnalysis.needsMarker(bytes)
-                && BeanWeavingAnalysis.isNormalScopedBeanClass(bytes, archive::classBytes, scopeCache(archive));
+    /**
+     * The load-time gate for a declared bean, the same as the agent tier's: normal-scoped, and
+     * {@link BeanWeavingAnalysis#needsMarker needing the marker}. The scope is checked first: in an archive without
+     * a bean list every class comes here, and only a normal-scoped one may have its client proxy read.
+     */
+    private boolean isWovenBean(String name, byte[] bytes, ArchiveContext archive) {
+        return BeanWeavingAnalysis.isNormalScopedBeanClass(bytes, archive::classBytes, scopeCache(archive))
+                && BeanWeavingAnalysis.needsMarker(name, bytes, archive::classBytes);
     }
 
     /**
@@ -176,7 +180,7 @@ public final class CdiProxifierTransformer implements ClassTransformerPlugin {
                 var beanBytes = a.classBytes(bean);
                 if (beanBytes == null) continue;
                 try {
-                    if (!ProxyLinkWeaver.hasMarkerConstructor(beanBytes) && isWovenBean(beanBytes, a)) {
+                    if (!ProxyLinkWeaver.hasMarkerConstructor(beanBytes) && isWovenBean(bean, beanBytes, a)) {
                         set.add(bean);
                     }
                 } catch (IllegalArgumentException _) {

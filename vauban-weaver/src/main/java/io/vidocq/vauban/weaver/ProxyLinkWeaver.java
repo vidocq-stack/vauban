@@ -22,6 +22,7 @@ package io.vidocq.vauban.weaver;
 import java.lang.classfile.ClassFile;
 import java.lang.classfile.ClassTransform;
 import java.lang.classfile.MethodModel;
+import java.lang.classfile.constantpool.MethodRefEntry;
 import java.lang.constant.ClassDesc;
 import java.lang.constant.ConstantDescs;
 import java.lang.constant.MethodTypeDesc;
@@ -64,6 +65,7 @@ public final class ProxyLinkWeaver {
     private static final ClassDesc CD_PROXY_LINK = ClassDesc.of(PROXY_LINK_CLASS);
     private static final MethodTypeDesc MTD_MARKER =
             MethodTypeDesc.of(ConstantDescs.CD_void, CD_PROXY_LINK);
+    private static final String MARKER_DESCRIPTOR = MTD_MARKER.descriptorString();
     private static final MethodTypeDesc MTD_VOID = MethodTypeDesc.of(ConstantDescs.CD_void);
     /** The client proxy's delegate field — mirror of {@code ClientProxyShape.FIELD_DELEGATE}. */
     private static final String FIELD_DELEGATE = "$$delegate";
@@ -85,6 +87,23 @@ public final class ProxyLinkWeaver {
     public static boolean hasMarkerConstructor(byte[] classBytes) {
         for (var method : ClassFile.of().parse(classBytes).methods()) {
             if (isMarkerCtor(method)) return true;
+        }
+        return false;
+    }
+
+    /**
+     * {@code true} when {@code classBytes} refer to the {@code (ProxyLink)} constructor of {@code ownerBinaryName}, as
+     * a client proxy retargeted onto its bean's marker does. Reads the constant pool only.
+     */
+    public static boolean refersToMarkerConstructor(byte[] classBytes, String ownerBinaryName) {
+        var owner = ownerBinaryName.replace('.', '/');
+        for (var entry : ClassFile.of().parse(classBytes).constantPool()) {
+            if (entry instanceof MethodRefEntry ref
+                    && ref.name().equalsString(ConstantDescs.INIT_NAME)
+                    && ref.type().equalsString(MARKER_DESCRIPTOR)
+                    && ref.owner().asInternalName().equals(owner)) {
+                return true;
+            }
         }
         return false;
     }

@@ -1453,7 +1453,8 @@ public final class VaubanContainerBuilder {
         var tempResolver = new BeanResolver(descriptors, discovered.interceptors(), assignability, qualifierMatcher);
         var validator = new DeploymentValidator(
                 descriptors, tempResolver, index)
-                .loadTimeWoven(loadTimeWeaving.planned());
+                .loadTimeWoven(loadTimeWeaving.planned())
+                .loadTimeUnwoven(loadTimeWeaving.unwoven(), loadTimeWeaving.failure());
         var errors = validator.validate();
         if (errors.isEmpty()) {
             return;

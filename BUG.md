@@ -5,6 +5,47 @@ suspected cause, status. Updated on every investigation.
 
 ---
 
+## BUG-20261114-01 — A no-arg bean class recompiled without Vauban under its woven client proxy is not woven at load, and its first client proxy throws `NoSuchMethodError`
+
+- **Date**: 2026-11-14
+- **Status**: FIXED on `fix/unwoven-bean-weaving`
+- **Module**: `vauban-weaver` (`BeanWeavingAnalysis`, `ProxyLinkWeaver`), `vauban-core` (`LoadTimeWeaving`,
+  `DeploymentValidator`, `VaubanContainerBuilder`), `vauban-classloader` (`CdiProxifierTransformer`)
+- **Symptom**: found while checking the Vidocq tutorial. In a packaged Vidocq application, `BookResource.class` (an
+  `@ApplicationScoped`/`@RequestScoped` REST resource with an implicit public no-arg constructor) was replaced by a
+  class compiled with plain `javac -proc:none -g -parameters`, which is also what an IDE that recompiles
+  `target/classes` without Maven writes. The container starts, the startup report shows load-time weaving `none`, and
+  the first request fails with `NoSuchMethodError: 'void com.example.library.book.BookResource.<init>(io.vidocq.vauban.api.ProxyLink)'`
+  from `BookResource_ClientProxy.<init>` ← `_VaubanComponents.createClientProxy` ←
+  `ComponentProviders.createClientProxy` ← `InterceptorBeanWrapper.subclassProxy`.
+- **Minimal repro**: `ReplacedBeanClassModulePathTest` (vauban-module-it) takes the build output of `Collaborator`
+  (`@ApplicationScoped`, implicit no-arg constructor), drops the woven `<init>(ProxyLink)`, puts it next to the
+  shipped `Collaborator_ClientProxy` and a `vauban-beans.list`, runs `LoadTimeWeaving.prepare` and creates the proxy:
+  `NoSuchMethodError: 'void io.vidocq.vauban.moduleit.Collaborator.<init>(io.vidocq.vauban.api.ProxyLink)'`.
+- **Cause**: at build, the javac plugin (`VaubanProcessor.publishWeavePlan`, `WeavePlan`) and the Maven plugin
+  (`ProxyLinkWeaving`) weave the marker into every top-level normal-scoped managed bean, no-arg constructor or not, and
+  retarget its `<Bean>_ClientProxy` onto it. At start, `LoadTimeWeaving` and the class loader's
+  `CdiProxifierTransformer` planned a class only when `BeanWeavingAnalysis.needsMarker(bytes)` held: no marker and no
+  non-private no-arg constructor. A no-arg class was never planned, even when the proxy next to it calls
+  `<init>(ProxyLink)`, and `DeploymentValidator` checks proxyability only through injection points, never which
+  constructor the proxy calls. When weaving could not be installed, nothing failed the start either.
+- **Fix**: one rule, `BeanWeavingAnalysis.needsMarker(name, bytes, resolver)`, for both load-time tiers: a class
+  without the marker needs it when it has no non-private no-arg constructor, or when `<name>_ClientProxy` next to it
+  refers to its `<init>(Lio/vidocq/vauban/api/ProxyLink;)V` (`ProxyLinkWeaver.refersToMarkerConstructor`, constant
+  pool only). The proxy is read only for a class without the marker that has a no-arg constructor: a woven build
+  reads nothing more. Such a class is planned and woven like any other unwoven bean. When nothing can weave it (the
+  attach fails, or `-Dvauban.weaving.loadtime=disabled`, which now detects without attaching), `LoadTimeWeaving.Result`
+  names it in `unwoven()`, and `DeploymentValidator.loadTimeUnwoven` fails the start on each such managed bean,
+  injected or not, with the weaving failure as the reason (the message Vidocq reports as VAUBAN-009).
+- **Tests**: `BeanWeavingAnalysisTest` (vauban-weaver: the rule, and that a woven class or one without a no-arg
+  constructor reads no proxy); `LoadTimeWeavingTest` (the agent weaves the replaced class, a proxy chaining the no-arg
+  constructor needs nothing, the opt-out names what it leaves unwoven); `VaubanClassLoaderTest` (the class loader
+  weaves it); `ProxyableBeanValidationTest` and `UnwovenBeanStartFailureTest` (the start fails, once per bean, with
+  the reason); `ReplacedBeanClassModulePathTest` (vauban-module-it, on the real build output). Each failed first.
+- **Not covered**: a woven subclass whose marker chains `super((ProxyLink) null)` to a superclass recompiled without
+  the marker (checking it would read the superclass of every woven bean at start); a class path without
+  `vauban-weaver`, where `LoadTimeWeaving` cannot analyse anything.
+
 ## BUG-20261113-19 — A synthetic bean of an interface type always takes the run-time client proxy, with advice that does not apply
 
 - **Date**: 2026-11-13

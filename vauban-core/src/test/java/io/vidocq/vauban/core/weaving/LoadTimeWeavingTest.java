@@ -117,6 +117,39 @@ class LoadTimeWeavingTest {
     }
 
     @Test
+    @DisplayName("BUG-20261114-01: a no-arg class replaced under the proxy of a woven build is woven at definition")
+    void replacedNoArgClassIsWovenForItsProxy(@TempDir Path dir) throws Exception {
+        var fixture = "com.example.idebuild.ReplacedBeanG";
+        var classes = fixtureDir(dir, fixture, noArgFixture(fixture));
+        writeClass(classes, fixture + "_ClientProxy", proxyFixture(fixture, true));
+
+        try (var loader = new URLClassLoader(new URL[] {classes.toUri().toURL()},
+                getClass().getClassLoader())) {
+            var result = LoadTimeWeaving.prepare(loader);
+
+            assertNull(result.failure(), "attach must succeed: " + result.failure());
+            assertEquals(Set.of(fixture), result.planned(),
+                    "its client proxy chains to <init>(ProxyLink), which the replaced class lacks");
+            var proxy = Class.forName(fixture + "_ClientProxy", true, loader);
+            assertDoesNotThrow(() -> proxy.getDeclaredConstructor().newInstance(),
+                    "the first client proxy must not throw NoSuchMethodError");
+            assertTrue(Class.forName(fixture, false, loader).getDeclaredConstructor(ProxyLink.class).isSynthetic());
+        }
+    }
+
+    @Test
+    @DisplayName("a no-arg class whose proxy chains its no-arg constructor needs no weaving")
+    void noArgClassWithNoArgProxyNeedsNoWeaving(@TempDir Path dir) throws Exception {
+        var fixture = "com.example.idebuild.UnwovenBeanH";
+        var classes = fixtureDir(dir, fixture, noArgFixture(fixture));
+        writeClass(classes, fixture + "_ClientProxy", proxyFixture(fixture, false));
+        try (var loader = new URLClassLoader(new URL[] {classes.toUri().toURL()},
+                getClass().getClassLoader())) {
+            assertEquals(LoadTimeWeaving.Result.NONE, LoadTimeWeaving.prepare(loader));
+        }
+    }
+
+    @Test
     @DisplayName("a class outside every vauban-beans.list is never considered")
     void undeclaredClassesAreIgnored(@TempDir Path dir) throws Exception {
         var fixture = "com.example.idebuild.UnwovenBeanD";
@@ -141,14 +174,24 @@ class LoadTimeWeavingTest {
     }
 
     @Test
-    @DisplayName("-Dvauban.weaving.loadtime=disabled opts out entirely")
+    @DisplayName("-Dvauban.weaving.loadtime=disabled weaves nothing and names what it leaves unwoven")
     void optOut(@TempDir Path dir) throws Exception {
         var fixture = "com.example.idebuild.UnwovenBeanF";
+        var replaced = "com.example.idebuild.ReplacedBeanF";
         var classes = fixtureDir(dir, fixture, businessCtorOnlyFixture(fixture, true));
+        writeClass(classes, replaced, noArgFixture(replaced));
+        writeClass(classes, replaced + "_ClientProxy", proxyFixture(replaced, true));
+        Files.writeString(classes.resolve("META-INF/vauban-beans.list"), fixture + "\n" + replaced + "\n");
         System.setProperty(LoadTimeWeaving.MODE_PROPERTY, "disabled");
         try (var loader = new URLClassLoader(new URL[] {classes.toUri().toURL()},
                 getClass().getClassLoader())) {
-            assertEquals(LoadTimeWeaving.Result.NONE, LoadTimeWeaving.prepare(loader));
+            var result = LoadTimeWeaving.prepare(loader);
+
+            assertEquals(Set.of(), result.planned());
+            assertEquals(Set.of(fixture, replaced), result.unwoven(),
+                    "deployment validation must fail the start on them, not their first client proxy");
+            assertNotNull(result.failure());
+            assertTrue(result.failure().contains(LoadTimeWeaving.MODE_PROPERTY), result.failure());
         }
     }
 
@@ -195,6 +238,32 @@ class LoadTimeWeavingTest {
                                     MethodTypeDesc.of(ConstantDescs.CD_void));
                             cob.return_();
                         }));
+    }
+
+    /**
+     * The client proxy the processor ships for {@code beanName}: {@code public class <bean>_ClientProxy extends <bean>
+     * { public <bean>_ClientProxy() { super((ProxyLink) null); } }} after a woven build, {@code super()} otherwise.
+     */
+    private static byte[] proxyFixture(String beanName, boolean chainsToMarker) {
+        var beanDesc = ClassDesc.of(beanName);
+        var marker = MethodTypeDesc.of(ConstantDescs.CD_void, ClassDesc.of(ProxyLink.CLASS_NAME));
+        return ClassFile.of().build(ClassDesc.of(beanName + "_ClientProxy"), clb -> clb
+                .withSuperclass(beanDesc)
+                .withMethodBody(ConstantDescs.INIT_NAME, ConstantDescs.MTD_void, ClassFile.ACC_PUBLIC, cob -> {
+                    cob.aload(0);
+                    if (chainsToMarker) {
+                        cob.aconst_null();
+                    }
+                    cob.invokespecial(beanDesc, ConstantDescs.INIT_NAME,
+                            chainsToMarker ? marker : ConstantDescs.MTD_void);
+                    cob.return_();
+                }));
+    }
+
+    private static void writeClass(Path classes, String binaryName, byte[] bytes) throws IOException {
+        var classFile = classes.resolve(binaryName.replace('.', '/') + ".class");
+        Files.createDirectories(classFile.getParent());
+        Files.write(classFile, bytes);
     }
 
     /** Writes the fixture class plus a matching META-INF/vauban-beans.list. */

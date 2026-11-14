@@ -49,6 +49,8 @@ public final class DeploymentValidator {
             " must have a non-private no-arg constructor, or declare a non-private constructor"
             + " taking " + ClientProxyShape.PROXY_LINK_CLASS
             + " as its client-proxy entry point (Vauban extension, Vidocq/vauban#24)";
+    private static final String MSG_UNWOVEN_AT_LOAD = " lacks the " + ClientProxyShape.PROXY_LINK_CLASS
+            + " constructor its client proxy needs, and load-time weaving cannot add it (Vidocq/vauban#24): ";
 
     private final List<BeanDescriptor> beans;
     private final BeanResolver resolver;
@@ -60,6 +62,14 @@ public final class DeploymentValidator {
      * legitimately lacks the marker, so the unproxyable-constructor check must not fire.
      */
     private Set<String> loadTimeWoven = Set.of();
+
+    /**
+     * Bean classes that need the {@code (ProxyLink)} constructor and that load-time weaving cannot give it, with the
+     * reason: each fails the deployment, injected or not, where its client proxy would fail at first use
+     * (BUG-20261114-01).
+     */
+    private Set<String> loadTimeUnwoven = Set.of();
+    private String loadTimeUnwovenReason;
 
     /** Reflection-only fallback — proxyability checks are blind to unloadable classes. */
     public DeploymentValidator(List<BeanDescriptor> beans, BeanResolver resolver) {
@@ -83,6 +93,16 @@ public final class DeploymentValidator {
         return this;
     }
 
+    /**
+     * Declares classes that need the {@code (ProxyLink)} constructor and that load-time weaving leaves without it,
+     * and why; returns {@code this}.
+     */
+    public DeploymentValidator loadTimeUnwoven(Set<String> beanClassNames, String reason) {
+        this.loadTimeUnwoven = Set.copyOf(beanClassNames);
+        this.loadTimeUnwovenReason = reason;
+        return this;
+    }
+
     public List<ValidationError> validate() {
         var errors = new ArrayList<ValidationError>();
 
@@ -97,6 +117,7 @@ public final class DeploymentValidator {
         for (var bean : beans) {
             validateNormalScopedProducer(bean, errors);
             validateInterceptedBeanClass(bean, errors);
+            validateWovenAtLoad(bean, errors);
         }
 
         validateDuplicateNames(errors);
@@ -104,6 +125,25 @@ public final class DeploymentValidator {
         validateInterceptorConstructors(errors);
 
         return List.copyOf(errors);
+    }
+
+    /**
+     * A normal-scoped managed bean whose class load-time weaving leaves without the marker it needs: reported here,
+     * once, whether or not an injection point resolves to it (a REST resource is looked up, never injected).
+     */
+    private void validateWovenAtLoad(BeanDescriptor bean, List<ValidationError> errors) {
+        if (bean.kind() == BeanDescriptor.BeanKind.MANAGED && bean.scope().isNormal()
+                && loadTimeUnwoven.contains(bean.beanClass().value())) {
+            errors.add(new ValidationError(
+                    ValidationError.Kind.DEPLOYMENT_ERROR,
+                    PREFIX_NORMAL_SCOPED + bean.beanClass() + MSG_UNWOVEN_AT_LOAD + loadTimeUnwovenReason,
+                    bean));
+        }
+    }
+
+    /** Whether load-time weaving settled the marker of {@code className}: woven, or reported unwoven. */
+    private boolean settledByLoadTimeWeaving(String className) {
+        return loadTimeWoven.contains(className) || loadTimeUnwoven.contains(className);
     }
 
     /** Whether a managed bean's class, loaded from the deployment, is an interceptor. */
@@ -396,7 +436,7 @@ public final class DeploymentValidator {
         boolean hasProxyEntryCtor = !hasExplicitCtor // implicit no-arg constructor
                 || info.methods().stream().anyMatch(m -> m.isConstructor() && !m.isPrivate()
                         && (m.parameters().isEmpty() || ClientProxyShape.isProxyLinkConstructor(m)));
-        if (!hasProxyEntryCtor && !loadTimeWoven.contains(info.name().value())) {
+        if (!hasProxyEntryCtor && !settledByLoadTimeWeaving(info.name().value())) {
             // Distinct kind: the vauban-maven-plugin can weave the marker at process-classes,
             // so the processor downgrades this one to a warning (final members it cannot fix).
             errors.add(new ValidationError(
@@ -450,7 +490,7 @@ public final class DeploymentValidator {
         boolean hasProxyEntryCtor = java.util.Arrays.stream(clazz.getDeclaredConstructors())
                 .anyMatch(ctor -> !java.lang.reflect.Modifier.isPrivate(ctor.getModifiers())
                         && (ctor.getParameterCount() == 0 || ClientProxyShape.isProxyLinkConstructor(ctor)));
-        if (!hasProxyEntryCtor && !loadTimeWoven.contains(clazz.getName())) {
+        if (!hasProxyEntryCtor && !settledByLoadTimeWeaving(clazz.getName())) {
             errors.add(new ValidationError(
                     ValidationError.Kind.UNPROXYABLE_BEAN,
                     PREFIX_NORMAL_SCOPED + bean.beanClass() + MSG_UNPROXYABLE_CTOR,

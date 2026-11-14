@@ -71,8 +71,14 @@ import java.util.concurrent.TimeUnit;
  * short-lived child process running {@code io.vidocq.vauban.weaver.AttachBack} from the
  * agent jar (embedded in this artifact, extracted to a temporary file). The JDK prints its
  * standard dynamic-agent warning; disable this tier with
- * {@code -Dvauban.weaving.loadtime=disabled} (the unwoven beans then fail deployment
- * validation with the regular vauban#24 diagnostic).
+ * {@code -Dvauban.weaving.loadtime=disabled} (no agent is attached, and the beans that
+ * needed it then fail deployment validation).
+ *
+ * <p>A class with a non-private no-arg constructor needs no marker, unless the client proxy
+ * shipped next to it chains to one: a woven build wrote that proxy, and the class was
+ * recompiled since without Vauban, as an IDE does (BUG-20261114-01). Such a class is woven
+ * like any other; only a class without the marker that has a no-arg constructor has its
+ * proxy read.
  */
 public final class LoadTimeWeaving {
 
@@ -91,17 +97,29 @@ public final class LoadTimeWeaving {
     /** Classes already handed to the agent in this JVM — repeated boots must not re-attach. */
     private static final Set<String> plannedSoFar = new LinkedHashSet<>();
 
+    /** What to do when the beans need weaving and this tier cannot weave them. */
+    private static final String REMEDY = "Either build with Maven/Gradle (build-time weaving),"
+            + " run with -javaagent:vauban-weaver.jar=<plan>, or add the (ProxyLink) constructors manually.";
+
     /**
      * @param planned binary names of bean classes the agent weaves at load time in this
      *                JVM (deployment validation must not flag them as unproxyable)
      * @param failure human-readable reason when weaving was needed but could not be
      *                installed, {@code null} otherwise
+     * @param unwoven binary names of bean classes that need the {@code (ProxyLink)} marker and that nothing weaves:
+     *                deployment validation fails the start on them, where their client proxy would fail at first use
      */
-    public record Result(Set<String> planned, String failure) {
-        public static final Result NONE = new Result(Set.of(), null);
+    public record Result(Set<String> planned, String failure, Set<String> unwoven) {
+        public static final Result NONE = new Result(Set.of(), null, Set.of());
 
         public Result {
             planned = Set.copyOf(planned);
+            unwoven = Set.copyOf(unwoven);
+        }
+
+        /** Nothing woven: {@code unwoven} need the marker, and {@code failure} says why they will not get it. */
+        static Result notWoven(Set<String> unwoven, String failure) {
+            return new Result(Set.of(), failure, unwoven);
         }
     }
 
@@ -111,17 +129,16 @@ public final class LoadTimeWeaving {
      * Detects unwoven normal-scoped beans among the {@code META-INF/vauban-beans.list}
      * declarations visible from {@code loader} and, if any, installs the load-time weaving
      * agent. Must run before those classes are loaded. Idempotent per JVM and per class.
+     * With {@value #MODE_PROPERTY}{@code =disabled}, no agent is attached, and the beans that
+     * needed one are reported {@linkplain Result#unwoven() unwoven}.
      */
     public static synchronized Result prepare(ClassLoader loader) {
-        if ("disabled".equalsIgnoreCase(System.getProperty(MODE_PROPERTY, ""))) {
-            return Result.NONE;
-        }
         try {
             return doPrepare(loader);
         } catch (LinkageError weaverAbsent) {
             // A hand-crafted class/module path without vauban-weaver must not kill the
             // boot: unwoven beans then simply fail deployment validation as before.
-            return new Result(Set.of(), "Load-time weaving unavailable — vauban-weaver is "
+            return Result.notWoven(Set.of(), "Load-time weaving unavailable — vauban-weaver is "
                     + "not on the class/module path (" + weaverAbsent + ")");
         }
     }
@@ -131,7 +148,7 @@ public final class LoadTimeWeaving {
         try {
             declared = readBeanLists(loader);
         } catch (IOException e) {
-            return new Result(Set.of(), "Cannot read " + BEANS_LIST_RESOURCE + ": " + e);
+            return Result.notWoven(Set.of(), "Cannot read " + BEANS_LIST_RESOURCE + ": " + e);
         }
         if (declared.isEmpty()) {
             return Result.NONE;
@@ -149,7 +166,12 @@ public final class LoadTimeWeaving {
         if (definedByVaubanClassLoader(loader)) {
             LOG.log(System.Logger.Level.INFO, () -> "Unwoven normal-scoped bean(s) "
                     + beans.keySet() + " will be woven by the Vauban class loader");
-            return new Result(beans.keySet(), null);
+            return new Result(beans.keySet(), null, Set.of());
+        }
+        if ("disabled".equalsIgnoreCase(System.getProperty(MODE_PROPERTY, ""))) {
+            return Result.notWoven(beans.keySet(), "Load-time weaving is disabled (-D" + MODE_PROPERTY
+                    + "=disabled). Either build with Maven/Gradle (build-time weaving), remove the property,"
+                    + " or add the (ProxyLink) constructors manually.");
         }
         return attachAgentFor(beans);
     }
@@ -185,8 +207,8 @@ public final class LoadTimeWeaving {
     }
 
     /**
-     * The candidates that still lack the marker constructor, each with the chain to its superclass's
-     * constructor; superclasses that are candidates themselves join the map as the chains resolve.
+     * The candidates that {@link BeanWeavingAnalysis#needsMarker need the marker constructor}, each with the chain
+     * to its superclass's constructor; superclasses that are candidates themselves join the map as the chains resolve.
      */
     private static Map<String, ProxyLinkWeaver.SuperChain> unwovenBeans(Map<String, byte[]> bytesByName,
             BeanWeavingAnalysis.ByteResolver resolver) {
@@ -209,7 +231,7 @@ public final class LoadTimeWeaving {
             BeanWeavingAnalysis.ByteResolver resolver, Set<String> candidates,
             Map<String, ProxyLinkWeaver.SuperChain> beans) {
         try {
-            if (!BeanWeavingAnalysis.needsMarker(bytes)) {
+            if (!BeanWeavingAnalysis.needsMarker(name, bytes, resolver)) {
                 return null;
             }
             var chain = BeanWeavingAnalysis.superChain(bytes, resolver, candidates, beans);
@@ -242,7 +264,7 @@ public final class LoadTimeWeaving {
         if (newBeans.isEmpty()) {
             // Everything was planned by an earlier call in this JVM (e.g. the Vidocq
             // bootstrap ran before this container-builder backstop).
-            return new Result(beans.keySet(), null);
+            return new Result(beans.keySet(), null, Set.of());
         }
 
         var proxies = new LinkedHashSet<String>();
@@ -260,13 +282,11 @@ public final class LoadTimeWeaving {
         try {
             attach(plan);
         } catch (Exception e) {
-            return new Result(Set.of(), "Load-time weaving could not be installed ("
-                    + e.getMessage() + "). Either build with Maven/Gradle (build-time weaving),"
-                    + " run with -javaagent:vauban-weaver.jar=<plan>, or add the (ProxyLink)"
-                    + " constructors manually.");
+            return Result.notWoven(newBeans.keySet(), "Load-time weaving could not be installed ("
+                    + e.getMessage() + "). " + REMEDY);
         }
         plannedSoFar.addAll(newBeans.keySet());
-        return new Result(beans.keySet(), null);
+        return new Result(beans.keySet(), null, Set.of());
     }
 
     private static Set<String> readBeanLists(ClassLoader loader) throws IOException {

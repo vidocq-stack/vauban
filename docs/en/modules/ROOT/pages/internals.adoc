@@ -582,6 +582,27 @@ Hint: a trampoline main that re-layers the application (Vidocq: @VidocqMain + Vi
 agent entirely
 ----
 
+[#recompiled-under-woven-proxy]
+[.tag-new]#NEW# The same holds for one class the IDE recompiled over a Maven build, `BookResource` with
+its implicit public constructor, say. Maven wove the marker into it and shipped
+`BookResource_ClientProxy`, which calls `BookResource(ProxyLink)`; plain `javac` writes the class back
+without that constructor. A no-arg constructor is not enough here: the container reads the shipped
+proxy, sees what it calls, and weaves the class like any other. The start used to see the no-arg
+constructor, weave nothing, and the first request threw `NoSuchMethodError` from
+`BookResource_ClientProxy.<init>` (BUG-20261114-01).
+
+When nothing can weave such a class — the agent cannot be attached, or
+`-Dvauban.weaving.loadtime=disabled` — the start fails, whether or not anything injects the bean,
+and the reason closes the message:
+
+[source,text]
+----
+Normal-scoped bean com.acme.BookResource lacks the io.vidocq.vauban.api.ProxyLink constructor its client
+proxy needs, and load-time weaving cannot add it (Vidocq/vauban#24): Load-time weaving is disabled
+(-Dvauban.weaving.loadtime=disabled). Either build with Maven/Gradle (build-time weaving), remove the
+property, or add the (ProxyLink) constructors manually.
+----
+
 == APT pipeline — sequence diagram
 
 [plantuml]
@@ -660,6 +681,13 @@ Details worth knowing about the load-time tier:
 * **Plan-driven, no heuristics** — the agent only ever touches the classes named in the
   plan computed from the container's own index: unwoven beans get the marker constructor,
   their `_ClientProxy` companions are retargeted to it.
+* [.tag-new]#NEW# **What the shipped proxy expects** — a bean class needs the marker when it has
+  none and either has no non-private no-arg constructor, or its `<Bean>_ClientProxy` next to it
+  calls `<init>(ProxyLink)` all the same: a woven build wrote that proxy, and the class was
+  recompiled since without Vauban (<<recompiled-under-woven-proxy>>). The proxy's constant pool is
+  read only for a class that lacks the marker and has a no-arg constructor, so a woven build reads
+  nothing more. The agent tier and the class loader's transformer share this one rule
+  (`BeanWeavingAnalysis.needsMarker`).
 * **Ordering constraint** — adding a constructor is not a valid retransformation, so a
   class loaded before the attach can no longer be woven. The hook therefore runs inside
   `VaubanContainerBuilder.build()` right after the index is final and before bean
@@ -671,8 +699,10 @@ Details worth knowing about the load-time tier:
   the loader also defines a library whose proxies it places, the transformer weaves the listed
   produced types — which carry no scope annotation — and the superclasses they need, so a placed
   client proxy does not chain a third-party constructor.
-* **Opt-out** — `-Dvauban.weaving.loadtime=disabled`; unwoven beans then fail deployment
-  validation with the regular vauban#24 diagnostic. Explicit
+* **Opt-out** — `-Dvauban.weaving.loadtime=disabled`: no agent is attached, and every bean
+  that needed one fails the start [.tag-new]#NEW#, named with the reason, as when the agent cannot
+  be attached; a bean nothing injects included, where its first client proxy used to fail at run
+  time. In a Vauban layer the class loader still weaves, so nothing fails there. Explicit
   `-javaagent:vauban-weaver.jar=<plan>` is also supported (`Premain-Class`).
 
 [#module-descriptor]

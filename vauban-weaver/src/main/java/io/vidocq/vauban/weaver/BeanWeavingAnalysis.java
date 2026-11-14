@@ -49,6 +49,8 @@ public final class BeanWeavingAnalysis {
             "Ljakarta/enterprise/context/SessionScoped;",
             "Ljakarta/enterprise/context/ConversationScoped;");
     private static final String NORMAL_SCOPE_DESCRIPTOR = "Ljakarta/enterprise/context/NormalScope;";
+    /** The client proxy of a bean is {@code <bean binary name>_ClientProxy}, in its package. */
+    private static final String CLIENT_PROXY_SUFFIX = "_ClientProxy";
     private static final int ACC_INTERFACE = 0x0200;
     private static final int ACC_ABSTRACT = 0x0400;
 
@@ -106,10 +108,29 @@ public final class BeanWeavingAnalysis {
         }
     }
 
-    /** {@code true} when the class needs the woven marker: no marker, no usable no-arg. */
-    public static boolean needsMarker(byte[] bytes) {
-        return !ProxyLinkWeaver.hasMarkerConstructor(bytes)
-                && !ProxyLinkWeaver.hasNonPrivateNoArgConstructor(bytes);
+    /**
+     * Whether the bean class needs the woven {@code (ProxyLink)} marker: it lacks one, and either offers no
+     * non-private no-arg constructor for its client proxy to chain, or its client proxy,
+     * {@code <binaryName>_ClientProxy} next to it, chains to the marker all the same. Such a proxy was built against a
+     * woven class, and the class was replaced since by one compiled without Vauban, as an IDE that recompiles the
+     * build output does: without the marker, the proxy's first instance throws {@code NoSuchMethodError}
+     * (BUG-20261114-01).
+     *
+     * <p>The proxy is read only for a class that lacks the marker and has a no-arg constructor: a class built with
+     * the marker costs nothing more.
+     *
+     * @param resolver resolves the bytes of the client proxy, from where the bean's bytes come from
+     * @throws IllegalArgumentException when {@code bytes}, or the proxy's bytes, are not class-file bytes
+     */
+    public static boolean needsMarker(String binaryName, byte[] bytes, ByteResolver resolver) {
+        if (ProxyLinkWeaver.hasMarkerConstructor(bytes)) {
+            return false;
+        }
+        if (!ProxyLinkWeaver.hasNonPrivateNoArgConstructor(bytes)) {
+            return true;
+        }
+        var proxy = resolver.bytesOf(binaryName + CLIENT_PROXY_SUFFIX);
+        return proxy != null && ProxyLinkWeaver.refersToMarkerConstructor(proxy, binaryName);
     }
 
     /**

@@ -33,6 +33,7 @@ import org.junit.jupiter.api.Test;
 import java.util.List;
 import java.util.Set;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -124,6 +125,48 @@ class ProxyableBeanValidationTest {
         var errors = validate(bean);
 
         assertTrue(errors.isEmpty(), "expected no errors, got: " + errors);
+    }
+
+    // ---- Beans load-time weaving leaves unwoven (BUG-20261114-01) -------------------------------
+
+    private static final String WEAVING_OFF = "Load-time weaving is disabled (-Dvauban.weaving.loadtime=disabled).";
+
+    @Test
+    @DisplayName("a bean load-time weaving leaves unwoven fails the deployment, even when nothing injects it")
+    void beanLeftUnwovenFailsTheDeployment() {
+        var fqn = "com.acme.BookResource";
+        var index = index(classInfo(fqn, PUBLIC, List.of(ctor(PUBLIC))));
+        var beans = List.of(makeBean(fqn, List.of()));
+        var resolver = new BeanResolver(beans, new AssignabilityRules(index));
+
+        var errors = new DeploymentValidator(beans, resolver, index)
+                .loadTimeUnwoven(Set.of(fqn), WEAVING_OFF)
+                .validate();
+
+        // A REST resource is looked up, never injected: its first client proxy would throw NoSuchMethodError
+        assertEquals(1, errors.size(), "expected one error, got: " + errors);
+        var error = errors.getFirst();
+        assertEquals(DeploymentValidator.ValidationError.Kind.DEPLOYMENT_ERROR, error.kind());
+        assertTrue(error.message().contains(fqn) && error.message().contains("ProxyLink")
+                && error.message().contains(WEAVING_OFF), error.message());
+    }
+
+    @Test
+    @DisplayName("a bean left unwoven is reported once when a consumer injects it")
+    void beanLeftUnwovenIsReportedOnce() {
+        var fqn = "com.acme.Oidc";
+        var index = index(classInfo(fqn, PUBLIC, List.of(ctor(PUBLIC, param("com.acme.Config")))));
+        var beans = List.of(
+                makeBean(fqn, List.of()),
+                makeBean("com.acme.Consumer", List.of(injectionPointOn(fqn))));
+        var resolver = new BeanResolver(beans, new AssignabilityRules(index));
+
+        var errors = new DeploymentValidator(beans, resolver, index)
+                .loadTimeUnwoven(Set.of(fqn), WEAVING_OFF)
+                .validate();
+
+        assertEquals(1, errors.size(), "expected one error, got: " + errors);
+        assertTrue(errors.getFirst().message().contains(WEAVING_OFF), errors.getFirst().message());
     }
 
     // ---- Reflection-fallback case (real class, absent from the index) ---------------------------

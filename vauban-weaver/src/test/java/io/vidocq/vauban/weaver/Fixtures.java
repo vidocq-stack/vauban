@@ -51,6 +51,27 @@ final class Fixtures {
                         }));
     }
 
+    /** {@code public class <name> { public <name>() { super(); } }} — what javac writes for an implicit constructor. */
+    static byte[] beanWithNoArgCtor(String binaryName) {
+        return ClassFile.of().build(ClassDesc.of(binaryName), clb -> clb
+                .withSuperclass(ConstantDescs.CD_Object)
+                .withMethodBody(ConstantDescs.INIT_NAME, ConstantDescs.MTD_void, ClassFile.ACC_PUBLIC, cob -> cob
+                        .aload(0)
+                        .invokespecial(ConstantDescs.CD_Object, ConstantDescs.INIT_NAME, ConstantDescs.MTD_void)
+                        .return_()));
+    }
+
+    /** {@code public class <proxy> extends <bean> { public <proxy>() { super(); } }} */
+    static byte[] proxyChainingNoArgCtor(String proxyName, String beanName) {
+        var beanDesc = ClassDesc.of(beanName);
+        return ClassFile.of().build(ClassDesc.of(proxyName), clb -> clb
+                .withSuperclass(beanDesc)
+                .withMethodBody(ConstantDescs.INIT_NAME, ConstantDescs.MTD_void, ClassFile.ACC_PUBLIC, cob -> cob
+                        .aload(0)
+                        .invokespecial(beanDesc, ConstantDescs.INIT_NAME, ConstantDescs.MTD_void)
+                        .return_()));
+    }
+
     /** {@code public class <proxy> extends <bean> { public <proxy>() { super((String) null); } }} */
     static byte[] proxyChainingBusinessCtor(String proxyName, String beanName) {
         var proxyDesc = ClassDesc.of(proxyName);

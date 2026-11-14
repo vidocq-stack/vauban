@@ -73,6 +73,55 @@ class VaubanClassLoaderTest {
     }
 
     @Test
+    @DisplayName("BUG-20261114-01: a no-arg class replaced under the proxy of a woven build gains the marker")
+    void weavesNoArgClassReplacedUnderItsWovenProxy(@TempDir Path dir) throws Exception {
+        var beanName = "com.example.lapp.BookResource";
+        var root = dir.resolve("app");
+        var beanFile = root.resolve("com/example/lapp/BookResource.class");
+        Files.createDirectories(beanFile.getParent());
+        // javac -proc:none over the bean: no marker, the implicit public no-arg constructor
+        Files.write(beanFile, normalScopedNoArgClass(beanName));
+        // the proxy a woven build shipped next to it chains to <init>(ProxyLink)
+        Files.write(root.resolve("com/example/lapp/BookResource_ClientProxy.class"),
+                io.vidocq.vauban.weaver.ProxyLinkWeaver.retargetProxyConstructor(
+                        proxyChainingNoArgCtor(beanName + "_ClientProxy", beanName)));
+        Files.createDirectories(root.resolve("META-INF"));
+        Files.writeString(root.resolve("META-INF/vauban-beans.list"), beanName + "\n");
+
+        try (var loader = VaubanClassLoader.of(List.of(root), getClass().getClassLoader(),
+                PluginContext.empty())) {
+            var proxy = Class.forName(beanName + "_ClientProxy", true, loader);
+            assertDoesNotThrow(() -> proxy.getDeclaredConstructor().newInstance(),
+                    "the first client proxy must not throw NoSuchMethodError");
+            assertNotNull(Class.forName(beanName, false, loader).getDeclaredConstructor(
+                    Class.forName("io.vidocq.vauban.api.ProxyLink")));
+        }
+    }
+
+    @Test
+    @DisplayName("a no-arg class whose proxy chains its no-arg constructor is left as built")
+    void leavesNoArgClassWithNoArgProxyUnwoven(@TempDir Path dir) throws Exception {
+        var beanName = "com.example.lapp.Plain";
+        var root = dir.resolve("app");
+        var beanFile = root.resolve("com/example/lapp/Plain.class");
+        Files.createDirectories(beanFile.getParent());
+        Files.write(beanFile, normalScopedNoArgClass(beanName));
+        Files.write(root.resolve("com/example/lapp/Plain_ClientProxy.class"),
+                proxyChainingNoArgCtor(beanName + "_ClientProxy", beanName));
+        Files.createDirectories(root.resolve("META-INF"));
+        Files.writeString(root.resolve("META-INF/vauban-beans.list"), beanName + "\n");
+
+        try (var loader = VaubanClassLoader.of(List.of(root), getClass().getClassLoader(),
+                PluginContext.empty())) {
+            var proxy = Class.forName(beanName + "_ClientProxy", true, loader);
+            assertNotNull(proxy.getDeclaredConstructor().newInstance());
+            var bean = Class.forName(beanName, false, loader);
+            assertThrows(NoSuchMethodException.class, () -> bean.getDeclaredConstructor(
+                    Class.forName("io.vidocq.vauban.api.ProxyLink")));
+        }
+    }
+
+    @Test
     @DisplayName("a build-woven archive passes through unchanged (idempotence)")
     void wovenArchiveIsUntouched(@TempDir Path dir) throws Exception {
         var app = appArchive(dir, "com.example.lapp.Service", true);
@@ -230,6 +279,27 @@ class VaubanClassLoaderTest {
                                             ClassDesc.of("java.lang.String")));
                             cob.return_();
                         }));
+    }
+
+    /** {@code @ApplicationScoped public class <name> { public <name>() {} }} */
+    static byte[] normalScopedNoArgClass(String binaryName) {
+        return ClassFile.of().transformClass(ClassFile.of().parse(simpleClass(binaryName)),
+                java.lang.classfile.ClassTransform.endHandler(clb -> clb.with(
+                        RuntimeVisibleAnnotationsAttribute.of(java.lang.classfile.Annotation.of(
+                                ClassDesc.ofDescriptor(APPLICATION_SCOPED_DESC))))));
+    }
+
+    /** {@code public class <proxy> extends <bean> { public <proxy>() { super(); } }} */
+    static byte[] proxyChainingNoArgCtor(String proxyName, String beanName) {
+        var beanDesc = ClassDesc.of(beanName);
+        return ClassFile.of().build(ClassDesc.of(proxyName), clb -> clb
+                .withSuperclass(beanDesc)
+                .withMethodBody(ConstantDescs.INIT_NAME, MethodTypeDesc.of(ConstantDescs.CD_void),
+                        ClassFile.ACC_PUBLIC, cob -> cob
+                                .aload(0)
+                                .invokespecial(beanDesc, ConstantDescs.INIT_NAME,
+                                        MethodTypeDesc.of(ConstantDescs.CD_void))
+                                .return_()));
     }
 
     /** {@code public class <name> { public <name>() {} }} */
