@@ -5,6 +5,46 @@ suspected cause, status. Updated on every investigation.
 
 ---
 
+## BUG-20261114-05 — Every module of a Vauban layer reads the first archive's copy of a resource outside any package
+
+- **Date**: 2026-11-14
+- **Status**: FIXED on `fix/find-resource-module-name`
+- **Module**: `vauban-classloader` (`VaubanClassLoader`, `VaubanLayerFactory`)
+- **Symptom**: found in the Vidocq runtime. Its `ExtensionLoader` reads `META-INF/vidocq/extension.properties` from
+  each module of the application layer with `Module.getResourceAsStream`, and read 71 identical descriptors: every
+  module answered with the copy of the first archive that had the file. Vidocq worked around it by reading each
+  module through its `ModuleReader`.
+- **Minimal repro**: two modules in a layer of `VaubanLayerFactory.createAppLayer`, `com.example.alpha` (a jar) and
+  `com.example.beta` (a directory), both shipping `META-INF/vidocq/extension.properties` with a content of their
+  own, and `META-INF/alpha-only.txt` in alpha only: `beta.getResourceAsStream(SHARED)` gave alpha's content, and
+  `beta.getResourceAsStream("META-INF/alpha-only.txt")` alpha's file instead of `null`.
+- **Cause**: `findResource(String moduleName, String name)`, which `Module.getResourceAsStream`, and
+  `Class.getResource` on a class of a named module, reach, ignored `moduleName` and searched every archive of the
+  loader in order. The JDK contract is the resource of that module, `null` when it does not hold it or when no module
+  of that name is defined to the loader, and the class path of the unnamed module for a `null` name. A name inside a
+  package hid the flaw, since a package belongs to one module; a name outside any package (`META-INF/…`, a root file)
+  did not. `findClass(String moduleName, String name)` ignored the module the same way: `Class.forName(Module, name)`
+  still returned `null` for another module's class, because the JDK checks the module of the result, but only after
+  the loader had defined it.
+- **Fix**: `VaubanLayerFactory` hands the loader each module's name with its archive (`forLayer(Map<String, Path>)`).
+  `findResource(moduleName, name)` looks in that module's archive only, `null` for an unknown module; with a `null`
+  name it searches the class-path archives, all of them for a loader of `VaubanClassLoader.of`, none for a layer
+  loader. `findClass(moduleName, name)` defines a class only when its archive, or its produced type's for a placed
+  proxy, is that module's. The name-based `getResource`, `getResources` and `getResourceAsStream` still search every
+  archive.
+- **Tests**: `ModuleScopedLookupTest` (five tests, all red before):
+  `eachModuleReadsItsOwnCopy` (`expected: <id=beta> but was: <id=alpha>`),
+  `aModuleThatLacksAResourceFindsNothing` (beta got alpha's stream instead of `null`),
+  `theUnnamedModuleOfALayerLoaderHoldsNoResource` (a URL instead of `null`),
+  `aModuleFindsItsOwnClassesOnly` (`findClass(BETA, "com.example.alpha.Alpha")` returned the class),
+  `theUnnamedModuleOfAClassPathLoaderHoldsTheArchives` (`findResource(ALPHA, …)` on a class-path loader returned a
+  URL). `PlacedProxyTest.placedProxyBelongsToTheProducedTypesModule` guards the placed-proxy branch.
+- **Consumers**: the Vidocq runtime (the only consumer of `vauban-classloader`), read on `origin/main`:
+  `ExtensionLoader.descriptors` gets each module's own descriptor; `GenerateStamp` now reads the stamp, the bean index
+  and the processor markers of the application module itself, where it could read another module's copy. Foy's
+  `Module.getResourceAsStream` / `Class.getResourceAsStream` reads all name the class file of the type asked, which
+  lives in that type's module: unchanged. No consumer reads through the layer loader's unnamed module.
+
 ## BUG-20261114-04 — In a Vauban class loader, each Vidocq start says twice that it will weave the same beans
 
 - **Date**: 2026-11-14

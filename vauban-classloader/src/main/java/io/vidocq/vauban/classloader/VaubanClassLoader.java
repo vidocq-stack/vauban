@@ -42,10 +42,12 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.Enumeration;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.ServiceLoader;
 import java.util.Set;
@@ -96,6 +98,8 @@ public class VaubanClassLoader extends ClassLoader implements AutoCloseable {
     private final List<Archive> archives;
     /** internal class entry name (a/b/C.class) → owning archive. */
     private final Map<String, Archive> classIndex;
+    /** Module name → the archive of that module, for a loader that defines the modules of a layer. */
+    private final Map<String, Archive> moduleArchives;
     private final List<ClassTransformerPlugin> transformers;
     /**
      * Delegation order for classes present in the managed archives. {@code false}
@@ -111,6 +115,8 @@ public class VaubanClassLoader extends ClassLoader implements AutoCloseable {
     private final class Archive {
         final Path path;
         final ArchiveReader reader;
+        /** The module this archive holds in a layer; {@code null} on the class path of the unnamed module. */
+        final String moduleName;
         final ArchiveContext context;
         /**
          * The domain of every class defined from this archive: its location as the code source, as a
@@ -120,9 +126,10 @@ public class VaubanClassLoader extends ClassLoader implements AutoCloseable {
         /** The bean list once read: {@code null} until the first {@link #beansList()} call. */
         private volatile BeansList cachedBeansList;
 
-        Archive(Path path, ArchiveReader reader) {
+        Archive(Path path, ArchiveReader reader, String moduleName) {
             this.path = path;
             this.reader = reader;
+            this.moduleName = moduleName;
             this.domain = new ProtectionDomain(codeSource(path), null, VaubanClassLoader.this, null);
             this.context = new ArchiveContext() {
                 @Override
@@ -204,15 +211,33 @@ public class VaubanClassLoader extends ClassLoader implements AutoCloseable {
                 explicitSources, false);
     }
 
-    /** Self-first variant — reserved for module-layer definition ({@code VaubanLayerFactory}). */
-    static VaubanClassLoader forLayer(List<Path> archivePaths, ClassLoader parent,
+    /**
+     * Self-first variant — reserved for module-layer definition ({@code VaubanLayerFactory}).
+     *
+     * @param moduleArchives each module of the layer, by name, and the archive it is read from, in lookup order: the
+     *                       module-aware lookups of a module search its own archive only
+     */
+    static VaubanClassLoader forLayer(Map<String, Path> moduleArchives, ClassLoader parent,
             PluginContext pluginContext) throws IOException {
-        return new VaubanClassLoader("vauban-app-layer", archivePaths, parent, pluginContext,
-                List.of(), true);
+        var moduleNames = new HashMap<Path, String>();
+        moduleArchives.forEach((module, path) -> moduleNames.put(path, module));
+        return new VaubanClassLoader("vauban-app-layer", List.copyOf(new LinkedHashSet<>(moduleArchives.values())),
+                moduleNames, parent, pluginContext, List.of(), true);
     }
 
+    /** A loader whose archives are all on the class path of its unnamed module. */
     protected VaubanClassLoader(String name, List<Path> archivePaths, ClassLoader parent,
             PluginContext pluginContext, List<ByteSourcePlugin> explicitSources,
+            boolean selfFirst) throws IOException {
+        this(name, archivePaths, Map.of(), parent, pluginContext, explicitSources, selfFirst);
+    }
+
+    /**
+     * @param moduleNames the module each archive holds, by archive; an archive it does not name is on the class path
+     *                    of the unnamed module
+     */
+    private VaubanClassLoader(String name, List<Path> archivePaths, Map<Path, String> moduleNames,
+            ClassLoader parent, PluginContext pluginContext, List<ByteSourcePlugin> explicitSources,
             boolean selfFirst) throws IOException {
         super(name, parent);
         this.selfFirst = selfFirst;
@@ -220,10 +245,14 @@ public class VaubanClassLoader extends ClassLoader implements AutoCloseable {
         sources.addAll(sourcePlugins());
         this.archives = new ArrayList<>();
         this.classIndex = new LinkedHashMap<>();
+        this.moduleArchives = new HashMap<>();
         for (var path : archivePaths) {
             var reader = openArchive(path, sources, pluginContext);
-            var archive = new Archive(path, reader);
+            var archive = new Archive(path, reader, moduleNames.get(path));
             archives.add(archive);
+            if (archive.moduleName != null) {
+                moduleArchives.put(archive.moduleName, archive);
+            }
             for (var entry : reader.classEntries()) {
                 classIndex.putIfAbsent(entry, archive);
             }
@@ -474,15 +503,19 @@ public class VaubanClassLoader extends ClassLoader implements AutoCloseable {
     }
 
     /**
-     * Module-aware variant invoked by the JVM for classes of the modules a
-     * {@code ModuleLayer} defines to this loader ({@code VaubanLayerFactory}) — the
-     * inherited default returns {@code null}, which would make every layer class
-     * unloadable unless something had already triggered its definition through the plain
-     * name-based path. One loader serves the whole layer, so the module name adds nothing
-     * to the lookup.
+     * Module-aware variant, which {@code Class.forName(Module, String)}, and so {@code ServiceLoader}, reaches for
+     * the classes of the modules a {@code ModuleLayer} defines to this loader ({@code VaubanLayerFactory}) — the
+     * inherited default returns {@code null}, which would make every layer class unloadable unless something had
+     * already triggered its definition through the plain name-based path. One loader serves the whole layer, but a
+     * module holds only its own classes: {@code null} unless the class comes from the archive of module
+     * {@code moduleName}, or from the class path when it is {@code null} (BUG-20261114-05).
      */
     @Override
     protected Class<?> findClass(String moduleName, String name) {
+        var archive = definingArchive(name);
+        if (archive == null || !Objects.equals(archive.moduleName, moduleName)) {
+            return null;
+        }
         try {
             return findClass(name);
         } catch (ClassNotFoundException _) {
@@ -490,10 +523,35 @@ public class VaubanClassLoader extends ClassLoader implements AutoCloseable {
         }
     }
 
-    /** Module-aware resource lookup — same single-loader reasoning as above. */
+    /** The archive of the module {@code binaryName} belongs to: its own, or its produced type's for a placed proxy. */
+    private Archive definingArchive(String binaryName) {
+        var archive = classIndex.get(toEntry(binaryName));
+        if (archive != null) {
+            return archive;
+        }
+        var produced = producedTypeOf(binaryName);
+        return produced.isEmpty() ? null : classIndex.get(toEntry(produced));
+    }
+
+    /**
+     * Module-aware resource lookup, which {@code Module.getResourceAsStream}, and {@code Class.getResource} on a
+     * class of a named module, reach: the resource of the archive of module {@code moduleName}, or of the class path
+     * when it is {@code null}. Never another module's copy of a name outside any package, such as a
+     * {@code META-INF/} file (BUG-20261114-05); {@code null} when that module does not hold the resource, or when no
+     * module of that name is defined to this loader.
+     */
     @Override
     protected URL findResource(String moduleName, String name) {
-        return findResource(name);
+        if (moduleName != null) {
+            var archive = moduleArchives.get(moduleName);
+            return archive == null ? null : resourceUrl(archive, name);
+        }
+        return archives.stream()
+                .filter(archive -> archive.moduleName == null)
+                .map(archive -> resourceUrl(archive, name))
+                .filter(Objects::nonNull)
+                .findFirst()
+                .orElse(null);
     }
 
     /** The archive's location as a code source, without signers; {@code null} for a path no URL can name. */

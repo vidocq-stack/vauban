@@ -84,19 +84,19 @@ public final class VaubanLayerFactory {
             throw new IOException("No Java module found on the application path " + appPaths);
         }
 
-        // The loader manages the exact archives the resolved modules come from, so the
-        // class index, the resource lookup and the transformer contexts line up with the
-        // layer content.
-        var archives = new LinkedHashSet<Path>();
+        // The loader manages the exact archives the resolved modules come from, each under its
+        // module's name, so the class index, the resource lookup (a module's own archive for
+        // Module.getResourceAsStream) and the transformer contexts line up with the layer content.
+        var archives = new LinkedHashMap<String, Path>();
         Configuration configuration = parentLayer.configuration()
                 .resolveAndBind(finder, ModuleFinder.of(), roots);
         for (var resolved : configuration.modules()) {
             resolved.reference().location()
                     .flatMap(VaubanLayerFactory::archiveOf)
-                    .ifPresent(archives::add);
+                    .ifPresent(path -> archives.put(resolved.name(), path));
         }
 
-        var loader = VaubanClassLoader.forLayer(List.copyOf(archives), parentLoader, pluginContext);
+        var loader = VaubanClassLoader.forLayer(archives, parentLoader, pluginContext);
         var controller = ModuleLayer.defineModules(configuration, List.of(parentLayer),
                 moduleName -> loader);
         return new AppLayer(controller.layer(), loader, roots, controller);

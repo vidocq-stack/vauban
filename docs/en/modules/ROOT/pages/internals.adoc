@@ -810,7 +810,15 @@ archive ───▶ │ dir | jar | sjar | …  │ ─▶│ cdi-proxifier | (
   `java.lang.instrument` and without the JDK's dynamic-agent warning. Implementation
   note for custom layer loaders: the JVM loads layer-module classes through
   `findClass(String moduleName, String name)`, whose inherited default returns `null` —
-  both name-based and module-based lookups are overridden. Known limitation: custom JUL
+  both name-based and module-based lookups are overridden.
+  [[module-scoped-lookups]][.tag-new]#NEW# The module-based lookups answer for the module
+  they name, as the JDK's own loaders do. `Module.getResourceAsStream`, and
+  `Class.getResource` on a class of a layer module, read that module's archive only: a name
+  outside any package (`META-INF/…`, a root file) gives each module its own copy, and
+  `null` to a module that lacks it. `Class.forName(Module, name)` finds only that module's
+  classes. The loader's own `getResource`, `getResources` and `getResourceAsStream` still
+  search every archive of the layer, and the layer loader's unnamed module holds none
+  (BUG-20261114-05). Known limitation: custom JUL
   log handlers declared in `logging.properties` must live on the module path —
   `LogManager` instantiates handlers through the system class loader and cannot see the
   layer.

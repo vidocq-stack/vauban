@@ -31,11 +31,14 @@ import java.lang.constant.ConstantDescs;
 import java.lang.constant.MethodTypeDesc;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -163,7 +166,7 @@ class PlacedProxyTest {
         var app = appArchive(dir, true, true);
         try (var parent = VaubanClassLoader.of(List.of(parentRoot), getClass().getClassLoader(),
                 PluginContext.empty());
-             var layer = VaubanClassLoader.forLayer(List.of(lib, app), parent, PluginContext.empty())) {
+             var layer = VaubanClassLoader.forLayer(modules(lib, app), parent, PluginContext.empty())) {
             var proxy = Class.forName(PROXY, true, layer);
             assertSame(layer, proxy.getClassLoader(),
                     "the placed proxy must be defined by the layer loader, not found in the parent");
@@ -188,7 +191,7 @@ class PlacedProxyTest {
         var lib = libArchive(dir);
         try (var parent = VaubanClassLoader.of(List.of(parentRoot), getClass().getClassLoader(),
                 PluginContext.empty());
-             var layer = VaubanClassLoader.forLayer(List.of(lib), parent, PluginContext.empty())) {
+             var layer = VaubanClassLoader.forLayer(modules(lib), parent, PluginContext.empty())) {
             assertNotNull(Class.forName(name, false, parent), "the parent does know the name");
             assertThrows(ClassNotFoundException.class, () -> Class.forName(name, false, layer),
                     "com.example.lib belongs to the layer: its names must never come from the parent");
@@ -215,7 +218,7 @@ class PlacedProxyTest {
         var placed = app.resolve(PLACED);
         Files.createDirectories(placed.getParent());
         Files.write(placed, VaubanClassLoaderTest.proxyChainingBusinessCtor(PROXY, WIDGET));
-        try (var layer = VaubanClassLoader.forLayer(List.of(lib, app), getClass().getClassLoader(),
+        try (var layer = VaubanClassLoader.forLayer(modules(lib, app), getClass().getClassLoader(),
                 PluginContext.empty())) {
             var proxy = Class.forName(PROXY, true, layer);
             var proxyLink = Class.forName("io.vidocq.vauban.api.ProxyLink");
@@ -263,7 +266,34 @@ class PlacedProxyTest {
         });
     }
 
+    /** BUG-20261114-05: a module-aware lookup finds a placed proxy in the module of the type it is placed beside. */
+    @Test
+    @DisplayName("a placed proxy belongs to the module of its produced type, not to the module that ships its bytes")
+    void placedProxyBelongsToTheProducedTypesModule(@TempDir Path dir) throws Exception {
+        var lib = libArchive(dir);
+        var app = appArchive(dir, true, true);
+        try (var layer = VaubanClassLoader.forLayer(modules(lib, app), getClass().getClassLoader(),
+                PluginContext.empty())) {
+            assertNull(layer.findClass("app", PROXY), "app only ships the bytes: the proxy lands in lib's package");
+            assertNull(layer.findClass(null, PROXY), "every archive of a layer loader is a named module");
+            var proxy = layer.findClass("lib", PROXY);
+            assertNotNull(proxy);
+            assertEquals(WIDGET, proxy.getSuperclass().getName());
+            assertNull(layer.findClass("lib", "com.example.lib.Missing_ClientProxy"), "no such produced type");
+            assertNull(layer.findClass("lib", "com.example.lib.Missing"), "no such class");
+        }
+    }
+
     // ---------------------------------------------------------------- fixtures
+
+    /** A layer loader's archives, in lookup order, each the archive of a module named after its directory. */
+    private static Map<String, Path> modules(Path... archives) {
+        var modules = new LinkedHashMap<String, Path>();
+        for (var archive : archives) {
+            modules.put(archive.getFileName().toString(), archive);
+        }
+        return modules;
+    }
 
     /** Exploded library archive: {@code Widget} only — no beans list, it knows nothing about CDI. */
     static Path libArchive(Path dir) throws IOException {
