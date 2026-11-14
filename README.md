@@ -288,7 +288,11 @@ var beans = index.getAnnotatedClasses(DotName.of("jakarta.enterprise.context.App
 
 **Role**: Public entry point for applications.
 
-Provides the `Vauban` facade and re-exports the CDI 4.1 contracts.
+Provides the `Vauban` facade and re-exports the CDI 4.1 contracts. It also holds the contract between the generated
+code and the container (`VaubanComponentProvider`, `ProxyLink`) and `@ClientProxies`, which an extension puts on one
+of its classes to have the processor generate the client proxies of the interfaces its synthetic beans have: without
+it, the container proxies them with `java.lang.reflect.Proxy` at boot and announces a run-time code generation
+fallback.
 
 **Java module**: `io.vidocq.vauban.api` — depends on the Jakarta CDI API (transitive).
 
