@@ -38,6 +38,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.Properties;
 import java.util.Set;
+import java.util.TreeMap;
+import java.util.stream.Collectors;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -48,6 +50,10 @@ class FrozenExtensionsRecordTest {
     @TempDir
     Path output;
 
+    private static final FrozenExtensions.Deployment BUILT = new FrozenExtensions.Deployment(
+            "beanArchive=true;forced=[]", new TreeMap<>(Map.of(
+                    "com.acme.Greeting", "1a2b", "com.acme.StaticExtension", "3c4d+5e6f", "com.acme.Outer$Inner", "-")));
+
     private static FrozenExtensions aRecord(String fingerprint) {
         var stereotypes = new LinkedHashMap<String, List<String>>();
         stereotypes.put("com.acme.Shared", List.of("jakarta.enterprise.context.ApplicationScoped", "jakarta.inject.Named"));
@@ -56,7 +62,7 @@ class FrozenExtensionsRecordTest {
         synthetic.setProperty("bean.count", "1");
         synthetic.setProperty("bean.0.beanClass", "com.acme.Greeting");
         synthetic.setProperty("bean.0.param.text", "S:hello = world: \\ é");
-        return new FrozenExtensions(fingerprint,
+        return new FrozenExtensions(fingerprint, BUILT,
                 List.of("com.acme.StaticExtension", "com.acme.StartCheckExtension"),
                 Set.of("com.acme.StartCheckExtension"),
                 new FrozenExtensions.Discovery(List.of("com.acme.Extra"), List.of("com.acme.Tagged"),
@@ -87,6 +93,7 @@ class FrozenExtensionsRecordTest {
         var read = found.frozen();
         assertNotNull(read);
         assertEquals("abc123", read.fingerprint());
+        assertEquals(BUILT, read.deployment());
         assertEquals(List.of("com.acme.StaticExtension", "com.acme.StartCheckExtension"), read.extensions());
         assertEquals(Set.of("com.acme.StartCheckExtension"), read.startExtensions());
         assertEquals(aRecord("abc123").discovery(), read.discovery());
@@ -164,6 +171,52 @@ class FrozenExtensionsRecordTest {
         var incomplete = FrozenExtensions.find(loaderOf(output));
         assertNull(incomplete.frozen());
         assertTrue(incomplete.note().contains("cannot be read"), incomplete.note());
+    }
+
+    @Test
+    @DisplayName("a record written before the classes were listed is used, and says nothing of them")
+    void aRecordWithoutTheClasses() throws IOException {
+        aRecord("abc123").write(output);
+        Path main = output.resolve(FrozenExtensions.PATH);
+        Files.writeString(main, Files.readString(main).lines()
+                .filter(line -> !line.startsWith("class.") && !line.startsWith("settings="))
+                .collect(Collectors.joining("\n", "", "\n")));
+
+        var found = FrozenExtensions.find(loaderOf(output));
+
+        assertNull(found.note());
+        assertEquals("abc123", found.frozen().fingerprint());
+        assertEquals(FrozenExtensions.Deployment.UNKNOWN, found.frozen().deployment());
+        assertEquals("", BUILT.differencesFrom(FrozenExtensions.Deployment.UNKNOWN));
+    }
+
+    @Test
+    @DisplayName("what differs from the deployment a record was written for: classes added, removed, changed")
+    void theDifferencesNameTheClasses() {
+        var start = new FrozenExtensions.Deployment("beanArchive=true;forced=[]", new TreeMap<>(Map.of(
+                "com.acme.Greeting", "9999", "com.acme.StaticExtension", "3c4d+5e6f", "com.acme.Added", "7a7a")));
+
+        assertEquals("3 bean classes differ from the build's: com.acme.Added (added), com.acme.Greeting (changed),"
+                + " com.acme.Outer$Inner (removed)", start.differencesFrom(BUILT));
+        assertEquals("", BUILT.differencesFrom(BUILT));
+    }
+
+    @Test
+    @DisplayName("the settings that differ, and a long list cut short")
+    void theSettingsAndALongList() {
+        var many = new TreeMap<String, String>();
+        for (int i = 0; i < 25; i++) {
+            many.put("com.acme.C" + (char) ('a' + i), "1");
+        }
+        var start = new FrozenExtensions.Deployment("beanArchive=false;forced=[]", many);
+
+        String differences = start.differencesFrom(new FrozenExtensions.Deployment("beanArchive=true;forced=[]",
+                new TreeMap<>()));
+
+        assertTrue(differences.startsWith("the discovery settings differ from the build's (build: beanArchive=true;"
+                + "forced=[], start: beanArchive=false;forced=[]); 25 bean classes differ from the build's: "
+                + "com.acme.Ca (added), "), differences);
+        assertTrue(differences.endsWith("com.acme.Cj (added) and 15 more"), differences);
     }
 
     @Test

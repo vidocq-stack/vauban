@@ -447,9 +447,23 @@ class FrozenExtensionsTest {
         try (VaubanContainer container = deployment(STATIC_DEPLOYMENT).build()) {
             assertTrue(StaticExtension.RUNS.get() > 0, "one more bean class: the record is another deployment's");
             assertFalse(container.extensionsAtStart().frozen());
-            assertNotNull(container.extensionsAtStart().note());
-            assertTrue(container.extensionsAtStart().note().contains("fingerprint"),
-                    container.extensionsAtStart().note());
+            String note = container.extensionsAtStart().note();
+            assertNotNull(note);
+            assertTrue(note.contains("1 bean class differs from the build's: " + Plain.class.getName() + " (added)"),
+                    note);
+        }
+    }
+
+    @Test
+    @DisplayName("the note of a refused record names the class the start no longer has")
+    void aRefusedRecordNamesTheClassThatWentAway() {
+        assertTrue(deployment(STATIC_DEPLOYMENT).freezeExtensions(output).frozen());
+
+        try (VaubanContainer container = deployment(List.of(Promoted.class, StaticExtension.class)).build()) {
+            String note = container.extensionsAtStart().note();
+            assertFalse(container.extensionsAtStart().frozen());
+            assertTrue(note.contains(Plain.class.getName() + " (removed)"), note);
+            assertTrue(note.contains(FrozenExtensions.PATH), note);
         }
     }
 

@@ -19,6 +19,7 @@
  */
 package io.vidocq.vauban.core.container;
 
+import io.vidocq.vauban.core.extensions.FrozenExtensions;
 import io.vidocq.vauban.indexer.model.ClassInfo;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
@@ -65,6 +66,11 @@ final class DeploymentFingerprint {
             classes.put(className, Long.toHexString(ClassChecksums.ofModel(model)) + "+"
                     + Long.toHexString(ClassChecksums.ofCode(classFile)));
         }
+    }
+
+    /** What the fingerprint is computed from, for the record to keep and a refused start to compare. */
+    FrozenExtensions.Deployment deployment() {
+        return new FrozenExtensions.Deployment(settings, classes);
     }
 
     /** The fingerprint: the same for the same classes whatever the order they came in. */

@@ -666,13 +666,13 @@ public final class VaubanContainerBuilder {
 
         /** The extensions that asked whether they run at build time. */
         final Set<Class<?>> asked = java.util.concurrent.ConcurrentHashMap.newKeySet();
-        private String fingerprint;
+        private DeploymentFingerprint fingerprint;
         private List<Class<?>> extensions = List.of();
         private BceProcessor.DiscoveryResult discovery;
         private Map<DotName, List<VaubanClassConfig>> enhancements = Map.of();
         private BceProcessor.Result result;
 
-        void captured(String fingerprint, List<Class<?>> extensions, BceProcessor.DiscoveryResult discovery,
+        void captured(DeploymentFingerprint fingerprint, List<Class<?>> extensions, BceProcessor.DiscoveryResult discovery,
                 Map<DotName, List<VaubanClassConfig>> enhancements, BceProcessor.Result result) {
             this.fingerprint = fingerprint;
             this.extensions = extensions;
@@ -726,7 +726,8 @@ public final class VaubanContainerBuilder {
 
             var contexts = io.vidocq.vauban.core.extensions.FrozenContexts.of(
                     discovery.metaAnnotations().getCustomContexts());
-            return new FrozenExtensions(fingerprint, extensions.stream().map(Class::getName).toList(), atStart,
+            return new FrozenExtensions(fingerprint.value(), fingerprint.deployment(),
+                    extensions.stream().map(Class::getName).toList(), atStart,
                     ExtensionDiscovery.of(discovery).named(contexts),
                     io.vidocq.vauban.core.extensions.EnhancementPatchSerializer.additions(frozenModifications),
                     synthetic);
@@ -739,9 +740,11 @@ public final class VaubanContainerBuilder {
 
     /**
      * The record of the frozen extensions {@code loader} sees, if it is this deployment's: the one whose
-     * fingerprint is {@code fingerprint}. Another one is left alone, with a note saying so.
+     * fingerprint is {@code fingerprint}'s. Another one is left alone, with a note saying so and naming, when the
+     * record keeps them, the classes that differ. The note is logged at debug level only: the embedding runtime
+     * knows whether a refused record is expected (a test adds its classes) or a mistake, and says it at its level.
      */
-    private static FrozenExtensions.Found frozenExtensionsOf(ClassLoader loader, String fingerprint) {
+    private static FrozenExtensions.Found frozenExtensionsOf(ClassLoader loader, DeploymentFingerprint fingerprint) {
         var found = FrozenExtensions.find(loader);
         if (found.frozen() == null) {
             if (found.note() != null) {
@@ -749,10 +752,14 @@ public final class VaubanContainerBuilder {
             }
             return found;
         }
-        if (!found.frozen().fingerprint().equals(fingerprint)) {
-            String note = "the record of the frozen extensions (" + FrozenExtensions.PATH + ") has the fingerprint "
-                    + found.frozen().fingerprint() + ", this deployment " + fingerprint
-                    + ": a bean class was added, removed or recompiled since the build that wrote it";
+        String value = fingerprint.value();
+        if (!found.frozen().fingerprint().equals(value)) {
+            String differences = fingerprint.deployment().differencesFrom(found.frozen().deployment());
+            String note = "the record of the frozen extensions (" + FrozenExtensions.PATH + ") was written for "
+                    + "another deployment: " + (differences.isEmpty()
+                            ? "fingerprint " + found.frozen().fingerprint() + ", this deployment " + value
+                                    + ", a bean class was added, removed or recompiled since the build that wrote it"
+                            : differences);
             LOG.log(System.Logger.Level.DEBUG, "The extensions run at start: {0}.", note);
             return new FrozenExtensions.Found(null, note);
         }
@@ -785,7 +792,8 @@ public final class VaubanContainerBuilder {
      * frozen ones did and runs only those that left work for the start; a build capturing the extensions looks for
      * no record.
      */
-    private ExtensionPlan planExtensions(boolean capturing, ClassLoader discoveryClassLoader, String fingerprint) {
+    private ExtensionPlan planExtensions(boolean capturing, ClassLoader discoveryClassLoader,
+            DeploymentFingerprint fingerprint) {
         List<Class<?>> deploymentExtensions = beanClasses.stream()
                 .filter(ReflectionValidator::isBuildCompatibleExtension)
                 .toList();
@@ -903,7 +911,7 @@ public final class VaubanContainerBuilder {
                 DeploymentClassLoader.forDeployment(beanClasses, this.classLoader, discoveryClassLoader);
 
         // Which extensions run, and what stands for those the build froze (VAU-PERF-005).
-        var plan = planExtensions(capture != null, discoveryClassLoader, fingerprint.value());
+        var plan = planExtensions(capture != null, discoveryClassLoader, fingerprint);
         var frozen = plan.frozen();
         var bceClasses = plan.toRun();
         var unprocessedArchiveClasses = plan.toEnhance();
@@ -985,7 +993,7 @@ public final class VaubanContainerBuilder {
             }
             if (capture != null) {
                 // The build stops here: what the extensions did is all it wants.
-                capture.captured(fingerprint.value(), bceClasses, discoveryResult, combinedEnhMods, bceResult);
+                capture.captured(fingerprint, bceClasses, discoveryResult, combinedEnhMods, bceResult);
                 return null;
             }
             if (frozen != null) {

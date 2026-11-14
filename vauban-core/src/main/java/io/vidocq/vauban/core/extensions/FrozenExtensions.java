@@ -38,6 +38,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.Properties;
 import java.util.Set;
+import java.util.SortedMap;
+import java.util.TreeMap;
 import java.util.TreeSet;
 
 /**
@@ -57,6 +59,8 @@ import java.util.TreeSet;
  * Sorted and without a date, so that a build stays reproducible.
  *
  * @param fingerprint     the fingerprint of the deployment the extensions ran on
+ * @param deployment      what that fingerprint was computed from, so that a start it does not match can say what
+ *                        differs
  * @param extensions      the extensions that ran, in their order
  * @param startExtensions those that run again at start, because they asked or because the build named them: what
  *                        they did is not in the record
@@ -65,8 +69,9 @@ import java.util.TreeSet;
  *                        {@link EnhancementPatchSerializer#additions} gives them
  * @param synthetic       the synthetic beans and observers, as {@link SyntheticMetadataSerializer} writes them
  */
-public record FrozenExtensions(String fingerprint, List<String> extensions, Set<String> startExtensions,
-        FrozenExtensions.Discovery discovery, Map<String, List<AnnotationInfo>> enhancements, Properties synthetic) {
+public record FrozenExtensions(String fingerprint, FrozenExtensions.Deployment deployment, List<String> extensions,
+        Set<String> startExtensions, FrozenExtensions.Discovery discovery, Map<String, List<AnnotationInfo>> enhancements,
+        Properties synthetic) {
 
     public static final String PATH = "META-INF/vauban-frozen-extensions.properties";
     public static final String ENHANCEMENTS_PATH = "META-INF/vauban-frozen-enhancements.properties";
@@ -78,6 +83,8 @@ public record FrozenExtensions(String fingerprint, List<String> extensions, Set<
     private static final String FORMAT = "1";
     private static final String KEY_FORMAT = "format";
     private static final String KEY_FINGERPRINT = "fingerprint";
+    private static final String KEY_SETTINGS = "settings";
+    private static final String CLASS = "class.";
     private static final String EXTENSION = "extension";
     private static final String START = "start";
     private static final String SCANNED = "scanned";
@@ -129,6 +136,64 @@ public record FrozenExtensions(String fingerprint, List<String> extensions, Set<
 
         public static final Discovery NONE = new Discovery(List.of(), List.of(), List.of(), Map.of(), Map.of(),
                 List.of());
+    }
+
+    /**
+     * What the fingerprint of a deployment was computed from: the discovery settings of the builder and, for each
+     * bean class, the checksum of what the extensions see of it. A record keeps the build's, so that a start whose
+     * fingerprint differs can name the classes that make the difference.
+     *
+     * @param settings the builder settings that change what discovery finds, as one line; empty when unknown
+     * @param classes  each bean class by binary name, with its checksum; empty when unknown
+     */
+    public record Deployment(String settings, SortedMap<String, String> classes) {
+
+        /** The deployment of a record written before the records kept it. */
+        public static final Deployment UNKNOWN = new Deployment("", new TreeMap<>());
+
+        /** How many classes a note names before it only counts the others. */
+        private static final int NAMED = 10;
+
+        public Deployment {
+            classes = Collections.unmodifiableSortedMap(new TreeMap<>(classes));
+        }
+
+        /**
+         * What differs between this deployment, a start's, and {@code built}, the deployment a record was written
+         * for: the settings, and the classes added, removed or changed since, sorted by name. Empty when the two are
+         * the same, or when {@code built} is {@link #UNKNOWN}.
+         */
+        public String differencesFrom(Deployment built) {
+            if (built.equals(UNKNOWN)) {
+                return "";
+            }
+            var parts = new ArrayList<String>();
+            if (!settings.equals(built.settings)) {
+                parts.add("the discovery settings differ from the build's (build: " + built.settings + ", start: "
+                        + settings + ")");
+            }
+            var named = new ArrayList<String>();
+            var names = new TreeSet<>(classes.keySet());
+            names.addAll(built.classes.keySet());
+            for (String name : names) {
+                String now = classes.get(name);
+                String then = built.classes.get(name);
+                if (then == null) {
+                    named.add(name + " (added)");
+                } else if (now == null) {
+                    named.add(name + " (removed)");
+                } else if (!now.equals(then)) {
+                    named.add(name + " (changed)");
+                }
+            }
+            if (!named.isEmpty()) {
+                String shown = String.join(", ", named.subList(0, Math.min(NAMED, named.size())));
+                parts.add(named.size() + (named.size() == 1 ? " bean class differs" : " bean classes differ")
+                        + " from the build's: " + shown
+                        + (named.size() > NAMED ? " and " + (named.size() - NAMED) + " more" : ""));
+            }
+            return String.join("; ", parts);
+        }
     }
 
     /**
@@ -200,8 +265,23 @@ public record FrozenExtensions(String fingerprint, List<String> extensions, Set<
         try (InputStream in = sibling(location, ENHANCEMENTS_PATH).openStream()) {
             enhancements = EnhancementPatchSerializer.read(in);
         }
-        return new FrozenExtensions(fingerprint, indexed(main, EXTENSION), Set.copyOf(indexed(main, START)),
-                discovery, enhancements, load(sibling(location, SYNTHETIC_PATH)));
+        return new FrozenExtensions(fingerprint, deploymentOf(main), indexed(main, EXTENSION),
+                Set.copyOf(indexed(main, START)), discovery, enhancements, load(sibling(location, SYNTHETIC_PATH)));
+    }
+
+    /** The deployment a record keeps: {@link Deployment#UNKNOWN} for a record written before it kept one. */
+    private static Deployment deploymentOf(Properties main) {
+        String settings = main.getProperty(KEY_SETTINGS);
+        if (settings == null) {
+            return Deployment.UNKNOWN;
+        }
+        var classes = new TreeMap<String, String>();
+        for (String key : main.stringPropertyNames()) {
+            if (key.startsWith(CLASS)) {
+                classes.put(key.substring(CLASS.length()), main.getProperty(key));
+            }
+        }
+        return new Deployment(settings, classes);
     }
 
     private static Properties load(URL url) throws IOException {
@@ -277,6 +357,10 @@ public record FrozenExtensions(String fingerprint, List<String> extensions, Set<
                 """);
         line(out, KEY_FORMAT, FORMAT);
         line(out, KEY_FINGERPRINT, fingerprint);
+        if (!deployment.equals(Deployment.UNKNOWN)) {
+            line(out, KEY_SETTINGS, deployment.settings());
+            deployment.classes().forEach((name, checksum) -> line(out, CLASS + name, checksum));
+        }
         lines(out, EXTENSION, extensions);
         lines(out, START, new TreeSet<>(startExtensions));
         lines(out, SCANNED, discovery.scannedClasses());
