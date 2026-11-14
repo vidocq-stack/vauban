@@ -21,6 +21,7 @@ package io.vidocq.vauban.processor;
 
 import io.vidocq.vauban.core.bean.model.BeanDescriptor;
 import io.vidocq.vauban.core.proxy.ClientProxyEmitter;
+import io.vidocq.vauban.core.proxy.ClientProxyShape;
 import io.vidocq.vauban.core.proxy.ProducerProxyEligibility;
 import io.vidocq.vauban.indexer.model.DotName;
 import io.vidocq.vauban.indexer.model.TypeInfo;
@@ -184,9 +185,7 @@ final class ClientProxyArtefacts {
         if (generation.hasProducerProxy(pkg, key)) {
             return;
         }
-        var ifaceSimple = ifaceFqn.substring(ifaceFqn.lastIndexOf('.') + 1)
-                .replace('$', '_');
-        var proxyBinaryName = producerProxyName(pkg, ifaceSimple, ifaceFqn);
+        var proxyBinaryName = ClientProxyShape.producerProxyName(pkg, ifaceFqn);
         var gen = InterfaceProxySourceRenderer.render(iface, proxyBinaryName,
                 processingEnv.getElementUtils(), processingEnv.getTypeUtils());
         output.writeSourceFile(gen.className(), gen.source());
@@ -194,13 +193,6 @@ final class ClientProxyArtefacts {
         processingEnv.getMessager().printMessage(Diagnostic.Kind.NOTE,
                 "[Vauban] Generated build-time interface proxy " + proxyBinaryName
                         + " for " + ifaceFqn + " (key " + key + ") — no reflect.Proxy.");
-    }
-
-    /** {@code <producer package>.<simple name>$$<hash of the produced type>_ClientProxy}. */
-    private static String producerProxyName(String producerPkg, String producedSimple, String producedFqn) {
-        return (producerPkg.isEmpty() ? "" : producerPkg + ".")
-                + producedSimple + "$$"
-                + Integer.toHexString(producedFqn.hashCode()) + CLIENT_PROXY_SUFFIX;
     }
 
     /**
@@ -251,9 +243,7 @@ final class ClientProxyArtefacts {
         // A method the proxy leaves out is reported on the producer method, which the user
         // wrote: the produced type is often a class of a dependency, with no source.
         var producerSite = producerElement != null ? producerSite(bean, producerElement) : producedType;
-        var producedSimple = producedFqn.substring(producedFqn.lastIndexOf('.') + 1)
-                .replace('$', '_');
-        var proxyBinaryName = producerProxyName(producerPkg, producedSimple, producedFqn);
+        var proxyBinaryName = ClientProxyShape.producerProxyName(producerPkg, producedFqn);
         var unnameable = ClientProxyShapeFromElements.unnameableForwards(producedType, proxyPackage,
                 processingEnv.getElementUtils(), processingEnv.getTypeUtils());
         var throughHandles = ClientProxyShapeFromElements.methodHandleForwards(producedType, proxyPackage,
@@ -286,8 +276,8 @@ final class ClientProxyArtefacts {
     /**
      * Whether a produced type with this verdict can be proxied at all once the proxy sits in the
      * type's own package: a non-public overridable member and an inaccessible constructor are
-     * cross-package obstacles only. A final or sealed class, a final method or an abstract class
-     * are unproxyable anywhere (CDI 4.1 §3.10), so nothing is shipped for them.
+     * cross-package obstacles only. A final or sealed class and a final method are unproxyable
+     * anywhere (CDI 4.1 §3.10), so nothing is shipped for them; an abstract class is proxyable.
      */
     private static boolean isPlaceable(ProducerProxyEligibility.Reason verdict) {
         return verdict.placeable();

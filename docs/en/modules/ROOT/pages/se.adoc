@@ -208,8 +208,10 @@ package. The loader places the proxies it has bytes for; on a bare boot layer, t
 overcome. Static generation, nothing generated at runtime — the loader only *places* the class.
 |===
 
-A `final` or `sealed` class, a `final` method or an abstract class are unproxyable anywhere (CDI
-4.1 §3.10): nothing is shipped for them, and they remain deployment errors. Nothing is shipped
+A `final` or `sealed` class or a `final` method are unproxyable anywhere (CDI 4.1 §3.10): nothing is
+shipped for them, and they remain deployment errors. An abstract class is not unproxyable: its proxy
+forwards the abstract methods, and it sits in the producer's package unless a non-public member keeps
+it in the type's own [.tag-new]#NEW#. Nothing is shipped
 either for a produced type that is not `public`, or for a non-static nested one — a co-located proxy
 could serve those two, and does not today.
 

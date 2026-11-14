@@ -45,9 +45,9 @@ import java.util.function.Consumer;
  *
  * <p>Front-end specifics, mirrored from the historical source renderer:
  * <ul>
- *   <li><em>declared</em>, non-static, non-private, non-final, non-abstract instance
- *       methods, the inherited ones each front-end allows, and the interface default methods the
- *       bean inherits; erased signatures — for {@link #from}, rendered as source, the signature as a
+ *   <li><em>declared</em>, non-static, non-private, non-final instance methods, abstract ones
+ *       included, the inherited ones each front-end allows, and the interface methods the bean
+ *       inherits and no class of it implements; erased signatures — for {@link #from}, rendered as source, the signature as a
  *       member of the bean, its type variables bound, which may differ from the bytecode
  *       descriptor (BUG-20261004-06);</li>
  *   <li>the super constructor is the simplest non-private declared one — its parameter
@@ -230,10 +230,11 @@ public final class ClientProxyShapeFromElements {
     }
 
     /**
-     * The interface default methods {@code bean} inherits — those no class of the bean overrides,
-     * which {@link Elements#getAllMembers} already leaves out — forwarded like any public method.
-     * Left out, a call on the proxy runs the default body on the proxy itself, bypassing the
-     * contextual instance and its interceptors (BUG-20261004-02). As in
+     * The interface methods {@code bean} inherits — those no class of the bean overrides, which
+     * {@link Elements#getAllMembers} already leaves out — forwarded like any public method. Left out,
+     * a call on the proxy runs a default body on the proxy itself, bypassing the contextual instance
+     * and its interceptors (BUG-20261004-02), and finds no body at all for an abstract one, which an
+     * abstract proxied type leaves to its subclasses (BUG-20261114-02). As in
      * {@code RuntimeClientProxyGenerator.shapeOf}, and {@link InterfaceProxySourceRenderer} for an
      * interface-typed proxy.
      */
@@ -255,9 +256,13 @@ public final class ClientProxyShapeFromElements {
         }
     }
 
-    /** A {@code default} method the proxy may forward, by the same rules as a class method. */
+    /**
+     * An interface method the proxy may forward, by the same rules as a class method: a {@code default} one, or an
+     * abstract one an abstract proxied type leaves to its subclasses (BUG-20261114-02). As in
+     * {@code RuntimeClientProxyGenerator.shapeOf}.
+     */
     private static boolean isProxiedDefault(ExecutableElement m) {
-        return m.getModifiers().contains(Modifier.DEFAULT) && shouldProxy(m);
+        return m.getEnclosingElement().getKind().isInterface() && shouldProxy(m);
     }
 
     /**
@@ -424,13 +429,12 @@ public final class ClientProxyShapeFromElements {
                 superCtorThrown(bean, elements, types));
     }
 
-    /** Mirrors the bytecode generators: skip static/private/final/abstract/{@code $$}. */
+    /** Mirrors the bytecode generators: skip static/private/final/{@code $$}. */
     private static boolean shouldProxy(ExecutableElement m) {
         var mods = m.getModifiers();
         if (mods.contains(Modifier.STATIC)) return false;
         if (mods.contains(Modifier.PRIVATE)) return false;
         if (mods.contains(Modifier.FINAL)) return false;
-        if (mods.contains(Modifier.ABSTRACT)) return false;
         return !m.getSimpleName().toString().startsWith("$$");
     }
 

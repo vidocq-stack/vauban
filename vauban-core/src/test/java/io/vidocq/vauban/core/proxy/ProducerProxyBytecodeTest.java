@@ -22,6 +22,9 @@ package io.vidocq.vauban.core.proxy;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
+import java.time.Clock;
+import java.time.Instant;
+import java.time.ZoneOffset;
 import java.util.function.Supplier;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -78,6 +81,67 @@ class ProducerProxyBytecodeTest {
 
         // Forwarding: calling the produced-type method on the proxy runs on the delegate instance.
         assertEquals("hi", ((Greeter) proxy).greet());
+    }
+
+    /** An abstract produced type: one abstract method of its own, one an interface leaves to it, one concrete. */
+    public abstract static class Meter implements Supplier<String> {
+        protected Meter() {
+        }
+
+        public abstract int reading();
+
+        public String unit() {
+            return "kWh";
+        }
+    }
+
+    /** What the producer returns: the contextual instance the proxy forwards to. */
+    public static class FixedMeter extends Meter {
+        @Override
+        public int reading() {
+            return 42;
+        }
+
+        @Override
+        public String get() {
+            return "meter";
+        }
+
+        @Override
+        public String unit() {
+            return "MWh";
+        }
+    }
+
+    @Test
+    @DisplayName("an abstract produced type: the proxy forwards every method, abstract ones included (BUG-20261114-02)")
+    void anAbstractProducedTypeIsForwardedWhole() throws Exception {
+        var proxyName = "gen.producer.Meter$$cafe_ClientProxy";
+        var generated = RuntimeClientProxyGenerator.generateProducerProxyAt(Meter.class, proxyName);
+
+        var proxyClass = new ByteLoader().define(proxyName, generated.bytecode());
+        var meter = (Meter) proxyClass.getDeclaredConstructor(Supplier.class)
+                .newInstance((Supplier<?>) FixedMeter::new);
+
+        assertEquals(42, meter.reading(), "an abstract method of the class");
+        assertEquals("meter", meter.get(), "an abstract method of an interface the class does not implement");
+        assertEquals("MWh", meter.unit(), "a concrete method");
+    }
+
+    @Test
+    @DisplayName("java.time.Clock, abstract and of the boot loader: the proxy forwards to the instance")
+    void aJdkAbstractClassIsForwardedWhole() throws Exception {
+        var proxyName = "gen.producer.Clock$$beef_ClientProxy";
+        var generated = RuntimeClientProxyGenerator.generateProducerProxyAt(Clock.class, proxyName);
+        var fixed = Clock.fixed(Instant.EPOCH, ZoneOffset.UTC);
+
+        var proxyClass = new ByteLoader().define(proxyName, generated.bytecode());
+        var clock = (Clock) proxyClass.getDeclaredConstructor(Supplier.class).newInstance((Supplier<?>) () -> fixed);
+
+        assertEquals(Instant.EPOCH, clock.instant());
+        assertEquals(ZoneOffset.UTC, clock.getZone());
+        assertEquals(0L, clock.millis());
+        assertEquals(fixed, clock.withZone(ZoneOffset.UTC));
     }
 
     @Test

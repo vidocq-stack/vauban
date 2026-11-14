@@ -119,14 +119,16 @@ public final class RuntimeClientProxyGenerator {
     }
 
     /**
-     * The interface default methods no class above overrides: left out, a call on the proxy
-     * would run the default body on the proxy itself, bypassing the contextual instance and its
-     * interceptors (BUG-20261004-02). getMethods() lists the most specific default of each.
+     * The interface methods no class above overrides: a default one, which left out would run its
+     * body on the proxy itself, bypassing the contextual instance and its interceptors
+     * (BUG-20261004-02), and an abstract one an abstract proxied type leaves to its subclasses, which
+     * left out would have no body on the proxy at all (BUG-20261114-02). getMethods() lists the most
+     * specific of each.
      */
     private static void addInterfaceDefaults(Class<?> beanClass, boolean colocated,
                                              java.util.Set<String> proxiedSeen, List<ProxyMethodShape> methods) {
         for (var method : BeanMembers.inStableOrder(beanClass.getMethods())) {
-            if (method.isDefault() && shouldProxy(method)) {
+            if (method.getDeclaringClass().isInterface() && shouldProxy(method)) {
                 defaultMethodShape(beanClass, method, colocated, proxiedSeen).ifPresent(methods::add);
             }
         }

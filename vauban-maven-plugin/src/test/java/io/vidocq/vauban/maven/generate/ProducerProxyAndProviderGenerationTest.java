@@ -30,6 +30,8 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.vidocq.vauban.maven.enhance.fixture.Widget;
+import io.vidocq.vauban.maven.generate.abstractmeter.Meter;
+import io.vidocq.vauban.maven.generate.abstractproduced.Instruments;
 import io.vidocq.vauban.maven.generate.paths.Gadget;
 import io.vidocq.vauban.maven.generate.paths.Hidden;
 import io.vidocq.vauban.maven.generate.paths.Workshop;
@@ -40,7 +42,11 @@ import java.net.URLClassLoader;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Clock;
+import java.time.Instant;
+import java.time.ZoneOffset;
 import java.util.List;
+import java.util.function.Supplier;
 import java.util.stream.Stream;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -106,6 +112,45 @@ class ProducerProxyAndProviderGenerationTest {
         assertFalse(names(provider).contains(Workshop.Bench.class.getName()), "a nested bean keeps reflection");
         assertEquals(Workshop.class.getPackageName() + "." + PROVIDER,
                 Files.readString(output.resolve(PROVIDER_SERVICE), StandardCharsets.UTF_8).strip());
+    }
+
+    /**
+     * BUG-20261114-02: an abstract produced class is proxyable (CDI 4.1 §3.10), from the producer's package when its
+     * members allow it, a class of the JDK included. The plugin used to warn that the runtime would generate its
+     * proxy, which it could not do for {@code java.time.Clock}.
+     */
+    @Test
+    void anAbstractProducedClassGetsItsProxyInTheProducerPackage() throws Exception {
+        var classes = copyPackage(Instruments.class, tmp.resolve("classes"));
+        var output = tmp.resolve("output");
+
+        var result = VaubanGenerator.generate(new VaubanGenerator.Config(List.of(), classes, output, withoutHidden()));
+
+        assertFalse(result.warnings().stream().anyMatch(warning -> warning.contains("not build-time proxyable")),
+                result.warnings().toString());
+        var proxies = proxyFiles(packageDir(output, Instruments.class)).stream()
+                .filter(name -> name.startsWith("Clock$$") || name.startsWith("Meter$$")).toList();
+        assertEquals(2, proxies.size(), proxies.toString());
+        var provider = names(packageDir(output, Instruments.class).resolve(PROVIDER + ".class"));
+        var fixed = Clock.fixed(Instant.EPOCH, ZoneOffset.UTC);
+        var meter = Meter.fixed();
+        try (var loader = new URLClassLoader(new URL[] {output.toUri().toURL()}, getClass().getClassLoader())) {
+            for (var proxy : proxies) {
+                var proxyFqn = Instruments.class.getPackageName() + "." + proxy.replace(".class", "");
+                assertTrue(provider.contains(proxyFqn), "the provider creates " + proxyFqn);
+                var instance = loader.loadClass(proxyFqn).getConstructor(Supplier.class)
+                        .newInstance((Supplier<?>) () -> proxy.startsWith("Clock$$") ? fixed : meter);
+                if (instance instanceof Clock clock) {
+                    assertEquals(Instant.EPOCH, clock.instant());
+                    assertEquals(ZoneOffset.UTC, clock.getZone());
+                } else {
+                    var forwarded = (Meter) instance;
+                    assertEquals(42, forwarded.reading());
+                    assertEquals("meter", forwarded.get());
+                    assertEquals("MWh", forwarded.unit());
+                }
+            }
+        }
     }
 
     @Test

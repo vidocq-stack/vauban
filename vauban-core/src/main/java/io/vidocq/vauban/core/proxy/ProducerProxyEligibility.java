@@ -32,7 +32,9 @@ import java.util.List;
  * {@code TypeElement}, both through a {@link TypeView}. A produced class type can be proxied at build time in the
  * producer's own package only when it is fully public, since a cross-package proxy forwards every
  * method through a cast to the external type (reaching only public members) and chains to a
- * public/protected super constructor.
+ * public/protected super constructor. An abstract class qualifies like any other: CDI 4.1 §3.10 does
+ * not count it as unproxyable, and the proxy forwards its abstract methods to the contextual instance,
+ * which implements them (BUG-20261114-02).
  */
 public final class ProducerProxyEligibility {
 
@@ -45,7 +47,6 @@ public final class ProducerProxyEligibility {
         NOT_PUBLIC,
         FINAL_CLASS,
         SEALED_CLASS,
-        ABSTRACT_CLASS,
         INACCESSIBLE_NESTED,
         NO_ACCESSIBLE_CTOR,
         FINAL_VIRTUALS,
@@ -59,8 +60,8 @@ public final class ProducerProxyEligibility {
         /**
          * Whether a proxy for this verdict becomes possible once it sits <em>inside the produced
          * type's own package</em>. A non-public overridable member and an inaccessible constructor
-         * are cross-package obstacles only: co-located, the proxy overrides and forwards them. A
-         * final or sealed class, a final method and an abstract class are unproxyable anywhere
+         * are cross-package obstacles only: co-located, the proxy overrides and forwards them, an
+         * abstract one included. A final or sealed class and a final method are unproxyable anywhere
          * (CDI 4.1 §3.10), and nothing is shipped for a non-public or a non-static nested type.
          */
         public boolean placeable() {
@@ -107,9 +108,6 @@ public final class ProducerProxyEligibility {
         if (type.is(Flag.SEALED)) {
             return Reason.SEALED_CLASS;
         }
-        if (type.is(Flag.ABSTRACT)) {
-            return Reason.ABSTRACT_CLASS;
-        }
         if (type.isNested() && !type.is(Flag.STATIC)) {
             return Reason.INACCESSIBLE_NESTED;
         }
@@ -134,7 +132,8 @@ public final class ProducerProxyEligibility {
      * Walking upwards, the most derived override of a signature decides: the method it overrides is
      * not the one the proxy forwards. A bridge marks the signature it stands for as overridden. The
      * worst obstacle is the verdict, whatever the order the model lists the methods in: a final
-     * method, then a package-private one, then a protected one.
+     * method, then a package-private one, then a protected one. An abstract method is judged like any
+     * other: the proxy must override it, so from another package it must be public too.
      */
     private static Reason methodsVerdict(TypeView type) {
         var seen = new HashSet<String>();
@@ -156,7 +155,7 @@ public final class ProducerProxyEligibility {
         if (m.is(Flag.FINAL)) {
             return Reason.FINAL_VIRTUALS;
         }
-        if (m.is(Flag.ABSTRACT) || m.is(Flag.PUBLIC)) {
+        if (m.is(Flag.PUBLIC)) {
             return Reason.ELIGIBLE;
         }
         return m.is(Flag.PROTECTED) ? Reason.PROTECTED_VIRTUALS : Reason.PACKAGE_PRIVATE_VIRTUALS;

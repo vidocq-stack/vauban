@@ -978,6 +978,54 @@ class ClientProxyInheritanceCrossCheckTest {
                 "source producer shape");
     }
 
+    /**
+     * An abstract produced type (BUG-20261114-02): an abstract method of its own, one an interface leaves to it, and
+     * a concrete one. CDI 4.1 §3.10 does not count an abstract class as unproxyable.
+     */
+    public abstract static class AbstractMeter implements java.util.function.Supplier<String> {
+        protected AbstractMeter() {
+        }
+
+        public abstract int reading();
+
+        public String unit() { return "kWh"; }
+    }
+
+    /** An abstract method is judged by its access, as any other method. */
+    public abstract static class AbstractProtectedHook {
+        protected abstract String hook();
+
+        public String own() { return "own"; }
+    }
+
+    @Test
+    @DisplayName("an abstract produced type is proxyable, its abstract methods judged by their access, on both paths")
+    void abstractProducedTypesOnBothPaths() throws Exception {
+        for (var fixture : List.of(AbstractMeter.class, AbstractProtectedHook.class, java.time.Clock.class)) {
+            assertEquals(ProducerProxyEligibility.of(fixture).name(), eligibilityFromElements(fixture),
+                    "source and bytecode eligibility disagree on " + fixture.getSimpleName());
+        }
+        assertEquals(ProducerProxyEligibility.Reason.ELIGIBLE, ProducerProxyEligibility.of(AbstractMeter.class));
+        assertEquals(ProducerProxyEligibility.Reason.ELIGIBLE, ProducerProxyEligibility.of(java.time.Clock.class));
+        assertEquals(ProducerProxyEligibility.Reason.PROTECTED_VIRTUALS,
+                ProducerProxyEligibility.of(AbstractProtectedHook.class));
+    }
+
+    @Test
+    @DisplayName("a producer's proxy of an abstract class forwards every method, abstract ones included, on every path")
+    void abstractProducedTypeShapesForwardAbstractMethods() throws Exception {
+        // Left out, an abstract method has no body on the proxy: a source proxy does not compile, a
+        // bytecode one throws AbstractMethodError on the call.
+        Set<String> expected = Set.of("reading()", "unit()", "get()");
+        assertEquals(expected, runtimeProducerShape(AbstractMeter.class), "run-time producer shape");
+        assertEquals(expected, shapeFromElementsIn(AbstractMeter.class, "proxycrosscheck"), "source producer shape");
+        assertEquals(expected, colocatedShapeFromElements(AbstractMeter.class), "co-located shape");
+        Set<String> clock = Set.of("getZone()", "withZone(java.time.ZoneId)", "instant()", "millis()");
+        assertEquals(clock, runtimeProducerShape(java.time.Clock.class), "run-time producer shape of Clock");
+        assertEquals(clock, shapeFromElementsIn(java.time.Clock.class, "proxycrosscheck"),
+                "source producer shape of Clock");
+    }
+
     /** The Elements/Types pair handed to the callback. */
     record Env(Elements elements, Types types) {}
 

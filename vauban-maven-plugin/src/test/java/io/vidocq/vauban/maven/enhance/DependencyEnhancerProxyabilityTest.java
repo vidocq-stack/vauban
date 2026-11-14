@@ -92,7 +92,6 @@ class DependencyEnhancerProxyabilityTest {
         return Stream.of(
                 Arguments.of(Runnable.class, " is not a proxyable class"),
                 Arguments.of(FinalType.class, " is final (unproxyable)"),
-                Arguments.of(AbstractType.class, " is abstract (unproxyable)"),
                 Arguments.of(PrivateConstructorOnly.class, " has no non-private constructor (unproxyable)"),
                 Arguments.of(FinalMethod.class, " has a non-static final method name (unproxyable per CDI 4.1 §3.10)"));
     }
@@ -120,6 +119,34 @@ class DependencyEnhancerProxyabilityTest {
         assertNull(result.enhancedJar());
         assertEquals(List.of("enhance: cannot load com.acme.Missing (java.lang.ClassNotFoundException:"
                 + " com.acme.Missing)"), warnings);
+    }
+
+    /** An abstract class is proxyable (CDI 4.1 §3.10 does not list it): its proxy forwards the abstract methods. */
+    @Test
+    void anAbstractTypeGetsItsProxy() throws IOException {
+        var warnings = new ArrayList<String>();
+
+        var result = DependencyEnhancer.enhance(jarOf(AbstractType.class), COORDINATES, tmp.resolve("out"),
+                List.of(AbstractType.class.getName()), getClass().getClassLoader(), warnings);
+
+        assertEquals(List.of(), warnings);
+        assertEquals(List.of(AbstractType.class.getName()), result.enhancedTypes());
+        try (var enhanced = new JarFile(result.enhancedJar().toFile())) {
+            assertNotNull(enhanced.getEntry(AbstractType.class.getName().replace('.', '/') + "_ClientProxy.class"));
+        }
+    }
+
+    /** A jar holding the class file of {@code type} alone. */
+    private Path jarOf(Class<?> type) throws IOException {
+        var source = tmp.resolve(type.getSimpleName() + ".jar");
+        var entry = type.getName().replace('.', '/') + ".class";
+        try (var out = new JarOutputStream(Files.newOutputStream(source));
+                var in = getClass().getClassLoader().getResourceAsStream(entry)) {
+            out.putNextEntry(new JarEntry(entry));
+            out.write(in.readAllBytes());
+            out.closeEntry();
+        }
+        return source;
     }
 
     @Test

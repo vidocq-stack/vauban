@@ -33,7 +33,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
  * The verdict {@link ProducerProxyEligibility} gives a produced type: the constructor the proxy chains to, then
  * each method the proxy would forward.
  */
-@SuppressWarnings({"unused", "java:S100", "java:S1186", "java:S2094"})
+@SuppressWarnings({"unused", "java:S100", "java:S1186", "java:S1694", "java:S2094"})
 class ProducerProxyEligibilityVerdictTest {
 
     public static class PrivateConstructorOnly {
@@ -69,6 +69,37 @@ class ProducerProxyEligibilityVerdictTest {
     public static class ImplementsAbstract extends AbstractBase {
         @Override
         public void work() {
+        }
+    }
+
+    /**
+     * An abstract class is proxyable (CDI 4.1 §3.10 does not list it): the proxy forwards its abstract methods, and
+     * the one it leaves to an interface, to the contextual instance (BUG-20261114-02).
+     */
+    public abstract static class AbstractMeter implements java.util.function.Supplier<String> {
+        protected AbstractMeter() {
+        }
+
+        public abstract int reading();
+
+        public String unit() {
+            return "kWh";
+        }
+    }
+
+    /** An abstract method is judged by its access, as any other: a protected one cannot be forwarded from elsewhere. */
+    public abstract static class AbstractProtectedHook {
+        protected abstract void hook();
+    }
+
+    public abstract static class AbstractPackageHook {
+        abstract void hook();
+    }
+
+    public abstract static class AbstractWithFinal {
+        public abstract void work();
+
+        public final void pinned() {
         }
     }
 
@@ -155,6 +186,12 @@ class ProducerProxyEligibilityVerdictTest {
                 Arguments.of(ProtectedConstructor.class, Reason.ELIGIBLE),
                 Arguments.of(ProxyLinkConstructor.class, Reason.ELIGIBLE),
                 Arguments.of(ImplementsAbstract.class, Reason.ELIGIBLE),
+                Arguments.of(AbstractBase.class, Reason.ELIGIBLE),
+                Arguments.of(AbstractMeter.class, Reason.ELIGIBLE),
+                Arguments.of(java.time.Clock.class, Reason.ELIGIBLE),
+                Arguments.of(AbstractProtectedHook.class, Reason.PROTECTED_VIRTUALS),
+                Arguments.of(AbstractPackageHook.class, Reason.PACKAGE_PRIVATE_VIRTUALS),
+                Arguments.of(AbstractWithFinal.class, Reason.FINAL_VIRTUALS),
                 Arguments.of(ProtectedMethod.class, Reason.PROTECTED_VIRTUALS),
                 Arguments.of(PackagePrivateMethod.class, Reason.PACKAGE_PRIVATE_VIRTUALS),
                 Arguments.of(FinalMethod.class, Reason.FINAL_VIRTUALS),

@@ -68,8 +68,9 @@ public final class DependencyEnhancer {
 
     /**
      * Enhance {@code sourceJar} for the {@code typeFqns} that live in it, writing an enhanced copy to
-     * {@code outputDir}. Types that cannot be proxied (final, abstract, interface, no accessible
-     * constructor, or a non-static final method) are skipped with a warning.
+     * {@code outputDir}. Types that cannot be proxied (final, interface, no accessible constructor, or
+     * a non-static final method) are skipped with a warning. An abstract class is proxied (CDI 4.1
+     * §3.10 does not list it): its proxy forwards the abstract methods to the contextual instance.
      */
     public static Result enhance(Path sourceJar, String coordinates, Path outputDir,
             List<String> typeFqns, ClassLoader loader, List<String> warnings) throws IOException {
@@ -208,9 +209,6 @@ public final class DependencyEnhancer {
         int mods = type.getModifiers();
         if (Modifier.isFinal(mods)) {
             return Optional.of(" is final (unproxyable)");
-        }
-        if (Modifier.isAbstract(mods)) {
-            return Optional.of(" is abstract (unproxyable)");
         }
         if (java.util.Arrays.stream(type.getDeclaredConstructors())
                 .allMatch(c -> Modifier.isPrivate(c.getModifiers()))) {

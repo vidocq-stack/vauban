@@ -46,6 +46,45 @@ suspected cause, status. Updated on every investigation.
   the marker (checking it would read the superclass of every woven bean at start); a class path without
   `vauban-weaver`, where `LoadTimeWeaving` cannot analyse anything.
 
+## BUG-20261114-02 — A normal-scoped producer of an abstract class fails, `java.time.Clock` with a `NullPointerException`
+
+- **Date**: 2026-11-14
+- **Status**: FIXED on fix/abstract-produced-type-proxy
+- **Module**: `vauban-core` (`ProducerProxyEligibility`, `ForwardedMethods`, `RuntimeClientProxyGenerator`,
+  `InterceptorBeanWrapper`), `vauban-processor`, `vauban-maven-plugin`
+- **Symptom**: an application on Vidocq 0.4.0-SNAPSHOT started in-process (`VidocqBootstrap.create().configure()
+  .start()`) with `@ApplicationScoped class ClockProducer { @Produces @ApplicationScoped Clock clock() { return
+  Clock.systemUTC(); } }`: `CDI.current().select(Clock.class).get()` throws `DeploymentException: Failed to create
+  client proxy for normal-scoped bean …ClockProducer`, caused by `ContainerOperationException: Failed to define proxy
+  class for class java.time.Clock`, caused by `NullPointerException: Cannot invoke "ClassLoader.loadClass(String)"
+  because the return value of "Class.getClassLoader()" is null`. The reporter worked around it with `@Singleton`.
+- **Minimal repro**: the producer above in a `VaubanContainer`, then `container.select(Clock.class)`
+  (`AbstractProducedTypeProxyTest`); on the module path with the processor, `AbstractProducedTypeTest` of
+  `vauban-producer-module-it`.
+- **Cause**: `ProducerProxyEligibility` answered `ABSTRACT_CLASS` for any abstract produced type, with a Javadoc
+  claiming CDI 4.1 §3.10 makes it unproxyable. §3.10 lists classes without a non-private no-arg constructor, final
+  classes, classes with non-static final methods, primitives and arrays: not abstract classes. So the processor
+  shipped no proxy (a NOTE), `vauban:generate` warned that the run time would generate it, and the run-time fallback
+  generated `java.time.Clock_ClientProxy` in `java.time`: `loadOrDefineClassRobustly` called
+  `getClassLoader().loadClass` on the boot loader's `null`, and could not have defined a class in `java.time` anyway.
+  Every proxy generator also skipped abstract methods (`ForwardedMethods.isProxyable`, the interface-default walks),
+  so a proxy of an abstract class, wherever it came from, threw `AbstractMethodError` on such a call.
+- **Fix**: an abstract class is eligible like any class; an abstract method is judged by its access, as the others
+  (a protected one keeps the proxy in the type's own package). The proxy shape forwards abstract methods, those an
+  interface leaves to the class included, to the contextual instance, never through `super`. The processor and
+  `vauban:generate` then generate the proxy in the producer's package (`ClientProxyShape.producerProxyName`, now the
+  one naming rule of the three paths); `vauban:enhance-dependencies` no longer refuses an abstract type. The run-time
+  fallback defines the proxy next to the produced type when the build left it there or Vauban can define a class in
+  that package; otherwise, for a producer, in the producer's package through the producer's lookup, as the build
+  would have; a type that fits neither is a `DeploymentException` naming the type, its producer and scope, and
+  suggesting `@Singleton` or `@Dependent`. `Class.forName` replaces `getClassLoader().loadClass`.
+- **Tests**: `ProducerProxyEligibilityVerdictTest` (abstract, `Clock`, protected, package-private and final abstract
+  cases), `ProducerProxyBytecodeTest` (a call reaches the instance through a proxy of `Clock` and of an abstract
+  class), `AbstractProducedTypeProxyTest` (run time: `Clock` in the producer's package, an abstract class of another
+  package, `java.util.Random` refused with a `DeploymentException`), `ClientProxyInheritanceCrossCheckTest` and
+  `AbstractProducedTypeProxyEmissionTest` (processor), `ProducerProxyAndProviderGenerationTest` and
+  `DependencyEnhancerProxyabilityTest` (plugin), `AbstractProducedTypeTest` (module path, zero opens). All red before.
+
 ## BUG-20261113-19 — A synthetic bean of an interface type always takes the run-time client proxy, with advice that does not apply
 
 - **Date**: 2026-11-13

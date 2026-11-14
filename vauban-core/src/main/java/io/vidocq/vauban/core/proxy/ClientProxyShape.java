@@ -148,6 +148,18 @@ public record ClientProxyShape(
         }
     }
 
+    /**
+     * Binary name of the client proxy of a normal-scoped producer's {@code producedBinaryName}, placed in the
+     * producer's package (issue #42): {@code <producer package>.<simple name>$$<hash of the produced type>_ClientProxy},
+     * a {@code $} of a nested type's simple name turned into {@code _}. The processor, {@code vauban:generate} and
+     * the run-time fallback name it alike (BUG-20261114-02).
+     */
+    public static String producerProxyName(String producerPackage, String producedBinaryName) {
+        var producedSimple = producedBinaryName.substring(producedBinaryName.lastIndexOf('.') + 1).replace('$', '_');
+        return (producerPackage.isEmpty() ? "" : producerPackage + ".")
+                + producedSimple + "$$" + Integer.toHexString(producedBinaryName.hashCode()) + PROXY_SUFFIX;
+    }
+
     /** Binary name of the generated proxy: {@code beanBinaryName + "_ClientProxy"}. */
     public String proxyClassName() {
         return beanBinaryName + PROXY_SUFFIX;

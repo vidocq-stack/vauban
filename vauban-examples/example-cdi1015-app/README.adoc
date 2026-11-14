@@ -261,8 +261,9 @@ Three `--add-opens`-free levers, all documented in the reference docs:
   (`Vauban-Enhanced-From`, `Vauban-Enhanced-Digest`). It is a modified redistribution of a
   third-party artefact — that governance cost is what makes the goal opt-in.
 
-Truly unproxyable types in the specification's sense (`final` or `sealed` class, `final` method,
-abstract class) remain deployment errors — no trick saves those.
+Truly unproxyable types in the specification's sense (`final` or `sealed` class, `final` method)
+remain deployment errors — no trick saves those. An abstract class is not one of them: its proxy
+forwards the abstract methods to the contextual instance.
 
 See the link:https://doc.vidocq.dev/vauban/dev/internals.html#proxy-strategies[client-proxy strategies] in the Vauban docs for
 the full decision table.

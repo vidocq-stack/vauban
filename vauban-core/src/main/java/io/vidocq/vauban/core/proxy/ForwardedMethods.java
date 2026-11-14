@@ -91,11 +91,14 @@ public final class ForwardedMethods {
     }
 
     /**
-     * Whether a proxy may override {@code m}: neither static, private, final nor abstract, neither a bridge nor
-     * generated plumbing, nor a finalizer or {@code clone()}, which no proxy forwards.
+     * Whether a proxy may override {@code m}: neither static, private nor final, neither a bridge nor generated
+     * plumbing, nor a finalizer or {@code clone()}, which no proxy forwards. An abstract method is forwarded like any
+     * other: the proxy never calls {@code super}, and the contextual instance implements it. Only an abstract proxied
+     * type has one the walk reaches, since a concrete class overrides every abstract method above it, and CDI 4.1
+     * §3.10 does not count an abstract class as unproxyable (BUG-20261114-02).
      */
     public static boolean isProxyable(TypeView.Member m) {
-        if (m.is(Flag.STATIC) || m.is(Flag.PRIVATE) || m.is(Flag.FINAL) || m.is(Flag.ABSTRACT) || m.isBridge()) {
+        if (m.is(Flag.STATIC) || m.is(Flag.PRIVATE) || m.is(Flag.FINAL) || m.isBridge()) {
             return false;
         }
         var name = m.name();

@@ -125,8 +125,12 @@ xref:internals.adoc#proxy-strategies[Internals — one strategy per case].
 |Nothing.
 
 |`@Produces` returning a **fully public** class of another module — even one that knows nothing
- about CDI
-|The proxy is generated at build time in *your* producer's package.
+ about CDI, an **abstract** one included, such as `java.time.Clock` [.tag-new]#NEW#
+|The proxy is generated at build time in *your* producer's package. It forwards every method to
+ what your producer returns, the abstract ones included: CDI 4.1 §3.10 does not count an abstract
+ class as unproxyable. Built without the processor, the container generates the same proxy at run
+ time, in the same package, when it cannot define a class in the produced type's own package (a
+ class of the JDK, a package not opened to it).
 |Nothing.
 
 |`@Produces` returning an **interface**
@@ -159,13 +163,17 @@ launcher, refuses deployment and names the way out:
 
 [source,text]
 ----
-Cannot reflectively access com.acme.lib.FraudScreen on the module path. Either (preferred)
-provide a generated VaubanComponentProvider for its module — the APT or packaging plugin emits
-a `_VaubanComponents` and the module declares
-`provides io.vidocq.vauban.api.VaubanComponentProvider with …;` — so the container instantiates
-it in-module without reflection; or open the package:
-`opens com.acme.lib to io.vidocq.vauban.core;`
+No client proxy can be generated for com.acme.lib.FraudScreen, produced by
+com.acme.app.Integrations with the normal scope @ApplicationScoped: Vauban cannot define a class
+in package com.acme.lib (not opened to io.vidocq.vauban.core), and a proxy in the producer's
+package needs a fully public type (PACKAGE_PRIVATE_VIRTUALS). Declare the producer @Singleton or
+@Dependent, which need no client proxy, or produce an interface type, or open com.acme.lib to
+io.vidocq.vauban.core.
 ----
+
+A class of the JDK that only its own package could proxy, such as `java.util.Random` and its
+protected `next(int)`, fails the same way, without the `opens` advice: no class can be defined in a
+package of the JDK.
 
 An unproxyable shape is a deployment error, reported with the bean and the reason:
 

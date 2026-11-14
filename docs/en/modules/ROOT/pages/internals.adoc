@@ -243,7 +243,7 @@ per-package `_VaubanComponents` provider instantiates it in-module (`new …(del
 |Zero `opens`, zero `exports`, zero runtime class definition.
 
 |**Producer of a fully-public class** — `@Produces` returning a public, non-final class
-from another module, even one that knows nothing about CDI
+from another module, even one that knows nothing about CDI, abstract or not
 |The APT emits the proxy at build time in the **producer's** package (never the produced
 type's — that would be a split package), registered under the produced-type key the
 runtime looks up before any fallback. Eligibility requires the produced type to be *fully
@@ -252,6 +252,15 @@ public*: public non-final non-sealed class, only public overridable methods, an 
 excluding, `java.lang.Object`), because a method inherited from a superclass is neither declared
 by the produced type nor overridden by the proxy: judging only declared methods would hand out a
 proxy that silently runs the superclass body against its own empty state.
+
+[.tag-new]#NEW# An abstract class qualifies: CDI 4.1 §3.10 does not count it as unproxyable. The
+proxy overrides each abstract method, its own and those an interface leaves to it, and forwards it
+to the contextual instance; it never calls `super`. An abstract method is judged by its access like
+any other, so a protected one keeps the proxy in the type's own package (next row). When nothing
+ran at build, the run-time fallback defines the same proxy in the producer's package whenever it
+cannot define a class in the produced type's own: a class of the JDK (`java.time.Clock`, whose
+package belongs to the boot class loader), or a package not opened to the container
+(BUG-20261114-02).
 |Zero `opens`, zero runtime class definition (#42, Stage 1).
 
 |**Producer of an interface**
@@ -294,7 +303,8 @@ this `--add-opens`-free (below).
 |An `opens` (applied by the container, opt-in) *or* a jar rewrite.
 
 |**Producer of a class that is unproxyable outright** — `final` or `sealed` class, a
-non-static `final` method that is not `private`, abstract class (CDI 4.1 §3.10)
+non-static `final` method that is not `private` (CDI 4.1 §3.10; an abstract class is not one of
+them)
 |No proxy can be built anywhere, co-located or not. A deployment error, as the
 specification requires; nothing is shipped.
 |Nothing helps — the type cannot be normal-scoped.
@@ -464,18 +474,20 @@ io.vidocq.vauban.core;`; or, as a last resort, set -Dvauban.opens.auto=true to l
 open it at boot through an agent — which integrity by default is closing off.
 ----
 
-Ignore the warning and the boot fails at the injection point, with the whole chain named:
+Ignore the warning and the boot fails at the injection point, naming the produced type, its
+producer and the ways out. The container first tries the producer's package, where a fully public
+type would have its proxy; `FraudScreen` is not one (BUG-20261114-02):
 
 [source,text]
 ----
-jakarta.enterprise.inject.spi.DeploymentException: Failed to create client proxy for normal-scoped
-bean io.vidocq.vauban.example.cdi1015.app.Integrations
-  Caused by: java.lang.RuntimeException: Failed to define proxy class for class …lib.FraudScreen
-  Caused by: java.lang.RuntimeException: Cannot reflectively access …lib.FraudScreen on the module
-      path. Either (preferred) provide a generated VaubanComponentProvider for its module […] or
-      open the package: `opens io.vidocq.vauban.example.cdi1015.lib to io.vidocq.vauban.core;`
-  Caused by: java.lang.IllegalAccessException: module …cdi1015.lib does not open …cdi1015.lib to
-      module io.vidocq.vauban.core
+jakarta.enterprise.inject.spi.DeploymentException: No client proxy can be generated for
+io.vidocq.vauban.example.cdi1015.lib.FraudScreen, produced by
+io.vidocq.vauban.example.cdi1015.app.Integrations with the normal scope @ApplicationScoped: Vauban
+cannot define a class in package io.vidocq.vauban.example.cdi1015.lib (not opened to
+io.vidocq.vauban.core), and a proxy in the producer's package needs a fully public type
+(PACKAGE_PRIVATE_VIRTUALS). Declare the producer @Singleton or @Dependent, which need no client
+proxy, or produce an interface type, or open io.vidocq.vauban.example.cdi1015.lib to
+io.vidocq.vauban.core.
 ----
 
 === 5. Last resort: rewriting a copy of the dependency

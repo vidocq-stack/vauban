@@ -306,7 +306,8 @@ final class InterceptorBeanWrapper {
             // would throw ContextNotActiveException and leave the injected field null.
             // For pseudo-scoped beans (Dependent, Singleton) the eager path is safe.
             if (bean.descriptor().scope().isNormal()) {
-                throw new DeploymentException(
+                // A DeploymentException already names the bean, its type and the remedy (BUG-20261114-02).
+                throw e instanceof DeploymentException named ? named : new DeploymentException(
                         "Failed to create client proxy for normal-scoped bean "
                                 + bean.getBeanClass().getName(), e);
             }
@@ -438,16 +439,87 @@ final class InterceptorBeanWrapper {
         }
 
         // 2. Fallback: the proxy the build left next to the bean (Maven plugin), else one generated
-        //    now; then reflective instantiation through its only constructor, (Supplier), which
-        //    wires the delegate once and for all.
-        boolean preGenerated = isLoadable(beanClass, proxyClassName);
-        var generated = io.vidocq.vauban.core.proxy.RuntimeClientProxyGenerator.generate(beanClass);
-        var proxyClass = defineProxyClass(beanClass, generated.className(), generated.bytecode());
+        //    now, where runtimeProxySite says; then reflective instantiation through its only
+        //    constructor, (Supplier), which wires the delegate once and for all.
+        var site = runtimeProxySite(bean, beanClass);
+        boolean preGenerated = isLoadable(site.host(), site.className());
+        var generated = site.producerPackage()
+                ? io.vidocq.vauban.core.proxy.RuntimeClientProxyGenerator.generateProducerProxyAt(beanClass,
+                        site.className())
+                : io.vidocq.vauban.core.proxy.RuntimeClientProxyGenerator.generate(beanClass);
+        var proxyClass = defineProxyClass(site.host(), generated.className(), generated.bytecode());
         if (!preGenerated) {
             runtimeGeneration.generated(RuntimeGeneration.Kind.CLIENT_PROXY, generated.className());
         }
 
         return proxyClass.getDeclaredConstructor(java.util.function.Supplier.class).newInstance(delegate);
+    }
+
+    /**
+     * Where the run-time fallback defines a client proxy of {@code target}: {@code host} lends its class loader and
+     * package, {@code className} names the proxy, and {@code producerPackage} says whether it is a producer's proxy
+     * placed in the producer's package, which forwards through public members only.
+     */
+    private record ProxySite(Class<?> host, String className, boolean producerPackage) {}
+
+    /**
+     * Where the run-time fallback defines the client proxy of {@code bean}, whose proxied class is {@code target}:
+     * next to {@code target}, as {@code <target>_ClientProxy}, when the build left it there or Vauban can define a
+     * class in that package. A produced type of a package Vauban cannot define into — the boot class loader's, as
+     * for {@code java.time.Clock}, or a module's package not opened to it — gets its proxy where the build would
+     * have put it: in the producer's package, through the producer's lookup (BUG-20261114-02).
+     *
+     * @throws DeploymentException when neither place can hold a proxy of {@code target}
+     */
+    private ProxySite runtimeProxySite(ManagedBean<?> bean, Class<?> target) {
+        String key = io.vidocq.vauban.core.proxy.RuntimeClientProxyGenerator.proxyClassName(target);
+        if (!isProducer(bean) || definableNextTo(target, key)) {
+            return new ProxySite(target, key, false);
+        }
+        var verdict = io.vidocq.vauban.core.proxy.ProducerProxyEligibility.of(target);
+        if (!verdict.eligible()) {
+            throw new DeploymentException(noClientProxy(bean, target, verdict));
+        }
+        var producer = bean.getBeanClass();
+        return new ProxySite(producer, io.vidocq.vauban.core.proxy.ClientProxyShape.producerProxyName(
+                producer.getPackageName(), target.getName()), true);
+    }
+
+    /** Whether the proxy {@code key} of {@code target} is already there, or Vauban can define it in its package. */
+    private boolean definableNextTo(Class<?> target, String key) {
+        if (target.getClassLoader() == null) {
+            // No lookup defines a class in a package of the boot class loader for the container.
+            return false;
+        }
+        if (isLoadable(target, key)) {
+            return true;
+        }
+        try {
+            vaubanLookup.lookupFor(target);
+            return true;
+        } catch (ContainerOperationException _) {
+            return false;
+        }
+    }
+
+    /** Why no client proxy of the produced type {@code target} can be generated, and what to do instead. */
+    private static String noClientProxy(ManagedBean<?> bean, Class<?> target,
+                                        io.vidocq.vauban.core.proxy.ProducerProxyEligibility.Reason verdict) {
+        boolean jdk = target.getClassLoader() == null;
+        return "No client proxy can be generated for " + target.getName() + ", produced by "
+                + bean.getBeanClass().getName() + " with the normal scope @" + bean.getScope().getSimpleName()
+                + ": Vauban cannot define a class in package " + target.getPackageName()
+                + (jdk ? " (a package of the JDK)" : " (not opened to io.vidocq.vauban.core)")
+                + ", and a proxy in the producer's package needs a fully public type (" + verdict + ")."
+                + " Declare the producer @Singleton or @Dependent, which need no client proxy, or produce an"
+                + " interface type" + (jdk ? "." : ", or open " + target.getPackageName()
+                + " to io.vidocq.vauban.core.");
+    }
+
+    /** Whether {@code bean} is a producer method or field: its proxied class is the type it produces. */
+    private static boolean isProducer(ManagedBean<?> bean) {
+        return bean.descriptor().kind() == BeanDescriptor.BeanKind.PRODUCER_METHOD
+                || bean.descriptor().kind() == BeanDescriptor.BeanKind.PRODUCER_FIELD;
     }
 
     /** Whether {@code className} loads, uninitialized, from {@code beanClass}'s loader: a class the build generated. */
@@ -497,8 +569,12 @@ final class InterceptorBeanWrapper {
         }
         if (target.isInterface()) {
             runtimeGeneration.generated(interfaceProxyKind(bean), target.getName());
-        } else if (!isLoadable(target, key)) {
-            runtimeGeneration.generated(RuntimeGeneration.Kind.CLIENT_PROXY, key);
+            return;
+        }
+        // The class the fallback will define, where it will define it; none when it cannot.
+        var site = runtimeProxySite(bean, target);
+        if (!isLoadable(site.host(), site.className())) {
+            runtimeGeneration.generated(RuntimeGeneration.Kind.CLIENT_PROXY, site.className());
         }
     }
 
@@ -517,17 +593,17 @@ final class InterceptorBeanWrapper {
         return runtimeGeneration;
     }
 
-    private Class<?> defineProxyClass(Class<?> beanClass, String className, byte[] bytecode) {
+    /** Loads {@code className} through {@code host}'s class loader, or defines it in {@code host}'s package. */
+    private Class<?> defineProxyClass(Class<?> host, String className, byte[] bytecode) {
         try {
-            return loadOrDefineClassRobustly(beanClass, className, bytecode);
+            return loadOrDefineClassRobustly(host, className, bytecode);
         } catch (Exception e) {
-            throw new ContainerOperationException("Failed to define proxy class for " + beanClass, e);
+            throw new ContainerOperationException("Failed to define proxy class " + className + " next to " + host, e);
         }
     }
 
     static Class<?> resolveProxyTargetClass(ManagedBean<?> bean) {
-        if (bean.descriptor().kind() == BeanDescriptor.BeanKind.PRODUCER_METHOD
-                || bean.descriptor().kind() == BeanDescriptor.BeanKind.PRODUCER_FIELD) {
+        if (isProducer(bean)) {
             // First pass: prefer a concrete (non-interface) type
             for (var type : bean.getTypes()) {
                 if (type instanceof Class<?> c && c != Object.class && !c.isInterface()) {
@@ -692,7 +768,8 @@ final class InterceptorBeanWrapper {
     Class<?> loadOrDefineClassRobustly(Class<?> targetClass, String className, byte[] bytecode)
             throws IllegalAccessException {
         try {
-            return targetClass.getClassLoader().loadClass(className);
+            // Class.forName takes the boot class loader's null as is (BUG-20261114-02).
+            return Class.forName(className, false, targetClass.getClassLoader());
         } catch (ClassNotFoundException _) {
             // Use the container's VaubanLookup which has the user-provided root Lookup
             // (no sun.misc.Unsafe needed — addReads + privateLookupIn handles Java Modules)

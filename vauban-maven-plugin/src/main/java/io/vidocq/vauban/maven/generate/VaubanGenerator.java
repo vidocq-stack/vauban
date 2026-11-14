@@ -26,6 +26,7 @@ import io.vidocq.vauban.core.interceptor.InterceptionTargets;
 import io.vidocq.vauban.core.interceptor.InterceptorSubclassGenerator;
 import io.vidocq.vauban.core.provider.ComponentProviderClassGenerator;
 import io.vidocq.vauban.core.provider.ComponentProviderClassGenerator.ProducerProxy;
+import io.vidocq.vauban.core.proxy.ClientProxyShape;
 import io.vidocq.vauban.core.proxy.RuntimeClientProxyGenerator;
 import io.vidocq.vauban.indexer.IndexBuilder;
 import io.vidocq.vauban.indexer.VaubanIndex;
@@ -588,11 +589,7 @@ public final class VaubanGenerator {
             return Optional.empty();
         }
         var producedFqn = producedClass.getName();
-        var producedSimple = producedFqn.substring(producedFqn.lastIndexOf('.') + 1)
-                .replace('$', '_');
-        var proxyFqn = (producerPkg.isEmpty() ? "" : producerPkg + ".")
-                + producedSimple + "$$"
-                + Integer.toHexString(producedFqn.hashCode()) + CLIENT_PROXY_SUFFIX;
+        var proxyFqn = ClientProxyShape.producerProxyName(producerPkg, producedFqn);
         if (!classFileExists(outputDir, proxyFqn)) {
             try {
                 var gen = RuntimeClientProxyGenerator.generateProducerProxyAt(producedClass, proxyFqn);
