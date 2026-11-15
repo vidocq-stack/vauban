@@ -21,6 +21,9 @@ package io.vidocq.vauban.processor.apt;
 
 import io.vidocq.vauban.processor.VaubanProcessor;
 
+import jakarta.enterprise.inject.build.compatible.spi.BuildCompatibleExtension;
+import jakarta.enterprise.inject.build.compatible.spi.ClassConfig;
+import jakarta.enterprise.inject.build.compatible.spi.Enhancement;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -37,6 +40,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -173,6 +177,152 @@ class GenerationRoundTest {
 
         assertTrue(result.success(), String.join("\n", result.messages()));
         assertTrue(Files.readString(result.generated().resolve("app/_VaubanComponents.java")).contains("app.TrackedBean"));
+        // The companion wrote nothing in the second round: Vauban asks javac for a third one (BUG-20261115-06).
+        assertFalse(result.mentions(LAST_ROUND), String.join("\n", result.messages()));
+    }
+
+    /** An extension of the module's build, as vauban-webcontexts' runs at foy-cdi-vauban's. */
+    public static final class WebComponentsExtension implements BuildCompatibleExtension {
+        @Enhancement(types = Object.class, withAnnotations = jakarta.inject.Named.class)
+        public void named(ClassConfig type) {
+            // Present for its phase only: the shape of the build, not what an extension does in it.
+        }
+    }
+
+    /**
+     * foy-cdi-vauban's shape: normal-scoped producers of interface types, the holders they read, a build compatible
+     * extension, and no other processor. Without a companion writing a class in the first round, javac had no second
+     * round and Vauban wrote its classes in the last one, one warning each (BUG-20261115-06).
+     */
+    @Test
+    void aModuleWithNoOtherProcessorWritesBeforeTheLastRound() throws IOException {
+        var vauban = new VaubanProcessor();
+        vauban.overrideBceClasses(List.of(WebComponentsExtension.class));
+        var result = ProcessorCompiler.compile(workDir, Map.of("app/ExchangeHolder.java", """
+                package app;
+
+                import io.vidocq.vauban.processor.apt.testfixtures.Exchange;
+
+                @jakarta.enterprise.context.RequestScoped
+                class ExchangeHolder {
+                    private Exchange exchange;
+
+                    void hold(Exchange served) { exchange = served; }
+
+                    Exchange exchange() { return exchange; }
+                }
+                """, "app/Greeting.java", """
+                package app;
+
+                public interface Greeting {
+                    String hi();
+                }
+                """, "app/BuiltInBeans.java", """
+                package app;
+
+                import io.vidocq.vauban.processor.apt.testfixtures.Exchange;
+                import jakarta.enterprise.context.ApplicationScoped;
+                import jakarta.enterprise.context.Dependent;
+                import jakarta.enterprise.context.RequestScoped;
+                import jakarta.enterprise.inject.Produces;
+                import jakarta.enterprise.inject.Typed;
+
+                @Dependent
+                class BuiltInBeans {
+                    @Produces
+                    @RequestScoped
+                    @Typed(Exchange.class)
+                    Exchange exchange(ExchangeHolder holder) { return holder.exchange(); }
+
+                    @Produces
+                    @ApplicationScoped
+                    Greeting greeting() { return () -> "hi"; }
+                }
+                """), List.of(), List.of(vauban));
+
+        assertTrue(result.success(), String.join("\n", result.messages()));
+        assertFalse(result.mentions(LAST_ROUND), String.join("\n", result.messages()));
+        assertTrue(Files.exists(result.classes().resolve("app/_VaubanComponents.class")));
+        assertTrue(Files.exists(result.classes().resolve("app/ExchangeHolder_ClientProxy.class")));
+        try (var classes = Files.walk(result.classes())) {
+            assertEquals(List.of(), classes.map(Path::getFileName).map(Path::toString)
+                            .filter(name -> name.startsWith("_VaubanRound")).toList(),
+                    "the extra round leaves no class behind");
+        }
+    }
+
+    /**
+     * A module that declares a type of the name the extra round's unit takes: the Filer refuses the unit, and Vauban
+     * writes its classes in the last round, as before, the compilation unharmed.
+     */
+    @Test
+    void aRoundUnitTheFilerRefusesFallsBackToTheLastRound() throws IOException {
+        var result = ProcessorCompiler.compile(workDir, Map.of("app/Greeter.java", SOURCES.get("app/Greeter.java"),
+                "app/_VaubanRound1.java", """
+                        package app;
+
+                        class _VaubanRound1 {
+                        }
+                        """), List.of(), List.of(new VaubanProcessor()));
+
+        assertTrue(result.success(), String.join("\n", result.messages()));
+        assertTrue(result.mentions(LAST_ROUND), String.join("\n", result.messages()));
+        assertTrue(Files.exists(result.classes().resolve("app/Greeter_ClientProxy.class")));
+    }
+
+    /** A module with nothing for Vauban to write leaves javac's rounds as they are. */
+    @Test
+    void aModuleWithoutBeansAsksForNoExtraRound() throws IOException {
+        var result = ProcessorCompiler.compile(workDir, Map.of("app/Plain.java", """
+                package app;
+
+                public class Plain {
+                }
+                """), List.of(), List.of(new VaubanProcessor()));
+
+        assertTrue(result.success(), String.join("\n", result.messages()));
+        try (var generated = Files.walk(result.generated())) {
+            assertEquals(List.of(), generated.filter(Files::isRegularFile).toList());
+        }
+    }
+
+    /** A bean of the unnamed package: the round's unit is there too, without a package clause. */
+    @Test
+    void aBeanOfTheUnnamedPackageWritesBeforeTheLastRound() throws IOException {
+        var result = ProcessorCompiler.compile(workDir, Map.of("Greeter.java", """
+                @jakarta.enterprise.context.ApplicationScoped
+                public class Greeter {
+                    public String hi() { return "hi"; }
+                }
+                """), List.of(), List.of(new VaubanProcessor()));
+
+        assertTrue(result.success(), String.join("\n", result.messages()));
+        assertFalse(result.mentions(LAST_ROUND), String.join("\n", result.messages()));
+        assertFalse(Files.readString(result.generated().resolve("_VaubanRound1.java")).contains("package"));
+    }
+
+    /**
+     * A module with no bean that lists interfaces in {@code @ClientProxies}, an extension's: nothing is indexed, so
+     * the round's unit goes in the package of a class the round compiles.
+     */
+    @Test
+    void aModuleListingInterfacesOnlyWritesBeforeTheLastRound() throws IOException {
+        var result = ProcessorCompiler.compile(workDir, Map.of("app/LedgerExtension.java", """
+                package app;
+
+                @io.vidocq.vauban.api.ClientProxies(app.LedgerExtension.Ledger.class)
+                public class LedgerExtension {
+
+                    public interface Ledger {
+                        String name();
+                    }
+                }
+                """), List.of(), List.of(new VaubanProcessor()));
+
+        assertTrue(result.success(), String.join("\n", result.messages()));
+        assertFalse(result.mentions(LAST_ROUND), String.join("\n", result.messages()));
+        assertTrue(Files.exists(result.generated().resolve("app/_VaubanRound1.java")),
+                "the unit is in the package of the round's class");
     }
 
     @Test
@@ -243,6 +393,43 @@ class GenerationRoundTest {
                     public String hi() { return "hi"; }
                 }
                 """), List.of(), List.of(new Companion(Map.of(1, PLAIN_COMPANION_CLASS)), new VaubanProcessor()));
+
+        assertTrue(result.success(), String.join("\n", result.messages()));
+        assertFalse(result.mentions(LAST_ROUND), String.join("\n", result.messages()));
+    }
+
+    /**
+     * The Servlet API's {@code @ServletSecurity} is {@code @Inherited}, but starts no processor: Foy's takes the
+     * classes javac hands it by {@code @WebServlet}, {@code @WebFilter}, {@code @WebListener}, none inherited, or by
+     * type. A secured servlet, which Foy's build compatible extension makes a {@code @Dependent} bean, keeps the
+     * early round (BUG-20261115-06, Vidocq's vidocq-runtime-it-foy-servlet).
+     */
+    @Test
+    void aSecuredServletIsWrittenBeforeTheLastRound() throws IOException {
+        // The Servlet API is not on this module's class path: a stand-in, @Inherited as the real one is.
+        var result = ProcessorCompiler.compile(workDir, Map.of("jakarta/servlet/annotation/ServletSecurity.java", """
+                package jakarta.servlet.annotation;
+
+                @java.lang.annotation.Inherited
+                @java.lang.annotation.Retention(java.lang.annotation.RetentionPolicy.RUNTIME)
+                public @interface ServletSecurity {
+                }
+                """, "app/AccountServlet.java", """
+                package app;
+
+                @jakarta.enterprise.context.Dependent
+                @jakarta.servlet.annotation.ServletSecurity
+                public class AccountServlet {
+                    @jakarta.inject.Inject Greeter greeter;
+                }
+                """, "app/Greeter.java", """
+                package app;
+
+                @jakarta.enterprise.context.ApplicationScoped
+                public class Greeter {
+                    public String hi() { return "hi"; }
+                }
+                """), List.of(), List.of(new VaubanProcessor()));
 
         assertTrue(result.success(), String.join("\n", result.messages()));
         assertFalse(result.mentions(LAST_ROUND), String.join("\n", result.messages()));

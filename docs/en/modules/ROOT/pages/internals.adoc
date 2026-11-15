@@ -104,7 +104,7 @@ CDI 4.1 describes a richly reflective object model: `Bean<T>`, `BeanManager`, `I
 
 Two tools generate, at two different moments:
 
-. **`vauban-processor`** — a `javax.annotation.processing.Processor`, running inside javac. It generates in the last annotation-processing round, mostly as **Java source** so the generated provider can instantiate its siblings in-module, and through the **Class-File API** (https://openjdk.org/jeps/484[JEP 484]) where source is not possible. It writes the bean index `META-INF/vauban-beans.list` for the module it compiles. No ASM, no Byte Buddy, no Gizmo.
+. **`vauban-processor`** — a `javax.annotation.processing.Processor`, running inside javac. It generates once the other processors are done, in the first annotation-processing round that brings no new bean and is not javac's last (xref:reference.adoc#generation-round[`-Avauban.generationRound`]), mostly as **Java source** so the generated provider can instantiate its siblings in-module, and through the **Class-File API** (https://openjdk.org/jeps/484[JEP 484]) where source is not possible. It writes the bean index `META-INF/vauban-beans.list` for the module it compiles. No ASM, no Byte Buddy, no Gizmo.
 . **`vauban-maven-plugin`** — the `generate` goal, bound to `process-classes`. It covers what never went through this compilation: dependency archives and modules built without the processor. It merges the bean index and emits the missing classes as bytecode, since it has no javac.
 
 Both also ship what an in-package proxy needs, and it is worth naming the two files plainly:

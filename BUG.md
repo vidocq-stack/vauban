@@ -5,6 +5,38 @@ suspected cause, status. Updated on every investigation.
 
 ---
 
+## BUG-20261115-06 — A module whose only processor is Vauban gets "created in the last round" warnings again
+
+- **Date**: 2026-11-15
+- **Status**: FIXED on `fix/processor-build-noise`
+- **Module**: `vauban-processor` (`VaubanProcessor.process`, `NextRound`)
+- **Symptom**: `foy-cdi-vauban`'s build with vauban-processor `0.4.0-20261115.150122-50` prints six `File for type
+  '…' created in the last round will not be subject to annotation processing.`: `ServletRequestHolder_ClientProxy`,
+  `ServletContextHolder_ClientProxy`, `HttpServletRequest$$4717b253_ClientProxy`, `HttpSession$$1fde0ed_ClientProxy`,
+  `ServletContext$$ec34198f_ClientProxy`, `_VaubanComponents`; a sample application compiled with Vauban alone
+  prints one for its own `_VaubanComponents`. VAU-APT-007 had removed them from the tutorial's builds. Found by the
+  Foy session (Servlet built-in beans, Vidocq/foy#107). Vidocq's `vidocq-runtime-it-foy-servlet`, with Foy's,
+  Cassini's and Champollion's processors, prints six too, for its client proxies and `_VaubanComponents`.
+- **Repro**: `GenerationRoundTest.aModuleWithNoOtherProcessorWritesBeforeTheLastRound` (foy-cdi-vauban's shape:
+  normal-scoped producers of interface types, their holders, a build compatible extension, Vauban alone), and
+  `aBeanACompanionGeneratesWithAForeignAnnotationIsWaitedFor`, which now also asserts that no warning is printed.
+- **Cause**: not a regression, a case VAU-APT-007 kept on purpose: "kept in the last round when there is no second
+  round". javac starts a round only for the source and class files the previous one created
+  (`JavacProcessingEnvironment.moreToDo` is `filer.newFiles()`). Vauban waits in the first round for the companion
+  processors, so in a module where none writes a class there, as foy-cdi-vauban (vauban-processor and
+  vauban-webcontexts' extension only), the second round is javac's last, and every class written there warns. The
+  same held when a companion's bean that carries a foreign annotation made Vauban wait in the second round, and
+  nothing was written there. In Vidocq's IT, `AccountServlet` carries `@ServletSecurity`, which is `@Inherited`:
+  Vauban took it for an annotation that could start another processor on its subclasses and kept the last round.
+- **Fix**: a round Vauban waits in, when it has something to write and may write before the last round (no
+  `-Avauban.generationRound=last`, no foreign `@Inherited` annotation indexed), writes `<package>._VaubanRound<n>`, a
+  compilation unit that declares no type and compiles to nothing: javac starts the next round, where Vauban writes
+  its classes. foy-cdi-vauban's jar holds the same entries as before; its build prints no warning, a rebuild without
+  `clean` either. A compilation with nothing for Vauban writes nothing (`aModuleWithoutBeansAsksForNoExtraRound`).
+  `jakarta.servlet.annotation` joins the packages whose `@Inherited` annotations start no processor, as JAX-RS's:
+  Foy's processor starts from `@WebServlet`, `@WebFilter`, `@WebListener`, none inherited, or from a class's type
+  (`aSecuredServletIsWrittenBeforeTheLastRound`); the Vidocq IT's build then prints no warning.
+
 ## BUG-20261115-05 — A module's own build compatible extension is reported as "NOT on the annotation-processor path"
 
 - **Date**: 2026-11-15

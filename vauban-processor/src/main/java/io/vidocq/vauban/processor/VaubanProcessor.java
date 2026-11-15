@@ -313,23 +313,53 @@ public class VaubanProcessor extends AbstractProcessor {
         }
         collectDeclaredInterfaceProxies(annotations, roundEnv);
 
-        // Companion processors (mansart-data-processor, cassini-processor and friends) emit their classes in the
-        // first round; they surface here in the second. The pipeline waits for them, then runs in the first round
-        // from the second on whose new classes brought no bean: before javac's last round, where every file written
-        // costs a "created in the last round will not be subject to annotation processing" warning
-        // (BUG-20261030-26 of vidocq). A round whose new classes only carry annotations no companion acts on, such
-        // as Mansart Data's repository implementations (@Generated, @Singleton, @Inject), counts as quiet too: no
-        // further class can come from them (VAU-APT-007). Without a second round, or with
-        // -Avauban.generationRound=last, it runs in the last round, as it always did.
-        boolean quietRound = round >= 2 && (accumulatedIndex.size() > 0 || !declaredInterfaceProxies.isEmpty())
-                && indexedThisRound.stream().allMatch(this::carriesOnlyInertAnnotations);
-        if (!roundEnv.processingOver()
-                && !(quietRound && earlyGeneration() && !foreignInheritedAnnotationIndexed())) return false;
+        if (!roundEnv.processingOver() && waitsForALaterRound(roundEnv)) {
+            return false;
+        }
         finalized = true;
         generatedEarly = !roundEnv.processingOver();
         try (var _ = BceLogBridge.install(processingEnv.getMessager(), BCE_PREFIX)) {
             return processDeployment(scanner);
         }
+    }
+
+    /**
+     * Whether the pipeline waits for a later round than this one, which is not javac's last.
+     *
+     * <p>Companion processors (mansart-data-processor, cassini-processor and friends) emit their classes in the
+     * first round; they surface here in the second. The pipeline waits for them, then runs in the first round from
+     * the second on whose new classes brought no bean: before javac's last round, where every file written costs a
+     * "created in the last round will not be subject to annotation processing" warning (BUG-20261030-26 of vidocq).
+     * A round whose new classes only carry annotations no companion acts on, such as Mansart Data's repository
+     * implementations ({@code @Generated}, {@code @Singleton}, {@code @Inject}), counts as quiet too: no further
+     * class can come from them (VAU-APT-007). A round it waits in asks javac for the next one, which javac starts
+     * only for a new source or class file: without a companion, the round after the first was the last
+     * (BUG-20261115-06). With {@code -Avauban.generationRound=last}, or a foreign {@code @Inherited} annotation
+     * indexed, it waits for the last round, as it always did.</p>
+     */
+    private boolean waitsForALaterRound(RoundEnvironment roundEnv) {
+        boolean early = (accumulatedIndex.size() > 0 || !declaredInterfaceProxies.isEmpty()) && earlyGeneration()
+                && !foreignInheritedAnnotationIndexed();
+        if (early && round >= 2 && indexedThisRound.stream().allMatch(this::carriesOnlyInertAnnotations)) {
+            return false;
+        }
+        if (early) {
+            askForAnotherRound(roundEnv);
+        }
+        return true;
+    }
+
+    /**
+     * Has javac start one more round after this one, in the package of a type this round indexed or compiles
+     * ({@link NextRound}).
+     */
+    private void askForAnotherRound(RoundEnvironment roundEnv) {
+        indexedThisRound.stream()
+                .findFirst()
+                .or(() -> ElementFilter.typesIn(roundEnv.getRootElements()).stream().findFirst())
+                .ifPresent(origin -> NextRound.request(processingEnv.getFiler(), processingEnv.getMessager(),
+                        processingEnv.getElementUtils().getPackageOf(origin).getQualifiedName().toString(), origin,
+                        round));
     }
 
     /**
@@ -367,10 +397,12 @@ public class VaubanProcessor extends AbstractProcessor {
 
     /**
      * Packages of {@code @Inherited} annotations known to start no processor on Vauban's subclasses: JAX-RS's
-     * {@code @Produces} and {@code @Consumes}, MicroProfile OpenAPI's {@code @Tag} and friends. Cassini's and Grimm's
-     * processors start from {@code @Path}, which is not inherited.
+     * {@code @Produces} and {@code @Consumes}, the Servlet API's {@code @ServletSecurity}, MicroProfile OpenAPI's
+     * {@code @Tag} and friends. Cassini's and Grimm's processors start from {@code @Path}, which is not inherited;
+     * Foy's from {@code @WebServlet}, {@code @WebFilter} and {@code @WebListener}, which are not either, or from a
+     * class's type, which a subclass has whatever it inherits.
      */
-    private static final Set<String> INHERITED_SAFE_PACKAGES = Set.of("jakarta.ws.rs",
+    private static final Set<String> INHERITED_SAFE_PACKAGES = Set.of("jakarta.ws.rs", "jakarta.servlet.annotation",
             "org.eclipse.microprofile.openapi.annotations", "org.eclipse.microprofile.openapi.annotations.tags",
             "org.eclipse.microprofile.openapi.annotations.media", "org.eclipse.microprofile.openapi.annotations.responses",
             "org.eclipse.microprofile.openapi.annotations.parameters", "org.eclipse.microprofile.openapi.annotations.security");
