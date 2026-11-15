@@ -5,6 +5,24 @@ suspected cause, status. Updated on every investigation.
 
 ---
 
+## BUG-20261115-03 — A modularized library that looks services up by a parameter misses their `uses`
+
+- **Date**: 2026-11-15
+- **Status**: FIXED on `fix/modularize-shipped-services`
+- **Module**: `vauban-maven-plugin` (`modularize`, `ServiceUsesScanner`)
+- **Symptom**: a Vidocq application with Liquibase starts with `vidocq:run` and its distribution, and fails in a
+  jlink image: `ServiceConfigurationError: liquibase.logging.LogService: module liquibase.core does not declare
+  `uses``. The descriptor `modularize` writes for `liquibase-core-4.33.0.jar` has 38 `provides` and 24 `uses`: 16
+  services it provides are not used. Found by the Vidocq tutorial session.
+- **Repro**: `ServiceUsesShippedServicesTest`; by hand, `Modularizer.synthesizeOne` on `liquibase-core-4.33.0.jar`
+  over the jars of the application's `lib/`.
+- **Cause**: the scanner finds a service by the class constant written before the lookup. Liquibase's
+  `StandardServiceLocator.findInstances(Class)` hands `ServiceLoader` a type held in a parameter, and its factories
+  hold the type in a field: no call site names it.
+- **Fix**: a jar with a method that takes the service type as a parameter and reaches `ServiceLoader` also uses
+  every service its `META-INF/services` declares for a type it defines itself (a type it does not define may be in
+  no module it reads). On `liquibase-core`: 41 `uses`, every provided service used.
+
 ## BUG-20261115-02 — A build that can decrypt an encrypted jar takes all its classes as beans, and the start does not
 
 - **Date**: 2026-11-15

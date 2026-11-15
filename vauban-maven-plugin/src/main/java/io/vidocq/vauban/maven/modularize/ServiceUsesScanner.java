@@ -88,6 +88,9 @@ final class ServiceUsesScanner {
     /** Owner of the lookups we seed the call graph with, in internal form. */
     private static final String SERVICE_LOADER = "java/util/ServiceLoader";
 
+    /** Where a jar declares the services it provides. */
+    private static final String SERVICES = "META-INF/services/";
+
     /** The parameter type that makes a method a candidate for forwarding a service type. */
     private static final ClassDesc CLASS = ClassDesc.of("java.lang.Class");
 
@@ -140,6 +143,16 @@ final class ServiceUsesScanner {
                             type.descriptorString()), invoked);
                 }
             }
+        }
+
+        /** Whether a method of {@code jar} takes a service type as a parameter and reaches {@code ServiceLoader}. */
+        boolean forwardsLookups(Path jar) {
+            return lookups.stream().anyMatch(key -> jar.equals(jarOfClass.get(key.owner())));
+        }
+
+        /** The jar that defines the class of internal name {@code owner}, or {@code null}. */
+        Path jarOf(String owner) {
+            return jarOfClass.get(owner);
         }
 
         /** Maps each method declared by a supertype to the implementations the closure defines. */
@@ -262,6 +275,17 @@ final class ServiceUsesScanner {
         Map<Path, Set<String>> servicesByJar = new HashMap<>();
         for (Path jar : closure) {
             recordFailures(unreadable, jar, forEachClass(jar, model -> harvest(model, jar, graph, servicesByJar)));
+        }
+        // Pass 4: a jar whose own lookup takes the service type as a parameter (Liquibase's StandardServiceLocator)
+        // names no service in its bytecode when the type is held in a variable. The services it ships for its own
+        // types are the ones it looks up.
+        for (Path jar : closure) {
+            if (graph.forwardsLookups(jar)) {
+                Set<String> shipped = shippedServices(jar, graph);
+                if (!shipped.isEmpty()) {
+                    servicesByJar.computeIfAbsent(jar, k -> new HashSet<>()).addAll(shipped);
+                }
+            }
         }
         // Reported once per jar, after both passes: a class the scanner cannot read is a service
         // lookup it cannot see, so a jar whose descriptor is generated from a partial scan may be
@@ -441,6 +465,26 @@ final class ServiceUsesScanner {
             }
         }
         return failures;
+    }
+
+    /**
+     * The services {@code jar} declares in {@code META-INF/services} whose type it defines itself: a type it does
+     * not define may be in no module it reads, and a {@code uses} on it would cost the jar its descriptor.
+     */
+    private static Set<String> shippedServices(Path jar, CallGraph graph) throws IOException {
+        Set<String> shipped = new TreeSet<>();
+        try (JarFile jf = new JarFile(jar.toFile())) {
+            for (JarEntry entry : jf.stream().toList()) {
+                String name = entry.getName();
+                if (!entry.isDirectory() && name.startsWith(SERVICES) && name.length() > SERVICES.length()) {
+                    String service = name.substring(SERVICES.length());
+                    if (jar.equals(graph.jarOf(service.replace('.', '/')))) {
+                        shipped.add(service);
+                    }
+                }
+            }
+        }
+        return shipped;
     }
 
     private static boolean isScannedClass(JarEntry entry) {
