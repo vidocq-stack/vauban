@@ -24,6 +24,8 @@ import org.junit.jupiter.api.Test;
 
 import java.net.URI;
 import java.net.URL;
+import java.nio.file.Path;
+import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -142,6 +144,22 @@ class ProcessedArchivesTest {
     void unparsableUrl() {
         assertEquals("{a}", ProcessedArchives.location("{a}"));
         assertEquals("1x:{a}", ProcessedArchives.location("1x:{a}"));
+    }
+
+    @Test
+    @DisplayName("the local jar of a resource, its path decoded; none for a directory or a nested jar "
+            + "(BUG-20261115-08)")
+    void localJarOf() throws Exception {
+        var header = "META-INF/vauban.header";
+
+        assertEquals(Optional.of(Path.of("/a b/été/x.jar")), ProcessedArchives.localJarOf(
+                URI.create("jar:file:/a%20b/%C3%A9t%C3%A9/x.jar!/" + header).toURL(), header));
+        assertEquals(Optional.of(Path.of("/a/x.jar")),
+                ProcessedArchives.localJarOf(URI.create("jar:file:///a/x.jar!/" + header).toURL(), header));
+        assertEquals(Optional.empty(),
+                ProcessedArchives.localJarOf(URI.create("file:/a/classes/" + header).toURL(), header));
+        assertEquals(Optional.empty(), ProcessedArchives.localJarOf(
+                URI.create("jar:file:/a/app.jar!/lib/inner.jar!/" + header).toURL(), header));
     }
 
     @Test

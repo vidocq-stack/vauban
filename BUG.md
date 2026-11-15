@@ -5,6 +5,26 @@ suspected cause, status. Updated on every investigation.
 
 ---
 
+## BUG-20261115-08 — An encrypted jar in a directory whose name holds a space or a non-ASCII character is not found
+
+- **Date**: 2026-11-15
+- **Status**: FIXED on `fix/bce-processed-source-location`
+- **Module**: `vauban-core` (`ContainerScanner.scanEncryptedJarsOnClasspath`)
+- **Symptom**: an encrypted jar (`META-INF/vauban.header`) on the class path under a directory such as `with space été/`
+  gives no bean. The start logs `Failed to load encrypted JAR secret.jar` with
+  `NoSuchFileException: …/with%20space%20%C3%A9t%C3%A9/secret.jar`, and goes on without its beans. Found while fixing
+  BUG-20261115-07.
+- **Repro**: `ContainerScannerResourcesTest.encryptedJarUnderAnEscapedPath`: a `URLClassLoader` over
+  `with space été/secret.jar` (header and a `bean-discovery-mode="all"` `beans.xml`), a plugin that opens it,
+  `scanClasspath()`: the fixture was not among the bean classes.
+- **Cause**: the scanner took the jar's path as the text of the header's URL between `jar:file:` and `!`, without
+  decoding it: `Path.of("/…/with%20space%20%C3%A9t%C3%A9/secret.jar")` names a file that does not exist.
+- **Fix**: `ProcessedArchives.localJarOf` gives the local jar of a `jar:file:` resource with its path decoded, as the
+  location of BUG-20261115-07 is; a resource of a directory or of a nested jar gives none, as before.
+- **Verification**: `encryptedJarUnderAnEscapedPath` red before, green now; `ProcessedArchivesTest.localJarOf` on the
+  escaped, `file:///`, directory and nested spellings. With BUG-20261115-07 on the same branch: `vauban-core` 1354
+  tests, 0 failures, 3 skipped; the reactor's `-Pquality,errorprone clean install` 2315 tests, 0 failures.
+
 ## BUG-20261115-07 — Under the Vauban class loader or on the module path, a jar processed at compile is not recognised
 
 - **Date**: 2026-11-15

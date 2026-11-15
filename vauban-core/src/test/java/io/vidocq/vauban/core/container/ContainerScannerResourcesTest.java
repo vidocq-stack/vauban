@@ -34,6 +34,7 @@ import java.io.InputStream;
 import java.io.UncheckedIOException;
 import java.net.URI;
 import java.net.URL;
+import java.net.URLClassLoader;
 import java.net.URLConnection;
 import java.net.URLStreamHandler;
 import java.nio.charset.StandardCharsets;
@@ -264,6 +265,22 @@ class ContainerScannerResourcesTest {
         try (var container = VaubanContainer.builder().classLoader(unlistable).scanClasspath()
                 .addBeanClass(Fixture.class).build()) {
             assertEquals("fixture", container.select(Fixture.class).id());
+        }
+    }
+
+    @Test
+    @DisplayName("an encrypted jar in a directory whose name holds a space and a non-ASCII character is found "
+            + "(BUG-20261115-08)")
+    void encryptedJarUnderAnEscapedPath(@TempDir Path dir) throws IOException {
+        var sjar = jarWith(Files.createDirectories(dir.resolve("with space été")).resolve("secret.jar"),
+                Map.of("META-INF/vauban.header", "k", BEANS_XML, "<beans bean-discovery-mode=\"all\"/>"));
+
+        try (var loader = new URLClassLoader(new URL[]{sjar.toUri().toURL()}, getClass().getClassLoader())) {
+            var builder = VaubanContainer.builder().classLoader(loader).addByteSourcePlugin(new FixturePlugin());
+            builder.scanClasspath();
+
+            assertTrue(builder.beanClassNames().contains(Fixture.class.getName()),
+                    "the beans of " + sjar + ": " + builder.beanClassNames());
         }
     }
 

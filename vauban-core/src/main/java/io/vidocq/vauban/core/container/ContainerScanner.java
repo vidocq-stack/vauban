@@ -367,14 +367,11 @@ final class ContainerScanner {
         try {
             // SJAR v2 marker entry. Must match io.vidocq.vauban.sjar.SjarHeader.HEADER_ENTRY.
             // Referenced as a literal to avoid a vauban-core -> vauban-sjar module dependency.
-            var markers = cl.getResources("META-INF/vauban.header");
+            var header = "META-INF/vauban.header";
+            var markers = cl.getResources(header);
             while (markers.hasMoreElements()) {
-                var markerUrl = markers.nextElement().toString();
-                if (markerUrl.startsWith(JAR_FILE_PREFIX)) {
-                    var jarPath = java.nio.file.Path.of(
-                            markerUrl.substring(JAR_FILE_PREFIX.length(), markerUrl.indexOf('!')));
-                    loadEncryptedJar(jarPath);
-                }
+                // The jar's path decoded from its URL: a space is %20 there (BUG-20261115-08).
+                ProcessedArchives.localJarOf(markers.nextElement(), header).ifPresent(this::loadEncryptedJar);
             }
         } catch (java.io.IOException _) {
             // Classpath scan failure — non-fatal

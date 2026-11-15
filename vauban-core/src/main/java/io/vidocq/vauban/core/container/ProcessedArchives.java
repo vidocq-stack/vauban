@@ -28,6 +28,7 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 
 /**
@@ -44,6 +45,7 @@ final class ProcessedArchives {
     private static final List<String> ARCHIVE_SCHEMES = List.of("jar:", "vauban:");
     private static final String ENTRY_SEPARATOR = "!/";
     private static final String FILE_SCHEME = "file:";
+    private static final String JAR_FILE = "jar:" + FILE_SCHEME;
 
     /** One location per archive: a {@link Path}, or the {@link String} of a normalised URI. */
     private final Set<Object> locations = new HashSet<>();
@@ -69,6 +71,18 @@ final class ProcessedArchives {
 
     boolean isEmpty() {
         return locations.isEmpty();
+    }
+
+    /**
+     * The local jar that holds {@code resource}, the URL of the resource {@code name}, its path decoded:
+     * {@code jar:file:/a%20b/x.jar!/name} gives {@code /a b/x.jar}. Empty for a resource of a directory, of a jar
+     * nested in another, or of an archive that is no local file.
+     */
+    static Optional<Path> localJarOf(URL resource, String name) {
+        var url = resource.toExternalForm();
+        return url.startsWith(JAR_FILE) && location(rootOf(url, name)) instanceof Path path
+                ? Optional.of(path)
+                : Optional.empty();
     }
 
     /**
