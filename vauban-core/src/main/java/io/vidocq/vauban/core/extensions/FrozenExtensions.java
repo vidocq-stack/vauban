@@ -80,6 +80,12 @@ public record FrozenExtensions(String fingerprint, FrozenExtensions.Deployment d
     /** Why a deployment without any build compatible extension has no record. */
     public static final String NO_EXTENSION = "the deployment has no build compatible extension";
 
+    /**
+     * Why a deployment whose archives the annotation processor all handled has no record: its extensions ran at
+     * compile, and the start runs none of them.
+     */
+    public static final String ALL_AT_COMPILE = "every build compatible extension of the deployment ran at compile";
+
     private static final String FORMAT = "1";
     private static final String KEY_FORMAT = "format";
     private static final String KEY_FINGERPRINT = "fingerprint";
@@ -114,9 +120,12 @@ public record FrozenExtensions(String fingerprint, FrozenExtensions.Deployment d
             return new Outcome(false, reason, List.of(), List.of());
         }
 
-        /** Whether there is no record because the deployment has no extension: nothing a start would run. */
+        /**
+         * Whether there is no record because no extension would run at start: the deployment has none
+         * ({@link #NO_EXTENSION}), or the annotation processor ran them all at compile ({@link #ALL_AT_COMPILE}).
+         */
         public boolean nothingToFreeze() {
-            return !frozen && NO_EXTENSION.equals(reason);
+            return !frozen && (NO_EXTENSION.equals(reason) || ALL_AT_COMPILE.equals(reason));
         }
     }
 

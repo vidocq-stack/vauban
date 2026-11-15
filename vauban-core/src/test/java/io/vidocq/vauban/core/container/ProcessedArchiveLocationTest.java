@@ -21,6 +21,7 @@ package io.vidocq.vauban.core.container;
 
 import io.vidocq.vauban.classloader.VaubanClassLoader;
 import io.vidocq.vauban.classloader.spi.PluginContext;
+import io.vidocq.vauban.core.extensions.FrozenExtensions;
 import jakarta.enterprise.context.Dependent;
 import jakarta.enterprise.inject.build.compatible.spi.BuildCompatibleExtension;
 import jakarta.enterprise.inject.build.compatible.spi.ClassConfig;
@@ -54,6 +55,8 @@ import java.util.jar.JarEntry;
 import java.util.jar.JarOutputStream;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * An archive the Vauban processor handled at compile ({@code META-INF/vauban-bce-processed}) is recognised as such
@@ -164,6 +167,33 @@ class ProcessedArchiveLocationTest {
 
         assertEquals(List.of(ArchiveExtension.class.getName()),
                 extensionsRunUnderVaubanLoader(List.of(processed, raw)));
+    }
+
+    @Test
+    @DisplayName("the build of a deployment whose archives were all processed says every extension ran at compile")
+    void freezingAProcessedDeployment() throws Exception {
+        Path jar = jar(tmp.resolve("app.jar"), BEAN, true);
+
+        try (var loader = VaubanClassLoader.of(List.of(jar), getClass().getClassLoader(), PluginContext.empty())) {
+            var outcome = VaubanContainer.builder().classLoader(loader).scanClasspath()
+                    .freezeExtensions(Files.createDirectories(tmp.resolve("output")));
+
+            assertFalse(outcome.frozen());
+            assertEquals(FrozenExtensions.ALL_AT_COMPILE, outcome.reason());
+            assertTrue(outcome.nothingToFreeze(), "the start runs no extension: nothing to warn about");
+        }
+    }
+
+    @Test
+    @DisplayName("the build of a deployment without an extension still says it has none")
+    void freezingADeploymentWithoutAnExtension() throws Exception {
+        try (var loader = VaubanClassLoader.of(List.of(), getClass().getClassLoader(), PluginContext.empty())) {
+            var outcome = VaubanContainer.builder().classLoader(loader).scanClasspath()
+                    .freezeExtensions(Files.createDirectories(tmp.resolve("output")));
+
+            assertEquals(FrozenExtensions.NO_EXTENSION, outcome.reason());
+            assertTrue(outcome.nothingToFreeze());
+        }
     }
 
     // ---- helpers ----

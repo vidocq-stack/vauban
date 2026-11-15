@@ -613,7 +613,8 @@ public final class VaubanContainerBuilder {
      * again at each start, and what it did is not frozen. So are the extensions {@code startExtensions} names.
      *
      * <p>No record is written, a stale one is removed and the outcome says why, when the deployment has no
-     * extension, when an extension fails or reports an error (the start will report it, in the environment it
+     * extension or the annotation processor ran them all at compile (nothing to freeze either way), when an extension
+     * fails or reports an error (the start will report it, in the environment it
      * belongs to), when an {@code @Enhancement} removes annotations or when a synthetic component holds a parameter
      * the metadata cannot express. The start then runs the extensions, as it does without this step.
      *
@@ -662,20 +663,23 @@ public final class VaubanContainerBuilder {
         private BceProcessor.DiscoveryResult discovery;
         private Map<DotName, List<VaubanClassConfig>> enhancements = Map.of();
         private BceProcessor.Result result;
+        /** Whether the deployment's extensions all ran at compile, so that none ran here. */
+        private boolean ranAtCompile;
 
         void captured(DeploymentFingerprint fingerprint, List<Class<?>> extensions, BceProcessor.DiscoveryResult discovery,
-                Map<DotName, List<VaubanClassConfig>> enhancements, BceProcessor.Result result) {
+                Map<DotName, List<VaubanClassConfig>> enhancements, BceProcessor.Result result, boolean ranAtCompile) {
             this.fingerprint = fingerprint;
             this.extensions = extensions;
             this.discovery = discovery;
             this.enhancements = enhancements;
             this.result = result;
+            this.ranAtCompile = ranAtCompile;
         }
 
         /** The record of what was captured, without what the extensions that run at start did. */
         FrozenExtensions frozen(java.util.Collection<String> namedForStart) {
             if (extensions.isEmpty() || result == null || discovery == null) {
-                throw new NotFrozen(FrozenExtensions.NO_EXTENSION);
+                throw new NotFrozen(ranAtCompile ? FrozenExtensions.ALL_AT_COMPILE : FrozenExtensions.NO_EXTENSION);
             }
             var atStart = new java.util.TreeSet<String>();
             asked.forEach(extension -> atStart.add(extension.getName()));
@@ -768,10 +772,12 @@ public final class VaubanContainerBuilder {
      *                             consider
      * @param enhancementPatch     the annotations frozen for each target: by the archives, and by the record
      * @param effectiveReplayPairs the pairs to replay: those whose class the frozen patch does not cover
+     * @param ranAtCompile         whether the deployment has extensions and every archive is processed: the
+     *                             annotation processor ran them at compile
      */
     private record ExtensionPlan(FrozenExtensions.Found lookup, List<Class<?>> toRun, List<Class<?>> toEnhance,
             List<Map.Entry<Class<?>, Class<?>>> replayPairs, Map<DotName, List<AnnotationInfo>> enhancementPatch,
-            List<Map.Entry<Class<?>, Class<?>>> effectiveReplayPairs) {
+            List<Map.Entry<Class<?>, Class<?>>> effectiveReplayPairs, boolean ranAtCompile) {
 
         FrozenExtensions frozen() {
             return lookup.frozen();
@@ -799,15 +805,15 @@ public final class VaubanContainerBuilder {
                 .filter(c -> !bceProcessedSources.holds(c))
                 .toList();
 
+        // If ALL sources are pre-processed AND we have a replay list, skip full BCE
+        // lifecycle (cleaner: BCEs from pre-processed JARs are already digested).
+        boolean allSourcesProcessed = unmarkedArchiveClasses.isEmpty() && !bceProcessedSources.isEmpty();
         List<Class<?>> toRun;
         if (frozen != null) {
             toRun = deploymentExtensions.stream()
                     .filter(extension -> frozen.startExtensions().contains(extension.getName()))
                     .toList();
         } else {
-            // If ALL sources are pre-processed AND we have a replay list, skip full BCE
-            // lifecycle (cleaner: BCEs from pre-processed JARs are already digested).
-            boolean allSourcesProcessed = unmarkedArchiveClasses.isEmpty() && !bceProcessedSources.isEmpty();
             toRun = allSourcesProcessed ? List.of() : deploymentExtensions;
         }
         // Nothing to enhance when no extension runs: the record holds what the frozen ones added.
@@ -834,7 +840,8 @@ public final class VaubanContainerBuilder {
         var effectiveReplayPairs = replayPairs.stream()
                 .filter(p -> !frozenEnhancementClasses.contains(DotName.of(p.getValue().getName())))
                 .toList();
-        return new ExtensionPlan(found, toRun, toEnhance, replayPairs, enhancementPatch, effectiveReplayPairs);
+        return new ExtensionPlan(found, toRun, toEnhance, replayPairs, enhancementPatch, effectiveReplayPairs,
+                allSourcesProcessed && !deploymentExtensions.isEmpty());
     }
 
     /** What {@code @Discovery} registered: the extensions that ran, the record of the frozen ones, or both. */
@@ -984,7 +991,8 @@ public final class VaubanContainerBuilder {
             }
             if (capture != null) {
                 // The build stops here: what the extensions did is all it wants.
-                capture.captured(fingerprint, bceClasses, discoveryResult, combinedEnhMods, bceResult);
+                capture.captured(fingerprint, bceClasses, discoveryResult, combinedEnhMods, bceResult,
+                        plan.ranAtCompile());
                 return null;
             }
             if (frozen != null) {

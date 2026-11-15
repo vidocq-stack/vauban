@@ -37,6 +37,14 @@ suspected cause, status. Updated on every investigation.
   exploded module in a module layer; an unprocessed jar and a processed jar beside an unprocessed one still run the
   extension): 3 red before (the Vauban class loader's jar, the same under a path with a space and `été`, the jar
   module), all green now. `ProcessedArchivesTest` (16) on the spellings and on `holds`.
+- **Message**: the build of such a deployment said `the deployment has no build compatible extension`
+  (`FrozenExtensions.NO_EXTENSION`), which it has. It now says `every build compatible extension of the deployment ran
+  at compile` (`FrozenExtensions.ALL_AT_COMPILE`), and `ExtensionFreezer.report` writes `nothing to freeze: <reason>`
+  for both, at info level (`Outcome.nothingToFreeze()` covers both). `NO_EXTENSION` keeps its text and meaning: Vidocq's
+  `VidocqGenerateMojo` and `VidocqGenerateFreezeTest` read them. Covered by
+  `ProcessedArchiveLocationTest.freezingAProcessedDeployment` (red before) and `freezingADeploymentWithoutAnExtension`,
+  and `ExtensionFreezerTest.theReportWhenNothingIsToFreeze`.
+
 ## BUG-20261115-06 — A module whose only processor is Vauban gets "created in the last round" warnings again
 
 - **Date**: 2026-11-15

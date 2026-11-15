@@ -183,6 +183,15 @@ class ExtensionFreezerTest {
     }
 
     @Test
+    @DisplayName("the report of a deployment with nothing to freeze does not say the start runs extensions")
+    void theReportWhenNothingIsToFreeze() {
+        assertEquals(List.of("Vauban: nothing to freeze: " + FrozenExtensions.NO_EXTENSION + "."),
+                ExtensionFreezer.report(FrozenExtensions.Outcome.notFrozen(FrozenExtensions.NO_EXTENSION)));
+        assertEquals(List.of("Vauban: nothing to freeze: " + FrozenExtensions.ALL_AT_COMPILE + "."),
+                ExtensionFreezer.report(FrozenExtensions.Outcome.notFrozen(FrozenExtensions.ALL_AT_COMPILE)));
+    }
+
+    @Test
     @DisplayName("the path of the deployment alone is scanned, not the build tool's own")
     void onlyTheDeploymentIsScanned() throws Exception {
         generate(false);

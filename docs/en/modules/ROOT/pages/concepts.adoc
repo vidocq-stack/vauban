@@ -167,6 +167,8 @@ What an extension sees of a bean class is what the language model shows it: the 
 
 No brick jar is copied or marked: the record is the application's, one per deployment.
 
+A deployment with nothing to freeze gets no record either, and the build says so without a warning: `nothing to freeze: the deployment has no build compatible extension`, or `nothing to freeze: every build compatible extension of the deployment ran at compile` when every bean archive carries the processor's marker, so that the start runs none of them. `FrozenExtensions.Outcome.nothingToFreeze()` answers `true` for both.
+
 The build writes no record, removes a stale one and says why, when the result cannot be frozen faithfully:
 
 * an extension failed or reported an error: the start reports it, in the environment it belongs to;

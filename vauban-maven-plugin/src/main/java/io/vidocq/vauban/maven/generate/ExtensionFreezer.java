@@ -68,6 +68,9 @@ public final class ExtensionFreezer {
 
     /** What a build says about {@code outcome}, one line per item. */
     public static List<String> report(FrozenExtensions.Outcome outcome) {
+        if (outcome.nothingToFreeze()) {
+            return List.of("Vauban: nothing to freeze: " + outcome.reason() + ".");
+        }
         if (!outcome.frozen()) {
             return List.of("Vauban: the build compatible extensions are not frozen, the container start runs them: "
                     + outcome.reason() + ".");
