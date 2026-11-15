@@ -234,9 +234,15 @@ public final class VaubanLayerFactory {
      * {@code ContextAccessor}, an optional dependency often absent (vauban#162); on the class path, or as an
      * automatic module, that file was ignored the same way.
      *
+     * <p>Public for a build that writes the same {@code provides} into the {@code module-info.class} of the modules
+     * it packages, for a launch without an application layer: it reads the descriptors of this finder, and defines
+     * no layer. One rule then decides what is promoted, at launch and at build.
+     *
+     * @param base   the finder of the modules to promote
      * @param parent the layer the modules resolve against, where required modules may be found too
+     * @return a finder of the same modules, the explicit ones with their services files promoted
      */
-    static ModuleFinder promotingServices(ModuleFinder base, ModuleLayer parent) {
+    public static ModuleFinder promotingServices(ModuleFinder base, ModuleLayer parent) {
         return new ModuleFinder() {
             @Override
             public Optional<ModuleReference> find(String name) {

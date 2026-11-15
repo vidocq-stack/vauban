@@ -160,6 +160,29 @@ class VaubanLayerFactoryTest {
         assertTrue(provided.contains("java.util.logging.Filter"), provided.toString());
     }
 
+    /** A build reads the promoted descriptors to write them into the modules it packages: no layer is defined. */
+    @Test
+    @DisplayName("the promoting finder gives the promoted descriptors without a layer")
+    void thePromotingFinderGivesThePromotedDescriptorsWithoutALayer(@TempDir Path dir) throws Exception {
+        var root = modularAppArchive(dir);
+        Files.write(root.resolve("com/example/layered/Api.class"), serviceInterface("com.example.layered.Api"));
+        Files.write(root.resolve("com/example/layered/ApiImpl.class"),
+                serviceImpl("com.example.layered.ApiImpl", "com.example.layered.Api"));
+        var services = root.resolve("META-INF/services");
+        Files.createDirectories(services);
+        Files.writeString(services.resolve("com.example.layered.Api"), "com.example.layered.ApiImpl\n");
+        Files.writeString(services.resolve("io.micrometer.context.ContextAccessor"), "com.example.layered.ApiImpl\n");
+
+        var finder = VaubanLayerFactory.promotingServices(java.lang.module.ModuleFinder.of(root), ModuleLayer.boot());
+
+        var provides = finder.find(MODULE).orElseThrow().descriptor().provides();
+        assertEquals(1, provides.size(), provides.toString());
+        var promoted = provides.iterator().next();
+        assertEquals("com.example.layered.Api", promoted.service());
+        assertEquals(List.of("com.example.layered.ApiImpl"), promoted.providers());
+        assertEquals(provides, finder.findAll().iterator().next().descriptor().provides());
+    }
+
     @Test
     @DisplayName("spike: a child layer may shadow a parent layer's module of the same name (trampoline re-layering)")
     void childLayerShadowsParentModule(@TempDir Path dir) throws Exception {
