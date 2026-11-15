@@ -179,6 +179,11 @@ public final class VaubanContainerBuilder {
         return this;
     }
 
+    /** The names of the bean classes added so far, in the order they were added. */
+    List<String> beanClassNames() {
+        return beanClasses.stream().map(Class::getName).toList();
+    }
+
     /**
      * Add a class that is explicitly contributed to the deployment as if it belonged to a
      * synthetic bean archive with {@code bean-discovery-mode=all} — the CDI SE contract for

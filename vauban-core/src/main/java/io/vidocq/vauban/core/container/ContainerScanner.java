@@ -37,6 +37,8 @@ final class ContainerScanner {
     private static final String CLASS_SUFFIX = ".class";
     private static final String FILE_PREFIX = "file:";
     private static final String JAR_FILE_PREFIX = "jar:file:";
+    private static final String BEANS_LIST = "META-INF/vauban-beans.list";
+    private static final String BEANS_XML = "META-INF/beans.xml";
 
     private final VaubanContainerBuilder host;
 
@@ -148,7 +150,7 @@ final class ContainerScanner {
 
         // 3. Read vauban-beans.list files from all JARs/directories
         try {
-            var urls = cl.getResources("META-INF/vauban-beans.list");
+            var urls = cl.getResources(BEANS_LIST);
             while (urls.hasMoreElements()) {
                 var url = urls.nextElement();
                 try (var reader = new java.io.BufferedReader(
@@ -241,13 +243,13 @@ final class ContainerScanner {
     }
 
     /** The entries whose presence means that a Vauban build step indexed the archive. */
-    private static final List<String> PROCESSED_MARKERS = List.of("META-INF/vauban-beans.list",
+    private static final List<String> PROCESSED_MARKERS = List.of(BEANS_LIST,
             "META-INF/vauban-bce-processed", "META-INF/services/io.vidocq.vauban.api.VaubanComponentProvider");
 
     private void scanBeanArchives(boolean unprocessedOnly, java.util.function.Consumer<java.net.URL> onArchive) {
         var cl = effectiveClassLoader();
         try {
-            var beansXmlUrls = cl.getResources("META-INF/beans.xml");
+            var beansXmlUrls = cl.getResources(BEANS_XML);
             while (beansXmlUrls.hasMoreElements()) {
                 var beansXmlUrl = beansXmlUrls.nextElement();
                 var mode = discoveryMode(beansXmlUrl);
@@ -434,11 +436,44 @@ final class ContainerScanner {
         try {
             var engineLoader = io.vidocq.vauban.classloader.VaubanClassLoader.of(
                     java.util.List.of(sjarPath), cl, ctx, host.byteSourcePlugins);
-            for (var className : engineLoader.managedClassNames()) {
-                tryAddBeanClass(className, engineLoader);
-            }
+            addSjarBeans(sjarPath, engineLoader);
         } catch (IOException e) {
             throw new java.io.UncheckedIOException("Failed to scan SJAR: " + sjarPath, e);
+        }
+    }
+
+    /**
+     * Adds the beans of an encrypted jar as the start finds them on the module path, where the jar is a module like any
+     * other: the classes its build-time index lists, or the classes of a bean archive, and none when it is neither.
+     * Taking every class would put in the build's record of the frozen extensions beans that the start does not see,
+     * and that record would never match the deployment (VIDOCQ-GEN-003 at each start).
+     */
+    private void addSjarBeans(java.nio.file.Path sjarPath, io.vidocq.vauban.classloader.VaubanClassLoader engineLoader)
+            throws IOException {
+        // META-INF stays clear in an encrypted jar: its index and beans.xml are read as in any jar.
+        try (var jar = new java.util.jar.JarFile(sjarPath.toFile())) {
+            var index = jar.getEntry(BEANS_LIST);
+            if (index != null) {
+                var listed = new String(jar.getInputStream(index).readAllBytes(),
+                        java.nio.charset.StandardCharsets.UTF_8).lines()
+                        .map(String::strip)
+                        .filter(line -> !line.isEmpty() && !line.startsWith("#"))
+                        .collect(java.util.stream.Collectors.toSet());
+                engineLoader.managedClassNames().stream().filter(listed::contains)
+                        .forEach(className -> tryAddBeanClass(className, engineLoader));
+                return;
+            }
+            var beansXml = jar.getEntry(BEANS_XML);
+            if (beansXml == null) {
+                return;
+            }
+            var mode = BeanDiscoveryMode.of(new String(jar.getInputStream(beansXml).readAllBytes(),
+                    java.nio.charset.StandardCharsets.UTF_8));
+            if (mode != BeanDiscoveryMode.NONE) {
+                for (var className : engineLoader.managedClassNames()) {
+                    tryAddArchiveClass(className, engineLoader, mode == BeanDiscoveryMode.ALL);
+                }
+            }
         }
     }
 

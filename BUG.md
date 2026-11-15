@@ -5,6 +5,27 @@ suspected cause, status. Updated on every investigation.
 
 ---
 
+## BUG-20261115-02 — A build that can decrypt an encrypted jar takes all its classes as beans, and the start does not
+
+- **Date**: 2026-11-15
+- **Status**: FIXED on `fix/sjar-bean-archive`
+- **Module**: `vauban-core` (`ContainerScanner.scanSjar`)
+- **Symptom**: a Vidocq application depends on an encrypted jar that is not a bean archive (no `beans.xml`, no
+  `META-INF/vauban-beans.list`). Built with `VAUBAN_SJAR_KEY` in the environment, the record of the frozen
+  extensions lists the jar's classes (`com.acme.secretlib.Secret`, `com.acme.secretlib.internal.Vault`) as bean
+  classes; every start with the key then runs the extensions again and warns `VIDOCQ-GEN-003 … 2 bean classes differ
+  from the build's: … (removed)`. `vidocq:run`, which builds and starts with the same environment, warns at each
+  start. Built without the key, the record matches. Found by the Vidocq tutorial session.
+- **Repro**: `ContainerScannerResourcesTest.encryptedJarFollowsTheBeanArchiveRules`: an encrypted jar with only its
+  header gave its class as a bean.
+- **Cause**: `generate` scans the class path. There, `scanEncryptedJarsOnClasspath` decrypts every jar with a
+  `META-INF/vauban.header` and `scanSjar` added each of its classes as a bean class, whatever the jar declared. The
+  start reads the jar as a module of the layer and applies the bean archive rules, so it found none.
+- **Fix**: `scanSjar` reads the jar's clear `META-INF` as for any jar: the classes its `vauban-beans.list` lists,
+  else the classes of a bean archive (`beans.xml`, by its discovery mode), else none.
+- **Validation**: the new test, red before the fix; `ExampleAppEndToEndTest` (an encrypted jar indexed by
+  `vauban-beans.list`) still gives its beans.
+
 ## BUG-20261115-01 — In a module layer, a class of an encrypted jar's internal package cannot be called by its module
 
 - **Date**: 2026-11-15

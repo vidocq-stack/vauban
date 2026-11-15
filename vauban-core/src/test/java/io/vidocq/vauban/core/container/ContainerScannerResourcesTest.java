@@ -45,6 +45,7 @@ import java.util.Enumeration;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.jar.JarEntry;
 import java.util.jar.JarOutputStream;
 
@@ -282,6 +283,89 @@ class ContainerScannerResourcesTest {
         public ArchiveReader open(Path archivePath, PluginContext context) throws IOException {
             throw new IOException("cannot open " + archivePath.getFileName());
         }
+    }
+
+    /** Opens any archive as one holding the class file of {@link Fixture}, read from the test classes. */
+    private static final class FixturePlugin implements ByteSourcePlugin {
+        @Override
+        public String protocol() {
+            return "fixture";
+        }
+
+        @Override
+        public boolean handles(Path archivePath) {
+            return true;
+        }
+
+        @Override
+        public ArchiveReader open(Path archivePath, PluginContext context) {
+            return new ArchiveReader() {
+                @Override
+                public List<String> classEntries() {
+                    return List.of(PACKAGE_PATH + "/" + FIXTURE_FILE);
+                }
+
+                @Override
+                public byte[] readClass(String entryName) throws IOException {
+                    try (var in = ContainerScannerResourcesTest.class.getClassLoader()
+                            .getResourceAsStream(entryName)) {
+                        return in.readAllBytes();
+                    }
+                }
+
+                @Override
+                public Optional<byte[]> readResource(String entryName) {
+                    return Optional.empty();
+                }
+
+                @Override
+                public void close() {
+                    // Nothing to release.
+                }
+            };
+        }
+    }
+
+    private static Path jarWith(Path file, Map<String, String> entries) throws IOException {
+        try (var out = new JarOutputStream(Files.newOutputStream(file))) {
+            for (var entry : entries.entrySet()) {
+                out.putNextEntry(new JarEntry(entry.getKey()));
+                out.write(entry.getValue().getBytes(StandardCharsets.UTF_8));
+                out.closeEntry();
+            }
+        }
+        return file;
+    }
+
+    private static List<String> beanClassesOf(Path sjar) {
+        var builder = VaubanContainer.builder().addByteSourcePlugin(new FixturePlugin());
+        builder.scanSjar(sjar);
+        return builder.beanClassNames();
+    }
+
+    @Test
+    @DisplayName("an encrypted jar gives beans as a bean archive does: none without beans.xml or an index")
+    void encryptedJarFollowsTheBeanArchiveRules(@TempDir Path dir) throws IOException {
+        var header = "META-INF/vauban.header";
+        var fixture = Fixture.class.getName();
+
+        var plain = jarWith(dir.resolve("plain.jar"), Map.of(header, "k"));
+        var none = jarWith(dir.resolve("none.jar"),
+                Map.of(header, "k", BEANS_XML, "<beans bean-discovery-mode=\"none\"/>"));
+        var all = jarWith(dir.resolve("all.jar"),
+                Map.of(header, "k", BEANS_XML, "<beans bean-discovery-mode=\"all\"/>"));
+        var annotated = jarWith(dir.resolve("annotated.jar"), Map.of(header, "k", BEANS_XML, ""));
+        var indexed = jarWith(dir.resolve("indexed.jar"),
+                Map.of(header, "k", "META-INF/vauban-beans.list", "# beans\n" + fixture + "\n"));
+        var indexedElsewhere = jarWith(dir.resolve("indexed-elsewhere.jar"),
+                Map.of(header, "k", "META-INF/vauban-beans.list", "com.acme.Other\n"));
+
+        assertEquals(List.of(), beanClassesOf(plain), "not a bean archive: the build and the start must agree");
+        assertEquals(List.of(), beanClassesOf(none));
+        assertEquals(List.of(fixture), beanClassesOf(all));
+        assertEquals(List.of(fixture), beanClassesOf(annotated));
+        assertEquals(List.of(fixture), beanClassesOf(indexed));
+        assertEquals(List.of(), beanClassesOf(indexedElsewhere));
     }
 
     @Test
