@@ -5,6 +5,36 @@ suspected cause, status. Updated on every investigation.
 
 ---
 
+## BUG-20261115-04 — An injection point a bean module satisfies warns when the compilation does not read that module
+
+- **Date**: 2026-11-15
+- **Status**: FIXED on `fix/processor-build-noise`
+- **Module**: `vauban-processor` (`VaubanProcessor.scanBeanArchiveModules`, `ProcessorPathArchives`)
+- **Symptom**: an application that injects `HttpServletRequest`, `HttpSession` or `ServletContext`, produced since
+  Vidocq/foy#107 by `ServletBuiltInBeans` of `foy-cdi-vauban`, warns at every build: `[Vauban] Unsatisfied
+  dependency: field WhoAmIServlet.request of type …HttpServletRequest … — the required type is not declared by this
+  compilation unit; resolution deferred to the runtime container.` On the module path and on the class path alike;
+  `--add-modules io.vidocq.foy.cdi.vauban` silences it. Found by the Foy session (Servlet built-in beans). Vidocq's
+  `vidocq-runtime-it-foy-servlet` and the applications `vidocq create` writes print it four times: there
+  `foy-cdi-vauban` is a runtime dependency, on the processor path only, through the Foy extension's `-codegen` bundle.
+- **Repro**: `BeanArchiveModuleInjectionTest.aBeanModuleTheApplicationDoesNotReadResolvesFromTheProcessorPath` and
+  `aBeanArchiveOnTheClassPathResolvesFromTheProcessorPath`: a module `repro.beans` produces `repro.api`'s `Exchange`,
+  the application requires `repro.api` only, `repro.beans` sits on the processor path, and on the module path (or the
+  class path) or not.
+- **Cause**: VAU-APT-006 reads the bean archive modules through `Elements.getAllModuleElements()`, which javac fills
+  with the modules of the compilation's module graph only (`Modules.getObservableModule` checks `allModules()`).
+  No module of a Vidocq application requires `io.vidocq.foy.cdi.vauban`, the Foy runtime extension included, so it
+  is never resolved; on the class path, VAU-APT-006 reads nothing. javac gives a processor no way to list the module
+  path: the Filer reads a module-oriented location only for a module it names.
+- **Fix**: for the types still deferred, the processor also reads the bean archives on the processor path, its own
+  class loader, where Vidocq's `-codegen` bundles put each brick's CDI jar: every `META-INF/vauban-beans.list`, and
+  the class files of the beans it lists (resources that end with `.class` are never encapsulated, in a named module
+  of a processor module path either), scanned with `ClassFileScanner`; nothing is loaded or run. VAU-APT-006's rules
+  hold: those beans join resolution only, never validated, generated or listed by the application, an ambiguity among
+  them stays a warning, and a class this compilation compiles is never taken from a path. A bean module neither read
+  nor on the processor path stays deferred, with the warning
+  (`aBeanModuleNeitherReadNorOnTheProcessorPathStaysDeferred`): another build adds it with `--add-modules`.
+
 ## BUG-20261115-03 — A modularized library that looks services up by a parameter misses their `uses`
 
 - **Date**: 2026-11-15

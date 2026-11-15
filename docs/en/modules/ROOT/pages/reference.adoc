@@ -399,12 +399,22 @@ modules it depends on:
   class files, without loading or running anything of theirs, and replays bean discovery on them. An application that
   injects `JsonWebToken` now validates against the producer of `cervantes-cdi-vauban` instead of warning that the
   type is unsatisfied.
+* [.tag-new]#NEW# since BUG-20261115-04, a bean of a *bean archive on the processor path*, a jar compiled with Vauban, which lists
+  its beans in `META-INF/vauban-beans.list`. javac only shows a processor the modules the compilation reads: a
+  Vidocq application does not require `io.vidocq.foy.cdi.vauban`, which produces `HttpServletRequest`, `HttpSession`
+  and `ServletContext`, and has it as a runtime dependency, absent from the compile module path. The extension's
+  `-codegen` bundle puts that jar on the processor path, where the processor
+  reads the list and the class files of the beans it names, again without loading or running anything of theirs.
+  The same holds for a jar on the class path that is also on the processor path.
 
 Those beans of other modules only take part in resolution: their own module validates their injection points,
 generates their artefacts and lists them in its `vauban-beans.list`. An ambiguity among them is the container's to
 decide, with every archive in view, and stays a warning. Still deferred to the container, with the
-_resolution deferred to the runtime container_ warning: a module on the class path, whose directives cannot be read;
-a bean a Build Compatible Extension adds when it runs at start-up only; a type no archive declares.
+_resolution deferred to the runtime container_ warning: a bean archive that the compilation does not read and that is
+not on the processor path either (javac gives a processor no way to list the module path: add the module with
+`--add-modules`, or its jar to the processor path); a bean archive on the class path that is not on the processor path,
+whose directives cannot be read; a bean a Build Compatible Extension adds when it runs at start-up only; a type no
+archive declares.
 
 [#system-properties]
 == System properties

@@ -112,7 +112,7 @@ public class VaubanProcessor extends AbstractProcessor {
             "jakarta.enterprise.context.NormalScope",
             "jakarta.inject.Scope");
 
-    private static final String BEANS_LIST_PATH = "META-INF/vauban-beans.list";
+    private static final String BEANS_LIST_PATH = ProcessorPathArchives.BEANS_LIST_PATH;
     private static final String REQUIRED_OPENS_PATH = "META-INF/vauban/required-opens.list";
     private static final String BCE_RUNTIME_LIST_PATH = "META-INF/vauban-bce-runtime.list";
     private static final String LOG_PREFIX = "[Vauban] ";
@@ -153,6 +153,8 @@ public class VaubanProcessor extends AbstractProcessor {
 
     /** Named modules this compilation is building — never complete their directives. */
     private final Set<String> compiledModuleNames = new HashSet<>();
+    /** The top-level types this compilation compiles, by qualified name: its root elements, every round. */
+    private final Set<String> compiledTypeNames = new HashSet<>();
     private Set<String> bceAnnotationTypes = Set.of();
 
     /**
@@ -187,9 +189,18 @@ public class VaubanProcessor extends AbstractProcessor {
 
     private ClassLoader bceClassLoader;
 
-    /** Visible for testing — the class loader whose {@code ServiceLoader} discovers the BCEs, in place of the processor's. */
+    /**
+     * Visible for testing — the class loader standing for the processor path, in place of the processor's: its
+     * {@code ServiceLoader} discovers the BCEs, and its bean archives satisfy the injection points of the types this
+     * compilation does not declare.
+     */
     public void overrideBceClassLoader(ClassLoader classLoader) {
         this.bceClassLoader = classLoader;
+    }
+
+    /** The processor path: the processor's class loader, unless a test stands another one for it. */
+    private ClassLoader processorPathLoader() {
+        return bceClassLoader != null ? bceClassLoader : VaubanProcessor.class.getClassLoader();
     }
 
     /** Visible for testing — returns the set of external class names after processing. */
@@ -226,8 +237,8 @@ public class VaubanProcessor extends AbstractProcessor {
         // Discover BCEs early so their @Enhancement(withAnnotations=...) annotations
         // are included in getSupportedAnnotationTypes(). Without this, classes annotated
         // with e.g. @Path would never be seen by the APT roundEnv.
-        var cl = bceClassLoader != null ? bceClassLoader : VaubanProcessor.class.getClassLoader();
-        discoveredBceClasses = overrideBceClasses != null ? overrideBceClasses : discoverBceClasses(cl);
+        discoveredBceClasses = overrideBceClasses != null ? overrideBceClasses
+                : discoverBceClasses(processorPathLoader());
         bceAnnotationTypes = extractBceAnnotationTypes(discoveredBceClasses);
     }
 
@@ -431,7 +442,8 @@ public class VaubanProcessor extends AbstractProcessor {
      * Remembers which module(s) this compilation is building: reading the module <em>directives</em>
      * of a module still being compiled (as unloadableBcesOnCompilePath does for dependency
      * modules) completes it prematurely and freezes {@code provides} resolution errors before the
-     * last-round generated classes exist. getModuleOf only walks ownership — no completion.
+     * last-round generated classes exist. getModuleOf only walks ownership — no completion. Remembers the types it
+     * compiles too, which no class or service file of a path may stand for.
      */
     private void recordCompiledModules(RoundEnvironment roundEnv) {
         for (var root : roundEnv.getRootElements()) {
@@ -439,7 +451,20 @@ public class VaubanProcessor extends AbstractProcessor {
             if (module != null && !module.isUnnamed()) {
                 compiledModuleNames.add(module.getQualifiedName().toString());
             }
+            if (root instanceof TypeElement type) {
+                compiledTypeNames.add(type.getQualifiedName().toString());
+            }
         }
+    }
+
+    /** Whether {@code binaryName} names a type this compilation compiles: one of its top-level types, or a member. */
+    private boolean isCompiledType(String binaryName) {
+        for (int end = binaryName.length(); end > 0; end = binaryName.lastIndexOf('$', end - 1)) {
+            if (compiledTypeNames.contains(binaryName.substring(0, end))) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /** Adds to the cross-round index each annotated type, or the type enclosing an annotated member. */
@@ -587,7 +612,7 @@ public class VaubanProcessor extends AbstractProcessor {
         // These classes come from dependency jars (added via ScannedClasses.add()), not from
         // the module being compiled — track them as external so we skip factory/proxy generation.
         for (var className : discoveryResult.scannedClasses().getAddedClasses()) {
-            var bytes = loadClassBytes(className, aptClassLoader);
+            var bytes = ProcessorPathArchives.classFile(aptClassLoader, className);
             if (bytes.length > 0) {
                 indexScannedClass(indexBuilder, className, bytes);
             }
@@ -1613,10 +1638,16 @@ public class VaubanProcessor extends AbstractProcessor {
      * {@code Elements} — compiled classes on the module path, never loaded, nothing of theirs executed — then
      * scanned into the index, and discovery is replayed to obtain their beans.</p>
      *
+     * <p>The modules the compilation does not read are out of sight of {@code Elements}: a Vidocq application does not
+     * require {@code io.vidocq.foy.cdi.vauban}, which produces {@code HttpServletRequest}. The bean archives on the
+     * processor path, where Vidocq's {@code -codegen} bundles put each brick's CDI jar, are read too, from their
+     * {@code vauban-beans.list} and their class files (BUG-20261115-04, {@link ProcessorPathArchives}).</p>
+     *
      * <p>Those beans join resolution only ({@link #archiveBeans}): their own module validates their injection
      * points, generates their artefacts and lists them in its {@code vauban-beans.list}. What stays deferred:
-     * a module on the class path (no module directives to read), a bean a Build Compatible Extension adds when
-     * it runs at boot only, and a type no archive declares at all.</p>
+     * a bean archive neither read by the compilation nor on the processor path, among them a jar on the class path
+     * only (no module directives to read), a bean a Build Compatible Extension adds when it runs at boot only, and a
+     * type no archive declares at all.</p>
      */
     private ArchiveResolution resolveFromBeanArchiveModules(Set<String> deferred, IndexBuilder indexBuilder,
             ElementScanner scanner, BceProcessor.DiscoveryResult discoveryResult) {
@@ -1649,7 +1680,10 @@ public class VaubanProcessor extends AbstractProcessor {
         return new ArchiveResolution(satisfied, classes);
     }
 
-    /** Scans into the index the packages of beans of every bean archive module; returns the classes added. */
+    /**
+     * Scans into the index the packages of beans of every bean archive module the compilation reads, then the beans
+     * the archives on the processor path list; returns the classes added.
+     */
     private Set<DotName> scanBeanArchiveModules(IndexBuilder indexBuilder, ElementScanner scanner) {
         var elements = processingEnv.getElementUtils();
         Set<DotName> scanned = new LinkedHashSet<>();
@@ -1657,6 +1691,12 @@ public class VaubanProcessor extends AbstractProcessor {
             for (var type : ElementFilter.typesIn(elements.getPackageOf(provider).getEnclosedElements())) {
                 scanArchiveType(type, indexBuilder, scanner, scanned);
             }
+        }
+        // A class of this compilation stays its own, even when an earlier build of it is on the processor path.
+        for (var classInfo : ProcessorPathArchives.beanClasses(processorPathLoader(),
+                name -> indexBuilder.contains(DotName.of(name)) || isCompiledType(name))) {
+            indexBuilder.add(classInfo);
+            scanned.add(classInfo.name());
         }
         return scanned;
     }
@@ -1821,16 +1861,6 @@ public class VaubanProcessor extends AbstractProcessor {
             }
         }
         return classes;
-    }
-
-    /** The class file of {@code className} on {@code cl}; empty when it cannot be read there. */
-    private byte[] loadClassBytes(String className, ClassLoader cl) {
-        var resourceName = className.replace('.', '/') + ".class";
-        try (var is = cl.getResourceAsStream(resourceName)) {
-            return is != null ? is.readAllBytes() : new byte[0];
-        } catch (IOException _) {
-            return new byte[0];
-        }
     }
 
     // --- File writing ---
