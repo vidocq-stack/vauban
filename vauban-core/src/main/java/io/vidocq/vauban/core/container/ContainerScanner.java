@@ -114,22 +114,6 @@ final class ContainerScanner {
         }
     }
 
-    /**
-     * Extracts the JAR/directory root from a resource URL.
-     * E.g. "jar:file:/path/to/my.jar!/META-INF/marker" → "file:/path/to/my.jar"
-     *      "file:/path/to/classes/META-INF/marker" → "file:/path/to/classes/"
-     */
-    private static String extractSourceRoot(String resourceUrl, String resourcePath) {
-        // jar:file:/path/to/my.jar!/META-INF/...
-        if (resourceUrl.startsWith("jar:")) {
-            int bangIdx = resourceUrl.indexOf('!');
-            return bangIdx > 0 ? resourceUrl.substring(4, bangIdx) : resourceUrl;
-        }
-        // file:/path/to/classes/META-INF/...
-        int idx = resourceUrl.indexOf(resourcePath);
-        return idx > 0 ? resourceUrl.substring(0, idx) : resourceUrl;
-    }
-
     void scanClasspath() {
         var cl = effectiveClassLoader();
 
@@ -141,8 +125,8 @@ final class ContainerScanner {
             var markerUrls = cl.getResources(
                     io.vidocq.vauban.core.extensions.SyntheticMetadataSerializer.BCE_PROCESSED_MARKER);
             while (markerUrls.hasMoreElements()) {
-                host.bceProcessedSources.add(extractSourceRoot(markerUrls.nextElement().toString(),
-                        io.vidocq.vauban.core.extensions.SyntheticMetadataSerializer.BCE_PROCESSED_MARKER));
+                host.bceProcessedSources.addArchiveOf(markerUrls.nextElement(),
+                        io.vidocq.vauban.core.extensions.SyntheticMetadataSerializer.BCE_PROCESSED_MARKER);
             }
         } catch (java.io.IOException _) {
             // No marker can be read: no source counts as processed by a build compatible extension.

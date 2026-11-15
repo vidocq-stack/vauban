@@ -54,7 +54,10 @@ container's normal path: the reflective path below it exists for classes no buil
 | The container at boot: it applies the frozen enhancements and registers the synthetic beans, observers and
   contexts instead of running the extensions again; `vauban-bce-runtime.list` names the (extension, class) pairs
   whose `@Enhancement` it still replays when no frozen patch covers them
-| Unless every bean archive carries the marker, the extensions' whole lifecycle runs again at boot.
+| Unless every bean archive carries the marker, the extensions' whole lifecycle runs again at boot. A class
+  belongs to a marked archive by location, whatever loader defines it: the container compares the archive that holds
+  the marker with the code source of the class as paths, not as URLs, which the Vauban class loader and the JDK's
+  loaders spell differently (`jar:file:///app.jar!/…` against `file:/app.jar`, BUG-20261115-07).
 
 | What the extensions did on the whole deployment: `vauban-frozen-extensions.properties`,
   `vauban-frozen-enhancements.properties`, `vauban-frozen-synthetic.properties`

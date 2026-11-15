@@ -5,6 +5,38 @@ suspected cause, status. Updated on every investigation.
 
 ---
 
+## BUG-20261115-07 — Under the Vauban class loader or on the module path, a jar processed at compile is not recognised
+
+- **Date**: 2026-11-15
+- **Status**: FIXED on `fix/bce-processed-source-location`
+- **Module**: `vauban-core` (`ContainerScanner.scanClasspath`, `VaubanContainerBuilder.planExtensions`)
+- **Symptom**: a packaged Vidocq application whose bean archives were all processed by `vauban-processor` at compile
+  (each carries `META-INF/vauban-bce-processed`) still runs its build compatible extensions at every start; under
+  `vidocq.startup.require-frozen-extensions=true` it refuses to start (VIDOCQ-GEN-003). A servlet-only application,
+  Foy's `FoyWebExtension` processed at compile and nothing else, is one. Found by a Vidocq integration test (Vidocq
+  BUG-20261115-05).
+- **Repro**: `ProcessedArchiveLocationTest`: a jar with a bean, its index, an extension's service file and the
+  marker, loaded through `VaubanClassLoader.of(...)`: `extensionsAtStart().ranAtStart()` named the extension. So did
+  the same jar as module `m.app` in a module layer. The same jar under a `URLClassLoader`, a directory of classes, or
+  an exploded module, ran none.
+- **Cause**: `scanClasspath` recorded each marker's archive as the text of its URL, the `jar:` prefix and the entry
+  cut off, and `isClassFromBceProcessedSource` looked a class's code source up in that set by its text. The Vauban
+  class loader writes a jar's entry `jar:file:///a/app.jar!/META-INF/vauban-bce-processed` (`Path.toUri()`) and the
+  code source of its classes `file:/a/app.jar` (`URI.toURL()`): one file, two spellings, never equal. A
+  `URLClassLoader` writes both from the URL it was given, so they matched. The module path writes them as the Vauban
+  class loader does: a jar module's entry `jar:file:///…/m.app.jar!/…`, its classes' code source `file:/…/m.app.jar`;
+  an exploded module matched. Every class looked unprocessed, and `planExtensions` ran every extension. The mismatch
+  was noted when the loader got its code sources (BUG-20261013-01, with the `vauban:` URLs of that time) and left for
+  a separate change.
+- **Fix**: `ProcessedArchives` records and compares locations, not strings: the archive of a `jar:` or `vauban:` URL
+  is the URL inside it, a `file:` URL is the normalised `Path` it names (escaped or raw, a space or a non-ASCII
+  character included), and what names no local file (a `jrt:` module, a nested jar, a file URL with a host) is its
+  normalised URI without a trailing slash. A jar nested in another stays apart from the outer jar.
+- **Verification**: `ProcessedArchiveLocationTest` (9: the Vauban class loader with a jar, a directory, a path with a
+  space and `été`; a `URLClassLoader` with an escaped URL, and a raw one as a no-regression case; a jar module and an
+  exploded module in a module layer; an unprocessed jar and a processed jar beside an unprocessed one still run the
+  extension): 3 red before (the Vauban class loader's jar, the same under a path with a space and `été`, the jar
+  module), all green now. `ProcessedArchivesTest` (16) on the spellings and on `holds`.
 ## BUG-20261115-06 — A module whose only processor is Vauban gets "created in the last round" warnings again
 
 - **Date**: 2026-11-15

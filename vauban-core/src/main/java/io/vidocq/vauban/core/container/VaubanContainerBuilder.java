@@ -68,7 +68,8 @@ public final class VaubanContainerBuilder {
      * them is the deployment's too, and stays in its fingerprint (BUG-20261113-16).
      */
     private final Set<String> deploymentClasses = new java.util.HashSet<>();
-    final Set<String> bceProcessedSources = new java.util.HashSet<>();
+    /** The archives the Vauban processor handled at compile: their extensions need not run at start. */
+    final ProcessedArchives bceProcessedSources = new ProcessedArchives();
     private final Map<DotName, BeanFactory<?>> factories = new LinkedHashMap<>();
     /** The classes {@link #addFactory} was given a factory for: built without reflection. */
     private final java.util.Set<DotName> suppliedFactories = new java.util.HashSet<>();
@@ -410,21 +411,6 @@ public final class VaubanContainerBuilder {
                 if (!list.contains(ann)) list.add(ann);
             }
         });
-    }
-
-    /**
-     * Checks whether a class comes from a source that was already BCE-processed at compile time.
-     */
-    private boolean isClassFromBceProcessedSource(Class<?> clazz) {
-        try {
-            var codeSource = clazz.getProtectionDomain().getCodeSource();
-            if (codeSource == null) return false;
-            var location = codeSource.getLocation();
-            if (location == null) return false;
-            return bceProcessedSources.contains(location.toString());
-        } catch (Exception _) {
-            return false;
-        }
     }
 
     /**
@@ -810,7 +796,7 @@ public final class VaubanContainerBuilder {
         // Classes from sources WITHOUT vauban-bce-processed marker need runtime @Enhancement
         List<Class<?>> unmarkedArchiveClasses = beanClasses.stream()
                 .filter(c -> !ReflectionValidator.isBuildCompatibleExtension(c))
-                .filter(c -> !isClassFromBceProcessedSource(c))
+                .filter(c -> !bceProcessedSources.holds(c))
                 .toList();
 
         List<Class<?>> toRun;
