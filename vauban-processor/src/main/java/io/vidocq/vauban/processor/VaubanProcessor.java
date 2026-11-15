@@ -1001,18 +1001,24 @@ public class VaubanProcessor extends AbstractProcessor {
      * Gradle's {@code classes/java/test} next to {@code classes/java/main}. {@code null} for a main round.
      */
     private java.nio.file.Path mainOutput() {
-        if (mainOutputResolved) {
-            return mainOutput;
+        if (!mainOutputResolved) {
+            mainOutputResolved = true;
+            mainOutput = findMainOutput();
         }
-        mainOutputResolved = true;
+        return mainOutput;
+    }
+
+    /**
+     * {@link #mainOutput()}, looked up now: before the pipeline has seen the main {@code _VaubanComponents}, from the
+     * option or the build tools' layouts only.
+     */
+    private java.nio.file.Path findMainOutput() {
         var option = processingEnv.getOptions().get("vauban.mainOutput");
         if (option != null && !option.isBlank()) {
-            mainOutput = existingDirectory(java.nio.file.Path.of(option.trim()));
-            return mainOutput;
+            return existingDirectory(java.nio.file.Path.of(option.trim()));
         }
         if (mainOutputFromProvider != null) {
-            mainOutput = mainOutputFromProvider;
-            return mainOutput;
+            return mainOutputFromProvider;
         }
         var roundOutput = classOutput();
         if (roundOutput == null) {
@@ -1020,15 +1026,39 @@ public class VaubanProcessor extends AbstractProcessor {
         }
         var name = roundOutput.getFileName() == null ? "" : roundOutput.getFileName().toString();
         if (name.equals("test-classes") && roundOutput.getParent() != null) {
-            mainOutput = existingDirectory(roundOutput.getParent().resolve("classes"));
+            return existingDirectory(roundOutput.getParent().resolve("classes"));
         } else if (name.equals("test") && roundOutput.getParent() != null
                 && roundOutput.getParent().getFileName() != null
                 && roundOutput.getParent().getParent() != null
                 && roundOutput.getParent().getParent().getFileName() != null
                 && roundOutput.getParent().getParent().getFileName().toString().equals("classes")) {
-            mainOutput = existingDirectory(roundOutput.getParent().resolve("main"));
+            return existingDirectory(roundOutput.getParent().resolve("main"));
         }
-        return mainOutput;
+        return null;
+    }
+
+    /**
+     * Whether {@code file} lies in this compilation's class output or, for a test compilation, in the main output of
+     * the same module: the build's own files, which Maven puts on the class path. Compared as real paths: javac
+     * reports the class path as given and the output resolved, which differ under a link ({@code /var} and
+     * {@code /private/var} on macOS).
+     */
+    private boolean isBuildOutput(java.net.URI file) {
+        if (!"file".equalsIgnoreCase(file.getScheme())) {
+            return false;
+        }
+        var path = realPath(java.nio.file.Path.of(file));
+        return java.util.stream.Stream.of(classOutput(), findMainOutput())
+                .anyMatch(dir -> dir != null && path.startsWith(realPath(dir)));
+    }
+
+    /** {@code path} with its links resolved, or as it is when it cannot be. */
+    private static java.nio.file.Path realPath(java.nio.file.Path path) {
+        try {
+            return path.toRealPath();
+        } catch (IOException _) {
+            return path.toAbsolutePath().normalize();
+        }
     }
 
     private java.nio.file.Path mainOutput;
@@ -1248,7 +1278,9 @@ public class VaubanProcessor extends AbstractProcessor {
      * path — but their <em>declarations</em> are visible through supported APIs: the
      * {@code provides} directives of every observable module ({@code Elements}), and the
      * {@code META-INF/services} resource of the classpath ({@code Filer}). Anything declared
-     * there but absent from the loaded set is reported.
+     * there but absent from the loaded set is reported, except a module's own extensions, which run at the build of
+     * the applications that depend on it: a type this compilation compiles, and what the service file of the build's
+     * own outputs declares, the class output and, for a test compilation, the main output.
      */
     private Set<String> unloadableBcesOnCompilePath() {
         if (unloadableBcesCache != null) return unloadableBcesCache;
@@ -1269,22 +1301,23 @@ public class VaubanProcessor extends AbstractProcessor {
             // Module elements unavailable in this javac configuration — classpath probe still runs.
         }
 
-        // (b) classpath: the ServiceLoader descriptor as a compile-classpath resource.
+        // (b) classpath: the ServiceLoader descriptor as a compile-classpath resource, unless it is the module's own,
+        // which Maven puts on the class path with the main output, at the test compilation too (BUG-20261115-05).
         try {
-            var resource = processingEnv.getFiler()
-                    .getResource(StandardLocation.CLASS_PATH, "", "META-INF/services/" + bceFqn);
-            try (var reader = new BufferedReader(
-                    new InputStreamReader(resource.openInputStream(), StandardCharsets.UTF_8))) {
-                reader.lines()
-                        .map(line -> line.replaceFirst("#.*", "").trim())
-                        .filter(line -> !line.isEmpty())
-                        .forEach(declared::add);
+            var resource = processingEnv.getFiler().getResource(StandardLocation.CLASS_PATH, "", BCE_SERVICE_PATH);
+            if (!isBuildOutput(resource.toUri())) {
+                try (var in = resource.openInputStream()) {
+                    declared.addAll(ProcessorPathArchives.listedNames(in));
+                }
             }
         } catch (Exception _) {
             // No such resource on the classpath — the normal case.
         }
 
         discoveredBceClasses.forEach(loaded -> declared.remove(loaded.getName()));
+        // The module's own extensions run at the build of the applications that depend on it, not at its own; Maven
+        // puts its output, the service file copied with the resources, on the class path (BUG-20261115-05).
+        declared.removeIf(this::isCompiledType);
         unloadableBcesCache = declared;
         return declared;
     }

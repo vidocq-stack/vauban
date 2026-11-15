@@ -162,7 +162,128 @@ class BceProcessorPathDiagnosticTest {
                 "no processor-path warning expected when no BCE is around: " + result.messages());
     }
 
+    /**
+     * A module that provides its own extension, as foy-cdi-vauban provides {@code FoyWebExtension}: Maven copies the
+     * resources before it compiles, and puts the output directory on the class path, so the module's own service
+     * file is there, at the main compilation and at the test compilation alike. The extension runs at the build of
+     * the applications, not at its own: the warning, whose advice cannot be followed, is not for it
+     * (BUG-20261115-05). An extension of another module still is.
+     */
+    @Test
+    @DisplayName("a module's own BCE, its service file on the class path output, is not reported, at the main or the "
+            + "test compilation; another module's is")
+    void aModulesOwnBceIsNotReported() throws Exception {
+        var other = compileModule("other", List.of(), "-proc:none", """
+                module repro.other {
+                    requires jakarta.cdi;
+                    provides jakarta.enterprise.inject.build.compatible.spi.BuildCompatibleExtension
+                            with io.repro.other.OtherExtension;
+                }
+                """, """
+                package io.repro.other;
+
+                public class OtherExtension
+                        implements jakarta.enterprise.inject.build.compatible.spi.BuildCompatibleExtension {
+                }
+                """);
+        assertTrue(other.success(), "the other module must compile: " + other.messages());
+        declareBceService(classesOf("ext"), "io.repro.ext.OwnExtension\nio.repro.ext.OwnExtension$Nested");
+
+        var result = compileModule("ext", List.of(classesOf("other")), "-proc:full", """
+                module repro.ext {
+                    requires jakarta.cdi;
+                    requires io.vidocq.vauban.api;
+                    requires repro.other;
+                    provides jakarta.enterprise.inject.build.compatible.spi.BuildCompatibleExtension
+                            with io.repro.ext.OwnExtension, io.repro.ext.OwnExtension.Nested;
+                    provides io.vidocq.vauban.api.VaubanComponentProvider with io.repro.ext._VaubanComponents;
+                }
+                """, """
+                package io.repro.ext;
+
+                public class OwnExtension
+                        implements jakarta.enterprise.inject.build.compatible.spi.BuildCompatibleExtension {
+
+                    public static class Nested
+                            implements jakarta.enterprise.inject.build.compatible.spi.BuildCompatibleExtension {
+                    }
+                }
+                """, """
+                package io.repro.ext;
+
+                @jakarta.enterprise.context.ApplicationScoped
+                public class Holder {
+                    public String ok() { return "ok"; }
+                }
+                """);
+
+        assertTrue(result.success(), "the module must compile: " + result.messages());
+        assertReportsOnlyTheOtherModulesExtension(result);
+
+        // The module's tests, in Maven's layout: test-classes next to classes, which is on the class path with its
+        // service file; the other module on the module path.
+        Path testClasses = Files.createDirectories(tempDir.resolve("ext").resolve("test-classes"));
+        var modulePath = new ArrayList<>(apiModulePath());
+        modulePath.add(classesOf("other").toString());
+        var tests = compileWithVauban(writeSources(tempDir.resolve("ext-test-src"), """
+                package io.repro.ext;
+
+                @jakarta.enterprise.context.ApplicationScoped
+                public class HolderClient {
+                    @jakarta.inject.Inject Holder holder;
+                }
+                """), "-d", testClasses.toString(), "--release", "25", "-proc:full",
+                "--module-path", String.join(File.pathSeparator, modulePath), "--add-modules", "ALL-MODULE-PATH",
+                "-classpath", testClasses + File.pathSeparator + classesOf("ext"));
+
+        assertTrue(tests.success(), "the tests must compile: " + tests.messages());
+        assertReportsOnlyTheOtherModulesExtension(tests);
+    }
+
+    /** {@code io.repro.other}'s extension is reported as missing from the processor path, {@code io.repro.ext}'s not. */
+    private static void assertReportsOnlyTheOtherModulesExtension(CompilationResult result) {
+        var unloadable = result.messages().stream()
+                .filter(m -> m.startsWith("WARNING") && m.contains("NOT on the annotation-processor path"))
+                .toList();
+        assertTrue(unloadable.stream().anyMatch(m -> m.contains("io.repro.other.OtherExtension")),
+                "another module's extension the processor path lacks is still reported: " + result.messages());
+        assertFalse(unloadable.stream().anyMatch(m -> m.contains("io.repro.ext.OwnExtension")),
+                "the module's own extensions, a member class among them, are not reported: " + unloadable);
+    }
+
     // ---- Helpers (same harness as CrossModuleInjectionTest) ------------------------------------
+
+    /**
+     * Compiles the named module of {@code sources} into {@link #classesOf}, with Vauban's processor unless
+     * {@code proc} is {@code -proc:none}: the APIs and {@code modulePath} on the module path, the output directory on
+     * the class path, as Maven lays a module's build out.
+     */
+    private CompilationResult compileModule(String name, List<Path> modulePath, String proc, String... sources)
+            throws Exception {
+        var paths = new ArrayList<>(apiModulePath());
+        modulePath.forEach(path -> paths.add(path.toString()));
+        Path out = Files.createDirectories(classesOf(name));
+        return compileWithVauban(writeSources(tempDir.resolve(name + "-src"), sources), "-d", out.toString(),
+                "--release", "25", proc, "--module-path", String.join(File.pathSeparator, paths),
+                "-classpath", out.toString());
+    }
+
+    /** The main output of module {@code name}, Maven's {@code classes}. */
+    private Path classesOf(String name) {
+        return tempDir.resolve(name).resolve("classes");
+    }
+
+    /** The APIs the modules compile against, Vauban's and CDI's, as module path entries. */
+    private static List<String> apiModulePath() throws java.net.URISyntaxException {
+        var paths = new ArrayList<String>();
+        for (var clazz : List.of(io.vidocq.vauban.api.VaubanComponentProvider.class,
+                jakarta.enterprise.context.ApplicationScoped.class, jakarta.inject.Inject.class,
+                jakarta.annotation.Priority.class, jakarta.interceptor.Interceptor.class,
+                jakarta.enterprise.lang.model.AnnotationInfo.class)) {
+            paths.add(Path.of(clazz.getProtectionDomain().getCodeSource().getLocation().toURI()).toString());
+        }
+        return paths;
+    }
 
     /** Writes the {@code META-INF/services} declaration into the dependency's classes dir. */
     private static void declareBceService(Path classesDir, String implementationFqn)
@@ -195,21 +316,23 @@ class BceProcessorPathDiagnosticTest {
 
     /** Compiles the «application module» with the processor, the dependency on its classpath. */
     private CompilationResult compileApp(Path dependencyClasses, String... sources) throws IOException {
-        var compiler = ToolProvider.getSystemJavaCompiler();
-        var diagnostics = new DiagnosticCollector<JavaFileObject>();
-
         Path out = tempDir.resolve("app-classes");
         Files.createDirectories(out);
 
-        var options = List.of(
+        return compileWithVauban(writeSources(tempDir.resolve("app-src"), sources),
                 "-d", out.toString(),
                 "--release", "25",
                 "-classpath", dependencyClasses + File.pathSeparator + resolveCompilationClasspath(),
                 "-proc:full");
+    }
 
+    /** Compiles {@code sources} with {@code options} and Vauban's processor; its diagnostics, kind first. */
+    private static CompilationResult compileWithVauban(List<JavaFileObject> sources, String... options)
+            throws IOException {
+        var compiler = ToolProvider.getSystemJavaCompiler();
+        var diagnostics = new DiagnosticCollector<JavaFileObject>();
         try (var fileManager = compiler.getStandardFileManager(diagnostics, null, null)) {
-            var task = compiler.getTask(null, fileManager, diagnostics, options, null,
-                    writeSources(tempDir.resolve("app-src"), sources));
+            var task = compiler.getTask(null, fileManager, diagnostics, List.of(options), null, sources);
             task.setProcessors(List.of(new VaubanProcessor()));
             boolean success = task.call();
 
@@ -230,7 +353,8 @@ class BceProcessorPathDiagnosticTest {
             String pkg = extractPackageName(source);
             Path dir = pkg == null ? root : root.resolve(pkg.replace('.', '/'));
             Files.createDirectories(dir);
-            Path file = dir.resolve(extractClassName(source) + ".java");
+            String type = source.startsWith("module ") ? "module-info" : extractClassName(source);
+            Path file = dir.resolve(type + ".java");
             Files.writeString(file, source);
             files.add(new SimpleJavaFileObject(file.toUri(), JavaFileObject.Kind.SOURCE) {
                 @Override

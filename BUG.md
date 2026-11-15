@@ -5,6 +5,31 @@ suspected cause, status. Updated on every investigation.
 
 ---
 
+## BUG-20261115-05 — A module's own build compatible extension is reported as "NOT on the annotation-processor path"
+
+- **Date**: 2026-11-15
+- **Status**: FIXED on `fix/processor-build-noise`
+- **Module**: `vauban-processor` (`VaubanProcessor.unloadableBcesOnCompilePath`)
+- **Symptom**: `foy-cdi-vauban`'s build warns `[Vauban] 1 Build Compatible Extension(s) present on the
+  compile/module path are NOT on the annotation-processor path and will not run:
+  [io.vidocq.foy.cdi.vauban.FoyWebExtension]. Maven's <annotationProcessorPaths> narrows javac's -processorpath …`
+  about its own extension, which runs at the build of the applications, with advice that cannot be followed. Found by
+  the Foy session (Servlet built-in beans, Vidocq/foy#107); Foy's pom carries a comment explaining the warning away.
+- **Repro**: `BceProcessorPathDiagnosticTest.aModulesOwnBceIsNotReported`: a module `repro.ext` provides
+  `OwnExtension` and `OwnExtension$Nested`, its output directory, with the service file, on the class path, and
+  requires `repro.other`, which provides `OtherExtension`; then its test compilation, `test-classes` next to
+  `classes`, which is on the class path (the task review's repro: the main compile clean, the test compile still
+  warned about `OwnExtension`).
+- **Cause**: `unloadableBcesOnCompilePath` skips the modules under compilation when it reads the `provides`
+  directives (a), but reads `META-INF/services/…BuildCompatibleExtension` from `StandardLocation.CLASS_PATH` (b),
+  where Maven puts the module's own `target/classes`, into which it copied the resources before compiling.
+- **Fix**: a declared extension that is a type this compilation compiles (a root type of a round, or a member of
+  one) is never reported, whichever way it was declared; nor is what the service file of the build's own outputs
+  declares, the class output and, for a test compilation, the main output (`-Avauban.mainOutput`, Maven's and
+  Gradle's layouts), compared as real paths (javac gives the class path as written and the output resolved: `/var`
+  and `/private/var` on macOS). `OtherExtension` still is. Left: a service file outside those outputs, as in Gradle's
+  separate resources directory, still counts.
+
 ## BUG-20261115-04 — An injection point a bean module satisfies warns when the compilation does not read that module
 
 - **Date**: 2026-11-15
