@@ -76,7 +76,8 @@ public final class VaubanLayerFactory {
      */
     public static AppLayer createAppLayer(List<Path> appPaths, ModuleLayer parentLayer,
             ClassLoader parentLoader, PluginContext pluginContext) throws IOException {
-        var finder = promotingServices(ModuleFinder.of(appPaths.toArray(Path[]::new)), parentLayer);
+        var finder = promotingServices(
+                withPluginPackages(ModuleFinder.of(appPaths.toArray(Path[]::new)), pluginContext), parentLayer);
         var roots = finder.findAll().stream()
                 .map(ref -> ref.descriptor().name())
                 .collect(Collectors.toCollection(LinkedHashSet::new));
@@ -422,9 +423,68 @@ public final class VaubanLayerFactory {
         return result;
     }
 
+    /**
+     * Wraps {@code base} so that a module read through a source plugin, such as an encrypted jar, declares every
+     * package its classes are in. An encrypted jar stores its internal classes under opaque names, so the module
+     * system, which finds the packages of a module by the names of its entries, sees the exported packages only:
+     * a class of an internal package was then defined in the loader's unnamed module, which the module does not
+     * read, and the first call into it failed (BUG-20261115-01).
+     */
+    static ModuleFinder withPluginPackages(ModuleFinder base, PluginContext pluginContext) {
+        return new ModuleFinder() {
+            @Override
+            public Optional<ModuleReference> find(String name) {
+                return base.find(name).map(reference -> withPluginPackages(reference, pluginContext));
+            }
+
+            @Override
+            public Set<ModuleReference> findAll() {
+                return base.findAll().stream()
+                        .map(reference -> withPluginPackages(reference, pluginContext))
+                        .collect(Collectors.toCollection(LinkedHashSet::new));
+            }
+        };
+    }
+
+    private static ModuleReference withPluginPackages(ModuleReference reference, PluginContext pluginContext) {
+        var descriptor = reference.descriptor();
+        var archive = reference.location().flatMap(VaubanLayerFactory::archiveOf);
+        if (descriptor.isAutomatic() || archive.isEmpty()) {
+            return reference;
+        }
+        Set<String> packages;
+        try {
+            packages = VaubanClassLoader.pluginPackages(archive.get(), pluginContext);
+        } catch (IOException e) {
+            throw new UncheckedIOException("Cannot read the classes of " + archive.get(), e);
+        }
+        if (descriptor.packages().containsAll(packages)) {
+            return reference;
+        }
+        var all = new LinkedHashSet<>(descriptor.packages());
+        all.addAll(packages);
+        var provides = new LinkedHashMap<String, LinkedHashSet<String>>();
+        for (var p : descriptor.provides()) {
+            provides.put(p.service(), new LinkedHashSet<>(p.providers()));
+        }
+        var rebuilt = rebuild(descriptor, provides, all);
+        return new ModuleReference(rebuilt, reference.location().orElse(null)) {
+            @Override
+            public ModuleReader open() throws IOException {
+                return reference.open();
+            }
+        };
+    }
+
     /** Rebuilds {@code descriptor} identically, with {@code provides} replaced. */
     private static ModuleDescriptor rebuildWithProvides(ModuleDescriptor descriptor,
             java.util.Map<String, LinkedHashSet<String>> provides) {
+        return rebuild(descriptor, provides, descriptor.packages());
+    }
+
+    /** Rebuilds {@code descriptor} identically, with {@code provides} and its packages replaced. */
+    private static ModuleDescriptor rebuild(ModuleDescriptor descriptor,
+            java.util.Map<String, LinkedHashSet<String>> provides, Set<String> packages) {
         var builder = ModuleDescriptor.newModule(descriptor.name(), descriptor.modifiers());
         descriptor.rawVersion().ifPresent(builder::version);
         for (var requires : descriptor.requires()) {
@@ -441,7 +501,7 @@ public final class VaubanLayerFactory {
         for (var uses : descriptor.uses()) {
             builder.uses(uses);
         }
-        builder.packages(descriptor.packages());
+        builder.packages(packages);
         descriptor.mainClass().ifPresent(builder::mainClass);
         provides.forEach((service, providers) ->
                 builder.provides(service, List.copyOf(providers)));

@@ -5,6 +5,33 @@ suspected cause, status. Updated on every investigation.
 
 ---
 
+## BUG-20261115-01 — In a module layer, a class of an encrypted jar's internal package cannot be called by its module
+
+- **Date**: 2026-11-15
+- **Status**: FIXED on `fix/sjar-in-layer`
+- **Module**: `vauban-classloader` (`VaubanLayerFactory`, `VaubanClassLoader`)
+- **Symptom**: an application launched in a Vauban layer (Vidocq: `vidocq:run`, the `vidocq:package`
+  distribution) depends on an encrypted jar. It starts, and the first call from an exported class of that jar into a
+  class of one of its internal packages fails: `IllegalAccessError: class com.acme.secretlib.Secret (in module
+  com.acme.secretlib) cannot access class com.acme.secretlib.internal.Vault (in unnamed module @…) because module
+  com.acme.secretlib does not read unnamed module`. Found by the Vidocq tutorial session, which saw a
+  `ClassNotFoundException` for the same class.
+- **Repro**: a module that exports `com.acme.secretlib` and holds `com.acme.secretlib.internal.Vault`, packaged by
+  Maven's jar plugin, encrypted with `vauban:encrypt`; `VaubanLayerFactory.createAppLayer` on it, then
+  `Secret.reveal()`, which calls `Vault.value()`. `EncryptedModuleInLayerTest`.
+- **Cause**: the module system finds the packages of a module by the names of the entries of its jar, unless the
+  descriptor lists them in a `ModulePackages` attribute, which only the `jar` tool writes. An encrypted jar stores
+  its internal classes under opaque names (`META-INF/vauban/<uuid>`), so the layer was defined with the exported
+  packages only. The loader then defined an internal class in a package no module of the layer owns: the class
+  went to the loader's unnamed module, which the named module does not read. A jar made with the `jar` tool hides
+  the defect, and so did the existing encrypted-archive tests, which load through the loader without a layer.
+- **Fix**: `VaubanLayerFactory.withPluginPackages` wraps the module finder of the layer: a module read through a
+  source plugin declares every package its classes are in, as the plugin lists them
+  (`VaubanClassLoader.pluginPackages`). A plain jar or a directory is left as the module system describes it.
+- **Validation**: `EncryptedModuleInLayerTest`, red before the fix. By hand, the distribution of a Vidocq
+  application that depends on such a jar, the jar zipped as Maven does and encrypted with a known key: `GET /secret`
+  answers 500 with the class loader of `main`, and the decrypted value with the fixed one.
+
 ## BUG-20261114-05 — Every module of a Vauban layer reads the first archive's copy of a resource outside any package
 
 - **Date**: 2026-11-14

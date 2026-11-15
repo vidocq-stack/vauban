@@ -270,6 +270,40 @@ public class VaubanClassLoader extends ClassLoader implements AutoCloseable {
         return BuiltInReaders.open(path);
     }
 
+    /**
+     * The packages of the classes that a source plugin serves for {@code path}; empty when no plugin handles it, a
+     * plain jar or a directory, whose packages the module system finds by itself. An encrypted jar keeps its
+     * internal classes under opaque names: only its plugin knows their packages (BUG-20261115-01).
+     */
+    static Set<String> pluginPackages(Path path, PluginContext pluginContext) throws IOException {
+        for (var plugin : sourcePlugins()) {
+            if (plugin.handles(path)) {
+                var packages = new java.util.TreeSet<String>();
+                var reader = plugin.open(path, pluginContext);
+                try {
+                    for (var entry : reader.classEntries()) {
+                        int slash = entry.lastIndexOf('/');
+                        if (slash > 0) {
+                            packages.add(entry.substring(0, slash).replace('/', '.'));
+                        }
+                    }
+                } finally {
+                    closeQuietly(reader);
+                }
+                return packages;
+            }
+        }
+        return Set.of();
+    }
+
+    private static void closeQuietly(ArchiveReader reader) {
+        try {
+            reader.close();
+        } catch (Exception e) {
+            LOG.log(System.Logger.Level.DEBUG, () -> "Closing an archive reader failed: " + e);
+        }
+    }
+
     private static List<ByteSourcePlugin> sourcePlugins() {
         var plugins = new ArrayList<ByteSourcePlugin>();
         ServiceLoader.load(ByteSourcePlugin.class, VaubanClassLoader.class.getClassLoader())
