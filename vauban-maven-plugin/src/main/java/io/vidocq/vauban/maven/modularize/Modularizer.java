@@ -316,9 +316,15 @@ public final class Modularizer {
             Set<String> uses = legality.verdict().legal().getOrDefault(jar, Set.of());
             ModuleDescriptorSynthesizer.Result synthesized =
                     synthesize(jar, name, closure, options, uses, log);
+            // The descriptor cannot declare a service the jar's callers define: declare it where it is looked up.
+            ServiceLoaderCalls calls = new ServiceLoaderCalls();
             Path out = ModuleDescriptorSynthesizer.writeJarWithDescriptor(
-                    jar, synthesized.moduleInfo(), outDir);
+                    jar, synthesized.moduleInfo(), outDir, calls);
             patched.add(out);
+            if (calls.packages() > 0) {
+                log.accept(jar.getFileName() + ": ServiceLoader lookups declare their service at the call, in "
+                        + calls.packages() + " package(s)");
+            }
             report.append("\n## ").append(jar.getFileName()).append(" → module ").append(name)
                     .append(" (").append(info.kind()).append(")\n")
                     .append(render(synthesized.descriptor())).append('\n');

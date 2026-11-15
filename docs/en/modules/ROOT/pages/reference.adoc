@@ -195,7 +195,8 @@ as a `Class` parameter are followed across jars, since it is the module reaching
 not the one naming the service — that must declare the directive.They are followed
 through an interface or superclass method as well, when an implementation in the closure forwards to
 `ServiceLoader` (vauban#167). A service type passed as a
-variable rather than a class literal cannot be seen by any bytecode scan; declare that one by hand.
+variable rather than a class literal cannot be seen by any bytecode scan: the lookup declares it at
+its call (see _Lookups the descriptor cannot declare_ below).
 
 Every `ServiceLoader` factory is covered: `load(Class)`, `load(Class, ClassLoader)`,
 `load(ModuleLayer, Class)` and `loadInstalled(Class)`.The `ClassLoader` argument
@@ -236,8 +237,28 @@ records it. Automatic modules work on the module path, so a development loop or 
 a library cannot be linked into an image until it changes upstream — each caller doing its own
 `ServiceLoader.load`, or the library shipping a hand-written `module-info`.
 
-Set `vauban.modularize.forceExplicit` to patch the jar anyway, the illegal directives still dropped,
-when you know the failing lookup is one your application never reaches.
+Set `vauban.modularize.forceExplicit` to patch the jar anyway, the illegal directives still dropped:
+its lookups then declare their service at the call, as below.
+
+[[service-loader-calls]]
+==== Lookups the descriptor cannot declare
+
+Some lookups have no `uses` a descriptor could carry: a type passed as a variable, or a type of a
+module that depends on the jar. Vaadin's `Lookup` loads, with `ServiceLoader.load(type)`, the route
+classes of the application itself (Vidocq/vidocq#598). In an explicit module, each of those lookups
+would fail with _module … does not declare `uses`_.
+
+`Module.addUses` declares a service at run time, but only when the module itself calls it. So every
+patched jar has its `ServiceLoader.load` and `loadInstalled` references redirected to a generated
+class of the same package, `VaubanServiceLoader`, whose method of the same name and type calls
+`addUses` on its own module, then the `ServiceLoader` method. The change is made in the constant
+pool only: the code of the classes and their stack maps stay byte for byte as they were. For a
+service the descriptor already declares, `addUses` does nothing. A method reference
+(`ServiceLoader::load`) is redirected too; a reflective call to `ServiceLoader` is not.
+
+The lookup still needs the service type to be accessible to the library: its package must be
+exported or opened to it. Vaadin requires the route packages to be opened anyway. The build logs one
+line per jar whose lookups were redirected.
 
 ==== `derived` or `all-automatic`
 
@@ -340,8 +361,8 @@ the gate is off.
 
 | `vauban.modularize.forceExplicit` (`<forceExplicit>`)
 | `false`
-| Patch a jar even when one of its own `ServiceLoader` lookups cannot be declared legally — see
-  _Why some jars stay automatic_.
+| Patch a jar even when one of its own `ServiceLoader` lookups cannot be declared legally; the lookup
+  then declares its service at the call — see _Why some jars stay automatic_.
 |===
 
 ==== A development loop needs an earlier binding

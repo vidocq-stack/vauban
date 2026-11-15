@@ -261,6 +261,40 @@ public final class ModuleDescriptorSynthesizer {
      * @return the path of the copy
      */
     public static Path writeJarWithDescriptor(Path jar, byte[] moduleInfo, Path outDir) throws IOException {
+        return writeJarWithDescriptor(jar, moduleInfo, outDir, EntryRewriter.NONE);
+    }
+
+    /**
+     * Rewrites the entries of a jar while it is copied: each entry goes through {@link #rewrite}, then
+     * {@link #added} gives the entries to add at the end.
+     */
+    public interface EntryRewriter {
+        /** Copies every entry as it is and adds none. */
+        EntryRewriter NONE = new EntryRewriter() {
+            @Override
+            public byte[] rewrite(String name, byte[] bytes) {
+                return bytes;
+            }
+
+            @Override
+            public Map<String, byte[]> added() {
+                return Map.of();
+            }
+        };
+
+        /** The content to write for the entry {@code name} of the source jar. */
+        byte[] rewrite(String name, byte[] bytes);
+
+        /** The entries to add, by name, once every entry of the source jar is written. */
+        Map<String, byte[]> added();
+    }
+
+    /**
+     * Same as {@link #writeJarWithDescriptor(Path, byte[], Path)}, with every entry going through
+     * {@code rewriter}, and the entries it adds written before the descriptor.
+     */
+    public static Path writeJarWithDescriptor(Path jar, byte[] moduleInfo, Path outDir, EntryRewriter rewriter)
+            throws IOException {
         Files.createDirectories(outDir);
         Path out = outDir.resolve(jar.getFileName().toString());
         try (var source = new JarFile(jar.toFile());
@@ -274,9 +308,14 @@ public final class ModuleDescriptorSynthesizer {
                 target.putNextEntry(new JarEntry(name));
                 if (!entry.isDirectory()) {
                     try (InputStream in = source.getInputStream(entry)) {
-                        in.transferTo(target);
+                        target.write(rewriter.rewrite(name, in.readAllBytes()));
                     }
                 }
+                target.closeEntry();
+            }
+            for (var added : rewriter.added().entrySet()) {
+                target.putNextEntry(new JarEntry(added.getKey()));
+                target.write(added.getValue());
                 target.closeEntry();
             }
             target.putNextEntry(new JarEntry(MODULE_INFO));

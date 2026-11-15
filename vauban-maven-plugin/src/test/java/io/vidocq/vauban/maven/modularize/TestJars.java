@@ -24,6 +24,7 @@ import java.io.IOException;
 import java.io.OutputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.List;
 import java.util.Map;
 import java.util.jar.Attributes;
 import java.util.jar.JarEntry;
@@ -70,6 +71,25 @@ final class TestJars {
         Files.createDirectories(classesDir);
         var javac = ToolProvider.getSystemJavaCompiler();
         int rc = javac.run(null, null, null, args);
+        if (rc != 0) throw new IllegalStateException("javac failed for " + sources.keySet());
+    }
+
+    /**
+     * Compiles a module ({@code fqcn} → source, {@code "module-info"} for its descriptor) into {@code classesDir},
+     * against the modules of {@code modulePath}.
+     */
+    static void compileModule(Path classesDir, Map<String, String> sources, Path modulePath) throws IOException {
+        Path srcRoot = classesDir.resolveSibling(classesDir.getFileName() + "-src");
+        var args = new java.util.ArrayList<>(List.of("-d", classesDir.toString(), "--release", "25",
+                "--module-path", modulePath.toString()));
+        for (var e : sources.entrySet()) {
+            Path src = srcRoot.resolve(e.getKey().replace('.', '/') + ".java");
+            Files.createDirectories(src.getParent());
+            Files.writeString(src, e.getValue());
+            args.add(src.toString());
+        }
+        Files.createDirectories(classesDir);
+        int rc = ToolProvider.getSystemJavaCompiler().run(null, null, null, args.toArray(String[]::new));
         if (rc != 0) throw new IllegalStateException("javac failed for " + sources.keySet());
     }
 

@@ -5,6 +5,25 @@ suspected cause, status. Updated on every investigation.
 
 ---
 
+## BUG-20261115-09 — A modularized library that looks up a type its callers give it fails in an explicit module
+
+- **Date**: 2026-11-15
+- **Status**: FIXED on `fix/modularize-service-loader-uses`
+- **Module**: `vauban-maven-plugin` (`modularize`: `Modularizer`, new `ServiceLoaderCalls`, `ConstantPoolPatch`)
+- **Symptom**: the `vidocq:jlink` image of a Vaadin application serves its page, but the view never renders:
+  `ServiceConfigurationError: io.vidocq.tools.vaadin.MainView: module flow.server does not declare uses`, from
+  `com.vaadin.flow.di.LookupInitializer$LookupImpl.lookup`. Found by the Vaadin session (Vidocq/vidocq#598).
+- **Repro**: `ServiceLoaderCallsTest`: a library whose `Lookup.find(Class)` calls `ServiceLoader.load(type)`, patched,
+  and an application module that requires it and passes its own class.
+- **Cause**: an explicit module may only load the services it declares. The type here is the application's, in a
+  module that depends on the library: a `uses` of it would need a `requires` back, so `UsesLegality` drops it (or the
+  scan never sees it, the type being a parameter). Vidocq's jlink image makes such jars explicit (`forceExplicit`,
+  Vidocq/vidocq#580).
+- **Fix**: each patched jar has its `ServiceLoader.load` / `loadInstalled` method references redirected, in the
+  constant pool, to a generated `VaubanServiceLoader` class of the same package, which calls `Module.addUses` from the
+  module itself, then the original method. The code and its stack maps are left as they were: rewriting the code
+  made the Class-File API recompute stack maps, which needs the hierarchy of the library's types.
+
 ## BUG-20261115-08 — An encrypted jar in a directory whose name holds a space or a non-ASCII character is not found
 
 - **Date**: 2026-11-15
