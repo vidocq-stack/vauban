@@ -134,7 +134,8 @@ class BceProcessorPathDiagnosticTest {
         assertTrue(result.messages().stream()
                         .anyMatch(m -> m.startsWith("ERROR") && m.contains("[Vauban]")
                                 && m.contains("Unsatisfied dependency")
-                                && m.contains("io.repro.core.FakeBce")),
+                                && m.contains("io.repro.core.FakeBce")
+                                && m.contains("Only one") && m.contains("cannot be checked")),
                 "the error must hint at the unloadable BCE that may contribute the bean: "
                         + result.messages());
     }
@@ -251,6 +252,149 @@ class BceProcessorPathDiagnosticTest {
                 "the module's own extensions, a member class among them, are not reported: " + unloadable);
     }
 
+    /**
+     * Two entries of the class path each declare an extension. The {@code Filer} gives one class-path resource, the
+     * first (BUG-20261116-01): the warning names that one, and says that the others cannot be checked and how to make
+     * them run, rather than letting the reader think the list is complete.
+     */
+    @Test
+    @DisplayName("two class-path entries with an extension: only the first is visible, and the warning says so")
+    void onlyTheFirstServiceFileOfTheClassPathIsVisible() throws IOException {
+        var first = library("first", "FirstBce");
+        var second = library("second", "SecondBce");
+
+        var result = compileApp(first + File.pathSeparator + second, """
+                package io.repro.app;
+
+                @jakarta.enterprise.context.ApplicationScoped
+                public class Standalone {
+                    public String ok() { return "ok"; }
+                }
+                """);
+
+        assertTrue(result.success(), "a healthy compilation must still succeed: " + result.messages());
+        var warning = unloadableWarning(result);
+        assertTrue(warning.contains("io.repro.first.FirstBce"), "the visible extension is named: " + warning);
+        assertFalse(warning.contains("io.repro.second.SecondBce"),
+                "the second service file is not visible to the processor: " + warning);
+        assertTrue(warning.contains("Only one") && warning.contains(first.toString())
+                        && warning.contains("cannot be checked")
+                        && warning.contains("<annotationProcessorPaths>") && warning.contains("module path"),
+                "the warning must say that one service file is visible, name its entry, and how to make the others run: "
+                        + warning);
+    }
+
+    /**
+     * Maven puts the module's own output first on the class path. Its service file hides the other entries from the
+     * {@code Filer} although the check leaves it out (BUG-20261115-05): when something else is reported, here another
+     * module's extension, the note says that the visible file is the module's own output.
+     */
+    @Test
+    @DisplayName("the module's own output first on the class path hides the other entries, and the note says so")
+    void ownOutputFirstHidesTheOtherEntries() throws Exception {
+        var other = compileModule("other", List.of(), "-proc:none", """
+                module repro.other {
+                    requires jakarta.cdi;
+                    provides jakarta.enterprise.inject.build.compatible.spi.BuildCompatibleExtension
+                            with io.repro.other.OtherExtension;
+                }
+                """, """
+                package io.repro.other;
+
+                public class OtherExtension
+                        implements jakarta.enterprise.inject.build.compatible.spi.BuildCompatibleExtension {
+                }
+                """);
+        assertTrue(other.success(), "the other module must compile: " + other.messages());
+        declareBceService(classesOf("ext"), "io.repro.ext.OwnExtension");
+        var hidden = library("hidden", "HiddenBce");
+
+        var result = compileModuleWith("ext", List.of(classesOf("other")), "-proc:full", hidden.toString(), """
+                module repro.ext {
+                    requires jakarta.cdi;
+                    requires io.vidocq.vauban.api;
+                    requires repro.other;
+                    provides io.vidocq.vauban.api.VaubanComponentProvider with io.repro.ext._VaubanComponents;
+                }
+                """, """
+                package io.repro.ext;
+
+                @jakarta.enterprise.context.ApplicationScoped
+                public class Holder {
+                    public String ok() { return "ok"; }
+                }
+                """);
+
+        assertTrue(result.success(), "the module must compile: " + result.messages());
+        var warning = unloadableWarning(result);
+        assertTrue(warning.contains("io.repro.other.OtherExtension"), "the module-path extension is reported: " + warning);
+        assertTrue(warning.contains("this module's own output") && warning.contains("cannot be checked")
+                        && warning.contains(classesOf("ext").toString()),
+                "the note must say the visible file is the module's own output: " + warning);
+        assertFalse(warning.contains("io.repro.hidden.HiddenBce"), "the hidden entry is not read: " + warning);
+    }
+
+    /**
+     * {@code Filer.getResource(CLASS_PATH, ...)} looks in the directories of the class path and never in a jar: a jar
+     * that declares an extension is not seen (BUG-20261116-01). Pins that limit, which the reference page documents.
+     */
+    @Test
+    @DisplayName("an extension declared in a jar of the class path is not visible to the processor")
+    void aJarsServiceFileIsNotVisible() throws IOException {
+        var result = compileApp(jarOf(library("jarred", "JarredBce"), "jarred"), """
+                package io.repro.app;
+
+                @jakarta.enterprise.context.ApplicationScoped
+                public class Standalone {
+                    public String ok() { return "ok"; }
+                }
+                """);
+
+        assertTrue(result.success(), "compilation must succeed: " + result.messages());
+        assertTrue(unloadableWarning(result).isEmpty(),
+                "a jar's service file is not seen, so nothing is reported: " + result.messages());
+    }
+
+    private static String unloadableWarning(CompilationResult result) {
+        return result.messages().stream()
+                .filter(m -> m.startsWith("WARNING") && m.contains("NOT on the annotation-processor path"))
+                .findFirst().orElse("");
+    }
+
+    /** The classes directory of a library of one extension {@code type}, declared in its service file. */
+    private Path library(String name, String type) throws IOException {
+        Path classes = Files.createDirectories(tempDir.resolve(name + "-classes"));
+        var compiler = ToolProvider.getSystemJavaCompiler();
+        var diagnostics = new DiagnosticCollector<JavaFileObject>();
+        var source = "package io.repro." + name + ";\n"
+                + "public class " + type + " implements "
+                + "jakarta.enterprise.inject.build.compatible.spi.BuildCompatibleExtension {}\n";
+        try (var fileManager = compiler.getStandardFileManager(diagnostics, null, null)) {
+            var task = compiler.getTask(null, fileManager, diagnostics,
+                    List.of("-d", classes.toString(), "--release", "25",
+                            "-classpath", resolveCompilationClasspath(), "-proc:none"),
+                    null, writeSources(tempDir.resolve(name + "-src"), source));
+            assertTrue(task.call(), "the library must compile: " + diagnostics.getDiagnostics());
+        }
+        declareBceService(classes, "io.repro." + name + "." + type);
+        return classes;
+    }
+
+    /** {@code classes} packed as a jar. */
+    private Path jarOf(Path classes, String name) throws IOException {
+        Path jar = tempDir.resolve(name + ".jar");
+        try (var out = new java.util.jar.JarOutputStream(Files.newOutputStream(jar));
+                var files = Files.walk(classes)) {
+            for (var file : files.filter(Files::isRegularFile).toList()) {
+                out.putNextEntry(new java.util.zip.ZipEntry(
+                        classes.relativize(file).toString().replace(File.separatorChar, '/')));
+                Files.copy(file, out);
+                out.closeEntry();
+            }
+        }
+        return jar;
+    }
+
     // ---- Helpers (same harness as CrossModuleInjectionTest) ------------------------------------
 
     /**
@@ -260,12 +404,19 @@ class BceProcessorPathDiagnosticTest {
      */
     private CompilationResult compileModule(String name, List<Path> modulePath, String proc, String... sources)
             throws Exception {
+        return compileModuleWith(name, modulePath, proc, null, sources);
+    }
+
+    /** As above, with {@code extraClassPath} (when not {@code null}) after the module's own output on the class path. */
+    private CompilationResult compileModuleWith(String name, List<Path> modulePath, String proc, String extraClassPath,
+            String... sources) throws Exception {
         var paths = new ArrayList<>(apiModulePath());
         modulePath.forEach(path -> paths.add(path.toString()));
         Path out = Files.createDirectories(classesOf(name));
         return compileWithVauban(writeSources(tempDir.resolve(name + "-src"), sources), "-d", out.toString(),
                 "--release", "25", proc, "--module-path", String.join(File.pathSeparator, paths),
-                "-classpath", out.toString());
+                "-classpath", extraClassPath == null || extraClassPath.isEmpty() ? out.toString()
+                        : out + File.pathSeparator + extraClassPath);
     }
 
     /** The main output of module {@code name}, Maven's {@code classes}. */
@@ -316,13 +467,18 @@ class BceProcessorPathDiagnosticTest {
 
     /** Compiles the «application module» with the processor, the dependency on its classpath. */
     private CompilationResult compileApp(Path dependencyClasses, String... sources) throws IOException {
+        return compileApp(dependencyClasses.toString(), sources);
+    }
+
+    /** Compiles the application module with the processor, {@code classPath} before the API jars. */
+    private CompilationResult compileApp(String classPath, String... sources) throws IOException {
         Path out = tempDir.resolve("app-classes");
         Files.createDirectories(out);
 
         return compileWithVauban(writeSources(tempDir.resolve("app-src"), sources),
                 "-d", out.toString(),
                 "--release", "25",
-                "-classpath", dependencyClasses + File.pathSeparator + resolveCompilationClasspath(),
+                "-classpath", classPath + File.pathSeparator + resolveCompilationClasspath(),
                 "-proc:full");
     }
 

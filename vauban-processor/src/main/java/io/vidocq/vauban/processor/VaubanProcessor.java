@@ -149,6 +149,10 @@ public class VaubanProcessor extends AbstractProcessor {
      * round's {@code Elements}). See {@link #unloadableBcesOnCompilePath()} (vauban#29).
      */
     private Set<String> unloadableBcesCache;
+    /** The class-path entry whose service file the processor could read, or null when it found none (BUG-20261116-01). */
+    private String visibleServiceFileEntry;
+    /** Whether {@link #visibleServiceFileEntry} is the build's own output, whose file the check leaves out. */
+    private boolean visibleServiceFileIsOwnOutput;
     private boolean warnedUnloadableBces;
 
     /** Named modules this compilation is building — never complete their directives. */
@@ -868,7 +872,7 @@ public class VaubanProcessor extends AbstractProcessor {
         return " Hint: Build Compatible Extension(s) " + unloadable
                 + " found on the compile/module path cannot run (not on the"
                 + " annotation-processor path) and may contribute the missing bean —"
-                + " add their artifact(s) to <annotationProcessorPaths>.";
+                + " add their artifact(s) to <annotationProcessorPaths>." + visibleServiceFileNote();
     }
 
     /**
@@ -1337,7 +1341,9 @@ public class VaubanProcessor extends AbstractProcessor {
         // which Maven puts on the class path with the main output, at the test compilation too (BUG-20261115-05).
         try {
             var resource = processingEnv.getFiler().getResource(StandardLocation.CLASS_PATH, "", BCE_SERVICE_PATH);
-            if (!isBuildOutput(resource.toUri())) {
+            visibleServiceFileEntry = classPathEntryOf(resource.toUri());
+            visibleServiceFileIsOwnOutput = isBuildOutput(resource.toUri());
+            if (!visibleServiceFileIsOwnOutput) {
                 try (var in = resource.openInputStream()) {
                     declared.addAll(ProcessorPathArchives.listedNames(in));
                 }
@@ -1352,6 +1358,31 @@ public class VaubanProcessor extends AbstractProcessor {
         declared.removeIf(this::isCompiledType);
         unloadableBcesCache = declared;
         return declared;
+    }
+
+    /**
+     * The class-path entry a service file lies in: the resource's URI without the service path. The {@code Filer}
+     * reads one class-path resource, the first one, and never one in a jar (BUG-20261116-01).
+     */
+    private static String classPathEntryOf(java.net.URI resource) {
+        var text = java.util.Objects.requireNonNullElse(resource.getPath(), resource.toString());
+        var at = text.lastIndexOf('/' + BCE_SERVICE_PATH);
+        return at < 0 ? text : text.substring(0, at);
+    }
+
+    /**
+     * What the reader must know when the class-path probe found a service file: the processor sees that one only, so
+     * the extensions of the other entries of the class path are neither reported nor checked; empty when it found none.
+     */
+    private String visibleServiceFileNote() {
+        if (visibleServiceFileEntry == null) {
+            return "";
+        }
+        var own = visibleServiceFileIsOwnOutput ? ", this module's own output, which the check leaves out" : "";
+        return " Only one " + BCE_SERVICE_PATH + " file of the class path is visible to the annotation processor ("
+                + visibleServiceFileEntry + own + "): extensions declared by other entries of the class path,"
+                + " and any declared in a jar, cannot be checked. To make sure they run, add them to"
+                + " <annotationProcessorPaths> or put their jars on the module path.";
     }
 
     /** Adds to {@code declared} the implementations {@code module} provides for the service {@code bceFqn}. */
@@ -1379,7 +1410,7 @@ public class VaubanProcessor extends AbstractProcessor {
                         + " javac's -processorpath to its entries — add the artifact(s) shipping"
                         + " these extensions as additional <path> entries (or pass"
                         + " -Avauban.validation=false to defer bean validation to the runtime"
-                        + " container).");
+                        + " container)." + visibleServiceFileNote());
     }
 
     /**

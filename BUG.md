@@ -5,6 +5,30 @@ suspected cause, status. Updated on every investigation.
 
 ---
 
+## BUG-20261116-01 — The "extension not on the processor path" check reads one class-path service file, in a directory only
+
+- **Date**: 2026-11-16
+- **Status**: LIMIT EXPLICIT when a warning or hint is printed, on `fix/processor-all-bce-service-files`; the check stays partial (dependency jars, and the other entries of a class path whose first entry is the module's own output and holds a service file, are never checked; no supported API lists the class path). In practice the vauban#29 class-path warning fires only for directories, and never for a dependency jar.
+- **Module**: `vauban-processor` (`VaubanProcessor.unloadableBcesOnCompilePath`, vauban#29)
+- **Symptom**: with several entries on the compile class path that declare build compatible extensions, only the first
+  one's are reported as unable to run; the others never run at build, with no warning. Worse, an extension declared in
+  a **jar** of the class path is never seen at all. And when the module's own output, which Maven puts first on the class
+  path, has a service file (a module that provides an extension), it hides every other entry: `isBuildOutput` leaves it
+  out (BUG-20261115-05), so nothing is reported and nothing is said.
+- **Repro**: `BceProcessorPathDiagnosticTest.onlyTheFirstServiceFileOfTheClassPathIsVisible` (two directories) and
+  `aJarsServiceFileIsNotVisible` (one jar) and `ownOutputFirstHidesTheOtherEntries` (own output first); same result with a bare `javac -processor` probe.
+- **Cause**: the class-path half of the check calls `Filer.getResource(CLASS_PATH, "", BCE_SERVICE_PATH)`, which returns
+  the first match among the directories of the class path and never one in a jar (`FileNotFoundException`, also for
+  `META-INF/MANIFEST.MF`). The module-path half (`provides` directives) is complete.
+- **Fix**: no supported API lists class-path resources (`Elements.getFileObjectOf` gives the jar of a type javac has
+  already looked at, not of one nobody references). When the probe finds a service file and a warning or a hint is printed anyway, they
+  say that only that file is visible, name its entry (and that it is the module's own
+  output, when it is), and tell to use
+  `<annotationProcessorPaths>` or the module path. Documented in `concepts.adoc`. Nothing is printed for a module whose
+  own output comes first, with a service file, and nothing else to report: that case stays silent on purpose, a
+  standalone warning would fire in every module that provides an extension, and its other class-path entries stay
+  unchecked.
+
 ## BUG-20261115-09 — A modularized library that looks up a type its callers give it fails in an explicit module
 
 - **Date**: 2026-11-15
