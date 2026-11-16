@@ -253,8 +253,13 @@ public final class BeanDiscovery {
             if (isBeanDefiningAnnotationName(annName)) return true;
             if (annName.equals(ALTERNATIVE) && clazz.isAnnotationPresent(jakarta.annotation.Priority.class)) return true;
         }
-        for (var ctor : clazz.getDeclaredConstructors()) {
-            if (ctor.isAnnotationPresent(jakarta.inject.Inject.class)) return true;
+        try {
+            for (var ctor : clazz.getDeclaredConstructors()) {
+                if (ctor.isAnnotationPresent(jakarta.inject.Inject.class)) return true;
+            }
+        } catch (LinkageError _) {
+            // A constructor takes a type of an optional dependency that is not there (a library's class that
+            // names a provider it never needs): such a class cannot be injected, so it is no bean here.
         }
         return false;
     }
@@ -324,7 +329,7 @@ public final class BeanDiscovery {
                     if (ctor.isAnnotationPresent(jakarta.inject.Inject.class)) return true;
                     if (ctor.getParameterCount() == 0) return true;
                 }
-            } catch (ClassNotFoundException _) { /* skip */ }
+            } catch (ClassNotFoundException | LinkageError _) { /* skip: an unlinkable class is no bean */ }
             return true; // implicit no-arg
         }
 

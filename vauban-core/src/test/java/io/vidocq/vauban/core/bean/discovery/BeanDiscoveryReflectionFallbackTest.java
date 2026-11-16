@@ -253,6 +253,49 @@ class BeanDiscoveryReflectionFallbackTest {
                 "the abstract class is rejected by reflection; the unloadable one keeps its implicit constructor");
     }
 
+    /**
+     * A class whose constructor takes a type no loader defines, as the classes of a library with an optional
+     * dependency do: reading its constructors by reflection throws {@link NoClassDefFoundError}.
+     */
+    private static Class<?> classWithAnUnlinkableConstructor(String name) throws ClassNotFoundException {
+        var self = java.lang.constant.ClassDesc.of(name);
+        var absent = java.lang.constant.ClassDesc.of("io.vidocq.vauban.core.bean.discovery.absent.Absent");
+        byte[] bytes = java.lang.classfile.ClassFile.of().build(self, builder -> builder
+                .withFlags(java.lang.classfile.ClassFile.ACC_PUBLIC)
+                .withMethodBody("<init>",
+                        java.lang.constant.MethodTypeDesc.of(java.lang.constant.ConstantDescs.CD_void, absent),
+                        java.lang.classfile.ClassFile.ACC_PUBLIC,
+                        code -> code.aload(0)
+                                .invokespecial(java.lang.constant.ConstantDescs.CD_Object, "<init>",
+                                        java.lang.constant.ConstantDescs.MTD_void)
+                                .return_()));
+        var loader = new ClassLoader(BeanDiscoveryReflectionFallbackTest.class.getClassLoader()) {
+            @Override
+            protected Class<?> findClass(String className) throws ClassNotFoundException {
+                if (!className.equals(name)) throw new ClassNotFoundException(className);
+                return defineClass(className, bytes, 0, bytes.length);
+            }
+        };
+        return loader.loadClass(name);
+    }
+
+    @Test
+    @DisplayName("a class whose constructor cannot be linked is no bean, and discovery goes on")
+    void aClassWithAnUnlinkableConstructorIsSkipped() throws Exception {
+        var name = "io.vidocq.vauban.core.bean.discovery.OptionalDependencyUser";
+        var unlinkable = classWithAnUnlinkableConstructor(name);
+        var previous = Thread.currentThread().getContextClassLoader();
+        Thread.currentThread().setContextClassLoader(unlinkable.getClassLoader());
+        try {
+            var names = beanClassNames(discovery(classInfo(name, List.of(), List.of(), List.of()),
+                    scan(InheritingBean.class)).discoverBeans());
+
+            assertEquals(List.of(InheritingBean.class.getName()), names);
+        } finally {
+            Thread.currentThread().setContextClassLoader(previous);
+        }
+    }
+
     @Test
     @DisplayName("a producer's @Priority missing from the index is read on the method or field by reflection")
     void producerPriorityByReflection() {
