@@ -136,10 +136,14 @@ final class ArchitectureRules {
     static final ArchRule SJAR_DEPENDENCIES = VidocqArchRules.dependOnlyOn(
             new String[] {SJAR}, Packages.of(Jdk.RUNTIME, SJAR, SPI), ZERO_DEPENDENCY + "; module-info.java of vauban-sjar");
 
-    /** The module descriptor of vauban-webcontexts reads the CDI API alone. */
+    /**
+     * The module descriptor of vauban-webcontexts reads the CDI API and vauban-api: session values written by one
+     * container are read into another (Vidocq dev swap, foy#114), and the read finds the importing container through
+     * {@code io.vidocq.vauban.api.Passivation}.
+     */
     static final ArchRule WEBCONTEXTS_DEPENDENCIES = VidocqArchRules.dependOnlyOn(
             new String[] {WEBCONTEXTS},
-            Packages.of(Jdk.RUNTIME, "jakarta.enterprise..", WEBCONTEXTS),
+            Packages.of(Jdk.RUNTIME, "jakarta.enterprise..", WEBCONTEXTS, API),
             ZERO_DEPENDENCY + "; module-info.java of vauban-webcontexts");
 
     /** The module descriptor of vauban-naming reads vauban-api, the CDI API and {@code java.naming}. */
@@ -165,12 +169,13 @@ final class ArchitectureRules {
      * The module descriptors: vauban-api, vauban-classloader-spi and vauban-weaver are the bottom layers and read
      * no other Vauban module; vauban-classloader builds on the last two, vauban-indexer on the SPI, vauban-core
      * on all of them; vauban-processor, a build-time tool, builds on vauban-core and nothing builds on it.
-     * vauban-sjar, vauban-webcontexts and vauban-naming are leaves: the first reads the SPI, the second nothing,
-     * the third vauban-api.
+     * vauban-sjar, vauban-webcontexts and vauban-naming are leaves: the first reads the SPI, the other two
+     * vauban-api. vauban-webcontexts reads it because session values written by one container are read into another
+     * (Vidocq dev swap, foy#114).
      */
     static final ArchRule LAYERS = VidocqArchRules.layers(
             "module-info.java files of the shipped modules",
-            Layer.named("API").in(API).accessesNoLayer().accessibleOnlyBy("Core", "Processor", "Naming"),
+            Layer.named("API").in(API).accessesNoLayer().accessibleOnlyBy("Core", "Processor", "Naming", "Webcontexts"),
             Layer.named("Classloader SPI")
                     .in(SPI)
                     .accessesNoLayer()
@@ -181,7 +186,7 @@ final class ArchitectureRules {
             Layer.named("Core").in(CORE).accessibleOnlyBy("Processor"),
             Layer.named("Processor").in(PROCESSOR).accessibleByNone(),
             Layer.named("Sjar").in(SJAR).accessibleByNone(),
-            Layer.named("Webcontexts").in(WEBCONTEXTS).accessesNoLayer().accessibleByNone(),
+            Layer.named("Webcontexts").in(WEBCONTEXTS).accessibleByNone(),
             Layer.named("Naming").in(NAMING).accessibleByNone());
 
     /**

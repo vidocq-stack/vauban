@@ -25,6 +25,7 @@ import io.vidocq.vauban.core.bean.model.ScopeInfo;
 import jakarta.enterprise.context.spi.CreationalContext;
 import jakarta.enterprise.inject.spi.Bean;
 import jakarta.enterprise.inject.spi.InjectionPoint;
+import jakarta.enterprise.inject.spi.PassivationCapable;
 
 import java.lang.annotation.Annotation;
 import java.lang.reflect.Type;
@@ -36,8 +37,15 @@ import java.util.function.BiConsumer;
 
 /**
  * CDI Bean implementation backed by a BeanDescriptor and a BeanFactory.
+ *
+ * <p>Passivation capable: its id is its {@code BeanId}. For a managed bean and a producer it is built from class
+ * and member names, so two containers built from the same classes give the bean the same id, and a
+ * {@code @SessionScoped} instance written by one container is found again by the other under that id (Vidocq dev
+ * swap, foy#114; internals.adoc, "Session entries across a container swap"). Two exceptions: a synthetic bean's id
+ * ends with its registration slot, which shifts when beans are added before it, and overloaded producer methods
+ * share one id.</p>
  */
-public final class ManagedBean<T> implements Bean<T> {
+public final class ManagedBean<T> implements Bean<T>, PassivationCapable {
 
     private static final String INTERCEPTED_SUFFIX = "$$Intercepted";
 
@@ -1180,6 +1188,12 @@ public final class ManagedBean<T> implements Bean<T> {
 
     public BeanDescriptor descriptor() {
         return descriptor;
+    }
+
+    /** The {@code BeanId}: the class name, {@code Class#method} for a producer method, {@code Class.field} for a field. */
+    @Override
+    public String getId() {
+        return descriptor.id().value();
     }
 
     /** The scope annotation type as the bean's own loader sees it: a custom scope may live in its layer only. */

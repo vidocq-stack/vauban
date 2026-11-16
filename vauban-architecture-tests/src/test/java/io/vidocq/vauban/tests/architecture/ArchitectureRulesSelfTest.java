@@ -47,7 +47,7 @@ import io.vidocq.vauban.naming.archfixture.NamingReachingIntoCore;
 import io.vidocq.vauban.processor.archfixture.ProcessorReachingIntoSjar;
 import io.vidocq.vauban.sjar.archfixture.SjarReachingIntoCore;
 import io.vidocq.vauban.weaver.archfixture.WeaverReachingIntoTheSpi;
-import io.vidocq.vauban.webcontexts.archfixture.WebcontextsReachingIntoApi;
+import io.vidocq.vauban.webcontexts.archfixture.WebcontextsReachingIntoCore;
 
 import com.tngtech.archunit.core.domain.JavaClasses;
 import com.tngtech.archunit.core.importer.ClassFileImporter;
@@ -95,8 +95,8 @@ class ArchitectureRulesSelfTest {
                 ruleWith(
                         "WEBCONTEXTS_DEPENDENCIES",
                         ArchitectureRules.WEBCONTEXTS_DEPENDENCIES,
-                        WebcontextsReachingIntoApi.class),
-                ruleWith("LAYERS", ArchitectureRules.LAYERS, WebcontextsReachingIntoApi.class),
+                        WebcontextsReachingIntoCore.class),
+                ruleWith("LAYERS", ArchitectureRules.LAYERS, WebcontextsReachingIntoCore.class),
                 ruleWith("NAMING_DEPENDENCIES", ArchitectureRules.NAMING_DEPENDENCIES, NamingReachingIntoCore.class),
                 ruleWith("LAYERS", ArchitectureRules.LAYERS, NamingReachingIntoCore.class));
     }

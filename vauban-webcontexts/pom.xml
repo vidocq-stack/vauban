@@ -16,10 +16,17 @@
         build-compatible extension.</description>
 
     <dependencies>
-        <!-- The CDI API only: the context is plugged in through MetaAnnotations.addContext. -->
+        <!-- The CDI API: the context is plugged in through MetaAnnotations.addContext. -->
         <dependency>
             <groupId>jakarta.enterprise</groupId>
             <artifactId>jakarta.enterprise.cdi-api</artifactId>
+        </dependency>
+        <!-- Passivation: session values written by one container are read into another (Vidocq dev swap,
+             foy#114); the read finds the importing container through the binding vauban-api holds. -->
+        <dependency>
+            <groupId>io.vidocq.vauban</groupId>
+            <artifactId>vauban-api</artifactId>
+            <version>${project.version}</version>
         </dependency>
         <dependency>
             <groupId>io.vidocq.vauban</groupId>

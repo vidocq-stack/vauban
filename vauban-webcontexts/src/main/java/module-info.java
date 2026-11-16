@@ -22,6 +22,9 @@
  */
 module io.vidocq.vauban.webcontexts {
     requires transitive jakarta.cdi;
+    // Passivation.importingBeanManager(): session values written by one container are read into another
+    // (Vidocq dev swap, foy#114).
+    requires io.vidocq.vauban.api;
 
     exports io.vidocq.vauban.webcontexts;
 

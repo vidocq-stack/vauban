@@ -1006,6 +1006,91 @@ Providers generated before this method existed grant nothing; the extension keep
 
 The container uses the same lookup itself to wire an intercepted bean: once the generated provider has created the `$$Intercepted` subclass, its post-construction method `$$init` is called through a method handle found with that lookup, so the bean's package needs neither `exports` nor `opens` (BUG-20261010-02). Without a granting provider, the call falls back to reflection, which needs the package exported to `io.vidocq.vauban.core`.
 
+[#session-swap]
+== Session entries across a container swap
+
+When Vidocq swaps the application layer in dev mode, Foy moves the live HTTP sessions to the new layer
+(https://codefloe.com/Vidocq/foy/pulls/114[foy#114^]): it writes each session attribute to its own bytes with Java
+serialization, then reads it back through the new layer's class loader. The `@SessionScoped` instances of
+`vauban-webcontexts` are session attributes, so they move with it, from the container that wrote them to the one that
+reads them. This is passivation: no `@PostConstruct` runs on import, no `@PreDestroy` on export.
+
+The key::
+One attribute per bean, named `io.vidocq.vauban.webcontexts.session:` followed by the bean's passivation id. Every
+Vauban bean is `PassivationCapable`, and its id is its `BeanId`: the class name for a managed bean, `Class#method` for
+a producer method, `Class.field` for a producer field. These are built from names, so two containers built from the
+same classes give such a bean the same id, and the importing container finds the attribute under the key it computes
+itself. A synthetic bean is the exception: its id ends with its registration slot, which shifts when beans are added
+before it (see the limits below). A foreign `Contextual` that is not passivation capable keeps a key bound to its own
+identity, valid in one container only.
++
+Since the key is the same in every container, a session store must never be bound to two live containers at once: the
+second would take the first one's entries for its own. The key used to carry the identity of the `Bean` object, which
+kept two containers apart on one store; now the values go from one container to the next through their serial form
+only.
+
+The serial form::
+The attribute holds an `Entry`: the bean, the instance and its creational context. The bean and the creational context
+belong to the container that holds them, so the entry is never written itself: its `writeReplace` writes an
+`EntryForm`, the passivation id and the instance. The form's `readResolve` looks the id up in the importing container
+(`BeanManager.getPassivationCapableBean`), checks the instance against that bean's types, and returns an entry of the
+importing container with a new creational context. When it cannot, it throws `InvalidObjectException` with a message
+that names the cause, never returns `null`: a form with no id, a bean the importing container lacks (removed, renamed
+or vetoed), an instance of another class. Foy drops the session in every one of these cases, as it does for a value
+that reads back `null`.
++
+The check covers the classes among the bean types: the bean class of a managed bean, the class a producer returns,
+their superclasses and interfaces. A parameterized type is left out, since reading its raw type is reflection, and
+`Object` always matches. A producer whose return type is parameterized and changed between two swaps can therefore
+pass the check, and fail with a `ClassCastException` at its first use instead of dropping the session.
++
+An `Entry` is never read as itself either: its `readObject` throws `InvalidObjectException`, so a stream laid out by
+hand cannot produce an entry with no bean.
+
+The binding::
+`readResolve` has no argument to tell it which container imports. Foy binds it around its reads with
+`io.vidocq.vauban.api.Passivation.importInto(beanManager, importer)`, a `ScopedValue` that holds on the reading thread,
+for the duration of the call; `Passivation.importingBeanManager()` reads it. A read outside that binding throws
+`InvalidObjectException("no importing container bound")`. `vauban-webcontexts` reads `vauban-api` for that binding
+alone (xref:reference.adoc#architecture-rules[Reference, Architecture rules]).
+
+The skip::
+A `@SessionScoped` producer of the session itself, as Foy's `HttpSession` bean, returns the web container's own
+session object, which is neither the bean's state nor serializable. `SessionStore.isSession(instance)` recognises it
+when the context stores the instance, and that entry writes a `Skipped` form, which reads back as a sentinel entry. The
+context treats the sentinel as no instance: the first use in the importing container runs the producer again, which
+returns the imported session, and replaces the sentinel. Destroying a session destroys nothing for a sentinel.
+
+What cannot move::
+`writeReplace` throws `NotSerializableException` with a message that names the cause, and Foy leaves the session
+behind with one `WARNING`:
++
+* an instance that is not `Serializable`: `bean class X is not Serializable`. Vauban does not check this at
+  deployment;
+* an instance of a `Contextual` that is not passivation capable: `contextual has no passivation id`;
+* an instance of an intercepted bean, an `$$Intercepted` subclass whose interceptor fields belong to the writing
+  container: `intercepted instances cannot move yet`.
++
+A field of the instance that cannot be written stops the stream too, which names its class: today the client proxy of
+a normal-scoped bean, and a built-in `Event`, `Instance` or `BeanManager`.
+
+`@Dependent` objects::
+A `@Dependent` object the instance holds moves inside it, as part of its state. The writing container's creational
+context tracked it; the importing container gives the entry a new, empty one. Its `@PreDestroy` therefore does not run
+when the moved session ends.
+
+Limits::
+What moves, moves as it was written, between two versions of the application:
++
+* **A synthetic bean, or one of overloaded producer methods.** A synthetic bean's id ends with its registration slot,
+  which shifts when beans are registered before it: its entry can be found under another synthetic bean of the same
+  name, or under none. Overloaded producer methods share one id, so their entries collide.
+* **A bean that gains an interceptor binding** in the new version moves as the plain instance it was: its interceptors
+  do not run on it until the session ends.
+* **A field added to the class** reads back with its default value: the import runs no injection and no
+  `@PostConstruct`. This needs a declared `serialVersionUID`; without one, the changed class computes another, the
+  read fails with `InvalidClassException`, and Foy drops the session.
+
 == Exported Java modules
 
 [cols="2,3"]

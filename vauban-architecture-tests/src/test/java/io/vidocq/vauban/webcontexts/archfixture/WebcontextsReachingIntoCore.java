@@ -19,19 +19,19 @@
  */
 package io.vidocq.vauban.webcontexts.archfixture;
 
-import io.vidocq.vauban.api.VaubanComponentProvider;
+import io.vidocq.vauban.core.container.VaubanContainer;
 
 /**
- * Breaks the rules on purpose: a vauban-webcontexts class that reaches into vauban-api, which it does not read.
+ * Breaks the rules on purpose: a vauban-webcontexts class that reaches into vauban-core, which it does not read.
  * Never shipped, only imported by {@code ArchitectureRulesSelfTest}.
  */
-public final class WebcontextsReachingIntoApi {
+public final class WebcontextsReachingIntoCore {
 
-    private WebcontextsReachingIntoApi() {
+    private WebcontextsReachingIntoCore() {
         // A fixture: never instantiated.
     }
 
-    public static String describe(VaubanComponentProvider provider) {
-        return provider.toString();
+    public static void close(VaubanContainer container) {
+        container.close();
     }
 }
