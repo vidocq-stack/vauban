@@ -27,6 +27,7 @@ import org.junit.jupiter.api.io.TempDir;
 
 import java.io.IOException;
 import java.lang.classfile.ClassFile;
+import java.lang.classfile.CodeBuilder;
 import java.lang.classfile.attribute.RuntimeVisibleAnnotationsAttribute;
 import java.lang.constant.ClassDesc;
 import java.lang.constant.ConstantDescs;
@@ -215,7 +216,86 @@ class VaubanClassLoaderTest {
         }
     }
 
+    /**
+     * A tool that redefines a class this loader defined (the class redefinition of {@code vidocq:dev}) needs the bytes
+     * the loader would define, woven, not the file as it is on disk.
+     */
+    @Test
+    @DisplayName("definitionBytes: the bytes findClass would define, through the transformer chain")
+    void definitionBytesAreTheTransformedBytes(@TempDir Path dir) throws Exception {
+        var app = appArchive(dir, "com.example.lapp.Service", true);
+        try (var loader = VaubanClassLoader.of(List.of(app), getClass().getClassLoader(),
+                PluginContext.empty())) {
+            var bytes = loader.definitionBytes("com.example.lapp.Service").orElseThrow();
+
+            assertTrue(hasConstructor(bytes, "(Lio/vidocq/vauban/api/ProxyLink;)V"),
+                    "the cdi-proxifier did not weave the (ProxyLink) constructor into the bytes");
+        }
+    }
+
+    @Test
+    @DisplayName("definitionBytes: a class file changed on disk gives its new bytes")
+    void definitionBytesReadTheArchiveAgain(@TempDir Path dir) throws Exception {
+        var root = dir.resolve("app");
+        var file = root.resolve("com/example/lapp/Greeter.class");
+        Files.createDirectories(file.getParent());
+        Files.write(file, simpleClass("com.example.lapp.Greeter"));
+        try (var loader = VaubanClassLoader.of(List.of(root), getClass().getClassLoader(),
+                PluginContext.empty())) {
+            Files.write(file, withMethod(simpleClass("com.example.lapp.Greeter"), "greet"));
+
+            var bytes = loader.definitionBytes("com.example.lapp.Greeter").orElseThrow();
+
+            assertTrue(ClassFile.of().parse(bytes).methods().stream()
+                    .anyMatch(m -> m.methodName().equalsString("greet")), "the bytes are not the new file's");
+        }
+    }
+
+    @Test
+    @DisplayName("definitionBytes: empty for a class outside the archives or one the loader refuses to define")
+    void definitionBytesOfAClassTheLoaderWouldNotDefineAreEmpty(@TempDir Path dir) throws Exception {
+        var root = dir.resolve("app");
+        var planted = root.resolve("io/vidocq/vauban/classloader/Planted.class");
+        Files.createDirectories(planted.getParent());
+        Files.write(planted, simpleClass("io.vidocq.vauban.classloader.Planted"));
+        try (var loader = VaubanClassLoader.of(List.of(root), getClass().getClassLoader(),
+                PluginContext.empty())) {
+            assertTrue(loader.definitionBytes("java.lang.String").isEmpty());
+            assertTrue(loader.definitionBytes("io.vidocq.vauban.classloader.Planted").isEmpty());
+        }
+    }
+
+    @Test
+    @DisplayName("definitionBytes: a class file deleted from its archive fails, naming the class")
+    void definitionBytesOfADeletedClassFail(@TempDir Path dir) throws Exception {
+        var root = dir.resolve("app");
+        var file = root.resolve("com/example/lapp/Gone.class");
+        Files.createDirectories(file.getParent());
+        Files.write(file, simpleClass("com.example.lapp.Gone"));
+        try (var loader = VaubanClassLoader.of(List.of(root), getClass().getClassLoader(),
+                PluginContext.empty())) {
+            Files.delete(file);
+
+            var failure = assertThrows(java.io.UncheckedIOException.class,
+                    () -> loader.definitionBytes("com.example.lapp.Gone"));
+            assertTrue(failure.getMessage().contains("com.example.lapp.Gone"), failure.getMessage());
+        }
+    }
+
     // ---------------------------------------------------------------- fixtures
+
+    private static boolean hasConstructor(byte[] bytes, String descriptor) {
+        return ClassFile.of().parse(bytes).methods().stream()
+                .anyMatch(m -> m.methodName().equalsString(ConstantDescs.INIT_NAME)
+                        && m.methodType().equalsString(descriptor));
+    }
+
+    /** {@code bytes} with one more {@code public void <name>() {}}. */
+    private static byte[] withMethod(byte[] bytes, String name) {
+        return ClassFile.of().transformClass(ClassFile.of().parse(bytes),
+                java.lang.classfile.ClassTransform.endHandler(clb -> clb.withMethodBody(name,
+                        MethodTypeDesc.of(ConstantDescs.CD_void), ClassFile.ACC_PUBLIC, CodeBuilder::return_)));
+    }
 
     /**
      * Exploded archive: {@code @ApplicationScoped Service} with ONLY a throwing business

@@ -528,12 +528,36 @@ public class VaubanClassLoader extends ClassLoader implements AutoCloseable {
         }
         byte[] bytes;
         try {
-            bytes = archive.reader.readClass(toEntry(name));
+            bytes = transformedBytes(name, archive);
         } catch (IOException e) {
             throw new ClassNotFoundException(name, e);
         }
-        bytes = applyTransformers(name, bytes, archive);
         return defineClass(name, bytes, 0, bytes.length, archive.domain);
+    }
+
+    /**
+     * The bytes {@link #findClass(String)} would define for {@code binaryName} now: read again from its archive and
+     * passed through the transformer chain, without defining anything. A development tool that redefines a class
+     * this loader defined (the class redefinition of {@code vidocq:dev}) needs these bytes, woven as the loaded class
+     * is, not the file as it is on disk.
+     *
+     * @return empty for a class outside the managed archives, or one this loader refuses to define
+     * @throws java.io.UncheckedIOException when the archive no longer holds the class or cannot be read
+     */
+    public Optional<byte[]> definitionBytes(String binaryName) {
+        var archive = classIndex.get(toEntry(binaryName));
+        if (archive == null || isExcluded(binaryName)) {
+            return Optional.empty();
+        }
+        try {
+            return Optional.of(transformedBytes(binaryName, archive));
+        } catch (IOException e) {
+            throw new java.io.UncheckedIOException("Cannot read " + binaryName + " from " + archive.path, e);
+        }
+    }
+
+    private byte[] transformedBytes(String name, Archive archive) throws IOException {
+        return applyTransformers(name, archive.reader.readClass(toEntry(name)), archive);
     }
 
     /**

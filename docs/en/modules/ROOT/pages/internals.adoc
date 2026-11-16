@@ -796,7 +796,11 @@ archive ───▶ │ dir | jar | sjar | …  │ ─▶│ cdi-proxifier | (
   The container's scanner defines sjar classes through this engine. Diagnostics:
   transformations are logged, `-Dvauban.classloader.dump=<dir>` writes transformed bytes,
   `-Dvauban.classloader.transformers.disabled=<names>` disables transformers by name, and
-  a transformer failure fails the class load — nothing silent.
+  a transformer failure fails the class load — nothing silent. `definitionBytes(name)`
+  returns the bytes the engine would define for a class now, read again from its archive
+  and through the chain, without defining it: what a tool that redefines a loaded class
+  must hand to the JVM, woven as the loaded class is (`vidocq:dev` redefines a method
+  body in place this way).
 * `VaubanLayerFactory` — the module-path story: application archives stay *off* the JVM
   module path and resolve into a child `ModuleLayer` whose single defining loader is the
   engine. Exports and opens keep being enforced inside the child layer; `ServiceLoader`
