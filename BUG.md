@@ -22,6 +22,22 @@ suspected cause, status. Updated on every investigation.
 - **Found by**: the review of BUG-20261116-07, which looked for an application interceptor with no bean: a vetoed one
   is the only one.
 
+## BUG-20261116-10 — A `Provider` injection point has no bean for `getInjectableReference`
+
+- **Date**: 2026-11-17
+- **Status**: FIXED on `feat/session-survives-swap`
+- **Module**: `vauban-core` (`VaubanBeanManager.getBuiltInBeans`)
+- **Symptom**: `BeanManager.getInjectableReference` for a `Provider<Shelf>` injection point throws
+  `UnsatisfiedResolutionException: No bean for injection point`, and `getBeans` of a `Provider<X>` type finds no
+  bean. Field, constructor and initializer injection of a `Provider` worked: they build the object from the
+  injection point and never resolve a bean, which is why the AtInject TCK passes.
+- **Repro**: `BuiltInInjectableReferenceTest#aProviderFieldKeepsItsType` in `vauban-core`.
+- **Cause**: the built-in `Instance` bean's types were `{Instance}`. CDI 4.1 §5.6.2 ("The built-in Instance") makes
+  it eligible for any injection point of type `Instance<X>` or `Provider<X>`.
+- **Fix**: the built-in `Instance` bean has the types `{Instance, Provider}`.
+- **Verification**: `aProviderFieldKeepsItsType` red before, green after; the reactor `-o -Pquality install`, the CDI
+  Lite TCK (774/774) and the AtInject TCK green on the branch.
+
 ## BUG-20261116-09 — `Instance.select` drops a parameterized type
 
 - **Date**: 2026-11-16

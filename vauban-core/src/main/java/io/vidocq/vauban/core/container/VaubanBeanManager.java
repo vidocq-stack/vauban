@@ -152,8 +152,9 @@ public final class VaubanBeanManager implements BeanManager, Serializable {
                 new BuiltInBean<>(Event.class,
                     Set.of(Event.class, Object.class),
                     this::getEvent),
+                // CDI 4.1 §5.6.2: the built-in bean of type Instance<X> is of type Provider<X> too (BUG-20261116-10)
                 new BuiltInBean<>(Instance.class,
-                    Set.of(Instance.class),
+                    Set.of(Instance.class, jakarta.inject.Provider.class),
                     this::createInstance),
                 new BuiltInBean<>(InjectionPoint.class,
                     Set.of(InjectionPoint.class),

@@ -43,6 +43,7 @@ import jakarta.enterprise.inject.spi.EventMetadata;
 import jakarta.enterprise.inject.spi.InjectionPoint;
 import jakarta.enterprise.util.TypeLiteral;
 import jakarta.inject.Inject;
+import jakarta.inject.Provider;
 import jakarta.interceptor.AroundInvoke;
 import jakarta.interceptor.Interceptor;
 import jakarta.interceptor.InterceptorBinding;
@@ -237,6 +238,14 @@ class BuiltInInjectableReferenceTest {
         container.select(Lookup.class).loudEvents.get().fire(new Ping("loud lookup"));
 
         assertEquals(List.of("loud lookup"), container.select(Recorder.class).loudPings());
+    }
+
+    @Test
+    @DisplayName("a Provider<Shelf> field gives a Provider of Shelf")
+    void aProviderFieldKeepsItsType() {
+        var provider = (Provider<?>) injectableReference(Holder.class, "provider");
+
+        assertSame(container.select(Shelf.class), provider.get());
     }
 
     @Test
