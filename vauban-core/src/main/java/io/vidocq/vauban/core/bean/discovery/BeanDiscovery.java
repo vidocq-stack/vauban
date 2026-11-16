@@ -771,7 +771,10 @@ public final class BeanDiscovery {
     private void collectBeanTypes(DotName className, Set<TypeInfo> types) {
         types.add(new TypeInfo.ClassType(className));
         var classInfo = index.getClassByName(className);
-        if (classInfo.isEmpty()) return;
+        if (classInfo.isEmpty()) {
+            collectUnindexedSupertypes(className, types);
+            return;
+        }
         var info = classInfo.get();
 
         if (info.superName() != null && !JAVA_LANG_OBJECT.equals(info.superName().value())) {
@@ -782,6 +785,28 @@ public final class BeanDiscovery {
         }
     }
 
+
+    /**
+     * The supertypes of a type the index does not describe, such as an interface of a Jakarta API
+     * ({@code HttpAuthenticationMechanismHandler} extends {@code HttpAuthenticationMechanism}): read by reflection,
+     * since a bean is of every type its supertypes make it, indexed or not. A class that cannot be loaded or
+     * linked adds nothing but its own name, as before.
+     */
+    private void collectUnindexedSupertypes(DotName className, Set<TypeInfo> types) {
+        Class<?> clazz;
+        try {
+            clazz = DeploymentClasses.load(className.value());
+        } catch (ClassNotFoundException _) {
+            return;
+        }
+        var superClass = clazz.getSuperclass();
+        if (superClass != null && superClass != Object.class) {
+            collectBeanTypes(DotName.of(superClass.getName()), types);
+        }
+        for (var iface : clazz.getInterfaces()) {
+            collectBeanTypes(DotName.of(iface.getName()), types);
+        }
+    }
 
     /**
      * A member type the index read from its {@code Signature} (VAU-PERF-007), in the form

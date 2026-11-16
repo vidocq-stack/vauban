@@ -279,6 +279,29 @@ class BeanDiscoveryReflectionFallbackTest {
         return loader.loadClass(name);
     }
 
+    /** An interface of a library, which the deployment's index does not describe, and the one it extends. */
+    public interface LibraryBase {
+    }
+
+    public interface LibrarySub extends LibraryBase {
+    }
+
+    public static class LibraryBean implements LibrarySub {
+    }
+
+    @Test
+    @DisplayName("the bean types follow the supertypes the index does not describe, by reflection")
+    void beanTypesFollowUnindexedSupertypes() {
+        var bean = scan(LibraryBean.class);
+        var discovery = discovery(bean);
+
+        var types = discovery.computeBeanTypes(bean);
+
+        assertTrue(types.contains(cls(LibrarySub.class.getName())), types::toString);
+        assertTrue(types.contains(cls(LibraryBase.class.getName())),
+                "a bean is also of the types the interface it implements extends: " + types);
+    }
+
     @Test
     @DisplayName("a class whose constructor cannot be linked is no bean, and discovery goes on")
     void aClassWithAnUnlinkableConstructorIsSkipped() throws Exception {
