@@ -566,7 +566,8 @@ public final class ManagedBean<T> implements Bean<T>, PassivationCapable {
     /** The first of {@code methods} named {@code name} that is a producer method, or {@code null}. */
     private static java.lang.reflect.Method producerMethodNamed(java.lang.reflect.Method[] methods, String name) {
         for (var m : methods) {
-            if (m.getName().equals(name) && m.isAnnotationPresent(jakarta.enterprise.inject.Produces.class)) {
+            if (VaubanContainer.isProducerMethod(m, name)
+                    && m.isAnnotationPresent(jakarta.enterprise.inject.Produces.class)) {
                 return m;
             }
         }

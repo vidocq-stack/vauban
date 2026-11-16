@@ -316,7 +316,8 @@ final class DisposerInvoker {
         if (producer.kind() == BeanDescriptor.BeanKind.PRODUCER_METHOD && producerId.contains("#")) {
             var methodName = producerId.substring(producerId.indexOf('#') + 1);
             for (var m : declaringClass.getDeclaredMethods()) {
-                if (m.getName().equals(methodName) && m.isAnnotationPresent(jakarta.enterprise.inject.Produces.class)) {
+                if (VaubanContainer.isProducerMethod(m, methodName)
+                        && m.isAnnotationPresent(jakarta.enterprise.inject.Produces.class)) {
                     return Optional.of(m.getAnnotations());
                 }
             }

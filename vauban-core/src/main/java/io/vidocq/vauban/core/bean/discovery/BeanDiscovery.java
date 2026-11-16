@@ -533,7 +533,10 @@ public final class BeanDiscovery {
     // isInterceptorBinding is defined further below
 
     private BeanDescriptor buildProducerMethodBean(ClassInfo declaringClass, MethodInfo method) {
-        var id = BeanId.ofProducerMethod(declaringClass.name(), method.name());
+        var id = isOverloadedProducer(declaringClass, method)
+                ? BeanId.ofOverloadedProducerMethod(declaringClass.name(), method.name(),
+                        method.parameters().stream().map(parameter -> erasedName(parameter.type())).toList())
+                : BeanId.ofProducerMethod(declaringClass.name(), method.name());
         var actualReturnType = reflectedProducerMethodType(declaringClass, method);
         var types = computeProducerTypesWithTyped(actualReturnType, method.annotations());
         var qualifiers = computeQualifiers(method.annotations());
@@ -568,8 +571,28 @@ public final class BeanDiscovery {
     }
 
     /**
-     * The generic return type of the first declared method named like the producer, read from the
-     * bean class of the deployment; the index's erased type when the class cannot be read.
+     * Whether {@code declaringClass} declares another producer method of {@code method}'s name: overloaded producer
+     * methods are told apart by their parameter types, in their ids and in their reflective lookups
+     * (BUG-20261116-11).
+     */
+    private static boolean isOverloadedProducer(ClassInfo declaringClass, MethodInfo method) {
+        return declaringClass.methods().stream()
+                .filter(candidate -> candidate.name().equals(method.name())
+                        && hasAnnotation(candidate.annotations(), PRODUCES))
+                .count() > 1;
+    }
+
+    /** Whether the reflected {@code m} is the producer {@code method}: its name, and its parameters when overloaded. */
+    private static boolean isReflectedProducer(java.lang.reflect.Method m, ClassInfo declaringClass,
+            MethodInfo method) {
+        return m.getName().equals(method.name())
+                && (!isOverloadedProducer(declaringClass, method)
+                        || sameErasedParameters(m.getParameterTypes(), method));
+    }
+
+    /**
+     * The generic return type of the producer method, the reflected method {@link #isReflectedProducer} matches, read
+     * from the bean class of the deployment; the index's erased type when the class cannot be read.
      */
     private static TypeInfo reflectedProducerMethodType(ClassInfo declaringClass, MethodInfo method) {
         if (declaringClass.genericMembers()) {
@@ -578,7 +601,7 @@ public final class BeanDiscovery {
         try {
             var clazz = DeploymentClasses.load(declaringClass.name().value());
             for (var m : clazz.getDeclaredMethods()) {
-                if (m.getName().equals(method.name())) {
+                if (isReflectedProducer(m, declaringClass, method)) {
                     var reflectType = reflectTypeToTypeInfo(m.getGenericReturnType());
                     return reflectType != null ? reflectType : method.returnType();
                 }
@@ -592,7 +615,7 @@ public final class BeanDiscovery {
         try {
             var clazz = DeploymentClasses.load(declaringClass.name().value());
             for (var m : clazz.getDeclaredMethods()) {
-                if (m.getName().equals(method.name())
+                if (isReflectedProducer(m, declaringClass, method)
                         && m.isAnnotationPresent(jakarta.annotation.Priority.class)) {
                     return java.util.OptionalInt.of(m.getAnnotation(jakarta.annotation.Priority.class).value());
                 }

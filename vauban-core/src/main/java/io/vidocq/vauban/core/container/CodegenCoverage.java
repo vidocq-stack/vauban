@@ -352,7 +352,7 @@ public final class CodegenCoverage {
     /** The first declared method of that name, as {@code VaubanContainer.createProducerMethodFactory} takes it. */
     private static Method producerMethod(Class<?> declaring, String name) {
         for (Method method : declaring.getDeclaredMethods()) {
-            if (method.getName().equals(name)) {
+            if (VaubanContainer.isProducerMethod(method, name)) {
                 return method;
             }
         }

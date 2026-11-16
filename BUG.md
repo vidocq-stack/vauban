@@ -22,6 +22,28 @@ suspected cause, status. Updated on every investigation.
 - **Found by**: the review of BUG-20261116-07, which looked for an application interceptor with no bean: a vetoed one
   is the only one.
 
+## BUG-20261116-11 — Overloaded producer methods collide: the deployment fails
+
+- **Date**: 2026-11-17
+- **Status**: FIXED on `feat/session-survives-swap`
+- **Module**: `vauban-core` (`BeanId`, `BeanDiscovery.buildProducerMethodBean`, and the producer method lookups of
+  `VaubanContainer`, `ManagedBean`, `DisposerInvoker`, `CodegenCoverage`)
+- **Symptom**: a class with two producer methods of one name, `@Produces Spoon make()` and
+  `@Produces Fork make(Spoon spoon)`, fails the deployment: `Illegal circular dependency involving @Dependent bean`,
+  naming `Kitchen#make` twice. On `main` too.
+- **Repro**: `OverloadedProducerTest` in `vauban-core`.
+- **Cause**: a producer method's id is `Class#method`, so overloaded producer methods share one: in the registry, a
+  `Map` keyed by id, one overwrote the other, and the validator saw one bean depend on itself. Each lookup of the
+  producer's `Method`, its factory, its return type, its annotations for the disposer, its codegen coverage, found
+  it by name alone, so it took the first overload.
+- **Fix**: one of overloaded producer methods has the id `Class#method(T1,T2)`, its erased parameter types as
+  `Class.getTypeName()` spells them (`BeanId.ofOverloadedProducerMethod`); a producer method of a name of its own
+  keeps `Class#method`. `VaubanContainer.isProducerMethod` finds the method an id names, by its name and, for an
+  overload, its parameter types, wherever the container looks it up. The ids of other producers, and the frozen and
+  generated records, do not change.
+- **Verification**: `OverloadedProducerTest` (2) red before, green after; the reactor `-o -Pquality install`, the CDI
+  Lite TCK (774/774) and the AtInject TCK green on the branch.
+
 ## BUG-20261116-10 — A `Provider` injection point has no bean for `getInjectableReference`
 
 - **Date**: 2026-11-17

@@ -1072,7 +1072,7 @@ public final class VaubanContainer implements AutoCloseable {
 
         private Producer findProducer(Class<?> declaringClass) {
             for (var method : declaringClass.getDeclaredMethods()) {
-                if (method.getName().equals(methodName)) {
+                if (isProducerMethod(method, methodName)) {
                     var transientReferences = new java.util.BitSet();
                     var params = method.getParameters();
                     for (int i = 0; i < params.length; i++) {
@@ -1349,6 +1349,20 @@ public final class VaubanContainer implements AutoCloseable {
                 }
             }
         };
+    }
+
+    /**
+     * Whether {@code method} is the producer method {@code member} names, the part of its bean's id after {@code #}:
+     * its name, followed for one of overloaded producer methods by its erased parameter types (BUG-20261116-11).
+     */
+    static boolean isProducerMethod(java.lang.reflect.Method method, String member) {
+        int open = member.indexOf('(');
+        if (open < 0) {
+            return method.getName().equals(member);
+        }
+        return method.getName().equals(member.substring(0, open))
+                && member.substring(open).equals(java.util.Arrays.stream(method.getParameterTypes())
+                        .map(Class::getTypeName).collect(java.util.stream.Collectors.joining(",", "(", ")")));
     }
 
     static String extractProducerMethodName(BeanId id) {
