@@ -340,7 +340,8 @@ fully-public produced type (nothing to open) or the build-time lever below.
   `vauban:enhance-dependencies` goal writes an enhanced copy of a third-party jar under
   `target/vauban-enhanced-deps/` in which `<Type>_ClientProxy` is co-located in the type's
   **own** package — so it *can* forward package-private and protected methods — and the
-  `module-info.class` is rewritten to `provides` the generated component provider. Placed
+  `module-info.class` is rewritten to `provides` the generated component provider, the versioned
+  descriptors of a multi-release jar (`META-INF/versions/<n>/module-info.class`) included. Placed
   ahead of the original on the module path it resolves with zero `opens` and no agent — and it
   survives integrity by default, since nothing is opened, attached or defined at runtime.
 +

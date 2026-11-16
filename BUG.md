@@ -5,6 +5,25 @@ suspected cause, status. Updated on every investigation.
 
 ---
 
+## BUG-20261116-03 — `vauban:enhance-dependencies` leaves the versioned descriptor of a multi-release jar as it is
+
+- **Date**: 2026-11-16
+- **Status**: FIXED on `fix/enhance-versioned-descriptor`
+- **Module**: `vauban-maven-plugin` (`DependencyEnhancer.copyEntry`)
+- **Symptom**: the enhanced copy of a multi-release jar whose module descriptor is only under
+  `META-INF/versions/<n>/` (a library that still runs on Java 8) holds the generated `<Type>_ClientProxy` and
+  `_VaubanComponents`, but its module neither provides `VaubanComponentProvider` nor requires `io.vidocq.vauban.api`.
+  On the module path no `ServiceLoader` finds the provider, so the container falls back to generating the proxy at
+  run time and asks for the `opens` the goal was run to avoid. Found by reading the code while Vidocq's
+  `vidocq:jlink` started to call the enhancer (Vidocq BUG-20261116-06), not reported by a user.
+- **Repro**: `DependencyEnhancerTest.enhancesTheVersionedDescriptorOfAMultiReleaseJar`: a jar with
+  `Multi-Release: true`, `META-INF/versions/9/module-info.class` and no root descriptor. Before the fix,
+  `ModuleFinder` reads from the enhanced copy a module that requires `java.base` only.
+- **Cause**: `copyEntry` rewrites the entry named `module-info.class` and copies every other entry as it is. The
+  module system reads the versioned descriptor of a multi-release jar.
+- **Fix**: `copyEntry` rewrites every module descriptor of the jar, the root one and the versioned ones
+  (`isModuleDescriptor`). `internals.adoc` says so.
+
 ## BUG-20261116-02 — A `@Decorator` is never applied: decorators (CDI Full) are not implemented
 
 - **Date**: 2026-11-16

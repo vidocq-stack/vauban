@@ -30,6 +30,7 @@ import java.lang.classfile.ClassFile;
 import java.lang.classfile.attribute.ModuleAttribute;
 import java.lang.classfile.attribute.ModuleRequireInfo;
 import java.lang.constant.ModuleDesc;
+import java.lang.module.ModuleFinder;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -37,6 +38,7 @@ import java.util.List;
 import java.util.jar.JarEntry;
 import java.util.jar.JarFile;
 import java.util.jar.JarOutputStream;
+import java.util.jar.Manifest;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
@@ -140,6 +142,43 @@ class DependencyEnhancerTest {
         }
     }
 
+    @Test
+    @DisplayName("a multi-release jar whose descriptor is a versioned one gets the provides and the requires too")
+    void enhancesTheVersionedDescriptorOfAMultiReleaseJar(@TempDir Path tmp) throws Exception {
+        var fqn = Widget.class.getName();
+        var srcJar = tmp.resolve("libwidget.jar");
+        byte[] moduleInfo = ClassFile.of().buildModule(ModuleAttribute.of(
+                ModuleDesc.of("fixture.mod"),
+                mb -> mb.requires(ModuleRequireInfo.of(
+                        ModuleDesc.of("java.base"), ClassFile.ACC_MANDATED, null))));
+        byte[] widgetBytes;
+        try (var is = getClass().getResourceAsStream("/" + PKG + "Widget.class")) {
+            widgetBytes = is.readAllBytes();
+        }
+        // A library that still runs on Java 8 keeps its descriptor under META-INF/versions/9/, and has no root one.
+        var manifest = new Manifest();
+        manifest.getMainAttributes().put(java.util.jar.Attributes.Name.MANIFEST_VERSION, "1.0");
+        manifest.getMainAttributes().put(java.util.jar.Attributes.Name.MULTI_RELEASE, "true");
+        try (var out = new JarOutputStream(Files.newOutputStream(srcJar), manifest)) {
+            put(out, "META-INF/versions/9/module-info.class", moduleInfo);
+            put(out, PKG + "Widget.class", widgetBytes);
+        }
+
+        var result = DependencyEnhancer.enhance(srcJar, "org.example:libwidget:1.0",
+                tmp.resolve("enhanced"), List.of(fqn), getClass().getClassLoader(), new ArrayList<>());
+
+        // The module system reads the versioned descriptor: this is the module a module path gets.
+        var descriptor = ModuleFinder.of(result.enhancedJar()).find("fixture.mod").orElseThrow().descriptor();
+        assertTrue(descriptor.requires().stream().anyMatch(r -> r.name().equals("io.vidocq.vauban.api")),
+                "the module must read io.vidocq.vauban.api, which the generated provider implements: "
+                        + descriptor.requires());
+        assertTrue(descriptor.provides().stream()
+                        .anyMatch(p -> p.service().equals("io.vidocq.vauban.api.VaubanComponentProvider")
+                                && p.providers().contains(
+                                        "io.vidocq.vauban.maven.enhance.fixture._VaubanComponents")),
+                "the module must provide the generated provider, or no ServiceLoader finds the proxy: "
+                        + descriptor.provides());
+    }
 
     @Test
     @DisplayName("records provenance in the manifest and drops the inherited signature")

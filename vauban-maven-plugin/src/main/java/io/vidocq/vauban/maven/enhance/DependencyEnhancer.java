@@ -38,6 +38,7 @@ import java.util.jar.JarEntry;
 import java.util.jar.JarFile;
 import java.util.jar.JarOutputStream;
 import java.util.jar.Manifest;
+import java.util.regex.Pattern;
 import java.security.MessageDigest;
 import java.util.HexFormat;
 
@@ -48,7 +49,8 @@ import java.util.HexFormat;
  * package</strong> (no split package) and can therefore forward package-private and protected
  * methods. Adds, per enhanced type: a co-located client proxy; per package a {@code _VaubanComponents}
  * provider; and a rewritten {@code module-info.class} declaring
- * {@code provides io.vidocq.vauban.api.VaubanComponentProvider ...} (+ a class-path service file).
+ * {@code provides io.vidocq.vauban.api.VaubanComponentProvider ...} (+ a class-path service file). The versioned
+ * descriptors of a multi-release jar are rewritten as the root one is.
  *
  * <p>The original jar is never touched; the enhanced copy shadows it on the module path (its
  * signature is invalidated, which is why the goal is opt-in). The container then resolves the
@@ -57,6 +59,7 @@ import java.util.HexFormat;
 public final class DependencyEnhancer {
 
     private static final String MODULE_INFO = "module-info.class";
+    private static final Pattern VERSIONED_MODULE_INFO = Pattern.compile("META-INF/versions/\\d+/module-info\\.class");
     private static final String MANIFEST = "META-INF/MANIFEST.MF";
     private static final String SERVICE_FILE = "META-INF/services/io.vidocq.vauban.api.VaubanComponentProvider";
     private static final String ENHANCE_PREFIX = "enhance: ";
@@ -188,10 +191,20 @@ public final class DependencyEnhancer {
         try (InputStream is = in.getInputStream(entry)) {
             bytes = is.readAllBytes();
         }
-        if (name.equals(MODULE_INFO)) {
+        if (isModuleDescriptor(name)) {
             bytes = ModuleInfoRewriter.addComponentProvider(bytes, providerFqns);
         }
         writeEntry(out, name, bytes);
+    }
+
+    /**
+     * A module descriptor of the jar: the root one, or a versioned one. A multi-release jar may keep its descriptor
+     * under {@code META-INF/versions/<n>/} only, as a library that still runs on Java 8 does, and the module system
+     * reads that one: left as it is, the module would neither provide the generated provider nor read its API
+     * (BUG-20261116-03).
+     */
+    private static boolean isModuleDescriptor(String name) {
+        return name.equals(MODULE_INFO) || VERSIONED_MODULE_INFO.matcher(name).matches();
     }
 
     private static boolean canProxy(Class<?> type, List<String> warnings) {
