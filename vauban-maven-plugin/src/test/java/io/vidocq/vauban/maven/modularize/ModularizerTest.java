@@ -206,12 +206,16 @@ class ModularizerTest {
             ModuleDescriptor md = ModuleFinder.of(patched).findAll().iterator().next().descriptor();
             assertFalse(md.packages().contains("com.acme.frontend"), md.name() + " " + md.packages());
         }
-        // One loud block per shared directory, naming both jars, the directory and who is affected.
-        assertEquals(1, log.stream().filter(l -> l.contains("jlink will refuse")).count(), log.toString());
+        // One loud block per shared directory, naming both jars, the directory, who is affected, and the way out
+        // for an image: a linking tool that merges the directory, Vidocq's vidocq:jlink among them.
+        assertEquals(1, log.stream().filter(l -> l.contains("jlink refuses")).count(), log.toString());
         String block = String.join("\n", log);
-        assertTrue(block.contains("jlink will refuse acme-react-1.0.jar, acme-server-1.0.jar"), block);
+        assertTrue(block.contains("jlink refuses acme-react-1.0.jar, acme-server-1.0.jar as they are"), block);
         assertTrue(block.contains("com/acme/frontend/"), block);
         assertTrue(block.contains("Running on the module path is not affected"), block);
+        assertTrue(block.contains("merge that directory into one jar before jlink")
+                && block.contains("-Dvidocq.jlink.mergeSharedResources=true"), block);
+        assertFalse(block.contains("Only the library can fix it"), block);
         assertTrue(result.report().contains("shared resource directory: com/acme/frontend/ — acme-react-1.0.jar, "
                 + "acme-server-1.0.jar"), result.report());
         ModuleLayer.boot().configuration().resolve(ModuleFinder.of(result.patched().toArray(Path[]::new)),

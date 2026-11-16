@@ -410,17 +410,20 @@ public final class Modularizer {
 
     /**
      * One loud block per resource directory several jars hold. The module system cannot give one directory to two
-     * modules, so jlink refuses those jars; the module path and the application layers leave the directory out of the
-     * descriptors and keep working, and only the library itself can fix it.
+     * modules, so jlink refuses those jars as they are; the module path and the application layers leave the directory
+     * out of the descriptors and keep working. An image needs the directory in one jar: a tool that links it can merge
+     * the directory first (Vidocq's {@code vidocq:jlink} does), else only the library can fix it.
      */
     private static void warnSharedResources(Map<String, List<String>> shared, Consumer<String> log) {
         shared.forEach((dir, jars) -> {
             log.accept("WARN ------------------------------------------------------------------------");
-            log.accept("WARN jlink will refuse " + String.join(", ", jars) + ":");
+            log.accept("WARN jlink refuses " + String.join(", ", jars) + " as they are:");
             log.accept("WARN   they all hold files under " + dir + ", a split package for the module system,");
             log.accept("WARN   so none of their descriptors can declare it.");
             log.accept("WARN   Running on the module path is not affected: the directory stays out of the descriptors.");
-            log.accept("WARN   Only the library can fix it: one jar must hold that directory.");
+            log.accept("WARN   For an image, merge that directory into one jar before jlink: Vidocq's vidocq:jlink");
+            log.accept("WARN   does it with -Dvidocq.jlink.mergeSharedResources=true. Otherwise only the library");
+            log.accept("WARN   can fix it, with one jar holding that directory.");
             log.accept("WARN ------------------------------------------------------------------------");
         });
     }

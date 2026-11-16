@@ -180,9 +180,11 @@ named module can hold them.
 module too: `jlink` counts it, and refuses a descriptor that lists fewer packages than the jar holds. `META-INF` and
 directory names that are no legal package name stay out. A resource directory that another jar of the closure also
 holds stays out as well, since two modules cannot hold one package (a split package). The build prints one block of
-warnings per such directory, `jlink will refuse <jars>: they all hold files under <dir>/ …`, and `report.txt` lists it
-as `shared resource directory: <dir>/ — <jars>`. Running on the module path is not affected; `jlink` refuses those
-jars until the library puts that directory in one jar. Vaadin's `flow-server` and `flow-react` share
+warnings per such directory, `jlink refuses <jars> as they are: they all hold files under <dir>/ …`, and `report.txt`
+lists it as `shared resource directory: <dir>/ — <jars>`. Running on the module path is not affected. For an image,
+the directory must sit in one jar: a tool that links the image can merge it there first, as Vidocq's `vidocq:jlink`
+does with `-Dvidocq.jlink.mergeSharedResources=true`, which the block names; otherwise `jlink` refuses those jars
+until the library puts that directory in one jar. Vaadin's `flow-server` and `flow-react` share
 `com/vaadin/flow/server/frontend/` (vauban#163).
 
 ==== `uses` directives, and only legal ones
