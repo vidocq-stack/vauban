@@ -38,6 +38,10 @@ import java.util.Set;
  * {@code jar:file:///a/app.jar!/…} and its classes' code source {@code file:/a/app.jar} (BUG-20261115-07). So they are
  * compared by location, not by spelling: the normalised path of a local file or directory, and the normalised URI of
  * whatever names none.
+ * <p>
+ * Not thread-safe: an instance belongs to one {@link VaubanContainerBuilder}, which fills it while it scans the class
+ * path ({@code ContainerScanner#scanClasspath}) and reads it while it plans the extensions
+ * ({@code planExtensions}), both on the thread that builds the container. No other thread reaches it.
  */
 final class ProcessedArchives {
 
@@ -47,8 +51,8 @@ final class ProcessedArchives {
     private static final String FILE_SCHEME = "file:";
     private static final String JAR_FILE = "jar:" + FILE_SCHEME;
 
-    /** One location per archive: a {@link Path}, or the {@link String} of a normalised URI. */
-    private final Set<Object> locations = new HashSet<>();
+    /** One location per archive. */
+    private final Set<Location> locations = new HashSet<>();
     /** The answer for each code source already asked about, by its URL: one parse per archive, not per class. */
     private final Map<String, Boolean> answers = new HashMap<>();
 
@@ -73,6 +77,17 @@ final class ProcessedArchives {
         return locations.isEmpty();
     }
 
+    /** Where an archive is: the one place two spellings of it agree on. */
+    sealed interface Location {
+        /** A local file or directory, by its absolute normalised path. */
+        record Local(Path path) implements Location {
+        }
+
+        /** What names no local file (a module of a run-time image, a nested jar): its normalised URI. */
+        record Named(String uri) implements Location {
+        }
+    }
+
     /**
      * The local jar that holds {@code resource}, the URL of the resource {@code name}, its path decoded:
      * {@code jar:file:/a%20b/x.jar!/name} gives {@code /a b/x.jar}. Empty for a resource of a directory, of a jar
@@ -80,7 +95,7 @@ final class ProcessedArchives {
      */
     static Optional<Path> localJarOf(URL resource, String name) {
         var url = resource.toExternalForm();
-        return url.startsWith(JAR_FILE) && location(rootOf(url, name)) instanceof Path path
+        return url.startsWith(JAR_FILE) && location(rootOf(url, name)) instanceof Location.Local(Path path)
                 ? Optional.of(path)
                 : Optional.empty();
     }
@@ -101,17 +116,18 @@ final class ProcessedArchives {
      * a {@code jar:} or {@code vauban:} URL of the jar's root names, and, for what names no local file (a module of a
      * run-time image, a nested jar), the normalised URI without a trailing slash.
      */
-    static Object location(String url) {
+    static Location location(String url) {
         var archive = archiveOf(withoutFragment(url));
         if (archive.startsWith(FILE_SCHEME)) {
             var path = localPath(archive);
             if (path != null) {
-                return path;
+                return new Location.Local(path);
             }
         }
         var uri = uri(archive);
         var normalised = uri == null ? archive : uri.normalize().toASCIIString();
-        return normalised.endsWith("/") ? normalised.substring(0, normalised.length() - 1) : normalised;
+        return new Location.Named(
+                normalised.endsWith("/") ? normalised.substring(0, normalised.length() - 1) : normalised);
     }
 
     private static String withoutFragment(String url) {

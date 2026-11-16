@@ -41,7 +41,7 @@ class ProcessedArchivesTest {
 
     private static final String MARKER = "META-INF/vauban-bce-processed";
 
-    private static Object markerRoot(String resourceUrl) {
+    private static ProcessedArchives.Location markerRoot(String resourceUrl) {
         return ProcessedArchives.location(ProcessedArchives.rootOf(resourceUrl, MARKER));
     }
 
@@ -136,14 +136,14 @@ class ProcessedArchivesTest {
     @Test
     @DisplayName("a URL with a character a URI cannot hold is compared escaped")
     void urlWithAnIllegalCharacter() {
-        assertEquals("custom:%7Ba%7D", ProcessedArchives.location("custom:{a}"));
+        assertEquals(new ProcessedArchives.Location.Named("custom:%7Ba%7D"), ProcessedArchives.location("custom:{a}"));
     }
 
     @Test
     @DisplayName("a URL no URI can hold is compared as written")
     void unparsableUrl() {
-        assertEquals("{a}", ProcessedArchives.location("{a}"));
-        assertEquals("1x:{a}", ProcessedArchives.location("1x:{a}"));
+        assertEquals(new ProcessedArchives.Location.Named("{a}"), ProcessedArchives.location("{a}"));
+        assertEquals(new ProcessedArchives.Location.Named("1x:{a}"), ProcessedArchives.location("1x:{a}"));
     }
 
     @Test
@@ -160,6 +160,39 @@ class ProcessedArchivesTest {
                 ProcessedArchives.localJarOf(URI.create("file:/a/classes/" + header).toURL(), header));
         assertEquals(Optional.empty(), ProcessedArchives.localJarOf(
                 URI.create("jar:file:/a/app.jar!/lib/inner.jar!/" + header).toURL(), header));
+    }
+
+    @Test
+    @DisplayName("the local jar of a resource in a directory whose name holds a '!' (raw or escaped), but not a '!/'")
+    void localJarOfDirectoryWithBang() throws Exception {
+        var header = "META-INF/vauban.header";
+
+        assertEquals(Optional.of(Path.of("/tmp/a!b/x.jar")), ProcessedArchives.localJarOf(
+                URI.create("jar:file:/tmp/a!b/x.jar!/" + header).toURL(), header));
+        assertEquals(Optional.of(Path.of("/tmp/a!b/x.jar")), ProcessedArchives.localJarOf(
+                URI.create("jar:file:/tmp/a%21b/x.jar!/" + header).toURL(), header));
+        // "!/" inside a directory name is the entry separator of a nested jar: no URL tells the two apart, and the
+        // JDK's own jar: handler splits on the first one too. Such a jar is read as nested, so it has no local path.
+        assertEquals(Optional.empty(), ProcessedArchives.localJarOf(
+                URI.create("jar:file:/tmp/a!/b/x.jar!/" + header).toURL(), header));
+    }
+
+    @Test
+    @DisplayName("the local jar of a resource whose name has a path inside the jar, and of a 'jar:file:' form")
+    void localJarOfNamedPath() throws Exception {
+        var name = "META-INF/services/io.vidocq.Marker";
+
+        assertEquals(Optional.of(Path.of("/a/x.jar")), ProcessedArchives.localJarOf(
+                URI.create("jar:file:/a/x.jar!/" + name).toURL(), name));
+        assertEquals(Optional.of(Path.of("/a/x.jar")), ProcessedArchives.localJarOf(
+                URI.create("jar:file:/a/x.jar!/" + name + "#runtime").toURL(), name));
+    }
+
+    @Test
+    @DisplayName("a local file is a Local location, whatever its spelling")
+    void localLocation() {
+        assertEquals(new ProcessedArchives.Location.Local(Path.of("/a/app.jar")),
+                ProcessedArchives.location("jar:file:/a/lib/../app.jar!/"));
     }
 
     @Test
