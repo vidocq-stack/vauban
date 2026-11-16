@@ -564,10 +564,10 @@ Both JUnit lifecycles get their `@Inject` fields. With the default `@TestInstanc
 | ✅
 | ❌
 
-| Decorators
-| Optional
+| Decorators (`@Decorator`, `@Delegate`)
+| ❌
 | ✅
-| // TODO@user: validate coverage
+| ❌
 |===
 
 == Configuration

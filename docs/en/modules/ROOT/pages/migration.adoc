@@ -68,7 +68,7 @@ OpenWebBeans is very close to Weld in API. The Weld table mostly applies. OWB-sp
 
 Lite-profile specifics worth knowing before migrating:
 
-* **`@Decorator`** — supported in Lite, validate against your code. // TODO@user: confirm exact coverage.
+* **`@Decorator`** — not supported. Decorators belong to CDI Full, not to Lite: Vauban applies none, and `BeanManager.resolveDecorators` returns an empty list. Use an interceptor, or composition, until CDI Full support lands (see BUG-20261116-02 in link:{repo-vauban}/src/branch/main/BUG.md[BUG.md]).
 * **`@Specializes`** — not supported. Refactor as composition or a prioritised `@Alternative`.
 * **`@Alternative` + `@Priority`** — supported; check existing priorities.
 * **Producer methods with `@Disposes`** — supported.

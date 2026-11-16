@@ -5,6 +5,32 @@ suspected cause, status. Updated on every investigation.
 
 ---
 
+## BUG-20261116-02 — A `@Decorator` is never applied: decorators (CDI Full) are not implemented
+
+- **Date**: 2026-11-16
+- **Status**: OPEN — waits for the CDI Full work (stage F4 of
+  `docs/superpowers/plans/2026-10-19-cdi-4.1-full-study.md`, Vidocq/vauban#38); decided 2026-11-16, no early slice
+- **Module**: `vauban-core` (`VaubanBeanManager.resolveDecorators`, `VaubanSeContainerInitializer.enableDecorators`,
+  `DeploymentValidator`), `vauban-processor` (no generation for decorators)
+- **Symptom**: a class annotated `@Decorator` with an `@Inject @Delegate` injection point decorates nothing: calls
+  reach the bean directly, with no error and no warning. Found by the Jakarta Security TCK application
+  `app-mem-basic-decorate`, which decorates `HttpAuthenticationMechanism`, a synthetic bean of Kerckhoffs: 1 test of
+  2 fails (KERCK-20261116-01, Vidocq/kerckhoffs#29).
+- **Minimal repro**: the Security TCK application above. No Vauban test yet: the CDI TCK runs with
+  `excludedGroups=integration,javaee-full,se,cdi-full`, so no decorator test runs.
+- **Cause**: not implemented. `resolveDecorators` returns an empty list, `enableDecorators` does nothing, the
+  processor generates nothing for a decorator, and the `<decorators>` section of `beans.xml` is not read.
+  `BeanDiscovery` only knows `jakarta.decorator.Decorator` as a bean defining annotation. Not checked yet: what the
+  container does with the decorator class itself (an ordinary bean of the decorated type would be a latent
+  ambiguity).
+- **Investigations**:
+  - 2026-11-16: read-only study for Kerckhoffs. Feasible at build without a run-time proxy: a generated subclass
+    in the shape of `$$Intercepted` for a managed bean of a class type; a chain of decorator instances for a bean
+    exposing interfaces only. Open contract question: CDI requires decoration of managed and built-in beans, not of
+    synthetic ones, so decorating a synthetic bean (opt-in on the builder, or general) is Vauban's decision.
+    `app-mem-basic-decorate` is a ready acceptance test for F4. The documentation said "supported in Lite"
+    (`migration.adoc`) and left a TODO (`reference.adoc`); both now say unsupported.
+
 ## BUG-20261116-01 — The "extension not on the processor path" check reads one class-path service file, in a directory only
 
 - **Date**: 2026-11-16
