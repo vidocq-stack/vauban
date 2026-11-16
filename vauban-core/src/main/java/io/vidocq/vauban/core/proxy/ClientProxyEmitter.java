@@ -27,6 +27,8 @@ import io.vidocq.vauban.core.codegen.GeneratedClassFile;
 
 import java.lang.classfile.ClassFile;
 import java.lang.classfile.CodeBuilder;
+import java.lang.classfile.attribute.ConstantValueAttribute;
+import java.lang.classfile.attribute.ExceptionsAttribute;
 import java.lang.constant.ClassDesc;
 import java.lang.constant.ConstantDescs;
 import java.lang.constant.MethodTypeDesc;
@@ -62,6 +64,9 @@ public final class ClientProxyEmitter {
     private static final ClassDesc CD_Throwable = ConstantDescs.CD_Throwable;
     private static final ClassDesc CD_Vetoed = ClassDesc.of("jakarta.enterprise.inject.Vetoed");
     private static final ClassDesc CD_ExceptionInInitializerError = ClassDesc.of("java.lang.ExceptionInInitializerError");
+    private static final ClassDesc CD_Serializable = ClassDesc.of("java.io.Serializable");
+    private static final ClassDesc CD_ObjectStreamException = ClassDesc.of("java.io.ObjectStreamException");
+    private static final String SERIAL_VERSION_UID = "serialVersionUID";
 
     private ClientProxyEmitter() {}
 
@@ -92,9 +97,18 @@ public final class ClientProxyEmitter {
             clb.with(java.lang.classfile.attribute.RuntimeVisibleAnnotationsAttribute.of(
                     java.lang.classfile.Annotation.of(CD_Vetoed)));
 
-            // Field: private final Supplier $$delegate, assigned once by the constructor
+            // Serializable, writing its delegate in its place: a session value that holds the proxy moves to
+            // another container, where the delegate's serial form resolves to that container's proxy (foy#114).
+            clb.withInterfaceSymbols(CD_Serializable);
+            clb.withField(SERIAL_VERSION_UID, ConstantDescs.CD_long, fb -> fb
+                    .withFlags(ClassFile.ACC_PRIVATE | ClassFile.ACC_STATIC | ClassFile.ACC_FINAL)
+                    .with(ConstantValueAttribute.of(1L)));
+
+            // Field: private final transient Supplier $$delegate, assigned once by the constructor; never written
+            // itself, since writeReplace writes it in the proxy's place.
             clb.withField(ClientProxyShape.FIELD_DELEGATE, CD_Supplier,
-                    ClassFile.ACC_PRIVATE | ClassFile.ACC_FINAL);
+                    ClassFile.ACC_PRIVATE | ClassFile.ACC_FINAL | ClassFile.ACC_TRANSIENT);
+            generateWriteReplace(clb, proxyCD, shape.overridesWriteReplace());
 
             // Static final MethodHandle fields for protected/cross-package methods.
             for (String mhField : mhFields) {
@@ -138,6 +152,27 @@ public final class ClientProxyEmitter {
                 generateProxyMethod(clb, proxyCD, beanCD, methods.get(i), mhFields.get(i));
             }
         });
+    }
+
+    /**
+     * {@code private Object writeReplace() throws ObjectStreamException { return this.$$delegate; }}: the stream
+     * carries the delegate instead of the proxy. When it overrides a {@code writeReplace()} the bean exposes
+     * ({@link ClientProxyShape#overridesWriteReplace()}), {@code public Object writeReplace()} with no exception, as
+     * the source proxy must make it: an override may not declare a checked exception the inherited method does not.
+     */
+    private static void generateWriteReplace(ClassBuilder clb, ClassDesc proxyCD, boolean overrides) {
+        clb.withMethod(ForwardedMethods.WRITE_REPLACE, MethodTypeDesc.of(CD_Object),
+                overrides ? ClassFile.ACC_PUBLIC : ClassFile.ACC_PRIVATE,
+                mb -> {
+                    if (!overrides) {
+                        mb.with(ExceptionsAttribute.ofSymbols(CD_ObjectStreamException));
+                    }
+                    mb.withCode(cob -> {
+                        cob.aload(0);
+                        cob.getfield(proxyCD, ClientProxyShape.FIELD_DELEGATE, CD_Supplier);
+                        cob.areturn();
+                    });
+                });
     }
 
     /** Push a default value for the given type: 0/false for scalar primitives, null otherwise. */

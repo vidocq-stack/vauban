@@ -320,33 +320,16 @@ final class InterceptorBeanWrapper {
     }
 
     /**
-     * What a client proxy delegates to: the contextual instance of the bean, looked up again on every call, in the
-     * context of its scope.
+     * What a client proxy of {@code proxiedType} delegates to: the contextual instance of the bean, looked up again on
+     * every call, in the context of its scope. It writes a reference to its bean, so the proxy moves with a session
+     * (foy#114).
      */
-    @SuppressWarnings("unchecked")
-    private <T> java.util.function.Supplier<Object> contextualInstance(ManagedBean<T> bean) {
-        var beanId = bean.descriptor().id();
-        return () -> {
-            var currentBean = container.beans.get(beanId);
-            if (currentBean == null) currentBean = bean;
-            var scopeClass = currentBean.getScope();
-            var ctx = container.getFirstContext(scopeClass);
-            if (ctx == null) {
-                // A normal-scoped proxy call without a registered context must fail loudly
-                // (CDI 4.1 §6.5.1) — the previous silent @Dependent fallback handed out a
-                // fresh instance per proxy call, so state written through the proxy
-                // vanished on the next call (VAU-CTX-001).
-                throw new jakarta.enterprise.context.ContextNotActiveException(
-                        "No context registered for scope " + scopeClass.getName()
-                                + " (bean " + currentBean.getBeanClass().getName() + ")");
-            }
-            return ctx.get((Contextual<Object>) (Contextual<?>) currentBean,
-                    new CreationalContextImpl<Object>());
-        };
+    private ContextualInstance contextualInstance(ManagedBean<?> bean, Class<?> proxiedType) {
+        return new ContextualInstance(container, bean, proxiedType);
     }
 
     private <T> Object interfaceProxy(ManagedBean<T> bean, Class<?> beanClass) {
-        var delegate = contextualInstance(bean);
+        var delegate = contextualInstance(bean, beanClass);
         // Issue #42: prefer the build-time static interface proxy (a generated class
         // `implements <Iface>`, registered by the APT under the produced-type key). No
         // runtime java.lang.reflect.Proxy, no reflection. Falls through to reflect.Proxy on
@@ -371,17 +354,53 @@ final class InterceptorBeanWrapper {
         return java.lang.reflect.Proxy.newProxyInstance(
                 beanClass.getClassLoader(),
                 ifaces,
-                (proxy, method, args) -> {
-                    Object target = delegate.get();
-                    try {
-                        return method.invoke(target, args);
-                    } catch (java.lang.reflect.InvocationTargetException e) {
-                        // The caller gets what the contextual instance threw, not the reflective wrapper
-                        // that java.lang.reflect.Proxy turns into an UndeclaredThrowableException
-                        // (BUG-20261113-02).
-                        throw e.getCause();
-                    }
-                });
+                new ReflectiveProxyHandler(delegate, beanClass.getName()));
+    }
+
+    /**
+     * The handler of the {@code java.lang.reflect.Proxy} fallback: each call reaches the contextual instance through
+     * reflection. A session value that holds such a proxy cannot move to another container (foy#114): a
+     * {@code reflect.Proxy} class is not read back by name, so this handler refuses to be written, and its message
+     * names the cure, a build-time proxy listed in {@code @ClientProxies}.
+     */
+    static final class ReflectiveProxyHandler implements java.lang.reflect.InvocationHandler, java.io.Serializable {
+
+        @java.io.Serial
+        private static final long serialVersionUID = 1L;
+
+        private final transient java.util.function.Supplier<Object> delegate;
+        private final transient String interfaceName;
+
+        ReflectiveProxyHandler(java.util.function.Supplier<Object> delegate, String interfaceName) {
+            this.delegate = delegate;
+            this.interfaceName = interfaceName;
+        }
+
+        @Override
+        public Object invoke(Object proxy, Method method, Object[] args) throws Throwable {
+            Object target = delegate.get();
+            try {
+                return method.invoke(target, args);
+            } catch (java.lang.reflect.InvocationTargetException e) {
+                // The caller gets what the contextual instance threw, not the reflective wrapper
+                // that java.lang.reflect.Proxy turns into an UndeclaredThrowableException
+                // (BUG-20261113-02).
+                throw e.getCause();
+            }
+        }
+
+        @java.io.Serial
+        private Object writeReplace() throws java.io.ObjectStreamException {
+            throw new java.io.NotSerializableException(interfaceName
+                    + " is proxied by the java.lang.reflect.Proxy fallback; list it in @ClientProxies");
+        }
+
+        /** Never written, so never read: a stream that holds one was laid out by hand. */
+        @java.io.Serial
+        private void readObject(java.io.ObjectInputStream in) throws java.io.InvalidObjectException {
+            throw new java.io.InvalidObjectException("the handler of the java.lang.reflect.Proxy fallback is never"
+                    + " written, so it is never read");
+        }
     }
 
     /** A normal-scoped bean's class must be proxyable: not final, no final method, not only a private no-arg constructor. */
@@ -424,7 +443,7 @@ final class InterceptorBeanWrapper {
     }
 
     private <T> Object subclassProxy(ManagedBean<T> bean, Class<?> beanClass) throws ReflectiveOperationException {
-        var delegate = contextualInstance(bean);
+        var delegate = contextualInstance(bean, beanClass);
 
         // 1. In-module proxy creation via the component provider (zero-opens AND zero-export):
         //    the APT-generated provider does `new <Bean>_ClientProxy(delegate)` in-package, so the

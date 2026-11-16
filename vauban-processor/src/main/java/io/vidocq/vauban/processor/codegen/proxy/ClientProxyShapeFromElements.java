@@ -19,6 +19,7 @@
  */
 package io.vidocq.vauban.processor.codegen.proxy;
 
+import io.vidocq.vauban.core.codegen.TypeView;
 import io.vidocq.vauban.core.interceptor.TypeRef;
 import io.vidocq.vauban.core.proxy.ClientProxyShape;
 import io.vidocq.vauban.core.proxy.ClientProxyShape.ProxyMethodShape;
@@ -36,6 +37,7 @@ import javax.lang.model.util.Elements;
 import javax.lang.model.util.Types;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
 import java.util.function.Consumer;
 
 /**
@@ -132,10 +134,8 @@ public final class ClientProxyShapeFromElements {
     private static List<ForwardedMethods.Forward> forwardedClassMethods(TypeElement bean,
             javax.lang.model.element.PackageElement proxyPackage, Elements elements, Types types,
             java.util.Set<String> seen) {
-        var placement = elements.getPackageOf(bean).equals(proxyPackage)
-                ? ForwardedMethods.Placement.TYPE_PACKAGE
-                : ForwardedMethods.Placement.OTHER_PACKAGE;
-        var selection = ForwardedMethods.select(ElementTypeView.of(bean, types), placement);
+        var selection = ForwardedMethods.select(ElementTypeView.of(bean, types),
+                placement(bean, proxyPackage, elements));
         seen.addAll(selection.keys());
         return selection.forwards();
     }
@@ -222,11 +222,106 @@ public final class ClientProxyShapeFromElements {
             methods.add(methodShape(bean, ElementTypeView.method(forward.method()), asMember,
                     forward.needsMethodHandle(), elements, types));
         }
-        addDefaultMethods(new ShapeRequest(bean, proxyPackage, elements, types, omitted, subject, asMember),
-                seen, methods);
+        var request = new ShapeRequest(bean, proxyPackage, elements, types, omitted, subject, asMember);
+        addDefaultMethods(request, seen, methods);
+        // Looked up once for the shape: what the proxy inherits decides both the report and its own writeReplace().
+        var inherited = inheritedWriteReplace(bean, proxyPackage, elements, types);
+        inherited.ifPresent(method -> reportUnforwardedWriteReplace(request, method));
 
         return new ClientProxyShape(beanBinaryName, superCtorParams(bean, elements, types), methods,
-                superCtorThrown(bean, elements, types));
+                superCtorThrown(bean, elements, types),
+                inherited.filter(InheritedWriteReplace::isSerialHook).isPresent());
+    }
+
+    /**
+     * Whether a proxy of {@code bean} rendered in {@code proxyPackage} inherits a no-arg {@code Object writeReplace()}:
+     * from a class, by the rule of every build path ({@link ForwardedMethods#exposesWriteReplace}), or from an
+     * interface, whose methods are public. The proxy's own {@code writeReplace()} then overrides it, so Java source
+     * must declare it public, with no {@code throws} clause.
+     */
+    private static boolean exposesWriteReplace(TypeElement bean, javax.lang.model.element.PackageElement proxyPackage,
+            Elements elements, Types types) {
+        return inheritedWriteReplace(bean, proxyPackage, elements, types)
+                .filter(InheritedWriteReplace::isSerialHook)
+                .isPresent();
+    }
+
+    /**
+     * The {@code writeReplace()} a proxy of {@code bean} rendered in {@code proxyPackage} inherits and next to which
+     * Java source cannot declare the proxy's own {@code Object writeReplace()}, as
+     * {@code static java.lang.Object writeReplace()}: a static one of a class, or one of a class or an interface
+     * returning another type ({@link ForwardedMethods#inheritedWriteReplace}). Empty, or that one declaration: the
+     * proxy is then emitted as bytecode, which has neither limit.
+     */
+    public static List<String> clashingWriteReplace(TypeElement bean,
+            javax.lang.model.element.PackageElement proxyPackage, Elements elements, Types types) {
+        return inheritedWriteReplace(bean, proxyPackage, elements, types)
+                .filter(inherited -> !inherited.isSerialHook())
+                .map(inherited -> List.of(inherited.declaration()))
+                .orElse(List.of());
+    }
+
+    /**
+     * A no-arg {@code writeReplace()} a proxy inherits.
+     *
+     * @param isStatic whether it is static: no proxy forwards it, and it needs none
+     * @param returned its erased return type, as a canonical name
+     */
+    private record InheritedWriteReplace(boolean isStatic, String returned) {
+
+        /** Whether serialization calls it: an instance method returning {@code Object}, which the proxy overrides. */
+        boolean isSerialHook() {
+            return !isStatic && ForwardedMethods.OBJECT.equals(returned);
+        }
+
+        /** As {@code static java.lang.Object writeReplace()}. */
+        String declaration() {
+            return (isStatic ? "static " : "") + returned + " " + ForwardedMethods.WRITE_REPLACE + "()";
+        }
+    }
+
+    /**
+     * The no-arg {@code writeReplace()} a proxy of {@code bean} rendered in {@code proxyPackage} inherits, if any:
+     * from a class, by the rule of every build path, else from an interface, a default method no class above
+     * overrides or an abstract one an abstract class leaves to its subclasses, public either way.
+     */
+    private static Optional<InheritedWriteReplace> inheritedWriteReplace(TypeElement bean,
+            javax.lang.model.element.PackageElement proxyPackage, Elements elements, Types types) {
+        var fromClass = ForwardedMethods.inheritedWriteReplace(ElementTypeView.of(bean, types),
+                placement(bean, proxyPackage, elements));
+        if (fromClass.isPresent()) {
+            return Optional.of(new InheritedWriteReplace(fromClass.get().is(TypeView.Flag.STATIC),
+                    fromClass.get().returnType()));
+        }
+        for (ExecutableElement m : ElementFilter.methodsIn(elements.getAllMembers(bean))) {
+            if (m.getEnclosingElement().getKind().isInterface() && !m.getModifiers().contains(Modifier.STATIC)
+                    && m.getSimpleName().contentEquals(ForwardedMethods.WRITE_REPLACE) && m.getParameters().isEmpty()) {
+                return Optional.of(new InheritedWriteReplace(false, types.erasure(m.getReturnType()).toString()));
+            }
+        }
+        return Optional.empty();
+    }
+
+    /**
+     * Reports {@code inherited}, the {@code writeReplace()} the proxy of {@code request.bean()} inherits, when it is an
+     * instance method returning another type than {@code Object}: a business method, which the proxy does not forward
+     * ({@link ForwardedMethods#isSerialHook}), as its own {@code Object writeReplace()} takes the name.
+     */
+    private static void reportUnforwardedWriteReplace(ShapeRequest request, InheritedWriteReplace inherited) {
+        if (!inherited.isStatic() && !inherited.isSerialHook()) {
+            request.omitted().accept(request.bean().getQualifiedName() + ": " + request.subject().proxy
+                    + " does not forward " + inherited.declaration() + " — its own java.lang.Object writeReplace()"
+                    + " takes the name, so that a session holding it can move to another container (foy#114); "
+                    + UNSHADOWED_CALL);
+        }
+    }
+
+    /** Where a proxy rendered in {@code proxyPackage} lives, relative to {@code bean}. */
+    private static ForwardedMethods.Placement placement(TypeElement bean,
+            javax.lang.model.element.PackageElement proxyPackage, Elements elements) {
+        return elements.getPackageOf(bean).equals(proxyPackage)
+                ? ForwardedMethods.Placement.TYPE_PACKAGE
+                : ForwardedMethods.Placement.OTHER_PACKAGE;
     }
 
     /**
@@ -426,16 +521,18 @@ public final class ClientProxyShapeFromElements {
         addDefaultMethods(new ShapeRequest(bean, elements.getPackageOf(bean), elements, types, omitted -> {},
                 Subject.BEAN, false), seen, methods);
         return new ClientProxyShape(beanBinaryName, superCtorParams(bean, elements, types), methods,
-                superCtorThrown(bean, elements, types));
+                superCtorThrown(bean, elements, types),
+                exposesWriteReplace(bean, elements.getPackageOf(bean), elements, types));
     }
 
-    /** Mirrors the bytecode generators: skip static/private/final/{@code $$}. */
+    /** Mirrors the bytecode generators: skip static/private/final/{@code $$} and the serialization hooks. */
     private static boolean shouldProxy(ExecutableElement m) {
         var mods = m.getModifiers();
         if (mods.contains(Modifier.STATIC)) return false;
         if (mods.contains(Modifier.PRIVATE)) return false;
         if (mods.contains(Modifier.FINAL)) return false;
-        return !m.getSimpleName().toString().startsWith("$$");
+        var name = m.getSimpleName().toString();
+        return !name.startsWith("$$") && !ForwardedMethods.isSerialHook(name, m.getParameters().size());
     }
 
     /**

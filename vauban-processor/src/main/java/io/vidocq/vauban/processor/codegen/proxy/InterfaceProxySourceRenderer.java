@@ -21,6 +21,7 @@ package io.vidocq.vauban.processor.codegen.proxy;
 
 import io.vidocq.vauban.core.proxy.ClientProxyShape;
 import io.vidocq.vauban.core.proxy.ClientProxyShape.ProxyMethodShape;
+import io.vidocq.vauban.core.proxy.ForwardedMethods;
 import io.vidocq.vauban.processor.codegen.interceptor.InterceptedShapeFromElements;
 
 import javax.lang.model.element.ExecutableElement;
@@ -32,6 +33,7 @@ import javax.lang.model.util.Types;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Optional;
 
 /**
  * Renders a build-time client proxy for a normal-scoped producer whose produced type is an
@@ -46,7 +48,10 @@ public final class InterfaceProxySourceRenderer {
 
     private InterfaceProxySourceRenderer() {}
 
-    /** Render the interface proxy at {@code proxyBinaryName}, implementing {@code iface}. */
+    /**
+     * Render the interface proxy at {@code proxyBinaryName}, implementing {@code iface}, which must have no
+     * {@link #clashingWriteReplace clashing writeReplace()}.
+     */
     public static ClientProxySourceRenderer.Generated render(
             TypeElement iface, String proxyBinaryName, Elements elements, Types types) {
         // The canonical name: a '$' may be part of the interface's own name (BUG-20261007-01).
@@ -65,15 +70,19 @@ public final class InterfaceProxySourceRenderer {
         sb.append("@jakarta.enterprise.inject.Vetoed\n");
         sb.append(ClientProxySourceRenderer.SUPPRESS_ERASED);
         sb.append("public final class ").append(proxySimple).append(" implements ")
-                .append(ifaceSource).append(" {\n\n");
+                .append(ifaceSource).append(", ").append(ClientProxySourceRenderer.SERIALIZABLE).append(" {\n\n");
         // Final delegate, set once by the only constructor (vauban#227).
         var supplier = ClientProxySourceRenderer.supplierOf(ifaceSource);
-        sb.append("    private final ").append(supplier).append(" ")
-                .append(ClientProxyShape.FIELD_DELEGATE).append(";\n\n");
+        ClientProxySourceRenderer.renderSerialVersionUid(sb);
+        ClientProxySourceRenderer.renderDelegateField(sb, supplier);
         sb.append("    public ").append(proxySimple).append("(").append(supplier)
                 .append(" d) { this.").append(ClientProxyShape.FIELD_DELEGATE).append(" = d; }\n\n");
 
-        for (ProxyMethodShape m : collectMethods(iface, elements, types)) {
+        var methods = collectMethods(iface, elements, types);
+        // An interface's writeReplace() is public: the proxy's own implements it, public too, in its place.
+        boolean declaresWriteReplace = methods.removeIf(m -> isWriteReplace(m.name(), m.params().size()));
+        ClientProxySourceRenderer.renderWriteReplace(sb, declaresWriteReplace);
+        for (ProxyMethodShape m : methods) {
             ClientProxySourceRenderer.renderForward(sb, m);
         }
 
@@ -111,6 +120,33 @@ public final class InterfaceProxySourceRenderer {
             }
         }
         return methods;
+    }
+
+    /**
+     * The proxy's own {@code writeReplace()} takes the place of the interface's: forwarded, it would be a duplicate.
+     * A {@code readResolve()} is forwarded, unlike a class proxy's ({@link ForwardedMethods#isSerialHook}): nothing
+     * clashes with it, and an abstract one must be implemented.
+     */
+    private static boolean isWriteReplace(String name, int parameterCount) {
+        return parameterCount == 0 && name.equals(ForwardedMethods.WRITE_REPLACE);
+    }
+
+    /**
+     * The {@code writeReplace()} of {@code iface} that returns another type than {@code Object}, as
+     * {@code java.lang.String writeReplace()}, or empty. No source proxy can implement it next to its own
+     * {@code Object writeReplace()} (JLS 8.4.8.3), and an interface proxy has no bytecode fallback: the build reports
+     * the interface instead.
+     */
+    public static Optional<String> clashingWriteReplace(TypeElement iface, Elements elements, Types types) {
+        for (ExecutableElement m : ElementFilter.methodsIn(elements.getAllMembers(iface))) {
+            if (isForwardable(m) && isWriteReplace(m.getSimpleName().toString(), m.getParameters().size())) {
+                var returned = types.erasure(m.getReturnType()).toString();
+                if (!ForwardedMethods.OBJECT.equals(returned)) {
+                    return Optional.of(returned + " " + ForwardedMethods.WRITE_REPLACE + "()");
+                }
+            }
+        }
+        return Optional.empty();
     }
 
     /** An instance method a client can call, other than one of the implicit {@code java.lang.Object} methods. */

@@ -32,6 +32,9 @@
  */
 module io.vidocq.vauban.moduleit {
     requires io.vidocq.vauban.core;
+    // The session context: a session that holds client proxies moves to another container on the module path
+    // (SessionMoveModulePathTest, foy#114).
+    requires io.vidocq.vauban.webcontexts;
 
     requires jakarta.cdi;
     requires jakarta.inject;

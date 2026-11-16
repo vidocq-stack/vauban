@@ -36,7 +36,16 @@ public final class TypeMembers {
      * give {@code C} the package-private methods of {@code A}.
      */
     public static boolean isMemberOf(TypeView type, TypeView declaring, TypeView.Member method) {
-        if (method.is(Flag.STATIC) || method.is(Flag.PRIVATE)) {
+        return !method.is(Flag.STATIC) && isInherited(type, declaring, method);
+    }
+
+    /**
+     * Whether {@code type} inherits {@code method}, declared by {@code declaring} — {@code type} or one of its
+     * superclasses — static or not: as {@link #isMemberOf}, a static method included. A subclass of {@code type} in
+     * its package cannot declare an instance method with the same signature as a static one it inherits.
+     */
+    public static boolean isInherited(TypeView type, TypeView declaring, TypeView.Member method) {
+        if (method.is(Flag.PRIVATE)) {
             return false;
         }
         if (method.is(Flag.PUBLIC) || method.is(Flag.PROTECTED)) {

@@ -43,12 +43,15 @@ import java.util.List;
  * @param methods the overridden methods, in emission order
  * @param superCtorThrown the exceptions that super constructor declares: the source proxy constructor declares
  *        them in turn (vauban#227); the bytecode emitter ignores them
+ * @param overridesWriteReplace the proxied type exposes an {@code Object writeReplace()} to the proxy, which the
+ *        proxy's own {@code writeReplace()} then overrides ({@link ForwardedMethods#exposesWriteReplace})
  */
 public record ClientProxyShape(
         String beanBinaryName,
         List<TypeRef> superCtorParams,
         List<ProxyMethodShape> methods,
-        List<TypeRef> superCtorThrown) {
+        List<TypeRef> superCtorThrown,
+        boolean overridesWriteReplace) {
 
     /** Suffix of the generated proxy class: {@code <Bean>_ClientProxy}. */
     public static final String PROXY_SUFFIX = "_ClientProxy";
@@ -103,6 +106,12 @@ public record ClientProxyShape(
         superCtorParams = List.copyOf(superCtorParams);
         methods = List.copyOf(methods);
         superCtorThrown = List.copyOf(superCtorThrown);
+    }
+
+    /** A shape whose proxied type exposes no {@code writeReplace()} to the proxy. */
+    public ClientProxyShape(String beanBinaryName, List<TypeRef> superCtorParams, List<ProxyMethodShape> methods,
+                            List<TypeRef> superCtorThrown) {
+        this(beanBinaryName, superCtorParams, methods, superCtorThrown, false);
     }
 
     /** A shape whose super constructor declares no exception. */

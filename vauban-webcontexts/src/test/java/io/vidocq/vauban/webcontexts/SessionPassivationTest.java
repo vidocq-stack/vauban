@@ -164,6 +164,66 @@ class SessionPassivationTest {
     }
 
     @Test
+    void aClientProxyHeldBySessionBeanReachesTheImportingContainersBean() throws Exception {
+        var a = container(Shopper.class, Catalog.class, Visit.class);
+        a.select(Catalog.class).mark("A");
+        var exported = new MapSessionStore();
+        WebContexts.activateSession(exported);
+        a.select(Shopper.class).name("ada");
+        WebContexts.deactivateSession();
+        var written = write(exported);
+
+        var b = container(Shopper.class, Catalog.class, Visit.class);
+        b.select(Catalog.class).mark("B");
+        WebContexts.activateSession(read(b, written));
+        var shopper = b.select(Shopper.class);
+
+        assertEquals("ada", shopper.name(), "the session bean moved with its state");
+        assertEquals(List.of("B"), shopper.catalog().marks(), "the field reaches B's service, not A's");
+        assertSame(b.select(Catalog.class), shopper.catalog(), "the field holds B's own client proxy");
+    }
+
+    @Test
+    void aClientProxyOfATypedBeanReachesTheImportingContainersBean() throws Exception {
+        var a = container(Checkout.class, FlatPricing.class);
+        var exported = new MapSessionStore();
+        WebContexts.activateSession(exported);
+        a.select(Checkout.class).owner("cy");
+        a.select(Checkout.class).pricing().mark("A");
+        WebContexts.deactivateSession();
+        var written = write(exported);
+
+        var b = container(Checkout.class, FlatPricing.class);
+        b.select(Pricing.class).mark("B");
+        WebContexts.activateSession(read(b, written));
+        var checkout = b.select(Checkout.class);
+
+        assertEquals("cy", checkout.owner(), "the session bean moved with its state");
+        assertEquals(List.of("B"), checkout.pricing().marks(), "the field reaches B's service, not A's");
+        assertSame(b.select(Pricing.class), checkout.pricing(), "the field holds B's own client proxy");
+    }
+
+    @Test
+    void aClientProxyOfARequestBeanResolvesUnderTheImportingRequest() throws Exception {
+        var a = container(Shopper.class, Catalog.class, Visit.class);
+        var exported = new MapSessionStore();
+        WebContexts.activateSession(exported);
+        a.select(Shopper.class).name("bob");
+        WebContexts.deactivateSession();
+        var written = write(exported);
+
+        var b = container(Shopper.class, Catalog.class, Visit.class);
+        WebContexts.activateSession(read(b, written));
+        var shopper = b.select(Shopper.class);
+
+        b.requestContext().runInScope(() -> {
+            shopper.visit().page();
+            shopper.visit().page();
+            assertEquals(2, b.select(Visit.class).pages(), "the field reaches B's request instance");
+        });
+    }
+
+    @Test
     void aReadWithNoImportingContainerFails() throws Exception {
         var a = container(Basket.class);
         var exported = new MapSessionStore();

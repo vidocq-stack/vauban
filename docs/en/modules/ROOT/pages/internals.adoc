@@ -1071,8 +1071,50 @@ behind with one `WARNING`:
 * an instance of an intercepted bean, an `$$Intercepted` subclass whose interceptor fields belong to the writing
   container: `intercepted instances cannot move yet`.
 +
-A field of the instance that cannot be written stops the stream too, which names its class: today the client proxy of
-a normal-scoped bean, and a built-in `Event`, `Instance` or `BeanManager`.
+A field of the instance that cannot be written stops the stream too, which names its class: today a built-in `Event`,
+`Instance` or `BeanManager`.
+
+Client proxies::
+A session bean usually holds client proxies: the `@ApplicationScoped` service it injects, a `@RequestScoped` bean.
+A proxy belongs to the container that built it, so it moves as a reference to its bean, and reads back as the
+importing container's proxy of that bean:
++
+* every generated client proxy is `Serializable`: the bytecode the emitter writes (at boot, by the Maven plugin, by
+  the processor's bytecode paths) and the source the processor renders, class-typed or interface-typed. It declares a
+  `serialVersionUID`, a `transient` delegate, and `private Object writeReplace() throws ObjectStreamException`,
+  which returns the delegate: the proxy itself never enters the stream;
+* the delegate is a `ContextualInstance` of `vauban-core`, which looks the contextual instance up on each call as
+  before. Its own `writeReplace` writes a `ClientProxyReference`: the bean's passivation id and the binary name of
+  the proxied type, the bean class of a subclass proxy or the interface of an interface proxy;
+* the reference's `readResolve` reads the importing container from the binding above, finds the bean by its id, checks
+  that the bean still has a normal scope there and that the proxied type is the bean class or one of the classes among
+  its bean types, and returns `BeanManager.getReference(bean, Object.class, …)`. For a normal-scoped bean that is the
+  importing container's own cached proxy, so the field holds the same proxy as every other injection point there, and
+  each call reaches the importing container's contextual instance: its `@ApplicationScoped` instance, the instance of
+  its active request. A stream that holds one proxy twice reads back one object.
++
+When it cannot, it throws `InvalidObjectException` with a message that names the cause, never returns `null`: no
+importing container bound, a reference with no id or no type, a bean the importing container lacks, a bean that now
+has a pseudo-scope such as `@Dependent`, a proxied type that is no longer the bean's, or a `RuntimeException` of
+`getReference`, which the exception carries as its cause. Foy drops the session. The type check catches a synthetic
+bean whose registration slot now names a bean of another type, not one of the same type: see _Limits_ below.
++
+A proxied type that declares its own no-arg `writeReplace()` or `readResolve()` does not get them forwarded, whatever
+they return: the proxy's own `Object writeReplace()` takes the place of the first, and a proxy is never read back.
+Serialization finds the hook through `Class.getDeclaredMethod`, which picks the most specific return type, so a
+forwarded `String writeReplace()` next to the proxy's own would hide it. When the proxied type exposes an
+`Object writeReplace()` to the proxy (public or protected, package-private in the proxy's package, or an interface
+method), the proxy's own overrides it, so it is public and declares no exception, in source and in bytecode alike.
+Java source cannot declare the proxy's own next to a static `writeReplace()` the proxy inherits, nor next to one that
+returns another type: the processor then emits that class proxy as bytecode, with a `NOTE` that says why, and warns
+that a `writeReplace()` returning another type is not forwarded. An interface whose `writeReplace()` returns another
+type has no bytecode fallback: the build fails with an error that names it. An interface proxy still forwards a
+`readResolve()` its interface declares, since an abstract one must be implemented.
++
+The `java.lang.reflect.Proxy` fallback of an interface does not move: its class is not read back by name. Its handler
+refuses to be written with `X is proxied by the java.lang.reflect.Proxy fallback; list it in @ClientProxies`, which
+Foy logs in its `WARNING`: listed, the interface gets a build-time proxy, which moves (see
+xref:concepts.adoc#synthetic-interface-proxies[Client proxies of synthetic beans]).
 
 `@Dependent` objects::
 A `@Dependent` object the instance holds moves inside it, as part of its state. The writing container's creational
@@ -1084,7 +1126,10 @@ What moves, moves as it was written, between two versions of the application:
 +
 * **A synthetic bean, or one of overloaded producer methods.** A synthetic bean's id ends with its registration slot,
   which shifts when beans are registered before it: its entry can be found under another synthetic bean of the same
-  name, or under none. Overloaded producer methods share one id, so their entries collide.
+  name, or under none. Overloaded producer methods share one id, so their entries collide. The same holds for a client
+  proxy of such a bean that a session bean holds: its reference reads back as the proxy of whichever bean has its id
+  now. The type check refuses a bean of another type, but two synthetic beans of the same type, such as the
+  `EntityManager` of two persistence units, pass it, and the field then reaches the other one.
 * **A bean that gains an interceptor binding** in the new version moves as the plain instance it was: its interceptors
   do not run on it until the session ends.
 * **A field added to the class** reads back with its default value: the import runs no injection and no

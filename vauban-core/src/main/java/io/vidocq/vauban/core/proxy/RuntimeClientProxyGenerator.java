@@ -94,7 +94,8 @@ public final class RuntimeClientProxyGenerator {
      */
     public static ClientProxyShape shapeOf(Class<?> beanClass, boolean colocated) {
         // The proxy is generated in the bean's package (the suffix carries no dot).
-        var selection = ForwardedMethods.select(ClassTypeView.of(beanClass), ForwardedMethods.Placement.TYPE_PACKAGE);
+        var type = ClassTypeView.of(beanClass);
+        var selection = ForwardedMethods.select(type, ForwardedMethods.Placement.TYPE_PACKAGE);
         var proxiedSeen = new java.util.HashSet<>(selection.keys());
         var methods = new ArrayList<ProxyMethodShape>();
         for (var forward : selection.forwards()) {
@@ -115,7 +116,30 @@ public final class RuntimeClientProxyGenerator {
                 beanClass.getName(),
                 typeRefs(superCtor.getParameterTypes()),
                 methods,
-                typeRefs(superCtor.getExceptionTypes()));
+                typeRefs(superCtor.getExceptionTypes()),
+                ForwardedMethods.exposesWriteReplace(type, ForwardedMethods.Placement.TYPE_PACKAGE)
+                        || inheritsInterfaceWriteReplace(beanClass));
+    }
+
+    /**
+     * Whether {@code beanClass} inherits {@code Object writeReplace()} from an interface, a default method no class
+     * above overrides, or an abstract one an abstract class leaves to its subclasses: public, so the proxy inherits it
+     * too.
+     */
+    private static boolean inheritsInterfaceWriteReplace(Class<?> beanClass) {
+        for (var method : beanClass.getMethods()) {
+            if (method.getDeclaringClass().isInterface() && !Modifier.isStatic(method.getModifiers())
+                    && isObjectWriteReplace(method)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /** {@code Object writeReplace()}: the name, no parameter, and the return type serialization looks for. */
+    private static boolean isObjectWriteReplace(Method method) {
+        return method.getName().equals(ForwardedMethods.WRITE_REPLACE) && method.getParameterCount() == 0
+                && method.getReturnType() == Object.class;
     }
 
     /**
@@ -186,6 +210,7 @@ public final class RuntimeClientProxyGenerator {
         if (method.isBridge()) return false;
         if (method.getName().startsWith("$$")) return false;
         if (method.getName().equals("finalize") && method.getParameterCount() == 0) return false;
+        if (ForwardedMethods.isSerialHook(method.getName(), method.getParameterCount())) return false;
         return !(method.getName().equals("clone") && method.getParameterCount() == 0);
     }
 

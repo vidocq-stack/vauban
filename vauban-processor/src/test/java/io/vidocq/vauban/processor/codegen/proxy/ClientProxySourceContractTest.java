@@ -19,6 +19,7 @@
  */
 package io.vidocq.vauban.processor.codegen.proxy;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -43,8 +44,8 @@ class ClientProxySourceContractTest {
         var source = ClientProxySourceRenderer.render(new ClientProxyShape("app.Store", List.of(), List.of(LOAD)))
                 .source();
 
-        assertTrue(source.contains("    private final java.util.function.Supplier<? extends app.Store> $$delegate;\n"),
-                source);
+        assertTrue(source.contains(
+                "    private final transient java.util.function.Supplier<? extends app.Store> $$delegate;\n"), source);
         assertTrue(source.contains("    public Store_ClientProxy(java.util.function.Supplier<? extends app.Store> d) {\n"),
                 source);
         assertTrue(source.contains("        return $$delegate.get().load(p0);\n"), source);
@@ -68,5 +69,50 @@ class ClientProxySourceContractTest {
                         super((java.lang.String) null);
                 """), throwing);
         assertFalse(throwing.contains("Throwable"), throwing);
+    }
+
+    @Test
+    @DisplayName("the proxy is Serializable, with a serialVersionUID, and writes its delegate in its place")
+    void serializableWritingItsDelegate() {
+        var source = ClientProxySourceRenderer.render(new ClientProxyShape("app.Store", List.of(), List.of(LOAD)))
+                .source();
+
+        assertTrue(source.contains("public final class Store_ClientProxy extends app.Store"
+                + " implements java.io.Serializable {\n"), source);
+        assertTrue(source.contains("""
+                    @java.io.Serial
+                    private static final long serialVersionUID = 1L;
+                """), source);
+        assertTrue(source.contains("""
+                    @java.io.Serial
+                    private java.lang.Object writeReplace() throws java.io.ObjectStreamException {
+                        return this.$$delegate;
+                    }
+                """), source);
+        assertEquals(1, occurrences(source, "writeReplace("), source);
+    }
+
+    @Test
+    @DisplayName("a proxied type that exposes its own writeReplace gets a public override, which throws nothing")
+    void anExposedWriteReplaceIsOverridden() {
+        var source = ClientProxySourceRenderer.render(
+                new ClientProxyShape("app.Store", List.of(), List.of(LOAD), List.of(), true)).source();
+
+        assertTrue(source.contains("""
+                    @java.io.Serial
+                    @Override
+                    public java.lang.Object writeReplace() {
+                        return this.$$delegate;
+                    }
+                """), source);
+        assertEquals(1, occurrences(source, "writeReplace("), source);
+    }
+
+    private static int occurrences(String text, String part) {
+        int count = 0;
+        for (int i = text.indexOf(part); i >= 0; i = text.indexOf(part, i + 1)) {
+            count++;
+        }
+        return count;
     }
 }

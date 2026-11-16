@@ -115,7 +115,9 @@ final class ClientProxyArtefacts {
                 proxyPackage, processingEnv.getElementUtils(), processingEnv.getTypeUtils());
         var throughHandles = ClientProxyShapeFromElements.methodHandleForwards(proxyTypeElement,
                 proxyPackage, processingEnv.getElementUtils(), processingEnv.getTypeUtils());
-        if (unnameable.isEmpty() && throughHandles.isEmpty()) {
+        var clashing = ClientProxyShapeFromElements.clashingWriteReplace(proxyTypeElement,
+                proxyPackage, processingEnv.getElementUtils(), processingEnv.getTypeUtils());
+        if (unnameable.isEmpty() && throughHandles.isEmpty() && clashing.isEmpty()) {
             var proxyShape = ClientProxyShapeFromElements.from(proxyTypeElement, proxyPackage,
                     processingEnv.getElementUtils(), processingEnv.getTypeUtils(),
                     omitted -> output.warnOmitted(omitted, proxyTypeElement));
@@ -124,15 +126,17 @@ final class ClientProxyArtefacts {
             output.writeSourceFile(gen.className(), gen.source());
         } else {
             // An inherited method's signature names a type this package cannot
-            // (BUG-20261004-09): no source override can declare it. The bytecode
-            // proxy carries that type in a descriptor only; the source provider
-            // instantiates it through its own lookup (noteBytecode records it).
+            // (BUG-20261004-09), or an inherited writeReplace() leaves no room for the
+            // proxy's own: no source can declare it. The bytecode proxy carries that type
+            // in a descriptor only, and its writeReplace() next to any other; the source
+            // provider instantiates it through its own lookup (noteBytecode records it).
             var proxyShape = ClientProxyShapeFromElements.fromErased(proxyTypeElement, proxyPackage,
                     processingEnv.getElementUtils(), processingEnv.getTypeUtils(),
                     omitted -> output.warnOmitted(omitted, proxyTypeElement));
             output.generateClass(new GeneratedClass(proxyShape.proxyClassName(),
                     ClientProxyEmitter.emit(proxyShape)));
-            output.noteBytecode(proxyShape.proxyClassName(), unnameable, throughHandles, proxyTypeElement);
+            output.noteBytecode(proxyShape.proxyClassName(), unnameable, throughHandles, clashing,
+                    proxyTypeElement);
         }
     }
 
@@ -183,6 +187,17 @@ final class ClientProxyArtefacts {
                 .getBinaryName(iface).toString();
         var key = ifaceFqn + CLIENT_PROXY_SUFFIX;
         if (generation.hasProducerProxy(pkg, key)) {
+            return;
+        }
+        var clashing = InterfaceProxySourceRenderer.clashingWriteReplace(iface, processingEnv.getElementUtils(),
+                processingEnv.getTypeUtils());
+        if (clashing.isPresent()) {
+            // No bytecode fallback here: the build stops on the interface, which only its author can change.
+            processingEnv.getMessager().printMessage(Diagnostic.Kind.ERROR, LOG_PREFIX
+                    + "No client proxy can implement " + ifaceFqn + ": it declares " + clashing.get()
+                    + ", and a client proxy declares its own java.lang.Object writeReplace(), so that a session"
+                    + " holding it can move to another container (foy#114). Return java.lang.Object from"
+                    + " writeReplace(), or rename the method.", iface);
             return;
         }
         var proxyBinaryName = ClientProxyShape.producerProxyName(pkg, ifaceFqn);
@@ -248,7 +263,9 @@ final class ClientProxyArtefacts {
                 processingEnv.getElementUtils(), processingEnv.getTypeUtils());
         var throughHandles = ClientProxyShapeFromElements.methodHandleForwards(producedType, proxyPackage,
                 processingEnv.getElementUtils(), processingEnv.getTypeUtils());
-        if (unnameable.isEmpty() && throughHandles.isEmpty()) {
+        var clashing = ClientProxyShapeFromElements.clashingWriteReplace(producedType, proxyPackage,
+                processingEnv.getElementUtils(), processingEnv.getTypeUtils());
+        if (unnameable.isEmpty() && throughHandles.isEmpty() && clashing.isEmpty()) {
             var shape = ClientProxyShapeFromElements.fromProduced(producedType, proxyPackage,
                     processingEnv.getElementUtils(), processingEnv.getTypeUtils(),
                     omitted -> output.warnOmitted(omitted, producerSite));
@@ -258,13 +275,14 @@ final class ClientProxyArtefacts {
             output.writeSourceFile(gen.className(), gen.source());
         } else {
             // As for a bean's proxy: a signature the producer's package cannot write in
-            // source is carried by a bytecode descriptor instead (BUG-20261004-09).
+            // source is carried by a bytecode descriptor instead (BUG-20261004-09), and an
+            // inherited writeReplace() that leaves no room for the proxy's own is no limit there.
             var shape = ClientProxyShapeFromElements.fromProducedErased(producedType, proxyPackage,
                     processingEnv.getElementUtils(), processingEnv.getTypeUtils(),
                     omitted -> output.warnOmitted(omitted, producerSite));
             output.generateClass(new GeneratedClass(proxyBinaryName,
                     ClientProxyEmitter.emitAt(shape, proxyBinaryName)));
-            output.noteBytecode(proxyBinaryName, unnameable, throughHandles, producerSite);
+            output.noteBytecode(proxyBinaryName, unnameable, throughHandles, clashing, producerSite);
         }
         var key = producedFqn + CLIENT_PROXY_SUFFIX;
         generation.addProducerProxy(producerPkg, key, proxyBinaryName);

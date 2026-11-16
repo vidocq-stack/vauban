@@ -58,9 +58,48 @@ public final class ClientProxySourceRenderer {
      */
     static final String SUPPRESS_ERASED = "@SuppressWarnings({\"unchecked\", \"rawtypes\"})\n";
 
+    /** The interface every client proxy implements: it moves with a session, as its delegate (foy#114). */
+    static final String SERIALIZABLE = "java.io.Serializable";
+
+    /** The closing brace of a member's body, and the blank line after it. */
+    private static final String END_OF_MEMBER = "    }\n\n";
+
     /** {@code java.util.function.Supplier<? extends T>}: the type of the delegate of a proxy of {@code type}. */
     static String supplierOf(String type) {
         return "java.util.function.Supplier<? extends " + type + ">";
+    }
+
+    /** The proxy's {@code serialVersionUID}, so that {@code -Xlint:serial} stays quiet in the application's build. */
+    static void renderSerialVersionUid(StringBuilder sb) {
+        sb.append("    @java.io.Serial\n")
+                .append("    private static final long serialVersionUID = 1L;\n\n");
+    }
+
+    /**
+     * The delegate field, {@code transient}: the proxy is never written itself, {@link #renderWriteReplace} writes the
+     * delegate in its place.
+     */
+    static void renderDelegateField(StringBuilder sb, String supplierType) {
+        sb.append("    private final transient ").append(supplierType).append(" ")
+                .append(ClientProxyShape.FIELD_DELEGATE).append(";\n\n");
+    }
+
+    /**
+     * {@code writeReplace()}, returning the delegate: a stream carries it in the proxy's place, and its serial form
+     * reads back as the importing container's proxy of the same bean (foy#114). Private, unless it overrides a
+     * {@code writeReplace()} the proxied type exposes: it is then public, which no inherited access exceeds, and
+     * declares no exception, which an override may not add (JLS 8.4.8.3).
+     */
+    static void renderWriteReplace(StringBuilder sb, boolean overrides) {
+        sb.append("    @java.io.Serial\n");
+        if (overrides) {
+            sb.append("    @Override\n")
+                    .append("    public java.lang.Object writeReplace() {\n");
+        } else {
+            sb.append("    private java.lang.Object writeReplace() throws java.io.ObjectStreamException {\n");
+        }
+        sb.append("        return this.").append(ClientProxyShape.FIELD_DELEGATE).append(";\n")
+                .append(END_OF_MEMBER);
     }
 
     private ClientProxySourceRenderer() {}
@@ -121,12 +160,12 @@ public final class ClientProxySourceRenderer {
         sb.append("@jakarta.enterprise.inject.Vetoed\n");
         sb.append(SUPPRESS_ERASED);
         sb.append("public final class ").append(proxySimple).append(" extends ").append(beanSource)
-                .append(" {\n\n");
+                .append(" implements ").append(SERIALIZABLE).append(" {\n\n");
 
         // Delegate supplier — final, set once by the constructor (same contract as the bytecode
         // emitter): nothing can rewire the proxy afterwards (vauban#227).
-        sb.append("    private final ").append(supplierOf(beanSource)).append(" ")
-                .append(ClientProxyShape.FIELD_DELEGATE).append(";\n\n");
+        renderSerialVersionUid(sb);
+        renderDelegateField(sb, supplierOf(beanSource));
 
         // The only constructor, (Supplier d): calls the simplest non-private super constructor with
         // default values (null / 0 / false) — the proxy never uses the super state, it forwards to
@@ -140,7 +179,9 @@ public final class ClientProxySourceRenderer {
         sb.append(" {\n")
                 .append("        super(").append(superDefaultArgs(shape.superCtorParams())).append(");\n")
                 .append("        this.").append(ClientProxyShape.FIELD_DELEGATE).append(" = d;\n")
-                .append("    }\n\n");
+                .append(END_OF_MEMBER);
+
+        renderWriteReplace(sb, shape.overridesWriteReplace());
 
         // Forwarding overrides.
         for (ProxyMethodShape m : shape.methods()) {
@@ -218,7 +259,7 @@ public final class ClientProxySourceRenderer {
             sb.append("p").append(i);
         }
         sb.append(");\n");
-        sb.append("    }\n\n");
+        sb.append(END_OF_MEMBER);
     }
 
     /** Keeps the bean method's (erased) checked-exception contract so the forwarding call compiles. */

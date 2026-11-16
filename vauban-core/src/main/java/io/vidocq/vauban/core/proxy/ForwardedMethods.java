@@ -26,6 +26,7 @@ import io.vidocq.vauban.core.codegen.TypeView.Flag;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Optional;
 import java.util.Set;
 
 /**
@@ -38,6 +39,14 @@ import java.util.Set;
  * a signature decides, whether the proxy forwards it or not: the declaration it overrides is never forwarded.
  */
 public final class ForwardedMethods {
+
+    /** The serialization hook every client proxy declares, writing its delegate in its place. */
+    public static final String WRITE_REPLACE = "writeReplace";
+
+    /** The return type, as an erased canonical name, of the serialization hooks serialization calls. */
+    public static final String OBJECT = "java.lang.Object";
+
+    private static final String READ_RESOLVE = "readResolve";
 
     private ForwardedMethods() {}
 
@@ -92,10 +101,11 @@ public final class ForwardedMethods {
 
     /**
      * Whether a proxy may override {@code m}: neither static, private nor final, neither a bridge nor generated
-     * plumbing, nor a finalizer or {@code clone()}, which no proxy forwards. An abstract method is forwarded like any
-     * other: the proxy never calls {@code super}, and the contextual instance implements it. Only an abstract proxied
-     * type has one the walk reaches, since a concrete class overrides every abstract method above it, and CDI 4.1
-     * §3.10 does not count an abstract class as unproxyable (BUG-20261114-02).
+     * plumbing, nor a finalizer or {@code clone()}, nor a serialization hook ({@link #isSerialHook}), which no proxy
+     * forwards. An abstract method is forwarded like any other: the proxy never calls {@code super}, and the
+     * contextual instance implements it. Only an abstract proxied type has one the walk reaches, since a concrete
+     * class overrides every abstract method above it, and CDI 4.1 §3.10 does not count an abstract class as
+     * unproxyable (BUG-20261114-02).
      */
     public static boolean isProxyable(TypeView.Member m) {
         if (m.is(Flag.STATIC) || m.is(Flag.PRIVATE) || m.is(Flag.FINAL) || m.isBridge()) {
@@ -104,7 +114,68 @@ public final class ForwardedMethods {
         var name = m.name();
         return !(name.startsWith("$$")
                 || (name.equals("finalize") && m.parameterCount() == 0)
-                || (name.equals("clone") && m.parameterCount() == 0));
+                || (name.equals("clone") && m.parameterCount() == 0)
+                || isSerialHook(name, m.parameterCount()));
+    }
+
+    /**
+     * Whether a method named {@code name} with {@code parameterCount} parameters is a serialization hook no proxy
+     * forwards: {@code writeReplace()} or {@code readResolve()}. A client proxy declares its own
+     * {@code Object writeReplace()}, which writes its delegate in its place (foy#114), so a forwarded one would be a
+     * duplicate; and a proxy is never read back, so a forwarded {@code readResolve()} would never run. Whatever their
+     * return type: serialization finds a hook through {@code Class.getDeclaredMethod}, which picks the most specific
+     * return type, so a forwarded {@code String writeReplace()} next to the proxy's own would hide it, and the proxy
+     * would be written as itself, without its delegate.
+     */
+    public static boolean isSerialHook(String name, int parameterCount) {
+        return parameterCount == 0 && (name.equals(WRITE_REPLACE) || name.equals(READ_RESOLVE));
+    }
+
+    /**
+     * Whether a class of {@code type} exposes {@code Object writeReplace()} to a proxy placed where {@code placement}
+     * says: the proxy then inherits it, and its own {@code writeReplace()} overrides it, so it must be at least as
+     * accessible (JLS 8.4.8.3) and declare no checked exception the inherited one does not. Interface methods are the
+     * front-ends' to add: this walk sees the classes only.
+     */
+    public static boolean exposesWriteReplace(TypeView type, Placement placement) {
+        return inheritedWriteReplace(type, placement)
+                .filter(m -> !m.is(Flag.STATIC) && OBJECT.equals(m.returnType())).isPresent();
+    }
+
+    /**
+     * The no-arg {@code writeReplace()}, static or not, of a class of {@code type} that a proxy placed where
+     * {@code placement} says inherits. The most derived declaration decides; a bridge stands for the method it calls.
+     * In the type's package the proxy inherits what the type does ({@link TypeMembers#isInherited}); in another one,
+     * a public or protected method, as any subclass does. Java source cannot declare the proxy's own
+     * {@code Object writeReplace()} next to a static one, which an instance method cannot override (JLS 8.4.8.1), nor
+     * next to one returning another type (JLS 8.4.8.3); bytecode can. Interface methods are the front-ends' to add:
+     * this walk sees the classes only.
+     */
+    public static Optional<TypeView.Member> inheritedWriteReplace(TypeView type, Placement placement) {
+        for (TypeView c = type; c != null; c = c.superclass()) {
+            for (var m : c.methods()) {
+                if (isWriteReplace(m)) {
+                    return isInheritedByProxy(type, c, m, placement) ? Optional.of(m) : Optional.empty();
+                }
+            }
+        }
+        return Optional.empty();
+    }
+
+    /** Whether {@code m} is a no-arg {@code writeReplace()} itself, not a bridge that stands for it. */
+    private static boolean isWriteReplace(TypeView.Member m) {
+        return m.name().equals(WRITE_REPLACE) && m.parameterCount() == 0 && !m.isBridge();
+    }
+
+    /**
+     * Whether a proxy placed where {@code placement} says inherits {@code m}, declared by {@code declaring}: what
+     * {@code type} inherits in its package, a public or protected method in another one.
+     */
+    private static boolean isInheritedByProxy(TypeView type, TypeView declaring, TypeView.Member m,
+            Placement placement) {
+        return placement == Placement.TYPE_PACKAGE
+                ? TypeMembers.isInherited(type, declaring, m)
+                : m.is(Flag.PUBLIC) || m.is(Flag.PROTECTED);
     }
 
     /**

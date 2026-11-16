@@ -80,15 +80,17 @@ final class GeneratedOutput {
      * listed in {@code unnameable} (BUG-20261004-09): said at build time, as a note.
      */
     void noteBytecode(String className, List<String> unnameable, javax.lang.model.element.Element site) {
-        noteBytecode(className, unnameable, List.of(), site);
+        noteBytecode(className, unnameable, List.of(), List.of(), site);
     }
 
     /**
      * The same, for a client proxy that may also call {@code throughHandles} through a {@code MethodHandle}:
-     * protected methods of a superclass in another package, which Java source cannot call on the delegate.
+     * protected methods of a superclass in another package, which Java source cannot call on the delegate; or that
+     * inherits {@code clashingWriteReplace}, a {@code writeReplace()} next to which Java source cannot declare the
+     * proxy's own {@code Object writeReplace()}.
      */
     void noteBytecode(String className, List<String> unnameable, List<String> throughHandles,
-            javax.lang.model.element.Element site) {
+            List<String> clashingWriteReplace, javax.lang.model.element.Element site) {
         bytecodeClasses.add(className);
         var why = new ArrayList<String>();
         if (!unnameable.isEmpty()) {
@@ -98,6 +100,10 @@ final class GeneratedOutput {
         if (!throughHandles.isEmpty()) {
             why.add("it forwards " + String.join(", ", throughHandles)
                     + " through a MethodHandle, protected in a superclass of another package (JLS 6.6.2)");
+        }
+        if (!clashingWriteReplace.isEmpty()) {
+            why.add("Java source cannot declare its own java.lang.Object writeReplace() next to the inherited "
+                    + String.join(", ", clashingWriteReplace) + " (JLS 8.4.8.1, 8.4.8.3)");
         }
         processingEnv.getMessager().printMessage(Diagnostic.Kind.NOTE, "[Vauban] Generated " + className
                 + " as bytecode: " + String.join("; ", why) + ".", site);

@@ -44,6 +44,12 @@
             <artifactId>vauban-classloader-spi</artifactId>
             <scope>runtime</scope>
         </dependency>
+        <!-- The session context: SessionMoveModulePathTest moves a session to another container (foy#114). -->
+        <dependency>
+            <groupId>io.vidocq.vauban</groupId>
+            <artifactId>vauban-webcontexts</artifactId>
+            <version>${project.version}</version>
+        </dependency>
         <dependency>
             <groupId>jakarta.enterprise</groupId>
             <artifactId>jakarta.enterprise.cdi-api</artifactId>
@@ -84,10 +90,13 @@
                         <configuration>
                             <proc>none</proc>
                             <!-- Test-only, as the Surefire argLine below: ModuleLookupModulePathTest
-                                 uses ModuleLookups. -->
+                                 uses ModuleLookups, and SessionMoveModulePathTest listens to the container's
+                                 run-time generation report through java.util.logging. -->
                             <compilerArgs combine.children="append">
                                 <arg>--add-exports</arg>
                                 <arg>io.vidocq.vauban.core/io.vidocq.vauban.core.access=io.vidocq.vauban.moduleit</arg>
+                                <arg>--add-reads</arg>
+                                <arg>io.vidocq.vauban.moduleit=java.logging</arg>
                             </compilerArgs>
                         </configuration>
                     </execution>
@@ -105,9 +114,10 @@
                 <artifactId>maven-surefire-plugin</artifactId>
                 <configuration>
                     <!-- Test-only: ModuleLookupModulePathTest calls ModuleLookups, whose package the
-                         container exports to the trusted extension modules alone. -->
+                         container exports to the trusted extension modules alone; SessionMoveModulePathTest
+                         reads the container's run-time generation report through java.util.logging. -->
                     <!-- @{argLine} keeps the JaCoCo agent of the quality profile (vidocq-parent). -->
-                    <argLine>@{argLine} --add-exports io.vidocq.vauban.core/io.vidocq.vauban.core.access=io.vidocq.vauban.moduleit</argLine>
+                    <argLine>@{argLine} --add-exports io.vidocq.vauban.core/io.vidocq.vauban.core.access=io.vidocq.vauban.moduleit --add-reads io.vidocq.vauban.moduleit=java.logging</argLine>
                     <systemPropertyVariables>
                         <vauban.annotations.reflection>forbid</vauban.annotations.reflection>
                     </systemPropertyVariables>
