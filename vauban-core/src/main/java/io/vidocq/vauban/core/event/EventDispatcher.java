@@ -676,6 +676,9 @@ public final class EventDispatcher {
             } else if (paramTypes[i] == jakarta.enterprise.inject.Instance.class
                     || paramTypes[i] == jakarta.inject.Provider.class) {
                 args[i] = instanceArgument(observer, method, i, params[i], ctx);
+            } else if (paramTypes[i] == jakarta.enterprise.event.Event.class) {
+                // With the parameter's qualifiers (BUG-20261116-07), and no injection point: it cannot move.
+                args[i] = EventImpl.injected(this, observerParamQualifiers(observer, method, i, params[i]), null);
             } else {
                 args[i] = beanArgument(observer, beanClass, method, i, params[i], ctx);
             }

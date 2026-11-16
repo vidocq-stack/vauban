@@ -229,14 +229,22 @@ final class InterceptorBeanWrapper {
         var params = constructor.getParameters();
         var args = new Object[paramTypes.length];
         for (int i = 0; i < paramTypes.length; i++) {
-            args[i] = interceptorConstructorArg(paramTypes[i], genericParamTypes[i], params[i], ctx);
+            args[i] = interceptorConstructorArg(paramTypes[i], genericParamTypes[i], params[i], i, ctx);
         }
         return args;
     }
 
     private Object interceptorConstructorArg(Class<?> paramType, java.lang.reflect.Type genericParamType,
-                                             java.lang.reflect.Parameter param, CreationalContext<?> ctx) {
+                                             java.lang.reflect.Parameter param, int position,
+                                             CreationalContext<?> ctx) {
         var paramQuals = QualifierHelper.extractParamQualifiers(param);
+        if (paramType == jakarta.enterprise.event.Event.class || paramType == jakarta.enterprise.inject.Instance.class
+                || paramType == jakarta.inject.Provider.class) {
+            // Built from the parameter, with its qualifiers, as a bean's constructor parameter is: getReference knows
+            // only @Default (BUG-20261116-07)
+            return container.resolveParameter(paramType, genericParamType, ctx, paramQuals,
+                    param.getDeclaringExecutable(), null, param, position);
+        }
         if (paramQuals.length > 0) {
             var bm = container.getBeanManager();
             var beans = bm.getBeans(paramType, paramQuals);

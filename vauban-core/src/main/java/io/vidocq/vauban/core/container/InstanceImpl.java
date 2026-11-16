@@ -198,7 +198,7 @@ public final class InstanceImpl<T> implements Instance<T>, Serializable {
         ScopedValue.CallableOp<T, RuntimeException> action = () -> {
             var ctx = bm.createCreationalContext(bean);
             @SuppressWarnings("unchecked")
-            var ref = (T) bm.getReference(bean, resolveType, ctx);
+            var ref = (T) referenceOf(container, bean, resolveType, qualifiers, ctx);
             if (ref != null && bean.getScope() == jakarta.enterprise.context.Dependent.class) {
                 dependentInstances.put(ref, ctx);
                 if (parentCreationalContext != null) {
@@ -238,6 +238,19 @@ public final class InstanceImpl<T> implements Instance<T>, Serializable {
             return ScopedValue.where(VaubanContainer.CURRENT_INJECTION_POINT, syntheticIp).call(action);
         }
         return action.call();
+    }
+
+    /**
+     * The reference to {@code bean} for {@code requested}: what {@code getReference} gives, except for the built-in
+     * {@code Event}, {@code Instance} or {@code Provider} bean, which gives one with the qualifiers of the
+     * {@code Instance} it was looked up through, where {@code getReference} knows only {@code @Default}.
+     */
+    private static Object referenceOf(VaubanContainer container, Bean<?> bean, java.lang.reflect.Type requested,
+            Annotation[] qualifiers, jakarta.enterprise.context.spi.CreationalContext<?> ctx) {
+        if (bean instanceof BuiltInBean<?> && VaubanBeanManager.isBuiltInPerInjectionPoint(requested)) {
+            return container.lookedUpBuiltIn(requested, qualifiers);
+        }
+        return container.getBeanManager().getReference(bean, requested, ctx);
     }
 
     @Override
@@ -391,7 +404,7 @@ public final class InstanceImpl<T> implements Instance<T>, Serializable {
         }
         @SuppressWarnings("unchecked")
         var bean = (Bean<T>) bm.resolve(beans);
-        return new HandleImpl<>(bean, type, container, injectionPoint);
+        return new HandleImpl<>(bean, type, qualifiers, container, injectionPoint);
     }
 
     @Override
@@ -401,7 +414,7 @@ public final class InstanceImpl<T> implements Instance<T>, Serializable {
         for (var b : beans) {
             @SuppressWarnings("unchecked")
             var bean = (Bean<T>) b;
-            result.add(new HandleImpl<>(bean, type, container, injectionPoint));
+            result.add(new HandleImpl<>(bean, type, qualifiers, container, injectionPoint));
         }
         return result;
     }
@@ -425,7 +438,7 @@ public final class InstanceImpl<T> implements Instance<T>, Serializable {
                 var ctx = bm.createCreationalContext(bean);
 
                 @SuppressWarnings("unchecked")
-                var ref = (T) bm.getReference(bean, type, ctx);
+                var ref = (T) referenceOf(container, bean, type, qualifiers, ctx);
 
                 // Link the dependent bean to parent context if needed
                 if (bean.getScope() == jakarta.enterprise.context.Dependent.class && parentCreationalContext != null) {
@@ -482,15 +495,18 @@ public final class InstanceImpl<T> implements Instance<T>, Serializable {
     private static final class HandleImpl<T> implements Handle<T> {
         private final Bean<T> bean;
         private final Class<T> type;
+        private final Annotation[] qualifiers;
         private final VaubanContainer container;
         private final jakarta.enterprise.inject.spi.InjectionPoint injectionPoint;
         private T instance;
         private jakarta.enterprise.context.spi.CreationalContext<T> creationalContext;
         private boolean destroyed;
 
-        HandleImpl(Bean<T> bean, Class<T> type, VaubanContainer container, jakarta.enterprise.inject.spi.InjectionPoint injectionPoint) {
+        HandleImpl(Bean<T> bean, Class<T> type, Annotation[] qualifiers, VaubanContainer container,
+                jakarta.enterprise.inject.spi.InjectionPoint injectionPoint) {
             this.bean = bean;
             this.type = type;
+            this.qualifiers = qualifiers;
             this.container = container;
             this.injectionPoint = injectionPoint;
         }
@@ -505,7 +521,7 @@ public final class InstanceImpl<T> implements Instance<T>, Serializable {
                 Runnable resolve = () -> {
                     var bm = container.getBeanManager();
                     creationalContext = bm.createCreationalContext(bean);
-                    instance = (T) bm.getReference(bean, type, creationalContext);
+                    instance = (T) referenceOf(container, bean, type, qualifiers, creationalContext);
                 };
                 if (injectionPoint != null) {
                     ScopedValue.where(VaubanContainer.CURRENT_INJECTION_POINT, injectionPoint).run(resolve);

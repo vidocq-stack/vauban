@@ -1195,6 +1195,16 @@ public final class VaubanContainer implements AutoCloseable {
     private Object instanceParameter(java.lang.reflect.Type genericType, Annotation[] qualifiers,
             jakarta.enterprise.inject.spi.Bean<?> ownerBean, java.lang.reflect.Member member,
             java.lang.reflect.Parameter param, int paramPosition) {
+        return builtInInstance(genericType, qualifiers, ownerBean, member, param, paramPosition).asInjected();
+    }
+
+    /**
+     * An {@link InstanceImpl} of the type argument of {@code genericType}, an {@code Instance} or {@code Provider}
+     * type, at the given parameter: one no injection gave, until {@link InstanceImpl#asInjected()}.
+     */
+    private InstanceImpl<?> builtInInstance(java.lang.reflect.Type genericType, Annotation[] qualifiers,
+            jakarta.enterprise.inject.spi.Bean<?> ownerBean, java.lang.reflect.Member member,
+            java.lang.reflect.Parameter param, int paramPosition) {
         Class<?> instanceType = Object.class;
         var targetType = genericType;
         if (genericType instanceof ParameterizedType pt && pt.getActualTypeArguments().length > 0) {
@@ -1204,7 +1214,25 @@ public final class VaubanContainer implements AutoCloseable {
         }
         var ip = parameterInjectionPoint(targetType, defaultedQualifiers(qualifiers), ownerBean, member, param,
                 paramPosition);
-        return ((InstanceImpl<?>) new InstanceImpl<>(this, instanceType, ip).select(qualifiers)).asInjected();
+        return (InstanceImpl<?>) new InstanceImpl<>(this, instanceType, ip).select(qualifiers);
+    }
+
+    /** Whether {@code type} is {@code Event}, raw or parameterized. */
+    private static boolean isEvent(java.lang.reflect.Type type) {
+        return (type instanceof ParameterizedType pt ? pt.getRawType() : type) == Event.class;
+    }
+
+    /**
+     * What a programmatic lookup of {@code type}, an {@code Event}, {@code Instance} or {@code Provider} type, with
+     * {@code qualifiers} gives: one of that type with those qualifiers, which no injection gave, so it moves to no other
+     * container. An {@code Event} has no injection point: the events it fires say so in their metadata.
+     */
+    Object lookedUpBuiltIn(java.lang.reflect.Type type, Annotation[] qualifiers) {
+        if (isEvent(type)) {
+            var selectedType = type instanceof ParameterizedType pt ? pt.getActualTypeArguments()[0] : null;
+            return new EventImpl<>(eventDispatcher, qualifiers, null, selectedType);
+        }
+        return builtInInstance(type, qualifiers, null, null, null, -1);
     }
 
     /**
@@ -1221,7 +1249,7 @@ public final class VaubanContainer implements AutoCloseable {
         }
         var type = injectionPoint.getType();
         var qualifiers = injectionPoint.getQualifiers().toArray(new Annotation[0]);
-        if ((type instanceof ParameterizedType pt ? pt.getRawType() : type) == Event.class) {
+        if (isEvent(type)) {
             return EventImpl.injected(eventDispatcher, qualifiers, injectionPoint);
         }
         int position = VaubanInjectionPoint.positionOf(injectionPoint);

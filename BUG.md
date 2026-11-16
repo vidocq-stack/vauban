@@ -5,6 +5,58 @@ suspected cause, status. Updated on every investigation.
 
 ---
 
+## BUG-20261116-12 — A `@Vetoed` interceptor still intercepts
+
+- **Date**: 2026-11-17
+- **Status**: OPEN, waiting for a ruling: the fix spans the runtime and the annotation processor
+- **Module**: `vauban-core` (`InterceptorDiscovery`), `vauban-processor` (`VaubanProcessor`, `InterceptedArtefacts`)
+- **Symptom**: an interceptor class annotated `@Vetoed` is no bean, as it should be, but it still intercepts the
+  beans its binding names: the container creates it by itself, outside the bean path.
+- **Repro**: `BuiltInInjectableReferenceTest#aVetoedInterceptorInterceptsNothing` in `vauban-core`, disabled until
+  the fix: `VetoedAnnouncer` fires its `Ping` on `Shouter.shout()`.
+- **Cause**: `BeanDiscovery` skips a vetoed class or a class of a vetoed package, `InterceptorDiscovery` does not:
+  it makes an interceptor of any class annotated `@Interceptor`. CDI 4.1 ignores a vetoed type altogether, an
+  interceptor included. The annotation processor discovers interceptors on its own, to generate the `$$Intercepted`
+  subclasses at build, so a fix in `InterceptorDiscovery` alone would leave the build weaving an interceptor the
+  container no longer knows.
+- **Found by**: the review of BUG-20261116-07, which looked for an application interceptor with no bean: a vetoed one
+  is the only one.
+
+## BUG-20261116-07 — `getInjectableReference` drops the type and the qualifiers of a built-in `Event` or `Instance`
+
+- **Date**: 2026-11-16
+- **Status**: FIXED on `feat/session-survives-swap`
+- **Module**: `vauban-core` (`VaubanBeanManager.getInjectableReference` and `getReference`,
+  `VaubanContainer.injectedBuiltIn` and `lookedUpBuiltIn`, `InstanceImpl.get`, `EventDispatcher.observerArguments`,
+  `InterceptorBeanWrapper.interceptorConstructorArg`)
+- **Symptom**: `BeanManager.getInjectableReference` for an `Instance<Shelf>` injection point gives an
+  `Instance<Object>`, whose `get()` throws `AmbiguousResolutionException`; for a `@Loud Event<Ping>` injection point,
+  an `Event` that fires with `@Default` only, so the `@Loud` observers never see it. `getReference` of the built-in
+  `Instance` bean for `Instance<Shelf>` gives an `Instance<Object>` too. A `@Loud Event<Pong>` parameter of an
+  observer method fires with `@Default` as well, and so do the `Event` a `@Loud Instance<Event<Ping>>` gives and a
+  `@Loud Event<Ping>` constructor parameter of an interceptor the container creates with no bean.
+- **Repro**: `BuiltInInjectableReferenceTest` in `vauban-core`: an `Instance` field and constructor parameter, a
+  qualified `Event` field, `getReference` for `Instance<Shelf>`, an observer method's qualified `Event` parameter, a
+  `@Loud Instance<Event<Ping>>`, an interceptor with no bean.
+- **Cause**: the built-in `Event` and `Instance` beans create their object with `BeanManager.getEvent()` and
+  `createInstance()`, which know neither the injection point's type nor its qualifiers, and `getReference`, the
+  observer's arguments, `Instance.get()` and an interceptor's constructor went through those beans. Field,
+  constructor and initializer injection never did: they build the object from the injection point.
+- **Fix**: `getInjectableReference` of a built-in `Event`, `Instance` or `Provider` returns what an injection at its
+  injection point gives (`VaubanContainer.injectedBuiltIn`). `getReference` takes a bean, a bean type and a creational
+  context, no injection point (CDI 4.1 §13.3.2, "Obtaining a contextual reference for a bean"): it returns one of the
+  requested type with `@Default` (`VaubanContainer.lookedUpBuiltIn`), a programmatic lookup, whose `Event` fires with
+  no injection point in its metadata. `Instance.get()` gives one with the `Instance`'s qualifiers. A first version of
+  the fix read the injection point being injected when it had the requested type, so a `getReference` during an
+  unrelated injection took that injection point's qualifiers, and the `get()` of an injected `Instance<Event<Ping>>`
+  returned the `Instance` of the field instead of an `Event`. An observer method's `Event` parameter is built from the
+  parameter's qualifiers, and fires with `@Default` when it has none; it has no injection point, so it cannot move
+  with a session and says why. An interceptor's `Event`, `Instance` or `Provider` constructor parameter is built from
+  the parameter, as a bean's is.
+- **Verification**: `BuiltInInjectableReferenceTest` red before for each case (the type, the qualifiers, the
+  injection point of a looked-up `Event`, the `Instance<Event<Ping>>` regression), green after; the reactor
+  `-o -Pquality install`, the CDI Lite TCK (774/774) and the AtInject TCK green on the branch.
+
 ## BUG-20261116-03 — `vauban:enhance-dependencies` leaves the versioned descriptor of a multi-release jar as it is
 
 - **Date**: 2026-11-16

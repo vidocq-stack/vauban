@@ -169,6 +169,12 @@ public final class VaubanBeanManager implements BeanManager, Serializable {
 
     // --- Functional methods ---
 
+    /** Whether {@code beanType} is {@code Event}, {@code Instance} or {@code Provider}: built per injection point. */
+    static boolean isBuiltInPerInjectionPoint(Type beanType) {
+        var raw = beanType instanceof java.lang.reflect.ParameterizedType pt ? pt.getRawType() : beanType;
+        return raw == Event.class || raw == Instance.class || raw == jakarta.inject.Provider.class;
+    }
+
     @Override
     public Object getReference(Bean<?> bean, Type beanType, CreationalContext<?> ctx) {
         // Validate that beanType is actually a type of the bean
@@ -184,6 +190,14 @@ public final class VaubanBeanManager implements BeanManager, Serializable {
         if (!valid) {
             throw new IllegalArgumentException(
                 "Type " + beanType + " is not a bean type of " + bean.getBeanClass());
+        }
+
+        // A built-in Event, Instance or Provider takes the requested type (BUG-20261116-07), which the built-in bean's
+        // own supplier does not know. getReference has no injection point, even while one is being injected: its
+        // qualifier is @Default, and it is a programmatic lookup.
+        if (bean instanceof BuiltInBean<?> && isBuiltInPerInjectionPoint(beanType)) {
+            return container.lookedUpBuiltIn(beanType,
+                    new Annotation[] {jakarta.enterprise.inject.Default.Literal.INSTANCE});
         }
 
         // For normal-scoped beans, return client proxy via container
@@ -499,6 +513,10 @@ public final class VaubanBeanManager implements BeanManager, Serializable {
                     "No bean for injection point: " + ij);
         }
         var bean = resolve(matchingBeans);
+        if (bean instanceof BuiltInBean<?> && isBuiltInPerInjectionPoint(ij.getType())) {
+            // What an injection at ij gives, with its type and qualifiers (BUG-20261116-07)
+            return container.injectedBuiltIn(ij);
+        }
         try {
             return VaubanContainer.callWithInjectionPoint(ij, () -> getReference(bean, ij.getType(), ctx));
         } catch (RuntimeException e) {
