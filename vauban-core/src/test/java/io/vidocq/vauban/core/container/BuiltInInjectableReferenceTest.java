@@ -19,6 +19,8 @@
  */
 package io.vidocq.vauban.core.container;
 
+import io.vidocq.vauban.api.Passivation;
+import io.vidocq.vauban.core.bean.model.BeanDescriptor;
 import io.vidocq.vauban.core.container.BuiltInPassivationTest.Counted;
 import io.vidocq.vauban.core.container.BuiltInPassivationTest.Holder;
 import io.vidocq.vauban.core.container.BuiltInPassivationTest.Loud;
@@ -26,6 +28,8 @@ import io.vidocq.vauban.core.container.BuiltInPassivationTest.LoudHolder;
 import io.vidocq.vauban.core.container.BuiltInPassivationTest.Ping;
 import io.vidocq.vauban.core.container.BuiltInPassivationTest.Recorder;
 import io.vidocq.vauban.core.container.BuiltInPassivationTest.Shelf;
+import io.vidocq.vauban.core.container.BuiltInPassivationTest.Workshop;
+import io.vidocq.vauban.core.event.EventImpl;
 import jakarta.annotation.Priority;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.enterprise.context.Dependent;
@@ -48,10 +52,14 @@ import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
+import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.NotSerializableException;
+import java.io.ObjectInputStream;
 import java.io.ObjectOutputStream;
 import java.io.OutputStream;
+import java.io.UncheckedIOException;
 import java.lang.annotation.ElementType;
 import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
@@ -82,6 +90,7 @@ class BuiltInInjectableReferenceTest {
             .addBeanClass(LoudHolder.class)
             .addBeanClass(Relay.class)
             .addBeanClass(PlainRelay.class)
+            .addBeanClass(Workshop.class)
             .addBeanClass(Lookup.class)
             .addBeanClass(Announcer.class)
             .addBeanClass(Speaker.class)
@@ -258,6 +267,34 @@ class BuiltInInjectableReferenceTest {
         assertEquals("shouted", container.select(Shouter.class).shout());
 
         assertEquals(List.of(), container.select(Recorder.class).pings());
+    }
+
+    @Test
+    @DisplayName("the owner of a built-in's injection point is the class's own bean, when its producer comes first too")
+    void theOwnerIsTheManagedBeanWhenItsProducerComesFirst() throws Exception {
+        var managed = (ManagedBean<?>) container.getBeanManager().getPassivationCapableBean(Workshop.class.getName());
+        var id = managed.descriptor().id();
+        container.beans.remove(id);
+        container.beans.put(id, managed);
+
+        var pings = container.select(Workshop.class).pings;
+        @SuppressWarnings("unchecked")
+        var moved = (Event<Ping>) readIn(container.getBeanManager(), bytesOf(pings));
+        moved.fire(new Ping("workshop"));
+
+        assertSame(managed, ((EventImpl<?>) pings).getInjectionPoint().getBean(), "Workshop, not Workshop#tool");
+        assertEquals(List.of("workshop"), container.select(Recorder.class).pings());
+    }
+
+    @Test
+    @DisplayName("an instance of a class with no managed bean is owned by the first bean that class declares, as before")
+    void aClassWithNoManagedBeanIsOwnedByABeanItDeclares() {
+        var managed = (ManagedBean<?>) container.getBeanManager().getPassivationCapableBean(Workshop.class.getName());
+        container.beans.remove(managed.descriptor().id());
+
+        var owner = container.findBeanForInstance(new Workshop());
+
+        assertEquals(BeanDescriptor.BeanKind.PRODUCER_METHOD, owner.descriptor().kind());
     }
 
     // --- fixtures ---
@@ -443,6 +480,31 @@ class BuiltInInjectableReferenceTest {
     private static void write(Object value) throws IOException {
         try (var out = new ObjectOutputStream(OutputStream.nullOutputStream())) {
             out.writeObject(value);
+        }
+    }
+
+    private static byte[] bytesOf(Object value) throws IOException {
+        var bytes = new ByteArrayOutputStream();
+        try (var out = new ObjectOutputStream(bytes)) {
+            out.writeObject(value);
+        }
+        return bytes.toByteArray();
+    }
+
+    /** Reads {@code bytes} with {@code beanManager} bound as the importing container. */
+    private static Object readIn(BeanManager beanManager, byte[] bytes) throws IOException {
+        try {
+            return Passivation.importInto(beanManager, () -> {
+                try (var in = new ObjectInputStream(new ByteArrayInputStream(bytes))) {
+                    return in.readObject();
+                } catch (IOException e) {
+                    throw new UncheckedIOException(e);
+                } catch (ClassNotFoundException e) {
+                    throw new IllegalStateException(e);
+                }
+            });
+        } catch (UncheckedIOException e) {
+            throw e.getCause();
         }
     }
 

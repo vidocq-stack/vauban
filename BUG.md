@@ -22,6 +22,27 @@ suspected cause, status. Updated on every investigation.
 - **Found by**: the review of BUG-20261116-07, which looked for an application interceptor with no bean: a vetoed one
   is the only one.
 
+## BUG-20261116-08 — The injection points of a class that declares a producer can belong to the producer
+
+- **Date**: 2026-11-16
+- **Status**: FIXED on `feat/session-survives-swap`
+- **Module**: `vauban-core` (`VaubanContainer.findBeanForInstance`)
+- **Symptom**: when the producer method, producer field or synthetic bean a class declares comes before the class's
+  own managed bean in the container's registry, the injection of an instance of that class takes the producer as the
+  owner of its injection points: `InjectionPoint.getBean()` names the producer, and an `Event` or an `Instance` it
+  injects writes the producer's passivation id instead of the class's, so the importing container looks its injection
+  point up on the producer.
+- **Repro**: `BuiltInInjectableReferenceTest#theOwnerIsTheManagedBeanWhenItsProducerComesFirst` in `vauban-core`
+  moves the managed bean of `Workshop`, which declares a producer method, after that producer in the registry.
+- **Cause**: `findBeanForInstance` returned the first bean of the registry whose bean class is the instance's class,
+  whatever its kind, and a producer's bean class is the class that declares it. The registry follows the order the
+  descriptors were registered in, which a build compatible extension or another registration pass can change.
+- **Fix**: `findBeanForInstance` prefers the class's managed bean, wherever it comes; a class with no managed bean
+  keeps the first bean it declares, as before.
+- **Verification**: `theOwnerIsTheManagedBeanWhenItsProducerComesFirst` red before (the owner was `Workshop#tool`),
+  green after, with `aClassWithNoManagedBeanIsOwnedByABeanItDeclares` for the old behaviour; the reactor
+  `-o -Pquality install`, the CDI Lite TCK (774/774) and the AtInject TCK green on the branch.
+
 ## BUG-20261116-07 — `getInjectableReference` drops the type and the qualifiers of a built-in `Event` or `Instance`
 
 - **Date**: 2026-11-16

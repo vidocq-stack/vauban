@@ -778,21 +778,32 @@ public final class VaubanContainer implements AutoCloseable {
      */
     ManagedBean<?> findBeanForInstance(Object instance) {
         var instanceClass = instance.getClass();
-        for (var bean : beans.values()) {
-            if (bean.getBeanClass() == instanceClass) {
-                return bean;
-            }
-        }
+        var bean = beanOfClass(instanceClass);
         // Check superclass for intercepted/proxied subclasses
         var superClass = instanceClass.getSuperclass();
-        if (superClass != null && superClass != Object.class) {
-            for (var bean : beans.values()) {
-                if (bean.getBeanClass() == superClass) {
+        if (bean == null && superClass != null && superClass != Object.class) {
+            bean = beanOfClass(superClass);
+        }
+        return bean;
+    }
+
+    /**
+     * The bean of {@code beanClass}: its managed bean, wherever the producers and synthetic beans it declares come in
+     * {@link #beans}, which share its bean class (BUG-20261116-08); otherwise the first of those.
+     */
+    private ManagedBean<?> beanOfClass(Class<?> beanClass) {
+        ManagedBean<?> declared = null;
+        for (var bean : beans.values()) {
+            if (bean.getBeanClass() == beanClass) {
+                if (bean.descriptor().kind() == BeanDescriptor.BeanKind.MANAGED) {
                     return bean;
+                }
+                if (declared == null) {
+                    declared = bean;
                 }
             }
         }
-        return null;
+        return declared;
     }
 
     private ManagedBean<?> findManagedBeanByClass(DotName beanClassName) {
