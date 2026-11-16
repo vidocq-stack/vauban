@@ -22,6 +22,26 @@ suspected cause, status. Updated on every investigation.
 - **Found by**: the review of BUG-20261116-07, which looked for an application interceptor with no bean: a vetoed one
   is the only one.
 
+## BUG-20261116-09 — `Instance.select` drops a parameterized type
+
+- **Date**: 2026-11-16
+- **Status**: FIXED on `feat/session-survives-swap`
+- **Module**: `vauban-core` (`InstanceImpl.select(TypeLiteral, Annotation...)`, `InstanceImpl.select(Annotation...)`)
+- **Symptom**: `BeanManager.createInstance().select(new TypeLiteral<Supplier<String>>() { })`, or the same `select` on
+  an injected `Instance`, throws `ClassCastException: ParameterizedTypeImpl cannot be cast to Class`, though
+  `TypeLiteral` exists to select a parameterized type. Once past that, `select(qualifiers)` on an
+  `Instance<Supplier<String>>`, injected or selected by a `TypeLiteral`, resolves the raw `Supplier`: no bean.
+- **Repro**: `InstanceImplTest#shouldSelectAParameterizedType` and
+  `#shouldKeepAParameterizedTypeThroughSelectQualifiers` in `vauban-core`.
+- **Cause**: `select(TypeLiteral)` cast `subtype.getType()` to `Class`, which holds for a class literal only;
+  `select(Annotation...)` built its child with the constructor that takes the class alone, which drops the whole type.
+- **Fix**: the child `Instance` takes `subtype.getRawType()` as its class and `subtype.getType()` as the type it
+  resolves its beans with, as an injected `Instance<Supplier<String>>` already did, and its injection point takes the
+  whole type too; `select(Annotation...)` passes the whole type on.
+- **Verification**: the two tests red before (`ClassCastException`, then `UnsatisfiedResolutionException` for
+  `java.util.function.Supplier`), green after; the reactor `-o -Pquality install`, the CDI Lite TCK (774/774) and the
+  AtInject TCK green on the branch.
+
 ## BUG-20261116-08 — The injection points of a class that declares a producer can belong to the producer
 
 - **Date**: 2026-11-16

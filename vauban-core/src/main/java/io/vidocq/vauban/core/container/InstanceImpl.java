@@ -256,7 +256,9 @@ public final class InstanceImpl<T> implements Instance<T>, Serializable {
     @Override
     public Instance<T> select(Annotation... newQualifiers) {
         validateQualifiers(newQualifiers);
-        return new InstanceImpl<>(container, type, combineQualifiers(this.qualifiers, newQualifiers), injectionPoint, parentCreationalContext);
+        // The child keeps the whole type, parameterized or not (BUG-20261116-09)
+        return new InstanceImpl<>(container, type, resolveType, combineQualifiers(this.qualifiers, newQualifiers),
+                injectionPoint, parentCreationalContext);
     }
 
     @Override
@@ -270,15 +272,15 @@ public final class InstanceImpl<T> implements Instance<T>, Serializable {
     @Override
     public <U extends T> Instance<U> select(TypeLiteral<U> subtype, Annotation... newQualifiers) {
         validateQualifiers(newQualifiers);
-        @SuppressWarnings("unchecked")
-        var clazz = (Class<U>) subtype.getType();
+        // The raw class for generic bounds, the whole type, parameterized or not, for resolution (BUG-20261116-09)
         var combinedQuals = combineQualifiers(this.qualifiers, newQualifiers);
-        var updatedIp = updateInjectionPointType(clazz, combinedQuals);
-        return new InstanceImpl<>(container, clazz, combinedQuals, updatedIp, parentCreationalContext);
+        var updatedIp = updateInjectionPointType(subtype.getType(), combinedQuals);
+        return new InstanceImpl<>(container, subtype.getRawType(), subtype.getType(), combinedQuals, updatedIp,
+                parentCreationalContext);
     }
 
     private jakarta.enterprise.inject.spi.InjectionPoint updateInjectionPointType(
-            Class<?> newType, Annotation[] newQualifiers) {
+            java.lang.reflect.Type newType, Annotation[] newQualifiers) {
         if (injectionPoint == null) return null;
         var qualSet = new java.util.LinkedHashSet<Annotation>(Arrays.asList(newQualifiers));
         if (qualSet.isEmpty()) qualSet.add(jakarta.enterprise.inject.Default.Literal.INSTANCE);

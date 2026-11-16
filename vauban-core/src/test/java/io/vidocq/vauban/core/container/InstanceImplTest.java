@@ -20,10 +20,15 @@
 package io.vidocq.vauban.core.container;
 
 import jakarta.enterprise.context.ApplicationScoped;
+import jakarta.enterprise.context.Dependent;
+import jakarta.enterprise.inject.Default;
 import jakarta.enterprise.inject.Instance;
+import jakarta.enterprise.util.TypeLiteral;
 import jakarta.inject.Inject;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+
+import java.util.function.Supplier;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -35,6 +40,28 @@ class InstanceImplTest {
         public String greet() {
             return "hello";
         }
+    }
+
+    @ApplicationScoped
+    public static class Names implements Supplier<String> {
+        @Override
+        public String get() {
+            return "names";
+        }
+    }
+
+    @ApplicationScoped
+    public static class Counts implements Supplier<Integer> {
+        @Override
+        public Integer get() {
+            return 1;
+        }
+    }
+
+    @Dependent
+    public static class SupplierConsumer {
+        @Inject
+        Instance<Supplier<String>> suppliers;
     }
 
     @ApplicationScoped
@@ -139,6 +166,38 @@ class InstanceImplTest {
             assertNotNull(instance);
             var greeterInstance = instance.select(Greeter.class);
             assertTrue(greeterInstance.isResolvable());
+        }
+    }
+
+    @Test
+    @DisplayName("Instance.select(TypeLiteral) takes a parameterized type (BUG-20261116-09)")
+    void shouldSelectAParameterizedType() {
+        try (var container = VaubanContainer.builder()
+                .addBeanClass(Names.class)
+                .build()) {
+            var suppliers = container.getBeanManager().createInstance()
+                    .select(new TypeLiteral<Supplier<String>>() { });
+
+            assertTrue(suppliers.isResolvable());
+            assertEquals("names", suppliers.get().get());
+        }
+    }
+
+    @Test
+    @DisplayName("an Instance of a parameterized type keeps it through select(qualifiers) (BUG-20261116-09)")
+    void shouldKeepAParameterizedTypeThroughSelectQualifiers() {
+        try (var container = VaubanContainer.builder()
+                .addBeanClass(Names.class)
+                .addBeanClass(Counts.class)
+                .addBeanClass(SupplierConsumer.class)
+                .build()) {
+            var injected = container.select(SupplierConsumer.class).suppliers.select(Default.Literal.INSTANCE);
+            var selected = container.getBeanManager().createInstance()
+                    .select(new TypeLiteral<Supplier<String>>() { })
+                    .select(Default.Literal.INSTANCE);
+
+            assertEquals("names", injected.get().get());
+            assertEquals("names", selected.get().get());
         }
     }
 }

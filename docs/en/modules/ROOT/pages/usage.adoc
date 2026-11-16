@@ -335,6 +335,7 @@ public class Service { /* intercepted methods */ }
 
 `@AroundConstruct` is also supported. Interceptor chains are resolved at compile time and run by the generated `$$Intercepted` subclass.
 
+[#programmatic-instance]
 == Programmatic `Instance<T>`
 
 [source,java]
@@ -350,6 +351,8 @@ public class Router {
 ----
 
 `Instance<T>` enables dynamic resolution from application code while keeping the injection grid static inside the container.
+
+[.tag-new]#NEW# A parameterized type is selected with a `TypeLiteral`, as in `instance.select(new TypeLiteral<Supplier<String>>() { })`: the child `Instance` resolves its beans with the whole type, and keeps it through a later `select(qualifiers)`.
 
 == Integration with Cassini (Jakarta REST)
 
