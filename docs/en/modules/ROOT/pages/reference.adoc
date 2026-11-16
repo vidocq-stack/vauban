@@ -12,7 +12,7 @@ This page lists every artefact published by Vauban, the Java Modules packages th
 
 | `io.vidocq.vauban:vauban-api:{project-version}`
 | `compile`
-| Version marker (`Vauban.VERSION`), the generated-code SPI (`ProxyLink`, `VaubanComponentProvider`), `ClientProxies`, which asks the processor for the client proxies of the interfaces synthetic beans have (xref:concepts.adoc#synthetic-interface-proxies[Client proxies of synthetic beans]), and `AnnotationInstanceFactory`, which builds an annotation instance from members written as text (provided by `vauban-core`)
+| Version marker (`Vauban.VERSION`), the generated-code SPI (`ProxyLink`, `VaubanComponentProvider`), `ClientProxies`, which asks the processor for the client proxies of the interfaces synthetic beans have (xref:concepts.adoc#synthetic-interface-proxies[Client proxies of synthetic beans]), and `AnnotationInstanceFactory`, which builds an annotation instance from members written as text (provided by `vauban-core`). [.tag-new]#NEW# `Passivation` binds the container that reads back a session moved from another one: a web container wraps its reads in `Passivation.importInto(beanManager, importer)`, and Vauban's serial forms read it with `importingBeanManager()` (xref:internals.adoc#session-swap[Session entries across a container swap])
 
 | `io.vidocq.vauban:vauban-core:{project-version}`
 | `runtime`
@@ -40,7 +40,7 @@ This page lists every artefact published by Vauban, the Java Modules packages th
 
 | `io.vidocq.vauban:vauban-webcontexts:{project-version}`
 | `runtime`
-| The session context for a web container to drive (`WebContexts`, `SessionStore`), see xref:usage.adoc#web-contexts[Web contexts]
+| The session context for a web container to drive (`WebContexts`, `SessionStore`), see xref:usage.adoc#web-contexts[Web contexts]. [.tag-new]#NEW# `SessionStore.isSession(Object)`, `false` by default, tells the context that an instance is the very session the store adapts: that entry stays out of a moved session, and the producer gives the imported session at its first use (xref:internals.adoc#session-swap[Session entries across a container swap])
 
 | `io.vidocq.vauban:vauban-naming:{project-version}`
 | `runtime`
@@ -552,7 +552,7 @@ Both JUnit lifecycles get their `@Inject` fields. With the default `@TestInstanc
 | Passivation, bean serialisation
 | ❌
 | ✅
-| ❌
+| ❌ Not validated at deployment. Every managed bean is `PassivationCapable`, producer and synthetic beans included (the built-in beans are not), and `@SessionScoped` instances, client proxies and the built-in `Event`, `Instance` and `BeanManager` move between containers when written, for a Vidocq dev swap: xref:internals.adoc#session-swap[Session entries across a container swap]
 
 | `@Specializes`
 | ❌

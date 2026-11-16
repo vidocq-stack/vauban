@@ -1007,7 +1007,7 @@ Providers generated before this method existed grant nothing; the extension keep
 The container uses the same lookup itself to wire an intercepted bean: once the generated provider has created the `$$Intercepted` subclass, its post-construction method `$$init` is called through a method handle found with that lookup, so the bean's package needs neither `exports` nor `opens` (BUG-20261010-02). Without a granting provider, the call falls back to reflection, which needs the package exported to `io.vidocq.vauban.core`.
 
 [#session-swap]
-== Session entries across a container swap
+== Session entries across a container swap [.tag-new]#NEW#
 
 When Vidocq swaps the application layer in dev mode, Foy moves the live HTTP sessions to the new layer
 (https://codefloe.com/Vidocq/foy/pulls/114[foy#114^]): it writes each session attribute to its own bytes with Java
@@ -1017,8 +1017,10 @@ reads them. This is passivation: no `@PostConstruct` runs on import, no `@PreDes
 
 The key::
 One attribute per bean, named `io.vidocq.vauban.webcontexts.session:` followed by the bean's passivation id. Every
-Vauban bean is `PassivationCapable`, and its id is its `BeanId`: the class name for a managed bean, `Class#method` for
-a producer method, `Class.field` for a producer field. These are built from names, so two containers built from the
+managed bean is `PassivationCapable`, producer and synthetic beans included (the built-in beans, such as `Event` or
+`BeanManager`, are not), and its id is its `BeanId`: the class name for a managed bean, `Class#method` for a producer
+method, `Class#method(T1,T2)` for one of overloaded producer methods, with its erased parameter types,
+`Class.field` for a producer field. These are built from names, so two containers built from the
 same classes give such a bean the same id, and the importing container finds the attribute under the key it computes
 itself. A synthetic bean is the exception: its id ends with its registration slot, which shifts when beans are added
 before it (see the limits below). A foreign `Contextual` that is not passivation capable keeps a key bound to its own
@@ -1071,8 +1073,10 @@ behind with one `WARNING`:
 * an instance of an intercepted bean, an `$$Intercepted` subclass whose interceptor fields belong to the writing
   container: `intercepted instances cannot move yet`.
 +
-A field of the instance that cannot be written stops the stream too, which names its class: today a built-in `Event`,
-`Instance` or `BeanManager`.
+A field of the instance that cannot be written stops the stream too, with an exception that names its class or the
+cause: an object of the application that is not `Serializable`, one of the built-in objects that cannot move
+(_Built-in beans_ below), or an injected `InjectionPoint`, which a `@Dependent` object the instance holds may keep:
+Vauban's `InjectionPoint` is not `Serializable`.
 
 Client proxies::
 A session bean usually holds client proxies: the `@ApplicationScoped` service it injects, a `@RequestScoped` bean.
@@ -1116,25 +1120,80 @@ refuses to be written with `X is proxied by the java.lang.reflect.Proxy fallback
 Foy logs in its `WARNING`: listed, the interface gets a build-time proxy, which moves (see
 xref:concepts.adoc#synthetic-interface-proxies[Client proxies of synthetic beans]).
 
+Built-in beans::
+A session bean often injects the built-in `Event<T>`, `Instance<T>` or `BeanManager`, which CDI Full counts as
+passivation capable dependencies. Each belongs to the container that built it, so none enters the stream, and each
+reads back as the importing container's own:
++
+* the `BeanManager`: `VaubanBeanManager` is `Serializable` for one reason, serialization calls `writeReplace` on a
+  serializable class only. Its `writeReplace` writes a `BeanManagerReference`, a mark with no state, whose
+  `readResolve` returns the importing container's bean manager, from the binding above;
+* an `Event`, an `Instance` or a `Provider` the container injected writes an `InjectionPointReference`: the passivation
+  id of the bean it was injected into, the member (its declaring class, its name and, for a constructor or a method,
+  its erased parameter types, as in `com.acme.Cart#init(jakarta.enterprise.event.Event)`), the position of the
+  parameter (`-1` for a field), and the raw type of the field or parameter. No index into a list: a field added
+  before it changes nothing;
+* the reference's `readResolve` finds the bean by its id in the importing container, finds that injection point among
+  the bean's `getInjectionPoints()`, checks that it still takes the same built-in type, and returns what the importing
+  container injects there, built by the same code as at injection: an `Event` with the injection point's type and
+  qualifiers, which reaches the importing container's observers, or an `Instance` that resolves its beans at `get()`,
+  as before. The read creates no bean instance and runs no callback. `BeanManager.getInjectableReference` gives the
+  same object for that injection point, built by the same code.
++
+When it cannot, the reference throws `InvalidObjectException` with a message that names the cause, never returns
+`null`: no importing container bound, a reference with no id, no member or no type, a type that is no built-in `Event`,
+`Instance` or `Provider`, a bean the importing container lacks, an injection point it lacks (a field renamed or
+removed, a parameter moved), one that now takes another type, an importing bean manager that is not Vauban's, or a
+`RuntimeException` of the container, which the exception carries as its cause. Foy drops the session.
++
+Neither the selected type nor the qualifiers are written: the injection point gives them again, and a parameterized
+`java.lang.reflect.Type` is not `Serializable`. An `Event` or an `Instance` therefore moves only through the injection
+point the container injected it at, and these throw `NotSerializableException` on write, so Foy leaves the session
+behind with its `WARNING`:
++
+* one obtained by `select(...)`, from an injected one too: `an Event obtained by select(...) or by a programmatic lookup
+  cannot move to another container`, and `an Instance or a Provider obtained by select(...), by a programmatic lookup
+  or as a parameter of an observer method cannot move to another container`. Keep the injected one in the field and
+  select at each use;
+* one obtained by a programmatic lookup, which has no injection point: `CDI.current().select(...)`,
+  `BeanManager.getEvent()`, `BeanManager.createInstance()`, `BeanManager.getReference`, the `get()` of an
+  `Instance<Event<T>>`; the same messages;
+* an `Instance` or a `Provider` given to a parameter of an observer method, a programmatic lookup too: the same
+  message;
+* an `Event` given to a parameter of an observer method, which has no injection point either: `an Event given with no
+  injection point, as to an observer method, cannot move to another container`;
+* one injected outside a bean with a passivation id, such as a parameter of a producer method, which keeps no bean
+  in its injection point, or a non-contextual instance: `an Event, an Instance or a Provider injected outside a bean
+  with a passivation id cannot move to another container`.
+
 `@Dependent` objects::
 A `@Dependent` object the instance holds moves inside it, as part of its state. The writing container's creational
 context tracked it; the importing container gives the entry a new, empty one. Its `@PreDestroy` therefore does not run
-when the moved session ends.
+when the moved session ends. The same holds for the `@Dependent` instances a moved `Instance` gave at `get()` in the
+writing container: the importing one's `Instance` starts with none.
 
 Limits::
 What moves, moves as it was written, between two versions of the application:
 +
-* **A synthetic bean, or one of overloaded producer methods.** A synthetic bean's id ends with its registration slot,
-  which shifts when beans are registered before it: its entry can be found under another synthetic bean of the same
-  name, or under none. Overloaded producer methods share one id, so their entries collide. The same holds for a client
-  proxy of such a bean that a session bean holds: its reference reads back as the proxy of whichever bean has its id
-  now. The type check refuses a bean of another type, but two synthetic beans of the same type, such as the
-  `EntityManager` of two persistence units, pass it, and the field then reaches the other one.
+* **A synthetic bean.** A synthetic bean's id ends with its registration slot, which shifts when beans are
+  registered before it: its entry can be found under another synthetic bean of the same name, or under none. The same
+  holds for a client proxy of such a bean that a session bean holds: its reference reads back as the proxy of
+  whichever bean has its id now. The type check refuses a bean of another type, but two synthetic beans of the same
+  type, such as the `EntityManager` of two persistence units, pass it, and the field then reaches the other one.
+* **An overloaded producer method.** Overloaded producer methods have ids of their own, which carry their parameter
+  types (`Class#method(T1,T2)`). A producer method that gains an overload, or an overload whose parameters change, so
+  gets another id in the new version: its entry is not found, and Foy drops the session.
 * **A bean that gains an interceptor binding** in the new version moves as the plain instance it was: its interceptors
   do not run on it until the session ends.
-* **A field added to the class** reads back with its default value: the import runs no injection and no
-  `@PostConstruct`. This needs a declared `serialVersionUID`; without one, the changed class computes another, the
-  read fails with `InvalidClassException`, and Foy drops the session.
+* **A field added to the class** reads back with its default value, an `@Inject` field too, a built-in `Event` or
+  `Instance` included: the import runs no injection and no `@PostConstruct`. This needs a declared
+  `serialVersionUID`; without one, the changed class computes another, the read fails with `InvalidClassException`,
+  and Foy drops the session.
+* **An injected `Event` or `Instance` whose injection point changed** but kept its member and its built-in type, as
+  `Event<Order>` turned into `Event<Invoice>`, or a qualifier added, reads back as the new injection point gives it:
+  with the new type and qualifiers, as an injection would. The member is named by its declaring class, its name and
+  its parameter types, so these drop the session: a renamed field, a field moved to another class (pulled up into a
+  superclass, say), a parameter moved, a constructor or an initializer method whose parameter types changed.
 
 == Exported Java modules
 

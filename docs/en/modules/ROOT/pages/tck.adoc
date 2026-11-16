@@ -124,7 +124,7 @@ Current   100%   █████████████████████
 | Out of the Lite profile.
 
 | `PassivationCapable` / passivation
-| Out of the Lite profile. Beans are not serialisable.
+| Out of the Lite profile: passivation is a CDI Full feature, and Vauban is not certified for it. Vauban does not validate passivating scopes at deployment. Every managed bean is `PassivationCapable`, though, producer and synthetic beans included (the built-in beans are not), and the `@SessionScoped` instances, their client proxies and the built-in `Event`, `Instance` and `BeanManager` they hold move to another container when written, for Foy's session move across a Vidocq dev swap (xref:internals.adoc#session-swap[Session entries across a container swap]). CDI Lite stays at 774/774.
 
 | EL wired into managed beans
 | Out of the Lite profile. `jakarta.el` is required only as a spec dependency, not activated on application beans.

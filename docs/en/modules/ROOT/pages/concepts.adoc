@@ -222,7 +222,11 @@ Vauban implements the _Lite_ profile. The following are absent:
 * runtime portable extensions (`Extension`, `BeforeBeanDiscovery`, etc.) — replaced by BCEs;
 * `@Specializes`;
 * `@ConversationScoped`;
-* passivation (`PassivationCapable`);
+* passivation validation: Vauban does not reject a passivating-scope bean that is not `Serializable`. Every managed
+  bean is `PassivationCapable`, though, producer and synthetic beans included (the built-in beans are not), and a
+  `@SessionScoped` instance moves to another container with the session, its client proxies and the built-in `Event`,
+  `Instance` and `BeanManager` it injects too, when Foy moves the live sessions
+  across a Vidocq dev swap (xref:internals.adoc#session-swap[Session entries across a container swap]);
 * EL (Expression Language) wired into managed beans.
 
 See xref:reference.adoc#lite-vs-full[the comparison table].
