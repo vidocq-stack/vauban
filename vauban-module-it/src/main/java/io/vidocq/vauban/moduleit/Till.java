@@ -20,10 +20,14 @@
 package io.vidocq.vauban.moduleit;
 
 import jakarta.enterprise.context.ApplicationScoped;
+import jakarta.enterprise.event.Observes;
 import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
 
-/** An application service whose client proxy the processor renders as source, held by {@link ShoppingSession}. */
+/**
+ * An application service whose client proxy the processor renders as source, held by {@link ShoppingSession}. It
+ * marks the {@link Receipt}s it observes too.
+ */
 @ApplicationScoped
 public class Till {
 
@@ -31,6 +35,10 @@ public class Till {
 
     public void mark(String mark) {
         marks.add(mark);
+    }
+
+    void onReceipt(@Observes Receipt receipt) {
+        marks.add("receipt " + receipt.text());
     }
 
     public List<String> marks() {

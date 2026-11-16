@@ -218,19 +218,16 @@ final class BeanInjector {
 
         // What the bean's descriptor records for this field, or null for a field it does not
         // describe — an interceptor's, injected without one (vauban#70).
-        var describedQualifiers = QualifierHelper.fieldQualifiers(
-                descriptor == null ? null : descriptor.injectionPoints(), field,
-                container.qualifierMatcher().types());
+        var describedQualifiers = describedQualifiers(descriptor, field);
         var describedSet = describedQualifiers == null ? null
                 : new java.util.LinkedHashSet<>(java.util.List.of(describedQualifiers));
 
-        if (rawType == Instance.class || rawType == jakarta.inject.Provider.class) {
-            injectInstanceField(instance, field, typeMapping, describedQualifiers, describedSet);
+        if (isInjectedPerInjectionPoint(rawType)) {
+            writeField(instance, field, builtInValue(field, container.findBeanForInstance(instance), typeMapping,
+                    describedQualifiers, describedSet));
         } else if (BeanManager.class.isAssignableFrom(rawType)
                 || rawType == jakarta.enterprise.inject.spi.BeanContainer.class) {
             writeField(instance, field, container.getBeanManager());
-        } else if (rawType == Event.class) {
-            injectEventField(instance, field, describedQualifiers, describedSet);
         } else {
             var ownerBean = container.findBeanForInstance(instance);
             VaubanContainer.withInjectionPoint(new VaubanInjectionPoint(field, ownerBean, describedSet),
@@ -238,18 +235,50 @@ final class BeanInjector {
         }
     }
 
-    /** An {@code Instance<T>} or {@code Provider<T>} field: a handle on the beans of {@code T}, resolved lazily. */
-    private void injectInstanceField(Object instance, Field field,
-                                     Map<java.lang.reflect.TypeVariable<?>, java.lang.reflect.Type> typeMapping,
-                                     java.lang.annotation.Annotation[] describedQualifiers,
-                                     java.util.Set<java.lang.annotation.Annotation> describedSet) {
+    /** The qualifiers {@code descriptor} records for {@code field}, or {@code null} when it does not describe it. */
+    private java.lang.annotation.Annotation[] describedQualifiers(BeanDescriptor descriptor, Field field) {
+        return QualifierHelper.fieldQualifiers(descriptor == null ? null : descriptor.injectionPoints(), field,
+                container.qualifierMatcher().types());
+    }
+
+    /** A built-in made for each injection point it is injected at: {@code Event}, {@code Instance}, {@code Provider}. */
+    private static boolean isInjectedPerInjectionPoint(Class<?> rawType) {
+        return rawType == Event.class || rawType == Instance.class || rawType == jakarta.inject.Provider.class;
+    }
+
+    /**
+     * The built-in an {@code Event}, {@code Instance} or {@code Provider} field of {@code owner} gets, as it got it at
+     * injection: for a value written by another container, which reads back as what this one injects there
+     * ({@link InjectionPointReference}). It creates no bean instance: an {@code Instance} resolves at {@code get()}.
+     */
+    Object builtInFieldValue(ManagedBean<?> owner, Field field) {
+        var describedQualifiers = describedQualifiers(owner.descriptor(), field);
+        var describedSet = describedQualifiers == null ? null
+                : new java.util.LinkedHashSet<>(java.util.List.of(describedQualifiers));
+        return builtInValue(field, owner, ManagedBean.buildTypeVariableMapping(owner.getBeanClass()),
+                describedQualifiers, describedSet);
+    }
+
+    /**
+     * An {@code Event<T>} field: the events of {@code T} with its qualifiers. An {@code Instance<T>} or
+     * {@code Provider<T>} field: a handle on the beans of {@code T}, resolved lazily. Both are the ones the container
+     * injected, which move with a session bean that holds them.
+     */
+    private Object builtInValue(Field field, jakarta.enterprise.inject.spi.Bean<?> ownerBean,
+                                Map<java.lang.reflect.TypeVariable<?>, java.lang.reflect.Type> typeMapping,
+                                java.lang.annotation.Annotation[] describedQualifiers,
+                                java.util.Set<java.lang.annotation.Annotation> describedSet) {
+        var ip = new VaubanInjectionPoint(field, ownerBean, describedSet);
+        if (field.getType() == Event.class) {
+            var eventQualifiers = describedQualifiers != null
+                    ? QualifierHelper.eventQualifiers(describedQualifiers)
+                    : QualifierHelper.collectEventQualifiers(field.getAnnotations());
+            return EventImpl.injected(container.eventDispatcher(), eventQualifiers, ip);
+        }
         var target = instanceTarget(ManagedBean.resolveType(ClassMetadataCache.genericTypeOf(field), typeMapping));
         var fieldQualifiers = describedQualifiers != null
                 ? describedQualifiers : QualifierHelper.extractFieldQualifiers(field);
-        var ownerBean = container.findBeanForInstance(instance);
-        var ip = new VaubanInjectionPoint(field, ownerBean, describedSet);
-        writeField(instance, field, new InstanceImpl<>(container, target.rawType(), target.lookupType(),
-                fieldQualifiers, ip, null));
+        return InstanceImpl.injected(container, target.rawType(), target.lookupType(), fieldQualifiers, ip);
     }
 
     /**
@@ -274,18 +303,6 @@ final class BeanInjector {
 
     /** The raw type and the full lookup type of an {@code Instance<T>} field. */
     private record InstanceTarget(Class<?> rawType, java.lang.reflect.Type lookupType) {
-    }
-
-    /** An {@code Event<T>} field, with the qualifiers its injection point describes or, without one, its own. */
-    private void injectEventField(Object instance, Field field,
-                                  java.lang.annotation.Annotation[] describedQualifiers,
-                                  java.util.Set<java.lang.annotation.Annotation> describedSet) {
-        var eventQualifiers = describedQualifiers != null
-                ? QualifierHelper.eventQualifiers(describedQualifiers)
-                : QualifierHelper.collectEventQualifiers(field.getAnnotations());
-        var ownerBean = container.findBeanForInstance(instance);
-        var eventIp = new VaubanInjectionPoint(field, ownerBean, describedSet);
-        writeField(instance, field, new EventImpl<>(container.eventDispatcher(), eventQualifiers, eventIp));
     }
 
     /** A field of a bean type, resolved by type and qualifiers; a primitive field left unresolved keeps its default. */

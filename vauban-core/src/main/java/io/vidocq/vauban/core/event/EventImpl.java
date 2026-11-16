@@ -23,6 +23,12 @@ import jakarta.enterprise.event.Event;
 import jakarta.enterprise.event.NotificationOptions;
 import jakarta.enterprise.util.TypeLiteral;
 
+import java.io.InvalidObjectException;
+import java.io.NotSerializableException;
+import java.io.ObjectInputStream;
+import java.io.ObjectStreamException;
+import java.io.Serial;
+import java.io.Serializable;
 import java.lang.annotation.Annotation;
 import java.lang.reflect.TypeVariable;
 import java.util.Arrays;
@@ -31,19 +37,38 @@ import java.util.concurrent.CompletionStage;
 
 /**
  * Implementation of {@link Event} backed by {@link EventDispatcher}.
+ *
+ * <p>Serializable, but never written itself: its dispatcher belongs to the container that built it. One the container
+ * injected into a bean ({@link #injected}) writes a reference to its injection point instead, which reads back as the
+ * importing container's {@code Event} at the same injection point, so a session bean holding it moves to another
+ * container (foy#114). One obtained by {@code select(...)} or by a programmatic lookup cannot be written.</p>
  */
 @SuppressWarnings("java:S3776") // CDI container logic has inherent complexity
-public final class EventImpl<T> implements Event<T> {
+public final class EventImpl<T> implements Event<T>, Serializable {
+
+    @Serial
+    private static final long serialVersionUID = 1L;
 
     private static final String MSG_EVENT_NULL = "Event object must not be null";
 
-    private final EventDispatcher dispatcher;
-    private final Annotation[] qualifiers;
-    private final jakarta.enterprise.inject.spi.InjectionPoint injectionPoint;
-    private final java.lang.reflect.Type selectedType;
+    private final transient EventDispatcher dispatcher;
+    private final transient Annotation[] qualifiers;
+    private final transient jakarta.enterprise.inject.spi.InjectionPoint injectionPoint;
+    private final transient java.lang.reflect.Type selectedType;
+    /** The container injected it at {@link #injectionPoint}: it moves by that injection point. */
+    private final transient boolean injected;
     // The qualifiers of this Event, reduced to their keys once: an injected Event fires many times.
     @SuppressWarnings("java:S3077")
-    private volatile java.util.Set<io.vidocq.vauban.core.annotation.AnnotationKey> keys;
+    private transient volatile java.util.Set<io.vidocq.vauban.core.annotation.AnnotationKey> keys;
+
+    /**
+     * The {@code Event} the container injects at {@code injectionPoint}: the one that moves with the bean that holds
+     * it, written as a reference to that injection point.
+     */
+    public static <T> EventImpl<T> injected(EventDispatcher dispatcher, Annotation[] qualifiers,
+            jakarta.enterprise.inject.spi.InjectionPoint injectionPoint) {
+        return new EventImpl<>(dispatcher, qualifiers, injectionPoint, null, true);
+    }
 
     public EventImpl(EventDispatcher dispatcher) {
         this(dispatcher, new Annotation[0], null, null);
@@ -61,9 +86,16 @@ public final class EventImpl<T> implements Event<T> {
     public EventImpl(EventDispatcher dispatcher, Annotation[] qualifiers,
             jakarta.enterprise.inject.spi.InjectionPoint injectionPoint,
             java.lang.reflect.Type selectedType) {
+        this(dispatcher, qualifiers, injectionPoint, selectedType, false);
+    }
+
+    private EventImpl(EventDispatcher dispatcher, Annotation[] qualifiers,
+            jakarta.enterprise.inject.spi.InjectionPoint injectionPoint,
+            java.lang.reflect.Type selectedType, boolean injected) {
         this.dispatcher = dispatcher;
         this.qualifiers = qualifiers;
         this.injectionPoint = injectionPoint;
+        this.injected = injected;
         if (selectedType != null) {
             this.selectedType = selectedType;
         } else if (injectionPoint != null) {
@@ -82,6 +114,28 @@ public final class EventImpl<T> implements Event<T> {
 
     public jakarta.enterprise.inject.spi.InjectionPoint getInjectionPoint() {
         return injectionPoint;
+    }
+
+    /**
+     * The reference to the injection point written in place of this {@code Event}. One the container did not inject
+     * throws, with a message that names the cause: the web container leaves its session behind.
+     */
+    @Serial
+    private Object writeReplace() throws ObjectStreamException {
+        if (!injected) {
+            throw new NotSerializableException("an Event obtained by select(...) or by a programmatic lookup cannot"
+                    + " move to another container: only one the container injected moves, by its injection point");
+        }
+        return io.vidocq.vauban.core.container.VaubanInjectionPoint.serialFormOf(injectionPoint);
+    }
+
+    /**
+     * Refuses a stream that carries an {@code Event} itself rather than its form: none is ever written, and its
+     * fields would read back {@code null}.
+     */
+    @Serial
+    private void readObject(ObjectInputStream in) throws InvalidObjectException {
+        throw new InvalidObjectException("an Event is read through its serial form only");
     }
 
     /** This Event's qualifiers as matching keys, converted on first use and kept. */

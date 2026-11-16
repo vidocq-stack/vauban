@@ -23,6 +23,8 @@ import jakarta.enterprise.inject.spi.Annotated;
 import jakarta.enterprise.inject.spi.Bean;
 import jakarta.enterprise.inject.spi.InjectionPoint;
 
+import java.io.NotSerializableException;
+import java.io.Serializable;
 import java.lang.annotation.Annotation;
 import java.lang.reflect.Field;
 import java.lang.reflect.Member;
@@ -138,6 +140,69 @@ public final class VaubanInjectionPoint implements InjectionPoint {
     @Override
     public boolean isTransient() {
         return member instanceof Field f && Modifier.isTransient(f.getModifiers());
+    }
+
+    /**
+     * What a built-in {@code Event} the container injected at {@code injectionPoint} writes in its place, so that a
+     * session bean holding it moves to another container (foy#114): a reference to the injection point, which reads
+     * back as what the importing container injects there.
+     *
+     * @param injectionPoint where the container injected it, {@code null} when it gave it with none
+     * @return the serial form
+     * @throws NotSerializableException if there is no injection point, or it belongs to no bean with a passivation id,
+     *                                  or names no field and no parameter
+     */
+    public static Serializable serialFormOf(InjectionPoint injectionPoint) throws NotSerializableException {
+        return InjectionPointReference.to(injectionPoint);
+    }
+
+    /**
+     * The member of {@code injectionPoint} as a reference to it names it, the same in two containers built from the
+     * same classes: its declaring class, its name and, for a constructor ({@code <init>}) or a method, its erased
+     * parameter types, as in {@code com.acme.Cart#init(jakarta.enterprise.event.Event)}. The declaring class tells a
+     * field from one a superclass declares with the same name, the parameter types an overloaded method from
+     * another. {@code null} when there is no member.
+     */
+    static String memberOf(InjectionPoint injectionPoint) {
+        return switch (injectionPoint.getMember()) {
+            case Field field -> field.getDeclaringClass().getName() + "#" + field.getName();
+            case java.lang.reflect.Constructor<?> constructor ->
+                    constructor.getDeclaringClass().getName() + "#<init>" + parameterTypes(constructor);
+            case java.lang.reflect.Method method ->
+                    method.getDeclaringClass().getName() + "#" + method.getName() + parameterTypes(method);
+            case null, default -> null;
+        };
+    }
+
+    private static String parameterTypes(java.lang.reflect.Executable executable) {
+        var names = new java.util.StringJoiner(",", "(", ")");
+        for (var parameterType : executable.getParameterTypes()) {
+            names.add(parameterType.getName());
+        }
+        return names.toString();
+    }
+
+    /** The position of the parameter {@code injectionPoint} is, or {@code -1} for a field. */
+    static int positionOf(InjectionPoint injectionPoint) {
+        return injectionPoint.getAnnotated() instanceof jakarta.enterprise.inject.spi.AnnotatedParameter<?> parameter
+                ? parameter.getPosition()
+                : -1;
+    }
+
+    /**
+     * The binary name of the declared type of the field or parameter {@code injectionPoint} is, its raw type: as in
+     * {@code jakarta.enterprise.event.Event}. {@code null} when it is neither.
+     */
+    static String typeOf(InjectionPoint injectionPoint) {
+        if (injectionPoint.getMember() instanceof Field field) {
+            return field.getType().getName();
+        }
+        int position = positionOf(injectionPoint);
+        if (injectionPoint.getMember() instanceof java.lang.reflect.Executable executable && position >= 0
+                && position < executable.getParameterCount()) {
+            return executable.getParameterTypes()[position].getName();
+        }
+        return null;
     }
 
     static Set<Annotation> extractQualifiersStatic(Field field) {

@@ -23,6 +23,12 @@ import jakarta.enterprise.inject.Instance;
 import jakarta.enterprise.inject.spi.Bean;
 import jakarta.enterprise.util.TypeLiteral;
 
+import java.io.InvalidObjectException;
+import java.io.NotSerializableException;
+import java.io.ObjectInputStream;
+import java.io.ObjectStreamException;
+import java.io.Serial;
+import java.io.Serializable;
 import java.lang.annotation.Annotation;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -38,21 +44,71 @@ import io.vidocq.vauban.core.context.CreationalContextImpl;
 /**
  * Implementation of {@link Instance} for programmatic bean lookup.
  * Delegates resolution to the {@link VaubanContainer} and its {@link VaubanBeanManager}.
+ *
+ * <p>Serializable, but never written itself: its container belongs to the one that built it. One the container
+ * injected into a bean ({@link #injected}) writes an {@link InjectionPointReference} instead, which reads back as the
+ * importing container's {@code Instance} at the same injection point, so a session bean holding it moves to another
+ * container (foy#114). One obtained by {@code select(...)} or by a programmatic lookup cannot be written.</p>
  */
-public final class InstanceImpl<T> implements Instance<T> {
+public final class InstanceImpl<T> implements Instance<T>, Serializable {
 
-    private final VaubanContainer container;
-    private final Class<T> type;
+    @Serial
+    private static final long serialVersionUID = 1L;
+
+    private final transient VaubanContainer container;
+    private final transient Class<T> type;
     /** Full resolution type (may be a ParameterizedType) — used in getBeans() to match synthetic beans exactly. */
-    private final java.lang.reflect.Type resolveType;
-    private final Annotation[] qualifiers;
-    private final jakarta.enterprise.inject.spi.InjectionPoint injectionPoint;
-    private final CreationalContextImpl<?> parentCreationalContext;
-    private final Map<Object, jakarta.enterprise.context.spi.CreationalContext<?>> dependentInstances = new IdentityHashMap<>();
+    private final transient java.lang.reflect.Type resolveType;
+    private final transient Annotation[] qualifiers;
+    private final transient jakarta.enterprise.inject.spi.InjectionPoint injectionPoint;
+    private final transient CreationalContextImpl<?> parentCreationalContext;
+    private final transient Map<Object, jakarta.enterprise.context.spi.CreationalContext<?>> dependentInstances =
+            new IdentityHashMap<>();
+    /** The container injected it at {@link #injectionPoint}: it moves by that injection point. */
+    private final transient boolean injected;
     // The qualifiers of this Instance, reduced to their keys once: select converts, get and its
     // friends match. Lazily computed, read-only after.
     @SuppressWarnings("java:S3077")
-    private volatile Set<io.vidocq.vauban.core.annotation.AnnotationKey> keys;
+    private transient volatile Set<io.vidocq.vauban.core.annotation.AnnotationKey> keys;
+
+    /**
+     * The {@code Instance} the container injects at {@code injectionPoint}: the one that moves with the bean that
+     * holds it, written as a reference to that injection point.
+     */
+    static <T> InstanceImpl<T> injected(VaubanContainer container, Class<T> type, java.lang.reflect.Type resolveType,
+                                        Annotation[] qualifiers,
+                                        jakarta.enterprise.inject.spi.InjectionPoint injectionPoint) {
+        return new InstanceImpl<>(container, type, resolveType, qualifiers, injectionPoint, null, true);
+    }
+
+    /** This lookup, as the one the container injects at its injection point: see {@link #injected}. */
+    InstanceImpl<T> asInjected() {
+        return new InstanceImpl<>(container, type, resolveType, qualifiers, injectionPoint, parentCreationalContext,
+                true);
+    }
+
+    /**
+     * The reference to the injection point written in place of this {@code Instance}. One the container did not
+     * inject throws, with a message that names the cause: the web container leaves its session behind.
+     */
+    @Serial
+    private Object writeReplace() throws ObjectStreamException {
+        if (!injected) {
+            throw new NotSerializableException("an Instance or a Provider obtained by select(...), by a programmatic"
+                    + " lookup or as a parameter of an observer method cannot move to another container: only one the"
+                    + " container injected into a bean moves, by its injection point");
+        }
+        return InjectionPointReference.to(injectionPoint);
+    }
+
+    /**
+     * Refuses a stream that carries an {@code Instance} itself rather than its form: none is ever written, and its
+     * fields would read back {@code null}.
+     */
+    @Serial
+    private void readObject(ObjectInputStream in) throws InvalidObjectException {
+        throw new InvalidObjectException("an Instance is read through its serial form only");
+    }
 
     /** This lookup's qualifiers as matching keys, converted on first use and kept. */
     private Set<io.vidocq.vauban.core.annotation.AnnotationKey> keys() {
@@ -99,11 +155,19 @@ public final class InstanceImpl<T> implements Instance<T> {
                         Annotation[] qualifiers,
                         jakarta.enterprise.inject.spi.InjectionPoint injectionPoint,
                         CreationalContextImpl<?> parentCreationalContext) {
+        this(container, type, resolveType, qualifiers, injectionPoint, parentCreationalContext, false);
+    }
+
+    private InstanceImpl(VaubanContainer container, Class<T> type, java.lang.reflect.Type resolveType,
+                         Annotation[] qualifiers,
+                         jakarta.enterprise.inject.spi.InjectionPoint injectionPoint,
+                         CreationalContextImpl<?> parentCreationalContext, boolean injected) {
         this.container = container;
         this.type = type;
         this.resolveType = resolveType != null ? resolveType : type;
         this.injectionPoint = injectionPoint;
         this.parentCreationalContext = parentCreationalContext;
+        this.injected = injected;
         // If qualifiers are empty, default to @Any and @Default
         if (qualifiers == null || qualifiers.length == 0) {
             this.qualifiers = new Annotation[] {

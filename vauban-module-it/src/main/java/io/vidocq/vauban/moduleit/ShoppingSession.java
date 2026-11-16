@@ -20,14 +20,17 @@
 package io.vidocq.vauban.moduleit;
 
 import jakarta.enterprise.context.SessionScoped;
+import jakarta.enterprise.event.Event;
+import jakarta.enterprise.inject.Instance;
+import jakarta.enterprise.inject.spi.BeanManager;
 import jakarta.inject.Inject;
 import java.io.Serial;
 import java.io.Serializable;
 
 /**
  * A session bean that holds two client proxies the processor rendered as source: the class-typed one of
- * {@link Till} and the interface-typed one of {@link Clerk}. A session that holds it moves to another container on the
- * module path, with no {@code opens}.
+ * {@link Till} and the interface-typed one of {@link Clerk}, and the built-in {@code Event}, {@code Instance} and
+ * {@code BeanManager}. A session that holds it moves to another container on the module path, with no {@code opens}.
  */
 @SessionScoped
 public class ShoppingSession implements Serializable {
@@ -40,6 +43,15 @@ public class ShoppingSession implements Serializable {
 
     @Inject
     Clerk clerk;
+
+    @Inject
+    Event<Receipt> receipts;
+
+    @Inject
+    Instance<Till> tills;
+
+    @Inject
+    BeanManager beanManager;
 
     private String owner = "nobody";
 
@@ -57,5 +69,17 @@ public class ShoppingSession implements Serializable {
 
     public Clerk clerk() {
         return clerk;
+    }
+
+    public Event<Receipt> receipts() {
+        return receipts;
+    }
+
+    public Instance<Till> tills() {
+        return tills;
+    }
+
+    public BeanManager beanManager() {
+        return beanManager;
     }
 }

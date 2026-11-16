@@ -46,10 +46,13 @@ import java.io.ObjectOutputStream;
 import java.io.ObjectStreamConstants;
 import java.io.UncheckedIOException;
 import java.lang.reflect.Proxy;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -221,6 +224,104 @@ class SessionPassivationTest {
             shopper.visit().page();
             assertEquals(2, b.select(Visit.class).pages(), "the field reaches B's request instance");
         });
+    }
+
+    @Test
+    void anInjectedEventFiresInTheImportingContainer() throws Exception {
+        var a = container(Desk.class, Signals.class, Catalog.class);
+        var written = writeADesk(a, "ada");
+
+        var b = container(Desk.class, Signals.class, Catalog.class);
+        WebContexts.activateSession(read(b, written));
+        var desk = b.select(Desk.class);
+        desk.signals().fire(new Signal("moved"));
+
+        assertEquals("ada", desk.owner(), "the session bean moved with its state");
+        assertEquals(List.of("moved"), b.select(Signals.class).received(), "B's observer got the signal");
+        assertEquals(List.of(), a.select(Signals.class).received(), "A's observer did not");
+    }
+
+    @Test
+    void anEventInjectedIntoAnInitializerMovesWithItsQualifiers() throws Exception {
+        var a = container(Desk.class, Signals.class, Catalog.class);
+        var written = writeADesk(a, "bob");
+
+        var b = container(Desk.class, Signals.class, Catalog.class);
+        WebContexts.activateSession(read(b, written));
+        b.select(Desk.class).urgent().fire(new Signal("now"));
+
+        assertEquals(Set.of("now", "urgent now"), Set.copyOf(b.select(Signals.class).received()),
+                "B's observers got the signal, the @Urgent one included");
+        assertEquals(List.of(), a.select(Signals.class).received(), "A's observers did not");
+    }
+
+    @Test
+    void anInjectedInstanceResolvesInTheImportingContainer() throws Exception {
+        var a = container(Desk.class, Signals.class, Catalog.class);
+        a.select(Catalog.class).mark("A");
+        var written = writeADesk(a, "cy");
+
+        var b = container(Desk.class, Signals.class, Catalog.class);
+        b.select(Catalog.class).mark("B");
+        WebContexts.activateSession(read(b, written));
+        var catalog = b.select(Desk.class).catalogs().get();
+
+        assertSame(b.select(Catalog.class), catalog, "get() gives B's client proxy of the application bean");
+        assertEquals(List.of("B"), catalog.marks(), "B's catalog, not A's");
+    }
+
+    @Test
+    void anInjectedBeanManagerIsTheImportingOne() throws Exception {
+        var a = container(Desk.class, Signals.class, Catalog.class);
+        var written = writeADesk(a, "dee");
+
+        var b = container(Desk.class, Signals.class, Catalog.class);
+        WebContexts.activateSession(read(b, written));
+
+        assertSame(b.getBeanManager(), b.select(Desk.class).beanManager());
+    }
+
+    @Test
+    void aSelectedInstanceCannotBeWritten() {
+        var a = container(Picker.class, Catalog.class);
+        var exported = new MapSessionStore();
+        WebContexts.activateSession(exported);
+        a.select(Picker.class).pick();
+        WebContexts.deactivateSession();
+
+        var thrown = assertThrows(NotSerializableException.class, () -> write(exported));
+
+        assertTrue(thrown.getMessage().startsWith("an Instance or a Provider obtained by select(...)"),
+                thrown.getMessage());
+    }
+
+    @Test
+    void aBuiltInReadWithNoImportingContainerFails() throws Exception {
+        var a = container(Desk.class, Signals.class, Catalog.class);
+        WebContexts.activateSession(new MapSessionStore());
+        var desk = a.select(Desk.class);
+        var written = List.of(bytesOf(desk.signals()), bytesOf(desk.catalogs()), bytesOf(desk.beanManager()));
+        WebContexts.deactivateSession();
+
+        for (byte[] bytes : written) {
+            var thrown = assertThrows(InvalidObjectException.class, () -> readObject(bytes));
+            assertEquals("no importing container bound", thrown.getMessage());
+        }
+    }
+
+    @Test
+    void anInjectionPointTheImportingContainerLacksFails() throws Exception {
+        var a = container(Desk.class, Signals.class, Catalog.class);
+        WebContexts.activateSession(new MapSessionStore());
+        byte[] written = bytesOf(a.select(Desk.class).signals());
+        WebContexts.deactivateSession();
+        // The field was renamed between the two containers: the stream names it by its old name.
+        var renamed = renamed(written, Desk.class.getName() + "#signals", Desk.class.getName() + "#signalz");
+
+        var b = container(Desk.class, Signals.class, Catalog.class);
+        var thrown = assertThrows(InvalidObjectException.class, () -> readIn(b.getBeanManager(), renamed));
+
+        assertTrue(thrown.getMessage().contains(Desk.class.getName() + "#signalz"), thrown.getMessage());
     }
 
     @Test
@@ -492,6 +593,35 @@ class SessionPassivationTest {
     private static <T> Bean<T> bean(VaubanContainer container, Class<T> type) {
         var beanManager = container.getBeanManager();
         return (Bean<T>) beanManager.resolve(beanManager.getBeans(type));
+    }
+
+    /** The session of a desk {@code owner} used in {@code container}, written as the web container writes it. */
+    private static Map<String, byte[]> writeADesk(VaubanContainer container, String owner) throws IOException {
+        var exported = new MapSessionStore();
+        WebContexts.activateSession(exported);
+        container.select(Desk.class).owner(owner);
+        WebContexts.deactivateSession();
+        return write(exported);
+    }
+
+    /**
+     * {@code bytes} with the one string {@code from} replaced by {@code to}, of the same length: what a stream written
+     * before a rename would name. The modified UTF-8 of an ASCII string is its bytes, after their length.
+     */
+    private static byte[] renamed(byte[] bytes, String from, String to) {
+        byte[] target = from.getBytes(StandardCharsets.US_ASCII);
+        byte[] replacement = to.getBytes(StandardCharsets.US_ASCII);
+        assertEquals(target.length, replacement.length, "a rename of the same length keeps the stream valid");
+        var renamed = bytes.clone();
+        int found = -1;
+        for (int i = 0; i + target.length <= renamed.length && found < 0; i++) {
+            if (Arrays.equals(renamed, i, i + target.length, target, 0, target.length)) {
+                found = i;
+            }
+        }
+        assertTrue(found >= 0, "the stream names " + from);
+        System.arraycopy(replacement, 0, renamed, found, replacement.length);
+        return renamed;
     }
 
     /** Each attribute to its own bytes, as the web container writes a session it moves. */

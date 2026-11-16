@@ -1134,7 +1134,7 @@ public final class VaubanContainer implements AutoCloseable {
         if (paramType == Event.class) {
             var eventIp = member == null ? null : parameterInjectionPoint(genericType,
                     QualifierHelper.collectQualifierSet(qualifiers), ownerBean, member, param, paramPosition);
-            return new EventImpl<>(eventDispatcher, qualifiers, eventIp);
+            return EventImpl.injected(eventDispatcher, qualifiers, eventIp);
         }
         if (paramType == Instance.class || paramType == jakarta.inject.Provider.class) {
             return instanceParameter(genericType, qualifiers, ownerBean, member, param, paramPosition);
@@ -1204,7 +1204,30 @@ public final class VaubanContainer implements AutoCloseable {
         }
         var ip = parameterInjectionPoint(targetType, defaultedQualifiers(qualifiers), ownerBean, member, param,
                 paramPosition);
-        return new InstanceImpl<>(this, instanceType, ip).select(qualifiers);
+        return ((InstanceImpl<?>) new InstanceImpl<>(this, instanceType, ip).select(qualifiers)).asInjected();
+    }
+
+    /**
+     * What this container injects at {@code injectionPoint}, an {@code Event}, {@code Instance} or {@code Provider}
+     * field or parameter: the object an injection there gives, built by the same code, with the injection point's
+     * type and qualifiers. A reference another container wrote reads back as it ({@link InjectionPointReference}). It
+     * creates no bean instance: an {@code Instance} resolves its beans at {@code get()}, as the injected one does.
+     */
+    Object injectedBuiltIn(jakarta.enterprise.inject.spi.InjectionPoint injectionPoint) {
+        var member = injectionPoint.getMember();
+        if (injectionPoint.getBean() instanceof ManagedBean<?> owner
+                && member instanceof java.lang.reflect.Field field) {
+            return beanInjector.builtInFieldValue(owner, field);
+        }
+        var type = injectionPoint.getType();
+        var qualifiers = injectionPoint.getQualifiers().toArray(new Annotation[0]);
+        if ((type instanceof ParameterizedType pt ? pt.getRawType() : type) == Event.class) {
+            return EventImpl.injected(eventDispatcher, qualifiers, injectionPoint);
+        }
+        int position = VaubanInjectionPoint.positionOf(injectionPoint);
+        var parameter = member instanceof java.lang.reflect.Executable executable && position >= 0
+                ? executable.getParameters()[position] : null;
+        return instanceParameter(type, qualifiers, injectionPoint.getBean(), member, parameter, position);
     }
 
     /** The reference to a {@code @Dependent} bean, created while its injection point is the current one. */

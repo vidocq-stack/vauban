@@ -35,6 +35,11 @@ import jakarta.enterprise.event.Event;
 import jakarta.enterprise.inject.Instance;
 import jakarta.enterprise.inject.spi.*;
 
+import java.io.InvalidObjectException;
+import java.io.ObjectInputStream;
+import java.io.ObjectStreamException;
+import java.io.Serial;
+import java.io.Serializable;
 import java.lang.annotation.Annotation;
 import java.lang.reflect.Type;
 import java.util.*;
@@ -42,9 +47,17 @@ import java.util.*;
 /**
  * Minimal BeanManager implementation for Vauban.
  * Only the essential methods are functional; the rest throw UnsupportedOperationException.
+ *
+ * <p>Serializable, but never written itself: it belongs to its container. It writes a {@link BeanManagerReference}
+ * instead, which reads back as the importing container's bean manager, so a session bean that holds the built-in
+ * {@code BeanManager} moves to another container (foy#114). Serialization calls {@code writeReplace} on a
+ * serializable class only.</p>
  */
 @SuppressWarnings("java:S3776") // CDI container logic has inherent complexity
-public final class VaubanBeanManager implements BeanManager {
+public final class VaubanBeanManager implements BeanManager, Serializable {
+
+    @Serial
+    private static final long serialVersionUID = 1L;
 
     // Volatile immutable sets: assigned once at startup, read-only after — thread-safe by design
     @SuppressWarnings("java:S3077")
@@ -79,18 +92,38 @@ public final class VaubanBeanManager implements BeanManager {
         return customInterceptorBindingTypes.contains(annotationType);
     }
 
-    private final VaubanContainer container;
-    private final Map<Class<? extends Annotation>, List<Context>> contexts;
+    private final transient VaubanContainer container;
+    private final transient Map<Class<? extends Annotation>, List<Context>> contexts;
     private static final String MSG_NOT_IMPLEMENTED = "Not yet implemented";
     private static final String MSG_NOT_A_QUALIFIER = "Not a qualifier: ";
 
-    private final Collection<ManagedBean<?>> beans;
-    private final EventDispatcher eventDispatcher;
-    private final InterceptorManager interceptorManager;
-    private List<Bean<?>> builtInBeans;
+    private final transient Collection<ManagedBean<?>> beans;
+    private final transient EventDispatcher eventDispatcher;
+    private final transient InterceptorManager interceptorManager;
+    private transient List<Bean<?>> builtInBeans;
 
     public EventDispatcher getEventDispatcher() {
         return eventDispatcher;
+    }
+
+    /** The container this bean manager belongs to. */
+    VaubanContainer container() {
+        return container;
+    }
+
+    /** The mark written in place of this bean manager: it reads back as the importing container's. */
+    @Serial
+    private Object writeReplace() throws ObjectStreamException {
+        return new BeanManagerReference();
+    }
+
+    /**
+     * Refuses a stream that carries a bean manager itself rather than its form: none is ever written, and its fields
+     * would read back {@code null}.
+     */
+    @Serial
+    private void readObject(ObjectInputStream in) throws InvalidObjectException {
+        throw new InvalidObjectException("a bean manager is read through its serial form only");
     }
 
     public VaubanBeanManager(VaubanContainer container,

@@ -19,7 +19,6 @@
  */
 package io.vidocq.vauban.core.container;
 
-import io.vidocq.vauban.api.Passivation;
 import jakarta.enterprise.inject.spi.Bean;
 import jakarta.enterprise.inject.spi.BeanManager;
 import java.io.InvalidObjectException;
@@ -64,13 +63,8 @@ record ClientProxyReference(String passivationId, String typeName) implements Se
         if (passivationId == null || typeName == null) {
             throw new InvalidObjectException("an incomplete client proxy reference in the stream");
         }
-        BeanManager beanManager = Passivation.importingBeanManager()
-                .orElseThrow(() -> new InvalidObjectException("no importing container bound"));
-        Bean<?> bean = beanManager.getPassivationCapableBean(passivationId);
-        if (bean == null) {
-            throw new InvalidObjectException("no bean " + passivationId
-                    + " in the importing container: it was removed, renamed or vetoed");
-        }
+        BeanManager beanManager = ImportingContainer.beanManager();
+        Bean<?> bean = ImportingContainer.bean(beanManager, passivationId);
         if (!beanManager.isNormalScope(bean.getScope())) {
             throw new InvalidObjectException("the bean " + passivationId + " has the pseudo-scope "
                     + bean.getScope().getName() + " in the importing container: a client proxy reads back as the"

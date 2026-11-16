@@ -128,6 +128,28 @@ class SessionMoveModulePathTest {
         assertEquals(List.of(), runtimeGenerated, "still no class generated at run time, in either container");
     }
 
+    @Test
+    @DisplayName("the built-in Event, Instance and BeanManager the session bean holds move with it")
+    void theBuiltInsOfASessionBeanMove() throws Exception {
+        var a = container();
+        var exported = new MapStore();
+        WebContexts.activateSession(exported);
+        a.select(ShoppingSession.class).owner("bob");
+        WebContexts.deactivateSession();
+        var written = write(exported);
+
+        var b = container();
+        WebContexts.activateSession(read(b, written));
+        var moved = b.select(ShoppingSession.class);
+        moved.receipts().fire(new Receipt("r1"));
+
+        assertEquals("bob", moved.owner(), "the session bean moved with its state");
+        assertEquals(List.of("receipt r1"), b.select(Till.class).marks(), "B's observer got the receipt");
+        assertEquals(List.of(), a.select(Till.class).marks(), "A's did not");
+        assertSame(b.select(Till.class), moved.tills().get(), "the Instance gives B's own proxy");
+        assertSame(b.getBeanManager(), moved.beanManager(), "B's bean manager");
+    }
+
     // --- helpers ---
 
     /** A session held in a map, as a web container would hold its attributes. */
