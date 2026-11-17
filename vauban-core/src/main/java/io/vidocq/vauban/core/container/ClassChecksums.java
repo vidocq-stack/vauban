@@ -25,6 +25,7 @@ import io.vidocq.vauban.indexer.model.ClassInfo;
 import io.vidocq.vauban.indexer.model.DotName;
 import io.vidocq.vauban.indexer.model.FieldInfo;
 import io.vidocq.vauban.indexer.model.MethodInfo;
+import io.vidocq.vauban.indexer.model.TypeAnnotationInfo;
 import io.vidocq.vauban.indexer.model.TypeInfo;
 import java.lang.classfile.Attributes;
 import java.lang.classfile.ClassFile;
@@ -149,6 +150,29 @@ final class ClassChecksums {
                 type(type.genericSuperclass());
                 list(type.genericInterfaces(), this::type);
             }
+            typeAnnotations(type.typeAnnotations());
+        }
+
+        /**
+         * The annotations on the types a class, a field or a method declares, which the extensions see
+         * (BUG-20261117-60), where there are any: a class without them keeps the checksum it had before the index read
+         * them, and with it the record of a build by an earlier Vauban.
+         */
+        private void typeAnnotations(List<TypeAnnotationInfo> annotations) {
+            if (annotations.isEmpty()) {
+                return;
+            }
+            text.append('Y');
+            list(annotations, annotation -> {
+                string(annotation.target().name());
+                number(annotation.index());
+                number(annotation.boundIndex());
+                list(annotation.path(), step -> {
+                    string(step.kind().name());
+                    number(step.typeArgumentIndex());
+                });
+                annotation(annotation.annotation());
+            });
         }
 
         private static boolean hasTypeArguments(ClassInfo type) {
@@ -162,6 +186,7 @@ final class ClassChecksums {
             type(field.type());
             number(field.accessFlags());
             list(field.annotations(), this::annotation);
+            typeAnnotations(field.typeAnnotations());
         }
 
         private void method(MethodInfo method) {
@@ -178,6 +203,7 @@ final class ClassChecksums {
             list(method.annotations(), this::annotation);
             value(method.defaultValue());
             list(method.typeParameters(), this::type);
+            typeAnnotations(method.typeAnnotations());
         }
 
         private void annotation(AnnotationInfo annotation) {

@@ -27,6 +27,7 @@ import io.vidocq.vauban.indexer.model.DotName;
 import io.vidocq.vauban.indexer.model.FieldInfo;
 import io.vidocq.vauban.indexer.model.MethodInfo;
 import io.vidocq.vauban.indexer.model.ParameterInfo;
+import io.vidocq.vauban.indexer.model.TypeAnnotationInfo.Target;
 import io.vidocq.vauban.indexer.model.TypeInfo;
 
 import javax.lang.model.element.AnnotationMirror;
@@ -138,9 +139,20 @@ public final class ElementScanner {
             default -> ClassKind.CLASS;
         };
 
+        // The annotations on the types the class declares (BUG-20261117-60)
+        var typeAnnotations = typeAnnotations().types(typeElement.getInterfaces(), Target.INTERFACE)
+                .typeParameters(typeElement.getTypeParameters());
+        if (superMirror.getKind() != TypeKind.NONE) {
+            typeAnnotations.type(superMirror, Target.SUPERCLASS, 0);
+        }
+
         return new ClassInfo(name, superName, interfaces, accessFlags, fields, methods, annotations, kind,
                 typeElement.getSimpleName().toString(), typeParameters.typeParameters(), false, genericSuperclass,
-                genericInterfaces);
+                genericInterfaces, typeAnnotations.found());
+    }
+
+    private MirrorTypeAnnotations typeAnnotations() {
+        return new MirrorTypeAnnotations(this::annotationInfo, ElementScanner::isJavaLangObject);
     }
 
     /**
@@ -224,7 +236,8 @@ public final class ElementScanner {
         var type = typeMirrorToTypeInfo(field.asType());
         var accessFlags = modifiersToFlags(field.getModifiers());
         var annotations = scanAnnotations(field);
-        return new FieldInfo(name, type, accessFlags, annotations);
+        return new FieldInfo(name, type, accessFlags, annotations,
+                typeAnnotations().type(field.asType(), Target.FIELD, 0).found());
     }
 
     private MethodInfo scanMethod(ExecutableElement method) {
@@ -248,27 +261,39 @@ public final class ElementScanner {
         var annotations = scanAnnotations(method);
         var defaultValue = method.getDefaultValue() == null ? null : convertAnnotationValue(method.getDefaultValue());
 
+        var typeAnnotations = typeAnnotations().type(method.getReturnType(), Target.RETURN, 0)
+                .parameters(method.getParameters()).types(method.getThrownTypes(), Target.THROWS)
+                .typeParameters(method.getTypeParameters());
+        if (MirrorTypeAnnotations.isPresent(method.getReceiverType())) {
+            typeAnnotations.type(method.getReceiverType(), Target.RECEIVER, 0);
+        }
+        if (method.getKind() == ElementKind.CONSTRUCTOR) {
+            typeAnnotations.constructor(method);
+        }
+
         return new MethodInfo(name, returnType, parameters, exceptionTypes, accessFlags, annotations, defaultValue,
-                new TypeParameterReader(method).typeParameters());
+                new TypeParameterReader(method).typeParameters(), typeAnnotations.found());
     }
 
     private List<AnnotationInfo> scanAnnotations(Element element) {
         var result = new ArrayList<AnnotationInfo>();
         for (var mirror : element.getAnnotationMirrors()) {
-            var annName = binaryName((TypeElement) mirror.getAnnotationType().asElement());
-            var members = new LinkedHashMap<String, io.vidocq.vauban.indexer.model.AnnotationValue>();
-
-            for (var entry : mirror.getElementValues().entrySet()) {
-                var memberName = entry.getKey().getSimpleName().toString();
-                var memberValue = convertAnnotationValue(entry.getValue());
-                if (memberValue != null) {
-                    members.put(memberName, memberValue);
-                }
-            }
-
-            result.add(new AnnotationInfo(annName, members));
+            result.add(annotationInfo(mirror));
         }
         return result;
+    }
+
+    private AnnotationInfo annotationInfo(AnnotationMirror mirror) {
+        var annName = binaryName((TypeElement) mirror.getAnnotationType().asElement());
+        var members = new LinkedHashMap<String, io.vidocq.vauban.indexer.model.AnnotationValue>();
+        for (var entry : mirror.getElementValues().entrySet()) {
+            var memberName = entry.getKey().getSimpleName().toString();
+            var memberValue = convertAnnotationValue(entry.getValue());
+            if (memberValue != null) {
+                members.put(memberName, memberValue);
+            }
+        }
+        return new AnnotationInfo(annName, members);
     }
 
     private io.vidocq.vauban.indexer.model.AnnotationValue convertAnnotationValue(

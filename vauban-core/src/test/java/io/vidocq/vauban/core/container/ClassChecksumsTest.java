@@ -31,6 +31,7 @@ import io.vidocq.vauban.indexer.model.DotName;
 import io.vidocq.vauban.indexer.model.FieldInfo;
 import io.vidocq.vauban.indexer.model.MethodInfo;
 import io.vidocq.vauban.indexer.model.ParameterInfo;
+import io.vidocq.vauban.indexer.model.TypeAnnotationInfo;
 import io.vidocq.vauban.indexer.model.TypeInfo;
 import io.vidocq.vauban.indexer.scanner.ClassFileScanner;
 import java.io.IOException;
@@ -251,6 +252,38 @@ class ClassChecksumsTest {
             assertEquals(model.flags().flagsMask(), unsignedShort(classFile, end), what);
             assertEquals(model.thisClass().index(), unsignedShort(classFile, end + 2), what);
         });
+    }
+
+    /**
+     * The annotations on the types a class declares count, which the extensions see (BUG-20261117-60): on a field, a
+     * method or the class, by their target, index, bound and path. A class without them keeps the checksum it had, and
+     * with it the record an earlier Vauban wrote: {@link #aClassWithRawSupertypesKeepsItsChecksum} pins it.
+     */
+    @Test
+    @DisplayName("the annotations on types count, where a class has any")
+    void typeAnnotationsCount() {
+        var marker = new AnnotationInfo(B, Map.of());
+        var onField = TypeAnnotationInfo.of(TypeAnnotationInfo.Target.FIELD, 0, marker);
+        var inField = TypeAnnotationInfo.of(TypeAnnotationInfo.Target.FIELD, 0, marker,
+                TypeAnnotationInfo.Step.typeArgument(0));
+        var string = new TypeInfo.ClassType(DotName.of("java.lang.String"));
+        var plain = new FieldInfo("f", string, 2, List.of());
+        var method = new MethodInfo("m", string, List.of(), List.of(), 1, List.of(), null, null,
+                List.of(TypeAnnotationInfo.of(TypeAnnotationInfo.Target.RETURN, 0, marker)));
+        var onClass = new ClassInfo(A, DotName.of("java.lang.Object"), List.of(), 1, List.of(), List.of(), List.of(),
+                ClassInfo.ClassKind.CLASS, "A", List.of(), true, null, null,
+                List.of(TypeAnnotationInfo.of(TypeAnnotationInfo.Target.SUPERCLASS, 0, marker)));
+        long none = ClassChecksums.ofModel(type(List.of(plain), List.of(), List.of()));
+
+        assertNotEquals(none, ClassChecksums.ofModel(type(List.of(new FieldInfo("f", string, 2, List.of(),
+                List.of(onField))), List.of(), List.of())));
+        assertNotEquals(ClassChecksums.ofModel(type(List.of(new FieldInfo("f", string, 2, List.of(),
+                List.of(onField))), List.of(), List.of())), ClassChecksums.ofModel(type(List.of(new FieldInfo("f",
+                string, 2, List.of(), List.of(inField))), List.of(), List.of())));
+        assertNotEquals(ClassChecksums.ofModel(type(List.of(), List.of(new MethodInfo("m", string, List.of(),
+                List.of(), 1, List.of())), List.of())), ClassChecksums.ofModel(type(List.of(), List.of(method),
+                List.of())));
+        assertNotEquals(ClassChecksums.ofModel(type(List.of(), List.of(), List.of())), ClassChecksums.ofModel(onClass));
     }
 
     @Test

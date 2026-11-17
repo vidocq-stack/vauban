@@ -58,6 +58,23 @@ suspected cause, status. Updated on every investigation.
   `deploymentErrors`, a `DeploymentException` in the processor, at start and frozen).
 - **Found by**: the review of BUG-20261118-04.
 
+## BUG-20261118-06 — The processor misses a type-use-only annotation on a constructor
+
+- **Date**: 2026-11-18
+- **Status**: OPEN
+- **Module**: `vauban-processor` (`apt.MirrorTypeAnnotations`)
+- **Symptom**: `@A Fixture(int size) {}`, `@A` targeting `TYPE_USE` only: the class file records `@A` on the
+  constructor's return type (`METHOD_RETURN`), the bytecode scan indexes it on the constructor's `RETURN` target, the
+  processor does not. An annotation that targets `TYPE_USE` and `CONSTRUCTOR` is indexed by both.
+- **Repro**: `ElementScannerTypeAnnotationsTest#aTypeUseOnlyAnnotationOnAConstructor` in `vauban-processor`,
+  disabled with this id.
+- **Cause (hypothesis)**: javac's model has the annotation neither in the constructor's `getAnnotationMirrors()` nor
+  on its `void` return type; it may be reachable through the tree API (`com.sun.source`), which the processor does
+  not use.
+- **Found by**: BUG-20261117-60, lane L2.
+
+---
+
 ## BUG-20261118-05 — An exception of `@Enhancement` is swallowed outside the full extension cycle
 
 - **Date**: 2026-11-18
@@ -179,10 +196,11 @@ suspected cause, status. Updated on every investigation.
 ## BUG-20261117-60 — The language model shows no annotation on a type
 
 - **Date**: 2026-11-18
-- **Status**: OPEN — fixed at start (index and language model); the processor and the frozen record follow
+- **Status**: FIXED — in the index, at start, in the processor and frozen; a constructor's type-use-only annotation is
+  missing in the processor (BUG-20261118-06)
 - **Module**: `vauban-indexer` (`model.TypeAnnotationInfo`, `scanner.ClassFileScanner`,
-  `scanner.TypeAnnotationReader`), `vauban-core` (`langmodel.types`, `langmodel.declarations`), `vauban-processor`
-  (`apt.ElementScanner`), `vauban-core` (`container.ClassChecksums`)
+  `scanner.TypeAnnotationReader`), `vauban-core` (`langmodel.types`, `langmodel.declarations`,
+  `container.ClassChecksums`), `vauban-processor` (`apt.ElementScanner`, `apt.MirrorTypeAnnotations`)
 - **Symptom**: every `annotations()` of a type of the language model (`jakarta.enterprise.lang.model.types`) is
   empty, in the processor, at start and frozen: `List<@A String>`, `@A String field`, `String @A []`,
   `extends @A Base<@B T>`, `<@A T extends @B Number>`, `throws @A Exception` and an annotated receiver. A build
@@ -207,16 +225,38 @@ suspected cause, status. Updated on every investigation.
   and `FieldInfo` gain a `typeAnnotations` component, in a canonical order, every earlier constructor kept.
   `ClassFileScanner` reads them through `TypeAnnotationReader`, which follows a type path along the index's type:
   `Outer.@A Inner` is kept, `@A Outer.Inner`, which the language model has no type for, is left out, by the depth of
-  each inner class the `InnerClasses` attribute gives. The language model's `TypeMapper` walks a type and its use
+  each inner class the `InnerClasses` attribute gives, read only for a class whose types carry annotations, each class
+  of a chain of `InnerClasses` entries counted once: entries that name each other as outer classes, which the JVM
+  does not check, end the count. An inner member class's constructor without `MethodParameters` (javac before Java
+  21) takes its outer instance first. The language model's `TypeMapper` walks a type and its use
   together (`TypeUse`); a `TypeParameterScope` of the method, then of its class, annotates the bounds of a type
   variable where it is used as its type parameter declares them, and gives the class's `typeParameters()` with
   their own annotations. The types share their annotation queries (`AnnotatedTypeUse`); the annotations take no part
   in their equality.
-- **Waits for**: a receiver type (BUG-20261117-53), a method's type parameters (BUG-20261117-51) and a generic
-  `throws` type at start (BUG-20261117-52) carry their annotations once those land: `VaubanMethodInfo.typeUse` gives
-  their use, and the index already holds their annotations. A constructor's return type shows the annotations on the
-  constructor's `RETURN` target, placed on the class, once BUG-20261117-54 gives it the class. Three tests of
-  `BceTypeAnnotationsTest` are disabled with those ids.
+- **Fix (processor)**: `ElementScanner` reads the annotations on types from the compiler's model
+  (`MirrorTypeAnnotations`) into the same `TypeAnnotationInfo`s: runtime-retained ones only, a parameter at its
+  position in the parameters the processor records (no outer instance, no enum name and ordinal), a bound at its
+  position in the bounds it records, a constructor's annotation that applies to a type use on its `RETURN` target.
+  `ElementScannerTypeAnnotationsTest` checks that both indexes agree, member by member. JDK-8225377 (the compiler
+  gives the types of a class of the class path without their annotations) does not show with the compiler of Java
+  25: `TypeAnnotationsProcessorTest#aClassPathClassShowsItsTypeAnnotations` reads a library compiled apart and sees
+  every annotation; with the class-file read the brief planned switched off it stays green (`stack-l2-red.log`,
+  "PROOF JDK-8225377"), so the processor reads no class file.
+- **Fix (frozen)**: `ClassChecksums` counts the type annotations of a class, a field and a method where there are
+  any: the record of a build by an earlier Vauban stays valid for a class without them
+  (`aClassWithRawSupertypesKeepsItsChecksum` keeps its golden value) and is refused for a class with them, so the
+  start runs the extensions again. `TypeAnnotationsGenerationTest` in `vauban-maven-plugin` shows that `vauban:generate`
+  runs an `@Enhancement` with the annotations shown.
+- **Verification**: `stack-l2-red.log`, "RED BUG-20261117-60 at start" (red on 81fab2cb), "RED BUG-20261117-60 in the
+  processor" (red on ad4703f0), "RED BUG-20261117-60 frozen" (`ClassChecksumsTest#typeAnnotationsCount`, red on
+  ad4703f0); review round 1, "RED review round 1 on f6d0fbc1" (`ClassFileScannerTypeAnnotationsTest`: the scan of a
+  class with cyclic `InnerClasses` entries timed out, a constructor without `MethodParameters` numbered its
+  parameter on the outer instance); `stack-l2-e1.log` (reactor green with E1); `stack-l2-e2.log`, "E2 before commit: full reactor install
+  with tests" (green).
+- **With BUG-20261117-51 to 54**: a method's `typeParameters()`, its `receiverType()`, a generic `throws` type and a
+  constructor's `returnType()` read their annotations through `VaubanMethodInfo.typeParameterScope()` and `typeUse`
+  (`RECEIVER`, `THROWS`, `RETURN`), at start and in the processor, whose `ElementScanner` records the method's own
+  type parameters, so that a method's `<T>` shadows the class's `T` with its own bounds and their annotations.
 - **Found by**: the language model TCK probe (BUG-20261117-40, `vauban-tickets/40.md`, group 1).
 
 ## BUG-20261117-54 — A constructor's `name()` is `<init>` and its `returnType()` is `void`
@@ -317,9 +357,10 @@ suspected cause, status. Updated on every investigation.
   (`ClassFileScanner` reads them from the method's `Signature` through `ClassTypeParameters.methodTypes`); the
   processor's `ElementScanner.scanMethod` did not record them.
 - **Fix**: `VaubanMethodInfo.typeParameters()` maps the index's, each with `java.lang.Object` when it declares no
-  bound, as `ClassInfo.typeParameters()` does (`TypeMapper.typeParameter`). `ElementScanner` records a method's
-  type parameters through its `TypeParameterReader`, now built for a method too: a bound naming a type parameter of
-  the method or of its class carries that parameter's bounds, as the bytecode scan reads them. The fingerprint of the
+  bound, as `ClassInfo.typeParameters()` does (`TypeParameterScope.typeParameters`, since BUG-20261117-60).
+  `ElementScanner` records a method's type parameters through its `TypeParameterReader`, now built for a method too:
+  a bound naming a type parameter of the method or of its class carries that parameter's bounds, as the bytecode scan
+  reads them. The fingerprint of the
   frozen record does not change: it is computed from the bytecode index, which held them already.
 - **Who sees the change**: an extension gets the type parameters of a generic method. The processor now reports a
   generic initializer method (`@Inject <T> void init(T t)`) as the container does at start, as a warning.
@@ -848,6 +889,9 @@ suspected cause, status. Updated on every investigation.
   have bounds that are not `Object` (the `T` inside `Comparable<T>` of `T extends Comparable<T>`). It needs the type
   parameters of the declaring class or method at hand. It changes what an extension sees of the bean types too, so it
   is a change of its own.
+- **Already done for the receiver**: `MethodInfo.receiverType()` (BUG-20261117-53, wired in BUG-20261117-60) puts
+  `java.lang.Object` back on its top-level type arguments, the class's type parameters that declare no bound
+  (`VaubanMethodInfo.receiverType`). The fix of this bug takes that local patch in.
 - **Found by**: the tests of BUG-20261117-22.
 
 ## BUG-20261117-32 — An interface's `ClassInfo.superClass()` is `Object` at start and `null` in the processor
