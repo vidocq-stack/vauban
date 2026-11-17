@@ -22,6 +22,8 @@ package io.vidocq.vauban.core.langmodel.declarations;
 import io.vidocq.vauban.core.langmodel.IndexLookup;
 import io.vidocq.vauban.core.langmodel.VaubanAnnotationInfo;
 import io.vidocq.vauban.core.langmodel.types.TypeMapper;
+import io.vidocq.vauban.core.langmodel.types.VaubanClassType;
+import io.vidocq.vauban.core.langmodel.types.VaubanParameterizedType;
 import io.vidocq.vauban.indexer.model.DotName;
 import jakarta.enterprise.lang.model.AnnotationInfo;
 import jakarta.enterprise.lang.model.types.Type;
@@ -66,9 +68,22 @@ public final class VaubanMethodInfo implements jakarta.enterprise.lang.model.dec
         return TypeMapper.map(indexMethod.returnType(), lookup);
     }
 
+    /**
+     * The type of the declaring class, the type of the receiver parameter an instance method may declare: for a
+     * generic class, parameterized by its own type variables, as reflection gives it. {@code null} for a static method
+     * and for a constructor (BUG-20261117-53). A constructor of an inner class may declare a receiver parameter too,
+     * of its enclosing class: the index does not record which classes are inner, and it is {@code null} as well
+     * (BUG-20261118-01).
+     */
     @Override
     public Type receiverType() {
-        return null;
+        if (indexMethod.isStatic() || indexMethod.isConstructor()) {
+            return null;
+        }
+        var name = DotName.of(declaringClass.name());
+        var typeParameters = declaringClass.typeParameters();
+        return typeParameters.isEmpty() ? new VaubanClassType(name, lookup)
+                : new VaubanParameterizedType(name, List.<Type>copyOf(typeParameters), lookup);
     }
 
     @Override

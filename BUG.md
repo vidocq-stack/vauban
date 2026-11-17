@@ -5,6 +5,55 @@ suspected cause, status. Updated on every investigation.
 
 ---
 
+## BUG-20261118-01 — An inner class's constructor has no receiver type
+
+- **Date**: 2026-11-18
+- **Status**: OPEN
+- **Module**: `vauban-indexer` (`model.ClassInfo`, `scanner.ClassFileScanner`), `vauban-processor`
+  (`apt.ElementScanner`), `vauban-core` (`langmodel.declarations.VaubanMethodInfo`)
+- **Symptom**: for `class Enclosing { class Inner { Inner() {} } }`, `MethodInfo.receiverType()` of `Inner`'s
+  constructor is `null` in the processor, at start and frozen. The language model asks for the type of the receiver
+  parameter it may declare, `Enclosing`: `null` only "if this method is `static` or is a constructor of a top-level
+  class or a `static` nested class", as `Constructor.getAnnotatedReceiverType()` gives it. The language model TCK does
+  not check it.
+- **Repro**: `VetoedInterceptorCompileTimeTest#anExtensionSeesTheReceiverTypeOfAnInnerClassConstructor` in
+  `vauban-processor`, `@Disabled` with this id. Red with the `@Disabled` lifted, on the BUG-20261117-53 fix
+  (`stack-l1-bug53.log`, "BUG-53 green attempt ... BUG-20261118-01 repro enabled, expected red": `receiver null`
+  all three ways).
+- **Cause**: the index does not record whether a class is inner, nor the class that encloses it: the class file keeps
+  both in its `InnerClasses` attribute (the `static` flag is not in the class's own access flags), which
+  `ClassFileScanner` reads for the simple name only; `ElementScanner` reads neither. BUG-20261117-53's
+  `receiverType()` answers `null` for every constructor.
+- **Fix idea**: an additive slot on the index's `ClassInfo`, the enclosing class of an inner member class, read from
+  the `InnerClasses` entry (`ACC_STATIC` clear, an outer class named) and from the compiler's `NestingKind.MEMBER`
+  without `static`. It changes the index model that lane L2 (type annotations) changes too, and goes with the start's
+  synthetic outer-instance parameter of the same constructors, which the processor does not show (as BUG-20261117-43
+  and the enum constructors of the TCK's group 10): left for a commit of its own.
+- **Found by**: the review of the API for BUG-20261117-53.
+
+## BUG-20261117-53 — `MethodInfo.receiverType()` is always `null`
+
+- **Date**: 2026-11-17
+- **Status**: FIXED on `fix/vauban-bug-stack`
+- **Module**: `vauban-core` (`langmodel.declarations.VaubanMethodInfo`)
+- **Symptom**: `MethodInfo.receiverType()` is `null` for every method, in the processor, at start and frozen. The
+  language model asks for the type of the receiver parameter an instance method may declare, whether it declares it
+  or not, and `null` only for a static method and a constructor of a top-level or static nested class. The official
+  language model TCK fails 10 checks on it (vauban#336, ticket 40, group 5: `AnnotatedReceiverTypes`).
+- **Repro**: `VetoedInterceptorCompileTimeTest#anExtensionSeesTheReceiverTypeOfAMethodInTheProcessorAtStartAndFrozen`
+  in `vauban-processor`: the instance methods, static method and constructors of the generic `vi.types.Members` and
+  of `vi.types.Simple`, one of which declares its receiver parameter. Red on 2f9ba2cc (`stack-l1-bug53.log`,
+  "BUG-53 red": `receiver null` for every method, all three ways).
+- **Cause**: `VaubanMethodInfo.receiverType()` returned `null`.
+- **Fix**: `receiverType()` gives the type of the declaring class for an instance method: a class type, or for a
+  generic class a parameterized type of its own type variables (`Members<C, E>`), as reflection gives it since JDK 17
+  and as the TCK accepts. `null` for a static method and a constructor. An inner class's constructor, which may declare
+  a receiver of its enclosing class, is `null` too: BUG-20261118-01. Nothing of the index changes, nor the fingerprint
+  of the frozen record. The receiver type carries no type annotation (ticket 40, group 1).
+- **Who sees the change**: an extension gets a receiver type for an instance method, where it got `null`.
+- **Verification**: green in `stack-l1-bug53.log` ("BUG-53 green attempt", "BUG-53 module tests with the fix").
+- **Found by**: the language model TCK probe (vauban#336).
+
 ## BUG-20261117-52 — At start and frozen, a method's generic `throws` types are erased
 
 - **Date**: 2026-11-17

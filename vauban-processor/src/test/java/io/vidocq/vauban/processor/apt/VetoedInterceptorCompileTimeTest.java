@@ -2572,6 +2572,127 @@ class VetoedInterceptorCompileTimeTest {
         seen.assertEachIs(expected);
     }
 
+    /** The classes whose methods and constructors {@link ReceiverTypeRecorder} reads. */
+    private static final List<String> RECEIVER_PROBES = List.of(MEMBERS, "Simple");
+
+    /** Adds the classes {@link #RECEIVER_PROBES} names to the deployment, whatever annotates them. */
+    private static void addReceiverProbes(ScannedClasses classes) {
+        RECEIVER_PROBES.forEach(name -> classes.add(TYPES + name));
+    }
+
+    /**
+     * Records, in {@code @Synthesis}, the receiver type of each method and constructor of the classes
+     * {@link #RECEIVER_PROBES} names: a constructor as {@code new/} and its parameter count (BUG-20261117-53).
+     */
+    public static class ReceiverTypeRecorder implements BuildCompatibleExtension {
+
+        static final List<String> SEEN = new CopyOnWriteArrayList<>();
+
+        @Discovery
+        public void discovery(ScannedClasses classes) {
+            addReceiverProbes(classes);
+        }
+
+        @Synthesis
+        public void receiverTypes(Types types) {
+            for (var probe : RECEIVER_PROBES) {
+                var type = types.ofClass(TYPES + probe).declaration();
+                Stream.concat(type.constructors().stream(), type.methods().stream()).forEach(method -> {
+                    var receiver = method.receiverType();
+                    SEEN.add(probe + "#" + (method.isConstructor() ? "new/" + method.parameters().size()
+                            : method.name()) + " receiver "
+                            + (receiver == null ? "null" : receiver.kind() + " " + memberTypeName(receiver)));
+                });
+            }
+        }
+    }
+
+    /** {@link #withMethodMembers()}, with {@code vi.types.Simple}, a class that declares no type parameter. */
+    private static Map<String, String> withReceivers() {
+        var sources = withMethodMembers();
+        putType(sources, "Simple", """
+                public class Simple {
+                    public Simple() {
+                    }
+                    public void run() {
+                    }
+                    public void annotated(Simple this) {
+                    }
+                    public static Simple make() {
+                        return new Simple();
+                    }
+                }""");
+        return sources;
+    }
+
+    /**
+     * {@code MethodInfo.receiverType()} is the type of the declaring class for an instance method, with its type
+     * variables as type arguments for a generic class, whether the method declares its receiver parameter or not,
+     * and {@code null} for a static method and for a constructor of a top-level class, in the processor, at start and
+     * frozen. It was {@code null} for every method (BUG-20261117-53).
+     */
+    @Test
+    @DisplayName("an extension sees the receiver type of a method in the processor, at start and frozen")
+    void anExtensionSeesTheReceiverTypeOfAMethodInTheProcessorAtStartAndFrozen() throws Exception {
+        var members = "PARAMETERIZED_TYPE vi.types.Members<C, E>";
+        var simple = "CLASS vi.types.Simple";
+        var expected = sorted(List.of("Members#new/0 receiver null", "Members#new/1 receiver null",
+                "Members#plain receiver " + members, "Members#sorted receiver null",
+                "Members#throwing receiver " + members, "Members#typed receiver " + members,
+                "Simple#annotated receiver " + simple, "Simple#make receiver null", "Simple#new/0 receiver null",
+                "Simple#run receiver " + simple));
+
+        var seen = seenThreeWays(withReceivers(), ReceiverTypeRecorder.class, ReceiverTypeRecorder.SEEN);
+
+        seen.assertEachIs(expected);
+    }
+
+    /** The inner class whose constructor {@link InnerReceiverRecorder} reads (BUG-20261118-01). */
+    private static final String INNER = TYPES + "Enclosing$Inner";
+
+    /** Records, in {@code @Synthesis}, the receiver type of the constructor of {@link #INNER}. */
+    public static class InnerReceiverRecorder implements BuildCompatibleExtension {
+
+        static final List<String> SEEN = new CopyOnWriteArrayList<>();
+
+        @Discovery
+        public void discovery(ScannedClasses classes) {
+            classes.add(INNER);
+        }
+
+        @Synthesis
+        public void receiverType(Types types) {
+            for (var constructor : types.ofClass(INNER).declaration().constructors()) {
+                var receiver = constructor.receiverType();
+                SEEN.add("receiver " + (receiver == null ? "null" : receiver.kind() + " " + memberTypeName(receiver)));
+            }
+        }
+    }
+
+    /**
+     * The constructor of an inner class may declare a receiver parameter, of the class that encloses it: its
+     * {@code receiverType()} is that class, as {@code Constructor.getAnnotatedReceiverType()} gives it. It is
+     * {@code null}: the index does not record which classes are inner, nor the class that encloses them
+     * (BUG-20261118-01).
+     */
+    @Test
+    @Disabled("BUG-20261118-01: an inner class's constructor has no receiver type")
+    @DisplayName("an extension sees the receiver type of an inner class's constructor")
+    void anExtensionSeesTheReceiverTypeOfAnInnerClassConstructor() throws Exception {
+        var sources = withAVetoedPackage();
+        putType(sources, "Enclosing", """
+                public class Enclosing {
+                    public class Inner {
+                        public Inner() {
+                        }
+                    }
+                }""");
+
+        var seen = seenThreeWays(sources, InnerReceiverRecorder.class, InnerReceiverRecorder.SEEN);
+
+        seen.assertEachIs(List.of("receiver CLASS vi.types.Enclosing"));
+    }
+
     // ---- helpers ----
 
     /** The classes of the beans and interceptors {@code @Registration} sees while the processor compiles them. */
