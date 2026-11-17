@@ -797,6 +797,69 @@ suspected cause, status. Updated on every investigation.
   bean `Box<T extends Comparable<T>>`.
 - **Found by**: BUG-20261117-31's comparison of the processor and the bytecode scan on a class of a library.
 
+## BUG-20261117-35 — A normal scope an extension adds to a generic class is no definition error
+
+- **Date**: 2026-11-17 (entry written 2026-11-18)
+- **Status**: FIXED on `fix/vauban-bug-stack` (lane `stack/l3-container`); Cassini companion CASSINI-065 on
+  Cassini's `fix/vauban-bug-stack`
+- **Module**: `vauban-core` (`bean.validation.GenericBeanScope`, `VaubanContainerBuilder`, `IndexClassValidator`,
+  `ReflectionValidator`), `vauban-processor` (`VaubanProcessor.reportDefinitionErrors`)
+- **Symptom**: `@Resource public static class GenericResource<T>`, where `@Resource` is no scope, and a build
+  compatible extension `@Enhancement(types = Object.class, withAnnotations = Resource.class)` that adds
+  `@RequestScoped`: the container starts, and `GenericResource` is a request-scoped bean. CDI 4.1, 3.1: "If the
+  managed bean class is a generic type, it must have scope `@Dependent`. If a managed bean with a parameterized bean
+  class declares any scope other than `@Dependent`, the container automatically detects the problem and treats it as
+  a definition error." Cassini's `CassiniScopeExtension` does exactly this to a scope-less generic `@Path` class,
+  and Cassini carried a transitional path for the request-scoped generic resource (CASSINI-061). A class that
+  declares the scope itself was refused, with a message that did not name the scope.
+- **Repro**: `GenericBeanScopeTest` (vauban-core): `aNormalScopeAnExtensionAddsToAGenericClassIsADefinitionError`
+  started, `aScopeAGenericClassDeclaresIsNamed` lacked the scope; and
+  `VetoedInterceptorCompileTimeTest#aNormalScopeAnExtensionAddsToAGenericClassIsADefinitionErrorAtBuildAtStartAndFrozen`
+  (vauban-processor): no warning.
+- **Does an extension's scope count?** Yes. Weld's `ManagedBean.checkType()` throws WELD-000071
+  (`managedBeanWithParameterizedBeanClassMustBeDependent`) when `!isDependent()` and the enhanced annotated type is
+  parameterized, and reads the scope from the annotated type the extensions modified, so a scope added in
+  `ProcessAnnotatedType` counts. In CDI Lite, `@Enhancement` changes the annotations the container uses to discover
+  the bean: the bean is request-scoped, so it is a bean with a parameterized class and another scope. The CDI TCK
+  `org.jboss.cdi.tck.tests.definition.bean.genericbroken.GenericManagedBeanTest` (no `CDI_FULL` group, so in the
+  Lite part, not excluded by Vauban's runner) asserts the declared case, `@RequestScoped FooBroken<T>`,
+  `@ShouldThrowException(DefinitionException.class)`.
+- **Cause** (proved): the rule ran in the class-level validators only, `IndexClassValidator.validateGenericBeanScope`
+  and `ReflectionValidator.validateGenericBeanScope`, from `validateClassDefinitions`, before the enhancements: they
+  read the annotations the class declares. Nothing checked the bean descriptors once the extensions had run; the red
+  run shows the container starting.
+- **Fix**: `GenericBeanScope.errors(beans, index)` checks the bean descriptors: a managed bean whose class has type
+  parameters and whose scope is not `@Dependent` is a definition error, `Managed bean <class> has type parameters
+  and is not @Dependent: @<scope>`. `VaubanContainerBuilder.build` runs it right after the enhancements apply, at
+  every start, the extensions run or frozen. The processor adds its errors to the warnings of `reportDefinitionErrors`
+  ("— the container rejects this deployment at start."), deduplicated with the class-level ones; a warning, as every
+  definition error the processor reports, because an extension at start may still veto the class. The class-level
+  messages name the scope the class declares, through the same `GenericBeanScope.error`.
+- **Who sees the change**: an extension that gives a generic class a normal scope or `@Singleton` now fails the
+  start, where the bean worked with that scope. Cassini's `CassiniScopeExtension` gave a scope-less generic `@Path`
+  class `@RequestScoped`: CASSINI-065 gives it `@Dependent` and removes the transitional path. The message of a
+  declared scope gains `: @<scope>`.
+- **Verification**: red with the tests alone on the main code of b10193ee (`stack-l3-red.log`, "BUG-20261117-35 red:
+  GenericBeanScopeTest, tests only, main code of b10193ee": 3 tests, 2 failures; "BUG-20261117-35 red:
+  vauban-processor test, processor main code and vauban-core of b10193ee": no warning). The first version of the
+  processor test started what plain javac compiled with the extension
+  registered, which the processor's freeze of the enhancement for the deployment it compiled does not match
+  (`stack-l3-green.log`, "BUG-20261117-35 fix", 1 failure; `stack-l3-dev.log`, "processor test starts what the
+  processor compiled", 1 failure): the test now starts what the processor compiled, whose frozen enhancement applies
+  `@RequestScoped`; `GenericBeanScopeTest` covers the extension run at start. Green: the whole reactor,
+  `stack-l3-b35-full.log`, "BUG-20261117-35 fix: full reactor install with tests" (vauban-core 1637 tests, 13
+  skipped; vauban-processor 386, 16 skipped). Cassini: `stack-l3-cassini.log` and `stack-l3-cassini-full.log`.
+- **After review round 1** (2026-11-18): BUG-35 approved. Re-picked onto the amended BUG-20261117-30, -28 and -29;
+  the start runs this check with the descriptor-bean check of BUG-20261117-30 in one list, after the enhancements.
+  Green: the whole reactor, `stack-l3-r1-b35-full.log`, "BUG-20261117-35 after review round 1 re-pick" (vauban-core
+  1651 tests, 13 skipped; vauban-processor 389, 16 skipped).
+- **Other extensions that add a scope**: a grep of the main code of every `*/main` checkout of the workspace for
+  `addAnnotation(` (2026-11-18) finds one extension that adds a normal scope or `@Singleton` to a class, Cassini's
+  `CassiniScopeExtension` (`@RequestScoped`, `@ApplicationScoped`). Foy's `FoyWebExtension` adds `@Dependent`; the
+  others add bindings, `@Priority`, `@Inject`, qualifiers or `@Vetoed` (Heisenberg, Humboldt, Noether, Mansart,
+  Ravel).
+- **Found by**: the review of CASSINI-061.
+
 ## BUG-20261117-34 — The language model gives `?` no bound, and the processor gives `? extends Object` one
 
 - **Date**: 2026-11-17
@@ -1086,7 +1149,8 @@ suspected cause, status. Updated on every investigation.
   extension-made bean and the processor's legal inherited initializer were green before too, and guard the new rule.
   Green: `stack-l3-green.log`, "BUG-20261117-30 review round 1 fix, run 2" (vauban-core 1633 tests, 17 skipped;
   vauban-processor 385, 16 skipped), then the whole reactor (`stack-l3-r1-b30-full.log`).
-- **Verification**: red on the stack base, "fix(core): a class outside the index is described", with the tests alone (`stack-l3-red.log`, "BUG-20261117-30 red":
+- **Verification**: red on the stack base, "fix(core): a class outside the index is described", with the tests alone
+  (`stack-l3-red.log`, "BUG-20261117-30 red":
   `AssignabilityRulesReproductionTest#anInheritedInitializersParameterOfATypeVariableItsBeanClassGivesAClassIsLegal`
   refused, `IndexClassValidatorTest#typeVariableInitializerAndConstructorParameters` and two `sameErrorsAsReflection`
   cases empty; "BUG-20261117-30 red: vauban-processor":
@@ -1288,7 +1352,8 @@ suspected cause, status. Updated on every investigation.
   `#anInheritedObserversUnsatisfiedParameterFailsTheStart` and
   `#anInheritedObserversParameterItsBeanClassLeavesATypeVariableIsADefinitionError` threw nothing; "BUG-20261117-26
   red: vauban-processor":
-  `VetoedInterceptorCompileTimeTest#anInheritedObserversUnsatisfiedParameterFailsTheStartRunAndFrozen` started). Green: `stack-l3-green.log`, "BUG-20261117-26 fix" (vauban-core 1624 tests, 16 skipped;
+  `VetoedInterceptorCompileTimeTest#anInheritedObserversUnsatisfiedParameterFailsTheStartRunAndFrozen` started). Green:
+  `stack-l3-green.log`, "BUG-20261117-26 fix" (vauban-core 1624 tests, 16 skipped;
   vauban-processor 384, 16 skipped), `#anInheritedObserversParameterOfItsTypeVariableResolvesAsTheSubclassGivesIt`
   still green now that the check runs, and the whole reactor, `stack-l3-b26-full.log`.
 - **Found by**: the review of fix round 1 of BUG-20261117-16, which suspected `requiredTypeOf`; the repro showed the

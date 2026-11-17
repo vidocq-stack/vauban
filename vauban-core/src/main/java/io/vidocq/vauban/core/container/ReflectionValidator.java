@@ -110,18 +110,14 @@ final class ReflectionValidator {
 
     private static void validateGenericBeanScope(Class<?> clazz, List<String> errors) {
         if (hasBeanDefiningAnnotation(clazz) && clazz.getTypeParameters().length > 0) {
-            boolean isNonDependent = false;
             for (var ann : clazz.getAnnotations()) {
                 var annType = ann.annotationType();
                 if (annType.isAnnotationPresent(jakarta.enterprise.context.NormalScope.class)
                         || annType == jakarta.inject.Singleton.class) {
-                    isNonDependent = true;
+                    errors.add(io.vidocq.vauban.core.bean.validation.GenericBeanScope.error(clazz.getName(),
+                            annType.getName()));
                     break;
                 }
-            }
-            if (isNonDependent) {
-                errors.add("Managed bean " + clazz.getName()
-                        + " has type parameters and is not @Dependent");
             }
         }
     }

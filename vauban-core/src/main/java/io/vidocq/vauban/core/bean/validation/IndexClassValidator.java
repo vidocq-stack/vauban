@@ -223,11 +223,11 @@ public final class IndexClassValidator {
     private void validateGenericBeanScope(ClassInfo classInfo, List<AnnotationInfo> annotations,
             boolean beanDefining, List<String> errors) {
         if (beanDefining && !classInfo.typeParameters().isEmpty()) {
-            boolean nonDependent = annotations.stream()
-                    .anyMatch(a -> types.isNormalScope(a.name()) || a.name().equals(SINGLETON));
-            if (nonDependent) {
-                errors.add("Managed bean " + classInfo.name().value() + " has type parameters and is not @Dependent");
-            }
+            annotations.stream()
+                    .filter(a -> types.isNormalScope(a.name()) || a.name().equals(SINGLETON))
+                    .findFirst()
+                    .ifPresent(scope -> errors.add(GenericBeanScope.error(classInfo.name().value(),
+                            scope.name().value())));
         }
     }
 

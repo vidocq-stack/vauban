@@ -1044,11 +1044,13 @@ public final class VaubanContainerBuilder {
                 interceptors = applyEnhancements(new Discovered(descriptors, observers, interceptors),
                         combinedEnhMods, managedBeans(index, discovery));
             }
-            // A bean an extension made one, without a bean-defining annotation, was validated as no bean above
-            var descriptorBeanErrors = descriptorBeanErrors(index, descriptors);
-            if (!descriptorBeanErrors.isEmpty()) {
+            // A bean an extension made one, without a bean-defining annotation, was validated as no bean above, and
+            // a scope an extension added to a generic class is no annotation it declares (BUG-20261117-35)
+            var extendedErrors = new ArrayList<>(descriptorBeanErrors(index, descriptors));
+            extendedErrors.addAll(io.vidocq.vauban.core.bean.validation.GenericBeanScope.errors(descriptors, index));
+            if (!extendedErrors.isEmpty()) {
                 throw new jakarta.enterprise.inject.spi.DefinitionException(
-                        failureMessage(DEFINITION_FAILED, descriptorBeanErrors));
+                        failureMessage(DEFINITION_FAILED, extendedErrors));
             }
 
             // Load synthetic beans/observers from APT-generated metadata (if BCE was processed at compile time)

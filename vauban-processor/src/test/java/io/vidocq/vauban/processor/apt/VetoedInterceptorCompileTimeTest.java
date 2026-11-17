@@ -1220,6 +1220,51 @@ class VetoedInterceptorCompileTimeTest {
     }
 
     /**
+     * As Cassini's {@code CassiniScopeExtension} does for a {@code @Path} class: a class annotated {@code @Named} and
+     * nothing else gets {@code @RequestScoped}.
+     */
+    public static class RequestScopeExtension implements BuildCompatibleExtension {
+        @Enhancement(types = Object.class, withAnnotations = jakarta.inject.Named.class)
+        public void addScope(ClassConfig clazz) {
+            clazz.addAnnotation(jakarta.enterprise.context.RequestScoped.class);
+        }
+    }
+
+    /**
+     * A generic managed bean must be {@code @Dependent} (CDI 4.1, 3.1), the scope declared or added by an extension at
+     * {@code @Enhancement}, as Weld reads the annotated type the extensions modified: {@code Resource<T>}, which
+     * {@link RequestScopeExtension} makes {@code @RequestScoped}, is a definition error. The processor runs the
+     * extension and warns; the start of what it compiled applies the scope the processor froze, the extension not
+     * run again, and refuses the deployment. Vauban accepted it, and Cassini looked behind the client proxy of such a
+     * resource (BUG-20261117-35). {@code GenericBeanScopeTest} runs the extension at start.
+     */
+    @Test
+    @DisplayName("a normal scope an extension adds to a generic class is a definition error, at build, start, frozen")
+    void aNormalScopeAnExtensionAddsToAGenericClassIsADefinitionErrorAtBuildAtStartAndFrozen() throws Exception {
+        var sources = withAVetoedPackage();
+        putType(sources, "Resource", "@jakarta.inject.Named\npublic class Resource<T> {\n}");
+        putType(sources, "PlainResource", "@jakarta.inject.Named\npublic class PlainResource {\n}");
+        var error = "Managed bean vi.types.Resource has type parameters and is not @Dependent:"
+                + " @jakarta.enterprise.context.RequestScoped";
+
+        var processor = new VaubanProcessor();
+        processor.overrideBceClasses(List.of(RequestScopeExtension.class));
+        var processed = ProcessorCompiler.compile(workDir.resolve("processed"), sources, List.of(), processor);
+        assertTrue(processed.messages().contains("WARNING: [Vauban] " + error
+                + " — the container rejects this deployment at start."),
+                () -> String.join("\n", processed.messages()));
+        assertTrue(processed.success(), () -> String.join("\n", processed.messages()));
+        registerExtension(processed, RequestScopeExtension.class);
+        try (var loader = loader(processed)) {
+            var builder = VaubanContainer.builder().classLoader(loader).scanClasspath();
+            var frozen = assertThrows(DefinitionException.class, builder::build, "the container started")
+                    .getMessage();
+            assertTrue(frozen.contains("\n  - " + error), frozen);
+            assertFalse(frozen.contains("PlainResource"), frozen);
+        }
+    }
+
+    /**
      * The initializer {@code GadgetSetterOfAbstract} inherits from {@code AbstractGadgetSetter<T>} is given a
      * {@code Gadget}, at start and frozen; the build does not warn (BUG-20261117-30).
      */
@@ -1389,7 +1434,8 @@ class VetoedInterceptorCompileTimeTest {
         assertTrue(built.success(), () -> String.join("\n", built.messages()));
         for (var error : errors) {
             assertTrue(built.messages().contains("WARNING: [Vauban] " + error
-                    + " — the container rejects this deployment at start."), () -> String.join("\n", built.messages()));
+                    + " — the container rejects this deployment at start."),
+                    () -> String.join("\n", built.messages()));
         }
         var unvalidated = ProcessorCompiler.compile(workDir.resolve("unvalidated"), sources,
                 List.of("-Avauban.validation=false"));

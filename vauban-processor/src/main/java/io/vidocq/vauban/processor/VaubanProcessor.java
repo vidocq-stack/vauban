@@ -840,12 +840,16 @@ public class VaubanProcessor extends AbstractProcessor {
                                 TypeLookup.typeElementByBinaryName(processingEnv.getElementUtils(), name.value()))
                         .map(scanner::scan))
                 .withBeanClasses(managed::contains);
+        var errors = new java.util.LinkedHashSet<String>();
         for (var beanClass : beans.stream().map(BeanDescriptor::beanClass).distinct().toList()) {
-            var errors = index.getClassByName(beanClass).flatMap(validator::validate).orElse(List.of());
-            for (var error : errors) {
-                processingEnv.getMessager().printMessage(Diagnostic.Kind.WARNING,
-                        LOG_PREFIX + error + " — the container rejects this deployment at start.");
-            }
+            errors.addAll(index.getClassByName(beanClass).flatMap(validator::validate).orElse(List.of()));
+        }
+        // The scope the extensions gave a generic class, which the class's own annotations do not show
+        // (BUG-20261117-35); one the class declares is the same error, reported once
+        errors.addAll(io.vidocq.vauban.core.bean.validation.GenericBeanScope.errors(beans, index));
+        for (var error : errors) {
+            processingEnv.getMessager().printMessage(Diagnostic.Kind.WARNING,
+                    LOG_PREFIX + error + " — the container rejects this deployment at start.");
         }
     }
 

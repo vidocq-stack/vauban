@@ -274,7 +274,8 @@ class ReflectionValidatorCharacterizationTest {
     @DisplayName("a generic bean must be @Dependent")
     void genericBeanScope() {
         assertEquals(List.of("Managed bean " + GenericScoped.class.getName()
-                + " has type parameters and is not @Dependent"), errorsOf(GenericScoped.class));
+                + " has type parameters and is not @Dependent: @jakarta.enterprise.context.ApplicationScoped"),
+                errorsOf(GenericScoped.class));
         assertEquals(List.of(), errorsOf(GenericDependent.class));
     }
 
