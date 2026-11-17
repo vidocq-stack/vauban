@@ -23,11 +23,13 @@ import io.vidocq.vauban.api.ExtensionPhase;
 import io.vidocq.vauban.processor.apt.ElementScanner;
 import io.vidocq.vauban.processor.codegen.proxy.ClientProxyShapeFromElements;
 import io.vidocq.vauban.processor.codegen.provider.ComponentProviderGenerator;
+import io.vidocq.vauban.core.ProcessorAccess;
 import io.vidocq.vauban.core.bean.discovery.BeanDiscovery;
 import io.vidocq.vauban.core.bean.discovery.PackageInfos;
 import io.vidocq.vauban.core.bean.model.BeanDescriptor;
 import io.vidocq.vauban.core.bean.resolution.BeanResolver;
 import io.vidocq.vauban.core.bean.validation.DeploymentValidator;
+import io.vidocq.vauban.core.codegen.CompiledSupertypes;
 import io.vidocq.vauban.core.extensions.BceProcessor;
 import io.vidocq.vauban.core.extensions.SyntheticMetadataSerializer;
 import io.vidocq.vauban.core.extensions.VaubanClassConfig;
@@ -232,6 +234,9 @@ public class VaubanProcessor extends AbstractProcessor {
     @Override
     public synchronized void init(ProcessingEnvironment processingEnv) {
         super.init(processingEnv);
+        // The packages vauban-core exports to the processor alone, which a qualified export does not give it when its
+        // layer is above vauban-core's, as javac's --processor-module-path makes it (BUG-20261117-23)
+        ProcessorAccess.grantTo(VaubanProcessor.class.getModule());
         // The artefacts share one output: the classes one emits as bytecode, the providers instantiate through
         // their lookup (BUG-20261004-09).
         output = new GeneratedOutput(processingEnv);
@@ -323,8 +328,14 @@ public class VaubanProcessor extends AbstractProcessor {
         }
         finalized = true;
         generatedEarly = !roundEnv.processingOver();
+        // The whole pipeline reads a class the index does not hold as the compiler describes it: the extension phases
+        // (VAU-BCE-008), and the bean discovery, whose bean types stopped at a superclass this compilation compiles,
+        // which no class loader of the processor loads (BUG-20261117-03). The bean types of such a class carry the type
+        // arguments of its supertypes as the compiler reads them, as at start (BUG-20261117-14).
+        var parameterized = new ParameterizedSupertypes(processingEnv.getElementUtils(), processingEnv.getTypeUtils());
         try (var _ = BceLogBridge.install(processingEnv.getMessager(), BCE_PREFIX)) {
-            return processDeployment(scanner);
+            return CompiledSupertypes.where(parameterized, () -> IndexLookup.whereUnindexedDescribedBy(
+                    unindexedResolver(), () -> processDeployment(scanner)));
         }
     }
 
@@ -583,7 +594,8 @@ public class VaubanProcessor extends AbstractProcessor {
 
     /**
      * The pipeline run once, in the final round: the BCE phases, the deployment validation, the
-     * generation of every artefact and the indexes written beside them.
+     * generation of every artefact and the indexes written beside them. {@link #process} runs it where
+     * {@link IndexLookup#describe} reads a class the index does not hold through {@link #unindexedResolver()}.
      *
      * @return what {@link #process} returns
      */
@@ -671,8 +683,7 @@ public class VaubanProcessor extends AbstractProcessor {
     private BceProcessor.DiscoveryResult runDiscoveryPhase(List<Class<?>> bceClasses,
             io.vidocq.vauban.indexer.VaubanIndex index, IndexBuilder indexBuilder, ClassLoader aptClassLoader) {
         var lookup = new IndexLookup(index);
-        var discoveryResult = IndexLookup.whereUnindexedDescribedBy(unindexedResolver(),
-                () -> ExtensionPhase.atBuildTime(() -> BceProcessor.processDiscovery(bceClasses, lookup)));
+        var discoveryResult = ExtensionPhase.atBuildTime(() -> BceProcessor.processDiscovery(bceClasses, lookup));
         // The contexts the extensions registered are runtime objects: write them down, since
         // the container skips the extensions of an application compiled here (vauban-webcontexts).
         writeFrozenContexts(discoveryResult.metaAnnotations().getCustomContexts());
@@ -695,8 +706,11 @@ public class VaubanProcessor extends AbstractProcessor {
     /**
      * Describes, for the extensions' language model, a class the index does not hold but the compilation sees — one an
      * annotation value names, say ({@code @JsonbTypeAdapter(AmountAdapter.class)}): its members, as at boot, instead
-     * of an empty stub (VAU-BCE-008). Lazy and read-only; it never makes the class a bean. The JDK's classes stay
-     * stubs, as at boot, where the index does not hold them either.
+     * of an empty stub (VAU-BCE-008). The bean discovery and the extensions' type matching read the classes and
+     * interfaces above a class through it too: a superclass this compilation compiles, which no class loader of the
+     * processor loads, as at boot, where it loads (BUG-20261117-03). Lazy and read-only; it never makes the class a
+     * bean. The JDK's classes stay stubs, as at boot, where the index does not hold them either; their supertypes are
+     * read by loading them.
      */
     private java.util.function.Function<DotName, Optional<ClassInfo>> unindexedResolver() {
         var elements = processingEnv.getElementUtils();
@@ -737,12 +751,11 @@ public class VaubanProcessor extends AbstractProcessor {
         var interceptors = discovery.discoverInterceptors();
 
         var bceInstances = discoveryResult.bceInstances();
-        var bceResult = IndexLookup.whereUnindexedDescribedBy(unindexedResolver(),
-                () -> ExtensionPhase.atBuildTime(() -> BceProcessor.process(bceClasses, beans,
-                        observers, interceptors,
-                        index, aptClassLoader,
-                        bceInstances, archiveClasses,
-                        name -> index.getClassByName(name).map(discovery::buildManagedBean).orElse(null))));
+        var bceResult = ExtensionPhase.atBuildTime(() -> BceProcessor.process(bceClasses, beans,
+                observers, interceptors,
+                index, aptClassLoader,
+                bceInstances, archiveClasses,
+                name -> index.getClassByName(name).map(discovery::buildManagedBean).orElse(null)));
 
         // Report BCE errors as compilation errors
         boolean hasErrors = false;

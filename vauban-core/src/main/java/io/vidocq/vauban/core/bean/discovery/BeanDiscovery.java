@@ -20,6 +20,8 @@
 package io.vidocq.vauban.core.bean.discovery;
 
 import io.vidocq.vauban.core.bean.model.*;
+import io.vidocq.vauban.core.codegen.CompiledSupertypes;
+import io.vidocq.vauban.core.langmodel.IndexLookup;
 import io.vidocq.vauban.core.loading.DeploymentClasses;
 import io.vidocq.vauban.indexer.VaubanIndex;
 import io.vidocq.vauban.indexer.model.*;
@@ -88,6 +90,8 @@ public final class BeanDiscovery {
     }
 
     final VaubanIndex index;
+    /** The classes of {@link #index}, and what the annotation processor describes beside them. */
+    private final IndexLookup lookup;
     Set<DotName> customQualifiers = Set.of();
     Set<DotName> customInterceptorBindings = Set.of();
     Set<DotName> customStereotypes = Set.of();
@@ -102,6 +106,7 @@ public final class BeanDiscovery {
 
     public BeanDiscovery(VaubanIndex index) {
         this.index = Objects.requireNonNull(index);
+        this.lookup = new IndexLookup(index);
     }
 
     public void setCustomQualifiers(Set<DotName> qualifiers) {
@@ -709,7 +714,7 @@ public final class BeanDiscovery {
     }
 
     /**
-     * Bean types = the class itself + all supertypes + all interfaces + Object.
+     * Bean types = the class itself + all supertypes + all interfaces + Object, the legal ones only (CDI 4.1, 2.2.1).
      */
     Set<TypeInfo> computeBeanTypes(ClassInfo classInfo) {
         // CDI spec: @Typed restricts the bean types to the specified types + Object
@@ -721,46 +726,155 @@ public final class BeanDiscovery {
         }
         var types = new LinkedHashSet<TypeInfo>();
         collectBeanTypes(classInfo.name(), types);
-        // Enrich with parameterized supertypes via reflection
+        types.addAll(parameterizedSupertypes(classInfo.name()));
+        dropRawFormsOfParameterizedTypes(types);
+        types.add(new TypeInfo.ClassType(DotName.of(JAVA_LANG_OBJECT)));
+        return legalBeanTypes(types, ownTypeVariables(classInfo));
+    }
+
+    /**
+     * The parameterized classes and interfaces above {@code className}, its type variables resolved along the way: while
+     * Vauban's annotation processor runs, as it reads them from the compilation ({@link CompiledSupertypes}), and
+     * otherwise by reflection, as at start. The index names a class's supertypes raw, and a raw bean type matches every
+     * parameterization (BUG-20261117-14). Empty when neither knows the class.
+     */
+    private static List<TypeInfo> parameterizedSupertypes(DotName className) {
+        return CompiledSupertypes.of(new TypeInfo.ClassType(className))
+                .orElseGet(() -> reflectedParameterizedSupertypes(className));
+    }
+
+    private static List<TypeInfo> reflectedParameterizedSupertypes(DotName className) {
         try {
-            var clazz = DeploymentClasses.load(classInfo.name().value());
-            for (java.lang.reflect.Type t : io.vidocq.vauban.core.types.TypeHierarchyResolver.resolveAllSupertypes(clazz)) {
-                var typeInfo = reflectTypeToTypeInfo(t);
-                if (typeInfo instanceof TypeInfo.ParameterizedType) {
-                    types.add(typeInfo);
+            var parameterized = new ArrayList<TypeInfo>();
+            var beanClass = DeploymentClasses.load(className.value());
+            for (java.lang.reflect.Type t : io.vidocq.vauban.core.types.TypeHierarchyResolver.resolveAllSupertypes(
+                    beanClass)) {
+                if (reflectTypeToTypeInfo(t) instanceof TypeInfo.ParameterizedType type) {
+                    parameterized.add(supertypeAsJavaSeesIt(t, type, beanClass));
                 }
             }
+            return parameterized;
         } catch (ClassNotFoundException _) {
-            // The index alone describes the bean types
+            return List.of();
         }
+    }
 
-        // Remove raw ClassTypes if a ParameterizedType exists for the same class name
-        // (CDI spec: parameterized beans only have their parameterized types in the bean types set, not raw types)
-        var rawNamesWithParams = new java.util.HashSet<DotName>();
-        for (var t : types) {
-            if (t instanceof TypeInfo.ParameterizedType(var rawType, _)) {
-                rawNamesWithParams.add(rawType);
+    /**
+     * {@code info}, the type {@code reflected} above {@code root} in the index's terms, or its raw class when it is a
+     * parameterized type with a type variable of a class above {@code root} among its type arguments: only a
+     * supertype {@code root} names raw leaves one there, and Java erases the types above a raw type (JLS 4.8).
+     * {@code Legacy<E> extends ArrayList} is a {@code List}, not a {@code List<E>}, whose {@code E} is
+     * {@code ArrayList}'s; the legal bean type rule dropped it, and the raw {@code List} with it (BUG-20261117-14).
+     */
+    private static TypeInfo supertypeAsJavaSeesIt(java.lang.reflect.Type reflected, TypeInfo info, Class<?> root) {
+        return info instanceof TypeInfo.ParameterizedType parameterized && hasForeignTypeVariable(reflected, root)
+                ? new TypeInfo.ClassType(parameterized.rawType()) : info;
+    }
+
+    /**
+     * Whether a type argument of {@code type}, at any depth, a wildcard's bounds included, is a type variable a
+     * declaration other than {@code root} declares.
+     */
+    private static boolean hasForeignTypeVariable(java.lang.reflect.Type type, Class<?> root) {
+        return switch (type) {
+            case java.lang.reflect.TypeVariable<?> variable -> variable.getGenericDeclaration() != root;
+            case java.lang.reflect.ParameterizedType parameterized ->
+                    anyHasForeignTypeVariable(parameterized.getActualTypeArguments(), root);
+            case java.lang.reflect.WildcardType wildcard -> anyHasForeignTypeVariable(wildcard.getUpperBounds(), root)
+                    || anyHasForeignTypeVariable(wildcard.getLowerBounds(), root);
+            case java.lang.reflect.GenericArrayType array -> hasForeignTypeVariable(array.getGenericComponentType(),
+                    root);
+            case null, default -> false;
+        };
+    }
+
+    private static boolean anyHasForeignTypeVariable(java.lang.reflect.Type[] types, Class<?> root) {
+        return Arrays.stream(types).anyMatch(type -> hasForeignTypeVariable(type, root));
+    }
+
+    /** The names of the type variables {@code classInfo} declares. */
+    private static Set<String> ownTypeVariables(ClassInfo classInfo) {
+        var names = new HashSet<String>();
+        for (var variable : classInfo.typeParameters()) {
+            names.add(variable.name());
+        }
+        return names;
+    }
+
+    /**
+     * The legal bean types among {@code types} (CDI 4.1, 2.2.1), as {@code ManagedBean.getTypes()} keeps them. A type
+     * variable and a wildcard are none. A parameterized type with a type variable {@code variables} does not hold, at
+     * any depth, gives its raw class: only a supertype named raw leaves one there, and Java erases the types above a
+     * raw type (JLS 4.8). The variables are the bean class's own, or those of the type a producer produces. Such a
+     * type was dropped, and its raw class with it (BUG-20261117-14). A parameterized type with a wildcard among its
+     * type arguments is no bean type, nor is its raw class: the CDI TCK's {@code BeanTypesWithIllegalTypeTest} wants
+     * none.
+     */
+    private static Set<TypeInfo> legalBeanTypes(Set<TypeInfo> types, Set<String> variables) {
+        var legal = new LinkedHashSet<TypeInfo>();
+        for (var type : types) {
+            switch (type) {
+                case TypeInfo.ParameterizedType parameterized when !variables.containsAll(
+                        typeVariableNames(parameterized)) -> legal.add(new TypeInfo.ClassType(parameterized.rawType()));
+                case TypeInfo.ParameterizedType parameterized when !hasWildcard(parameterized) -> legal.add(type);
+                case TypeInfo.ParameterizedType _, TypeInfo.TypeVariable _, TypeInfo.WildcardType _ -> {
+                    // Not a legal bean type, and a type with a wildcard does not give its raw class
+                }
+                default -> legal.add(type);
             }
         }
-        types.removeIf(t -> t instanceof TypeInfo.ClassType(var name) && rawNamesWithParams.contains(name));
+        return legal;
+    }
 
-        types.add(new TypeInfo.ClassType(DotName.of(JAVA_LANG_OBJECT)));
-        return types;
+    /** Whether a type argument of {@code type} is a wildcard, or a parameterized type that has one, at any depth. */
+    private static boolean hasWildcard(TypeInfo.ParameterizedType type) {
+        return type.typeArguments().stream().anyMatch(argument -> argument instanceof TypeInfo.WildcardType
+                || argument instanceof TypeInfo.ParameterizedType nested && hasWildcard(nested));
+    }
+
+    /** The names of the type variables {@code type} has, itself or among its type arguments, at any depth. */
+    private static Set<String> typeVariableNames(TypeInfo type) {
+        var names = new HashSet<String>();
+        addTypeVariableNames(type, names);
+        return names;
+    }
+
+    private static void addTypeVariableNames(TypeInfo type, Set<String> names) {
+        switch (type) {
+            case TypeInfo.TypeVariable(var name, _) -> names.add(name);
+            case TypeInfo.ParameterizedType(_, var arguments) -> arguments.forEach(
+                    argument -> addTypeVariableNames(argument, names));
+            case TypeInfo.ArrayType(var component, _) -> addTypeVariableNames(component, names);
+            case TypeInfo.WildcardType(var upper, var lower) -> {
+                addTypeVariableNames(upper, names);
+                addTypeVariableNames(lower, names);
+            }
+            case null, default -> {
+                // A class or a primitive type, or no bound: no type variable
+            }
+        }
+    }
+
+    /**
+     * Removes the raw form of each class {@code types} also hold parameterized: a bean of a parameterized type has that
+     * type, not its raw class (CDI 4.1, 2.2.1).
+     */
+    private static void dropRawFormsOfParameterizedTypes(Set<TypeInfo> types) {
+        var parameterizedNames = new HashSet<DotName>();
+        for (var t : types) {
+            if (t instanceof TypeInfo.ParameterizedType(var rawType, _)) {
+                parameterizedNames.add(rawType);
+            }
+        }
+        types.removeIf(t -> t instanceof TypeInfo.ClassType(var name) && parameterizedNames.contains(name));
     }
 
     /**
      * The bean types {@code @Typed} leaves a managed bean: each named type, in its parameterized form
-     * when the class has such a supertype, plus {@code Object}.
+     * when the class has such a supertype, plus {@code Object}, the legal ones only.
      */
     private static Set<TypeInfo> typedBeanTypes(ClassInfo classInfo, List<DotName> restrictedRawTypes) {
-        // Build restricted types — use parameterized versions when available
-        var allParamTypes = new LinkedHashSet<TypeInfo>();
-        try {
-            for (java.lang.reflect.Type t : io.vidocq.vauban.core.types.TypeHierarchyResolver.resolveAllSupertypes(DeploymentClasses.load(classInfo.name().value()))) {
-                var typeInfo = reflectTypeToTypeInfo(t);
-                if (typeInfo != null) allParamTypes.add(typeInfo);
-            }
-        } catch (ClassNotFoundException _) { /* skip */ }
+        var allParamTypes = parameterizedSupertypes(classInfo.name());
         var restrictedTypes = new LinkedHashSet<TypeInfo>();
         for (var rawName : restrictedRawTypes) {
             restrictedTypes.add(allParamTypes.stream()
@@ -769,7 +883,7 @@ public final class BeanDiscovery {
                     .orElseGet(() -> new TypeInfo.ClassType(rawName)));
         }
         restrictedTypes.add(new TypeInfo.ClassType(DotName.of(JAVA_LANG_OBJECT)));
-        return restrictedTypes;
+        return legalBeanTypes(restrictedTypes, ownTypeVariables(classInfo));
     }
 
     /** The class names a {@code @Typed} annotation lists, in declaration order. */
@@ -789,10 +903,15 @@ public final class BeanDiscovery {
         };
     }
 
-
+    /**
+     * {@code className} and the classes and interfaces above it, read as {@link IndexLookup#describe} gives them: the
+     * index, and, while Vauban's annotation processor runs the deployment, its description of a class the index does
+     * not hold. A superclass the compilation compiles does not load in the processor, and the bean types stopped there
+     * (BUG-20261117-03). A class nothing describes, one of the JDK say, is loaded.
+     */
     private void collectBeanTypes(DotName className, Set<TypeInfo> types) {
         types.add(new TypeInfo.ClassType(className));
-        var classInfo = index.getClassByName(className);
+        var classInfo = lookup.describe(className);
         if (classInfo.isEmpty()) {
             collectUnindexedSupertypes(className, types);
             return;
@@ -807,9 +926,8 @@ public final class BeanDiscovery {
         }
     }
 
-
     /**
-     * The supertypes of a type the index does not describe, such as an interface of a Jakarta API
+     * The supertypes of a type nothing describes, such as an interface of a Jakarta API
      * ({@code HttpAuthenticationMechanismHandler} extends {@code HttpAuthenticationMechanism}): read by reflection,
      * since a bean is of every type its supertypes make it, indexed or not. A class that cannot be loaded or
      * linked adds nothing but its own name, as before.
@@ -910,6 +1028,7 @@ public final class BeanDiscovery {
                 TypeInfo lower = wt.getLowerBounds().length > 0 && wt.getLowerBounds()[0] != Object.class ? reflectTypeToTypeInfo(wt.getLowerBounds()[0], visited) : null;
                 yield new TypeInfo.WildcardType(upper, lower);
             }
+            case IndexedType(var typeInfo) -> typeInfo;
             case null, default -> null;
         };
     }
@@ -921,27 +1040,53 @@ public final class BeanDiscovery {
                 io.vidocq.vauban.core.container.ManagedBean.buildTypeVariableMapping(concreteClass));
     }
 
+    /**
+     * The bean types of a producer of {@code producerType}: the type, the classes and interfaces above it, their type
+     * variables resolved, and {@code Object}, the legal ones only. While Vauban's annotation processor runs, the
+     * classes and interfaces above the type are those the compilation gives: the type, or a type argument, may be a
+     * class it compiles, which does not load there (BUG-20261117-14). Otherwise reflection gives them, as at start, and
+     * the index where a class does not load.
+     */
     Set<TypeInfo> computeProducerTypes(TypeInfo producerType) {
         var types = new LinkedHashSet<TypeInfo>();
         types.add(producerType);
 
-        // Use TypeHierarchyResolver to correctly resolve both raw and parameterized supertypes
-        try {
-            reflectProducerType(producerType).ifPresent(refType -> {
-                for (java.lang.reflect.Type t : io.vidocq.vauban.core.types.TypeHierarchyResolver.resolveAllSupertypes(refType)) {
-                    var typeInfo = reflectTypeToTypeInfo(t);
-                    if (typeInfo != null) types.add(typeInfo);
-                }
-            });
-        } catch (Exception _) {
-            // The index alone describes the types of a plain class
-            if (producerType instanceof TypeInfo.ClassType(var name)) {
-                collectBeanTypes(name, types);
+        var compiled = CompiledSupertypes.of(producerType);
+        if (compiled.isPresent() || !addReflectedSupertypes(producerType, types)) {
+            var rawName = switch (producerType) {
+                case TypeInfo.ClassType(var name) -> name;
+                case TypeInfo.ParameterizedType(var rawType, _) -> rawType;
+                default -> null;
+            };
+            if (rawName != null) {
+                collectBeanTypes(rawName, types);
             }
+            types.addAll(compiled.orElse(List.of()));
+            dropRawFormsOfParameterizedTypes(types);
         }
 
         types.add(new TypeInfo.ClassType(DotName.of(JAVA_LANG_OBJECT)));
-        return types;
+        return legalBeanTypes(types, typeVariableNames(producerType));
+    }
+
+    /**
+     * Adds to {@code types} the classes and interfaces reflection finds above {@code producerType}, through
+     * {@code TypeHierarchyResolver}; false when a class it names does not load.
+     */
+    private static boolean addReflectedSupertypes(TypeInfo producerType, Set<TypeInfo> types) {
+        try {
+            reflectProducerType(producerType).ifPresent(refType -> {
+                var root = refType instanceof java.lang.reflect.ParameterizedType parameterized
+                        ? parameterized.getRawType() : refType;
+                for (java.lang.reflect.Type t : io.vidocq.vauban.core.types.TypeHierarchyResolver.resolveAllSupertypes(refType)) {
+                    var typeInfo = supertypeAsJavaSeesIt(t, reflectTypeToTypeInfo(t), (Class<?>) root);
+                    if (typeInfo != null) types.add(typeInfo);
+                }
+            });
+            return true;
+        } catch (ClassNotFoundException | RuntimeException _) {
+            return false;
+        }
     }
 
     /**
@@ -958,24 +1103,33 @@ public final class BeanDiscovery {
         };
     }
 
+    /**
+     * {@code rawType} with {@code typeArguments}, for {@code TypeHierarchyResolver}: a class argument as the class it
+     * names, and any other, a parameterized type, an array, a wildcard or a type variable, as the {@link IndexedType}
+     * that carries it. The resolver puts an argument where the type variable it stands for appears above the raw
+     * type, and no type variable of a class above it can occur in the argument, so {@link #reflectTypeToTypeInfo}
+     * gives it back as the index wrote it: as in the produced type itself, and as the processor puts it at build. It
+     * was {@code Object}, so a producer of {@code Box<List<String>>} had {@code Repo<Object>} at start where the build
+     * gives {@code Repo<List<String>>} (BUG-20261117-17).
+     */
     private static java.lang.reflect.ParameterizedType parameterizedReflectType(DotName rawType,
             List<TypeInfo> typeArguments) throws ClassNotFoundException {
-        // If it's parameterized, we still need the raw class to extract the tree
         Class<?> clazz = DeploymentClasses.load(rawType.value());
-
-        // Reconstruct a simple ParameterizedType to pass to TypeHierarchyResolver
         var args = new java.lang.reflect.Type[typeArguments.size()];
         for (int i = 0; i < typeArguments.size(); i++) {
-            // Fallback: Object for an argument that is not a plain class, a wildcard for instance
             args[i] = typeArguments.get(i) instanceof TypeInfo.ClassType(var argName)
                     ? DeploymentClasses.load(argName.value())
-                    : Object.class;
+                    : new IndexedType(typeArguments.get(i));
         }
         return new java.lang.reflect.ParameterizedType() {
             @Override public java.lang.reflect.Type[] getActualTypeArguments() { return args.clone(); }
             @Override public java.lang.reflect.Type getRawType() { return clazz; }
             @Override public java.lang.reflect.Type getOwnerType() { return null; }
         };
+    }
+
+    /** A type argument of a produced type that reflection carries through the classes above it without reading it. */
+    private record IndexedType(TypeInfo typeInfo) implements java.lang.reflect.Type {
     }
 
     Set<TypeInfo> computeProducerTypesWithTyped(TypeInfo producerType, List<AnnotationInfo> annotations) {

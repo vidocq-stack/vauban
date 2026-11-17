@@ -27,6 +27,7 @@ import io.vidocq.vauban.indexer.model.TypeInfo.*;
 
 import java.util.HashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Objects;
 import java.util.Set;
 
@@ -115,9 +116,12 @@ public final class AssignabilityRules {
         return wrapperName != null && type instanceof ClassType(var name) && name.equals(wrapperName);
     }
 
-    /** {@code type} is a {@code ClassType} with the name of the primitive {@code kind}. */
+    /**
+     * {@code type} is a {@code ClassType} with the name of the primitive {@code kind}, whatever the default locale: a
+     * Turkish one lowers {@code INT} to {@code ınt}, with a dotless i (BUG-20261117-20).
+     */
     private static boolean namesPrimitive(TypeInfo type, PrimitiveType.Kind kind) {
-        return type instanceof ClassType(DotName(var name)) && name.equals(kind.name().toLowerCase());
+        return type instanceof ClassType(DotName(var name)) && name.equals(kind.name().toLowerCase(Locale.ROOT));
     }
 
     /** One name is a primitive's and the other its wrapper's, or both are names of the same primitive. */
@@ -305,7 +309,7 @@ public final class AssignabilityRules {
 
     private static String primitiveName(TypeInfo type) {
         return switch (type) {
-            case PrimitiveType(var kind) -> kind.name().toLowerCase();
+            case PrimitiveType(var kind) -> kind.name().toLowerCase(Locale.ROOT);
             case ClassType(DotName(var name)) -> name;
             default -> null;
         };

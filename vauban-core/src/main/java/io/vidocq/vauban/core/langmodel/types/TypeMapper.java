@@ -20,9 +20,8 @@
 package io.vidocq.vauban.core.langmodel.types;
 
 import io.vidocq.vauban.core.langmodel.IndexLookup;
-import io.vidocq.vauban.indexer.model.DotName;
+import io.vidocq.vauban.core.types.TypeInfoUtils;
 import io.vidocq.vauban.indexer.model.TypeInfo;
-import jakarta.enterprise.lang.model.types.PrimitiveType.PrimitiveKind;
 import jakarta.enterprise.lang.model.types.Type;
 
 /**
@@ -45,9 +44,10 @@ public final class TypeMapper {
             // TypeInfo.PrimitiveType. The CDI Lite lang model requires it to be a PrimitiveType,
             // so portable extensions can do `type instanceof PrimitiveType` (e.g. to box it).
             // Without this, such a type was exposed as ClassType[name=boolean] and broke synthetic
-            // bean registration for primitive injection points (Cervantes @Claim boolean).
-            case TypeInfo.ClassType(var name) when primitiveKind(name) != null ->
-                    new VaubanPrimitiveType(primitiveKind(name));
+            // bean registration for primitive injection points (Cervantes @Claim boolean). The
+            // names are the JDK's, as the extensions' type matcher reads them (BceTypeMatcher).
+            case TypeInfo.ClassType(var name) when TypeInfoUtils.fromReflectType(Class.forPrimitiveName(name.value()))
+                    instanceof TypeInfo.PrimitiveType primitive -> new VaubanPrimitiveType(primitive);
             case TypeInfo.ClassType(var name) -> new VaubanClassType(name, lookup);
             case TypeInfo.ArrayType a -> mapArray(a, lookup);
             case TypeInfo.ParameterizedType(var rawType, var typeArguments) -> new VaubanParameterizedType(
@@ -60,24 +60,6 @@ public final class TypeMapper {
             case TypeInfo.WildcardType(var upperBound, var lowerBound) -> new VaubanWildcardType(
                     upperBound != null ? map(upperBound, lookup) : null,
                     lowerBound != null ? map(lowerBound, lookup) : null);
-        };
-    }
-
-    /**
-     * Maps a reserved primitive name ("boolean", "int", …) to its {@link PrimitiveKind}, or
-     * {@code null} for any real class name (no class may be named like a primitive).
-     */
-    private static PrimitiveKind primitiveKind(DotName name) {
-        return switch (name.value()) {
-            case "boolean" -> PrimitiveKind.BOOLEAN;
-            case "byte" -> PrimitiveKind.BYTE;
-            case "char" -> PrimitiveKind.CHAR;
-            case "short" -> PrimitiveKind.SHORT;
-            case "int" -> PrimitiveKind.INT;
-            case "long" -> PrimitiveKind.LONG;
-            case "float" -> PrimitiveKind.FLOAT;
-            case "double" -> PrimitiveKind.DOUBLE;
-            default -> null;
         };
     }
 

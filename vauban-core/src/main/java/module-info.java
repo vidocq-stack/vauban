@@ -71,6 +71,8 @@ module io.vidocq.vauban.core {
     // Every generated class file is written at the project's Java release, never at the release of
     // the JDK running the build (BUG-20260911-01) — the APT front-end generates through it too.
     exports io.vidocq.vauban.core.codegen to io.vidocq.vauban.processor;
+    // A qualified export does not reach a processor module javac defines in a layer above this one
+    // (--processor-module-path): ProcessorAccess gives it every package exported to it here (BUG-20261117-23).
 
     // Full-privilege lookups of managed classes, supplied by their package's generated provider
     // (ModuleLookups): exported only to the extension modules trusted with them, added by name.

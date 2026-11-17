@@ -5,6 +5,478 @@ suspected cause, status. Updated on every investigation.
 
 ---
 
+## BUG-20261117-23 — The processor in a layer above vauban-core's cannot use the packages exported to it alone
+
+- **Date**: 2026-11-17
+- **Status**: FIXED on `fix/processor-bean-supertypes`
+- **Module**: `vauban-core` (the qualified exports of `io.vidocq.vauban.core.codegen` and `io.vidocq.vauban.core.proxy`
+  to `io.vidocq.vauban.processor`), `vauban-processor`
+- **Symptom**: javac given `vauban-processor` on `--processor-module-path`, in a JVM whose module path holds
+  `vauban-core`: the processor's first use of either package throws `IllegalAccessError` ("module io.vidocq.vauban.core
+  does not export io.vidocq.vauban.core.codegen to module io.vidocq.vauban.processor"). On main (528c42dd), a
+  compilation with a normal-scoped bean failed (`ElementTypeView` implements `core.codegen.TypeView`), and one with an
+  intercepted method that carries an annotation (`BeanMembers`); a `@Dependent` bean compiled. With BUG-20261117-03,
+  every compilation failed (`CompiledSupertypes`, bound in `VaubanProcessor.process`): Foy's
+  `FoyWebExtensionTest.processorModulePathDiscoversTheExtension`, in the `pr-validate` of vauban#325 (downstream
+  `Vidocq/foy`).
+- **Repro**: `ProcessorAboveCoreLayerTest` in `vauban-processor`, enabled in every build: it defines the processor's
+  module in a layer above the boot layer, which holds `vauban-core`, as javac does, and compiles a `@Dependent` bean, a
+  normal-scoped bean and an intercepted method. Red on 154c46fc: the three, on `CompiledSupertypes`
+  (`vauban-b03-red.log`, "Fix round 5 red run 24"); on the main code of 528c42dd: the normal-scoped bean (`TypeView`)
+  and the intercepted method (`BeanMembers`), the `@Dependent` bean compiles (run 26; run 25, the binding on the
+  class, reached no `BeanMembers`).
+- **Cause**: a qualified export reaches the modules of the exporting module's layer, and of the layers below it, that
+  the layer holds when it is defined. javac defines the modules of `--processor-module-path` in a new layer above the
+  boot layer, and the processor's module reads `vauban-core` from the boot layer: no qualified export reaches it.
+- **The processor's uses** of the two packages, by path:
+  - every compilation (this branch only): `CompiledSupertypes` (`VaubanProcessor`, `ParameterizedSupertypes`);
+  - a client proxy, of a normal-scoped bean or producer: `ClientProxyEmitter`, `ClientProxyShape`,
+    `ProducerProxyEligibility` (`ClientProxyArtefacts`); `TypeView`, `ClientProxyShape` (`ElementTypeView`);
+    `ClientProxyShape`, `ProxyMethodShape`, `ForwardedMethods` (`ClientProxyShapeFromElements`,
+    `ClientProxySourceRenderer`, `InterfaceProxySourceRenderer`);
+  - an intercepted bean: `BeanMembers` (a method that carries an annotation) and `TypeMembers` (a default method),
+    `InterceptedShapeFromElements`.
+- **Who hits it**: a JVM whose module path holds `vauban-core` and that runs javac in process with `vauban-processor`
+  on `--processor-module-path`: Foy's tests (`TestApps.compile`). No application build, read on Vidocq 4a78d777:
+  applications compile with `annotationProcessorPaths` (`vidocq-runtime-parent/pom.xml:82-89`), a `-processorpath` in
+  Maven's JVM, whose boot layer holds no Vauban module; `vidocq:dev` recompiles with an out-of-process
+  `mvn process-classes` (`RecompileRunner.java:70-71`); `DependencyCodegen` runs javac in process
+  (`DependencyCodegen.java:124`, `:273-275`) with processors of a `URLClassLoader` over the platform loader
+  (`AttributedProcessors.java:85`, `:98`), where `vauban-core` and the processor share one unnamed module;
+  `WarJspPages` runs javac without a processor (`WarJspPages.java:116`, `:334`). The only `--processor-module-path`
+  there is a test that forks `javac` for Peano's processor (`PeanoAccessorRegistrationTest.java:64`).
+- **Fix**: `io.vidocq.vauban.core.ProcessorAccess.grantTo(Module)`, for `vauban-processor` only: from `vauban-core`,
+  which alone may add its exports (`Module.addExports`), it exports to the named module `io.vidocq.vauban.processor`
+  each package vauban-core's module descriptor exports to it by name, both packages today, so a later
+  `exports ... to io.vidocq.vauban.processor` needs no other change; it refuses a named module of another name, and
+  changes nothing for an unnamed one. `VaubanProcessor.init` calls it before any use. The qualified exports stay,
+  and the module descriptor names the hook. One public class in an exported package, on the precedent of
+  `IndexLookup.describe` (BUG-20261117-02).
+- **Not covered**: a processor on a class path whose loader takes `vauban-core` from a layer where it is a named module
+  (`-processorpath` in a JVM whose module path holds `vauban-core` and not `vauban-processor`): the processor is in an
+  unnamed module, which no qualified export names and the hook leaves alone. By reading, not run, it fails as above,
+  on every compilation since BUG-20261117-03. No consumer known: Foy isolates the loader of its class-path case for
+  that reason (`TestApps.isolatedLoader`), and Maven's JVM holds no Vauban module. The other qualified export,
+  `io.vidocq.vauban.core.access` to `io.vidocq.heisenberg.cdi.vauban`, has the same limit, which the Vidocq runtime
+  never reaches (read on Vidocq 4a78d777): its layer rule keeps every `io.vidocq.` module, Heisenberg's among them,
+  with `vauban-core` in the parent layer (`LayerSplit.java:61`, `:207`, `:310`); only an explicit
+  `-Dvidocq.app.modules` naming it moves it alone (`VidocqAppLayer.java:256`, `:281`), and Heisenberg then catches the
+  `LinkageError` (`VaubanLookupSource.java:48`).
+- **Verification**: green, `ProcessorAboveCoreLayerTest` 3/3 in `vauban-processor` and `ProcessorAccessTest` 3/3 in
+  `vauban-core` (`vauban-b03-dev.log`, "Fix round 5 dev run 19"; the final `ProcessorAccessTest` in dev run 21, beside
+  the tests of `core.codegen` and `core.proxy`, after the probe of dev run 20, and with the packages read from the
+  descriptor in "Fix round 6 dev run 22"), and in the full build of the commit (`vauban-b03-build.log`);
+  Foy's `FoyWebExtensionTest`, 11/11, on Foy's origin/main 412ca8b and on its checkout 6c873b1, with Vauban installed
+  from the commit (`vauban-b03-build.log`, "Foy FoyWebExtensionTest on").
+- **Found by**: `pr-validate` of vauban#325, downstream `Vidocq/foy`.
+
+## BUG-20261117-21 — A producer of an inner class of a generic class has the raw types above it in its descriptor
+
+- **Date**: 2026-11-17
+- **Status**: OPEN
+- **Module**: `vauban-indexer` (`TypeInfo.ParameterizedType`), as `vauban-core` (`BeanDiscovery.computeProducerTypes`)
+  and `vauban-processor` (`ParameterizedSupertypes`) read it
+- **Symptom**: `@Produces Outer<String>.Inner<Integer> inner()`, where `Outer<O>` declares
+  `class Inner<I> implements Holder<O>`, all compiled by the same compilation: the producer's descriptor, which the
+  resolution of an injection point and an extension's `BeanInfo.types()` read, holds the raw `Holder`, at build, at
+  start and frozen. `Bean.getTypes()`, read from the producer method, holds `Holder<String>`. A raw bean type satisfies
+  an injection point of any parameterization (BUG-20261117-16): `@Inject Holder<String>` resolves to it, and so does
+  `@Inject Holder<Integer>`.
+- **Repro**: `VetoedInterceptorCompileTimeTest#aProducerOfAnInnerClassOfAGenericClassHasTheTypesAboveIt` in
+  `vauban-processor`, disabled; red when enabled: the extension sees the raw `Holder` in the processor, at start and
+  frozen, and `Bean.getTypes()` has `Holder<String>` (`vauban-b03-red.log`, "Fix round 3 red run 18", on the round 3
+  tree). `#aProducerOfAnInnerClassOfAGenericClassHasTheSameTypesAtBuildAsAtStart` checks that the build and the start
+  agree.
+- **Cause**: the index names the produced type `Outer$Inner<Integer>`, without `Outer<String>`, the type that encloses
+  it. At build, the compiler's `Types.getDeclaredType` refuses a member class of a generic class without its enclosing
+  type (`IllegalArgumentException`, caught in `ParameterizedSupertypes.above`), and the bean discovery falls back to
+  the raw supertypes the index names. At start, reflection on `Outer$Inner<Integer>` without an owner type leaves the
+  `O` of `Holder<O>` unresolved. Until fix round 3 the start kept `Holder<O>`, a third answer, at start and frozen
+  (`vauban-b03-red.log`, "Fix round 4 red run 22", on the main code of 03db99af); a type variable of a class above
+  the produced type now gives the raw class (BUG-20261117-14), so the build and the start agree.
+- **Same cause, two more shapes** (by reading, the review of f8dc8292; not tested): neither the descriptor nor
+  `Bean.getTypes()` reads the type that encloses the produced type, `getOwnerType()` in reflection,
+  `getEnclosingType()` in the compiler.
+  - `@Produces <F> Outer<F>.Inner<Integer>`, with `Inner<I> implements Holder<O>`: `ManagedBean.typesOfProducedType`
+    collects the producer's type variables from the type arguments of the produced type only (`typeVariablesOf`),
+    so it misses the `F` in the enclosing `Outer<F>`, and `filterIllegalBeanTypes` makes `Holder<F>` raw. The
+    descriptor has the raw `Holder` too (`BeanDiscovery.hasForeignTypeVariable`, `ParameterizedSupertypes
+    .hasForeignTypeVariable`). Both give the raw `Holder`, where CDI 4.1, 3.3 wants `Holder<F>`.
+  - `@Produces Outer<String>.Inner<Integer>`, with `Inner<I> implements Holder<List<? extends O>>`:
+    `Bean.getTypes()` resolves `Holder<List<? extends String>>` and drops it, as a type with a wildcard type argument
+    should be. The descriptor, without the enclosing type, has the raw `Holder`, at build, at start and frozen, which
+    satisfies an injection point of any `Holder<X>` (BUG-20261117-16).
+- **Fix** (not done): carry the enclosing type in the index's parameterized type, read by the indexer and the
+  processor, and given to the compiler and to reflection; a change of the index's model, beyond this pull request.
+- **Found by**: the review of fix round 3 of BUG-20261117-14 (M-2).
+
+## BUG-20261117-20 — Under a Turkish default locale, a primitive type no longer matches the class named after it
+
+- **Date**: 2026-11-17
+- **Status**: FIXED on `fix/processor-bean-supertypes`
+- **Module**: `vauban-core` (`AssignabilityRules.namesPrimitive` and `primitiveName`, `VaubanPrimitiveType.name`)
+- **Symptom**: with a Turkish default locale, `PrimitiveType(INT)` and `ClassType("int")` are not assignable either
+  way, nor an array of `int` to an array of `ClassType("int")`, and `VaubanPrimitiveType.name()`, the name an
+  extension reads, is `ınt`, with a dotless i. Reflection names the component of an array of primitives as a class,
+  where the index and the compiler give a primitive: the bean types of BUG-20261117-14 match across both forms.
+- **Repro**: `AssignabilityRulesEdgeCasesTest#aPrimitiveTypeMatchesTheClassTypeNamedAfterItUnderATurkishDefaultLocale`
+  in `vauban-core`, which sets `Locale.forLanguageTag("tr")` and restores the default after it: red on 03db99af, four
+  failures (`vauban-b03-red.log`, "Fix round 3 red run 17").
+- **Cause**: `String.toLowerCase()` lowers in the default locale, and the Turkish one lowers `I` to `ı`.
+- **Fix**: `toLowerCase(Locale.ROOT)` at the three places. `ParameterizedSupertypes` and `TypeRef.sourceName` already
+  lowered that way. The other case conversions without a locale in `vauban-core` and `vauban-processor`: one,
+  `TypeRef.toString` (`TypeRef.java:333`), which names a type for a message, on no matching path; left as it is.
+- **Verification**: green with the fix (`vauban-b03-dev.log`, "Fix round 3 dev run 13", the whole `vauban-core`
+  suite).
+- **Found by**: the review of fix round 3 of BUG-20261117-14 (U2).
+
+## BUG-20261117-19 — The descriptor of a `@Typed` producer names its types raw
+
+- **Date**: 2026-11-17
+- **Status**: OPEN
+- **Module**: `vauban-core` (`BeanDiscovery.computeProducerTypesWithTyped`)
+- **Symptom**: `@Produces @Typed(Repo.class) Box<String> strings()` and `@Produces @Typed(Repo.class) Box<Integer>
+  integers()`, where `Box<T> implements Repo<T>`: an `@Inject Repo<String>` is ambiguous at build (`Ambiguous
+  dependency: field Reader.injected … Matching beans: [vi.types.BoxFactory, vi.types.BoxFactory]`) and, by the review,
+  at start. `Bean.getTypes()` holds `Repo<String>` and `Repo<Integer>`; an extension's `BeanInfo.types()` the raw
+  `Repo`.
+- **Repro**: `VetoedInterceptorCompileTimeTest#anInjectionPointResolvesToTheTypedProducerOfItsParameterization` in
+  `vauban-processor`, disabled; red when enabled, at build (`vauban-b03-red.log`, "Fix round 3 red run 18", on the
+  round 3 tree).
+- **Cause** (by reading): `computeProducerTypesWithTyped` gives the class each `@Typed` value names, raw, and
+  `Object`, without the type arguments the produced type gives it. A raw bean type satisfies an injection point of
+  any parameterization (BUG-20261117-16), so both producers do. A bean class's `@Typed` takes the parameterized form
+  (`typedBeanTypes`), and `ManagedBean.getTypes()` does for both.
+- **Found by**: the review of fix round 3 of BUG-20261117-14 (U1).
+
+## BUG-20261117-18 — The client proxy of a normal-scoped producer of a parameterized type is not one of that type
+
+- **Date**: 2026-11-17
+- **Status**: OPEN
+- **Module**: `vauban-core` (`InterceptorBeanWrapper.resolveProxyTargetClass`), `vauban-processor`
+  (`ClientProxyArtefacts`)
+- **Symptom**: `@Produces @RequestScoped Supplier<String> greeting()` in an `@ApplicationScoped GreetingProducer`, and
+  an `@Inject Supplier<String>` in another bean: calling the injected `Supplier` throws `ClassCastException: Cannot
+  cast …InterfaceClientProxyTest$GreetingProducer_ClientProxy to java.util.function.Supplier`. By the review of fix
+  round 3: `@Produces @RequestScoped ArrayList<String>` injected as a `List<String>` gets a proxy of `RandomAccess`,
+  which is no `List`; a `@Typed` producer gets a proxy of the class that declares it, while the processor generates
+  one of the `@Typed` interface.
+- **Repro**: `InterfaceClientProxyTest#aNormalScopedProducerOfAParameterizedInterfaceInjectsAsAProxyOfIt` in
+  `vauban-core`, disabled; red when enabled (`vauban-b03-red.log`, "Fix round 2 red run 7").
+- **Cause** (by reading, the repro agrees for the first case): `resolveProxyTargetClass` takes, for a producer, the
+  first bean type that is a `Class` and not `Object`, a class first, then an interface. A parameterized produced type,
+  and every parameterized type above it, is a `ParameterizedType`, not a `Class`. With none left, it returns
+  `bean.getBeanClass()`, the class that declares the producer, and the container proxies that class. With one left
+  above it, a class or an interface that is not generic, it proxies that one: `RandomAccess` for `ArrayList<String>`.
+  The injection point takes neither. The processor reads the descriptor's types that name a class without type
+  arguments (`ClientProxyArtefacts.producedTypeCandidates`) in the container's order. Where both read the same types,
+  it follows the container: it generates no proxy when there is no candidate, and the proxy of `RandomAccess` for
+  `ArrayList<String>`, which the container then uses, with the same failure. For a `@Typed` producer they differ: the
+  descriptor names the `@Typed` types raw (BUG-20261117-19), so the processor generates the proxy of the `@Typed`
+  interface, `Repo` for `@Typed(Repo.class) Box<String>`, while `Bean.getTypes()` holds `Repo<String>` only and the
+  container proxies the class that declares the producer.
+- **Found by**: the review of BUG-20261117-15 (fix round 2), which asked to confirm or rule it out; the two other
+  cases by the review of fix round 3 (M-5).
+
+## BUG-20261117-17 — A type argument of a produced type that is not a class is lost in the types above it
+
+- **Date**: 2026-11-17
+- **Status**: FIXED (the BUG-20261117-03 commit, fix round 2b)
+- **Module**: `vauban-core` (`BeanDiscovery.parameterizedReflectType`), `vauban-processor` (`ParameterizedSupertypes`)
+- **Symptom**: `@Produces Box<List<String>>`, where `Box<T> implements Repo<T>`: at start the producer's bean types
+  are `Box<List<String>>`, `Box<Object>`, `Repo<Object>` and `Object`, and an `@Inject Repo<List<String>>` is
+  unsatisfied. In an application compiled with the annotation processor, the build resolves that injection point:
+  since BUG-20261117-14 the processor reads `Repo<List<String>>` from the compilation. The start then refuses it. The
+  same for an array argument (`Box<String[]>`, `Box<List<String>[]>`, `Box<int[][]>`) and a type variable
+  (`<T> Box<T>`, `<N extends Number> Box<List<N>>`): `Box<Object>` and `Repo<Object>` at start. The processor got the
+  arrays of classes right, and gave the raw `Repo` to `Box<T>`, `Box<int[][]>` and `Box<List<N>>`.
+  `Bean.getTypes()`, which reflection reads from the producer method itself, was right in each case.
+- **Repro**: `VetoedInterceptorCompileTimeTest#aProducerOfATypeWithAParameterizedTypeArgumentHasTheTypesAboveItAtStartAsAtBuild`
+  and `#aProducerOfATypeWithATypeArgumentOfEveryShapeHasTheTypesAboveItAtStartAsAtBuild` in `vauban-processor`,
+  `BeanTypesAtStartTest#aTypeArgumentOfAProducedTypeKeepsItsShapeInTheTypesAboveIt`,
+  `#aProducerOfATypeWithAParameterizedTypeArgumentSatisfiesThatParameterizationAboveIt` and
+  `#…SatisfiesNoOtherParameterizationAboveIt` in `vauban-core`. Red on b8302835: the compilation passes and the start
+  fails with `Unsatisfied dependency: field Reader.injected` (`vauban-b03-red.log`, "Fix round 2b red run 11"); each
+  place's types and the core cases (run 12); an `@Inject Holder<List<String>>` unsatisfied and an `@Inject
+  Holder<Object>` satisfied by a producer of `Base<List<String>>` (run 14); the producers of `Crate<C> implements
+  Repo<C[]>`, `Crate<String[]>` and `<T> Crate<T>`, in the every-shape test, and a class argument, `Base<String>`, in
+  the core one (run 15, on the main code of b8302835 with the tests of "Fix round 2b dev run 12").
+- **Cause**: `computeProducerTypes` rebuilds the produced type for `TypeHierarchyResolver`, and
+  `parameterizedReflectType` turned each type argument that is not a plain class into `Object`. In the processor,
+  `ParameterizedSupertypes` built the produced type in the compiler's model, which has no type variable for a
+  `TypeInfo` that names one (a type alone does not declare it) and had no mirror for the index's primitive type: it
+  gave nothing, and the bean discovery fell back to the index's raw supertypes.
+- **Fix**: on both sides, a type argument that is not a class is carried as the index wrote it to where the type
+  variable it stands for appears above the produced type. At start `parameterizedReflectType` wraps it in an
+  `IndexedType`, a `java.lang.reflect.Type` that `TypeHierarchyResolver` places without reading it (no type variable
+  of the classes above can occur in it) and `reflectTypeToTypeInfo` gives back. In the processor the compiler gets the
+  type variable itself in that place, and the conversion to the index's types replaces that type variable, by its
+  element, with the argument; an array of such an argument is one array of both dimensions, as reflection gives it. A
+  class argument is still the class at start and the compiler's type at build. So the argument is the same in
+  `Box<X>` and in every type above it, at build, at start and frozen.
+- **What the start resolves differently**: such a producer no longer has `Box<Object>` and `Repo<Object>`, so an
+  injection point of those types that it satisfied, or made ambiguous with another bean, no longer finds it (tested
+  with `Holder<Object>` and a producer of `Base<List<String>>`), and an injection point of the type above it with the
+  argument resolves to it (tested with `Repo<List<String>>` and `Holder<List<String>>`; for the arrays and the type
+  variables the tests check the types, by reading the resolution follows). A producer of `Box<T>` now has
+  `Repo<T>`, a legal type for a producer (CDI 4.1, 2.2.1). A wildcard argument gives types that are not legal, and
+  dropped with their raw classes; such a producer is a definition error anyway (CDI 4.1, 3.2). At build, the
+  producers of `Box<T>`,
+  `Box<int[][]>` and `Box<List<N>>` no longer have the raw `Repo`, which satisfied an injection point of any `Repo`
+  (BUG-20261117-16). `Bean.getTypes()` does not change.
+- **Verification**: the five tests above, green with the fix (`vauban-b03-dev.log`, "Fix round 2b dev run 10" and
+  "dev run 11"), and with the `Crate` producers and the class argument ("dev run 12"); full build and TCKs under
+  BUG-20261117-03.
+- **Found by**: the review of BUG-20261117-14 (fix round 2), which asked to confirm or rule it out; fixed in this
+  pull request on review (fix round 2b), as the build resolved what the start refused.
+
+## BUG-20261117-16 — A raw bean type satisfies an injection point of any parameterization
+
+- **Date**: 2026-11-17
+- **Status**: OPEN
+- **Module**: `vauban-core` (`AssignabilityRules.isAssignableToParameterized`)
+- **Symptom**: a producer of a raw `Foo`, `@Produces Foo foo()` with `Foo<T>` generic, satisfies an `@Inject
+  Foo<Integer>`: the container starts. `BeanManager.getBeans` of `Foo<Integer>` returns no bean.
+- **Repro**: `AssignabilityRulesReproductionTest#aRawBeanTypeDoesNotSatisfyAnotherParameterization` in `vauban-core`,
+  disabled; when enabled, `getBeans` is empty and the container starts (`vauban-b03-red.log`, "Fix round 2 red run
+  7").
+- **Cause** (by reading): the resolution of an injection point (`BeanResolver` → `AssignabilityRules.beanTypeMatches`
+  → `isAssignableToParameterized`) takes a raw bean type for any parameterization of its class. CDI 4.1, 5.2.4 allows
+  it only when each type argument of the required type is `Object` or an unbounded type variable, as
+  `VaubanBeanManager.getBeans` does.
+- **Found by**: the review of BUG-20261117-14 (fix round 2).
+
+## BUG-20261117-15 — The processor generates the client proxy of a class or an interface above a producer's type
+
+- **Date**: 2026-11-17
+- **Status**: FIXED on `fix/processor-bean-supertypes`
+- **Module**: `vauban-processor` (`ClientProxyArtefacts.resolveProducedTypeElement`, `resolveProducedInterfaceElement`)
+- **Symptom**: for a normal-scoped producer of a class that extends another class, or of an interface that extends
+  another interface, the processor could generate the client proxy of a class or an interface above the produced
+  type, under that type's key: `app.c.A2_ClientProxy` for a producer of `app.c.A8`. The container looks the proxy up
+  by the produced type at start, finds none, and generates one at run time. Which proxy the processor generated
+  changed from one JVM to the next.
+- **Repro**: `ProducedTypeProxyTest` in `vauban-processor` (producers of `app.c.A8` and `app.c.B8`, each above seven
+  classes, and of `app.i.J8` and `app.i.K8`, each extending seven interfaces): the keys of `A2`, `B7`, `J5` and `K1`
+  (`vauban-b03-red.log`, "BUG-15 red run 2"; run 1, with the interfaces named `J0` and `K0`, got `A7` and `B1`).
+  `PlacedProxyEmissionTest#placedProxyOverridesInheritedPackagePrivateMembers` failed in one run on that code
+  (`vauban-b03-dev.log`, "dev run 3") and passed in another ("BUG-15 red run").
+- **Cause** (confirmed by the repro): both methods returned the first class, or the first public interface, among
+  the producer's bean types. A `BeanDescriptor` keeps them in a `Set.copyOf`, whose order changes from one JVM to the
+  next. They held the classes above a produced class of the compilation only when the index held them, a superclass
+  with a bean-defining annotation say; since BUG-20261117-03 they hold all of them. A producer of a JDK class whose
+  superclass is not `Object` (`java.security.SecureRandom`) could already get its superclass's proxy. The container
+  takes the first class of its own bean types, where the produced type comes first
+  (`InterceptorBeanWrapper.resolveProxyTargetClass`).
+- **Fix**: `ClientProxyArtefacts` takes the candidate the container proxies. It reads the produced type from the
+  producer method or field, walks the classes and interfaces above it in the container's order (`TypeHierarchyResolver`:
+  a class, its superclass, then its interfaces as they are declared), and takes the first candidate it meets, as
+  `resolveProxyTargetClass` takes the first class of its bean types. A producer `@Typed({T1.class, …, T8.class})` of
+  `Made implements T8, …, T1`, eight unrelated interfaces, gets the proxy of `T8`, the one the container uses; the
+  first fix took the first candidate when none is a subtype of all the others, and that order changes from one JVM to
+  the next. One of overloaded producer methods is found by the erased parameter types its id carries
+  (`Class#method(T1,T2)`); a producer whose member is not found gets no proxy, and the container generates one at run
+  time. A non-public interface the container proxies now gets no proxy, rather than the proxy of a public interface
+  above it, which the container does not look up.
+- **Verification**: red on d9144099 plus the BUG-20261117-03 fix (`vauban-b03-red.log`, "BUG-15 red run" and "BUG-15
+  red run 2"), green with the fix (`vauban-b03-dev.log`, "BUG-15 green check"). The `@Typed` case:
+  `ProducedTypeProxyTest#aProducerTypedWithUnrelatedInterfacesGetsTheProxyTheContainerLooksUp`, red on 438d3a80 (the
+  processor generated `T1`; `vauban-b03-red.log`, "Fix round 2 red run 5"); the same choice code generated `T8` in
+  "Fix round 2 red run 9", with the overloaded `twin()` added: it changes from one run to the next. Green with fix
+  round 2, the container using the generated proxies of `T8` and `T2` rather than a `java.lang.reflect.Proxy`. Then
+  the build and the TCK of BUG-20261117-03. The two departures, tested in fix round 3 by `ProducerProxyChoiceTest`,
+  which hands `ClientProxyArtefacts.generateForProducer` a descriptor: a producer of a package-private `Hidden extends
+  Shown` gets no proxy, not that of `Shown`, and a producer whose member is not found gets none; a producer of `Shown`
+  gets the proxy of `Shown`. They pin the code of 03db99af and pass on it (`vauban-b03-red.log`, "Fix round 3 red run
+  17"): a member that is not found does not occur in a compilation, where the processor writes the id itself.
+- **Found by**: the run of the whole `vauban-processor` suite before the commit of BUG-20261117-03.
+
+## BUG-20261117-14 — The processor's bean types are raw, and a raw bean type matches every parameterization
+
+- **Date**: 2026-11-17
+- **Status**: FIXED on `fix/processor-bean-supertypes`
+- **Module**: `vauban-core` (`BeanDiscovery.computeBeanTypes`, `typedBeanTypes`, `computeProducerTypes`), as
+  `vauban-processor` runs them; at start, `TypeHierarchyResolver` and `ManagedBean.getTypes()`
+- **Symptom**: in an application compiled with the annotation processor, `vi.types.Text implements Callable<String>`
+  and `vi.types.Count implements Callable<Integer>`, both `@Dependent`, make an `@Inject Callable<String>` ambiguous at
+  build (`Ambiguous dependency: … Matching beans: [vi.types.Text, vi.types.Count]`), and the compilation fails. The
+  container resolves it to `Text` at start. The same holds through interfaces the compilation compiles: with
+  `TextsImpl implements Texts`, `Texts extends Repo<String>`, and `CountsImpl` through `Counts extends Repo<Integer>`,
+  an `@Inject Repo<String>` is ambiguous at build, `[vi.types.TextsImpl, vi.types.CountsImpl]`, and resolves to
+  `TextsImpl` at start.
+- **Repro**: `VetoedInterceptorCompileTimeTest#anInjectionPointOfAParameterizedTypeResolvesAtBuildAsAtStart` in
+  `vauban-processor`: both injection points ambiguous at build (`vauban-b03-red.log`, "BUG-14 red run", and "Fix round
+  1 (BUG-14) red run 1"). The resolution at start: the probes of the same two shapes, with the build's validation off
+  (`vauban-b03-probe.log`, `PROBE-GENERIC`).
+- **Cause** (confirmed by the tests below): the processor's bean types named a class's supertypes raw. The index keeps
+  the superclass and the interfaces of a class as names, without their type arguments. The container adds the
+  parameterized ones by reflection on the bean class (`TypeHierarchyResolver.resolveAllSupertypes`), and a class the
+  compilation compiles does not load in the processor, so the processor kept the raw ones.
+  `AssignabilityRules.isAssignableToParameterized` lets a raw bean type match any parameterization of the required
+  type, so every bean that has the raw `Callable` or `Repo` matched. The direct form, `Text implements Callable<String>`
+  with `Text` in the index, has the same cause, the reflection on `vi.types.Text`, and failed before BUG-20261117-03 as
+  well (`vauban-b03-red.log`, "BUG-14 red run on the code before BUG-03": only `Readers.text` is ambiguous). Before
+  that fix the bean types of `TextsImpl` stopped at `Texts`: the `Repo<String>` injection point had no bean at build,
+  the processor deferred it to the container with a warning, and the compilation passed; that fix made it an error.
+- **Fix**: `BeanDiscovery` takes the parameterized classes and interfaces above a bean class, and above a producer's
+  type, from the processor while it runs (`CompiledSupertypes`, a `ScopedValue` in `io.vidocq.vauban.core.codegen`, a
+  package exported to the processor only, which `io.vidocq.vauban.core.ProcessorAccess` gives it where javac defines it
+  in a layer above vauban-core's, BUG-20261117-23), and by reflection otherwise. The processor's reading comes
+  first even for a class that loads where it runs: `vidocq:generate` runs javac in process, and a copy of a class in
+  the plugin's class loader is not the one the compilation compiles. A producer's type may be parameterized,
+  `Box<String>`, or have a type argument the compilation compiles, `List<Foo>`. The processor (`ParameterizedSupertypes`,
+  bound in `VaubanProcessor.process` around the deployment it processes) reads them from the compiler's model:
+  `Types.directSupertypes` gives each supertype with its type arguments substituted, inside a wildcard, an array and
+  the type that encloses an inner class too (JLS 4.10.2), so a type variable resolves along the chain
+  (`Texts extends Base<String>`, `Base<B> extends Repo<B>` gives `Repo<String>`); a raw supertype is walked from its
+  declaration, its type variables unresolved; the type itself and `Object` are left out; wildcards, arrays, primitives
+  and type variables with their bounds are converted as `BeanDiscovery.reflectTypeToTypeInfo` converts them. No class
+  is loaded and no reflection is added. The container binds nothing, at start and when `vauban:generate` freezes the
+  extensions. Both then keep the legal bean types (CDI 4.1, 2.2.1), as `ManagedBean.getTypes()` keeps them: a
+  parameterized type with a type variable that is neither the bean class's own nor one of the type a producer
+  produces is replaced by its raw class, as Java erases the types above a raw type (JLS 4.8, fix round 3); a
+  parameterized type with a wildcard type argument is dropped, and its raw class with it, as the CDI TCK's
+  `BeanTypesWithIllegalTypeTest` requires (fix round 3b). A type variable of a class above the bean class, or above
+  the produced type, which only a supertype named raw leaves unresolved, gives the raw class where the supertypes are
+  read, by the declaration of the variable, not its name, inside a wildcard's bounds too: on both sides, the
+  compiler's `TypeParameterElement.getGenericElement()` and reflection's `TypeVariable.getGenericDeclaration()`.
+- **What the start does differently** (fix round 2, each red first): `TypeHierarchyResolver` substituted a type
+  variable at the top of a type argument and inside a parameterized one only, and never mapped the type variables of
+  an enclosing class; it now substitutes inside a wildcard, an array and an enclosing type too, and maps them, as the
+  compiler does. `ManagedBean.getTypes()` read the classes and interfaces above a bean class with a walker of its own,
+  which substituted a top-level type argument only; it now reads them through `TypeHierarchyResolver`. The descriptor
+  types, which the resolution of an injection point and an extension's `BeanInfo.types()` read, are filtered as
+  `Bean.getTypes()` is. So: `ArrayLibrary extends ArrayShelf<String>`, with `ArrayShelf<S> implements Holder<S[]>`, is
+  a `Holder<String[]>`, where it was a `Holder<S[]>`, and an `@Inject Holder<String[]>` that the start refused
+  resolves; `InnerUser extends Outer<String>.Inner<Integer>`, with `Inner<I> implements Holder<O>`, is a
+  `Holder<String>`, where its descriptor had `Holder<O>` and `Bean.getTypes()` no `Holder`; `Library`, through
+  `Shelf<S> implements Holder<List<S>>`, has `Holder<List<String>>` in `Bean.getTypes()` too, where only its
+  descriptor had it; `Holder<List<? extends S>>`, `Holder<Map<?, int[][]>>`, `Pair<List<? extends Number>, …>` and
+  the `Holder<B>` above a class that implements `Base` raw are no longer in the descriptor nor in what an extension
+  sees, and were never in `Bean.getTypes()`; the raw `Holder` above the class that implements `Base` raw is in all
+  three (fix round 3), the raw classes of the types with a wildcard in none.
+  The types of an event go through `TypeHierarchyResolver` too
+  (`EventDispatcher`): an event of an `ArrayLibrary` already reached an observer of `Holder<String[]>` before
+  (`vauban-b03-red.log`, "Fix round 2 red run 8" and the note after it).
+- **What fix round 3 changes** (each red first): the rule on legal bean types dropped an illegal parameterized type
+  after the raw form of its class had been dropped for it, so nothing was left of that class. A bean of `LegacyNames
+  extends ArrayList`, raw, was no `List`, `Collection` or `Iterable`, a bean of `extends HashMap` no `Map`, and an
+  `@Inject List`, `List<Object>` or `Map` that resolved on d9144099 and on 438d3a80, by the review, was unsatisfied at
+  build and at start; `@Typed(Holder.class) class TypedRawUser implements Base` had `Object` only. They now have the
+  raw types, in the descriptor, in what an extension sees and in `Bean.getTypes()`, whose `addRawForRemoved` promised
+  it and never did it. `Legacy<E> extends ArrayList` kept `ArrayList`'s `List<E>` in its descriptor, its `E` taken for
+  its own by name; it now has the raw `List`, as in `Bean.getTypes()`. At start, `Bean.getTypes()` of a producer keeps
+  a parameterized type with a type variable only when that variable is in the produced type: a producer of
+  `LegacyNames` had `SequencedCollection<E>` and the like, and has the raw classes now (red run 17), and a producer
+  of a generic class named raw, `Ranked`, had `Holder<T>` there and in its descriptor, and has `Holder` (red run
+  22). A producer whose descriptor kept `Holder<O>` above `Outer<String>.Inner<Integer>`, at start and frozen, now
+  has the raw `Holder`, as at build (red run 22, BUG-20261117-21). Fix round 3 first replaced a type with a
+  wildcard type argument by its raw class too, and the CDI TCK failed on it (`vauban-b03-tck.log`, "TCK of
+  b5f950c8"): `BeanTypesWithIllegalTypeTest`, three tests, wants `Eagle<T> extends Bird<T>`, where
+  `Bird<T> extends AnimalHolder<Animal<? extends T>>`, to have exactly `Eagle<T>`, `Bird<T>` and `Object`, as a
+  bean, as a producer field and as a producer method. Such a type is dropped
+  with its raw class again (fix round 3b). A raw supertype still erases the types above it, wildcards and all:
+  `RawEyrie<P> extends Perch`, raw, where `Perch<P> implements Holder<List<? extends P>>`, is a `Holder`; the
+  source reads a wildcard's bounds for the type variables of another class, so that its own `P` is not taken for
+  `Perch`'s.
+- **Agreement, and what is left**: for the shapes the tests cover, the processor's descriptor types equal the
+  container's at start and frozen, and `Bean.getTypes()` equals them but for the type of a generic bean class itself,
+  raw in the descriptor (`Ranked`) and with its type variables in `Bean.getTypes()`
+  (`Ranked<T extends Number & Comparable<T>>`). A type argument of a produced type that is not a class, which the
+  start turned into `Object` above it, is carried as the index wrote it at build and at start (BUG-20261117-17,
+  FIXED). Still different: a raw bean type satisfies an injection point of any
+  parameterization, at build as at start (BUG-20261117-16, OPEN); the client proxy of a normal-scoped producer of a
+  parameterized type is not one of that type (BUG-20261117-18, OPEN); the descriptor of a `@Typed` producer names its
+  types raw (BUG-20261117-19, OPEN); the descriptor of a producer of an inner class of a generic class has the raw
+  types above it, where `Bean.getTypes()` has them parameterized (BUG-20261117-21, OPEN).
+- **Mansart**: the class Mansart's processor generates for a repository, `<Repository>Impl`
+  (`mansart-data-processor`, `RepositoryWriter.java:152`), is a `@Singleton` that `implements` the application's
+  repository interface (`RepositoryWriter.java:228` and `:232`), which the application compiles and which extends
+  `BasicRepository<Book, Long>` (`mansart-data-tests`, `BookRepository.java:34`). In an application compiled with both
+  processors, two repositories made an `@Inject BasicRepository<Book, Long>`, or `DataRepository<Book, Long>`,
+  ambiguous at build since BUG-20261117-03 (both have the raw `BasicRepository`), and unsatisfied with a warning
+  before it. An injection point of the repository interface itself, `@Inject BookRepository`, names a class without
+  type arguments and was never affected. With the fix the generated class is a `BasicRepository<Book, Long>`, as at
+  start: the shape of `aParameterizedTypeABeanHasThroughAnInterfaceItCompilesResolvesAtBuildAsAtStart`. No Mansart test
+  or example covers it: none injects a parameterized repository type, and `mansart-data-tests` compiles its
+  repositories with Mansart's processor only (`pom.xml`, `annotationProcessorPaths`), the Vauban container reading
+  them at start (read only, Mansart `main` at a873403f).
+- **Verification**: red first, on 6462110e (the BUG-20261117-03 commit) with the new tests (`vauban-b03-red.log`, "Fix
+  round 1 (BUG-14) red run 1"), each test run in the processor, at start and frozen: the repro, enabled, and
+  `aParameterizedTypeABeanHasThroughAnInterfaceItCompilesResolvesAtBuildAsAtStart` (`Repo<String>` through `Texts`),
+  `aTypeVariableResolvesAlongTheInterfacesTheCompilationCompilesAtBuildAsAtStart` (`Base<B> extends Repo<B>`) and
+  `aParameterizedTypeABeanDeclaresResolvesAtBuildAsAtStart` (`Callable<String>`), ambiguous at build;
+  `theProcessorsBeanTypesEqualTheContainersForEveryShapeOfTypeArgument` (wildcards, arrays of primitives, a nested
+  class, an intersection bound that refers to itself, a raw supertype, a chain of superclasses, `ArrayList<String>`,
+  a producer), raw types in the processor. Then on `BeanDiscovery.java` of 6462110e with the new core tests
+  (`vauban-b03-red.log`, "Fix round 1 (BUG-14) red run 2"): `BeanDiscoveryReflectionFallbackTest#beanTypesCarryTheTypeArgumentsTheProcessorReads`,
+  `#typedKeepsTheTypeArgumentsTheProcessorReads` and `#producerTypesCarryTheTypeArgumentsTheProcessorReads`, raw
+  `NoSuchRepo`. `aSupertypeTheCompilationDoesNotFindLeavesJavacsError`, a guard for a superclass, an interface or a
+  type argument javac does not find, passed on the code before it too: javac reports the missing classes and the
+  processor runs its deployment (`vauban-b03-red.log`, "red run 3" and "4", and the note after them;
+  `vauban-b03-probe.log`, `PROBE-ERRONEOUS`); it now asserts the processor's note "Generated
+  vi.types._VaubanComponents" too. Fix round 2, red on 438d3a80 with the new tests (`vauban-b03-red.log`, "Fix round
+  2 red run 5" and "6"), the processor tests each in the processor, at start and frozen, with `Bean.getTypes()` at
+  start and frozen: `aTypeVariableResolvesInsideAWildcardAnArrayAndAnEnclosingTypeAtStartAsAtBuild` (`Holder<S[]>`,
+  `Holder<O>` and `Holder<List<? extends S>>` at start), `anInjectionPointOfATypeArgumentArrayResolvesAtStartAsAtBuild`
+  (unsatisfied at start), `aProducerOfAParameterizedTypeHasTheTypesAboveItAtBuildAsAtStart` (`Box<String>` and
+  `List<Foo>` alone in the processor), `aProducerOfAParameterizedTypeAndABeanOfATypeAboveItAreAmbiguousAtBuildAsAtStart`
+  (the build resolved it), `theProcessorsBeanTypesEqualTheContainersForEveryShapeOfTypeArgument` (illegal types in the
+  descriptor, `Holder<List<String>>` missing from `Library`'s `Bean.getTypes()`); in `vauban-core`,
+  `BeanTypesAtStartTest`, six of its tests (`aBeanKeepsTheTypesItsOwnTypeVariablesAreIn`, a guard, passed once its
+  helper was fixed in run 6; `aSubstitutedWildcardAndArrayEqualTheJdks`, added later, is red on the resolver of
+  438d3a80, "Fix round 2 red run 10"), and
+  `BeanDiscoveryReflectionFallbackTest#theCompilationsReadingComesBeforeAClassThatLoads` (reflection first). Green: the build and the TCK of BUG-20261117-03 (`vauban-b03-build.log`, `vauban-b03-tck.log`),
+  and the whole `vauban-core` and `vauban-processor` suites before the commit (`vauban-b03-dev.log`, "Fix round 1
+  (BUG-14) dev run 2", and "Fix round 2 dev run 8").
+  Fix round 3, red on 03db99af (`vauban-b03-red.log`, "Fix round 3 red run 17"; run 16 ran the first test alone):
+  `BeanTypesAtStartTest#aClassThatExtendsAGenericClassRawHasTheRawTypesAboveIt`, eight failures (`LegacyNames`,
+  `Legacy` and a producer of `LegacyNames`, without `List` and the raw types above it, in the descriptor and in
+  `Bean.getTypes()`, `Legacy` with `List<E>` in its descriptor, `TypedRawUser` with `Object` only); in the processor,
+  `aBeanOfAClassThatExtendsAGenericClassRawHasTheRawTypesAboveItAtBuildAsAtStart`, in the processor, at start, frozen
+  and in `Bean.getTypes()`, and `anInjectionPointOfARawSupertypeResolvesToABeanThatExtendsAGenericClassRaw`, an
+  `@Inject List`, `Collection`, `Iterable`, `List<Object>` and `Map` each unsatisfied at build (run 19, on the main
+  code of 03db99af). Green with the fix, the tests that asserted the loss changed (`vauban-b03-dev.log`, "Fix round 3
+  dev run 13" and "dev run 14"). Fix round 3b, red on the main code of b5f950c8 (`vauban-b03-red.log`, "Fix round 3b
+  red run 20" for `vauban-core`, "red run 21" for `vauban-processor`), after the CDI TCK of b5f950c8 failed:
+  `BeanTypesAtStartTest#aTypeWithAWildcardTypeArgumentGoesWithItsRawClassUnlessARawSupertypeErasedIt`, four
+  failures (`Eyrie` and a producer of `Eyrie<F>`, with the raw `Holder`, in the descriptor and in `Bean.getTypes()`),
+  and the wildcard expectations of fix round 2 restored, `WildLibrary`, `Wild` and `Base<? extends Number>` with the
+  raw `Holder`; in the processor, the same test, at build, at start, frozen and in `Bean.getTypes()`,
+  `aTypeVariableResolvesInsideAWildcardAnArrayAndAnEnclosingTypeAtStartAsAtBuild` and
+  `theProcessorsBeanTypesEqualTheContainersForEveryShapeOfTypeArgument`, with the raw `Holder` and `Pair`. The
+  `RawEyrie` cases passed there and pin the order of the two rules. Green with the fix (`vauban-b03-dev.log`, "Fix
+  round 3b dev run 17"), and the CDI TCK 774/774 on the working tree (`vauban-b03-tck.log`, "Dev TCK of the round 3b
+  working tree"). Two tests of fix round 3 first ran green only, on code that already had the change; fix round 4
+  ran them on the main code of 03db99af (`vauban-b03-red.log`, "Fix round 4 red run 22" and the note after it), red:
+  `BeanTypesAtStartTest#aProducerKeepsTheTypeVariablesOfTheTypeItProduces`, two failures, `Holder<T>` in the
+  descriptor and in `Bean.getTypes()` of a producer of `Ranked` (its `Base<N>`, `Base<List<String>[]>` and `T` cases
+  pass there and pin the code), and
+  `VetoedInterceptorCompileTimeTest#aProducerOfAnInnerClassOfAGenericClassHasTheSameTypesAtBuildAsAtStart`, two
+  failures, `Holder<O>` at start and frozen where the processor gives the raw `Holder`.
+- **Found by**: the bricks audit of BUG-20261117-03, which asked what a raw supertype changes in the resolution.
+
+## BUG-20261117-13 — The `BeanInfo` of a producer bean has no producer method and no producer field
+
+- **Date**: 2026-11-17
+- **Status**: OPEN
+- **Module**: `vauban-core` (`VaubanBceBeanInfo`)
+- **Symptom**: a `@Registration` method gets, for a producer bean, a `BeanInfo` whose `isProducerMethod()` or
+  `isProducerField()` answers `true` and whose `producerMethod()` and `producerField()` answer `null`. `disposer()`
+  answers `null` and `stereotypes()` an empty list for every bean. CDI 4.1 gives the producer method or field, the
+  disposer method and the stereotypes. An extension that reads the producer's member throws `NullPointerException`,
+  and the deployment fails.
+- **Repro**: `BceRegistrationProducerInfoTest#theBeanInfoOfAProducerGivesItsMethodOrField` in `vauban-core`, disabled
+  until the fix: `@Registration error: Cannot invoke "…MethodInfo.name()" because the return value of
+  "…BeanInfo.producerMethod()" is null`, and the same for `producerField()` (`vauban-b03-red.log`, "BUG-13 red run").
+- **Cause**: `VaubanBceBeanInfo.producerMethod()`, `producerField()` and `disposer()` return `null`, and
+  `stereotypes()` returns `List.of()`.
+- **Next**: find the member through the index from the producer's descriptor (its declaring class, its name and, for
+  a method, its erased parameter types, as the producer ids of BUG-20261116-11 keep them), and the disposer and the
+  stereotypes the same way. No brick of the workspace reads these four.
+- **Found by**: the repro of BUG-20261117-11, which names a producer bean by its types because its `BeanInfo` gives
+  no member.
+
 ## BUG-20261117-12 — `vauban-synthetic-metadata.properties` changes at every compile (its date line)
 
 - **Date**: 2026-11-17
@@ -38,6 +510,27 @@ suspected cause, status. Updated on every investigation.
   **Not traced end to end**: `ClientProxyShapeFromElements:108,151,220,339,516` (they read as `add` dedup sets, but
   were not followed through every caller).
 
+## BUG-20261117-11 — `@Registration` over beans ignores primitive and array bean types
+
+- **Date**: 2026-11-17
+- **Status**: OPEN
+- **Module**: `vauban-core` (`BceTypeMatcher.matchesTypes`, `rawTypeName`)
+- **Symptom**: a `@Registration` method with a `BeanInfo` parameter is not called for a producer of `int` with
+  `types = Integer.class` or `Serializable.class`, nor for a producer of `String[]` with `types = Serializable.class`.
+  CDI 4.1 treats a primitive type as its wrapper class, and an array is `Serializable`; the `ObserverInfo` matcher
+  reads them so since BUG-20261117-05. The processor, the start and the frozen deployment agree.
+- **Repro**: `VetoedInterceptorCompileTimeTest#registrationGetsTheProducersOfPrimitiveAndArrayTypesFromTheProcessorAtStartAndFrozen`
+  in `vauban-processor`, disabled until the fix: the three places see `[serializable vi.Logger]` instead of
+  `[integer producer of int, serializable producer of int, serializable producer of java.lang.String[], serializable
+  vi.Logger]` (`vauban-b03-red.log`, "BUG-11 red run").
+- **Cause**: `matchesTypes` loads the class each bean type names (`rawTypeName`). A primitive or an array type names
+  none, and a class type named after a primitive, which the container reads by reflection, does not load: only the
+  bean type `Object` of such a producer matches.
+- **Next**: read a bean type as `isAssignableToAny` reads an observed event type: a primitive as its wrapper class, an
+  array through its component. The bricks' `@Registration` methods name `Object`, `Config`, `Servlet`, `Filter` and
+  `EventListener`: none of them gains a bean.
+- **Found by**: the review of BUG-20261117-02.
+
 ## BUG-20261117-10 — In the processor, `@Registration` does not see the annotations `@Enhancement` added
 
 - **Date**: 2026-11-17
@@ -55,7 +548,16 @@ suspected cause, status. Updated on every investigation.
   bean descriptors only. The processor runs no such pass and hands `@Registration` the index as the compilation wrote
   it. Fixing BUG-20261117-08 by dropping that pass would make start lose the annotation too.
 - **Next**: give `@Registration` a class view with the modifications of the `@Enhancement` phase that ran, in the
-  processor and at start alike, before or with BUG-20261117-08.
+  processor and at start alike, before or with BUG-20261117-08. At start it misses some of them too, checked in the
+  code (`VaubanContainerBuilder`) and, for the second case, by a probe. `@Discovery` runs first (~936); the first
+  `@Enhancement` pass (`collectEnhancements` ~968, ~1280-1284) then runs on fresh instances of the extensions,
+  without the state their `@Discovery` built, over the archive classes listed before `@Discovery` ran (~930), and its
+  modifications reach the index `@Registration` reads (`enrichIndex` ~977). A type `@Discovery` adds is enhanced by the
+  second pass only (`BceProcessor.process` ~997), and so is a modification that depends on that state; the second
+  pass's modifications go to the bean descriptors only (`applyEnhancements` ~1022). An extension that adds
+  `@Deprecated` only once its `@Discovery` ran finds it `x0` in the processor, at start and frozen; one that adds it
+  unconditionally, `x0` in the processor and `x1` at start and frozen (`vauban-b03-red.log` and
+  `vauban-b03-dev.log`, the `PROBE-B10` lines).
 - **Found by**: the probe of the review of BUG-20261117-08 (does an unguarded `addAnnotation` land twice?),
   `vauban-b02-r2-probe.log`.
 
@@ -144,7 +646,10 @@ suspected cause, status. Updated on every investigation.
   the abstract `vi.Base`, the interface `vi.Sub`, and the concrete `vi.Loose implements EventListener` and
   `vi.LooseChild extends Base`, none of them annotated, finds the same `[vi.Impl, vi.Other]` in the processor, at
   start and frozen (start twice each, BUG-20261117-08): neither place gives a class without an annotation, so the
-  filter hides no gap here (`vauban-b02-r2-probe.log`).
+  filter hides no gap here (`vauban-b02-r2-probe.log`). The run of that probe in `vauban-b02-r2-green.log` failed at
+  `seenThreeWays:678`, the `assertFalse` on `extensionsAtStart().frozen()`, most likely because its second
+  `seenThreeWays` call in one `@TempDir` found the first call's freeze record; the evidence is its re-run in
+  `vauban-b02-r2-probe.log`.
 - **Found by**: the review of BUG-20261117-02, which questioned "as `@Enhancement` already did".
 
 ## BUG-20261117-06 — At start, a `@Registration` method with a `BeanInfo` parameter gets classes that are no beans
@@ -252,23 +757,74 @@ suspected cause, status. Updated on every investigation.
 ## BUG-20261117-03 — The processor's bean types stop at a superclass the compilation compiles
 
 - **Date**: 2026-11-17
-- **Status**: OPEN
-- **Module**: `vauban-core` (`BeanDiscovery.collectBeanTypes`, `collectUnindexedSupertypes`), as `vauban-processor`
-  runs it
+- **Status**: FIXED on `fix/processor-bean-supertypes`
+- **Module**: `vauban-core` (`BeanDiscovery.collectBeanTypes`, `collectUnindexedSupertypes`), `vauban-processor`
+  (`VaubanProcessor.process`)
 - **Symptom**: in an application compiled with the annotation processor, a bean that extends a class the compilation
   compiles and the index does not hold (an abstract class without annotations, say) lacks the types that class
   brings: `vi.SerialService extends vi.Wrapping`, where `Wrapping implements Serializable`, is no `Serializable` to an
   extension the processor runs, `@Registration(types = Serializable.class)` is not called for it, and the processor
   resolves the injection points at build without that type. The container sees it at start.
 - **Repro**: `VetoedInterceptorCompileTimeTest#anExtensionRunByTheProcessorSeesTheTypesABeanHasThroughASuperclassItCompiles`
-  in `vauban-processor`, disabled until the fix: the start sees `serializable vi.SerialService`, the processor
+  in `vauban-processor`: the start sees `serializable vi.SerialService`, the processor
   `[interceptor vi.Logger, serializable vi.Logger]`.
-- **Cause**: `collectBeanTypes` reads a supertype the index does not hold by loading it
-  (`collectUnindexedSupertypes`, through `DeploymentClasses.load`), and the processor's class loader does not load a
-  class the compilation compiles: the walk stops at `vi.Wrapping`.
-- **Next**: read such a supertype through the processor's description of the compilation (`IndexLookup.describe`, the
-  resolver the processor binds around the extension phases), around the processor's bean discovery too. It changes the
-  bean types, and so the resolution, the processor computes at build, so it gets its own change.
+- **Cause** (confirmed in the code and by the tests below): `collectBeanTypes` reads a supertype the index does not
+  hold by loading it (`collectUnindexedSupertypes`, through `DeploymentClasses.load`), and the processor's class
+  loader does not load a class the compilation compiles: the walk stops at `vi.Wrapping`. The processor's description
+  of the compilation (`IndexLookup.whereUnindexedDescribedBy`, VAU-BCE-008) was bound around the extension phases
+  only: the bean discovery (`discoverBeans`, `beansAfterEnhancement`, and the discoveries again of
+  `resolveFromBeanArchiveModules` and `addDependencyBeans`) ran outside it.
+- **Fix**: `collectBeanTypes` reads each class through `IndexLookup.describe`: the index, then, while the processor
+  runs the deployment, its description of a class the index does not hold; a class nothing describes, one of the JDK
+  say, is loaded as before. The processor binds that description once around the whole deployment it processes
+  (`process`, around `processDeployment`): the extension phases and the bean discovery. The container binds none, at
+  start and when `vauban:generate` freezes the extensions, so there `describe` is the index and nothing changes. No
+  class of the compilation is loaded, and no reflection, `ThreadLocal` or run-time generation is added. The processor
+  hands its reading of the parameterized supertypes to the bean discovery through `CompiledSupertypes`, in
+  `io.vidocq.vauban.core.codegen`, a package exported to the processor alone: `VaubanProcessor.init` gets it, and
+  `io.vidocq.vauban.core.proxy`, through `io.vidocq.vauban.core.ProcessorAccess` where a qualified export does not
+  reach the processor, javac's `--processor-module-path` in a JVM whose module path holds `vauban-core`
+  (BUG-20261117-23).
+- **What the build does differently**: a bean, an interceptor or a producer whose type has a class or an interface
+  above it that the compilation compiles, and the index does not hold, has the types that class or interface brings,
+  as at start. An injection point only such a type satisfies resolves at build, where the build failed with
+  "Unsatisfied dependency"; two beans of such a type make an injection point ambiguous at build, where the build passed
+  and the start refused it; `@Registration(types = Serializable.class)` gets `vi.SerialService`, the normal-scoped
+  `vi.SerialStore` and the producer of `vi.Payload extends Wrapping`. The generated sources and classes name no bean
+  type: for `SerialService`, `SerialStore` and the `Payload` producer, `_VaubanComponents`, the client proxies and
+  `vauban-beans.list` are byte for byte those of d9144099 (`vauban-b03-probe.log`). The producer's proxy matched by
+  luck there: the processor took any class of the producer's types for its proxy, which the new types made a real
+  risk (BUG-20261117-15, fixed with this). Those types carry their type arguments, as at start: an injection point of
+  `Repo<String>` that two beans reach through such interfaces, one a `Repo<String>` and the other a `Repo<Integer>`,
+  resolves at build; raw, they made it ambiguous there (BUG-20261117-14, fixed with this, which also changes the start;
+  the cases still left are BUG-20261117-16 and -18).
+- **Bricks**: a source-level audit of the workspace checkouts (`b03-audit.py`, its output in `vauban-b03-probe.log`)
+  finds seven beans that gain types: Heisenberg's `DiracFtMetricsRecorder` and `OtelFtMetricsRecorder` gain
+  `FtMetricsRecorder` through `DelegatingFtMetricsRecorder`, which only two `@Any Instance<FtMetricsRecorder>` fields
+  inject, never validated at build; Mansart's test repository `ShelfNotes_` gains `BasicRepository` through
+  `ShelfNotes`; four beans of `vauban-module-it`. Beans that extend a class of another archive, Foy's and Vidocq's
+  servlets and filters, have the classes and interfaces above it as the compiler describes them when the processor
+  does not load it. No injection point of the workspace names a type these beans gain, `Serializable`, a servlet or
+  filter type, `EventListener` or a Jakarta Data repository, so no resolution changes. The audit does not see the
+  repository implementations Mansart generates in an application build; they gain `BasicRepository<Book, Long>` and
+  the interfaces above it, with their type arguments (BUG-20261117-14).
+- **Verification**: red first, each on its assertion, on the main code of d9144099 with the new tests
+  (`vauban-b03-red.log`, "red run 1"): `BeanDiscoveryReflectionFallbackTest#beanTypesFollowTheSupertypesTheProcessorDescribes`
+  and `#producerTypesFollowTheSupertypesTheProcessorDescribes` (no `java.io.Serializable` from the processor's
+  description); the repro, enabled (`[interceptor vi.Logger, serializable vi.Logger]` in the processor, right at
+  start and frozen); `anInjectionPointOfATypeABeanHasThroughASuperclassItCompilesResolvesAtBuildAsAtStart`
+  (`Unsatisfied dependency: field SerialClient.serial`); `twoBeansOfATypeOneHasThroughASuperclassItCompilesAreAmbiguousAtBuildAsAtStart`
+  (the build resolved the injection point). The processor tests run each case in the processor, at start and frozen.
+  Green: `-o -Pquality clean install` of the commit, 2587 tests, 0 failures, 0 errors, 14 skipped (`vauban-core` 1494
+  with 9 skipped, the repros of BUG-20261117-04, -06, -09, -13, -16 and -18 among them; `vauban-processor` 346 with 5
+  skipped, the repros of BUG-20261117-08, -10, -11, -19 and -21), `vauban-b03-build.log`, the last run; CDI Lite TCK
+  774/774 and AtInject 1/1 (`-Ptck`, `vauban-b03-tck.log`, the last run). The same runs verify BUG-20261117-14, -15,
+  -17 and -20. Each change fix rounds 3 and 3b make to the types at start was red first on the code before it
+  (`vauban-b03-red.log`, red runs 17, 19, 20, 21 and 22; run 22, on the main code of 03db99af, for a producer of a
+  generic class named raw and of an inner class of a generic class; BUG-20261117-14). Binding `CompiledSupertypes` on
+  every compilation made the processor fail on every compilation where javac defines it in a layer above
+  vauban-core's: red in `ProcessorAboveCoreLayerTest` on 154c46fc (`vauban-b03-red.log`, "Fix round 5 red run 24"),
+  and in Foy's `FoyWebExtensionTest` in the `pr-validate` of vauban#325 (BUG-20261117-23, fixed with this).
 - **Found by**: the tests of BUG-20261117-02, with a bean beside the interceptor that extends the same class.
 
 ## BUG-20261117-02 — An extension the annotation processor runs sees no interceptor the compilation compiles
@@ -302,9 +858,10 @@ suspected cause, status. Updated on every investigation.
   nothing describes, one of the JDK say, as before; no class of the compilation is loaded. A method with an
   `InterceptorInfo` parameter is called for the interceptors only, never for a bean nor for an archive class
   (`BceProcessor.registrationTargets`). The processor, the container at start and `vauban:generate` that freezes the
-  extensions now call a method for the same interceptors and observers. They still differ on two points: the
-  processor's bean types of a bean that extends a class the compilation compiles (BUG-20261117-03), and the classes
-  that are no beans a `BeanInfo` method gets at start when no bean has one of its types (BUG-20261117-06).
+  extensions now call a method for the same interceptors and observers. They still differ on the classes that are no
+  beans a `BeanInfo` method gets at start when no bean has one of its types (BUG-20261117-06). They differed on a
+  second point, the processor's bean types of a bean that extends a class the compilation compiles, until
+  BUG-20261117-03 was fixed on `fix/processor-bean-supertypes`.
 - **Bricks**: five extensions of the workspace declare a `@Registration`, all with a `BeanInfo` parameter. At compile
   time they are now called for the interceptors the compilation compiles too, with an `InterceptorInfo` whose `types()`
   and `injectionPoints()` are empty (BUG-20261117-04). Ravel's `ConfigCdiExtension` (`Object`, `Config`), Cervantes'

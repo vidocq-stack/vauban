@@ -37,10 +37,10 @@ import javax.tools.JavaFileObject;
 import javax.tools.ToolProvider;
 
 /** Compiles sources, relative path to content, with the Vauban processor, as a module's build does. */
-final class ProcessorCompiler {
+public final class ProcessorCompiler {
 
     /** What a compilation produced: its success, its class and source outputs, and its diagnostics. */
-    record Result(boolean success, Path classes, Path generated, List<String> messages) {
+    public record Result(boolean success, Path classes, Path generated, List<String> messages) {
 
         boolean mentions(String text) {
             return messages.stream().anyMatch(message -> message.contains(text));
@@ -60,8 +60,8 @@ final class ProcessorCompiler {
     }
 
     /** As {@link #compile(Path, Map, List)}, with {@code processor} in place of a plain Vauban processor. */
-    static Result compile(Path workDir, Map<String, String> sources, List<String> extraOptions, Processor processor)
-            throws IOException {
+    public static Result compile(Path workDir, Map<String, String> sources, List<String> extraOptions,
+            Processor processor) throws IOException {
         return compile(workDir, sources, extraOptions, List.of(processor));
     }
 

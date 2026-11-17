@@ -19,6 +19,7 @@
  */
 package io.vidocq.vauban.core.types;
 
+import io.vidocq.vauban.core.langmodel.types.VaubanPrimitiveType;
 import io.vidocq.vauban.indexer.IndexBuilder;
 import io.vidocq.vauban.indexer.model.DotName;
 import io.vidocq.vauban.indexer.model.TypeInfo;
@@ -28,16 +29,22 @@ import io.vidocq.vauban.indexer.model.TypeInfo.ParameterizedType;
 import io.vidocq.vauban.indexer.model.TypeInfo.PrimitiveType;
 import io.vidocq.vauban.indexer.model.TypeInfo.TypeVariable;
 import io.vidocq.vauban.indexer.model.TypeInfo.WildcardType;
+import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.parallel.ResourceLock;
+import org.junit.jupiter.api.parallel.Resources;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
 
 import java.util.List;
+import java.util.Locale;
 import java.util.stream.Stream;
 
+import static org.junit.jupiter.api.Assertions.assertAll;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * The corners of the CDI 4.1 assignability rules (§2.2.1, §5.2.4): primitives against their wrappers and
@@ -182,6 +189,28 @@ class AssignabilityRulesEdgeCasesTest {
     void aBeanTypeMatchesARequiredClassOnlyByNameOrPrimitiveWrapping(TypeInfo bean, TypeInfo required,
             boolean expected) {
         assertEquals(expected, rules.beanTypeMatches(bean, required));
+    }
+
+    /**
+     * A primitive type and the class type named after it match whatever the default locale: under a Turkish one,
+     * {@code "INT".toLowerCase()} is {@code "ınt"}, with a dotless i, and {@code PrimitiveType(INT)} no longer
+     * matched {@code ClassType(int)}, nor named itself {@code int} to an extension (BUG-20261117-20).
+     */
+    @Test
+    @ResourceLock(Resources.LOCALE)
+    @DisplayName("a primitive type matches the class type named after it under a Turkish default locale")
+    void aPrimitiveTypeMatchesTheClassTypeNamedAfterItUnderATurkishDefaultLocale() {
+        var defaultLocale = Locale.getDefault();
+        Locale.setDefault(Locale.forLanguageTag("tr"));
+        try {
+            assertAll(() -> assertTrue(rules.isAssignable(INT, INT_NAME), "PrimitiveType(INT) to ClassType(int)"),
+                    () -> assertTrue(rules.isAssignable(INT_NAME, INT), "ClassType(int) to PrimitiveType(INT)"),
+                    () -> assertTrue(rules.isAssignable(new ArrayType(INT, 1), new ArrayType(INT_NAME, 1)),
+                            "int[] to an array of ClassType(int)"),
+                    () -> assertEquals("int", new VaubanPrimitiveType(INT).name(), "the lang model's name"));
+        } finally {
+            Locale.setDefault(defaultLocale);
+        }
     }
 
     @Test

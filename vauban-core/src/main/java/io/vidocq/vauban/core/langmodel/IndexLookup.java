@@ -34,9 +34,9 @@ import java.util.function.Function;
 public final class IndexLookup {
 
     /**
-     * Describes, while Vauban's annotation processor runs extensions, a class the index does not hold: the processor
-     * sees every class of the compilation and of its class path, the index only the beans and the classes a trigger
-     * annotation brings in (VAU-BCE-008). Unbound at run time.
+     * Describes, while Vauban's annotation processor runs extensions and discovers beans, a class the index does not
+     * hold: the processor sees every class of the compilation and of its class path, the index only the beans and the
+     * classes a trigger annotation brings in (VAU-BCE-008, BUG-20261117-03). Unbound at run time.
      */
     private static final ScopedValue<Function<DotName, Optional<ClassInfo>>> UNINDEXED = ScopedValue.newInstance();
 
@@ -56,8 +56,9 @@ public final class IndexLookup {
 
     /**
      * The class as the index holds it or, when it does not and the caller runs under
-     * {@link #whereUnindexedDescribedBy}, as that resolver describes it: for the language model only, which shows a
-     * class's members to an extension; never a reason to treat the class as a bean.
+     * {@link #whereUnindexedDescribedBy}, as that resolver describes it: for the language model, which shows a class's
+     * members to an extension, and for the classes and interfaces above a class, which make a bean's types and what an
+     * extension's types match; never a reason to treat the class as a bean.
      */
     public Optional<ClassInfo> describe(DotName name) {
         var indexed = index.getClassByName(name);
@@ -66,7 +67,8 @@ public final class IndexLookup {
 
     /**
      * Runs {@code operation} with {@code resolver} describing the classes the index does not hold, for
-     * {@link #describe}. For Vauban's annotation processor, around the extension phases it runs.
+     * {@link #describe}. For Vauban's annotation processor, around the deployment it processes: the extension phases
+     * and the bean discovery.
      */
     public static <R, X extends Throwable> R whereUnindexedDescribedBy(
             Function<DotName, Optional<ClassInfo>> resolver, ScopedValue.CallableOp<? extends R, X> operation)

@@ -33,14 +33,23 @@ import io.vidocq.vauban.processor.codegen.proxy.InterfaceProxySourceRenderer;
 
 import javax.annotation.processing.ProcessingEnvironment;
 import javax.lang.model.element.ElementKind;
+import javax.lang.model.element.ExecutableElement;
 import javax.lang.model.element.Modifier;
 import javax.lang.model.element.TypeElement;
+import javax.lang.model.element.VariableElement;
+import javax.lang.model.type.DeclaredType;
+import javax.lang.model.type.TypeMirror;
 import javax.tools.Diagnostic;
 import javax.tools.StandardLocation;
 import java.io.IOException;
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.LinkedHashSet;
+import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
+import java.util.function.Predicate;
 
 /**
  * The client proxies the processor generates: the proxy of a normal-scoped managed bean, and the build-time proxy
@@ -346,19 +355,10 @@ final class ClientProxyArtefacts {
      * when the produced type is an interface (handled at runtime by {@code java.lang.reflect.Proxy},
      * which needs only {@code exports}) or is not resolvable at APT time. Mirrors the runtime
      * {@code InterceptorBeanWrapper.resolveProxyTargetClass}: prefer a concrete, non-{@code Object}
-     * type among the bean types.
+     * type among the bean types, the produced class itself rather than a class above it.
      */
     private TypeElement resolveProducedTypeElement(BeanDescriptor bean) {
-        var elements = processingEnv.getElementUtils();
-        for (var t : bean.types()) {
-            // By binary name: a nested produced type is app.Outer$Inner here (BUG-20261007-01).
-            var te = t instanceof TypeInfo.ClassType(DotName name) && !JAVA_LANG_OBJECT.equals(name.value())
-                    ? TypeLookup.typeElementByBinaryName(elements, name.value()) : null;
-            if (te != null && te.getKind() == ElementKind.CLASS) {
-                return te;
-            }
-        }
-        return null;
+        return asTheContainerPicks(bean, producedTypeCandidates(bean, te -> te.getKind() == ElementKind.CLASS));
     }
 
     /**
@@ -368,17 +368,65 @@ final class ClientProxyArtefacts {
      * runtime selection of the produced type, but keeps only a public interface.
      */
     private TypeElement resolveProducedInterfaceElement(BeanDescriptor bean) {
+        var chosen = asTheContainerPicks(bean, producedTypeCandidates(bean,
+                te -> te.getKind() == ElementKind.INTERFACE));
+        return chosen != null && chosen.getModifiers().contains(Modifier.PUBLIC) ? chosen : null;
+    }
+
+    /**
+     * The candidate the container proxies: the first of them it meets above the produced type, walking a class before
+     * its superclass, a superclass before the interfaces, and the interfaces in the order they are declared
+     * ({@code InterceptorBeanWrapper.resolveProxyTargetClass} over {@code TypeHierarchyResolver}'s order). A
+     * {@code @Typed} producer of {@code Made implements T8, ..., T1} restricted to the eight interfaces gets the proxy of
+     * {@code T8}. A descriptor's bean types are a set in no order, and they hold the classes and interfaces above the
+     * produced type, those the compilation compiles too since BUG-20261117-03: the first of them was any of these, and
+     * the proxy of a supertype is one the container does not look up (BUG-20261117-15). {@code null} for no candidate,
+     * and when the producer's member is not found: the container then generates the proxy at run time.
+     */
+    private TypeElement asTheContainerPicks(BeanDescriptor bean, List<TypeElement> candidates) {
+        var produced = producedType(bean);
+        if (produced == null) {
+            return null;
+        }
+        var order = new LinkedHashSet<TypeElement>();
+        walkAsTheContainer(produced, order);
+        return order.stream().filter(candidates::contains).findFirst().orElse(null);
+    }
+
+    /** The type the producer method or field {@code bean} stands for produces; {@code null} when it is not found. */
+    private TypeMirror producedType(BeanDescriptor bean) {
+        var declaring = TypeLookup.typeElementByBinaryName(processingEnv.getElementUtils(), bean.beanClass().value());
+        return switch (declaring == null ? null : producerSite(bean, declaring)) {
+            case ExecutableElement method -> method.getReturnType();
+            case VariableElement field -> field.asType();
+            case null, default -> null;
+        };
+    }
+
+    /** Adds the class or interface of {@code type}, then those above it, in the order the container meets them. */
+    private static void walkAsTheContainer(TypeMirror type, Set<TypeElement> order) {
+        if (type instanceof DeclaredType declared && declared.asElement() instanceof TypeElement element
+                && !element.getQualifiedName().contentEquals(JAVA_LANG_OBJECT) && order.add(element)) {
+            walkAsTheContainer(element.getSuperclass(), order);
+            for (var implemented : element.getInterfaces()) {
+                walkAsTheContainer(implemented, order);
+            }
+        }
+    }
+
+    /** The elements of the bean's class types, {@code Object} aside, that {@code accepted} keeps. */
+    private List<TypeElement> producedTypeCandidates(BeanDescriptor bean, Predicate<TypeElement> accepted) {
         var elements = processingEnv.getElementUtils();
+        var candidates = new ArrayList<TypeElement>();
         for (var t : bean.types()) {
             // By binary name: a nested produced type is app.Outer$Inner here (BUG-20261007-01).
             var te = t instanceof TypeInfo.ClassType(DotName name) && !JAVA_LANG_OBJECT.equals(name.value())
                     ? TypeLookup.typeElementByBinaryName(elements, name.value()) : null;
-            if (te != null && te.getKind() == ElementKind.INTERFACE
-                    && te.getModifiers().contains(Modifier.PUBLIC)) {
-                return te;
+            if (te != null && accepted.test(te)) {
+                candidates.add(te);
             }
         }
-        return null;
+        return candidates;
     }
 
     /**
@@ -402,7 +450,8 @@ final class ClientProxyArtefacts {
     /**
      * The producer method or field {@code bean} stands for, among the members of {@code declaring}
      * annotated {@code @Produces}, found by the name its id carries ({@code Class#method} or
-     * {@code Class.field}); {@code declaring} itself when none matches.
+     * {@code Class.field}), and, for one of overloaded producer methods, by its erased parameter types
+     * ({@code Class#method(T1,T2)}); {@code declaring} itself when none matches.
      */
     private javax.lang.model.element.Element producerSite(BeanDescriptor bean, TypeElement declaring) {
         var id = bean.id().value();
@@ -412,14 +461,37 @@ final class ClientProxyArtefacts {
             return declaring;
         }
         var memberName = id.substring(prefix.length() + 1);
+        var parameters = memberName.indexOf('(');
+        var name = parameters < 0 ? memberName : memberName.substring(0, parameters);
         var kind = bean.kind() == BeanDescriptor.BeanKind.PRODUCER_METHOD ? ElementKind.METHOD : ElementKind.FIELD;
         for (var member : declaring.getEnclosedElements()) {
-            if (member.getKind() == kind && member.getSimpleName().contentEquals(memberName)
+            var named = member.getKind() == kind && member.getSimpleName().contentEquals(name);
+            if (named && (parameters < 0 || memberName.equals(name + erasedParameters((ExecutableElement) member)))
                     && member.getAnnotationMirrors().stream().anyMatch(am ->
                             am.getAnnotationType().toString().equals("jakarta.enterprise.inject.Produces"))) {
                 return member;
             }
         }
         return declaring;
+    }
+
+    /** {@code (T1,T2)}: the erased parameter types of {@code method}, as the id of an overloaded producer spells them. */
+    private String erasedParameters(ExecutableElement method) {
+        var names = new ArrayList<String>();
+        for (var parameter : method.getParameters()) {
+            names.add(erasedName(parameter.asType()));
+        }
+        return "(" + String.join(",", names) + ")";
+    }
+
+    /** The erasure of {@code type}, as {@link Class#getTypeName()} spells it. */
+    private String erasedName(TypeMirror type) {
+        var erased = processingEnv.getTypeUtils().erasure(type);
+        return switch (erased) {
+            case javax.lang.model.type.ArrayType array -> erasedName(array.getComponentType()) + "[]";
+            case DeclaredType declared ->
+                    processingEnv.getElementUtils().getBinaryName((TypeElement) declared.asElement()).toString();
+            default -> erased.toString();
+        };
     }
 }

@@ -26,6 +26,7 @@ import jakarta.enterprise.lang.model.types.PrimitiveType;
 import java.lang.annotation.Annotation;
 import java.util.Collection;
 import java.util.List;
+import java.util.Locale;
 import java.util.Objects;
 import java.util.function.Predicate;
 
@@ -43,7 +44,8 @@ public final class VaubanPrimitiveType implements PrimitiveType {
 
     @Override
     public String name() {
-        return primitiveKind.name().toLowerCase();
+        // Whatever the default locale: a Turkish one lowers INT to "ınt", with a dotless i (BUG-20261117-20)
+        return primitiveKind.name().toLowerCase(Locale.ROOT);
     }
 
     @Override

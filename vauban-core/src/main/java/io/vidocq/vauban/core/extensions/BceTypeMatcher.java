@@ -21,19 +21,17 @@ package io.vidocq.vauban.core.extensions;
 
 import io.vidocq.vauban.core.bean.model.BeanDescriptor;
 import io.vidocq.vauban.core.langmodel.IndexLookup;
+import io.vidocq.vauban.core.types.TypeInfoUtils;
 import io.vidocq.vauban.indexer.model.DotName;
 import io.vidocq.vauban.indexer.model.TypeInfo;
 
 import java.lang.invoke.MethodType;
 import java.util.ArrayDeque;
-import java.util.Arrays;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
-import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
-import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 /**
@@ -50,11 +48,6 @@ final class BceTypeMatcher {
     /** The types every array has, besides the arrays of the types of its component (JLS 4.10.3). */
     private static final Set<Class<?>> ARRAY_SUPERTYPES =
             Set.of(Object.class, Cloneable.class, java.io.Serializable.class);
-
-    /** The primitive kinds by their names, {@code int} say, which a class type carries for a primitive read by reflection. */
-    private static final Map<String, TypeInfo.PrimitiveType.Kind> PRIMITIVE_NAMES =
-            Arrays.stream(TypeInfo.PrimitiveType.Kind.values())
-                    .collect(Collectors.toUnmodifiableMap(kind -> kind.name().toLowerCase(Locale.ROOT), kind -> kind));
 
     private BceTypeMatcher() {
     }
@@ -177,12 +170,13 @@ final class BceTypeMatcher {
     /**
      * {@code type}, with a class type named after a primitive, {@code int} say, read as that primitive type, the
      * component of an array included. The container reads the event type of an observer it loads by reflection so,
-     * where the processor reads the primitive type: both then match alike.
+     * where the processor reads the primitive type: both then match alike. The names are the JDK's
+     * ({@link Class#forPrimitiveName}), as the language model's {@code TypeMapper} reads them.
      */
     private static TypeInfo asPrimitives(TypeInfo type) {
         return switch (type) {
-            case TypeInfo.ClassType(var name) when PRIMITIVE_NAMES.containsKey(name.value()) ->
-                    new TypeInfo.PrimitiveType(PRIMITIVE_NAMES.get(name.value()));
+            case TypeInfo.ClassType(var name) when TypeInfoUtils.fromReflectType(Class.forPrimitiveName(name.value()))
+                    instanceof TypeInfo.PrimitiveType primitive -> primitive;
             case TypeInfo.ArrayType(var component, var dimensions) ->
                     new TypeInfo.ArrayType(asPrimitives(component), dimensions);
             default -> type;

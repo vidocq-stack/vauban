@@ -21,6 +21,8 @@ package io.vidocq.vauban.core.bean.discovery;
 
 import io.vidocq.vauban.core.bean.model.BeanDescriptor;
 import io.vidocq.vauban.core.bean.model.ScopeInfo;
+import io.vidocq.vauban.core.codegen.CompiledSupertypes;
+import io.vidocq.vauban.core.langmodel.IndexLookup;
 import io.vidocq.vauban.core.loading.IsolatedLoader;
 import io.vidocq.vauban.indexer.IndexBuilder;
 import io.vidocq.vauban.indexer.model.AnnotationInfo;
@@ -50,6 +52,8 @@ import java.lang.annotation.RetentionPolicy;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
+import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -71,6 +75,14 @@ class BeanDiscoveryReflectionFallbackTest {
     private static final String DEPENDENT = "jakarta.enterprise.context.Dependent";
     private static final String OBJECT = "java.lang.Object";
     private static final String VALUE = "value";
+    private static final String SERIALIZABLE = "java.io.Serializable";
+    /** A class the compilation compiles: the index does not hold it, and no class loader defines it. */
+    private static final String COMPILED_SUPERCLASS = "io.vidocq.vauban.core.bean.discovery.NoSuchWrapping";
+    /** A generic interface the compilation compiles: the index does not hold it, and no class loader defines it. */
+    private static final String COMPILED_REPO = "io.vidocq.vauban.core.bean.discovery.NoSuchRepo";
+    /** {@code Repo<String>}, as Vauban's annotation processor reads the interface above {@link #MISSING_CLASS}. */
+    private static final TypeInfo REPO_OF_STRING = new TypeInfo.ParameterizedType(DotName.of(COMPILED_REPO),
+            List.of(new TypeInfo.ClassType(DotName.of("java.lang.String"))));
 
     /** Inherited, but not bean defining. */
     @Inherited
@@ -300,6 +312,128 @@ class BeanDiscoveryReflectionFallbackTest {
         assertTrue(types.contains(cls(LibrarySub.class.getName())), types::toString);
         assertTrue(types.contains(cls(LibraryBase.class.getName())),
                 "a bean is also of the types the interface it implements extends: " + types);
+    }
+
+    /**
+     * How Vauban's annotation processor describes {@link #COMPILED_SUPERCLASS}, a class its compilation compiles: an
+     * abstract class that implements {@code Serializable}. It describes no other class here.
+     */
+    private static Optional<ClassInfo> describedByTheCompilation(DotName name) {
+        return name.value().equals(COMPILED_SUPERCLASS)
+                ? Optional.of(new ClassInfo(name, DotName.of(OBJECT), List.of(DotName.of(SERIALIZABLE)), 0x0401,
+                        List.of(), List.of(), List.of(), ClassInfo.ClassKind.CLASS))
+                : Optional.empty();
+    }
+
+    /**
+     * The processor's class loader does not load a class the compilation compiles, and the index holds no class without
+     * an annotation: the bean types stopped there, where the container, which loads it at start, reads on
+     * (BUG-20261117-03). The walk reads such a class as the processor describes it; unbound, as at start, it loads it.
+     */
+    @Test
+    @DisplayName("the bean types follow a supertype nothing loads as the processor describes it")
+    void beanTypesFollowTheSupertypesTheProcessorDescribes() {
+        var bean = new ClassInfo(DotName.of(MISSING_CLASS), DotName.of(COMPILED_SUPERCLASS), List.of(), 0x0001,
+                List.of(), List.of(constructor()), List.of(ann(DEPENDENT)), ClassInfo.ClassKind.CLASS);
+        var discovery = discovery(bean);
+
+        var unbound = discovery.computeBeanTypes(bean);
+        var described = IndexLookup.whereUnindexedDescribedBy(BeanDiscoveryReflectionFallbackTest::describedByTheCompilation,
+                () -> discovery.computeBeanTypes(bean));
+
+        assertEquals(Set.of(cls(MISSING_CLASS), cls(COMPILED_SUPERCLASS), cls(OBJECT)), unbound,
+                "a supertype that neither loads nor is described ends the walk");
+        assertEquals(Set.of(cls(MISSING_CLASS), cls(COMPILED_SUPERCLASS), cls(SERIALIZABLE), cls(OBJECT)), described);
+    }
+
+    @Test
+    @DisplayName("the types of a producer of a class nothing loads follow its supertypes as the processor describes them")
+    void producerTypesFollowTheSupertypesTheProcessorDescribes() {
+        var discovery = discovery();
+
+        var described = IndexLookup.whereUnindexedDescribedBy(BeanDiscoveryReflectionFallbackTest::describedByTheCompilation,
+                () -> discovery.computeProducerTypes(cls(COMPILED_SUPERCLASS)));
+
+        assertEquals(Set.of(cls(COMPILED_SUPERCLASS), cls(SERIALIZABLE), cls(OBJECT)), described);
+    }
+
+    private static Optional<List<TypeInfo>> readByTheCompilation(TypeInfo type) {
+        return type.equals(cls(MISSING_CLASS)) ? Optional.of(List.of(REPO_OF_STRING)) : Optional.empty();
+    }
+
+    /** The processor's reading of {@link LibraryBean}, a class that loads: a {@code NoSuchRepo<String>}. */
+    private static Optional<List<TypeInfo>> readOfALoadedClass(TypeInfo type) {
+        return type.equals(cls(LibraryBean.class.getName())) ? Optional.of(List.of(REPO_OF_STRING)) : Optional.empty();
+    }
+
+    /** A bean of {@link #MISSING_CLASS}, a class nothing loads, that implements {@link #COMPILED_REPO}. */
+    private static ClassInfo repositoryBean(List<AnnotationInfo> annotations) {
+        return new ClassInfo(DotName.of(MISSING_CLASS), DotName.of(OBJECT), List.of(DotName.of(COMPILED_REPO)), 0x0001,
+                List.of(), List.of(constructor()), annotations, ClassInfo.ClassKind.CLASS);
+    }
+
+    /**
+     * The index names the interfaces of a class raw, and a raw bean type matches every parameterization of it: two
+     * repositories of the same generic interface were ambiguous at build, where the container, which reads the type
+     * arguments by reflection at start, chose one (BUG-20261117-14).
+     */
+    @Test
+    @DisplayName("the bean types of a class nothing loads carry the type arguments the processor reads")
+    void beanTypesCarryTheTypeArgumentsTheProcessorReads() {
+        var bean = repositoryBean(List.of(ann(DEPENDENT)));
+        var discovery = discovery(bean);
+
+        var unbound = discovery.computeBeanTypes(bean);
+        var read = CompiledSupertypes.where(BeanDiscoveryReflectionFallbackTest::readByTheCompilation,
+                () -> discovery.computeBeanTypes(bean));
+
+        assertEquals(Set.of(cls(MISSING_CLASS), cls(COMPILED_REPO), cls(OBJECT)), unbound,
+                "unbound, as at start, nothing reads the type arguments of a class that does not load");
+        assertEquals(Set.of(cls(MISSING_CLASS), REPO_OF_STRING, cls(OBJECT)), read);
+    }
+
+    /**
+     * While the processor runs, its reading of the compilation comes before reflection: in a build that runs javac in
+     * process, {@code vidocq:generate} say, the class loader of the processor can hold another copy of a class the
+     * compilation compiles, and reflection read that copy.
+     */
+    @Test
+    @DisplayName("while the processor runs, its reading of the compilation comes before a class that loads")
+    void theCompilationsReadingComesBeforeAClassThatLoads() {
+        var bean = scan(LibraryBean.class);
+        var discovery = discovery(bean);
+
+        var beanTypes = CompiledSupertypes.where(BeanDiscoveryReflectionFallbackTest::readOfALoadedClass,
+                () -> discovery.computeBeanTypes(bean));
+        var producerTypes = CompiledSupertypes.where(BeanDiscoveryReflectionFallbackTest::readOfALoadedClass,
+                () -> discovery.computeProducerTypes(cls(LibraryBean.class.getName())));
+
+        assertTrue(beanTypes.contains(REPO_OF_STRING), beanTypes::toString);
+        assertTrue(producerTypes.contains(REPO_OF_STRING), producerTypes::toString);
+    }
+
+    @Test
+    @DisplayName("@Typed keeps the parameterized type the processor reads of a class nothing loads")
+    void typedKeepsTheTypeArgumentsTheProcessorReads() {
+        var bean = repositoryBean(List.of(ann(DEPENDENT),
+                ann("jakarta.enterprise.inject.Typed", new AnnotationValue.ClassVal(DotName.of(COMPILED_REPO)))));
+        var discovery = discovery(bean);
+
+        var read = CompiledSupertypes.where(BeanDiscoveryReflectionFallbackTest::readByTheCompilation,
+                () -> discovery.computeBeanTypes(bean));
+
+        assertEquals(Set.of(REPO_OF_STRING, cls(OBJECT)), read);
+    }
+
+    @Test
+    @DisplayName("the types of a producer of a class nothing loads carry the type arguments the processor reads")
+    void producerTypesCarryTheTypeArgumentsTheProcessorReads() {
+        var discovery = discovery();
+
+        var read = CompiledSupertypes.where(BeanDiscoveryReflectionFallbackTest::readByTheCompilation,
+                () -> discovery.computeProducerTypes(cls(MISSING_CLASS)));
+
+        assertEquals(Set.of(cls(MISSING_CLASS), REPO_OF_STRING, cls(OBJECT)), read);
     }
 
     @Test

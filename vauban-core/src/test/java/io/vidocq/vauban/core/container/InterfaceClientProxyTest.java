@@ -83,6 +83,47 @@ class InterfaceClientProxyTest {
         }
     }
 
+    @ApplicationScoped
+    public static class GreetingProducer {
+        @Produces
+        @RequestScoped
+        public java.util.function.Supplier<String> greeting() {
+            return () -> "hello";
+        }
+    }
+
+    @ApplicationScoped
+    public static class GreetingConsumer {
+        @Inject
+        java.util.function.Supplier<String> greeting;
+
+        public String greet() {
+            return greeting.get();
+        }
+    }
+
+    /**
+     * A normal-scoped producer of a parameterized type has no bean type that is a class, and the container proxied the
+     * class that declares the producer instead of the produced type ({@code InterceptorBeanWrapper
+     * .resolveProxyTargetClass}): the injection point of {@code Supplier<String>} could not take the proxy
+     * (BUG-20261117-18).
+     */
+    @org.junit.jupiter.api.Disabled("BUG-20261117-18: OPEN, the proxy of a producer of a parameterized type is one"
+            + " of the class that declares the producer")
+    @Test
+    @DisplayName("a normal-scoped producer of a parameterized interface injects as a proxy of that interface")
+    void aNormalScopedProducerOfAParameterizedInterfaceInjectsAsAProxyOfIt() {
+        try (var container = VaubanContainer.builder()
+                .addBeanClass(GreetingProducer.class)
+                .addBeanClass(GreetingConsumer.class)
+                .build()) {
+
+            GreetingConsumer consumer = container.select(GreetingConsumer.class);
+
+            container.requestContext().runInScope(() -> assertEquals("hello", consumer.greet()));
+        }
+    }
+
     /**
      * BUG-20261113-02: the proxy called the contextual instance through reflection and let its
      * {@code InvocationTargetException} escape, so the caller got an {@code UndeclaredThrowableException}

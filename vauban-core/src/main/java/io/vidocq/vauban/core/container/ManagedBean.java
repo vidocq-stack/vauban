@@ -29,6 +29,7 @@ import jakarta.enterprise.inject.spi.PassivationCapable;
 
 import java.lang.annotation.Annotation;
 import java.lang.reflect.Type;
+import java.util.Arrays;
 import java.util.LinkedHashSet;
 import java.util.Map;
 import java.util.Objects;
@@ -375,60 +376,75 @@ public final class ManagedBean<T> implements Bean<T>, PassivationCapable {
     }
 
     /**
-     * CDI 4.1 Section 2.2.1: Filter illegal bean types.
-     * Parameterized types with unresolved TypeVariables or Wildcards are illegal,
-     * unless the TypeVariables are the bean's own type parameters.
+     * CDI 4.1 Section 2.2.1: the legal bean types among {@code types}. A type variable and a wildcard are none. A
+     * parameterized type with a type variable {@code allowedTypeVars} does not hold, at any depth, gives its raw class:
+     * only a supertype named raw leaves one there, and Java erases the types above a raw type (JLS 4.8). The allowed
+     * type variables are the bean class's own, or those of the type a producer produces. Such a type was dropped, and
+     * its raw class with it: a bean of {@code LegacyNames extends ArrayList} was no {@code List} (BUG-20261117-14). A
+     * parameterized type with a wildcard among its type arguments is no bean type, nor is its raw class: the CDI TCK's
+     * {@code BeanTypesWithIllegalTypeTest} wants none.
      */
-    private static Set<Type> filterIllegalBeanTypes(Set<Type> types, Set<java.lang.reflect.TypeVariable<?>> allowedTypeVars) {
-        return filterIllegalBeanTypes(types, allowedTypeVars, false);
-    }
-
-    private static Set<Type> filterIllegalBeanTypes(Set<Type> types, Set<java.lang.reflect.TypeVariable<?>> allowedTypeVars, boolean addRawForRemoved) {
+    private static Set<Type> filterIllegalBeanTypes(Set<Type> types,
+            Set<java.lang.reflect.TypeVariable<?>> allowedTypeVars) {
         var result = new LinkedHashSet<Type>();
         for (var t : types) {
             switch (t) {
                 case Class<?> c -> result.add(c);
                 case java.lang.reflect.ParameterizedType pt
-                        when isLegalParameterizedType(pt, allowedTypeVars) -> result.add(t);
-                case java.lang.reflect.ParameterizedType pt
-                        when addRawForRemoved && pt.getRawType() instanceof Class<?>
-                                && containsTypeVariable(pt) ->
-                        // CDI spec 5.2.4: keep parameterized types with type variables for producers
-                        // so that assignability can match type variable bounds against required types
-                        result.add(t);
+                        when hasTypeVariableNotIn(pt, allowedTypeVars) -> result.add(pt.getRawType());
+                case java.lang.reflect.ParameterizedType pt when !hasWildcard(pt) -> result.add(t);
                 case java.lang.reflect.GenericArrayType gat
                         when !containsUnresolvedTypeVariable(gat) -> result.add(t);
-                case null, default -> { /* Skip TypeVariable, WildcardType */ }
+                case null, default -> { /* Skip TypeVariable, WildcardType, a type with a wildcard */ }
             }
         }
         return result;
     }
 
-    private static boolean containsTypeVariable(java.lang.reflect.ParameterizedType pt) {
-        for (var arg : pt.getActualTypeArguments()) {
-            if (arg instanceof java.lang.reflect.TypeVariable<?>) return true;
-            if (arg instanceof java.lang.reflect.ParameterizedType nested
-                    && containsTypeVariable(nested)) return true;
-        }
-        return false;
+    /** Whether {@code type} has a type variable {@code allowed} does not hold, itself or at any depth inside it. */
+    private static boolean hasTypeVariableNotIn(Type type, Set<java.lang.reflect.TypeVariable<?>> allowed) {
+        return switch (type) {
+            case java.lang.reflect.TypeVariable<?> variable -> !allowed.contains(variable);
+            case java.lang.reflect.ParameterizedType parameterized ->
+                    anyHasTypeVariableNotIn(parameterized.getActualTypeArguments(), allowed);
+            case java.lang.reflect.WildcardType wildcard -> anyHasTypeVariableNotIn(wildcard.getUpperBounds(), allowed)
+                    || anyHasTypeVariableNotIn(wildcard.getLowerBounds(), allowed);
+            case java.lang.reflect.GenericArrayType array ->
+                    hasTypeVariableNotIn(array.getGenericComponentType(), allowed);
+            case null, default -> false;
+        };
     }
 
-    private static boolean isLegalParameterizedType(java.lang.reflect.ParameterizedType pt,
-            Set<java.lang.reflect.TypeVariable<?>> allowedTypeVars) {
-        for (var arg : pt.getActualTypeArguments()) {
-            if (isIllegalTypeArgument(arg, allowedTypeVars)) {
-                return false;
+    private static boolean anyHasTypeVariableNotIn(Type[] types, Set<java.lang.reflect.TypeVariable<?>> allowed) {
+        return Arrays.stream(types).anyMatch(type -> hasTypeVariableNotIn(type, allowed));
+    }
+
+    /** Whether a type argument of {@code type} is a wildcard, or a parameterized type that has one, at any depth. */
+    private static boolean hasWildcard(java.lang.reflect.ParameterizedType type) {
+        return Arrays.stream(type.getActualTypeArguments()).anyMatch(
+                argument -> argument instanceof java.lang.reflect.WildcardType
+                        || argument instanceof java.lang.reflect.ParameterizedType nested && hasWildcard(nested));
+    }
+
+    /** The type variables {@code type} has, itself or among its type arguments, at any depth. */
+    private static Set<java.lang.reflect.TypeVariable<?>> typeVariablesOf(Type type) {
+        var variables = new LinkedHashSet<java.lang.reflect.TypeVariable<?>>();
+        addTypeVariables(type, variables);
+        return variables;
+    }
+
+    private static void addTypeVariables(Type type, Set<java.lang.reflect.TypeVariable<?>> variables) {
+        switch (type) {
+            case java.lang.reflect.TypeVariable<?> variable -> variables.add(variable);
+            case java.lang.reflect.ParameterizedType parameterized -> {
+                for (var argument : parameterized.getActualTypeArguments()) {
+                    addTypeVariables(argument, variables);
+                }
             }
+            case java.lang.reflect.GenericArrayType array -> addTypeVariables(array.getGenericComponentType(),
+                    variables);
+            case null, default -> { /* No type variable: a produced type has no wildcard (CDI 4.1, 3.2) */ }
         }
-        return true;
-    }
-
-    /** A wildcard, a type variable not allowed, or a parameterized type with such an argument. */
-    private static boolean isIllegalTypeArgument(Type arg, Set<java.lang.reflect.TypeVariable<?>> allowedTypeVars) {
-        return (arg instanceof java.lang.reflect.TypeVariable<?> tv && !allowedTypeVars.contains(tv))
-                || arg instanceof java.lang.reflect.WildcardType
-                || (arg instanceof java.lang.reflect.ParameterizedType nested
-                        && !isLegalParameterizedType(nested, allowedTypeVars));
     }
 
     private Set<Type> getProducerTypes() {
@@ -466,9 +482,8 @@ public final class ManagedBean<T> implements Bean<T>, PassivationCapable {
             return filtered;
         }
 
-        // Filter illegal types (producers have no allowed type variables)
-        // CDI spec: for producers, replace removed illegal parameterized types with their raw type
-        return filterIllegalBeanTypes(allTypes, Set.of(), true);
+        // The type variables of the produced type are a producer's: a method's, or its declaring class's
+        return filterIllegalBeanTypes(allTypes, typeVariablesOf(producerGenericType));
     }
 
     /** Fallback: the descriptor's types, resolved to Java types. */
@@ -493,7 +508,8 @@ public final class ManagedBean<T> implements Bean<T>, PassivationCapable {
             }
         }
         types.add(Object.class);
-        return filterIllegalBeanTypes(types, Set.of(), true);
+        // The conversion gives a type variable and a wildcard as Object: no type is illegal, nor made raw
+        return filterIllegalBeanTypes(types, Set.of());
     }
 
     /** The class {@code name} names, initialized; {@code null} when it cannot be found. */
@@ -803,6 +819,11 @@ public final class ManagedBean<T> implements Bean<T>, PassivationCapable {
         };
     }
 
+    /**
+     * {@code clazz}, with its own type variables when it is generic, and the classes and interfaces above it, their type
+     * variables resolved as the Java compiler resolves them: inside a wildcard, an array and the type that encloses an
+     * inner class too, as the processor reads them from the compilation (BUG-20261117-14).
+     */
     private static void collectTypes(Class<?> clazz, Set<Type> types) {
         if (clazz == null || clazz == Object.class) return;
         // CDI spec: for generic bean class, add parameterized type with own type variables
@@ -812,107 +833,11 @@ public final class ManagedBean<T> implements Bean<T>, PassivationCapable {
         } else {
             types.add(clazz);
         }
-        // Collect supertypes (skip self)
-        collectSupertypes(clazz, types, Map.of(), false);
-    }
-
-    /**
-     * Walks the generic supertype hierarchy (superclass + interfaces) of {@code clazz},
-     * adding every encountered type to {@code types}. Parameterized supertypes are resolved
-     * against {@code typeMapping} before being added; raw {@code Class} supertypes restart
-     * the walk with {@code addSelf = true} so they are added themselves.
-     *
-     * <p>Replaces the three historical near-identical methods
-     * ({@code collectTypesFromSupers} / {@code collectTypesWithMapping} /
-     * {@code collectTypesWithMappingSkipSelf}) — the only behavioral difference ever was
-     * whether {@code clazz} itself is added, captured by {@code addSelf}.</p>
-     */
-    private static void collectSupertypes(Class<?> clazz, Set<Type> types,
-            Map<java.lang.reflect.TypeVariable<?>, Type> typeMapping, boolean addSelf) {
-        if (clazz == null || clazz == Object.class) return;
-        if (addSelf) types.add(clazz);
-        var genericSuper = clazz.getGenericSuperclass();
-        if (genericSuper != null && genericSuper != Object.class) {
-            collectSupertype(genericSuper, types, typeMapping);
-        } else if (clazz.getSuperclass() != null) {
-            collectSupertypes(clazz.getSuperclass(), types, typeMapping, true);
-        }
-        for (var genericIface : clazz.getGenericInterfaces()) {
-            collectSupertype(genericIface, types, typeMapping);
-        }
-    }
-
-    private static void collectSupertype(Type supertype, Set<Type> types,
-            Map<java.lang.reflect.TypeVariable<?>, Type> typeMapping) {
-        switch (supertype) {
-            case java.lang.reflect.ParameterizedType pt -> {
-                // Resolve type arguments using the current mapping, then build a new
-                // mapping for the raw type's own type parameters before recursing
-                var resolved = resolveParameterizedType(pt, typeMapping);
-                types.add(resolved);
-                var rawClass = (Class<?>) pt.getRawType();
-                collectSupertypes(rawClass, types, buildTypeMapping(rawClass, resolved), false);
-            }
-            case Class<?> c -> collectSupertypes(c, types, typeMapping, true);
-            default -> { /* a type variable or a wildcard adds no supertype */ }
-        }
-    }
-
-    /**
-     * Resolve a ParameterizedType by substituting TypeVariables using the given mapping.
-     */
-    private static java.lang.reflect.ParameterizedType resolveParameterizedType(
-            java.lang.reflect.ParameterizedType pt,
-            Map<java.lang.reflect.TypeVariable<?>, Type> mapping) {
-        var args = pt.getActualTypeArguments();
-        var resolved = new Type[args.length];
-        boolean changed = false;
-        for (int i = 0; i < args.length; i++) {
-            if (args[i] instanceof java.lang.reflect.TypeVariable<?> tv && mapping.containsKey(tv)) {
-                resolved[i] = mapping.get(tv);
-                changed = true;
-            } else {
-                resolved[i] = args[i];
+        for (var supertype : io.vidocq.vauban.core.types.TypeHierarchyResolver.resolveAllSupertypes(clazz)) {
+            if (supertype != clazz) {
+                types.add(supertype);
             }
         }
-        if (!changed) return pt;
-        // Create a new ParameterizedType with resolved arguments
-        var rawType = pt.getRawType();
-        var owner = pt.getOwnerType();
-        final Type[] finalResolved = resolved;
-        return new java.lang.reflect.ParameterizedType() {
-            @Override public Type[] getActualTypeArguments() { return finalResolved.clone(); }
-            @Override public Type getRawType() { return rawType; }
-            @Override public Type getOwnerType() { return owner; }
-            @Override public boolean equals(Object o) {
-                if (!(o instanceof java.lang.reflect.ParameterizedType other)) return false;
-                return rawType.equals(other.getRawType())
-                        && java.util.Arrays.equals(finalResolved, other.getActualTypeArguments());
-            }
-            @Override public int hashCode() {
-                return java.util.Arrays.hashCode(finalResolved) ^ rawType.hashCode();
-            }
-            @Override public String toString() {
-                return rawType.getTypeName() + "<" +
-                        java.util.Arrays.stream(finalResolved).map(Type::getTypeName)
-                                .collect(java.util.stream.Collectors.joining(", ")) + ">";
-            }
-        };
-    }
-
-    /**
-     * Build a mapping from TypeVariables to their actual type arguments.
-     */
-    private static Map<java.lang.reflect.TypeVariable<?>, Type> buildTypeMapping(
-            Class<?> rawClass, java.lang.reflect.ParameterizedType paramType) {
-        var typeParams = rawClass.getTypeParameters();
-        var typeArgs = paramType.getActualTypeArguments();
-        if (typeParams.length != typeArgs.length) return Map.of();
-        var mapping = new java.util.HashMap<java.lang.reflect.TypeVariable<?>, Type>();
-        for (int i = 0; i < typeParams.length; i++) {
-            mapping.put(typeParams[i], typeArgs[i]);
-        }
-        return mapping;
     }
 
     @Override

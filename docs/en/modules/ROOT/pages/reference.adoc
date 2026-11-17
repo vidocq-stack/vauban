@@ -81,7 +81,7 @@ This page lists every artefact published by Vauban, the Java Modules packages th
 | `io.vidocq.vauban.api`
 
 | `io.vidocq.vauban.core`
-| `io.vidocq.vauban.core`, `.container`, `.langmodel`, `.langmodel.declarations`, `.langmodel.types`, `.types`, `.bean.model`, `.bean.discovery`, `.bean.resolution`, `.bean.validation`, `.context`, `.event`, `.interceptor`, `.enrichment`, `.extensions`, `.weaving`; `.proxy` is a qualified export to `io.vidocq.vauban.processor`
+| `io.vidocq.vauban.core`, `.container`, `.langmodel`, `.langmodel.declarations`, `.langmodel.types`, `.types`, `.bean.model`, `.bean.discovery`, `.bean.resolution`, `.bean.validation`, `.context`, `.event`, `.interceptor`, `.enrichment`, `.extensions`, `.weaving`; `.proxy` and `.codegen` are qualified exports to `io.vidocq.vauban.processor`, which gets them through `ProcessorAccess` when javac defines it in a layer above vauban-core's (`--processor-module-path`)
 
 | `io.vidocq.vauban.indexer`
 | `io.vidocq.vauban.indexer`, `.indexer.codegen`, `.indexer.model`, `.indexer.scanner`
