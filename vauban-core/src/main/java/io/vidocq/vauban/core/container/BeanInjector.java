@@ -305,7 +305,10 @@ final class BeanInjector {
     private record InstanceTarget(Class<?> rawType, java.lang.reflect.Type lookupType) {
     }
 
-    /** A field of a bean type, resolved by type and qualifiers; a primitive field left unresolved keeps its default. */
+    /**
+     * A field of a bean type, resolved by type and qualifiers: unsatisfied when no bean has them (BUG-20261117-28). A
+     * primitive field a producer gives {@code null} keeps its default.
+     */
     private void injectBeanField(Object instance, Field field, BeanDescriptor descriptor,
                                  CreationalContext<?> parentCtx,
                                  Map<java.lang.reflect.TypeVariable<?>, java.lang.reflect.Type> typeMapping) {
@@ -313,12 +316,10 @@ final class BeanInjector {
         var bm = container.getBeanManager();
         var fieldType = ManagedBean.resolveType(ClassMetadataCache.genericTypeOf(field), typeMapping);
         var resolvedBeans = bm.getBeans(fieldType, fieldKeys);
-        Object value;
         if (resolvedBeans.isEmpty()) {
-            value = container.select(field.getType());
-        } else {
-            value = beanReference(bm, bm.resolve(resolvedBeans), fieldType, parentCtx);
+            throw VaubanContainer.unsatisfied(fieldType);
         }
+        Object value = beanReference(bm, bm.resolve(resolvedBeans), fieldType, parentCtx);
         if (value != null || !field.getType().isPrimitive()) {
             writeField(instance, field, value);
         }

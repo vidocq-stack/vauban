@@ -30,6 +30,7 @@ import jakarta.enterprise.inject.Any;
 import jakarta.enterprise.inject.Default;
 import jakarta.enterprise.inject.Disposes;
 import jakarta.enterprise.inject.Produces;
+import jakarta.enterprise.inject.UnsatisfiedResolutionException;
 import jakarta.enterprise.inject.spi.Bean;
 import jakarta.enterprise.inject.spi.DefinitionException;
 import jakarta.enterprise.inject.spi.DeploymentException;
@@ -330,6 +331,43 @@ class AssignabilityRulesReproductionTest {
 
     @Dependent
     public static class GenericListenerOfVetoed<T> extends VetoedTypeVariableListener<T> {
+    }
+
+    /** A qualifier no bean of the deployment has. */
+    @jakarta.inject.Qualifier
+    @java.lang.annotation.Retention(java.lang.annotation.RetentionPolicy.RUNTIME)
+    public @interface Red {
+    }
+
+    @Dependent
+    public static class Knob {
+    }
+
+    /** No bean: the type a non-contextual subclass gives {@link ValueBase}'s type variable. */
+    public static class Missing {
+    }
+
+    public static class RedKnobClient {
+        @Inject
+        @Red
+        Knob knob;
+    }
+
+    public static class RedKnobInitializedClient {
+        Knob knob;
+
+        @Inject
+        void set(@Red Knob knob) {
+            this.knob = knob;
+        }
+    }
+
+    public static class ValueBase<V> {
+        @Inject
+        V value;
+    }
+
+    public static class MissingValueClient extends ValueBase<Missing> {
     }
 
     /** Not a bean: an {@code InjectionTarget} injects its field. */
@@ -943,12 +981,11 @@ class AssignabilityRulesReproductionTest {
 
     /**
      * An injection point of a non-contextual instance resolves by the rules of a bean's: a producer of a raw
-     * {@code Foo} does not satisfy {@code @Inject Foo<Integer>} (CDI 4.1, 5.2.4). When {@code getBeans} finds no
-     * bean, the injection falls back on the erased class, {@code container.select(Foo.class)}, which the raw producer
+     * {@code Foo} does not satisfy {@code @Inject Foo<Integer>} (CDI 4.1, 5.2.4). When {@code getBeans} found no
+     * bean, the injection fell back on the erased class, {@code container.select(Foo.class)}, which the raw producer
      * satisfies (BUG-20261117-28).
      */
     @Test
-    @Disabled("BUG-20261117-28: a non-contextual injection point falls back on its erased class")
     @DisplayName("a non-contextual injection point is not satisfied by a bean the strict rule refuses")
     void aNonContextualInjectionPointIsNotSatisfiedByABeanTheStrictRuleRefuses() {
         try (var container = VaubanContainer.builder().addBeanClass(RawFooFactory.class).build()) {
@@ -956,34 +993,80 @@ class AssignabilityRulesReproductionTest {
             var target = beanManager.getInjectionTargetFactory(beanManager.createAnnotatedType(
                     FooOfIntegerClient.class)).createInjectionTarget(null);
             var client = new FooOfIntegerClient();
-            try {
-                target.inject(client, beanManager.createCreationalContext(null));
-            } catch (RuntimeException _) {
-                // Refusing the injection point is what the specification asks.
-            }
-            assertNull(client.foo, "the raw Foo producer satisfied Foo<Integer>");
+            var context = beanManager.<FooOfIntegerClient>createCreationalContext(null);
+
+            assertThrows(UnsatisfiedResolutionException.class, () -> target.inject(client, context),
+                    "the raw Foo producer satisfied Foo<Integer>");
+            assertNull(client.foo, "what the field got");
         }
     }
 
     /**
      * The parameter of an initializer of a non-contextual instance resolves by the same rules: when {@code getBeans}
-     * finds no bean, {@code VaubanContainer.resolveParameter} falls back on the erased class,
+     * found no bean, {@code VaubanContainer.resolveParameter} fell back on the erased class,
      * {@code select(Foo.class)}, which the raw producer satisfies (BUG-20261117-28).
      */
     @Test
-    @Disabled("BUG-20261117-28: a non-contextual injection point falls back on its erased class")
     @DisplayName("a non-contextual initializer parameter is not satisfied by a bean the strict rule refuses")
     void aNonContextualInitializerParameterIsNotSatisfiedByABeanTheStrictRuleRefuses() {
         try (var container = VaubanContainer.builder().addBeanClass(RawFooFactory.class).build()) {
-            FooOfIntegerInitializedClient client = null;
-            try {
-                client = new jakarta.enterprise.inject.spi.Unmanaged<>(container.getBeanManager(),
-                        FooOfIntegerInitializedClient.class).newInstance().produce().inject().get();
-            } catch (RuntimeException _) {
-                // Refusing the injection point is what the specification asks.
+            var produced = new jakarta.enterprise.inject.spi.Unmanaged<>(container.getBeanManager(),
+                    FooOfIntegerInitializedClient.class).newInstance().produce();
+
+            // The initializer's call wraps what it throws, a reflective call's failure as any other
+            Throwable refused = assertThrows(RuntimeException.class, produced::inject,
+                    "the raw Foo producer satisfied Foo<Integer>");
+            while (refused != null && !(refused instanceof UnsatisfiedResolutionException)) {
+                refused = refused.getCause();
             }
-            assertTrue(client == null || client.foo == null, "the raw Foo producer satisfied Foo<Integer>");
+            assertInstanceOf(UnsatisfiedResolutionException.class, refused, "why the initializer was not called");
+            assertNull(produced.get().foo, "what the initializer got");
         }
+    }
+
+    /**
+     * A non-contextual injection point no bean satisfies is unsatisfied, as a bean's is (CDI 4.1, 5.2): the injection
+     * fell back on {@code select} of the erased class with {@code @Default}, which ignored the qualifiers,
+     * {@code @Inject @Red Knob} getting the {@code @Default Knob}, and looked {@code Object} up for a field of a
+     * type variable the class gives {@code Missing}, which no bean has (BUG-20261117-28, review round 1).
+     */
+    @Test
+    @DisplayName("a non-contextual injection point no bean satisfies is unsatisfied, its qualifiers and type kept")
+    void aNonContextualInjectionPointNoBeanSatisfiesIsUnsatisfied() {
+        try (var container = VaubanContainer.builder().addBeanClass(Knob.class).build()) {
+            var beanManager = container.getBeanManager();
+            var redField = new RedKnobClient();
+            var missing = new MissingValueClient();
+            var produced = new jakarta.enterprise.inject.spi.Unmanaged<>(beanManager,
+                    RedKnobInitializedClient.class).newInstance().produce();
+            var redTarget = beanManager.getInjectionTargetFactory(beanManager.createAnnotatedType(RedKnobClient.class))
+                    .createInjectionTarget(null);
+            var missingTarget = beanManager.getInjectionTargetFactory(
+                    beanManager.createAnnotatedType(MissingValueClient.class)).createInjectionTarget(null);
+            jakarta.enterprise.context.spi.CreationalContext<RedKnobClient> redContext =
+                    beanManager.createCreationalContext(null);
+            jakarta.enterprise.context.spi.CreationalContext<MissingValueClient> missingContext =
+                    beanManager.createCreationalContext(null);
+
+            assertAll(() -> assertThrows(UnsatisfiedResolutionException.class,
+                            () -> redTarget.inject(redField, redContext), "the @Default Knob satisfied @Red"),
+                    () -> assertThrows(UnsatisfiedResolutionException.class,
+                            () -> missingTarget.inject(missing, missingContext), "a bean of Object satisfied Missing"),
+                    () -> assertInstanceOf(UnsatisfiedResolutionException.class, rootRefusal(produced::inject),
+                            "the @Default Knob satisfied the @Red parameter"));
+            assertAll(() -> assertNull(redField.knob, "what the @Red field got"),
+                    () -> assertNull(missing.value, "what the field of Missing got"),
+                    () -> assertNull(produced.get().knob, "what the @Red parameter got"));
+        }
+    }
+
+    /** The {@code UnsatisfiedResolutionException} among the causes of what {@code call} throws, or the last cause. */
+    private static Throwable rootRefusal(Runnable call) {
+        Throwable cause = assertThrows(RuntimeException.class, call::run, "nothing refused");
+        while (cause.getCause() != null && !(cause instanceof UnsatisfiedResolutionException)) {
+            cause = cause.getCause();
+        }
+        return cause;
     }
 
     /**

@@ -421,6 +421,19 @@ public final class VaubanContainer implements AutoCloseable {
         return getContextualInstance(bean);
     }
 
+    /**
+     * What an injection point throws when {@code getBeans} of its required type and qualifiers finds no bean: it is
+     * unsatisfied (CDI 4.1, 5.2). A lookup of its erased class with {@code @Default} would ignore its qualifiers and
+     * its type arguments, and be satisfied by a bean the rules refuse: a producer of a raw {@code Foo} for
+     * {@code Foo<Integer>}, the {@code @Default} bean for an {@code @Inject @Red} one, any bean for {@code Object}, the
+     * erasure of a type variable. The start refuses such an injection point on a bean, not on a non-contextual
+     * instance (BUG-20261117-28).
+     */
+    static jakarta.enterprise.inject.UnsatisfiedResolutionException unsatisfied(java.lang.reflect.Type required) {
+        return new jakarta.enterprise.inject.UnsatisfiedResolutionException(
+                "No bean found for type: " + required.getTypeName());
+    }
+
     @SuppressWarnings("unchecked")
     private <T> T getContextualInstance(ManagedBean<T> bean) {
         var finalBean = (ManagedBean<T>) beans.get(bean.descriptor().id());
@@ -1210,12 +1223,9 @@ public final class VaubanContainer implements AutoCloseable {
         var bm = getBeanManager();
         var beansFound = bm.getBeans(genericType, qualifiers);
         if (beansFound.isEmpty()) {
-            return select(paramType);
+            throw unsatisfied(genericType);
         }
         var resolved = bm.resolve(beansFound);
-        if (resolved == null) {
-            return select(paramType);
-        }
 
         // Handle InjectionPoint for @Dependent beans
         if (resolved.getScope() == jakarta.enterprise.context.Dependent.class) {

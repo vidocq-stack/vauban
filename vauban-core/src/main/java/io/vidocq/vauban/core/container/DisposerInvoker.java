@@ -467,8 +467,10 @@ final class DisposerInvoker {
         // definition error the start reports (BUG-20261117-16)
         var requiredType = method.getGenericParameterTypes()[i];
         var beans = bm.getBeans(requiredType, qualifiers);
-        var bean = beans.isEmpty() ? null : bm.resolve(beans);
-        return bean != null ? bm.getReference(bean, requiredType, ctx) : container.select(paramType);
+        if (beans.isEmpty()) {
+            throw VaubanContainer.unsatisfied(requiredType);
+        }
+        return bm.getReference(bm.resolve(beans), requiredType, ctx);
     }
 
     private Object instanceArgument(Method method, int i, Annotation[] qualifiers) {

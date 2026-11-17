@@ -715,7 +715,7 @@ public final class EventDispatcher {
                 ? bm.getBeans(resolvedParamType, paramQualifiers)
                 : bm.getBeans(resolvedParamType);
         if (beans.isEmpty()) {
-            return container.resolveParameter(param.getType(), method.getGenericParameterTypes()[index]);
+            return container.resolveParameter(param.getType(), resolvedParamType);
         }
         // The type the bean was found by, Counter<Integer>: the erased Counter is no bean type of a bean of
         // Counter<T extends Number>, nor Holder of a bean of Holder<String> (BUG-20261117-25)

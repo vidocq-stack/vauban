@@ -1120,9 +1120,9 @@ suspected cause, status. Updated on every investigation.
 ## BUG-20261117-28 — A non-contextual injection point falls back on its erased class
 
 - **Date**: 2026-11-17
-- **Status**: OPEN
+- **Status**: FIXED on `fix/vauban-bug-stack` (lane `stack/l3-container`)
 - **Module**: `vauban-core` (`BeanInjector.injectBeanField`, `VaubanContainer.resolveParameter`,
-  `DisposerInvoker.disposerArgument`)
+  `DisposerInvoker.disposerArgument`, `EventDispatcher.beanArgument`)
 - **Symptom**: a deployment with a producer of a raw `Foo`, `@Produces Foo foo()` with `Foo<T>` generic. A class
   that is no bean, `FooOfIntegerClient { @Inject Foo<Integer> foo; }`, injected through
   `BeanManager.getInjectionTargetFactory(...).createInjectionTarget(null).inject(...)`, gets the raw producer's
@@ -1132,7 +1132,7 @@ suspected cause, status. Updated on every investigation.
   and `#aNonContextualInitializerParameterIsNotSatisfiedByABeanTheStrictRuleRefuses` in `vauban-core`, disabled; red
   when enabled, on b42eb9a6 (`vauban-b16-red.log`, "Red run 10", the field) and on fix round 2 of BUG-20261117-16
   ("Red run 14", both).
-- **Cause** (by reading): when `getBeans` of the parameterized type finds no bean, `BeanInjector.injectBeanField`
+- **Cause** (proved): when `getBeans` of the parameterized type finds no bean, `BeanInjector.injectBeanField`
   falls back on `container.select(field.getType())` and `VaubanContainer.resolveParameter` on `select(paramType)`:
   the erased class, which the raw producer satisfies. The start's validation refuses such an injection point on a
   bean before the fallback can run; a class that is no bean is not validated at start, and creating its
@@ -1140,6 +1140,29 @@ suspected cause, status. Updated on every investigation.
   `container.select(paramType)`, for a disposer's parameter; there the start's check of a disposer's parameters
   (BUG-20261117-25) refuses what `getBeans` does not satisfy before a disposer is called. The same family as
   BUG-20261117-25 and BUG-20261117-27.
+- **Fix**: the three fallbacks are gone: an injection point `getBeans` finds no bean for, with its type and its
+  qualifiers, throws `VaubanContainer.unsatisfied(required)`, `UnsatisfiedResolutionException: No bean found for type:
+  ...Foo<java.lang.Integer>` (CDI 4.1, 5.2). The first version kept `select(erased)` for a required type that is a
+  class; review round 1 showed it ignores the qualifiers, `@Inject @Red Knob` getting the `@Default Knob`, and looks
+  `Object` up for a field of a type variable the class gives `Missing`, which no bean has. No brick of the workspace
+  uses `Unmanaged` or an `InjectionTarget` (the reviewer's grep of every `*/main`). An
+  observer's argument that `getBeans` misses goes to `resolveParameter` with the type the bean class gives it,
+  `Holder<String>` for an inherited `Holder<X>`, no longer the declared one.
+- **Who sees the change**: an `InjectionTarget` or `Unmanaged` instance whose injection point of a parameterized type
+  no bean satisfies by the rules of CDI 4.1, 5.2.4 now fails when it is injected, with an
+  `UnsatisfiedResolutionException` (wrapped in a `ContainerOperationException` for an initializer, as any failure of
+  its call), where it got a bean of the erased class, a qualified injection point included. A bean's injection points
+  are checked at start, as before.
+- **Verification, review round 1**: `stack-l3-red.log`, "BUG-20261117-28 review round 1 red, run 3: the new test in
+  assertAll": `AssignabilityRulesReproductionTest#aNonContextualInjectionPointNoBeanSatisfiesIsUnsatisfied`, nothing
+  thrown for the `@Red` field, the field of `Missing` and the `@Red` initializer parameter (runs 1 and 2: a name
+  clash, then the first assertion alone). Green: `stack-l3-green.log`, "BUG-20261117-28 review round 1 fix"
+  (vauban-core 1635 tests, 14 skipped; vauban-processor 386, 16 skipped), then `stack-l3-r1-b28-full.log`.
+- **Verification**: red on the main code of "start checks inherited observer params" (`stack-l3-red.log`,
+  "BUG-20261117-28 red" with the tests as
+  logged, "BUG-20261117-28 red, round 2" with `assertThrows`: nothing thrown, the raw producer's `Foo` injected).
+  Green: the whole reactor, `stack-l3-b28-full.log`, "BUG-20261117-28 fix, round 2" (vauban-core 1624 tests, 14
+  skipped; vauban-processor 384, 16 skipped).
 - **Found by**: the review of fix round 1 of BUG-20261117-16.
 
 ## BUG-20261117-27 — An invoker's argument lookup resolves the erased class of its parameter
