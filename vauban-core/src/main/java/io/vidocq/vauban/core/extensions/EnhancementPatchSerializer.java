@@ -27,8 +27,6 @@ import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.io.OutputStream;
 import java.io.OutputStreamWriter;
-import java.io.StringWriter;
-import java.io.UncheckedIOException;
 import java.io.Writer;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
@@ -183,26 +181,9 @@ public final class EnhancementPatchSerializer {
         for (var entry : new TreeMap<>(patch).entrySet()) {
             var annotations = entry.getValue();
             if (annotations == null || annotations.isEmpty()) continue;
-            writer.write(line(entry.getKey(), SyntheticParamCodec.encodeAnnotations(annotations)));
+            writer.write(PropertiesText.entry(entry.getKey(), SyntheticParamCodec.encodeAnnotations(annotations)));
         }
         writer.flush();
-    }
-
-    /** One {@code key=value} line, escaped as {@link Properties#store} escapes it. */
-    private static String line(String key, String value) {
-        var one = new Properties();
-        one.setProperty(key, value);
-        var out = new StringWriter();
-        try {
-            one.store(out, null);
-        } catch (IOException e) {
-            throw new UncheckedIOException(e);
-        }
-        var result = new StringBuilder();
-        for (var stored : out.toString().split("\n")) {
-            if (!stored.startsWith("#")) result.append(stored.strip()).append('\n');
-        }
-        return result.toString();
     }
 
     /**

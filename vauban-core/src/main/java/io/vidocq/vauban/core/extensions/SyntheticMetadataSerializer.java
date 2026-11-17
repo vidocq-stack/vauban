@@ -86,8 +86,9 @@ public final class SyntheticMetadataSerializer {
             writeObserverBuilder(props, "observer." + i, observers.get(i));
         }
 
-        props.store(new OutputStreamWriter(os, StandardCharsets.UTF_8),
-                "Vauban synthetic metadata — generated at compile time by APT");
+        // No date and sorted keys: two builds of the same sources write the same bytes (BUG-20261117-12).
+        os.write(PropertiesText.sorted("Vauban synthetic metadata, generated at compile time by APT", props)
+                .getBytes(StandardCharsets.UTF_8));
     }
 
     private static void writeBeanBuilder(Properties props, String prefix,

@@ -5,6 +5,39 @@ suspected cause, status. Updated on every investigation.
 
 ---
 
+## BUG-20261117-12 — `vauban-synthetic-metadata.properties` changes at every compile (its date line)
+
+- **Date**: 2026-11-17
+- **Status**: FIXED on `fix/synthetic-metadata-no-date`
+- **Module**: `vauban-core` (`SyntheticMetadataSerializer.write`)
+- **Symptom**: found by a Vidocq probe of the `vidocq:dev` loop. On the Bistro example (Foy), changing one method
+  body gives `Hot reload signalled after … ms (layer swap: META-INF/vauban-synthetic-metadata.properties changed)`;
+  the same change on the REST example, whose build writes no such file, gives `class redefinition: 1 class`. An
+  application whose build writes synthetic metadata (4 of the 8 Vidocq examples: cyrano-rest-client, foy-servlet,
+  mansart-h2, petstore) never gets a redefinition in place, so each save is a layer swap and loses the state of its
+  application-scoped beans. The jar was not reproducible either.
+- **Repro**: compile an application with an extension that registers a synthetic bean twice, a second apart, and diff
+  `META-INF/vauban-synthetic-metadata.properties`: one line differs, `#Tue Nov 17 10:03:20 CET 2026`.
+  `BceCompileTimeTest#syntheticMetadataIsTheSameAtEveryCompilation` compiles twice and compares.
+- **Cause** (confirmed by the two red runs): `SyntheticMetadataSerializer.write` ended with
+  `Properties.store(Writer, comment)`, which writes the current date as a comment line and iterates in hash order (a
+  JDK detail, not a contract).
+- **Fix**: the file is written without the date and with its keys sorted, escaped as `Properties.store` escapes. The
+  pattern "store one entry, drop the `#` lines" existed twice (`FrozenExtensions.sorted`,
+  `EnhancementPatchSerializer.line`): it is now one package-private helper, `PropertiesText` (`entry`, `sorted`), used by
+  the three writers. The reader is untouched: a file of an earlier version, with the date and in hash order, reads as
+  before. The helper no longer `strip()`s a line, which dropped the trailing spaces of a value in the two older copies.
+- **Verification**: `SyntheticMetadataStableTest` (no date line, same bytes, sorted keys, an earlier file reads the same,
+  escapes kept) and the processor test above. Red on 85203ee4 (`theFileHasNoDateLine`, and the processor test: both
+  `expected: <[]> but was: <[#Tue Nov 17 10:12:42 CET 2026]>`), green after the fix. See the logs named in the PR.
+- **Audit** (what was checked, no more): no other `.store(`, `now()` or `new Date()` in the main code of `vauban-core`,
+  `vauban-processor` and `vauban-maven-plugin`, nor in `vidocq/main`, where `Instant.now()` appears only in the CLI
+  notice, the runtime and the temp cleanup. Traced to "membership or lookup only, never iterated into an output":
+  `ClientProxyArtefacts:62` (a `computeIfAbsent` cache), `ComponentProviderArtefacts:86` (`add` and `removeAll`),
+  `InterfaceProxySourceRenderer:101` (`seen.add` dedup) and `VaubanProcessor:139,160,162` (`add` and `contains` only).
+  **Not traced end to end**: `ClientProxyShapeFromElements:108,151,220,339,516` (they read as `add` dedup sets, but
+  were not followed through every caller).
+
 ## BUG-20261117-10 — In the processor, `@Registration` does not see the annotations `@Enhancement` added
 
 - **Date**: 2026-11-17

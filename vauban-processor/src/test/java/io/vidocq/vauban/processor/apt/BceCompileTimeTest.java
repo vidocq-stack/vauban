@@ -872,6 +872,38 @@ class BceCompileTimeTest {
     }
 
     @Test
+    @DisplayName("the synthetic metadata file has no date: two compilations of the same sources write the same bytes")
+    void syntheticMetadataIsTheSameAtEveryCompilation() throws IOException {
+        var source = """
+                import jakarta.enterprise.context.ApplicationScoped;
+
+                @ApplicationScoped
+                public class RealBean {
+                    public String hello() { return "hello"; }
+                }
+                """;
+        var first = compileWithBce(List.of(TestSynthesisBce.class), source);
+        assertTrue(first.success(), "Compilation should succeed. Messages: " + first.messages());
+        var firstBytes = Files.readAllBytes(first.outputDir().resolve(SyntheticMetadataSerializer.METADATA_PATH));
+        try (var walk = Files.walk(tempDir)) {
+            for (var path : walk.sorted(java.util.Comparator.reverseOrder()).toList()) {
+                if (!path.equals(tempDir)) {
+                    Files.delete(path);
+                }
+            }
+        }
+
+        var second = compileWithBce(List.of(TestSynthesisBce.class), source);
+        assertTrue(second.success(), "Compilation should succeed. Messages: " + second.messages());
+        var secondBytes = Files.readAllBytes(second.outputDir().resolve(SyntheticMetadataSerializer.METADATA_PATH));
+
+        var text = new String(firstBytes, StandardCharsets.UTF_8);
+        assertEquals(text, new String(secondBytes, StandardCharsets.UTF_8));
+        var dated = text.lines().filter(line -> line.matches("#\\p{Alpha}{3} \\p{Alpha}{3} \\d{2} .*\\d{4}")).toList();
+        assertEquals(List.of(), dated, "no Properties.store date line");
+    }
+
+    @Test
     @DisplayName("@Synthesis BCE serializes the synthetic beans into the metadata file")
     void shouldSerializeSyntheticBeanMetadata() throws IOException {
         var result = compileWithBce(

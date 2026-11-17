@@ -341,7 +341,9 @@ public record FrozenExtensions(String fingerprint, FrozenExtensions.Deployment d
             var patch = new ByteArrayOutputStream();
             EnhancementPatchSerializer.write(enhancements, patch);
             Files.write(output.resolve(ENHANCEMENTS_PATH), patch.toByteArray());
-            Files.writeString(output.resolve(SYNTHETIC_PATH), sorted(synthetic), StandardCharsets.UTF_8);
+            Files.writeString(output.resolve(SYNTHETIC_PATH),
+                    PropertiesText.sorted("Vauban frozen extensions: the synthetic beans and observers.", synthetic),
+                    StandardCharsets.UTF_8);
             Files.writeString(output.resolve(PATH), mainFile(), StandardCharsets.UTF_8);
         } catch (IOException e) {
             throw new UncheckedIOException("Cannot write the record of the frozen extensions under " + output, e);
@@ -397,22 +399,5 @@ public record FrozenExtensions(String fingerprint, FrozenExtensions.Deployment d
     /** One {@code key=value} line; the values are binary names and plain tokens, which need no escape. */
     private static void line(StringBuilder out, String key, String value) {
         out.append(key).append('=').append(value).append('\n');
-    }
-
-    /** {@code properties} as text, keys sorted, without the date {@link Properties#store} writes. */
-    private static String sorted(Properties properties) throws IOException {
-        var out = new StringBuilder("# Vauban frozen extensions: the synthetic beans and observers.\n");
-        for (String key : new TreeSet<>(properties.stringPropertyNames())) {
-            var one = new Properties();
-            one.setProperty(key, properties.getProperty(key));
-            var stored = new java.io.StringWriter();
-            one.store(stored, null);
-            for (String storedLine : stored.toString().split("\n")) {
-                if (!storedLine.startsWith("#")) {
-                    out.append(storedLine.strip()).append('\n');
-                }
-            }
-        }
-        return out.toString();
     }
 }
