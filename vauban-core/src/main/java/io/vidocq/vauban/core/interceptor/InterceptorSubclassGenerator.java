@@ -20,6 +20,7 @@
 package io.vidocq.vauban.core.interceptor;
 
 import io.vidocq.vauban.core.codegen.BeanMembers;
+import io.vidocq.vauban.core.codegen.BridgeCalls;
 import io.vidocq.vauban.core.codegen.ShadowedDefaults;
 
 import java.lang.reflect.Method;
@@ -107,7 +108,8 @@ public final class InterceptorSubclassGenerator {
             }
         }
         // Also intercept inherited public methods (from superclasses)
-        for (var method : BeanMembers.inStableOrder(beanClass.getMethods())) {
+        for (var listed : BeanMembers.inStableOrder(beanClass.getMethods())) {
+            var method = standsFor(listed);
             // Declared ones are already handled; Object's are never intercepted.
             if (method.getDeclaringClass() != beanClass && method.getDeclaringClass() != Object.class) {
                 var key = method.getName() + Arrays.toString(method.getParameterTypes());
@@ -155,6 +157,28 @@ public final class InterceptorSubclassGenerator {
     }
 
     // ---- helpers ----
+
+    /**
+     * The method {@code method} stands for when it is a visibility bridge: javac's copy, in a public class, of a public
+     * method of a non-public superclass, which {@code getMethods()} lists in the method's place. The processor sees the
+     * method itself, a member of the bean, and intercepts it (BUG-20261118-16). Any other method is itself. The class
+     * bytes tell which method a bridge calls ({@link BridgeCalls}): an overload of the bridge's name and arity does not
+     * mislead them.
+     */
+    private static Method standsFor(Method method) {
+        if (!method.isBridge()) {
+            return method;
+        }
+        var call = BridgeCalls.of(method);
+        return call.kind() == BridgeCalls.Kind.VISIBILITY && call.target() != null && isHiddenPublic(call.target())
+                ? call.target() : method;
+    }
+
+    /** A public method, no bridge, of a class that is not public: what a visibility bridge copies. */
+    private static boolean isHiddenPublic(Method candidate) {
+        return !candidate.isBridge() && Modifier.isPublic(candidate.getModifiers())
+                && !Modifier.isPublic(candidate.getDeclaringClass().getModifiers());
+    }
 
     /** Neither private nor the client proxy's {@code ProxyLink} entry constructor (Vidocq/vauban#24). */
     private static boolean isMirrored(java.lang.reflect.Constructor<?> constructor) {

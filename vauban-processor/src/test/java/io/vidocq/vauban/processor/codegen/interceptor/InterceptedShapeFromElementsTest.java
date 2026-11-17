@@ -132,6 +132,45 @@ class InterceptedShapeFromElementsTest {
                 fromClass);
     }
 
+    /** Not public: javac gives each public subclass a bridge {@code String hidden()} that calls this one. */
+    static class HiddenPublicBase {
+        public String hidden() { return "hidden"; }
+    }
+
+    /** Inherits {@code hidden()} through its own visibility bridge. */
+    public static class VisiblyInheriting extends HiddenPublicBase {
+        public String own() { return "own"; }
+    }
+
+    /** A public class between: the visibility bridge is its, and the bean inherits it. */
+    public static class VisibleMiddle extends HiddenPublicBase {
+    }
+
+    public static class InheritingThroughAMiddle extends VisibleMiddle {
+    }
+
+    /** Not public, with a method that takes a parameter. */
+    static class HiddenPutBase {
+        public String put(String value) { return value; }
+    }
+
+    /**
+     * Declares an overload of the name and arity of its visibility bridge {@code put(String)}: the class bytes, not the
+     * names, tell the bridge apart (BUG-20261118-16).
+     */
+    public static class OverloadingVisibly extends HiddenPutBase {
+        public String put(Integer value) { return "integer " + value; }
+    }
+
+    @Test
+    @DisplayName("a public method of a non-public superclass, behind a visibility bridge, is intercepted")
+    void aMethodBehindAVisibilityBridgeIsIntercepted() throws Exception {
+        assertEquals(Set.of("own()", "hidden()"), assertSameMethodSet(VisiblyInheriting.class));
+        assertEquals(Set.of("hidden()"), assertSameMethodSet(InheritingThroughAMiddle.class));
+        assertEquals(Set.of("put(java.lang.String)", "put(java.lang.Integer)"),
+                assertSameMethodSet(OverloadingVisibly.class));
+    }
+
     /** A plain superclass whose method implements {@code GenericLabel<String>.label(T)} for its subclass. */
     public static class PlainLabelBase {
         public String label(String value) { return "plain " + value; }

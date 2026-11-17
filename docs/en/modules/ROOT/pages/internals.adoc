@@ -179,7 +179,12 @@ public, protected and package-private superclass methods it inherits, and the in
 methods no class of the bean overrides. The processor's subclass already covered the inherited
 protected and package-private methods; the subclass the container generates at run time and the
 one `vauban:generate` writes now cover them too, so a call the bean makes on itself to such a method
-is intercepted as well.
+is intercepted as well. A public method of a superclass that is not public reaches the run-time
+generators as the bridge javac copies into the public class; they intercept the method that bridge
+copies, as the processor does (BUG-20261118-16). `BridgeCalls`, part of the run-time generators' reflective
+front-end, tells which method a bridge calls from the class bytes of its class, read through the Class-File API
+from the class's own loader; a class defined in memory, without bytes there, is judged by the names its classes
+declare. [.tag-new]#NEW#
 
 Three kinds of method are not business methods and are never overridden, by any of the generators,
 which read one list: `@Inject` initializers, the bean class's own interceptor methods

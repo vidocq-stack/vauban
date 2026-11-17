@@ -58,6 +58,45 @@ suspected cause, status. Updated on every investigation.
   `deploymentErrors`, a `DeploymentException` in the processor, at start and frozen).
 - **Found by**: the review of BUG-20261118-04.
 
+## BUG-20261118-16 — The run-time intercepted subclass skips a public method of a non-public superclass
+
+- **Date**: 2026-11-18
+- **Status**: FIXED on `fix/client-proxy-bridge`
+- **Module**: `vauban-core` (`interceptor.InterceptorSubclassGenerator`)
+- **Symptom**: a bean compiled without the processor, bound to an interceptor, whose public method comes from a
+  superclass that is not public: `public class VisiblyInheritedSupplier extends HiddenSupplierBase`, where the
+  package-private `HiddenSupplierBase` declares `public String get()`. The `$$Intercepted` subclass the container
+  generates does not override `get()`: a call runs the bean's method without its interceptors. The processor's
+  subclass intercepts it. Seen while proving BUG-20261117-49 (`vauban-b49-probe.log`,
+  `DependentVisible$$Intercepted get=hidden intercepted=[]`).
+- **Repro**: `InterceptedShapeFromElementsTest.aMethodBehindAVisibilityBridgeIsIntercepted` in `vauban-processor`
+  compares `InterceptorSubclassGenerator.fromClass` with the processor's shape for a bean that inherits `hidden()`
+  through its own visibility bridge and for one that inherits it through a public class between;
+  `BridgeMethodClientProxyTest.getInheritedThroughAHiddenSuperclass` in `vauban-core`, its bean now `@Traced`, starts a
+  container and counts the interceptor's calls.
+- **Cause** (proved by the red run): javac gives a public class a visibility bridge, `ACC_BRIDGE` with the method's
+  own descriptor, for each public method of a non-public superclass, and `getMethods()` lists that bridge in the
+  method's place. The generator's walk over `getMethods()` refuses a bridge (`shouldIntercept`), and its walk over
+  the inherited non-public methods leaves the public ones to the first walk: neither intercepted the method. Red:
+  "fromElements only: [hidden()]", and the interceptor saw `[]` (`stack-bug16-red.log`, "Red run 1").
+- **Fix**: the walk over `getMethods()` takes a visibility bridge for the method it copies, when it is a public method
+  of a class that is not public. `BridgeCalls` reads what a bridge calls from the class bytes of its class, through
+  the Class-File API: an `invokespecial` on a superclass method of the bridge's own descriptor makes a visibility
+  bridge. Any other bridge stands for itself. A class without bytes on its loader, one defined in memory, is judged by
+  names instead: a class that declares a method of the bridge's name and arity calls it, which an overload misleads
+  (`BridgeCallsTest` pins both). The first version of the fix judged by names alone, and missed `put(String)` of
+  `OverloadingVisibly extends HiddenPutBase`, which declares `put(Integer)` (review round 2). The emitted
+  `super.get()` still names the bean, and reaches the method through the bridge. The two front-ends now give the same
+  method set (`InterceptedShapeFromElementsTest`, 22 cases).
+- **Verification, review round 2**: red, `stack-bug16-red.log`, "Red run 2", and `stack-bug17-red.log`, "Red run
+  4": `OverloadingVisibly` loses `put(String)` on the run-time path. Green, `stack-bug17-dev.log`, "Dev run 4":
+  `vauban-core` 1635 tests, `vauban-processor` 388, no failure.
+- **Verification**: red, `stack-bug16-red.log`, "Red run 1" (on 65ef933f): both tests fail on the defect. Green,
+  `stack-bug16-dev.log`, "Dev run 2": `vauban-core` 1629 tests, `vauban-processor` 385, no failure ("Dev run 1"
+  intercepted override bridges as well, which the two cross-checks of BUG-20261004-06 caught); the full build of the
+  lane tip, `stack-bug49-build.log`.
+- **Found by**: the proof of BUG-20261117-49.
+
 ## BUG-20261118-12 — The start skips the class-level rules of a class an extension adds through `ScannedClasses`
 
 - **Date**: 2026-11-18

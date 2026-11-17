@@ -145,10 +145,8 @@ class BridgeMethodClientProxyTest {
         }
     }
 
-    /**
-     * Not intercepted: the run-time {@code $$Intercepted} subclass does not intercept a method behind such a bridge,
-     * whether a client proxy forwards to it or not, which is another walk than the client proxy's.
-     */
+    /** Its {@code get()} is a bridge to {@code HiddenSupplierBase.get()}, which is intercepted (BUG-20261118-16). */
+    @Traced
     @ApplicationScoped
     public static class VisiblyInheritedSupplier extends HiddenSupplierBase {
     }

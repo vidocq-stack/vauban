@@ -336,6 +336,7 @@ final class ArchitectureRules {
                 "generates at run time, with the Class-File API or java.lang.reflect.Proxy, the $$Intercepted"
                         + " subclass and the client proxy of a type the processor did not cover, and announces it"
                         + " in the framed RUNTIME CODE GENERATION FALLBACK warning",
+                "core.codegen.BridgeCalls",
                 "core.interceptor.InterceptorSubclassGenerator",
                 "core.proxy.ClientProxyShape",
                 "core.proxy.RuntimeClientProxyGenerator");
