@@ -285,8 +285,7 @@ public final class BeanDiscovery {
         // Check package-level @Vetoed via package-info class
         var packageName = classInfo.name().packageName();
         if (!packageName.isEmpty()) {
-            var packageInfoName = DotName.of(packageName + ".package-info");
-            var packageInfo = index.getClassByName(packageInfoName);
+            var packageInfo = index.getClassByName(PackageInfos.of(packageName));
             if (packageInfo.isPresent() && packageInfo.get().hasAnnotation(VETOED)) return true;
         }
         return false;

@@ -335,7 +335,7 @@ public class Service { /* intercepted methods */ }
 
 `@AroundConstruct` is also supported. The build generates an `$$Intercepted` subclass for a bean with an interceptor binding, and that subclass runs the interceptor chain the container resolves for the bean.
 
-[[vetoed-interceptor]][.tag-new]#NEW# A class annotated `@Vetoed`, or a class of a package whose `package-info.java` is annotated `@Vetoed`, is no interceptor, as it is no bean: it intercepts nothing, and an extension's `@Registration` does not see it, whether the extensions run at start or the build froze them. In an application compiled with the annotation processor, the `@Vetoed` of a package is not seen yet (BUG-20261117-01): put `@Vetoed` on the class.
+[[vetoed-interceptor]][.tag-new]#NEW# A class annotated `@Vetoed`, or a class of a package whose `package-info.java` is annotated `@Vetoed`, is no interceptor, as it is no bean: it intercepts nothing, and an extension's `@Registration` does not see it, whether the extensions run at start or the build froze them. The annotation processor and `vauban:generate` list no such class as a bean and generate nothing for it, the processor satisfies no injection point with a bean of a vetoed package of another module, and the container reads the `@Vetoed` of a package beside each class it indexes, whether it scans the class, finds it in a `vauban-beans.list` or an extension adds it through `ScannedClasses`.
 
 [#programmatic-instance]
 == Programmatic `Instance<T>`

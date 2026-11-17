@@ -21,6 +21,7 @@ package io.vidocq.vauban.core.container;
 
 import io.vidocq.vauban.core.BeanFactory;
 import io.vidocq.vauban.core.bean.discovery.BeanDiscovery;
+import io.vidocq.vauban.core.bean.discovery.PackageInfos;
 import io.vidocq.vauban.core.bean.model.BeanDescriptor;
 import io.vidocq.vauban.core.bean.model.InterceptorDescriptor;
 import io.vidocq.vauban.core.bean.model.ObserverDescriptor;
@@ -68,6 +69,15 @@ public final class VaubanContainerBuilder {
      * them is the deployment's too, and stays in its fingerprint (BUG-20261113-16).
      */
     private final Set<String> deploymentClasses = new java.util.HashSet<>();
+    /**
+     * The {@code package-info} classes given to {@link #addBeanClass}: no bean, each carries the annotations of its
+     * package.
+     */
+    private final List<Class<?>> packageInfoClasses = new ArrayList<>();
+    /** The packages whose {@code package-info} was looked up, by name. */
+    private final Set<String> packagesLookedUp = new java.util.HashSet<>();
+    /** The {@code package-info} of each vetoed package found so far, by package name. */
+    private final Map<String, ClassInfo> vetoedPackages = new java.util.HashMap<>();
     /** The archives the Vauban processor handled at compile: their extensions need not run at start. */
     final ProcessedArchives bceProcessedSources = new ProcessedArchives();
     private final Map<DotName, BeanFactory<?>> factories = new LinkedHashMap<>();
@@ -165,9 +175,14 @@ public final class VaubanContainerBuilder {
     }
 
     /**
-     * Add a bean class. The container will scan it and create a default factory.
+     * Add a bean class. The container will scan it and create a default factory. The {@code package-info} class of a
+     * package is no bean: the container reads on it whether the package is vetoed.
      */
     public VaubanContainerBuilder addBeanClass(Class<?> beanClass) {
+        if (PackageInfos.isPackageInfo(beanClass.getName())) {
+            packageInfoClasses.add(beanClass);
+            return this;
+        }
         deploymentClasses.add(beanClass.getName());
         return addClass(beanClass);
     }
@@ -1102,7 +1117,7 @@ public final class VaubanContainerBuilder {
                 indexBuilder.add(model);
             }
             // The fingerprint of the deployment as a build sees it: without the runtime's own beans.
-            if (!hostBeanClasses.contains(clazz.getName()) || deploymentClasses.contains(clazz.getName())) {
+            if (inFingerprint(clazz)) {
                 if (ReflectionValidator.isBuildCompatibleExtension(clazz)) {
                     fingerprint.addExtension(clazz.getName(), model, classFile);
                 } else {
@@ -1117,6 +1132,40 @@ public final class VaubanContainerBuilder {
                 factories.put(DotName.of(clazz.getName()), () -> instantiate(clazz, lkp));
             }
         }
+        indexVetoedPackages(indexBuilder, fingerprint);
+    }
+
+    /** Whether {@code clazz} counts in the fingerprint: a class of the deployment, not one only the runtime adds. */
+    private boolean inFingerprint(Class<?> clazz) {
+        return !hostBeanClasses.contains(clazz.getName()) || deploymentClasses.contains(clazz.getName());
+    }
+
+    /**
+     * Indexes the {@code package-info} of each vetoed package a class of the deployment belongs to, however the class
+     * came, so that discovery skips every type of the package (BUG-20261117-01). The fingerprint counts it as it counts
+     * the class: a veto changes what discovery finds, and the package of a bean only the runtime adds stays out.
+     */
+    private void indexVetoedPackages(IndexBuilder indexBuilder, DeploymentFingerprint fingerprint) {
+        java.util.stream.Stream.concat(beanClasses.stream(), packageInfoClasses.stream()).forEach(clazz ->
+                vetoedPackageOf(clazz.getName(), clazz.getClassLoader()).ifPresent(packageInfo -> {
+                    indexBuilder.add(packageInfo);
+                    if (inFingerprint(clazz)) {
+                        fingerprint.add(packageInfo.name().value(), packageInfo);
+                    }
+                }));
+    }
+
+    /**
+     * The {@code package-info} of the package of {@code className} when {@code loader} holds one that vetoes the
+     * package. Looked up once per package, as the first class of the package to ask finds it.
+     */
+    private java.util.Optional<ClassInfo> vetoedPackageOf(String className, ClassLoader loader) {
+        var packageName = DotName.of(className).packageName();
+        if (packagesLookedUp.add(packageName)) {
+            PackageInfos.vetoed(className, loader)
+                    .ifPresent(packageInfo -> vetoedPackages.put(packageName, packageInfo));
+        }
+        return java.util.Optional.ofNullable(vetoedPackages.get(packageName));
     }
 
     /** The class file of {@code clazz}, empty when its loader has none among its resources. */
@@ -1142,6 +1191,7 @@ public final class VaubanContainerBuilder {
             bceClassLoader.register(cls);
             extensionAddedClasses.add(cls);
             indexClassResource(className, discoveryClassLoader, indexBuilder);
+            vetoedPackageOf(className, discoveryClassLoader).ifPresent(indexBuilder::add);
             if (!factories.containsKey(DotName.of(className))) {
                 var lkp = getBuilderLookup();
                 factories.put(DotName.of(className), () -> instantiate(cls, lkp));

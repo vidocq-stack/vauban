@@ -5,29 +5,118 @@ suspected cause, status. Updated on every investigation.
 
 ---
 
-## BUG-20261117-01 — A package-level `@Vetoed` is ignored in a compiled application
+## BUG-20261117-02 — An extension the annotation processor runs sees no interceptor the compilation compiles
 
 - **Date**: 2026-11-17
 - **Status**: OPEN
-- **Module**: `vauban-processor` (`VaubanProcessor`, the index it builds), `vauban-core` (`ContainerScanner`)
+- **Module**: `vauban-core` (`BceTypeMatcher.matchesInterceptorTypes`, `BceProcessor.processRegistration`), as
+  `vauban-processor` runs them
+- **Symptom**: while the annotation processor runs the build compatible extensions of a compilation, a
+  `@Registration(types = Object.class)` method with a `BeanInfo` parameter is called for the beans the compilation
+  compiles, and for none of its interceptors. The container calls it for the interceptors too, whether the
+  extensions run at start or `vauban:generate` froze them. An extension that acts on an interceptor in
+  `@Registration` does nothing for it at compile time.
+- **Repro**: `VetoedInterceptorCompileTimeTest#anExtensionRunByTheProcessorSeesTheInterceptorsTheCompilationCompiles`
+  in `vauban-processor`, disabled until the fix: `@Registration` sees `[vi.LoggedService]`, not
+  `[vi.LoggedService, vi.Logger]`.
+- **Cause** (hypothesis, not yet run in a debugger): `BceTypeMatcher.matchesInterceptorTypes` matches an interceptor
+  by loading its class through the processor's class loader, where a class the compilation compiles does not load, so
+  it matches nothing. A bean matches through its bean types, `java.lang.Object` among them, which do load. The index
+  matching `@Enhancement` already uses (`matchesClassByIndex`) is the likely fix; it changes what the extensions of
+  every brick see at compile time, so it gets its own change.
+- **Found by**: BUG-20261117-01, whose processor test records what `@Registration` sees.
+
+## BUG-20261117-01 — A package-level `@Vetoed` is ignored in a compiled application
+
+- **Date**: 2026-11-17
+- **Status**: FIXED on `fix/vetoed-package`
+- **Module**: `vauban-processor` (`VaubanProcessor`, `ElementScanner`), `vauban-core` (`VaubanContainerBuilder`,
+  `BceProcessor`, `PackageInfos`)
 - **Symptom**: in an application compiled with the annotation processor, the classes of a package whose
   `package-info.java` carries `@Vetoed` are beans, and an interceptor among them intercepts. CDI 4.1 ignores them
-  altogether. A deployment that hands the container the `package-info` class itself, as the CDI TCK runner does,
-  skips them.
-- **Repro**: `VetoedInterceptorCompileTimeTest#aVetoedPackageHoldsNoBeanAndNoInterceptor` in `vauban-processor`,
-  disabled until the fix: `vi.quiet.QuietBean` is a bean, and `vi.quiet.QuietLogger` intercepts `vi.LoggedService`.
-- **Cause**: `BeanDiscovery.isVetoed` reads a package's `@Vetoed` on the `package-info` class of the index. The
-  processor indexes types only, never a package, so it lists the classes of a vetoed package in `vauban-beans.list`,
-  and the container of a compiled application indexes what that list names. The class path scanner leaves
-  `package-info` out as well, as an interface and, in a jar, by name (`ContainerScanner.tryAddArchiveClass`,
-  `scanJarEntries`): a `beans.xml` archive no Vauban build step handled loses the package's `@Vetoed` too. That second
-  path was read in the code, not run; `vauban:generate` was not checked.
+  altogether. So are the classes of such a package that the container scans, and those an extension adds through
+  `ScannedClasses`. The build of an application resolves an injection point with a bean of a vetoed package of
+  another module, which the start then finds unsatisfied. A deployment that hands the container the `package-info`
+  class itself, as the CDI TCK runner does, skips them.
+- **Repro**: `VetoedInterceptorCompileTimeTest#aVetoedPackageHoldsNoBeanAndNoInterceptor` in `vauban-processor`:
+  `vi.quiet.QuietBean` is a bean, and `vi.quiet.QuietLogger` intercepts `vi.LoggedService`
+  (`Logger(QuietLogger(hello))`). `VetoedInterceptorTest` in `vauban-core`, for a package `scanPackage` scans, a
+  directory and a jar with a `beans.xml` no Vauban build step processed, the classes an extension adds through
+  `ScannedClasses` from a jar with no `beans.xml`, and a `vauban-beans.list` that names them:
+  `overseer(package(call))`. `BeanArchiveModuleInjectionTest#aProducerOfAVetoedPackageOfAnotherModuleSatisfiesNothing`
+  in `vauban-processor`: `Resolved io.repro.api.Exchange with io.repro.quiet.ExchangeBeans from a bean archive
+  module`.
+- **Cause**: `BeanDiscovery.isVetoed` reads a package's `@Vetoed` on the `package-info` class of the index, and no
+  path but the one that hands the container the `package-info` class put it there. The processor indexes types only,
+  never a package, so it lists the classes of a vetoed package in `vauban-beans.list`, and the container of a
+  compiled application indexes what that list names. The class path scanner leaves `package-info` out, as an
+  interface and, in a jar, by name (`ContainerScanner.tryAddArchiveClass`, `scanJarEntries`, `tryAddBeanClass`). A
+  class an extension adds through `ScannedClasses` is indexed alone, by the container
+  (`VaubanContainerBuilder.addExtensionScannedClass`) and by the processor (`VaubanProcessor.runDiscoveryPhase`), and
+  so are the types of another module the processor resolves an injection point with
+  (`VaubanProcessor.scanBeanArchiveModules`): those of a package with a `_VaubanComponents`, which the current
+  processor writes for a vetoed package that declares an annotation type or holds a produced-type proxy, and those an
+  earlier processor listed in `vauban-beans.list`.
+- **Fix**: the index holds the `package-info` of every vetoed package a type of the deployment belongs to.
+  - The processor indexes the `package-info` of a type's package when the package carries `@Vetoed`
+    (`VaubanProcessor.indexVetoedPackage`), for each type it indexes from its annotations and for each type an
+    injection point brings in. `ElementScanner.scan(PackageElement)` builds it as the bytecode scan reads
+    `package-info.class`: a synthetic interface named `<package>.package-info` with the package's annotations. For a
+    class of another archive, one an extension adds through `ScannedClasses` or one of another module that the
+    processor resolves an injection point with (`scanBeanArchiveModules`), it reads the package's `@Vetoed` through
+    `Elements`, which sees a `package-info` the compilation compiles or finds on its class path or module path, and
+    else the `package-info.class` on the processor path (`PackageInfos.vetoed`). Discovery then skips the package's
+    classes on the processor as in the container: the processor lists none of them in `vauban-beans.list`, generates
+    no client proxy, no `$$Intercepted` and no `_VaubanComponents` for them, its extensions' `@Registration` sees
+    none of them, an injection point that needs one is unsatisfied at build, as at start, and no bean of a vetoed
+    package of another module satisfies one. The processor does not list the `package-info` itself.
+  - The container looks up the `package-info.class` of the package of each class it indexes, through the class's
+    loader, once per package, and indexes it when it carries `@Vetoed` (`VaubanContainerBuilder.indexVetoedPackages`,
+    `PackageInfos.vetoed`), whatever way the class came: `addBeanClass`, `scanPackage`, a `beans.xml` archive, a
+    `vauban-beans.list` (one from a processor without this fix lists the classes of a vetoed package), or
+    `ScannedClasses` (`addExtensionScannedClass`). The fingerprint of a frozen deployment counts it as it counts the
+    class that brought it: the `package-info` of a package only the runtime's own beans (`addHostBean`) belong to
+    stays out, as they do, and the veto holds on them all the same. `addBeanClass` given a `package-info` keeps it
+    apart from the bean classes, and looks it up the same way. The class path scanner is unchanged.
+  - A `package-info` is no type: no extension phase sees one. `BceProcessor` leaves the `package-info` classes out of
+    the archive classes `@Enhancement` and `@Registration` are given, and out of the index classes `@Enhancement`
+    matches (`typesOf`, `knownTypes`). `vauban:generate` indexes every class file but `module-info`, so on main an
+    `@Enhancement(types = Object.class)` it runs is given the `package-info` of every annotated package
+    (`@XmlSchema`, `@NullMarked`). The container never indexes one that does not veto its package, and counts none
+    among the classes of an archive.
+- **Verification**: red before the fix, green after:
+  - in `vauban-processor`, `VetoedInterceptorCompileTimeTest`'s `aVetoedPackageHoldsNoBeanAndNoInterceptor`,
+    `theExtensionsOfACompiledApplicationSeeNothingOfAVetoedPackage` (run at start and frozen at build),
+    `anExtensionRunByTheProcessorSeesNothingOfAVetoedPackage`, `aTypeOfAVetoedPackageAnInjectionPointNeedsIsNoBean`,
+    `aClassOfAVetoedPackageAnExtensionScansIsNoBean` (the processor listed `ScannedQuietBean`) and
+    `aClassAnExtensionScansIsNoBeanWhenTheCompilationVetoesItsPackage` (the compilation compiles the `package-info`,
+    which the processor path does not hold); `BeanArchiveModuleInjectionTest`'s
+    `aProducerOfAVetoedPackageOfAnotherModuleSatisfiesNothing`, for a module the application reads, whose vetoed
+    package has a `_VaubanComponents`, and for one on the processor path whose `vauban-beans.list` names the vetoed
+    producer (the build resolved the injection point with it; it now stays deferred to the container);
+  - in `vauban-core`, `VetoedInterceptorTest` for `scanPackage`, a directory and a jar archive, `ScannedClasses` and a
+    hand-written `vauban-beans.list`, with the extensions run at start and frozen at build (ten cases; the two where
+    the deployment is handed the `package-info` passed before), and
+    `VetoedInterceptorTest#aHostBeanOfAVetoedPackageLeavesTheRecordValid` (the start refused the record:
+    `io.vidocq.vauban.core.container.vetoed.package-info (added)`);
+  - in `vauban-maven-plugin`, `VetoedPackageGenerationTest#anEnhancementIsGivenNoPackageInfo`;
+    `VetoedPackageGenerationTest#aVetoedPackageHoldsNoBean` passes before and after, and fails when the
+    `package-info` is left out of the classes it scans.
+
+  `PackageInfoIsNoTypeTest` in `vauban-core`, run at start and frozen at build, guards against a regression the first
+  version of this fix brought, not a bug of main: that version added every `package-info` of a scanned archive to the
+  deployment, and `@Enhancement` was given that of an annotated and of a vetoed package. On main the scanner leaves
+  `package-info` out.
+
+  `ElementScannerPackageTest` checks the processor's `package-info` against the bytecode scan's, `PackageInfosTest`
+  the lookup. The reactor `-o -Pquality install` (2505 tests, 4 skipped), the CDI Lite TCK (774/774) and the AtInject
+  TCK (1/1) green on the branch.
 - **Found by**: BUG-20261116-12, whose tests cover a class of a vetoed package.
 
 ## BUG-20261116-12 — A `@Vetoed` interceptor still intercepts
 
 - **Date**: 2026-11-17
-- **Status**: FIXED on `fix/vetoed-interceptor`
+- **Status**: FIXED in vauban#321
 - **Module**: `vauban-core` (`InterceptorDiscovery`)
 - **Symptom**: an interceptor class annotated `@Vetoed`, or a class of a package annotated `@Vetoed`, is no bean, as
   it should be, but it still intercepts the beans its binding names, and an extension's `@Registration` sees it as an

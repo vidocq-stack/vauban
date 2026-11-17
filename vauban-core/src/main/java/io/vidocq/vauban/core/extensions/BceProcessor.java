@@ -19,6 +19,7 @@
  */
 package io.vidocq.vauban.core.extensions;
 
+import io.vidocq.vauban.core.bean.discovery.PackageInfos;
 import io.vidocq.vauban.core.bean.model.BeanDescriptor;
 import io.vidocq.vauban.core.bean.model.InterceptorDescriptor;
 import io.vidocq.vauban.core.bean.model.ObserverDescriptor;
@@ -64,12 +65,13 @@ public final class BceProcessor {
         var modifications = new HashMap<DotName, List<VaubanClassConfig>>();
         var errors = new ArrayList<String>();
         var errorCauses = new ArrayList<Throwable>();
+        var archiveTypes = typesOf(archiveClasses);
 
         for (var bceClass : bceClasses) {
             try {
                 ExtensionAsks.<Exception>of(bceClass, () -> {
                     var bce = instantiateBce(bceClass);
-                    processEnhancement(bce, bceClass, List.of(), archiveClasses, lookup, classLoader, errors,
+                    processEnhancement(bce, bceClass, List.of(), archiveTypes, lookup, classLoader, errors,
                             errorCauses, modifications);
                 });
             } catch (Exception _) {
@@ -241,10 +243,11 @@ public final class BceProcessor {
             });
         }
         var types = new VaubanTypes(lookup);
+        var archiveTypes = typesOf(allArchiveClasses);
 
         // Phase: @Enhancement — iterates over beans, fallback to archive classes if none match
         runPhase(extensions, deploymentErrors, deploymentErrorCauses, (bceClass, bce) ->
-                processEnhancement(bce, bceClass, beans, allArchiveClasses, lookup, classLoader, deploymentErrors,
+                processEnhancement(bce, bceClass, beans, archiveTypes, lookup, classLoader, deploymentErrors,
                         deploymentErrorCauses, allEnhancementMods));
 
         // Phase: @Registration — on the beans as Enhancement left them, the classes it made beans included
@@ -252,7 +255,7 @@ public final class BceProcessor {
         var enhancedBeans = beansAfterEnhancement(beans, allEnhancementMods, managedBean);
         runPhase(extensions, deploymentErrors, deploymentErrorCauses, (bceClass, bce) ->
                 processRegistration(bce, bceClass, enhancedBeans, observers, interceptors, lookup, classLoader, types,
-                        deploymentErrors, allArchiveClasses));
+                        deploymentErrors, archiveTypes));
 
         // Phase: @Synthesis
         runPhase(extensions, deploymentErrors, deploymentErrorCauses, (bceClass, bce) -> {
@@ -515,7 +518,7 @@ public final class BceProcessor {
                 boolean isObjectWildcard = enhancement.types().length == 1
                         && enhancement.types()[0] == Object.class;
 
-                for (var classInfo : lookup.index().getKnownClasses()) {
+                for (var classInfo : knownTypes(lookup.index())) {
                     if (processedClasses.contains(classInfo.name())) continue;
                     // Type matching: Object.class wildcard matches everything
                     if (!isObjectWildcard && !BceTypeMatcher.matchesClassByIndex(enhancement.types(),
@@ -528,6 +531,23 @@ public final class BceProcessor {
                 }
             }
         }
+    }
+
+    /**
+     * The classes of an archive an extension sees as types: all but the {@code package-info} classes, which only carry
+     * the annotations of their package (BUG-20261117-01).
+     */
+    private static List<Class<?>> typesOf(List<Class<?>> archiveClasses) {
+        return archiveClasses == null ? List.of() : archiveClasses.stream()
+                .filter(archiveClass -> !PackageInfos.isPackageInfo(archiveClass.getName()))
+                .toList();
+    }
+
+    /** The classes of {@code index} an extension sees as types: all but the {@code package-info} classes. */
+    private static List<io.vidocq.vauban.indexer.model.ClassInfo> knownTypes(VaubanIndex index) {
+        return index.getKnownClasses().stream()
+                .filter(classInfo -> !PackageInfos.isPackageInfo(classInfo.name().value()))
+                .toList();
     }
 
     /**

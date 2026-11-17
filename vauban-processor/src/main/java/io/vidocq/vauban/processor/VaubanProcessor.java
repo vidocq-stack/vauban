@@ -24,6 +24,7 @@ import io.vidocq.vauban.processor.apt.ElementScanner;
 import io.vidocq.vauban.processor.codegen.proxy.ClientProxyShapeFromElements;
 import io.vidocq.vauban.processor.codegen.provider.ComponentProviderGenerator;
 import io.vidocq.vauban.core.bean.discovery.BeanDiscovery;
+import io.vidocq.vauban.core.bean.discovery.PackageInfos;
 import io.vidocq.vauban.core.bean.model.BeanDescriptor;
 import io.vidocq.vauban.core.bean.resolution.BeanResolver;
 import io.vidocq.vauban.core.bean.validation.DeploymentValidator;
@@ -518,8 +519,40 @@ public class VaubanProcessor extends AbstractProcessor {
         var name = DotName.of(typeElement.getQualifiedName().toString());
         if (!accumulatedIndex.contains(name)) {
             accumulatedIndex.add(scanner.scan(typeElement));
+            indexVetoedPackage(accumulatedIndex, typeElement, scanner);
             indexedThisRound.add(typeElement);
         }
+    }
+
+    /**
+     * Adds to {@code indexBuilder} the {@code package-info} of the package of {@code type} when that package is
+     * annotated {@code @Vetoed}. Discovery reads a package's veto there, as the container does: it then skips every
+     * type of the package, so the processor lists none of them and generates nothing for them (BUG-20261117-01).
+     */
+    private void indexVetoedPackage(IndexBuilder indexBuilder, TypeElement type, ElementScanner scanner) {
+        indexVetoedPackage(indexBuilder, processingEnv.getElementUtils().getPackageOf(type), scanner);
+    }
+
+    /**
+     * As {@link #indexVetoedPackage(IndexBuilder, TypeElement, ElementScanner)}, for a class of another archive: the
+     * compiler sees a {@code package-info} the compilation compiles or finds on its class path or module path, and
+     * {@code loader}, which holds the class, one of the processor path (BUG-20261117-01).
+     */
+    private void indexVetoedPackage(IndexBuilder indexBuilder, String className, ClassLoader loader,
+            ElementScanner scanner) {
+        var pkg = processingEnv.getElementUtils().getPackageElement(DotName.of(className).packageName());
+        if (!indexVetoedPackage(indexBuilder, pkg, scanner)) {
+            PackageInfos.vetoed(className, loader).ifPresent(indexBuilder::add);
+        }
+    }
+
+    /** Adds the {@code package-info} of {@code pkg} when {@code pkg} is annotated {@code @Vetoed}; says whether. */
+    private static boolean indexVetoedPackage(IndexBuilder indexBuilder, PackageElement pkg, ElementScanner scanner) {
+        if (pkg == null || pkg.getAnnotation(jakarta.enterprise.inject.Vetoed.class) == null) {
+            return false;
+        }
+        indexBuilder.add(scanner.scan(pkg));
+        return true;
     }
 
     /**
@@ -647,10 +680,13 @@ public class VaubanProcessor extends AbstractProcessor {
         // Add scanned classes to the index.
         // These classes come from dependency jars (added via ScannedClasses.add()), not from
         // the module being compiled — track them as external so we skip factory/proxy generation.
+        // The package-info of a vetoed package comes along: no type of the package is a bean (BUG-20261117-01).
+        var scanner = new ElementScanner(processingEnv.getElementUtils(), processingEnv.getTypeUtils());
         for (var className : discoveryResult.scannedClasses().getAddedClasses()) {
             var bytes = ProcessorPathArchives.classFile(aptClassLoader, className);
             if (bytes.length > 0) {
                 indexScannedClass(indexBuilder, className, bytes);
+                indexVetoedPackage(indexBuilder, className, aptClassLoader, scanner);
             }
         }
         return discoveryResult;
@@ -1694,6 +1730,7 @@ public class VaubanProcessor extends AbstractProcessor {
             var typeElement = indexBuilder.contains(name) ? null : elements.getTypeElement(name.value());
             if (typeElement != null) {
                 indexBuilder.add(scanner.scan(typeElement));
+                indexVetoedPackage(indexBuilder, typeElement, scanner);
                 added.add(name);
             }
         }
@@ -1778,20 +1815,25 @@ public class VaubanProcessor extends AbstractProcessor {
 
     /**
      * Scans into the index the packages of beans of every bean archive module the compilation reads, then the beans
-     * the archives on the processor path list; returns the classes added.
+     * the archives on the processor path list; returns the classes added. The {@code package-info} of a vetoed
+     * package comes along, as the container indexes it at start: no type of the package is a bean (BUG-20261117-01).
      */
     private Set<DotName> scanBeanArchiveModules(IndexBuilder indexBuilder, ElementScanner scanner) {
         var elements = processingEnv.getElementUtils();
         Set<DotName> scanned = new LinkedHashSet<>();
         for (var provider : componentProvidersOfOtherModules()) {
-            for (var type : ElementFilter.typesIn(elements.getPackageOf(provider).getEnclosedElements())) {
+            var pkg = elements.getPackageOf(provider);
+            indexVetoedPackage(indexBuilder, pkg, scanner);
+            for (var type : ElementFilter.typesIn(pkg.getEnclosedElements())) {
                 scanArchiveType(type, indexBuilder, scanner, scanned);
             }
         }
         // A class of this compilation stays its own, even when an earlier build of it is on the processor path.
-        for (var classInfo : ProcessorPathArchives.beanClasses(processorPathLoader(),
+        var processorPath = processorPathLoader();
+        for (var classInfo : ProcessorPathArchives.beanClasses(processorPath,
                 name -> indexBuilder.contains(DotName.of(name)) || isCompiledType(name))) {
             indexBuilder.add(classInfo);
+            indexVetoedPackage(indexBuilder, classInfo.name().value(), processorPath, scanner);
             scanned.add(classInfo.name());
         }
         return scanned;

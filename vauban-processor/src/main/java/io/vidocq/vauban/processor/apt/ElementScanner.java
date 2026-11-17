@@ -19,6 +19,7 @@
  */
 package io.vidocq.vauban.processor.apt;
 
+import io.vidocq.vauban.core.bean.discovery.PackageInfos;
 import io.vidocq.vauban.indexer.model.AnnotationInfo;
 import io.vidocq.vauban.indexer.model.ClassInfo;
 import io.vidocq.vauban.indexer.model.ClassInfo.ClassKind;
@@ -33,6 +34,7 @@ import javax.lang.model.element.Element;
 import javax.lang.model.element.ElementKind;
 import javax.lang.model.element.ExecutableElement;
 import javax.lang.model.element.Modifier;
+import javax.lang.model.element.PackageElement;
 import javax.lang.model.element.TypeElement;
 import javax.lang.model.element.TypeParameterElement;
 import javax.lang.model.element.VariableElement;
@@ -41,6 +43,7 @@ import javax.lang.model.type.TypeKind;
 import javax.lang.model.type.TypeMirror;
 import javax.lang.model.util.Elements;
 import javax.lang.model.util.Types;
+import java.lang.classfile.ClassFile;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
@@ -55,6 +58,10 @@ import java.util.function.Function;
 public final class ElementScanner {
 
     private static final String JAVA_LANG_OBJECT = "java.lang.Object";
+
+    /** The flags javac gives a {@code package-info} class. */
+    private static final int PACKAGE_INFO_FLAGS = ClassFile.ACC_INTERFACE | ClassFile.ACC_ABSTRACT
+            | ClassFile.ACC_SYNTHETIC;
 
     private final Elements elements;
 
@@ -125,6 +132,17 @@ public final class ElementScanner {
 
         return new ClassInfo(name, superName, interfaces, accessFlags, fields, methods, annotations, kind,
                 typeElement.getSimpleName().toString(), new TypeParameterReader(typeElement).typeParameters());
+    }
+
+    /**
+     * Converts a package to its {@code package-info} class, as the bytecode scan reads it: a synthetic interface named
+     * {@code <package>.package-info}, which carries the package's annotations. The index holds a package that way, and
+     * discovery reads a package's {@code @Vetoed} from it.
+     */
+    public ClassInfo scan(PackageElement packageElement) {
+        var name = PackageInfos.of(packageElement.getQualifiedName().toString());
+        return new ClassInfo(name, DotName.of(JAVA_LANG_OBJECT), List.of(), PACKAGE_INFO_FLAGS, List.of(), List.of(),
+                scanAnnotations(packageElement), ClassKind.INTERFACE);
     }
 
     /**

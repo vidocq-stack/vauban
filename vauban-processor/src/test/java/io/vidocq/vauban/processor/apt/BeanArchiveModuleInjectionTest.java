@@ -311,6 +311,87 @@ class BeanArchiveModuleInjectionTest {
                 "nothing the processor can read declares the producer: " + result.messages());
     }
 
+    // ---- A vetoed package of another module (BUG-20261117-01) ----------------------------------
+
+    /**
+     * A bean module whose package {@code io.repro.quiet} is vetoed by its {@code package-info}: its producer of
+     * {@code Exchange} is no bean. The package still gets a {@code _VaubanComponents}, for the qualifier it declares,
+     * which a bean of another package of the module carries.
+     */
+    private static final Map<String, String> QUIET = Map.of(
+            "module-info.java", """
+                    module repro.quiet {
+                        requires repro.api;
+                        requires io.vidocq.vauban.api;
+                        requires jakarta.cdi;
+                        provides io.vidocq.vauban.api.VaubanComponentProvider
+                            with io.repro.quiet._VaubanComponents, io.repro.loud._VaubanComponents;
+                    }
+                    """,
+            "io/repro/loud/Loud.java", """
+                    package io.repro.loud;
+
+                    @io.repro.quiet.Quiet
+                    @jakarta.enterprise.context.Dependent
+                    public class Loud {
+                    }
+                    """,
+            "io/repro/quiet/package-info.java", """
+                    @jakarta.enterprise.inject.Vetoed
+                    package io.repro.quiet;
+                    """,
+            "io/repro/quiet/Quiet.java", """
+                    package io.repro.quiet;
+
+                    @jakarta.inject.Qualifier
+                    @java.lang.annotation.Retention(java.lang.annotation.RetentionPolicy.RUNTIME)
+                    public @interface Quiet {
+                    }
+                    """,
+            "io/repro/quiet/ExchangeBeans.java", producerModule("repro.quiet", "io.repro.quiet")
+                    .get("io/repro/quiet/ExchangeBeans.java"));
+
+    /** How the application's build comes to the vetoed package of the other module. */
+    enum VetoedArchive {
+        /** The application reads the module, whose {@code _VaubanComponents} names the package. */
+        READ_MODULE,
+        /**
+         * The module is on the processor path only, with a {@code vauban-beans.list} that names the vetoed producer,
+         * as an annotation processor from before BUG-20261117-01 wrote it.
+         */
+        LISTED_ON_THE_PROCESSOR_PATH
+    }
+
+    /**
+     * The start finds no bean for an injection point that only a class of a vetoed package would satisfy, so the
+     * build does not resolve it with that class either: the injection point stays deferred to the container.
+     */
+    @ParameterizedTest
+    @org.junit.jupiter.params.provider.EnumSource(VetoedArchive.class)
+    @DisplayName("a producer of a vetoed package of another module satisfies no injection point at build")
+    void aProducerOfAVetoedPackageOfAnotherModuleSatisfiesNothing(VetoedArchive archive) throws Exception {
+        Path api = compileModule("api", API, Layout.modules());
+        Path quiet = compileModule("quiet", QUIET, Layout.modules(api));
+        assertTrue(Files.exists(quiet.resolve("io/repro/quiet/_VaubanComponents.class")),
+                "the vetoed package gets a component provider");
+
+        CompilationResult result;
+        if (archive == VetoedArchive.READ_MODULE) {
+            var app = new java.util.HashMap<>(EXCHANGE_APP);
+            app.put("module-info.java", EXCHANGE_APP.get("module-info.java")
+                    .replace("requires repro.api;", "requires repro.api;\n    requires repro.quiet;"));
+            result = compile("app", app, Layout.modules(api, quiet));
+        } else {
+            Files.writeString(quiet.resolve("META-INF/vauban-beans.list"), "io.repro.quiet.ExchangeBeans\n");
+            result = compile("app", EXCHANGE_APP, new Layout(List.of(api), List.of(), List.of(quiet)));
+        }
+
+        assertTrue(result.success(), result.messages().toString());
+        assertTrue(result.defers("Exchange"), "no bean of a vetoed package satisfies it: " + result.messages());
+        assertFalse(result.messages().stream().anyMatch(message -> message.contains("io.repro.quiet.ExchangeBeans")),
+                result.messages().toString());
+    }
+
     // ---- Helpers -------------------------------------------------------------------------------
 
     /**
