@@ -188,7 +188,11 @@ public final class ClassFileScanner {
                 .orElseGet(() -> parseTypeFromDesc(methodType.returnType()));
         var parameters = buildParameters(mm, methodType,
                 generic.map(ClassTypeParameters.MethodTypes::parameters).orElse(null));
-        var exceptionTypes = extractExceptionTypes(mm);
+        // The thrown types as the method declares them, when its signature names them: a type variable among them,
+        // which the Exceptions attribute erases (BUG-20261117-52).
+        var exceptionTypes = generic.map(ClassTypeParameters.MethodTypes::exceptions)
+                .filter(declared -> !declared.isEmpty())
+                .orElseGet(() -> extractExceptionTypes(mm));
         var accessFlags = mm.flags().flagsMask();
         var annotations = extractAnnotations(mm);
         var defaultValue = extractDefaultValue(mm);

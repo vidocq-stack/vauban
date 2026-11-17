@@ -704,4 +704,47 @@ class ClassFileScannerTest {
                                     builder.constantPool().utf8Entry(signature))));
         }
     }
+
+    /** A class whose methods throw a type variable of the class, one of their own, or classes only. */
+    static class Thrower<E extends Exception> {
+        <F extends RuntimeException> void generic() throws IOException, E, F {
+            // the scan reads the declaration only: the throws clause and the signature
+        }
+
+        void plain() throws IOException {
+            // the scan reads the declaration only: a throws clause without a signature
+        }
+
+        <T> void signed(T value) throws IOException {
+            // the scan reads the declaration only: a signature that names no thrown type
+        }
+    }
+
+    /** BUG-20261117-52: the thrown types as the method declares them, from its {@code Signature}. */
+    @Nested
+    @DisplayName("Thrown types")
+    class ThrownTypes {
+
+        private List<TypeInfo> thrownBy(String method) throws IOException {
+            return scan(Thrower.class).methods().stream().filter(m -> m.name().equals(method)).findFirst()
+                    .orElseThrow().exceptionTypes();
+        }
+
+        @Test
+        @DisplayName("a type variable of the class or of the method stays a type variable, with its bound")
+        void typeVariables() throws IOException {
+            assertEquals(List.of(new ClassType(DotName.of("java.io.IOException")),
+                            new TypeVariable("E", List.of(new ClassType(DotName.of("java.lang.Exception")))),
+                            new TypeVariable("F", List.of(new ClassType(DotName.of("java.lang.RuntimeException"))))),
+                    thrownBy("generic"));
+        }
+
+        @Test
+        @DisplayName("a method whose signature names no thrown type keeps those of its Exceptions attribute")
+        void classesOnly() {
+            var io = List.<TypeInfo>of(new ClassType(DotName.of("java.io.IOException")));
+            assertAll(() -> assertEquals(io, thrownBy("plain"), "a method without a signature"),
+                    () -> assertEquals(io, thrownBy("signed"), "a signature without a thrown type"));
+        }
+    }
 }

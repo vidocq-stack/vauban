@@ -80,13 +80,17 @@ final class ClassTypeParameters {
         return new ClassTypeParameters(classParameters, List.of()).type(signature);
     }
 
-    /** The generic types a method's {@code Signature} declares. */
-    record MethodTypes(List<TypeInfo.TypeVariable> typeParameters, List<TypeInfo> parameters, TypeInfo result) {}
+    /**
+     * The generic types a method's {@code Signature} declares. {@code exceptions} is empty when the signature names
+     * none: javac writes the thrown types there only when one of them is a type variable (BUG-20261117-52).
+     */
+    record MethodTypes(List<TypeInfo.TypeVariable> typeParameters, List<TypeInfo> parameters, TypeInfo result,
+            List<TypeInfo> exceptions) {}
 
     /**
      * The type parameters, the parameter types and the return type a method's {@code Signature} declares, its type
-     * variables resolved against the method's own type parameters, then the class's. A {@code void} return type is
-     * {@link TypeInfo.VoidType}.
+     * variables resolved against the method's own type parameters, then the class's, and the types it throws, if it
+     * names them. A {@code void} return type is {@link TypeInfo.VoidType}.
      */
     static MethodTypes methodTypes(List<Signature.TypeParam> classParameters, MethodSignature signature) {
         var reader = new ClassTypeParameters(classParameters, signature.typeParameters());
@@ -97,7 +101,8 @@ final class ClassTypeParameters {
         var result = signature.result() instanceof Signature.BaseTypeSig base && base.baseType() == 'V'
                 ? new TypeInfo.VoidType()
                 : reader.type(signature.result());
-        return new MethodTypes(typeParameters, parameters, result);
+        var exceptions = signature.throwableSignatures().stream().map(reader::type).toList();
+        return new MethodTypes(typeParameters, parameters, result, exceptions);
     }
 
     private TypeInfo.TypeVariable typeVariable(String name) {

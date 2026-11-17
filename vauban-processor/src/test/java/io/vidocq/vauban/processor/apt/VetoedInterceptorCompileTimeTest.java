@@ -2531,6 +2531,47 @@ class VetoedInterceptorCompileTimeTest {
         seen.assertEachIs(expected);
     }
 
+    /**
+     * Records, in {@code @Synthesis}, the types each method of {@code vi.types.Members} declares it throws, each
+     * with its kind, and a type variable with its bounds (BUG-20261117-52).
+     */
+    public static class ThrowsTypeRecorder implements BuildCompatibleExtension {
+
+        static final List<String> SEEN = new CopyOnWriteArrayList<>();
+
+        @Synthesis
+        public void throwsTypes(Types types) {
+            for (var method : types.ofClass(TYPES + MEMBERS).declaration().methods()) {
+                SEEN.add(method.name() + " throws " + method.throwsTypes().stream()
+                        .map(type -> type.kind() + " " + memberTypeName(type) + (type.isTypeVariable()
+                                ? type.asTypeVariable().bounds().stream()
+                                        .map(VetoedInterceptorCompileTimeTest::memberTypeName).toList()
+                                : ""))
+                        .toList());
+            }
+        }
+    }
+
+    /**
+     * {@code MethodInfo.throwsTypes()} gives the types a method declares it throws as it declares them, in the
+     * processor, at start and frozen: a type variable of the method or of its class stays a type variable, with its
+     * bound. At start and frozen, it was the erasure the class file's {@code Exceptions} attribute names
+     * (BUG-20261117-52).
+     */
+    @Test
+    @DisplayName("an extension sees the generic throws types of a method in the processor, at start and frozen")
+    void anExtensionSeesTheGenericThrowsTypesOfAMethodInTheProcessorAtStartAndFrozen() throws Exception {
+        var expected = List.of("plain throws [CLASS java.io.IOException]",
+                "sorted throws []",
+                "throwing throws [CLASS java.io.IOException, TYPE_VARIABLE E[java.lang.Exception],"
+                        + " TYPE_VARIABLE F[java.lang.Throwable]]",
+                "typed throws []");
+
+        var seen = seenThreeWays(withMethodMembers(), ThrowsTypeRecorder.class, ThrowsTypeRecorder.SEEN);
+
+        seen.assertEachIs(expected);
+    }
+
     // ---- helpers ----
 
     /** The classes of the beans and interceptors {@code @Registration} sees while the processor compiles them. */

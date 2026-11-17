@@ -5,6 +5,32 @@ suspected cause, status. Updated on every investigation.
 
 ---
 
+## BUG-20261117-52 — At start and frozen, a method's generic `throws` types are erased
+
+- **Date**: 2026-11-17
+- **Status**: FIXED on `fix/vauban-bug-stack`
+- **Module**: `vauban-indexer` (`scanner.ClassFileScanner`, `scanner.ClassTypeParameters`)
+- **Symptom**: for `<F extends Throwable> void throwing() throws IOException, E, F` in a class
+  `Members<..., E extends Exception>`, `MethodInfo.throwsTypes()` gives the classes `java.lang.Exception` and
+  `java.lang.Throwable` at start and frozen, where the processor gives the type variables `E` and `F`. The official
+  language model TCK fails 4 checks on it at start (vauban#336, ticket 40, group 4: `AnnotatedThrowsTypes`).
+- **Repro**:
+  `VetoedInterceptorCompileTimeTest#anExtensionSeesTheGenericThrowsTypesOfAMethodInTheProcessorAtStartAndFrozen`
+  in `vauban-processor`, and `ClassFileScannerTest$ThrownTypes#typeVariables` in `vauban-indexer`. Red on 6d5338ef
+  (`stack-l1-bug52.log`, "BUG-52 red": `CLASS java.lang.Exception, CLASS java.lang.Throwable` at start and frozen,
+  the processor right; and the scan's `ClassType[name=java.lang.Exception]`).
+- **Cause**: `ClassFileScanner.extractExceptionTypes` read the method's `Exceptions` attribute, which names the
+  erasure of each thrown type (JVMS 4.7.5). The thrown types as declared are in the method's `Signature`, after `^`,
+  which javac writes when one of them is a type variable; `ClassTypeParameters.methodTypes` did not read them.
+- **Fix**: `ClassTypeParameters.methodTypes` reads the thrown types of the signature (`throwableSignatures()`), their
+  type variables resolved like the parameters', and `ClassFileScanner` takes them when the signature names any; the
+  `Exceptions` attribute otherwise, as before.
+- **Who sees the change**: an extension the container runs at start, or that the build freezes, gets a type variable
+  for a thrown type variable, as an extension the processor runs did. The fingerprint of the frozen record changes
+  for a class with such a method only, as what the extensions see of it changed; any other class keeps its checksum.
+- **Verification**: green in `stack-l1-bug52.log` ("BUG-52 module tests with the fix").
+- **Found by**: the language model TCK probe (vauban#336).
+
 ## BUG-20261117-51 — `MethodInfo.typeParameters()` is always empty
 
 - **Date**: 2026-11-17
