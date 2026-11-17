@@ -54,7 +54,7 @@ public final class VaubanInvokerFactory implements InvokerFactory {
             throw new IllegalStateException(
                     "Cannot create invoker for interceptor bean: " + bean.declaringClass().name());
         }
-        if ("<init>".equals(method.name())) {
+        if (method.isConstructor()) {
             throw new IllegalStateException(
                     "Cannot create invoker for constructor of: " + bean.declaringClass().name());
         }

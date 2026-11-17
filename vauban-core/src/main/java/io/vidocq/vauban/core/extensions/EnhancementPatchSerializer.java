@@ -166,8 +166,13 @@ public final class EnhancementPatchSerializer {
         return result;
     }
 
+    /**
+     * A method by its name and its descriptor; a constructor by {@code <init>}, as an earlier Vauban wrote it, though
+     * its {@code MethodInfo.name()} is its class's (BUG-20261117-54), so that an earlier frozen record stays valid.
+     */
     private static String methodKey(VaubanMethodConfig method) {
-        return method.info().name() + InjectionPointInfo.methodDescriptor(method.info().parameters().stream()
+        var name = method.info().isConstructor() ? "<init>" : method.info().name();
+        return name + InjectionPointInfo.methodDescriptor(method.info().parameters().stream()
                 .map(parameter -> LangModelTypeMapper.toIndexType(parameter.type())).toList());
     }
 

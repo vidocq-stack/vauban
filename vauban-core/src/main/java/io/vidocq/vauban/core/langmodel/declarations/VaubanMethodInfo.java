@@ -49,9 +49,10 @@ public final class VaubanMethodInfo implements jakarta.enterprise.lang.model.dec
         this.lookup = lookup;
     }
 
+    /** The name of the method; for a constructor, the binary name of its class, not {@code <init>}. */
     @Override
     public String name() {
-        return indexMethod.name();
+        return indexMethod.isConstructor() ? declaringClass.name() : indexMethod.name();
     }
 
     @Override
@@ -63,9 +64,11 @@ public final class VaubanMethodInfo implements jakarta.enterprise.lang.model.dec
         return List.copyOf(params);
     }
 
+    /** The return type of the method; for a constructor, the class type of its class, not void (BUG-20261117-54). */
     @Override
     public Type returnType() {
-        return TypeMapper.map(indexMethod.returnType(), lookup);
+        return indexMethod.isConstructor() ? new VaubanClassType(DotName.of(declaringClass.name()), lookup)
+                : TypeMapper.map(indexMethod.returnType(), lookup);
     }
 
     /**
@@ -189,6 +192,6 @@ public final class VaubanMethodInfo implements jakarta.enterprise.lang.model.dec
 
     @Override
     public String toString() {
-        return declaringClass.name() + "#" + name() + "()";
+        return declaringClass.name() + "#" + indexMethod.name() + "()";
     }
 }

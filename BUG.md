@@ -5,6 +5,38 @@ suspected cause, status. Updated on every investigation.
 
 ---
 
+## BUG-20261117-54 — A constructor's `name()` is `<init>` and its `returnType()` is `void`
+
+- **Date**: 2026-11-17
+- **Status**: FIXED on `fix/vauban-bug-stack`
+- **Module**: `vauban-core` (`langmodel.declarations.VaubanMethodInfo`, `extensions.EnhancementPatchSerializer`,
+  `extensions.VaubanInvokerFactory`)
+- **Symptom**: in the processor, at start and frozen, a constructor's `MethodInfo.name()` is `<init>` and its
+  `returnType()` the void type. The language model asks for "the binary name of the declaring class" and "the type of
+  the declaring class". The official language model TCK fails 5 checks on it (vauban#336, ticket 40, group 6:
+  `PlainClassMembers`, `ctor.name().equals(clazz.name())`, `ctor.returnType().asClass().declaration()`).
+- **Repro**:
+  `VetoedInterceptorCompileTimeTest#anExtensionSeesAConstructorNamedAndTypedAfterItsClassInTheProcessorAtStartAndFrozen`
+  in `vauban-processor`: the constructors of `vi.types.Members` and `vi.types.Simple`. Red on 5ef42670
+  (`stack-l1-bug54.log`, "BUG-54 red": `name <init> returns VOID void`, all three ways).
+- **Cause**: `VaubanMethodInfo` gave the index's method name and return type, which are the class file's: `<init>`
+  and `V`.
+- **Fix**: `name()` gives the binary name of the declaring class for a constructor, and `returnType()` its class type
+  (a class type for a generic class too, as the TCK reads it with `asClass()`). The index and the fingerprint of
+  the frozen record do not change. Two places inside Vauban read `<init>` there:
+  - the frozen record's `@Enhancement` patch keys a constructor `<init>(...)` still, so a record an earlier Vauban
+    wrote stays valid: `EnhancementPatchSerializerTest#aConstructorEntryKeyedInitStillTargetsTheConstructor`, green
+    before and after the fix ("BUG-54 guard");
+  - the invoker factory refuses a constructor by `isConstructor()`:
+    `VaubanInvokerLookupTest#theInvokerFactoryRefusesAConstructor`, red with the fix but the factory's old test of
+    `name()` against `<init>` (`stack-l1-r1.log`, "R1 item 2 red": the factory looked for a method named after the
+    class and failed with "Method ... not found", instead of "Cannot create invoker for constructor of: ...").
+- **Who sees the change**: an extension that compared a constructor's `name()` to `<init>` no longer matches: it reads
+  `isConstructor()`, as the language model intends.
+- **Verification**: green in `stack-l1-bug54.log` ("BUG-54 module tests with the fix") and in `stack-l1-r1.log`
+  ("R1 item 2 green").
+- **Found by**: the language model TCK probe (vauban#336).
+
 ## BUG-20261118-01 — An inner class's constructor has no receiver type
 
 - **Date**: 2026-11-18

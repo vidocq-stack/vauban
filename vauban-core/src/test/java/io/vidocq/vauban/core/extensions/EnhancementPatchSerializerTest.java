@@ -130,6 +130,28 @@ class EnhancementPatchSerializerTest {
     /** A class whose members a patch may target. */
     static class Enhanced {
         String dependency;
+
+        Enhanced(String dependency) {
+            this.dependency = dependency;
+        }
+    }
+
+    /**
+     * A constructor's entry is keyed by {@code <init>}, as an earlier Vauban wrote it in the frozen record, though its
+     * {@code MethodInfo.name()} is now the name of its class (BUG-20261117-54): the record stays valid.
+     */
+    @Test
+    @DisplayName("a constructor parameter's entry keyed <init> still targets the constructor")
+    void aConstructorEntryKeyedInitStillTargetsTheConstructor() throws IOException {
+        var patch = Map.of(DotName.of(Enhanced.class.getName() + "#parameter#<init>(Ljava/lang/String;)V#0"),
+                List.of(ann("jakarta.inject.Named")));
+
+        var configs = EnhancementPatchSerializer.memberConfigurations(patch, indexOfEnhanced());
+
+        var constructor = configs.get(DotName.of(Enhanced.class.getName())).getFirst().getMethodConfigs().stream()
+                .filter(method -> method.info().isConstructor()).findFirst().orElseThrow();
+        assertEquals(List.of("jakarta.inject.Named"), constructor.getParameterConfigs().getFirst()
+                .getAddedAnnotations().stream().map(jakarta.enterprise.lang.model.AnnotationInfo::name).toList());
     }
 
     private static io.vidocq.vauban.indexer.VaubanIndex indexOfEnhanced() throws IOException {

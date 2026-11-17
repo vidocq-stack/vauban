@@ -2647,6 +2647,48 @@ class VetoedInterceptorCompileTimeTest {
         seen.assertEachIs(expected);
     }
 
+    /**
+     * Records, in {@code @Synthesis}, the name and the return type of each constructor of the classes
+     * {@link #RECEIVER_PROBES} names (BUG-20261117-54).
+     */
+    public static class ConstructorRecorder implements BuildCompatibleExtension {
+
+        static final List<String> SEEN = new CopyOnWriteArrayList<>();
+
+        @Discovery
+        public void discovery(ScannedClasses classes) {
+            addReceiverProbes(classes);
+        }
+
+        @Synthesis
+        public void constructors(Types types) {
+            for (var probe : RECEIVER_PROBES) {
+                for (var constructor : types.ofClass(TYPES + probe).declaration().constructors()) {
+                    var returned = constructor.returnType();
+                    SEEN.add(probe + "/" + constructor.parameters().size() + " name " + constructor.name()
+                            + " returns " + returned.kind() + " " + memberTypeName(returned));
+                }
+            }
+        }
+    }
+
+    /**
+     * A constructor's {@code MethodInfo.name()} is the binary name of its class, and its {@code returnType()} the
+     * class type of its class, as the language model asks, in the processor, at start and frozen. They were
+     * {@code <init>} and {@code void} (BUG-20261117-54).
+     */
+    @Test
+    @DisplayName("an extension sees a constructor named and typed after its class, the three ways")
+    void anExtensionSeesAConstructorNamedAndTypedAfterItsClassInTheProcessorAtStartAndFrozen() throws Exception {
+        var members = " name vi.types.Members returns CLASS vi.types.Members";
+        var expected = List.of("Members/0" + members, "Members/1" + members,
+                "Simple/0 name vi.types.Simple returns CLASS vi.types.Simple");
+
+        var seen = seenThreeWays(withReceivers(), ConstructorRecorder.class, ConstructorRecorder.SEEN);
+
+        seen.assertEachIs(expected);
+    }
+
     /** The inner class whose constructor {@link InnerReceiverRecorder} reads (BUG-20261118-01). */
     private static final String INNER = TYPES + "Enclosing$Inner";
 

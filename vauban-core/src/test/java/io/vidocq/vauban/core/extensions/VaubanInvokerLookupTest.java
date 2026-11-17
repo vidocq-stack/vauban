@@ -806,4 +806,37 @@ class VaubanInvokerLookupTest {
             assertEquals(before + 2, DESTROYED.get());
         }
     }
+
+    /** Records why {@code createInvoker} refuses the constructor of {@code Worker}. */
+    public static class ConstructorInvokerBce implements BuildCompatibleExtension {
+        static final AtomicReference<String> REFUSAL = new AtomicReference<>();
+
+        @Registration(types = Worker.class)
+        public void register(BeanInfo bean, InvokerFactory invokers) {
+            var constructor = bean.declaringClass().constructors().iterator().next();
+            try {
+                invokers.createInvoker(bean, constructor);
+                REFUSAL.set("accepted " + constructor.name());
+            } catch (IllegalStateException refused) {
+                REFUSAL.set(refused.getMessage());
+            }
+        }
+    }
+
+    /**
+     * The invoker factory refuses a constructor, as CDI 4.1 allows no invoker of one. It tells one by
+     * {@code isConstructor()}: since its {@code name()} is its class's, no longer {@code <init>} (BUG-20261117-54),
+     * the test of the name it made missed the constructor, which then failed later, on the lookup of a method of that
+     * name, with another message.
+     */
+    @Test
+    @DisplayName("the invoker factory refuses a constructor")
+    void theInvokerFactoryRefusesAConstructor() {
+        ConstructorInvokerBce.REFUSAL.set(null);
+        try (var _ = VaubanContainer.builder().addBeanClass(Worker.class).addBeanClass(Part.class)
+                .addBeanClass(ConstructorInvokerBce.class).build()) {
+            assertEquals("Cannot create invoker for constructor of: " + Worker.class.getName(),
+                    ConstructorInvokerBce.REFUSAL.get());
+        }
+    }
 }
