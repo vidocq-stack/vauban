@@ -123,6 +123,82 @@ class IndexProxyInheritedMethodsTest {
         assertForwardsInheritedMethods(result, "app.PrivateCtorService");
     }
 
+    private static final String PLAIN_TAG_BASE = """
+            package app;
+
+            public class PlainTagBase {
+                public String tag(String value) { return getClass().getName(); }
+            }
+            """;
+
+    private static final String TAGGED = """
+            package app;
+
+            public interface Tagged<T> {
+                default String tag(T value) { return "default"; }
+            }
+            """;
+
+    /** javac gives it the bridge {@code tag(Object)}, which calls {@code PlainTagBase.tag(String)} by invokespecial. */
+    private static final String TAGGED_BEAN = """
+            package app;
+
+            @jakarta.enterprise.context.ApplicationScoped
+            public class TaggedService extends PlainTagBase implements Tagged<String> {
+            }
+            """;
+
+    private static final String PRIVATE_CTOR_TAGGED_BEAN = """
+            package app;
+
+            @jakarta.enterprise.context.ApplicationScoped
+            public class PrivateCtorTaggedService extends PlainTagBase implements Tagged<String> {
+                private PrivateCtorTaggedService() {}
+            }
+            """;
+
+    @Test
+    @DisplayName("a source proxy: a call through a bridge to a superclass method reaches the instance")
+    void sourceProxyForwardsABridgeToASuperclassMethod() throws Exception {
+        assertForwardsTheBridgedCall("TaggedService", TAGGED_BEAN);
+    }
+
+    @Test
+    @DisplayName("a bytecode proxy: a call through a bridge to a superclass method reaches the instance")
+    void bytecodeProxyForwardsABridgeToASuperclassMethod() throws Exception {
+        assertForwardsTheBridgedCall("PrivateCtorTaggedService", PRIVATE_CTOR_TAGGED_BEAN);
+    }
+
+    /**
+     * Calls {@code tag} through the proxy typed by the bean, then typed by {@code Tagged}, whose erased
+     * {@code tag(Object)} only the bridge carries: both run on the contextual instance (BUG-20261118-17).
+     */
+    private void assertForwardsTheBridgedCall(String bean, String source) throws Exception {
+        var result = compile(List.of("PlainTagBase", "Tagged", bean), List.of(PLAIN_TAG_BASE, TAGGED, source));
+        assertTrue(result.success(), "compilation should succeed. Messages: " + result.messages());
+        var beanName = "app." + bean;
+        try (var loader = new URLClassLoader(new URL[] {result.outputDir().toUri().toURL()},
+                getClass().getClassLoader())) {
+            Object proxy = proxyOf(loader, beanName);
+            assertEquals(beanName, proxy.getClass().getMethod("tag", String.class).invoke(proxy, "x"),
+                    "typed by the bean");
+            assertEquals(beanName, loader.loadClass("app.Tagged").getMethod("tag", Object.class).invoke(proxy, "x"),
+                    "typed by Tagged<String>, through the bridge");
+        }
+    }
+
+    /** A proxy of {@code beanName} wired to a new contextual instance. */
+    private static Object proxyOf(ClassLoader loader, String beanName) throws Exception {
+        Class<?> bean = loader.loadClass(beanName);
+        Class<?> proxy = loader.loadClass(beanName + ClientProxyShape.PROXY_SUFFIX);
+        var beanCtor = bean.getDeclaredConstructor();
+        beanCtor.setAccessible(true);
+        Object contextual = beanCtor.newInstance();
+        var proxyCtor = proxy.getDeclaredConstructor(Supplier.class);
+        proxyCtor.setAccessible(true);
+        return proxyCtor.newInstance((Supplier<Object>) () -> contextual);
+    }
+
     /**
      * Loads the bean and its proxy, wires a contextual instance into the proxy, and calls the
      * declared, the inherited and the default method through it.
@@ -130,15 +206,8 @@ class IndexProxyInheritedMethodsTest {
     private void assertForwardsInheritedMethods(CompilationResult result, String beanName) throws Exception {
         try (var loader = new URLClassLoader(new URL[] {result.outputDir().toUri().toURL()},
                 getClass().getClassLoader())) {
-            Class<?> bean = loader.loadClass(beanName);
-            Class<?> proxy = loader.loadClass(beanName + ClientProxyShape.PROXY_SUFFIX);
-
-            var beanCtor = bean.getDeclaredConstructor();
-            beanCtor.setAccessible(true);
-            Object contextual = beanCtor.newInstance();
-            var proxyCtor = proxy.getDeclaredConstructor(Supplier.class);
-            proxyCtor.setAccessible(true);
-            Object instance = proxyCtor.newInstance((Supplier<Object>) () -> contextual);
+            Object instance = proxyOf(loader, beanName);
+            Class<?> proxy = instance.getClass();
 
             assertEquals(beanName, proxy.getMethod("own").invoke(instance),
                     "a declared method runs on the contextual instance");

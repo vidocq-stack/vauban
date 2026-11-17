@@ -20,6 +20,7 @@
 package io.vidocq.vauban.core.proxy;
 
 import io.vidocq.vauban.core.codegen.BeanMembers;
+import io.vidocq.vauban.core.codegen.BridgeCalls;
 import io.vidocq.vauban.core.codegen.ClassTypeView;
 import io.vidocq.vauban.core.codegen.ShadowedDefaults;
 import io.vidocq.vauban.core.interceptor.TypeRef;
@@ -131,6 +132,7 @@ public final class RuntimeClientProxyGenerator {
                     forward.needsMethodHandle()));
         }
         addInterfaceDefaults(beanClass, colocated, proxiedSeen, methods);
+        addSuperCallingBridges(beanClass, methods);
 
         // CDI 4.1: beans with only @Inject constructors (no no-arg) must still be proxyable —
         // the proxy's no-arg constructor calls the simplest super ctor with default values.
@@ -207,6 +209,40 @@ public final class RuntimeClientProxyGenerator {
                 typeRefs(method.getExceptionTypes()),
                 false, // interface methods are public
                 interfaceOwner));
+    }
+
+    /**
+     * The bridges a proxy forwards as they are: javac implements an interface method with a superclass method of
+     * another erasure, {@code PlainTagBase.tag(String)} for {@code Tagged<String>.tag(T)}, through a bridge
+     * {@code tag(Object)} in the class that brings them together, which calls the superclass method by
+     * {@code invokespecial}. An override of {@code tag(String)} alone does not catch a call typed by the interface,
+     * which then ran on the proxy (BUG-20261118-17). The class bytes tell such a bridge apart ({@link BridgeCalls});
+     * one that calls a final method is left alone, as that method is, and as the processor leaves it.
+     */
+    private static void addSuperCallingBridges(Class<?> beanClass, List<ProxyMethodShape> methods) {
+        var declared = new java.util.HashSet<String>();
+        for (var m : methods) declared.add(descriptorKey(m));
+        for (var method : BeanMembers.inStableOrder(beanClass.getMethods())) {
+            if (method.isBridge() && !method.getDeclaringClass().isInterface() && callsASuperclassMethod(method)) {
+                var shape = new ProxyMethodShape(method.getName(), TypeRef.fromClass(method.getReturnType()),
+                        typeRefs(method.getParameterTypes()), typeRefs(method.getExceptionTypes()), false);
+                if (declared.add(descriptorKey(shape))) {
+                    methods.add(shape);
+                }
+            }
+        }
+    }
+
+    /** Whether {@code bridge} calls a superclass method, neither final, of another descriptor. */
+    private static boolean callsASuperclassMethod(Method bridge) {
+        var call = BridgeCalls.of(bridge);
+        return call.kind() == BridgeCalls.Kind.SUPER_CALL
+                && (call.target() == null || !Modifier.isFinal(call.target().getModifiers()));
+    }
+
+    /** The name, parameter types and return type: what a method of a class file is told apart by. */
+    static String descriptorKey(ProxyMethodShape m) {
+        return m.name() + m.params() + m.returnType();
     }
 
     private static List<TypeRef> typeRefs(Class<?>[] types) {

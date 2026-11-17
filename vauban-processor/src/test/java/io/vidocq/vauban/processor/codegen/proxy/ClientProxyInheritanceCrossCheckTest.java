@@ -443,19 +443,50 @@ class ClientProxyInheritanceCrossCheckTest {
     void oneOverridePerMemberSignature() throws Exception {
         // echo(String) overrides TaggedBase.echo(T); PlainTagBase.tag(String) implements Tagged.tag(T).
         // Keyed on the erased declarations, each pair counted twice and the source rendered the same
-        // member twice: "method echo(String) is already defined".
+        // member twice: "method echo(String) is already defined". A class file also forwards the
+        // bridge tag(Object), which calls PlainTagBase.tag(String) by invokespecial; javac adds it to
+        // a source proxy (BUG-20261118-17).
         for (var fixture : List.of(OverridingGenericChild.class, TaggedBySuperclass.class)) {
             Set<String> expected = Set.of(fixture == OverridingGenericChild.class
                     ? "echo(java.lang.String)" : "tag(java.lang.String)");
-            assertEquals(expected, RuntimeClientProxyGenerator.shapeOf(fixture).methods().stream()
+            Set<String> bytecode = fixture == OverridingGenericChild.class
+                    ? expected : Set.of("tag(java.lang.String)", "tag(java.lang.Object)");
+            assertEquals(bytecode, RuntimeClientProxyGenerator.shapeOf(fixture).methods().stream()
                     .map(m -> m.name() + "(" + m.params().stream().map(Object::toString)
                             .collect(Collectors.joining(",")) + ")")
                     .filter(k -> !OBJECT_METHODS.contains(k))
                     .collect(Collectors.toSet()), "run-time shape of " + fixture.getSimpleName());
             assertEquals(expected, shapeFromElements(fixture), "source shape of " + fixture.getSimpleName());
-            assertEquals(expected, colocatedShapeFromElements(fixture),
+            assertEquals(bytecode, colocatedShapeFromElements(fixture),
                     "co-located shape of " + fixture.getSimpleName());
         }
+    }
+
+    /** Declares an overload of the name and arity of its bridge {@code tag(Object)}, which calls the superclass. */
+    public static class TaggedWithOverload extends PlainTagBase implements Tagged<String> {
+        public String tag(Integer value) { return "integer " + value; }
+    }
+
+    public static class FinalTagBase {
+        public final String tag(String value) { return "final " + value; }
+    }
+
+    /** Its bridge {@code tag(Object)} calls a final method, which no proxy forwards. */
+    public static class FinalTagged extends FinalTagBase implements Tagged<String> {
+    }
+
+    @Test
+    @DisplayName("the class bytes tell a bridge to a superclass method apart, whatever the overloads (BUG-20261118-17)")
+    void aBridgeToASuperclassMethodIsReadFromTheClassBytes() throws Exception {
+        // An overload tag(Integer) of the bridge's name and arity misled a judgement by names; a bridge that calls a
+        // final method is forwarded by no path, as the method is not.
+        Set<String> overloaded = Set.of("tag(java.lang.String)", "tag(java.lang.Integer)");
+        assertEquals(overloaded, shapeFromElements(TaggedWithOverload.class), "source shape");
+        Set<String> bytecode = Set.of("tag(java.lang.String)", "tag(java.lang.Integer)", "tag(java.lang.Object)");
+        assertEquals(bytecode, runtimeShape(TaggedWithOverload.class), "run-time shape");
+        assertEquals(bytecode, colocatedShapeFromElements(TaggedWithOverload.class), "co-located shape");
+        assertEquals(Set.of(), runtimeShape(FinalTagged.class), "run-time shape of FinalTagged");
+        assertEquals(Set.of(), colocatedShapeFromElements(FinalTagged.class), "co-located shape of FinalTagged");
     }
 
     private Set<String> colocatedShapeFromElements(Class<?> fixture) throws Exception {

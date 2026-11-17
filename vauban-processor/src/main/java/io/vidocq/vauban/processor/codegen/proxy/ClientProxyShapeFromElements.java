@@ -205,7 +205,6 @@ public final class ClientProxyShapeFromElements {
             Elements elements, Types types, Consumer<String> omitted, Subject subject, boolean asMember) {
         String beanBinaryName = elements.getBinaryName(bean).toString();
 
-        var methods = new ArrayList<ProxyMethodShape>();
         // The class methods of every build path (ForwardedMethods): a method inherited from a
         // superclass is not declared here, and the proxy does not override it either — so leaving it
         // out means invoking it on the proxy runs the superclass body against the proxy's own
@@ -217,13 +216,8 @@ public final class ClientProxyShapeFromElements {
         // the only one Java source can override (BUG-20261004-06); javac adds the bridge. The walk
         // is keyed on that signature too: echo(String) overriding Base<String>.echo(T) is one
         // member, and the most derived declaration decides, a non-proxyable one included.
-        var seen = new java.util.HashSet<String>();
-        for (var forward : forwardedClassMethods(bean, proxyPackage, elements, types, seen)) {
-            methods.add(methodShape(bean, ElementTypeView.method(forward.method()), asMember,
-                    forward.needsMethodHandle(), elements, types));
-        }
         var request = new ShapeRequest(bean, proxyPackage, elements, types, omitted, subject, asMember);
-        addDefaultMethods(request, seen, methods);
+        var methods = forwardedMethods(request);
         // Looked up once for the shape: what the proxy inherits decides both the report and its own writeReplace().
         var inherited = inheritedWriteReplace(bean, proxyPackage, elements, types);
         inherited.ifPresent(method -> reportUnforwardedWriteReplace(request, method));
@@ -231,6 +225,27 @@ public final class ClientProxyShapeFromElements {
         return new ClientProxyShape(beanBinaryName, superCtorParams(bean, elements, types), methods,
                 superCtorThrown(bean, elements, types),
                 inherited.filter(InheritedWriteReplace::isSerialHook).isPresent());
+    }
+
+    /**
+     * The methods the proxy of the request forwards: the class methods, the interface methods no class method is, and,
+     * in a bytecode proxy, the bridges a call typed by an interface goes through ({@link #addSuperCallingBridges}).
+     */
+    private static List<ProxyMethodShape> forwardedMethods(ShapeRequest request) {
+        var methods = new ArrayList<ProxyMethodShape>();
+        var seen = new java.util.HashSet<String>();
+        var forwarded = new ArrayList<ExecutableElement>();
+        for (var forward : forwardedClassMethods(request.bean(), request.proxyPackage(), request.elements(),
+                request.types(), seen)) {
+            forwarded.add(ElementTypeView.method(forward.method()));
+            methods.add(methodShape(request.bean(), forwarded.getLast(), request.asMember(),
+                    forward.needsMethodHandle(), request.elements(), request.types()));
+        }
+        addDefaultMethods(request, seen, methods);
+        if (!request.asMember()) {
+            addSuperCallingBridges(request, forwarded, methods);
+        }
+        return methods;
     }
 
     /**
@@ -349,6 +364,54 @@ public final class ClientProxyShapeFromElements {
                 }
             }
         }
+    }
+
+    /**
+     * The interface methods a bytecode proxy forwards with their own erasure, next to the class method that implements
+     * them: javac implements an interface method with a superclass method of another erasure,
+     * {@code PlainTagBase.tag(String)} for {@code Tagged<String>.tag(T)}, through a bridge {@code tag(Object)} in the
+     * class that brings them together, which calls the superclass method by {@code invokespecial}. An override of
+     * {@code tag(String)} alone does not catch a call typed by the interface, which then ran on the proxy
+     * (BUG-20261118-17). The run-time generator forwards the same bridges, which it sees. A source proxy needs none:
+     * javac gives it the bridge.
+     */
+    private static void addSuperCallingBridges(ShapeRequest request, List<ExecutableElement> forwarded,
+            List<ProxyMethodShape> methods) {
+        var declared = new java.util.HashSet<String>();
+        for (var m : methods) declared.add(descriptorKey(m));
+        for (ExecutableElement m : ElementFilter.methodsIn(request.elements().getAllMembers(request.bean()))) {
+            if (isProxiedDefault(m)) {
+                var bridge = methodShape(request.bean(), m, false, false, request.elements(), request.types());
+                if (superCalledBy(request, forwarded, m, bridge).isPresent() && declared.add(descriptorKey(bridge))) {
+                    methods.add(bridge);
+                }
+            }
+        }
+    }
+
+    /**
+     * The forwarded class method javac bridges interface method {@code m}, erased as {@code erased}, to by
+     * {@code invokespecial}: one that implements {@code m} in the bean, with another erasure, declared by a class that
+     * does not implement {@code m}'s interface.
+     */
+    private static Optional<ExecutableElement> superCalledBy(ShapeRequest request, List<ExecutableElement> forwarded,
+            ExecutableElement m, ProxyMethodShape erased) {
+        var types = request.types();
+        var anInterface = types.erasure(m.getEnclosingElement().asType());
+        for (var c : forwarded) {
+            if (request.elements().overrides(c, m, request.bean())) {
+                boolean sameErasure = descriptorKey(erased).equals(descriptorKey(
+                        methodShape(request.bean(), c, false, false, request.elements(), types)));
+                boolean implementsIt = types.isSubtype(types.erasure(c.getEnclosingElement().asType()), anInterface);
+                return sameErasure || implementsIt ? Optional.empty() : Optional.of(c);
+            }
+        }
+        return Optional.empty();
+    }
+
+    /** The name, parameter types and return type: what a method of a class file is told apart by. */
+    private static String descriptorKey(ProxyMethodShape m) {
+        return m.name() + m.params() + m.returnType();
     }
 
     /**
@@ -512,14 +575,8 @@ public final class ClientProxyShapeFromElements {
      */
     public static ClientProxyShape fromColocated(TypeElement bean, Elements elements, Types types) {
         String beanBinaryName = elements.getBinaryName(bean).toString();
-        var methods = new ArrayList<ProxyMethodShape>();
-        var seen = new java.util.HashSet<String>();
-        for (var forward : forwardedClassMethods(bean, elements.getPackageOf(bean), elements, types, seen)) {
-            methods.add(methodShape(bean, ElementTypeView.method(forward.method()), false,
-                    forward.needsMethodHandle(), elements, types));
-        }
-        addDefaultMethods(new ShapeRequest(bean, elements.getPackageOf(bean), elements, types, omitted -> {},
-                Subject.BEAN, false), seen, methods);
+        var methods = forwardedMethods(new ShapeRequest(bean, elements.getPackageOf(bean), elements, types,
+                omitted -> {}, Subject.BEAN, false));
         return new ClientProxyShape(beanBinaryName, superCtorParams(bean, elements, types), methods,
                 superCtorThrown(bean, elements, types),
                 exposesWriteReplace(bean, elements.getPackageOf(bean), elements, types));

@@ -32,6 +32,7 @@ import jakarta.interceptor.AroundInvoke;
 import jakarta.interceptor.Interceptor;
 import jakarta.interceptor.InterceptorBinding;
 import jakarta.interceptor.InvocationContext;
+import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
@@ -60,6 +61,9 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class BridgeMethodClientProxyTest {
 
     private static final String INSTANCE = "instance";
+
+    /** What {@code tag("x")} returns on the contextual instance. */
+    private static final String TAGGED = INSTANCE + " x";
 
     @InterceptorBinding
     @Retention(RetentionPolicy.RUNTIME)
@@ -197,6 +201,48 @@ class BridgeMethodClientProxyTest {
         }
     }
 
+    /** Its {@code tag(String)} implements {@link Tagged#tag} for a subclass. */
+    public static class PlainTagBase {
+        private String state;
+
+        @PostConstruct
+        void init() {
+            state = INSTANCE;
+        }
+
+        public String tag(String value) {
+            return state + " " + value;
+        }
+    }
+
+    public interface Tagged<T> {
+        default String tag(T value) {
+            return "default";
+        }
+    }
+
+    /**
+     * javac gives it the bridge {@code tag(Object)}, which calls {@code PlainTagBase.tag(String)} by
+     * {@code invokespecial}: a proxy that overrides {@code tag(String)} alone does not catch it (BUG-20261118-17).
+     */
+    @ApplicationScoped
+    public static class TaggedBySuperclass extends PlainTagBase implements Tagged<String> {
+    }
+
+    /** Declares {@code tag(Integer)}, of the name and arity of its bridge {@code tag(Object)} (BUG-20261118-17). */
+    @ApplicationScoped
+    public static class TaggedWithOverload extends PlainTagBase implements Tagged<String> {
+        public String tag(Integer value) {
+            return "integer " + value;
+        }
+    }
+
+    /** The same, intercepted: the bridge bypasses the run-time intercepted subclass too (BUG-20261118-18). */
+    @Traced
+    @ApplicationScoped
+    public static class TracedTaggedBySuperclass extends PlainTagBase implements Tagged<String> {
+    }
+
     @Test
     @DisplayName("the bean's own get(), next to the bridge javac adds for Supplier<String>")
     void ownGet() {
@@ -244,6 +290,41 @@ class BridgeMethodClientProxyTest {
             var bean = container.select(CovariantValue.class);
             assertReachesTheInstance(container, CovariantValue.class, "value", 42, bean::value,
                     ((NumberBase) bean)::value);
+        }
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    @DisplayName("tag(String) of a superclass, which implements Tagged<String> through a bridge of the bean")
+    void tagThroughABridgeToASuperclassMethod() {
+        try (var container = start(TaggedBySuperclass.class)) {
+            var bean = container.select(TaggedBySuperclass.class);
+            assertReachesTheInstance(container, TaggedBySuperclass.class, "tag", TAGGED, () -> bean.tag("x"),
+                    () -> ((Tagged<String>) bean).tag("x"));
+        }
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    @DisplayName("tag(String) of a superclass through a bridge, next to an overload tag(Integer) of the bean")
+    void tagThroughABridgeNextToAnOverload() {
+        try (var container = start(TaggedWithOverload.class)) {
+            var bean = container.select(TaggedWithOverload.class);
+            assertReachesTheInstance(container, TaggedWithOverload.class, "tag", TAGGED, () -> bean.tag("x"),
+                    () -> ((Tagged<String>) bean).tag("x"));
+        }
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    @Disabled("BUG-20261118-18: the run-time intercepted subclass declares no bridge tag(Object), and the inherited one"
+            + " calls PlainTagBase.tag(String) by invokespecial, past the interceptor")
+    @DisplayName("tag(String) of a superclass, through a bridge of an intercepted bean, reaches the interceptor")
+    void tagThroughABridgeReachesTheInterceptor() {
+        try (var container = start(TracedTaggedBySuperclass.class)) {
+            var bean = container.select(TracedTaggedBySuperclass.class);
+            assertReachesTheInstance(container, TracedTaggedBySuperclass.class, "tag", TAGGED,
+                    () -> bean.tag("x"), () -> ((Tagged<String>) bean).tag("x"));
         }
     }
 
