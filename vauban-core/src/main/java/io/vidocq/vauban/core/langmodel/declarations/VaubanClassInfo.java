@@ -22,9 +22,7 @@ package io.vidocq.vauban.core.langmodel.declarations;
 import io.vidocq.vauban.core.langmodel.IndexLookup;
 import io.vidocq.vauban.core.langmodel.VaubanAnnotationInfo;
 import io.vidocq.vauban.core.langmodel.types.TypeMapper;
-import io.vidocq.vauban.core.langmodel.types.VaubanTypeVariable;
 import io.vidocq.vauban.indexer.model.DotName;
-import io.vidocq.vauban.indexer.model.TypeInfo;
 import jakarta.enterprise.lang.model.AnnotationInfo;
 import jakarta.enterprise.lang.model.types.Type;
 import jakarta.enterprise.lang.model.types.TypeVariable;
@@ -102,14 +100,8 @@ public final class VaubanClassInfo implements jakarta.enterprise.lang.model.decl
     @Override
     public List<TypeVariable> typeParameters() {
         return indexClass().typeParameters().stream()
-                .map(parameter -> (TypeVariable) new VaubanTypeVariable(parameter.name(), bounds(parameter)))
+                .map(parameter -> TypeMapper.typeParameter(parameter, lookup))
                 .toList();
-    }
-
-    private List<Type> bounds(TypeInfo.TypeVariable parameter) {
-        var bounds = parameter.bounds().isEmpty() ? List.<TypeInfo>of(new TypeInfo.ClassType(OBJECT))
-                : parameter.bounds();
-        return bounds.stream().map(bound -> TypeMapper.map(bound, lookup)).toList();
     }
 
     /**

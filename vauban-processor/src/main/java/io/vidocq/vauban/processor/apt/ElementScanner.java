@@ -162,15 +162,31 @@ public final class ElementScanner {
      */
     private final class TypeParameterReader {
 
-        private final List<? extends TypeParameterElement> declared;
+        /** The type parameters the class, or the method, declares. */
+        private final List<? extends TypeParameterElement> own;
+        /** Those whose bounds a bound carries: the class's, and a method's own. */
+        private final List<TypeParameterElement> declared = new ArrayList<>();
         private final Set<Element> reading = new HashSet<>();
 
         TypeParameterReader(TypeElement typeElement) {
-            this.declared = typeElement.getTypeParameters();
+            this.own = typeElement.getTypeParameters();
+            declared.addAll(own);
+        }
+
+        /**
+         * The reader of a method's type parameters, as the bytecode scan reads them from its signature: a bound naming
+         * a type parameter of the method or of its class carries that parameter's bounds (BUG-20261117-51).
+         */
+        TypeParameterReader(ExecutableElement method) {
+            this.own = method.getTypeParameters();
+            if (method.getEnclosingElement() instanceof TypeElement type) {
+                declared.addAll(type.getTypeParameters());
+            }
+            declared.addAll(own);
         }
 
         List<TypeInfo.TypeVariable> typeParameters() {
-            return declared.stream().map(this::typeVariable).toList();
+            return own.stream().map(this::typeVariable).toList();
         }
 
         /**
@@ -232,7 +248,8 @@ public final class ElementScanner {
         var annotations = scanAnnotations(method);
         var defaultValue = method.getDefaultValue() == null ? null : convertAnnotationValue(method.getDefaultValue());
 
-        return new MethodInfo(name, returnType, parameters, exceptionTypes, accessFlags, annotations, defaultValue);
+        return new MethodInfo(name, returnType, parameters, exceptionTypes, accessFlags, annotations, defaultValue,
+                new TypeParameterReader(method).typeParameters());
     }
 
     private List<AnnotationInfo> scanAnnotations(Element element) {

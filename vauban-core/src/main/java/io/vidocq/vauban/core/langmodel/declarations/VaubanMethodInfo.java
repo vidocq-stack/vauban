@@ -78,9 +78,15 @@ public final class VaubanMethodInfo implements jakarta.enterprise.lang.model.dec
                 .toList();
     }
 
+    /**
+     * The type parameters the method declares, in declaration order, as the index holds them, each with at least one
+     * bound, as {@link VaubanClassInfo#typeParameters()} gives those of a class (BUG-20261117-51).
+     */
     @Override
     public List<TypeVariable> typeParameters() {
-        return List.of();
+        return indexMethod.typeParameters().stream()
+                .map(parameter -> TypeMapper.typeParameter(parameter, lookup))
+                .toList();
     }
 
     @Override

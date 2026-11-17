@@ -5,6 +5,32 @@ suspected cause, status. Updated on every investigation.
 
 ---
 
+## BUG-20261117-51 — `MethodInfo.typeParameters()` is always empty
+
+- **Date**: 2026-11-17
+- **Status**: FIXED on `fix/vauban-bug-stack`
+- **Module**: `vauban-core` (`langmodel.declarations.VaubanMethodInfo`), `vauban-processor` (`apt.ElementScanner`)
+- **Symptom**: an extension reads no type parameter on a generic method, `<T, U extends C> void typed()`, in the
+  processor, at start and frozen. The language model asks for "a list of type parameters declared on this method".
+  The official language model TCK (vauban#336, ticket 40, group 2) fails 56 checks on it, in `AnnotatedTypes`
+  (`typeVariableMethod`) and the members of the other fixtures. The method-level sibling of VAU-BCE-007.
+- **Repro**: `VetoedInterceptorCompileTimeTest#anExtensionSeesTheTypeParametersOfAMethodInTheProcessorAtStartAndFrozen`
+  in `vauban-processor`: `vi.types.Members<C extends Number, E extends Exception>` declares `typed()`, `sorted(S)`
+  and `throwing()`, generic, and `plain()`; an extension records each method's `typeParameters()` in `@Synthesis`.
+  Red on 81fab2cb (`stack-l1-bug51.log`, "BUG-51 red"): `sorted<>`, `throwing<>`, `typed<>` all three ways.
+- **Cause**: `VaubanMethodInfo.typeParameters()` returned `List.of()`. At start and frozen, the index held them
+  (`ClassFileScanner` reads them from the method's `Signature` through `ClassTypeParameters.methodTypes`); the
+  processor's `ElementScanner.scanMethod` did not record them.
+- **Fix**: `VaubanMethodInfo.typeParameters()` maps the index's, each with `java.lang.Object` when it declares no
+  bound, as `ClassInfo.typeParameters()` does (`TypeMapper.typeParameter`). `ElementScanner` records a method's
+  type parameters through its `TypeParameterReader`, now built for a method too: a bound naming a type parameter of
+  the method or of its class carries that parameter's bounds, as the bytecode scan reads them. The fingerprint of the
+  frozen record does not change: it is computed from the bytecode index, which held them already.
+- **Who sees the change**: an extension gets the type parameters of a generic method. The processor now reports a
+  generic initializer method (`@Inject <T> void init(T t)`) as the container does at start, as a warning.
+- **Verification**: green in `stack-l1-bug51.log` ("BUG-51 green attempt", and "BUG-51 module tests").
+- **Found by**: the language model TCK probe (vauban#336).
+
 ## BUG-20261117-50 — The processor reads a type another processor generates in round 1 as `java.lang.Object`
 
 - **Date**: 2026-11-17

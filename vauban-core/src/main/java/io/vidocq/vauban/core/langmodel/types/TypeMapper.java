@@ -65,6 +65,16 @@ public final class TypeMapper {
     }
 
     /**
+     * A type parameter a class or a method declares, as the language model gives it: with at least one bound, so
+     * {@code java.lang.Object} for one that declares none, which the index leaves out.
+     */
+    public static jakarta.enterprise.lang.model.types.TypeVariable typeParameter(TypeInfo.TypeVariable parameter,
+            IndexLookup lookup) {
+        var bounds = parameter.bounds().isEmpty() ? java.util.List.of(OBJECT) : parameter.bounds();
+        return new VaubanTypeVariable(parameter.name(), bounds.stream().map(bound -> map(bound, lookup)).toList());
+    }
+
+    /**
      * A wildcard of the language model, where "{@code ?} is equivalent to {@code ? extends Object} and is represented
      * as such": the index records {@code ?} without bounds, as the class files and reflection read it, and the
      * language model gives it {@code java.lang.Object} as its upper bound (BUG-20261117-34).

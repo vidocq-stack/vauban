@@ -2433,6 +2433,104 @@ class VetoedInterceptorCompileTimeTest {
         }
     }
 
+    /** The class whose methods the method member recorders read (BUG-20261117-51 to -54). */
+    private static final String MEMBERS = "Members";
+
+    /**
+     * {@link #withAVetoedPackage()}, with the bean {@code vi.types.Members}: a generic class whose methods declare
+     * type parameters, generic {@code throws} types, and are static or not, and its constructors.
+     */
+    private static Map<String, String> withMethodMembers() {
+        var sources = withAVetoedPackage();
+        putType(sources, MEMBERS, DEPENDENT + """
+                public class Members<C extends Number, E extends Exception> {
+                    public Members() {
+                    }
+                    public Members(int size) {
+                    }
+                    public <T, U extends C, W extends Number & CharSequence,
+                            X extends java.util.List<? super String>> void typed() {
+                    }
+                    public static <S extends Comparable<S>> S sorted(S value) {
+                        return value;
+                    }
+                    public <F extends Throwable> void throwing() throws java.io.IOException, E, F {
+                    }
+                    public void plain() throws java.io.IOException {
+                    }
+                }""");
+        return sources;
+    }
+
+    /** {@code type} by its name: a class or a type variable by its name, the rest as the language model writes it. */
+    private static String memberTypeName(Type type) {
+        return switch (type.kind()) {
+            case CLASS -> type.asClass().declaration().name();
+            case PARAMETERIZED_TYPE -> type.asParameterizedType().genericClass().declaration().name()
+                    + type.asParameterizedType().typeArguments().stream()
+                            .map(VetoedInterceptorCompileTimeTest::memberTypeName)
+                            .collect(Collectors.joining(", ", "<", ">"));
+            case TYPE_VARIABLE -> type.asTypeVariable().name();
+            case WILDCARD_TYPE -> wildcardName(type.asWildcardType());
+            default -> type.toString();
+        };
+    }
+
+    private static String wildcardName(WildcardType wildcard) {
+        if (wildcard.lowerBound() != null) {
+            return "? super " + memberTypeName(wildcard.lowerBound());
+        }
+        return wildcard.upperBound() == null ? "?" : "? extends " + memberTypeName(wildcard.upperBound());
+    }
+
+    /**
+     * Records, in {@code @Synthesis}, the type parameters each method of {@code vi.types.Members} declares, with their
+     * bounds, and the bounds of a type variable of the class a bound names (BUG-20261117-51).
+     */
+    public static class MethodTypeParameterRecorder implements BuildCompatibleExtension {
+
+        static final List<String> SEEN = new CopyOnWriteArrayList<>();
+
+        @Synthesis
+        public void typeParameters(Types types) {
+            for (var method : types.ofClass(TYPES + MEMBERS).declaration().methods()) {
+                SEEN.add(method.name() + method.typeParameters().stream()
+                        .map(variable -> variable.name() + " extends " + variable.bounds().stream()
+                                .map(MethodTypeParameterRecorder::bound).collect(Collectors.joining(" & ")))
+                        .collect(Collectors.joining(", ", "<", ">")));
+            }
+        }
+
+        private static String bound(Type bound) {
+            return bound.isTypeVariable()
+                    ? bound.asTypeVariable().name() + bound.asTypeVariable().bounds().stream()
+                            .map(VetoedInterceptorCompileTimeTest::memberTypeName).toList()
+                    : memberTypeName(bound);
+        }
+    }
+
+    /**
+     * {@code MethodInfo.typeParameters()} gives the type parameters a method declares, in declaration order, each
+     * with the bounds it declares, {@code java.lang.Object} for one that declares none, in the processor, at start and
+     * frozen: a bound may name a type variable of the class, with its own bound, be an intersection, or a
+     * parameterized type with a wildcard. It was empty all three ways, though the bytecode index read them
+     * (BUG-20261117-51).
+     */
+    @Test
+    @DisplayName("an extension sees the type parameters of a method in the processor, at start and frozen")
+    void anExtensionSeesTheTypeParametersOfAMethodInTheProcessorAtStartAndFrozen() throws Exception {
+        var expected = List.of("plain<>",
+                "sorted<S extends java.lang.Comparable<S>>",
+                "throwing<F extends java.lang.Throwable>",
+                "typed<T extends java.lang.Object, U extends C[java.lang.Number], W extends java.lang.Number"
+                        + " & java.lang.CharSequence, X extends java.util.List<? super java.lang.String>>");
+
+        var seen = seenThreeWays(withMethodMembers(), MethodTypeParameterRecorder.class,
+                MethodTypeParameterRecorder.SEEN);
+
+        seen.assertEachIs(expected);
+    }
+
     // ---- helpers ----
 
     /** The classes of the beans and interceptors {@code @Registration} sees while the processor compiles them. */
