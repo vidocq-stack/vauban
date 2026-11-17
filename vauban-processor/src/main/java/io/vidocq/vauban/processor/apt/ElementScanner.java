@@ -49,6 +49,7 @@ import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.Set;
 import java.util.function.Function;
 
@@ -177,7 +178,8 @@ public final class ElementScanner {
          * {@link #typeParameters()}, as the bytecode scan reads the class signature.
          */
         TypeInfo supertype(TypeMirror supertype) {
-            return typeMirrorToTypeInfo(supertype, this::reference);
+            return unresolved(supertype).<TypeInfo>map(TypeInfo.ClassType::new)
+                    .orElseGet(() -> typeMirrorToTypeInfo(supertype, this::reference));
         }
 
         private TypeInfo.TypeVariable typeVariable(TypeParameterElement parameter) {
@@ -288,7 +290,7 @@ public final class ElementScanner {
     }
 
     TypeInfo typeMirrorToTypeInfo(TypeMirror mirror) {
-        return typeMirrorToTypeInfo(mirror, this::typeVariableWithUpperBound);
+        return typeMirrorToTypeInfo(mirror, new MemberTypeVariables()::typeVariable);
     }
 
     /** Converts a type, mapping each type variable it meets with {@code typeVariables}. */
@@ -346,20 +348,48 @@ public final class ElementScanner {
         };
     }
 
-    /** A type variable of a field, method or parameter type, with its upper bound unless that is Object. */
-    private TypeInfo typeVariableWithUpperBound(javax.lang.model.type.TypeVariable tv) {
-        var bounds = new ArrayList<TypeInfo>();
-        var upper = tv.getUpperBound();
-        // The java.lang.Object bound is implicit: skip it.
-        if (upper != null && upper.getKind() != TypeKind.NONE && !isJavaLangObject(upper)) {
-            bounds.add(typeMirrorToTypeInfo(upper));
+    /**
+     * The type variables of one field, method or parameter type, each with its upper bound unless that is Object. A
+     * type variable met again while its own bound is read ({@code T} in {@code <T extends Comparable<T>>}) has no
+     * bound, as the bytecode scan records it, so the model stays finite: its bound was read again and again, until a
+     * {@code StackOverflowError} failed the compilation (BUG-20261117-36).
+     */
+    private final class MemberTypeVariables {
+
+        private final Set<Element> reading = new HashSet<>();
+
+        TypeInfo typeVariable(javax.lang.model.type.TypeVariable variable) {
+            var element = variable.asElement();
+            var name = element.getSimpleName().toString();
+            if (!reading.add(element)) {
+                return new TypeInfo.TypeVariable(name, List.of());
+            }
+            var bounds = new ArrayList<TypeInfo>();
+            var upper = variable.getUpperBound();
+            // The java.lang.Object bound is implicit: skip it.
+            if (upper != null && upper.getKind() != TypeKind.NONE && !isJavaLangObject(upper)) {
+                bounds.add(typeMirrorToTypeInfo(upper, this::typeVariable));
+            }
+            reading.remove(element);
+            return new TypeInfo.TypeVariable(name, bounds);
         }
-        return new TypeInfo.TypeVariable(tv.asElement().getSimpleName().toString(), bounds);
     }
 
     private static boolean isJavaLangObject(TypeMirror type) {
         return type.getKind() == TypeKind.DECLARED
                 && JAVA_LANG_OBJECT.equals(((TypeElement) ((DeclaredType) type).asElement()).getQualifiedName().toString());
+    }
+
+    /**
+     * The name of a class the compiler cannot find, which a class file names: a supertype of a class of the class path
+     * whose class file is missing. The bytecode scan names it, and so does the processor's, so that the language
+     * model finds no such class and keeps its old answer, as at start (BUG-20261117-31); it was
+     * {@code java.lang.Object}.
+     */
+    private Optional<DotName> unresolved(TypeMirror mirror) {
+        return mirror.getKind() == TypeKind.ERROR && mirror instanceof DeclaredType declared
+                && declared.asElement() instanceof TypeElement element
+                ? Optional.of(binaryName(element)) : Optional.empty();
     }
 
     /**
@@ -370,6 +400,7 @@ public final class ElementScanner {
     private DotName typeMirrorToDotName(TypeMirror mirror) {
         return switch (mirror.getKind()) {
             case DECLARED -> binaryName((TypeElement) ((DeclaredType) mirror).asElement());
+            case ERROR -> unresolved(mirror).orElseGet(() -> DotName.of(JAVA_LANG_OBJECT));
             case BOOLEAN, BYTE, CHAR, SHORT, INT, LONG, FLOAT, DOUBLE, VOID, ARRAY -> DotName.fromDescriptor(descriptor(mirror));
             default -> DotName.of(JAVA_LANG_OBJECT);
         };

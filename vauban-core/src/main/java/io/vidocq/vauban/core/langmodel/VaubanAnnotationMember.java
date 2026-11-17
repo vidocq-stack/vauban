@@ -144,7 +144,9 @@ public final class VaubanAnnotationMember implements AnnotationMember {
     @Override
     public jakarta.enterprise.lang.model.declarations.ClassInfo asEnumClass() {
         if (indexValue instanceof io.vidocq.vauban.indexer.model.AnnotationValue.EnumVal(var enumClass, _)) {
-            return new VaubanClassInfo(lookup.requireClass(enumClass), lookup);
+            // An enum class outside the index is described as any class outside the deployment; one nothing
+            // describes throws the IllegalArgumentException it threw (BUG-20261117-31)
+            return new VaubanClassInfo(lookup.requireDeclaration(enumClass), lookup);
         }
         throw new IllegalStateException("Not an enum value, but " + kind());
     }

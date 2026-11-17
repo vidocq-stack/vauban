@@ -307,9 +307,13 @@ public final class VaubanGenerator {
             return new Enhanced(index, Set.of());
         }
         var archiveClasses = loadArchiveClasses(index, config.classLoader());
+        // A class outside the index is described from the class file the project's loader finds, as at start
+        // (BUG-20261117-31).
         var enhMods = io.vidocq.vauban.api.ExtensionPhase.atBuildTime(() ->
-                io.vidocq.vauban.core.extensions.BceProcessor.processEnhancementOnly(
-                        bceClasses, archiveClasses, index, config.classLoader()));
+                io.vidocq.vauban.core.langmodel.IndexLookup.whereOutsideDescribedBy(
+                        io.vidocq.vauban.core.langmodel.IndexLookup.classFiles(config.classLoader()),
+                        () -> io.vidocq.vauban.core.extensions.BceProcessor.processEnhancementOnly(
+                                bceClasses, archiveClasses, index, config.classLoader())));
 
         // Brique A for plugin-processed modules (cervantes/cyrano/knock/dirac, which use
         // this plugin instead of the APT): freeze the @Enhancement result as a static

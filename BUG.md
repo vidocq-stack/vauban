@@ -5,6 +5,49 @@ suspected cause, status. Updated on every investigation.
 
 ---
 
+## BUG-20261117-50 — The processor reads a type another processor generates in round 1 as `java.lang.Object`
+
+- **Date**: 2026-11-17
+- **Status**: OPEN
+- **Module**: `vauban-processor` (`apt.ElementScanner`, `VaubanProcessor`)
+- **Symptom**: a class of the compilation that names a type another annotation processor generates in the first
+  round is read with that type as `java.lang.Object`, or, for a supertype, by its simple name. What that does, shape
+  by shape (`GeneratedTypeProcessorTest`; `ShapesProbe` in `vauban-b50-shapes.log`, which also starts the
+  application where it compiles):
+  - an injection point of the generated type, `@Inject Baz_ baz`, fails the build: "Ambiguous dependency: field
+    User.baz of type ClassType[name=java.lang.Object]", which every bean matches;
+  - an observer of it, `@Observes Baz_`, fails the build: the observer method the processor generates in
+    `_VaubanComponents` passes it an `Object` ("incompatible types: java.lang.Object cannot be converted to p.Baz_");
+  - a producer method of it builds and starts, and a bean injects what it produces; an extension reads the
+    producer's types as `[java.lang.Object]`;
+  - a bean whose superclass and interface are generated builds and starts, and a bean injects it by that interface;
+    an extension reads them as `Base_` and `[Baz_]`, which name no class, and the bean's types as
+    `[Base_, Baz_, java.lang.Object, p.Foo]`. Before BUG-20261117-31 it read `java.lang.Object`, `[java.lang.Object]`
+    and `[java.lang.Object, p.Foo]`;
+  - a class the other processor generates is scanned in a later round, when the types it names exist: a generated
+    bean and the injection points of a generated class are read right.
+
+  MapStruct's pattern works: an `@ApplicationScoped` `CarMapperImpl` generated in the first round, injected by the
+  hand-written `CarMapper`, builds and starts. Immutables' pattern fails when an injection point names the generated
+  class: `ImmutableCar` produced and injected by that name fails the build ("Ambiguous dependency: field Garage.car
+  of type ClassType[name=java.lang.Object]"); produced by that name and injected as the hand-written `Car`, it builds
+  and starts. The companion processor of the repros generates classes of those shapes; the libraries themselves were
+  not run.
+- **Repro**: `GeneratedTypeProcessorTest` in `vauban-processor`, five tests `@Disabled` with this id: an injection
+  point, an observer, an Immutables value produced and injected by its generated name, and what an extension sees
+  of a producer's types and of a bean's supertypes. A companion processor that runs before Vauban's generates
+  `p.Baz_` and the others in the first round. Red with the `@Disabled` lifted on deb2aa98 (`vauban-b31-red.log`,
+  "Round 2: BUG-50 repro"). `ShapesProbe` gives the same results on Vauban main 455067f5, on BUG-20261117-31's base
+  b63cc6cb and on deb2aa98, but for the supertypes' names, which BUG-20261117-31 changed; MapStruct's pattern and
+  the Immutables value injected as `Car` work on all three.
+- **Cause**: in the first round, the generated type does not exist yet: javac gives an error type. The scan
+  (`ElementScanner.typeMirrorToTypeInfo`) has no case for an error type and gives `java.lang.Object`; a supertype
+  goes through `ElementScanner.unresolved`, which gives the binary name javac gives the error type, its simple name.
+  `VaubanProcessor.indexOnce` (~531) scans a class once, in the round where it first appears, and never again.
+- **Fix idea**: at pipeline time, scan again the classes whose scan met an error type, now that the types exist.
+  That would also name the supertypes (BUG-20261117-31, "Who sees the change").
+- **Found by**: the review of BUG-20261117-31 (62e80eaf), with its `GeneratedSupertypeProbe`.
+
 ## BUG-20261117-48 — The processor cannot build an invoker for a bean class compiled in the same build
 
 - **Date**: 2026-11-17
@@ -77,6 +120,27 @@ suspected cause, status. Updated on every investigation.
 - **Found by**: the review of BUG-20261117-41 (BUG-20261117-22, round 4), against CDI 4.1, 5.5.8; the failure was first
   seen in "Fix round 2 red run 3".
 
+## BUG-20261117-46 — An error an extension phase throws without a message is reported as "null"
+
+- **Date**: 2026-11-17
+- **Status**: OPEN
+- **Module**: `vauban-core` (`extensions.BceProcessor`)
+- **Symptom**: an `@Enhancement` method that throws a `Throwable` without a message, such as the `AssertionError` of a
+  failed `assert`, fails the start with
+  `DeploymentException: CDI deployment validation failed: - @Enhancement error: null`. The line names neither the
+  extension class, nor its method, nor the error; only the stack of the cause tells where. The CDI language model
+  TCK checks with plain `assert` statements, so each of its failures reads `null`.
+- **Repro**: `PhaseErrorReportTest#theStartFailureNamesTheExtensionItsMethodAndTheError` in `vauban-core`,
+  `@Disabled` with this id: red with the `@Disabled` lifted (`vauban-b31-red.log`, "Fix round 1, red run 11"). The
+  BUG-20261117-40 probe showed it first (`vauban-b40-probe.log`,
+  `LangModelTckProbeTest#anAssertionErrorInAPhaseFailsTheStart` on the local branch `probe/langmodel-tck`).
+- **Cause**: `BceProcessor` (~604-608) unwraps the phase's `InvocationTargetException`, keeps the cause, and adds
+  `"@Enhancement error: " + unwrapped.getMessage()` to the errors. `@Registration` (~756-789), `@Synthesis`
+  (~842-844), `@Validation` (~875-877) and the extension's own failure (~295) build their lines the same way.
+- **Expected**: when the message is `null`, the line names the extension class, the method and the exception type,
+  `@Enhancement error in ...Asserting.verify: java.lang.AssertionError` say.
+- **Found by**: the BUG-20261117-40 probe of the CDI language model TCK.
+
 ## BUG-20261117-45 — The start checks invoker lookups without the synthetic beans of frozen or compiled extensions
 
 - **Date**: 2026-11-17
@@ -108,6 +172,84 @@ suspected cause, status. Updated on every investigation.
   and `BeanManager`, and looks the others up among the deployment's beans, which do not hold the built-in ones. It
   was so before BUG-20261117-27, which counted classes.
 - **Found by**: the review of BUG-20261117-27.
+
+## BUG-20261117-43 — At start and frozen, the language model shows the synthetic methods of a class file
+
+- **Date**: 2026-11-17
+- **Status**: OPEN
+- **Module**: `vauban-indexer` (`scanner.ClassFileScanner`), `vauban-core` (`langmodel.declarations.VaubanClassInfo`)
+- **Symptom**: for a class with a lambda and a bridge method, `ClassInfo.methods()` gives `[get]` in the processor and
+  `[get, get, lambda$get$0]` at start and frozen: the bridge `Object get()` the compiler adds for
+  `Supplier<String>.get()`, and the body of the lambda. The same for a bean of the index and, since
+  BUG-20261117-31, for a class outside it described from its class file, a class of the JDK included. The review's
+  probe on a class of the class path (`SyntheticMembers`): `[<init>, get]` from the compiler,
+  `[<init>, get, get, lambda$get$0]` from the bytecode scan.
+- **Spec**: `ClassInfo.methods()` returns the methods "declared or implicitly declared in this class and all its
+  superclasses up to and excluding `java.lang.Object`, as well as all direct and indirect superinterfaces". A bridge
+  method or a lambda's body is neither: the compiler marks synthetic "a construct emitted by a Java compiler [that]
+  does not correspond to a construct declared explicitly or implicitly in source code" (JLS 13.1). The language
+  model's Javadoc does not name synthetic members, but its TCK checks them: `BridgeMethods` ("bridge method
+  `void genericMethod(Object)` will be generated") expects the class's `genericMethod(String)` and its superclass's
+  `genericMethod(T)`, and no bridge; `EnumMembers`: "enum constructors often have synthetic parameters, but the
+  language model demands that these are _not_ presented".
+- **Evidence**: in the BUG-20261117-40 probe (`vauban-b40-probe.log`, group 12), this bug shows in `BridgeMethods` by
+  masking BUG-20261117-42. Each class there overrides a method of its superclass, and the TCK expects two methods,
+  the class's and the superclass's, and no bridge. At start, the bridge stands in for the inherited method that
+  BUG-20261117-42 leaves out: `Number numberMethod()` for the superclass's `Number numberMethod()`,
+  `genericMethod(Object)` for its `genericMethod(T)`. So lines 56, 58 and 72 (two methods, one `numberMethod`
+  returning `Number`) pass at start, and fail in the processor, which shows no bridge. Line 74 fails at start for
+  BUG-20261117-42 alone: it counts a `genericMethod` whose parameter is a type variable, and the bridge's parameter
+  is the class `Object`.
+- **Fix order**: with BUG-20261117-42, or before it. Fixed alone, BUG-20261117-42 adds the inherited methods next
+  to the bridges, and `BridgeMethods` lines 56 and 72 turn red at start (three methods where the TCK counts two),
+  and, by reading its check, line 58 with them (two `numberMethod` returning `Number`).
+- **Repro**: `VetoedInterceptorCompileTimeTest#anExtensionSeesNoSyntheticMethodInTheProcessorAtStartAndFrozen` in
+  `vauban-processor`, `@Disabled` with this id: red with the `@Disabled` lifted on b7af3df3 (`vauban-b31-red.log`,
+  "Fix round 1, red run 9"): `[get]` in the processor, `[get, get, lambda$get$0]` at start and frozen, for the class
+  outside the index (`Teller`) and for the bean (`Counter`).
+- **Cause**: `ClassFileScanner` (~72) records every method of the class file, `ACC_SYNTHETIC` and `ACC_BRIDGE` ones
+  included, and `VaubanClassInfo.methods()` shows them all; `ElementScanner` reads the compiler's elements, which have
+  none.
+- **Fix idea**: leave the synthetic methods out of what the language model shows, from the index's `accessFlags`,
+  rather than out of the index, whose methods other generators read. The synthetic leading parameters of an enum's
+  constructor are the same family (the probe's group 10).
+- **Found by**: the review of BUG-20261117-31.
+
+## BUG-20261117-42 — The language model shows no inherited members and no `@Inherited` annotations
+
+- **Date**: 2026-11-17
+- **Status**: OPEN (vauban#336)
+- **Module**: `vauban-core` (`langmodel.declarations.VaubanClassInfo`)
+- **Symptom**: `ClassInfo.methods()` lists the class's own methods, plus those of its direct superinterfaces the index
+  holds; the methods of its superclasses, of its indirect superinterfaces and of an interface outside the index are
+  missing. `fields()` lists the class's own fields. `annotations()`, `annotation()` and `hasAnnotation()` leave out
+  the `@Inherited` annotations of the superclasses. The same in the processor, at start and frozen.
+- **Spec**: `ClassInfo.methods()`: "Returns a collection of methods declared or implicitly declared in this class and
+  all its superclasses up to and excluding `java.lang.Object`, as well as all direct and indirect superinterfaces. If
+  this class is `java.lang.Object`, its methods are not excluded. If this class is an interface, only superinterfaces
+  are considered. Implicitly declared methods corresponding to `java.lang.Object` methods in interfaces are omitted.
+  If the collection of methods described above contains multiple methods with the same signature, all such methods
+  are returned." `ClassInfo.fields()`: "Returns a collection of fields declared or implicitly declared in this class
+  and all its superclasses up to and excluding `java.lang.Object`, as well as all direct and indirect
+  superinterfaces." `AnnotationTarget`, which `DeclarationInfo` extends, defines the annotations it shows as those
+  "present on this annotation target", which "means: either the annotation is declared or implicitly declared
+  directly on this annotation target, or this annotation target is a class declaration and the annotation is
+  inherited from a superclass".
+- **Evidence**: the BUG-20261117-40 probe of the CDI language model TCK (`vauban-b40-probe.log`, group 8): 61 checks
+  fail at start for this cause, in `InheritedMethods` (25), `InheritedFields` (4), `InheritedAnnotations` (3),
+  `RepeatableAnnotations` (27, the inherited ones), `PlainClassMembers` (1, line 211) and `BridgeMethods` (1, line
+  74); in the processor, `EnumMembers` line 294 and `BridgeMethods` lines 56, 58 and 72 too. At start, those three
+  lines pass only because BUG-20261117-43's bridge methods stand in for the inherited methods this bug leaves out;
+  line 74 fails at start for this bug alone (BUG-20261117-43, "Evidence").
+- **Fix order**: BUG-20261117-43 is fixed with this one, or before it. Fixed alone, this one adds the inherited
+  methods next to the bridges, and `BridgeMethods` lines 56 and 72 turn red at start, and line 58 with them.
+- **Cause**: `VaubanClassInfo.methods()` (~222) reads the class's index entry and the direct superinterfaces
+  `IndexLookup.getClass` finds, `fields()` (~248) and the annotation methods (~262-295) the class's entry alone.
+- **Impact**: Dirac's `namesAMetric` misses a metric declared on an inherited method; its companion DRC-011, on
+  Dirac's `fix/langmodel-unindexed-classes`, works around it. Any extension that iterates `methods()`, `fields()` or
+  the annotations sees fewer than the spec says. A fix changes that for every consumer at once, so it needs an audit
+  of the consumers first.
+- **Found by**: the BUG-20261117-40 probe of the CDI language model TCK.
 
 ## BUG-20261117-41 — An interceptor that injects `@Intercepted Bean<?>` is refused
 
@@ -235,6 +377,64 @@ suspected cause, status. Updated on every investigation.
   the target method.
 - **Found by**: the work on BUG-20261117-27, testing that the qualifiers still apply.
 
+## BUG-20261117-37 — At start, `ClassInfo.modifiers()` gives the class file's flags
+
+- **Date**: 2026-11-17
+- **Status**: OPEN
+- **Module**: `vauban-indexer` (`scanner.ClassFileScanner`), `vauban-core` (`langmodel.declarations.VaubanClassInfo`)
+- **Symptom**: `ClassInfo.modifiers()` should read as `java.lang.reflect.Modifier` reads a class's modifiers. At
+  start and frozen, `Modifier.toString` gives `public synchronized` for `public class Plain`, and `public synchronized`
+  for its `public static class Inner`; the processor gives `public` and `public static`. The same extension sees two
+  answers for one class, and `Modifier.isStatic` is `false` at start for a static nested class.
+- **Repro**: `VetoedInterceptorCompileTimeTest#anExtensionSeesTheModifiersOfAClassInTheProcessorAtStartAndFrozen` in
+  `vauban-processor`, `@Disabled` with this id: red with the `@Disabled` lifted on 63cce2fc plus BUG-20261117-31's
+  fix, which does not touch `modifiers()` (`vauban-b31-red.log`, "red run 7"): green in the processor, `public
+  synchronized` for both classes at start and frozen.
+- **Cause**: `modifiers()` returns the index's `accessFlags`, which `ClassFileScanner` takes from the class file's
+  `access_flags`: `ACC_SUPER` (0x20), which javac sets on every class, is `Modifier.SYNCHRONIZED`, and a nested
+  class's `static`, `private` and `protected` live in its own `InnerClasses` entry, which the scan reads for the
+  simple name only. `ElementScanner` builds the flags from the compiler's modifiers. Every class at start is concerned,
+  and since BUG-20261117-31 a class outside the index described from its class file too.
+- **Fix idea**: give the language model the flags reflection gives, `Class.getModifiers()`'s rule: the class's own
+  `InnerClasses` flags when it has an entry, without `ACC_SUPER`. Kept out of BUG-20261117-31: the index's
+  `accessFlags` feed the bean discovery and the class checks, so the change belongs to the scan or to a new field of
+  the index, and must be shown not to move a bean.
+- **Found by**: BUG-20261117-31's comparison of the processor and the bytecode scan.
+
+## BUG-20261117-36 — The processor's scan overflows the stack on a member of a type variable bounded by itself
+
+- **Date**: 2026-11-17
+- **Status**: FIXED on `fix/langmodel-unindexed-classes`, with BUG-20261117-31
+- **Module**: `vauban-processor` (`apt.ElementScanner`)
+- **Symptom**: a compilation fails with `java.lang.RuntimeException: java.lang.StackOverflowError` when Vauban's
+  processor scans a class with a field, a parameter or a return typed by a type variable bounded by itself: the bean
+  `@Dependent public class Box<T extends Comparable<T>> { private T value; ... }`, or a class of a library such as
+  `Store<E extends Comparable<E>>` with a field of `List<? extends E>`.
+- **Repro**: `ElementScannerSelfBoundedMembersTest#aBeanWithASelfBoundedMemberCompiles` in `vauban-processor`, red on
+  the main code of 0360a032 (`vauban-b31-red.log`, "red run 3", where the bug was still numbered 34) and of 63cce2fc
+  ("red run 6"); `ElementScannerOutsideClassesTest`, whose library has `Store`, failed in its `@BeforeAll` the same
+  way in both runs.
+- **Cause**: `ElementScanner.typeVariableWithUpperBound` mapped the bound of a member's type variable with
+  `typeMirrorToTypeInfo`, which maps each type variable it meets with `typeVariableWithUpperBound` again: `T`,
+  `Comparable<T>`, `T`, ... without end. The type parameters of a class are read with a guard
+  (`TypeParameterReader`); the types of its members were not.
+- **Fix**: a member's type is read with `MemberTypeVariables`, which remembers the type variables whose bound it is
+  reading: a variable met again inside its own bound has no bound, as the bytecode scan records it
+  (`ClassTypeParameters`). `T` in `<T extends Comparable<T>>` reads `T extends Comparable<T>`, the inner `T` without
+  bound, the same model both ways (`ElementScannerOutsideClassesTest#theSameTypeForASelfBoundedField`).
+- **Verification**: green in `vauban-b31-dev.log` from "dev run 2" on, and in the full build of the commit
+  (`vauban-b31-build.log`).
+- **Why with BUG-20261117-31**: before BUG-20261117-31, the processor's scan read the members of the classes of the
+  compilation and of its class path only; a JDK class was a stub whose members nobody read. BUG-20261117-31 has it
+  describe every class an extension reaches outside the index, the JDK's included, with all their members, and
+  members typed by a type variable bounded by itself are common there: `Enum.compareTo(E)` in
+  `Enum<E extends Enum<E>>`, `Comparator.naturalOrder()` and `Map.Entry.comparingByKey()`, whose type variables are
+  bounded by a `Comparable` of themselves. Without this fix, a compilation would overflow where it got a stub before.
+  In the red runs, the class that overflowed was `lib.Store<E extends Comparable<E>>`, with its field
+  `List<? extends E>`, of `ElementScannerOutsideClassesTest`'s library, read before the test's JDK classes, and the
+  bean `Box<T extends Comparable<T>>`.
+- **Found by**: BUG-20261117-31's comparison of the processor and the bytecode scan on a class of a library.
+
 ## BUG-20261117-34 — The language model gives `?` no bound, and the processor gives `? extends Object` one
 
 - **Date**: 2026-11-17
@@ -352,6 +552,124 @@ suspected cause, status. Updated on every investigation.
   interface, as an extension the processor runs already did.
 - **Verification**: green in `vauban-b22-dev.log` ("dev run 1", "dev run 2"), and as BUG-20261117-22.
 - **Found by**: the three-way test of BUG-20261117-22.
+
+## BUG-20261117-31 — The language model gives a class outside the index an empty stub
+
+- **Date**: 2026-11-17
+- **Status**: FIXED on `fix/langmodel-unindexed-classes`
+- **Module**: `vauban-core` (`langmodel.IndexLookup`, `langmodel.ClassFileDeclarations`,
+  `langmodel.declarations.VaubanClassInfo`, `langmodel.types.VaubanClassType`, `langmodel.VaubanAnnotationInfo`,
+  `langmodel.VaubanAnnotationMember`, `container.VaubanContainerBuilder`), `vauban-processor`
+  (`CompilerDeclarations`, `VaubanProcessor`, `apt.ElementScanner`), `vauban-maven-plugin` (`generate.VaubanGenerator`)
+- **Symptom**: an extension that follows a type to a class the index does not hold gets a stub: superclass `Object`,
+  no interface, no type parameter, no member. That class may be one of a dependency jar (Jakarta Data's
+  `CrudRepository`), of the JDK (`Supplier`), or one of the application the deployment did not add. Mansart walks
+  `RoutedNoteArchive` → `CrudRepository<ArchivedNote, Long>` → `BasicRepository<ArchivedNote, Long>` to substitute
+  `T` and `K`, and its probe on 0360a032 stopped at the stub:
+
+  ```
+  jakarta.data.repository.CrudRepository typeParameters=0 superInterfaces=[]
+  jakarta.data.repository.BasicRepository typeParameters=0 superInterfaces=[]
+  ```
+
+  The three places did not agree. In the processor, a class the compilation sees, on its class path too, was
+  described (`unindexedResolver`, VAU-BCE-008), but a JDK class was a stub. At start and frozen, every class outside
+  the index was a stub. In all three, `superClassDeclaration()` and `superInterfacesDeclarations()` read the index
+  alone: `null` and a list without the class, while `superClass().asParameterizedType().genericClass().declaration()`
+  gave the processor's description. At start and frozen, `AnnotationInfo.declaration()` and an enum member's
+  `asEnumClass()` threw `IllegalArgumentException: Class not found in index` for a class outside the index.
+  **Mansart carries a documented reflective fallback until this fix (MANSART-068, mansart#109).** This fix, with
+  BUG-20261117-22, which gives the supertypes their type arguments, is what lets it go.
+- **Repro**: three ways, in `vauban-processor`,
+  `VetoedInterceptorCompileTimeTest#anExtensionSeesAClassOutsideTheIndexDescribedInTheProcessorAtStartAndFrozen`:
+  `interface Archive extends Crud<Note, Long>`, `interface Crud<T, K> extends Basic<T, K>`,
+  `interface Basic<T, K>`, `Crud` and `Basic` not in the index; an `@Synthesis` method records the declarations it
+  reaches, `Supplier`'s and `Plain`'s superclass declaration. In the processor `Crud` and `Basic` were described but
+  `superInterfacesDeclarations()` was `[]`, `Supplier` a class without type parameters and `Plain`'s superclass
+  declaration `null`; at start and frozen, `Crud` was a class with neither type parameters nor superinterfaces.
+  `BceUnindexedClassTest` in `vauban-core`, at start: Mansart's shape, `Supplier` (`[T]`), a class of the class path
+  never added (`Elsewhere`, with its fields, methods, constructor and annotation), an annotation type and an enum class
+  outside the index, a class nowhere (the stub, its name kept), and a guard that the beans and their types do not
+  change. `ElementScannerOutsideClassesTest`: the processor and the bytecode scan give a class of a library and of the
+  JDK the same declaration (name, kind, type parameters, supertypes, wildcards). Fix round 1:
+  `BceUnindexedClassTest#aClassNoClassFileDescribesKeepsItsOldAnswers` at start and `UnseenClassProcessorTest` in
+  the processor, a class file `Kept` whose superclass, one interface, two annotation types and an enum class exist
+  nowhere; `ClassFileDeclarationsTest#aWalkUpTheSuperclassesEnds` and `#objectHasNoSuperclass`; and
+  `OutsideClassGenerationTest` in `vauban-maven-plugin`, an `@Enhancement` that `vauban:generate` runs.
+- **Cause**: `VaubanClassType.declaration()` described a class only through `IndexLookup.describe`, which is the
+  index, plus the processor's resolver; anything else became VAU-BCE-001's stub. The container had no resolver, the
+  processor's left out the JDK, and the declaration methods (`superClassDeclaration()`, `superInterfacesDeclarations()`,
+  `AnnotationInfo.declaration()`, `asEnumClass()`) read the index alone.
+- **Fix**: every path to a class goes through `VaubanClassInfo.of(name, lookup)`, which describes it with
+  `IndexLookup.declaration`, the first time more than its name is asked: the index, else the language model's own
+  resolver, else the stub. The resolver is a `ScopedValue` binding, separate from the bean discovery's: at start and
+  frozen (`VaubanContainerBuilder.build`, around the whole extension cycle) and in `vauban:generate`, the class file
+  the deployment's class loader finds as a resource (`ClassFileDeclarations`, `ClassFileScanner`: nothing is loaded);
+  in the processor, the compiler's model, the JDK included (`CompilerDeclarations`, `ElementScanner`), which still
+  leaves the JDK out for the bean discovery. Each place caches its descriptions per container build or compilation,
+  one per class asked, in a `ConcurrentHashMap`: concurrent askers may read one class file twice and all get the
+  first description. `superClassDeclaration()` is now `java.lang.Object`'s declaration for a class that names no other
+  superclass, as the language model asks, and `null` for an interface, as `superClass()`. Nothing outside the
+  language model changes: the described class joins neither the index nor the bean discovery, the bean types or the
+  fingerprint.
+- **Fix round 1** (review of b7af3df3):
+  - a class no class file and no element describes keeps the answer each path gave, the coordinator's rule after the
+    Dirac audit, so that a consumer keeps its "I cannot see this class" path: a type's `declaration()` its stub,
+    `superClassDeclaration()` `null`, `superInterfacesDeclarations()` without it, and an annotation's `declaration()`
+    and `asEnumClass()` the `IllegalArgumentException: Class not found in index: <name>` they threw
+    (`IndexLookup.find` and `requireDeclaration`). The first commit gave a stub on every path.
+  - `java.lang.Object` has no superclass, wherever its description comes from: its stub names none, and
+    `VaubanClassInfo` answers `null` for it. The first commit's stub of `Object` named `Object` as its superclass, so a
+    walk up `superClassDeclaration()` outside the extension phases, or from a class with no lookup, never ended.
+  - in the processor, a supertype the compiler cannot find, named by a class file of the class path, is named as the
+    class file names it (`ElementScanner.unresolved`), as the bytecode scan names it: it was `java.lang.Object`, so the
+    language model gave `Object`'s declaration instead of `null`, and an interface `Object` instead of leaving it out.
+- **Persistence and fingerprint**: the frozen record does not fingerprint the classes described this way. What an
+  extension reads of them, type parameters, supertypes, members and annotations, comes from the deployment's own
+  classes in the wide sense the freeze rule allows: the dependency jars the application is built and packaged with,
+  and the JDK the build runs on: the freeze reads the class files of the JVM that runs the build, not those of the
+  `--release` it compiles for. A changed dependency between build and start is a different application; the
+  fingerprint has never covered the classes the build reads beyond the bean classes (the classes VAU-BCE-008
+  describes, a bean's superclass in a jar). Fingerprinting them would read at start
+  the very class files the freeze spares, and the set is only known by running the extensions. If an application
+  ever starts on another version of a jar its extensions read, the frozen record is stale for it, as it already is for
+  those classes.
+- **Who sees the change**: an extension at start or frozen, and in the processor for a JDK class, now reads type
+  parameters, supertypes, members and annotations where it read a stub, for every class a class file or the
+  compilation describes; for one nothing describes, every path keeps its old answer.
+  - **Dirac**: `namesAMetric` walks `superClassDeclaration()` to `null`. It now reads the superclasses a jar holds,
+    `java.lang.Object` last, where it deferred to its reflective scan at the first one outside the index, and it still
+    defers where nothing describes the class. Its companion DRC-011 covers it.
+  - **Foy** (`FoyWebExtension.hasBeanDefiningAnnotation`, ~216): a servlet, filter or listener that carries a library
+    annotation, neither a scope nor a stereotype, made `declaration()` throw at start, and Foy left the class alone.
+    When the annotation's class file is found, Foy now reads it and gives the class `@Dependent` at start, as the
+    processor already did.
+  - **Champollion** (`JsonbCdiExtension`): its `@Validation` asks `injects()` of the class a JSON-B annotation names,
+    which `collect` (~88) reached through `asClass().declaration()`, an adapter say. At start such a class outside the
+    index was a stub without members, so `injects()` read nothing; an adapter with `@Inject` members that is no bean
+    now fails the start, as it already failed the build.
+  - **The processor, for a supertype another processor generates in the first round**: `ElementScanner.unresolved`
+    names it as javac names the error type, by its simple name, `Bar_`, where the processor's index had
+    `java.lang.Object`; at start it is `p.Bar_`, from the class file. `VaubanProcessor.indexOnce` (~531) never scans
+    the class again, so in the processor an extension's `superClass()` names `Bar_`, and the bean's types gain a type
+    `Bar_` that names no class (BUG-20261117-50's repro of a bean's supertypes). The generated code does not change
+    (the review compared it). The processor and the start disagreed before this commit; only the shape of the
+    disagreement is new. BUG-20261117-50's fix, a new scan of such classes, covers both.
+- **Verification**: red on the main code of 0360a032 (`vauban-b31-red.log`, "red run 1", "red run 2", "red run 4")
+  and of 63cce2fc, BUG-20261117-22's commit amended, which is this commit's base ("red run 5", "red run 6");
+  `ClassFileDeclarationsTest` calls the new `IndexLookup.classFiles` and `stub`, does not compile on the base, and
+  its behaviour is covered red by `BceUnindexedClassTest`. Green in `vauban-b31-dev.log`; the full build of the commit
+  (`vauban-b31-build.log`), the CDI Lite TCK and the AtInject TCK (`vauban-b31-tck.log`), each under the header that
+  names the commit. Fix round 1: red on b7af3df3 (`vauban-b31-red.log`, "Fix round 1, red run 8" at start and for
+  `java.lang.Object`, "red run 9" in the processor); `OutsideClassGenerationTest` red with `VaubanGenerator` put back
+  to 63cce2fc's ("red run 10"); green in `vauban-b31-dev.log` from "Fix round 1, dev run 5" on, and in the full build
+  and the TCKs under the "Fix round 1" headers. Rebased onto b63cc6cb: the full build and the TCKs under the "Rebase
+  on b63cc6cb" headers. Fix round 2 changes this file and adds BUG-20261117-50's disabled repro, and no `src/main`
+  file: the full build under the "Fix round 2" header; the TCKs were not run again. Fix round 3 answers the local
+  SonarQube analysis of 7fa7d214: each cache keeps a lookup, a miss included, in a small private class that holds
+  the `Optional` every asker gets, instead of an `Optional` it compared with `null`, with the same behaviour; the full
+  build and the TCKs under the "Fix round 3" headers.
+- **Found by**: Mansart's probe on BUG-20261117-22's commit (MANSART-068, mansart#109).
 
 ## BUG-20261117-30 — The start refuses an inherited initializer's parameter of a type variable
 

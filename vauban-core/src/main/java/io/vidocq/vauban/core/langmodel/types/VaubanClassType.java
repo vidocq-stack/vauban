@@ -47,31 +47,17 @@ public final class VaubanClassType implements ClassType {
         this.lookup = lookup;
     }
 
+    /**
+     * The class, as {@link IndexLookup#declaration} describes it the first time the language model needs more than
+     * its name. The Vauban index holds the deployment's classes only: a JDK type ({@code java.lang.String}), a class of
+     * a library ({@code @ConfigProperty}, Jakarta Data's {@code CrudRepository}) or one the deployment did not add
+     * appears in the types of the extensions without being indexed. It is described from its class file at start and
+     * frozen, and from the compiler's model in the processor (VAU-BCE-008, BUG-20261117-31). One nothing describes,
+     * and a class an extension named without a lookup, is a stub that keeps its name (VAU-BCE-001).
+     */
     @Override
     public ClassInfo declaration() {
-        // The Vauban index contains only application/scanned classes. JDK types
-        // (java.lang.String, java.util.Optional, …) and external library types
-        // (e.g. annotation classes shipped in spec JARs like @ConfigProperty)
-        // legitimately appear in injection-point types but are absent from the
-        // index. Falling back to a synthetic stub keeps the spec contract
-        // ({@code ClassType.declaration().name()} returns the FQN) without
-        // forcing every referenced type to be eagerly indexed. Cf. VAU-BCE-001. At build, a class the
-        // compilation sees is described by the processor instead (VAU-BCE-008).
-        var indexClass = lookup == null ? syntheticClassInfo(name)
-                : lookup.describe(name).orElseGet(() -> syntheticClassInfo(name));
-        return new VaubanClassInfo(indexClass, lookup);
-    }
-
-    private static io.vidocq.vauban.indexer.model.ClassInfo syntheticClassInfo(DotName name) {
-        return new io.vidocq.vauban.indexer.model.ClassInfo(
-                name,
-                DotName.of("java.lang.Object"),
-                List.of(),
-                java.lang.reflect.Modifier.PUBLIC,
-                List.of(),
-                List.of(),
-                List.of(),
-                io.vidocq.vauban.indexer.model.ClassInfo.ClassKind.CLASS);
+        return VaubanClassInfo.of(name, lookup);
     }
 
     /**

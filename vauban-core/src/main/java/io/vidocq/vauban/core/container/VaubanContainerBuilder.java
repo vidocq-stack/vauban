@@ -898,18 +898,30 @@ public final class VaubanContainerBuilder {
     /**
      * Builds the container, or, with a {@code capture}, runs the build up to the end of the extension cycle, hands
      * the capture what the extensions did and returns {@code null}.
+     *
+     * <p>The language model the extensions read describes a class outside the index from the class file the
+     * deployment's loader finds, read once per container the first time an extension needs it: a class of a library
+     * or of the JDK, or one the deployment did not add (BUG-20261117-31). It never joins the index.
      */
     private VaubanContainer build(ExtensionCapture capture) {
+        // A loader that can resolve classes and resources from ALL sources
+        // (plain beans + encrypted SJAR beans may use different ClassLoaders)
+        ClassLoader discoveryClassLoader = buildCompositeClassLoader();
+        return io.vidocq.vauban.core.langmodel.IndexLookup.whereOutsideDescribedBy(
+                io.vidocq.vauban.core.langmodel.IndexLookup.classFiles(discoveryClassLoader),
+                () -> build(capture, discoveryClassLoader));
+    }
+
+    /** {@link #build(ExtensionCapture)}, its extensions reading the classes outside the index through its loader. */
+    private VaubanContainer build(ExtensionCapture capture, ClassLoader discoveryClassLoader) {
         var indexBuilder = new IndexBuilder();
         var fingerprint = new DeploymentFingerprint("beanArchive=" + isBeanArchive + ";strictScannedDiscovery="
                 + strictScannedDiscovery + ";forced=" + new java.util.TreeSet<>(forcedDiscoveryClasses.stream()
                         .map(Class::getName).toList()));
         indexBeanClasses(indexBuilder, fingerprint);
 
-        // Set TCCL to a ClassLoader that can resolve classes from ALL sources
-        // (plain beans + encrypted SJAR beans may use different ClassLoaders)
+        // Set TCCL to the loader that can resolve classes from ALL sources
         var previousCl = Thread.currentThread().getContextClassLoader();
-        ClassLoader discoveryClassLoader = buildCompositeClassLoader();
         Thread.currentThread().setContextClassLoader(discoveryClassLoader);
 
         // Load module-supplied component providers once; the bean factories (deferred lambdas)

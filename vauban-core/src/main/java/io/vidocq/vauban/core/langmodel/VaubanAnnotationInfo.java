@@ -40,10 +40,14 @@ public final class VaubanAnnotationInfo implements jakarta.enterprise.lang.model
         return indexAnnotation;
     }
 
+    /**
+     * The annotation type, described as the index would describe it when the index does not hold it, as for any class
+     * outside the deployment (BUG-20261117-31). One nothing describes throws the {@code IllegalArgumentException} it
+     * threw for any annotation type outside the index.
+     */
     @Override
     public jakarta.enterprise.lang.model.declarations.ClassInfo declaration() {
-        var classInfo = lookup.requireClass(indexAnnotation.name());
-        return new VaubanClassInfo(classInfo, lookup);
+        return new VaubanClassInfo(lookup.requireDeclaration(indexAnnotation.name()), lookup);
     }
 
     /**

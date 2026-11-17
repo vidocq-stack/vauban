@@ -38,29 +38,59 @@ public final class VaubanClassInfo implements jakarta.enterprise.lang.model.decl
 
     private static final DotName OBJECT = DotName.of("java.lang.Object");
 
-    private final io.vidocq.vauban.indexer.model.ClassInfo indexClass;
+    private final DotName name;
     private final IndexLookup lookup;
+    /**
+     * The class as the index, or {@link IndexLookup#declaration}, describes it; for a declaration reached by name, read
+     * the first time more than the name is asked (BUG-20261117-31). Written once with an immutable record: a reader
+     * that races sees {@code null} and describes the class again, the lookup giving the same description.
+     */
+    private io.vidocq.vauban.indexer.model.ClassInfo indexClass;
 
     public VaubanClassInfo(io.vidocq.vauban.indexer.model.ClassInfo indexClass, IndexLookup lookup) {
+        this.name = indexClass.name();
         this.indexClass = indexClass;
         this.lookup = lookup;
     }
 
+    private VaubanClassInfo(DotName name, IndexLookup lookup) {
+        this.name = name;
+        this.lookup = lookup;
+    }
+
+    /**
+     * The declaration of the class {@code name}, which the index may not hold: a class of a library or of the JDK, or
+     * one the deployment did not add, is described as {@link IndexLookup#declaration} gives it, the first time the
+     * language model needs more than its name; with no {@code lookup}, it is a stub (BUG-20261117-31).
+     */
+    public static VaubanClassInfo of(DotName name, IndexLookup lookup) {
+        return new VaubanClassInfo(name, lookup);
+    }
+
+    private io.vidocq.vauban.indexer.model.ClassInfo indexClass() {
+        var described = indexClass;
+        if (described == null) {
+            described = lookup == null ? IndexLookup.stub(name) : lookup.declaration(name);
+            indexClass = described;
+        }
+        return described;
+    }
+
     @Override
     public String name() {
-        return indexClass.name().value();
+        return name.value();
     }
 
     @Override
     public String simpleName() {
-        var full = indexClass.name().simpleName();
+        var full = name.simpleName();
         int dollarIdx = full.lastIndexOf('$');
         return dollarIdx >= 0 ? full.substring(dollarIdx + 1) : full;
     }
 
     @Override
     public jakarta.enterprise.lang.model.declarations.PackageInfo packageInfo() {
-        String pkg = indexClass.name().packageName();
+        String pkg = name.packageName();
         return pkg.isEmpty() ? null : new VaubanPackageInfo(pkg);
     }
 
@@ -71,7 +101,7 @@ public final class VaubanClassInfo implements jakarta.enterprise.lang.model.decl
      */
     @Override
     public List<TypeVariable> typeParameters() {
-        return indexClass.typeParameters().stream()
+        return indexClass().typeParameters().stream()
                 .map(parameter -> (TypeVariable) new VaubanTypeVariable(parameter.name(), bounds(parameter)))
                 .toList();
     }
@@ -84,24 +114,37 @@ public final class VaubanClassInfo implements jakarta.enterprise.lang.model.decl
 
     /**
      * The superclass as the class declares it, with its type arguments: {@code Base<List<String>>}, a class only when
-     * the class names it raw (BUG-20261117-22). {@code null} for {@code java.lang.Object} and for an interface, as the
-     * language model asks, though the class file of an interface names {@code java.lang.Object} as its superclass
-     * (BUG-20261117-32).
+     * the class names it raw (BUG-20261117-22). {@code null} for {@code java.lang.Object}, wherever its description
+     * comes from, and for an interface, as the language model asks, though the class file of an interface names
+     * {@code java.lang.Object} as its superclass (BUG-20261117-32).
      */
     @Override
     public Type superClass() {
-        var superclass = indexClass.genericSuperclass();
-        return superclass == null || indexClass.isInterface() ? null : TypeMapper.map(superclass, lookup);
+        var described = indexClass();
+        var superclass = described.genericSuperclass();
+        return superclass == null || hasNoSuperclass(described) ? null : TypeMapper.map(superclass, lookup);
     }
 
+    /**
+     * The declaration of the superclass, described as the index would describe it when the index does not hold it:
+     * {@code java.lang.Object} for a class that names no other superclass (BUG-20261117-31). {@code null} when nothing
+     * describes it, as it was for any superclass outside the index: a consumer keeps its "I cannot see this class"
+     * path. {@code null} for {@code java.lang.Object} and for an interface, as {@link #superClass()}.
+     */
     @Override
     public jakarta.enterprise.lang.model.declarations.ClassInfo superClassDeclaration() {
-        if (indexClass.superName() == null) {
-            return null;
-        }
-        return lookup.getClass(indexClass.superName())
-                .map(c -> new VaubanClassInfo(c, lookup))
-                .orElse(null);
+        var described = indexClass();
+        return described.superName() == null || hasNoSuperclass(described) ? null : found(described.superName());
+    }
+
+    private boolean hasNoSuperclass(io.vidocq.vauban.indexer.model.ClassInfo described) {
+        return described.isInterface() || OBJECT.equals(name);
+    }
+
+    /** The declaration of {@code type} as {@link IndexLookup#find} describes it; {@code null} when nothing does. */
+    private VaubanClassInfo found(DotName type) {
+        return lookup == null ? null
+                : lookup.find(type).map(described -> new VaubanClassInfo(described, lookup)).orElse(null);
     }
 
     /**
@@ -110,62 +153,67 @@ public final class VaubanClassInfo implements jakarta.enterprise.lang.model.decl
      */
     @Override
     public List<Type> superInterfaces() {
-        return indexClass.genericInterfaces().stream()
+        return indexClass().genericInterfaces().stream()
                 .map(i -> TypeMapper.map(i, lookup))
                 .toList();
     }
 
+    /**
+     * The declarations of the interfaces, in declaration order, as {@link #superInterfaces()} names them: one the
+     * index does not hold is described as the index would describe it (BUG-20261117-31). One nothing describes is
+     * left out, as any interface outside the index was.
+     */
     @Override
     public List<jakarta.enterprise.lang.model.declarations.ClassInfo> superInterfacesDeclarations() {
-        return indexClass.interfaces().stream()
-                .flatMap(i -> lookup.getClass(i).stream())
-                .map(c -> (jakarta.enterprise.lang.model.declarations.ClassInfo) new VaubanClassInfo(c, lookup))
+        return indexClass().interfaces().stream()
+                .<jakarta.enterprise.lang.model.declarations.ClassInfo>map(this::found)
+                .filter(java.util.Objects::nonNull)
                 .toList();
     }
 
     @Override
     public boolean isPlainClass() {
-        return indexClass.kind() == io.vidocq.vauban.indexer.model.ClassInfo.ClassKind.CLASS;
+        return indexClass().kind() == io.vidocq.vauban.indexer.model.ClassInfo.ClassKind.CLASS;
     }
 
     @Override
     public boolean isInterface() {
-        return indexClass.kind() == io.vidocq.vauban.indexer.model.ClassInfo.ClassKind.INTERFACE;
+        return indexClass().kind() == io.vidocq.vauban.indexer.model.ClassInfo.ClassKind.INTERFACE;
     }
 
     @Override
     public boolean isEnum() {
-        return indexClass.isEnum();
+        return indexClass().isEnum();
     }
 
     @Override
     public boolean isAnnotation() {
-        return indexClass.isAnnotation();
+        return indexClass().isAnnotation();
     }
 
     @Override
     public boolean isRecord() {
-        return indexClass.isRecord();
+        return indexClass().isRecord();
     }
 
     @Override
     public boolean isAbstract() {
-        return indexClass.isAbstract();
+        return indexClass().isAbstract();
     }
 
     @Override
     public boolean isFinal() {
-        return indexClass.isFinal();
+        return indexClass().isFinal();
     }
 
     @Override
     public int modifiers() {
-        return indexClass.accessFlags();
+        return indexClass().accessFlags();
     }
 
     @Override
     public Collection<jakarta.enterprise.lang.model.declarations.MethodInfo> constructors() {
-        return indexClass.methods().stream()
+        return indexClass().methods().stream()
                 .filter(io.vidocq.vauban.indexer.model.MethodInfo::isConstructor)
                 .map(m -> (jakarta.enterprise.lang.model.declarations.MethodInfo) new VaubanMethodInfo(m, this, lookup))
                 .toList();
@@ -175,14 +223,14 @@ public final class VaubanClassInfo implements jakarta.enterprise.lang.model.decl
     public Collection<jakarta.enterprise.lang.model.declarations.MethodInfo> methods() {
         var result = new java.util.ArrayList<jakarta.enterprise.lang.model.declarations.MethodInfo>();
         // Methods declared directly on this class
-        for (var m : indexClass.methods()) {
+        for (var m : indexClass().methods()) {
             if (!m.isConstructor() && !m.isStaticInitializer()) {
                 result.add(new VaubanMethodInfo(m, this, lookup));
             }
         }
         // Methods from superinterfaces (always included, even if overridden,
         // because BCE extensions may filter on declaringClass().isInterface())
-        for (var ifaceName : indexClass.interfaces()) {
+        for (var ifaceName : indexClass().interfaces()) {
             var ifaceClassOpt = lookup.getClass(ifaceName);
             if (ifaceClassOpt.isPresent()) {
                 var ifaceClass = ifaceClassOpt.get();
@@ -199,7 +247,7 @@ public final class VaubanClassInfo implements jakarta.enterprise.lang.model.decl
 
     @Override
     public Collection<jakarta.enterprise.lang.model.declarations.FieldInfo> fields() {
-        return indexClass.fields().stream()
+        return indexClass().fields().stream()
                 .map(f -> (jakarta.enterprise.lang.model.declarations.FieldInfo) new VaubanFieldInfo(f, this, lookup))
                 .toList();
     }
@@ -213,7 +261,7 @@ public final class VaubanClassInfo implements jakarta.enterprise.lang.model.decl
 
     @Override
     public boolean hasAnnotation(Class<? extends Annotation> annotationType) {
-        return indexClass.hasAnnotation(DotName.of(annotationType.getName()));
+        return indexClass().hasAnnotation(DotName.of(annotationType.getName()));
     }
 
     @Override
@@ -223,7 +271,7 @@ public final class VaubanClassInfo implements jakarta.enterprise.lang.model.decl
 
     @Override
     public <T extends Annotation> AnnotationInfo annotation(Class<T> annotationType) {
-        return indexClass.annotation(DotName.of(annotationType.getName()))
+        return indexClass().annotation(DotName.of(annotationType.getName()))
                 .map(a -> (AnnotationInfo) new VaubanAnnotationInfo(a, lookup))
                 .orElse(null);
     }
@@ -241,7 +289,7 @@ public final class VaubanClassInfo implements jakarta.enterprise.lang.model.decl
 
     @Override
     public Collection<AnnotationInfo> annotations() {
-        return indexClass.annotations().stream()
+        return indexClass().annotations().stream()
                 .map(a -> (AnnotationInfo) new VaubanAnnotationInfo(a, lookup))
                 .toList();
     }

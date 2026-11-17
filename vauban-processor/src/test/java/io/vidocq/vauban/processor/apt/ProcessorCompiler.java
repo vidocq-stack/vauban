@@ -96,7 +96,8 @@ public final class ProcessorCompiler {
         }
     }
 
-    private static String classPath() {
+    /** The class path of every compilation: the test's, with the CDI API and Vauban's processor. */
+    static String classPath() {
         var paths = new LinkedHashSet<String>();
         var classPath = System.getProperty("java.class.path");
         if (classPath != null && !classPath.isBlank()) {

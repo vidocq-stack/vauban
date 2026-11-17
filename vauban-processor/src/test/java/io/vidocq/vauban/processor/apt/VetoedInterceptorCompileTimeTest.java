@@ -172,6 +172,12 @@ class VetoedInterceptorCompileTimeTest {
     private static final String WATCHED_HELLO = "Watcher(vi.WatchedService: hello)";
     /** Why the repros of the bean metadata of CDI 4.1, 5.5.8, are disabled. */
     private static final String NO_BEAN_METADATA = "BUG-20261117-47: the container provides no bean metadata bean";
+    /** Mansart's repository interface, above two interfaces no annotation brings into the index (BUG-20261117-31). */
+    private static final String ARCHIVE = "Archive";
+    private static final String PLAIN = "Plain";
+    /** A class with a lambda and a bridge method, outside the index, and a bean of the same shape (BUG-20261117-43). */
+    private static final String TELLER = "Teller";
+    private static final String COUNTER = "Counter";
 
     @TempDir
     Path workDir;
@@ -2067,6 +2073,65 @@ class VetoedInterceptorCompileTimeTest {
     }
 
     /**
+     * Records, in {@code @Synthesis}, the declarations Mansart walks from a repository interface: from
+     * {@code vi.types.Archive}, its superinterface {@code Crud} and Crud's {@code Basic}, which no annotation brings
+     * into the index; a class of the JDK; and the declarations {@code superInterfacesDeclarations()} and
+     * {@code superClassDeclaration()} reach (BUG-20261117-31).
+     */
+    public static class OutsideRecorder implements BuildCompatibleExtension {
+
+        static final List<String> SEEN = new CopyOnWriteArrayList<>();
+
+        @Discovery
+        public void discovery(ScannedClasses classes) {
+            classes.add(TYPES + ARCHIVE);
+        }
+
+        @Synthesis
+        public void outside(Types types) {
+            var archive = types.ofClass(TYPES + ARCHIVE).declaration();
+            SEEN.add("Archive superInterfacesDeclarations " + names(archive.superInterfacesDeclarations()));
+            for (var crudType : archive.superInterfaces()) {
+                var crud = crudType.asParameterizedType().genericClass().declaration();
+                SEEN.add(declared(crud));
+                SEEN.add("Crud superInterfacesDeclarations " + names(crud.superInterfacesDeclarations()));
+                for (var basicType : crud.superInterfaces()) {
+                    SEEN.add(declared(basicType.asParameterizedType().genericClass().declaration()));
+                }
+            }
+            SEEN.add(declared(types.ofClass(Supplier.class.getName()).declaration()));
+            var object = types.ofClass(TYPES + PLAIN).declaration().superClassDeclaration();
+            SEEN.add("Plain superClassDeclaration " + (object == null ? null : object.name()));
+        }
+
+        private static String declared(ClassInfo type) {
+            return SupertypeRecorder.supertypesOf(type) + "; typeParameters=" + type.typeParameters()
+                    + (type.isInterface() ? "; interface" : "; class");
+        }
+
+        private static List<String> names(List<ClassInfo> declarations) {
+            return declarations.stream().map(ClassInfo::name).toList();
+        }
+    }
+
+    /**
+     * Records, in {@code @Synthesis}, the modifiers of {@code vi.types.Plain} and of its nested class {@code Inner} as
+     * {@code java.lang.reflect.Modifier} reads them (BUG-20261117-37).
+     */
+    public static class ModifierRecorder implements BuildCompatibleExtension {
+
+        static final List<String> SEEN = new CopyOnWriteArrayList<>();
+
+        @Synthesis
+        public void modifiers(Types types) {
+            for (var name : List.of(TYPES + PLAIN, TYPES + PLAIN + "$Inner")) {
+                var modifiers = types.ofClass(name).declaration().modifiers();
+                SEEN.add(name + ": " + java.lang.reflect.Modifier.toString(modifiers));
+            }
+        }
+    }
+
+    /**
      * An extension sees {@code ?} as {@code ? extends Object}, as the language model asks: "{@code ?} is equivalent to
      * {@code ? extends Object} and is represented as such. Therefore, either {@code upperBound()} or
      * {@code lowerBound()} always returns non-{@code null}." The same in the processor, at start and frozen, whether
@@ -2251,6 +2316,120 @@ class VetoedInterceptorCompileTimeTest {
                 .scanClasspath().build()) {
             assertEquals(frozen, container.extensionsAtStart().frozen(), container.extensionsAtStart().note());
             return hello(container, loader.loadClass(beanClass));
+        }
+    }
+
+    /**
+     * An extension sees the declaration of a class outside the index as the index would have described it, in the
+     * processor, at start and frozen: Mansart's {@code CrudRepository} and {@code BasicRepository}, with their type
+     * parameters and generic superinterfaces, a class of the JDK, and the declarations above a class. At start and
+     * frozen, every one was an empty stub; in the processor, the classes the compilation compiles were described, the
+     * JDK's were stubs and the declarations above a class stopped at the index (BUG-20261117-31). The beans and their
+     * types do not change, and the start takes the frozen record.
+     */
+    @Test
+    @DisplayName("an extension sees a class outside the index described, in the processor, at start and frozen")
+    void anExtensionSeesAClassOutsideTheIndexDescribedInTheProcessorAtStartAndFrozen() throws Exception {
+        var sources = withAVetoedPackage();
+        putType(sources, "Basic", """
+                public interface Basic<T, K> {
+                }""");
+        putType(sources, "Crud", """
+                public interface Crud<T, K> extends Basic<T, K> {
+                }""");
+        putType(sources, "Note", """
+                public class Note {
+                }""");
+        putType(sources, ARCHIVE, """
+                public interface Archive extends Crud<Note, Long> {
+                }""");
+        putType(sources, "Archivist", DEPENDENT + """
+                public class Archivist implements Archive {
+                }""");
+        putType(sources, PLAIN, DEPENDENT + """
+                public class Plain {
+                }""");
+        var parameters = "; typeParameters=[T extends java.lang.Object, K extends java.lang.Object]; interface";
+        var expected = sorted(List.of("Archive superInterfacesDeclarations [vi.types.Crud]",
+                TYPES + "Crud: " + NO_SUPERCLASS + "; superInterfaces=[PARAMETERIZED_TYPE vi.types.Basic<T, K> of"
+                        + " TYPE_VARIABLE, TYPE_VARIABLE]" + parameters,
+                "Crud superInterfacesDeclarations [vi.types.Basic]",
+                TYPES + "Basic: " + NO_SUPERCLASS + "; " + NO_SUPERINTERFACE + parameters,
+                "java.util.function.Supplier: " + NO_SUPERCLASS + "; " + NO_SUPERINTERFACE
+                        + "; typeParameters=[T extends java.lang.Object]; interface",
+                "Plain superClassDeclaration java.lang.Object"));
+        var beans = new ContainerTypes();
+
+        var seen = seenThreeWays(sources, OutsideRecorder.class, OutsideRecorder.SEEN, beans);
+
+        assertAll(() -> seen.assertEachIs(expected), () -> beans.assertEachIs(List.of("vi.types.Archivist:"
+                + " java.lang.Object, vi.types.Archive, vi.types.Archivist, vi.types.Basic<vi.types.Note,"
+                + " java.lang.Long>, vi.types.Crud<vi.types.Note, java.lang.Long>",
+                "vi.types.Plain: java.lang.Object, vi.types.Plain")));
+    }
+
+    /**
+     * {@code ClassInfo.modifiers()} reads as {@code java.lang.reflect.Modifier} reads a class's modifiers, the same in
+     * the processor, at start and frozen. At start and frozen, it gives the flags of the class file: {@code ACC_SUPER}
+     * reads as {@code synchronized}, and a nested class lacks the {@code static} its {@code InnerClasses} entry carries
+     * (BUG-20261117-37).
+     */
+    @Test
+    @Disabled("BUG-20261117-37: at start, ClassInfo.modifiers() gives the class file's flags")
+    @DisplayName("an extension sees a class's modifiers the same in the processor, at start and frozen")
+    void anExtensionSeesTheModifiersOfAClassInTheProcessorAtStartAndFrozen() throws Exception {
+        var sources = withAVetoedPackage();
+        putType(sources, PLAIN, DEPENDENT + """
+                public class Plain {
+                    public static class Inner {
+                    }
+                }""");
+
+        var seen = seenThreeWays(sources, ModifierRecorder.class, ModifierRecorder.SEEN);
+
+        seen.assertEachIs(sorted(List.of(TYPES + "Plain: public", TYPES + "Plain$Inner: public static")));
+    }
+
+    /**
+     * The methods an extension sees of a class with a lambda and a bridge method, the same in the processor, at start
+     * and frozen: a class outside the index, and a bean. The compiler shows the methods the source declares; at start
+     * and frozen, the class file adds the bridge {@code get()} returning {@code Object} and the lambda's
+     * {@code lambda$get$0} (BUG-20261117-43).
+     */
+    @Test
+    @Disabled("BUG-20261117-43: at start and frozen, the language model shows the synthetic methods of a class file")
+    @DisplayName("an extension sees the same methods of a class with a lambda and a bridge, in the processor, at"
+            + " start and frozen")
+    void anExtensionSeesNoSyntheticMethodInTheProcessorAtStartAndFrozen() throws Exception {
+        var sources = withAVetoedPackage();
+        var body = """
+                implements java.util.function.Supplier<String> {
+                    @Override
+                    public String get() {
+                        Runnable noop = () -> { };
+                        noop.run();
+                        return "told";
+                    }
+                }""";
+        putType(sources, TELLER, "public class Teller " + body);
+        putType(sources, COUNTER, DEPENDENT + "public class Counter " + body);
+
+        var seen = seenThreeWays(sources, MethodRecorder.class, MethodRecorder.SEEN);
+
+        seen.assertEachIs(sorted(List.of(TYPES + COUNTER + " methods [get]", TYPES + TELLER + " methods [get]")));
+    }
+
+    /** Records, in {@code @Synthesis}, the names of the methods of {@code Teller} and of the bean {@code Counter}. */
+    public static class MethodRecorder implements BuildCompatibleExtension {
+
+        static final List<String> SEEN = new CopyOnWriteArrayList<>();
+
+        @Synthesis
+        public void methods(Types types) {
+            for (var name : List.of(TYPES + TELLER, TYPES + COUNTER)) {
+                SEEN.add(name + " methods " + types.ofClass(name).declaration().methods().stream()
+                        .map(jakarta.enterprise.lang.model.declarations.MethodInfo::name).sorted().toList());
+            }
         }
     }
 
