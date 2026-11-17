@@ -19,7 +19,17 @@
  */
 package io.vidocq.vauban.core.extensions;
 
+import io.vidocq.vauban.core.annotation.AnnotationTypes;
+import io.vidocq.vauban.core.annotation.AnnotationValues;
 import io.vidocq.vauban.core.bean.model.BeanDescriptor;
+import io.vidocq.vauban.core.bean.model.InjectionPointInfo;
+import io.vidocq.vauban.core.bean.model.QualifierInstance;
+import io.vidocq.vauban.core.bean.resolution.BeanResolver;
+import io.vidocq.vauban.core.bean.resolution.QualifierMatcher;
+import io.vidocq.vauban.core.types.AssignabilityRules;
+import io.vidocq.vauban.core.types.TypeInfoUtils;
+import io.vidocq.vauban.indexer.VaubanIndex;
+import io.vidocq.vauban.indexer.model.DotName;
 import jakarta.enterprise.inject.build.compatible.spi.BeanInfo;
 import jakarta.enterprise.inject.build.compatible.spi.ClassConfig;
 import jakarta.enterprise.inject.build.compatible.spi.Enhancement;
@@ -32,6 +42,9 @@ import jakarta.enterprise.inject.build.compatible.spi.ObserverInfo;
 import jakarta.enterprise.inject.build.compatible.spi.Registration;
 
 import java.lang.reflect.Method;
+import java.lang.reflect.Parameter;
+import java.lang.reflect.TypeVariable;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 
@@ -119,50 +132,83 @@ final class ExtensionMethodValidator {
         }
     }
 
-    static void validateInvokerLookups(VaubanInvokerFactory factory,
+    /**
+     * The argument lookups of the invokers {@code factories} built: each must identify one bean among
+     * {@code allBeans}, every bean of the deployment (CDI 4.1, "Configuring lookups": an unsatisfied lookup, or an
+     * ambiguous one that is not resolvable, is a deployment problem). The extensions run at build and at start alike,
+     * so both refuse what the call would. The qualifiers are those the container knows: the annotations
+     * {@code @Qualifier} declares and those {@code qualifiers} lists, compared without their non-binding members.
+     */
+    static void validateInvokerLookups(List<VaubanInvokerFactory> factories,
                                        List<BeanDescriptor> allBeans,
+                                       VaubanIndex index,
                                        ClassLoader classLoader,
+                                       BceProcessor.RegisteredQualifiers qualifiers,
                                        List<String> errors) {
-        for (var builder : factory.getBuilders()) {
-            var reflectMethod = builder.getMethod();
-            for (int idx : builder.getArgumentLookups()) {
-                validateArgumentLookup(reflectMethod, idx, allBeans, classLoader, errors);
-            }
-        }
-    }
-
-    /** The argument {@code idx} of an invoker looked up as a bean: exactly one bean must match its type. */
-    private static void validateArgumentLookup(Method reflectMethod, int idx, List<BeanDescriptor> allBeans,
-                                               ClassLoader classLoader, List<String> errors) {
-        var paramType = reflectMethod.getParameterTypes()[idx];
-        if (SPECIAL_LOOKUP_TYPES.stream().anyMatch(t -> t.isAssignableFrom(paramType))) {
+        var builders = factories.stream().flatMap(factory -> factory.getBuilders().stream())
+                .filter(builder -> !builder.getArgumentLookups().isEmpty())
+                .toList();
+        if (builders.isEmpty()) {
             return;
         }
-        int matchCount = countBeansOfType(paramType, allBeans, classLoader);
-        if (matchCount == 0) {
-            errors.add("Invoker argument lookup unsatisfied: no bean found for parameter type "
-                    + paramType.getName() + " at position " + idx
-                    + " of method " + reflectMethod.getDeclaringClass().getName() + "." + reflectMethod.getName());
-        } else if (matchCount > 1) {
-            errors.add("Invoker argument lookup ambiguous: " + matchCount + " beans found for parameter type "
-                    + paramType.getName() + " at position " + idx
-                    + " of method " + reflectMethod.getDeclaringClass().getName() + "." + reflectMethod.getName());
+        var resolver = new BeanResolver(allBeans, List.of(), new AssignabilityRules(index, classLoader),
+                new QualifierMatcher(new AnnotationTypes(index, List.of(classLoader), qualifiers.nonbindingMembers())));
+        for (var builder : builders) {
+            var reflectMethod = builder.getMethod();
+            for (int idx : builder.getArgumentLookups()) {
+                validateArgumentLookup(reflectMethod, idx, resolver, qualifiers, errors);
+            }
         }
     }
 
-    /** How many beans have a class assignable to {@code type}; a class the loader cannot find counts for none. */
-    private static int countBeansOfType(Class<?> type, List<BeanDescriptor> allBeans, ClassLoader classLoader) {
-        int matchCount = 0;
-        for (var bean : allBeans) {
-            try {
-                var beanClass = classLoader.loadClass(bean.beanClass().value());
-                if (type.isAssignableFrom(beanClass)) {
-                    matchCount++;
-                }
-            } catch (ClassNotFoundException _) {
-                // Not visible through this loader: it matches no lookup.
+    /**
+     * The argument {@code idx} of an invoker, looked up as the call looks it up ({@code VaubanInvoker}), by the rules
+     * of an injection point: the declared type of the parameter, {@code Holder<String>}, and its qualifiers,
+     * {@code @Default} when it has none. It counted the beans whose class is assignable to the erased class of the
+     * parameter, with no qualifier, producers left out (BUG-20261117-27).
+     *
+     * <p>A parameter of a type variable, {@code T}, is refused: the required type is the declared type of the
+     * parameter, and a type variable is no legal one (CDI 4.1, 5.2.2). The count looked its erasure up, the bound.
+     */
+    private static void validateArgumentLookup(Method reflectMethod, int idx, BeanResolver resolver,
+                                               BceProcessor.RegisteredQualifiers qualifiers, List<String> errors) {
+        var parameter = reflectMethod.getParameters()[idx];
+        var where = parameter.getParameterizedType().getTypeName() + " at position " + idx
+                + " of method " + reflectMethod.getDeclaringClass().getName() + "." + reflectMethod.getName();
+        if (parameter.getParameterizedType() instanceof TypeVariable<?>) {
+            errors.add("Invoker argument lookup of a type variable: parameter type " + where
+                    + "; a type variable is not a legal required type");
+            return;
+        }
+        if (SPECIAL_LOOKUP_TYPES.stream().anyMatch(t -> t.isAssignableFrom(parameter.getType()))) {
+            return;
+        }
+        var lookup = new InjectionPointInfo(TypeInfoUtils.fromReflectType(parameter.getParameterizedType()),
+                qualifiersOf(parameter, qualifiers), InjectionPointInfo.InjectionKind.METHOD_PARAMETER,
+                "invoker argument " + idx);
+        var result = resolver.resolveInjectionPoint(lookup);
+        if (result.status() == BeanResolver.ResolutionResult.Status.UNSATISFIED) {
+            errors.add("Invoker argument lookup unsatisfied: no bean found for parameter type " + where);
+        } else if (result.status() == BeanResolver.ResolutionResult.Status.AMBIGUOUS) {
+            errors.add("Invoker argument lookup ambiguous: " + result.beans().size()
+                    + " beans found for parameter type " + where);
+        }
+    }
+
+    /**
+     * The qualifiers of {@code parameter}, or {@code @Default} when it has none, as an injection point has them: the
+     * annotations {@code @Qualifier} declares, and those an extension registered.
+     */
+    private static Set<QualifierInstance> qualifiersOf(Parameter parameter,
+                                                       BceProcessor.RegisteredQualifiers registered) {
+        var qualifiers = new HashSet<QualifierInstance>();
+        for (var annotation : parameter.getAnnotations()) {
+            var type = annotation.annotationType();
+            if (type.isAnnotationPresent(jakarta.inject.Qualifier.class)
+                    || registered.types().contains(DotName.of(type.getName()))) {
+                qualifiers.add(QualifierInstance.from(AnnotationValues.infoOf(annotation)));
             }
         }
-        return matchCount;
+        return qualifiers.isEmpty() ? Set.of(QualifierInstance.DEFAULT) : qualifiers;
     }
 }

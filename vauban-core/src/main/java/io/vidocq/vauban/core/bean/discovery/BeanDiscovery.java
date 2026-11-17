@@ -113,6 +113,11 @@ public final class BeanDiscovery {
         this.customQualifiers = qualifiers;
     }
 
+    /** The qualifiers extensions registered ({@code MetaAnnotations.addQualifier}). */
+    public Set<DotName> getCustomQualifiers() {
+        return customQualifiers;
+    }
+
     public void setCustomInterceptorBindings(Set<DotName> bindings) {
         this.customInterceptorBindings = bindings;
     }

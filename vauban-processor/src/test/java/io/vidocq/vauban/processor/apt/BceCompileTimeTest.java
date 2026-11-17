@@ -24,6 +24,7 @@ import io.vidocq.vauban.processor.VaubanProcessor;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.enterprise.context.RequestScoped;
 import jakarta.enterprise.inject.build.compatible.spi.*;
+import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -1145,6 +1146,103 @@ class BceCompileTimeTest {
         }
         assertEquals(List.of("@Channel(alpha) got to-alpha"), List.copyOf(ShapeObserver.OBSERVED),
                 "the observer qualified @Channel(\"alpha\") receives that event and no other");
+    }
+
+    /**
+     * Registers {@link io.vidocq.vauban.processor.apt.testfixtures.Registered} as a qualifier whose {@code value} is
+     * non-binding, adds the library classes {@code Gear} and {@code GearUser} to the deployment, and builds an invoker
+     * of each {@code useGear} method that looks its argument up.
+     */
+    public static class RegisteredQualifierLookupBce implements BuildCompatibleExtension {
+        static final List<String> BUILT = new java.util.concurrent.CopyOnWriteArrayList<>();
+
+        @Discovery
+        public void discover(MetaAnnotations meta, ScannedClasses classes) {
+            meta.addQualifier(io.vidocq.vauban.processor.apt.testfixtures.Registered.class).methods()
+                    .forEach(member -> member.addAnnotation(jakarta.enterprise.util.Nonbinding.class));
+            classes.add(io.vidocq.vauban.processor.apt.testfixtures.Gear.class.getName());
+            classes.add(io.vidocq.vauban.processor.apt.testfixtures.GearUser.class.getName());
+        }
+
+        @Registration(types = Object.class)
+        public void register(BeanInfo bean, InvokerFactory invokers) {
+            for (var method : bean.declaringClass().methods()) {
+                if (method.name().equals("useGear")) {
+                    invokers.createInvoker(bean, method).withArgumentLookup(0).build();
+                    BUILT.add(bean.declaringClass().simpleName() + "." + method.name());
+                }
+            }
+        }
+    }
+
+    /**
+     * The build checks an invoker's argument lookup with the qualifiers the extensions register, and the members they
+     * make non-binding, as the start does: {@code @Registered("lookup") Gear} is the bean of
+     * {@code @Registered("bean") Gear} (BUG-20261117-27). The beans are library classes: the build loads the class an
+     * invoker targets, and a class it compiles is not loadable yet (BUG-20261117-48).
+     */
+    @Test
+    @DisplayName("the build accepts an invoker lookup of a qualifier an extension registers (BUG-20261117-27)")
+    void anInvokerLookupOfARegisteredQualifierPassesTheBuild() throws Exception {
+        RegisteredQualifierLookupBce.BUILT.clear();
+        var fixtures = Path.of(io.vidocq.vauban.processor.apt.testfixtures.Registered.class
+                .getProtectionDomain().getCodeSource().getLocation().toURI());
+        var result = compileWithBce(List.of(RegisteredQualifierLookupBce.class), List.of(fixtures), """
+                package app;
+
+                import jakarta.enterprise.context.Dependent;
+
+                @Dependent
+                public class Application {
+                }
+                """);
+
+        assertTrue(result.success(), "the build refused the lookup: " + result.messages());
+        var built = List.copyOf(RegisteredQualifierLookupBce.BUILT);
+        assertEquals(List.of("GearUser.useGear"), built, "the invoker the build checked");
+    }
+
+    /** Builds an invoker of each {@code work} method, as CDI 4.1 lets an extension do for any managed bean. */
+    public static class SameBuildInvokerBce implements BuildCompatibleExtension {
+        static final List<String> BUILT = new java.util.concurrent.CopyOnWriteArrayList<>();
+
+        @Registration(types = Object.class)
+        public void register(BeanInfo bean, InvokerFactory invokers) {
+            for (var method : bean.declaringClass().methods()) {
+                if (method.name().equals("work")) {
+                    invokers.createInvoker(bean, method).build();
+                    BUILT.add(bean.declaringClass().simpleName() + "." + method.name());
+                }
+            }
+        }
+    }
+
+    /**
+     * An extension builds an invoker of a method of a bean the build compiles (CDI 4.1, "Building an invoker"). The
+     * build loads the bean class to find the method, which a class it compiles has no class file for yet, and fails
+     * the compilation: {@code Cannot load bean class: app.Worker} (BUG-20261117-48).
+     */
+    @Test
+    @Disabled("BUG-20261117-48")
+    @DisplayName("an extension builds an invoker of a bean the build compiles (BUG-20261117-48)")
+    void anExtensionBuildsAnInvokerForABeanTheBuildCompiles() throws Exception {
+        SameBuildInvokerBce.BUILT.clear();
+        var result = compileWithBce(List.of(SameBuildInvokerBce.class), """
+                package app;
+
+                import jakarta.enterprise.context.Dependent;
+
+                @Dependent
+                public class Worker {
+                    public String work() {
+                        return "work";
+                    }
+                }
+                """);
+
+        assertTrue(result.success(), "the build refused the invoker: " + result.messages());
+        var built = List.copyOf(SameBuildInvokerBce.BUILT);
+        assertEquals(List.of("Worker.work"), built, "the invoker the extension built");
     }
 
     /**

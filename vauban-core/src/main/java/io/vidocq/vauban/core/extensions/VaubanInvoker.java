@@ -20,16 +20,20 @@
 package io.vidocq.vauban.core.extensions;
 
 import jakarta.enterprise.context.Dependent;
+import jakarta.enterprise.context.spi.CreationalContext;
 import jakarta.enterprise.inject.build.compatible.spi.InvokerInfo;
 import jakarta.enterprise.inject.spi.BeanManager;
 import jakarta.enterprise.inject.spi.CDI;
 import jakarta.enterprise.invoke.Invoker;
 import io.vidocq.vauban.core.container.InstanceImpl;
+import io.vidocq.vauban.core.container.VaubanInjectionPoint;
 
+import java.lang.annotation.Annotation;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 
@@ -108,7 +112,7 @@ public final class VaubanInvoker implements Invoker<Object, Object>, InvokerInfo
 
         try {
             var target = instanceLookup ? lookupBean(cdi, beanClass, cleanups) : instance;
-            var callArguments = trimToParameterCount(lookupArguments(cdi, arguments, cleanups));
+            var callArguments = trimToParameterCount(lookupArguments(cdi.getBeanManager(), arguments, cleanups));
 
             if (!isStatic && target == null) {
                 throw new RuntimeException("Cannot invoke instance method " + method.getName()
@@ -133,37 +137,67 @@ public final class VaubanInvoker implements Invoker<Object, Object>, InvokerInfo
         return value;
     }
 
-    /** A copy of {@code arguments} with the looked-up positions filled, or {@code arguments} when none is. */
-    private Object[] lookupArguments(CDI<Object> cdi, Object[] arguments, List<Runnable> cleanups) {
+    /**
+     * A copy of {@code arguments} with the looked-up positions filled, or {@code arguments} when none is. The
+     * {@code @Dependent} instances they created are destroyed once the call is over.
+     */
+    private Object[] lookupArguments(BeanManager beanManager, Object[] arguments, List<Runnable> cleanups) {
         if (argumentLookups.isEmpty() || arguments == null) {
             return arguments;
         }
-        var paramTypes = method.getParameterTypes();
-        var genParamTypes = method.getGenericParameterTypes();
         var lookedUp = arguments.clone();
-        for (int idx : argumentLookups) {
-            lookedUp[idx] = lookupArgument(cdi, paramTypes[idx], genParamTypes[idx], cleanups);
+        for (int position : argumentLookups) {
+            lookedUp[position] = lookupArgument(beanManager, position, cleanups);
         }
         return lookedUp;
     }
 
-    /** The value of a looked-up argument: a built-in {@code Instance}, {@code Event} or {@code BeanManager}, or a bean. */
-    private Object lookupArgument(CDI<Object> cdi, Class<?> paramType, java.lang.reflect.Type genType,
-                                  List<Runnable> cleanups) {
-        if (jakarta.enterprise.inject.Instance.class.isAssignableFrom(paramType)) {
-            var resolved = resolveInstance(cdi, genType);
-            if (resolved instanceof InstanceImpl<?> instanceImpl) {
-                cleanups.add(instanceImpl::releaseAllDependents);
+    /**
+     * The value of the argument at {@code position}: a contextual reference for the bean typesafe resolution
+     * identifies, the required type the declared type of the parameter and the required qualifiers all the qualifiers
+     * on it (CDI 4.1, "Configuring lookups"), as for an injection point, a built-in {@code Instance}, {@code Event}
+     * or {@code BeanManager} among them. It resolved the erased class of the parameter with {@code @Default}: a
+     * {@code Holder<String>} parameter found no bean of {@code Holder<String>} (BUG-20261117-27).
+     */
+    private Object lookupArgument(BeanManager beanManager, int position, List<Runnable> cleanups) {
+        var parameter = method.getParameters()[position];
+        var qualifiers = new HashSet<Annotation>();
+        for (var annotation : parameter.getAnnotations()) {
+            if (beanManager.isQualifier(annotation.annotationType())) {
+                qualifiers.add(annotation);
             }
-            return resolved;
         }
-        if (jakarta.enterprise.event.Event.class.isAssignableFrom(paramType)) {
-            return resolveEvent(cdi, genType);
+        var injectionPoint = new VaubanInjectionPoint(parameter, position, method, parameter.getParameterizedType(),
+                qualifiers, null);
+        var value = beanManager.getInjectableReference(injectionPoint,
+                contextOf(beanManager, injectionPoint, cleanups));
+        if (value instanceof InstanceImpl<?> instanceImpl) {
+            cleanups.add(instanceImpl::releaseAllDependents);
         }
-        if (BeanManager.class.isAssignableFrom(paramType)) {
-            return cdi.getBeanManager();
+        return value;
+    }
+
+    /**
+     * A creational context of its own for the bean {@code injectionPoint} resolves to, as an injection gives each
+     * instance: two intercepted {@code @Dependent} arguments have an interceptor instance each (Jakarta Interceptors
+     * 2.1, 2.2), where one context for the whole call cached one for both (fix round 2 of BUG-20261117-27). The
+     * context of a {@code @Dependent} bean is released once the call is over, which destroys the {@code @Dependent}
+     * instances created for the lookups (CDI 4.1, "Configuring lookups"); that of any other bean is left alone, so a
+     * {@code @Singleton} the lookup creates keeps its {@code @Dependent} objects (fix round 1). No bean:
+     * {@code getInjectableReference} throws the lookup's exception; an ambiguous one throws here, the same.
+     *
+     * <p>The bean is resolved here and again in {@code getInjectableReference}, which takes no bean: it gives the
+     * built-in beans and the {@code InjectionPoint} metadata as an injection does.
+     */
+    private static CreationalContext<?> contextOf(BeanManager beanManager, VaubanInjectionPoint injectionPoint,
+                                                  List<Runnable> cleanups) {
+        var bean = beanManager.resolve(beanManager.getBeans(injectionPoint.getType(),
+                injectionPoint.getQualifiers().toArray(Annotation[]::new)));
+        var context = beanManager.createCreationalContext(bean);
+        if (bean == null || bean.getScope() == Dependent.class) {
+            cleanups.add(context::release);
         }
-        return lookupBean(cdi, paramType, cleanups);
+        return context;
     }
 
     /** {@code arguments} without the trailing values the method has no parameter for. */
@@ -220,26 +254,5 @@ public final class VaubanInvoker implements Invoker<Object, Object>, InvokerInfo
                 // intentionally empty
             }
         }
-    }
-
-    private Object resolveInstance(CDI<Object> cdi, java.lang.reflect.Type genType) {
-        if (genType instanceof java.lang.reflect.ParameterizedType pt) {
-            var actualType = pt.getActualTypeArguments()[0];
-            if (actualType instanceof Class<?> cls) {
-                return cdi.select(cls);
-            }
-        }
-        return cdi.select(Object.class);
-    }
-
-    private Object resolveEvent(CDI<Object> cdi, java.lang.reflect.Type genType) {
-        var bm = cdi.getBeanManager();
-        if (genType instanceof java.lang.reflect.ParameterizedType pt
-                && pt.getActualTypeArguments().length > 0) {
-            var eventTypeArg = pt.getActualTypeArguments()[0];
-            var dispatcher = ((io.vidocq.vauban.core.container.VaubanBeanManager) bm).getEventDispatcher();
-            return new io.vidocq.vauban.core.event.EventImpl<>(dispatcher, new java.lang.annotation.Annotation[0], null, eventTypeArg);
-        }
-        return bm.getEvent();
     }
 }

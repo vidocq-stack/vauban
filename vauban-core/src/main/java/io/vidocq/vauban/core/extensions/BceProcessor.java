@@ -194,7 +194,7 @@ public final class BceProcessor {
                                  Map<Class<?>, Object> bceInstances,
                                  List<Class<?>> allArchiveClasses) {
         return process(bceClasses, beans, List.of(), List.of(), index, classLoader, bceInstances, allArchiveClasses,
-                _ -> null);
+                _ -> null, RegisteredQualifiers.NONE);
     }
 
     /**
@@ -205,6 +205,8 @@ public final class BceProcessor {
      * @param managedBean the managed bean a class of the index would be, or {@code null} when it
      *                    cannot be one; it makes a bean of a class an {@code @Enhancement} gave a scope
      *                    (see {@link #beansAfterEnhancement})
+     * @param qualifiers  the qualifiers the extensions registered, which the check of the invokers' lookups
+     *                    applies as the container does
      */
     @SuppressWarnings("java:S107") // CDI BCE processing requires multiple contextual parameters
     public static Result process(List<Class<?>> bceClasses,
@@ -215,7 +217,8 @@ public final class BceProcessor {
                                  ClassLoader classLoader,
                                  Map<Class<?>, Object> bceInstances,
                                  List<Class<?>> allArchiveClasses,
-                                 java.util.function.Function<DotName, BeanDescriptor> managedBean) {
+                                 java.util.function.Function<DotName, BeanDescriptor> managedBean,
+                                 RegisteredQualifiers qualifiers) {
         var lookup = new IndexLookup(index);
         var definitionErrors = new ArrayList<String>();
         var deploymentErrors = new ArrayList<String>();
@@ -253,9 +256,10 @@ public final class BceProcessor {
         // Phase: @Registration — on the beans as Enhancement left them, the classes it made beans included
         // (BUG-20261008-03)
         var enhancedBeans = beansAfterEnhancement(beans, allEnhancementMods, managedBean);
+        var invokers = new ArrayList<VaubanInvokerFactory>();
         runPhase(extensions, deploymentErrors, deploymentErrorCauses, (bceClass, bce) ->
                 processRegistration(bce, bceClass, enhancedBeans, observers, interceptors, lookup, classLoader, types,
-                        deploymentErrors, archiveTypes));
+                        deploymentErrors, archiveTypes, invokers));
 
         // Phase: @Synthesis
         runPhase(extensions, deploymentErrors, deploymentErrorCauses, (bceClass, bce) -> {
@@ -265,6 +269,11 @@ public final class BceProcessor {
             allSyntheticBeans.addAll(synthesisResult.beans());
             allSyntheticObservers.addAll(synthesisResult.observers());
         });
+
+        // The looked-up beans of the invokers built, identified among every bean, the synthetic ones included: they
+        // were checked in @Registration, before @Synthesis added any (BUG-20261117-39)
+        ExtensionMethodValidator.validateInvokerLookups(invokers, withSyntheticBeans(enhancedBeans, allSyntheticBeans),
+                lookup.index(), classLoader, qualifiers, deploymentErrors);
 
         // Phase: @Validation
         runPhase(extensions, deploymentErrors, deploymentErrorCauses, (bceClass, bce) ->
@@ -642,7 +651,8 @@ public final class BceProcessor {
                                             IndexLookup lookup, ClassLoader classLoader,
                                             VaubanTypes types,
                                             List<String> errors,
-                                            List<Class<?>> allArchiveClasses) {
+                                            List<Class<?>> allArchiveClasses,
+                                            List<VaubanInvokerFactory> invokers) {
         for (var method : getDeclaredMethodsSafe(bceClass)) {
             var registration = method.getAnnotation(Registration.class);
             if (registration == null) continue;
@@ -662,7 +672,7 @@ public final class BceProcessor {
 
             for (var target : registrationTargets(method, registration.types(), beans, interceptors, lookup,
                     classLoader, allArchiveClasses)) {
-                invokeRegistrationMethod(method, bce, target, classLoader, types, errors, beans);
+                invokers.add(invokeRegistrationMethod(method, bce, target, classLoader, types, errors));
             }
         }
     }
@@ -767,10 +777,10 @@ public final class BceProcessor {
         }
     }
 
-    private static void invokeRegistrationMethod(Method method, Object bce,
-                                                   BeanInfo beanInfo, ClassLoader classLoader,
-                                                   VaubanTypes types, List<String> errors,
-                                                   List<BeanDescriptor> allBeans) {
+    /** Calls the {@code @Registration} {@code method} for {@code beanInfo}; returns the invokers it built. */
+    private static VaubanInvokerFactory invokeRegistrationMethod(Method method, Object bce,
+                                                                 BeanInfo beanInfo, ClassLoader classLoader,
+                                                                 VaubanTypes types, List<String> errors) {
         var invokerFactory = new VaubanInvokerFactory(classLoader);
         var messages = new VaubanMessages();
         var args = resolveRegistrationArgs(method, beanInfo, invokerFactory, messages, types);
@@ -792,8 +802,7 @@ public final class BceProcessor {
         if (messages.hasErrors()) {
             errors.addAll(messages.getErrors());
         }
-
-        ExtensionMethodValidator.validateInvokerLookups(invokerFactory, allBeans, classLoader, errors);
+        return invokerFactory;
     }
 
     private static Object[] resolveRegistrationArgs(Method method, BeanInfo beanInfo,
@@ -814,6 +823,20 @@ public final class BceProcessor {
             }
         }
         return args;
+    }
+
+    /**
+     * The qualifiers extensions registered with {@code MetaAnnotations.addQualifier}, and the members of qualifiers
+     * they made non-binding (annotation type name to member names), as the container applies them.
+     */
+    public record RegisteredQualifiers(Set<DotName> types, Map<String, Set<String>> nonbindingMembers) {
+        /** No qualifier registered, no member made non-binding. */
+        public static final RegisteredQualifiers NONE = new RegisteredQualifiers(Set.of(), Map.of());
+
+        public RegisteredQualifiers {
+            types = Set.copyOf(types);
+            nonbindingMembers = Map.copyOf(nonbindingMembers);
+        }
     }
 
     record SynthesisResult(
@@ -951,6 +974,16 @@ public final class BceProcessor {
     private static int getMethodPriority(Method m) {
         var p = m.getAnnotation(jakarta.annotation.Priority.class);
         return p != null ? p.value() : DEFAULT_PRIORITY;
+    }
+
+    /** {@code beans} followed by the descriptors of the synthetic beans {@code @Synthesis} added. */
+    private static List<BeanDescriptor> withSyntheticBeans(List<BeanDescriptor> beans,
+                                                           List<VaubanSyntheticBeanBuilder<?>> syntheticBeans) {
+        var all = new ArrayList<>(beans);
+        for (var syntheticBean : syntheticBeans) {
+            all.add(SyntheticBeanConverter.toBeanDescriptor(syntheticBean, all.size()));
+        }
+        return all;
     }
 
     /** Synthesis builder -> descriptor conversion — delegated to {@link SyntheticBeanConverter}. */

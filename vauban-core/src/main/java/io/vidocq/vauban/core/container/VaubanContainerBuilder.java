@@ -999,7 +999,9 @@ public final class VaubanContainerBuilder {
                         bceClassLoader,
                         discoveryResult.bceInstances(),
                         nonBceClasses,
-                        managedBeans(index, discovery));
+                        managedBeans(index, discovery),
+                        new BceProcessor.RegisteredQualifiers(discovery.getCustomQualifiers(),
+                                discovery.getCustomNonbindingMembers()));
                 failOnExtensionErrors(bceResult);
                 registerExtensionResults(bceResult, descriptors, observers, syntheticDisposers,
                         seenSyntheticSignatures, combinedEnhMods);

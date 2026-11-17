@@ -5,6 +5,105 @@ suspected cause, status. Updated on every investigation.
 
 ---
 
+## BUG-20261117-48 — The processor cannot build an invoker for a bean class compiled in the same build
+
+- **Date**: 2026-11-17
+- **Status**: OPEN
+- **Module**: `vauban-core` (`VaubanInvokerFactory.createInvoker`), run by `vauban-processor`
+- **Symptom**: an extension that builds, in `@Registration`, an invoker of a method of a bean the compilation
+  compiles, `@Dependent public class Worker { public String work() }`, fails the compilation with
+  `[Vauban BCE] Cannot load bean class: app.Worker`. CDI 4.1 lets an extension build an invoker of any method of an
+  enabled managed bean (TCK audit `building_invoker`, a): a valid extension on a valid application fails the build.
+- **Repro**: `BceCompileTimeTest#anExtensionBuildsAnInvokerForABeanTheBuildCompiles` in `vauban-processor`,
+  disabled; red when enabled, on 7c639ddf, fix round 2 of BUG-20261117-27 (`vauban-b27-red.log`, "Round 3: BUG-48
+  repro, run 2"; run 1 had no repro in it).
+- **Cause**: `createInvoker` loads the bean class with the processor's class loader to find the `Method`; under
+  javac a class of the compilation has no class file yet. So the build's check of invoker lookups
+  (BUG-20261117-27) only meets the classes of libraries.
+- **Fix idea**: build the invoker from the language model, by names, and resolve the `Method` at start, as
+  `SyntheticParamCodec.readInvoker` does already.
+- **Found by**: the review of fix round 2 of BUG-20261117-27, from its build-side test, whose beans are precompiled
+  for that reason.
+
+## BUG-20261117-45 — The start checks invoker lookups without the synthetic beans of frozen or compiled extensions
+
+- **Date**: 2026-11-17
+- **Status**: OPEN
+- **Module**: `vauban-core` (`VaubanContainerBuilder`, `BceProcessor.process`)
+- **Symptom** (by reading): at start, an extension that runs then builds an invoker whose argument lookup only a
+  synthetic bean of another extension satisfies, an extension frozen at build (`vidocq:generate`) or run by the
+  annotation processor of an archive: the start refuses the lookup as unsatisfied, though the call would find it.
+- **Repro**: none yet; it needs a deployment that freezes one extension and runs another at start.
+- **Cause**: `BceProcessor.process` checks the lookups among the beans discovered and the synthetic beans of the
+  extensions it ran (BUG-20261117-39). `VaubanContainerBuilder` registers the synthetic beans of the frozen
+  extensions (`registerSyntheticMetadata`) and of the archives processed at compile
+  (`loadSyntheticMetadataFromApt`) after it.
+- **Found by**: the review of BUG-20261117-27, checking the "every bean" of BUG-20261117-39.
+
+## BUG-20261117-44 — The start refuses an invoker's lookup of a built-in bean the call serves
+
+- **Date**: 2026-11-17
+- **Status**: OPEN
+- **Module**: `vauban-core` (`ExtensionMethodValidator.validateArgumentLookup`, `SPECIAL_LOOKUP_TYPES`)
+- **Symptom**: an extension builds an invoker of `boolean hasContainer(BeanContainer container)` with
+  `withArgumentLookup(0)`: the start fails with `Invoker argument lookup unsatisfied: no bean found for parameter
+  type jakarta.enterprise.inject.spi.BeanContainer at position 0`, though the call gives the `BeanContainer`. The
+  same, by reading, for `Provider<X>`, `RequestContextController` and `InjectionPoint`.
+- **Repro**: `VaubanInvokerLookupTest#theStartAcceptsALookupOfTheBeanContainer` in `vauban-core`, disabled; red when
+  enabled, on the main code of 35035df4 (`vauban-b27-red.log`, "Red run 4b") and with fix round 1 of
+  BUG-20261117-27 (`vauban-b27-dev.log`, "Dev run 6"); the review's probe saw it on 35035df4 too.
+- **Cause**: the check leaves to the container the built-in beans `SPECIAL_LOOKUP_TYPES` lists, `Instance`, `Event`
+  and `BeanManager`, and looks the others up among the deployment's beans, which do not hold the built-in ones. It
+  was so before BUG-20261117-27, which counted classes.
+- **Found by**: the review of BUG-20261117-27.
+
+## BUG-20261117-39 — The start checks an invoker's argument lookups before the synthetic beans exist
+
+- **Date**: 2026-11-17
+- **Status**: FIXED on `fix/invoker-argument-lookup`
+- **Module**: `vauban-core` (`BceProcessor.processRegistration`, `ExtensionMethodValidator.validateInvokerLookups`)
+- **Symptom**: an extension builds, in `@Registration`, an invoker of `String useGadget(Gadget gadget)` with
+  `withArgumentLookup(0)`, and adds, in `@Synthesis`, a synthetic bean of `Gadget`: the start, and the build, fail
+  with `Invoker argument lookup unsatisfied: no bean found for parameter type …Gadget at position 0 of method
+  …GadgetUser.useGadget`, though the call would find that bean.
+- **Repro**: `VaubanInvokerLookupTest#theStartAcceptsALookupASyntheticBeanSatisfies` in `vauban-core`. Red on the
+  main code of 131fb3e6, fix round 4 of BUG-20261117-16 (`vauban-b27-red.log`, "Red run 3").
+- **Why it goes with BUG-20261117-27**: the base refused a lookup only a synthetic bean satisfies, but it counted
+  the classes of the parameter's type, qualifiers left out, so a class bean of that type with a qualifier was
+  enough. BUG-20261117-27's check, run in `@Registration`, refuses what the base accepted: a managed
+  `@Fast FastDevice implements Device` and a synthetic `@Default Device`, looked up as `Device`.
+  `#theStartAcceptsALookupASyntheticBeanSatisfiesBesideAQualifiedClassBean` is green on the main code of 131fb3e6
+  ("Red run 6"), red with BUG-20261117-27's check run in `@Registration` ("Red run 5"), and green with this fix.
+- **Cause**: `invokeRegistrationMethod` checked the lookups of the invokers each `@Registration` call built, before
+  `@Synthesis` ran, among the beans discovered. CDI 4.1, "Configuring lookups", asks for the check during deployment
+  validation, among every bean of the deployment.
+- **Fix**: `processRegistration` collects the invoker factories; `BceProcessor.process` checks their lookups once
+  `@Synthesis` is over, among the beans and the descriptors of the synthetic beans of the extensions it ran
+  (`withSyntheticBeans`). The build (`VaubanProcessor`) and the start (`VaubanContainerBuilder`) both run
+  `BceProcessor.process`, so both agree. The synthetic beans of frozen extensions and of archives processed at
+  compile come later at start: BUG-20261117-45.
+- **Verification**: the tests green (`vauban-b27-dev.log`, "Dev run 10"). Whole build and TCKs under
+  BUG-20261117-27.
+- **Found by**: the work on BUG-20261117-27, reading where the start checks invoker lookups.
+
+## BUG-20261117-38 — An invoker's instance lookup misses a target bean that has a qualifier
+
+- **Date**: 2026-11-17
+- **Status**: OPEN; a fix is parked on the branch `fix/invoker-instance-lookup` (cc0cec19, on 35035df4), not
+  merged: it releases the target's creational context after every call, which destroys the `@Dependent` objects of
+  a `@Singleton` target the lookup created (the review of BUG-20261117-27); fix that before it goes anywhere
+- **Module**: `vauban-core` (`VaubanInvoker.lookupBean`)
+- **Symptom**: an invoker of `FastWorker.work()` with `withInstanceLookup()`, for a bean `@Dependent @Fast class
+  FastWorker`: the call throws `UnsatisfiedResolutionException: No bean found for type: …FastWorker`. The same for a
+  bean whose `@Typed` leaves its class out of its bean types.
+- **Repro**: `VaubanInvokerLookupTest#anInstanceLookupFindsATargetBeanThatHasAQualifier` and
+  `#anInstanceLookupFindsATargetBeanWhoseClassTypedLeavesOut` in `vauban-core`, disabled; red when enabled, on the
+  main code of 131fb3e6 (`vauban-b27-red.log`, "Red run 1" for the first, "Red run 2b" for both).
+- **Cause**: `lookupBean` calls `cdi.select(beanClass)`, which requires `@Default` and the class as a bean type.
+  CDI 4.1, "Configuring lookups", asks for a contextual reference for the target bean and the bean type that declares
+  the target method.
+- **Found by**: the work on BUG-20261117-27, testing that the qualifiers still apply.
+
 ## BUG-20261117-30 — The start refuses an inherited initializer's parameter of a type variable
 
 - **Date**: 2026-11-17
@@ -76,18 +175,59 @@ suspected cause, status. Updated on every investigation.
 ## BUG-20261117-27 — An invoker's argument lookup resolves the erased class of its parameter
 
 - **Date**: 2026-11-17
-- **Status**: OPEN
-- **Module**: `vauban-core` (`VaubanInvoker.lookupBean`)
+- **Status**: FIXED on `fix/invoker-argument-lookup`
+- **Module**: `vauban-core` (`VaubanInvoker.lookupBean`, `ExtensionMethodValidator.validateArgumentLookup`)
 - **Symptom**: an invoker of `String read(Holder<String> holder)` with `withArgumentLookup(0)`, and a bean of
   `TextHolder implements Holder<String>`: the call throws `UnsatisfiedResolutionException: No bean found for type:
   …Holder`.
+  The start checked the lookup otherwise again: it counted the beans whose class is assignable to the erased class,
+  with no qualifier and no producer, so it refused a `@Fast Part` parameter with two `Part` beans as ambiguous, a
+  `Holder<Integer>` parameter a producer satisfies as unsatisfied, and accepted a `Holder<Integer>` parameter with
+  only a `Holder<String>` bean, which the call then failed, or with a producer and a class bean of
+  `Holder<Integer>`, which the call found ambiguous.
 - **Repro**: `VaubanInvokerLookupTest#anArgumentLookupOfAParameterizedTypeResolvesThatType` in `vauban-core`,
   disabled; red when enabled, on 3ce0b832 (`vauban-b16-red.log`, "Red run 8") and on fix round 1 of
-  BUG-20261117-16 ("Red run 9").
+  BUG-20261117-16 ("Red run 9"). Enabled, with the wildcard, qualifier and start tests of this fix, red on the main
+  code of 131fb3e6, fix round 4 of BUG-20261117-16 (`vauban-b27-red.log`, "Red run 1", and again in "Red run 2b").
+  Fix round 1: the ambiguous start test now holds a producer and a class bean, which the base accepted; its first
+  form, two class beans of `Holder<String>`, the base refused too, by another message. Red on the main code of
+  131fb3e6 ("Red run 6"); the qualifier, `@Singleton` and type variable tests red on the main code of 35035df4, the
+  fix as first reviewed ("Red run 4b"). Fix round 2:
+  `#twoInterceptedDependentArgumentsHaveAnInterceptorInstanceEach` red on the main code of aa3dc804, fix round 1
+  ("Red run 7"), green on the main code of 131fb3e6 ("Base run 8"); the build side of the registered qualifiers,
+  `BceCompileTimeTest#anInvokerLookupOfARegisteredQualifierPassesTheBuild` in `vauban-processor`, green on aa3dc804
+  already ("Base run 10") and red on 35035df4 ("Red run 9").
 - **Cause** (by reading): `lookupArgument` hands `lookupBean` the parameter's class, and `lookupBean` calls
   `cdi.select(type)`: a raw required type, which a parameterized bean type satisfies only with `Object` or unbounded
   type variables for arguments (CDI 4.1, 5.2.4). The generic type is at hand (`genParamTypes`), and the `Instance`
   and `Event` lookups already read it. The same family as BUG-20261117-25.
+- **Fix**: an argument lookup is resolved as an injection point (CDI 4.1, "Configuring lookups"): `lookupArgument`
+  hands `BeanManager.getInjectableReference` a `VaubanInjectionPoint` of the parameter, its declared type and the
+  annotations `isQualifier` accepts, so `Instance`, `Event` and `BeanManager` are the built-in beans an injection
+  gets. Each lookup obtains its bean with a creational context of its own, as an injection does, so two intercepted
+  `@Dependent` arguments have an interceptor instance each (Jakarta Interceptors 2.1, 2.2; fix round 2: one context
+  for the whole call cached one interceptor instance for both). The context of a `@Dependent` bean is released once
+  the call is over, which destroys the `@Dependent` instances created for the lookups; that of any other bean is left
+  alone, so a `@Singleton` the lookup creates keeps its `@Dependent` objects (fix round 1: the first fix gave every
+  bean the call's context, and released it). Each lookup resolves its bean twice per call, for its context and in
+  `getInjectableReference`, which takes no bean and gives the built-in beans and the `InjectionPoint` metadata as an
+  injection does. The instance lookup is unchanged (BUG-20261117-38). The start and the build check each lookup with
+  `BeanResolver.resolveInjectionPoint` on the same type and qualifiers (`@Default` when none): the qualifiers are the
+  annotations `@Qualifier` declares and those the extensions registered, compared without the members they made
+  non-binding, as the container does (fix round 1: the first fix read `@Qualifier` alone, so it refused a lookup of a
+  registered qualifier the call served). The messages name the parameter by its declared type,
+  `…Holder<java.lang.Integer>`. A lookup no bean satisfies throws `UnsatisfiedResolutionException` at the call, and is
+  a `DeploymentException` at the start.
+- **A changed verdict**: a parameter of a type variable, `take(T part)` with `T extends Part`, is now refused at
+  build and at start, `Invoker argument lookup of a type variable: parameter type T at position 0 of method …`. The
+  base counted the beans of its erasure, `Part`, accepted the deployment when one bean was one, and the call looked
+  that erasure up. The required type is the declared type of the parameter (CDI 4.1, "Configuring lookups"), and a
+  type variable is no legal required type (5.2.2); Weld refuses it at validation. The call, for an invoker built
+  without the check, throws the `IllegalArgumentException` of `getBeans`.
+- **Verification**: `VaubanInvokerLookupTest`, 22 tests, 3 skipped (BUG-20261117-38, BUG-20261117-44), green, the
+  extension tests of `vauban-core` and the build-side test (`vauban-b27-dev.log`, "Dev run 10"). Whole build and
+  TCKs: `vauban-b27-build.log`, `vauban-b27-tck.log`, "Fix round 2". Fix round 3 changed tests and `BUG.md` alone:
+  the whole build again ("Fix round 3"), the TCKs not rerun, no `src/main` change.
 - **Found by**: the review of fix round 1 of BUG-20261117-16.
 
 ## BUG-20261117-26 — The start does not check an inherited observer's parameters

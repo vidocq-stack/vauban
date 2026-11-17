@@ -755,7 +755,9 @@ public class VaubanProcessor extends AbstractProcessor {
                 observers, interceptors,
                 index, aptClassLoader,
                 bceInstances, archiveClasses,
-                name -> index.getClassByName(name).map(discovery::buildManagedBean).orElse(null)));
+                name -> index.getClassByName(name).map(discovery::buildManagedBean).orElse(null),
+                new BceProcessor.RegisteredQualifiers(discovery.getCustomQualifiers(),
+                        nonbindingMembers(discoveryResult))));
 
         // Report BCE errors as compilation errors
         boolean hasErrors = false;
