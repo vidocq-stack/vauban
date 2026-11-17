@@ -550,34 +550,52 @@ public final class VaubanContainer implements AutoCloseable {
             jakarta.inject.Provider.class,
             jakarta.enterprise.event.Event.class);
 
+    /**
+     * Checks the parameters of {@code observer} as injection points: the observer the bean class declares, or the one
+     * it inherits, its parameters read as the bean class gives its superclasses' type variables, {@code Holder<X>} as
+     * {@code Holder<String>}, as the call resolves them ({@code EventDispatcher}). The start read the observers the
+     * bean class declares only, and an inherited observer went unchecked (BUG-20261117-26).
+     */
     private static void validateObserverParameters(io.vidocq.vauban.core.bean.model.ObserverDescriptor observer,
                                                    io.vidocq.vauban.core.bean.resolution.BeanResolver resolver) {
+        Class<?> beanClass;
         try {
-            var cl = Thread.currentThread().getContextClassLoader();
-            var clazz = Class.forName(observer.declaringClass().value(), false, cl);
-            var method = observerMethodNamed(clazz, observer.methodName());
-            if (method == null) return;
-            for (var param : method.getParameters()) {
-                if (needsResolution(param)) {
-                    checkResolvable(observer, param, resolver);
+            beanClass = Class.forName(observer.declaringClass().value(), false,
+                    Thread.currentThread().getContextClassLoader());
+        } catch (ClassNotFoundException | LinkageError _) {
+            return; // Skip validation for classes that can't be loaded
+        }
+        var method = observerMethodNamed(beanClass, observer.methodName());
+        if (method == null) return;
+        var mapping = ManagedBean.buildTypeVariableMapping(beanClass);
+        var params = method.getParameters();
+        for (int i = 0; i < params.length; i++) {
+            if (needsResolution(params[i])) {
+                var type = ManagedBean.resolveType(params[i].getParameterizedType(), mapping);
+                if (type instanceof java.lang.reflect.TypeVariable<?> variable) {
+                    // The bean class leaves the inherited observer's parameter a type variable (CDI 4.1, 5.2.3)
+                    throw new jakarta.enterprise.inject.spi.DefinitionException(
+                            io.vidocq.vauban.core.bean.validation.IndexClassValidator.TYPE_VARIABLE_INJECTION_POINT
+                                    + variable.getName() + ": " + beanClass.getName() + "." + method.getName()
+                                    + " observer param " + i);
                 }
+                checkResolvable(observer, params[i], type, resolver);
             }
-        } catch (jakarta.enterprise.inject.spi.DeploymentException e) {
-            throw e; // re-throw deployment exceptions
-        } catch (Exception _) {
-            // Skip validation for classes that can't be loaded
         }
     }
 
     /**
-     * The method {@code name} of {@code clazz} that observes an event, or {@code null}: an overload of the same name
-     * that observes nothing is not the observer (VAU-OBS-004), and {@code getDeclaredMethods()} has no fixed order.
+     * The method {@code name} of {@code clazz}, or of its nearest superclass that declares one, that observes an
+     * event, or {@code null}: an overload of the same name that observes nothing is not the observer (VAU-OBS-004),
+     * and {@code getDeclaredMethods()} has no fixed order.
      */
     private static java.lang.reflect.Method observerMethodNamed(Class<?> clazz, String name) {
-        for (var method : clazz.getDeclaredMethods()) {
-            if (method.getName().equals(name) && hasParameterAnnotated(method,
-                    jakarta.enterprise.event.Observes.class, jakarta.enterprise.event.ObservesAsync.class)) {
-                return method;
+        for (var type = clazz; type != null && type != Object.class; type = type.getSuperclass()) {
+            for (var method : type.getDeclaredMethods()) {
+                if (method.getName().equals(name) && hasParameterAnnotated(method,
+                        jakarta.enterprise.event.Observes.class, jakarta.enterprise.event.ObservesAsync.class)) {
+                    return method;
+                }
             }
         }
         return null;
@@ -626,18 +644,26 @@ public final class VaubanContainer implements AutoCloseable {
      * 5.2.4; BUG-20261117-25).
      */
     static io.vidocq.vauban.indexer.model.TypeInfo requiredTypeOf(java.lang.reflect.Parameter param) {
-        return param.getParameterizedType() instanceof java.lang.reflect.ParameterizedType parameterized
-                ? io.vidocq.vauban.core.types.TypeInfoUtils.fromReflectType(parameterized)
-                : new io.vidocq.vauban.indexer.model.TypeInfo.ClassType(
-                        io.vidocq.vauban.indexer.model.DotName.of(param.getType().getName()));
+        return requiredTypeOf(param.getParameterizedType(), param.getType());
+    }
+
+    /** {@link #requiredTypeOf(java.lang.reflect.Parameter)} of {@code type}, a class or {@code erased} otherwise. */
+    private static io.vidocq.vauban.indexer.model.TypeInfo requiredTypeOf(java.lang.reflect.Type type,
+                                                                          Class<?> erased) {
+        if (type instanceof java.lang.reflect.ParameterizedType parameterized) {
+            return io.vidocq.vauban.core.types.TypeInfoUtils.fromReflectType(parameterized);
+        }
+        var raw = type instanceof Class<?> cls ? cls : erased;
+        return new io.vidocq.vauban.indexer.model.TypeInfo.ClassType(
+                io.vidocq.vauban.indexer.model.DotName.of(raw.getName()));
     }
 
     /** Fails the deployment when no bean, or more than one, matches the type of an observer parameter. */
     private static void checkResolvable(io.vidocq.vauban.core.bean.model.ObserverDescriptor observer,
-                                        java.lang.reflect.Parameter param,
+                                        java.lang.reflect.Parameter param, java.lang.reflect.Type type,
                                         io.vidocq.vauban.core.bean.resolution.BeanResolver resolver) {
         var ip = new io.vidocq.vauban.core.bean.model.InjectionPointInfo(
-                requiredTypeOf(param),
+                requiredTypeOf(type, param.getType()),
                 java.util.Set.of(new io.vidocq.vauban.core.bean.model.QualifierInstance(
                         io.vidocq.vauban.indexer.model.DotName.of("jakarta.enterprise.inject.Default"),
                         java.util.Map.of()),
@@ -651,12 +677,12 @@ public final class VaubanContainer implements AutoCloseable {
             throw new jakarta.enterprise.inject.spi.DeploymentException(
                     "Observer method " + observer.declaringClass().simpleName() + "." + observer.methodName()
                             + "(): unsatisfied dependency for parameter " + param.getName()
-                            + " of type " + param.getParameterizedType().getTypeName());
+                            + " of type " + type.getTypeName());
         } else if (result.status() == io.vidocq.vauban.core.bean.resolution.BeanResolver.ResolutionResult.Status.AMBIGUOUS) {
             throw new jakarta.enterprise.inject.spi.DeploymentException(
                     "Observer method " + observer.declaringClass().simpleName() + "." + observer.methodName()
                             + "(): ambiguous dependency for parameter " + param.getName()
-                            + " of type " + param.getParameterizedType().getTypeName());
+                            + " of type " + type.getTypeName());
         }
     }
 

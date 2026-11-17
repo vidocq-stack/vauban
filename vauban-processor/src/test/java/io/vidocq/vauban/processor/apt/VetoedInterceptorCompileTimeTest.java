@@ -1234,6 +1234,59 @@ class VetoedInterceptorCompileTimeTest {
     }
 
     /**
+     * An observer's parameter that no bean satisfies fails the start, the observer inherited or not, with the
+     * extensions run at start and frozen: {@code InheritedIntegerHolderListener} inherits
+     * {@code on(@Observes Pung, Holder<Integer>)}, and the only holder is a {@code Holder<String>}. The start read the
+     * observers the bean class declares only, and the call failed at the first event (BUG-20261117-26).
+     */
+    @Test
+    @DisplayName("an inherited observer's unsatisfied parameter fails the start, extensions run and frozen")
+    void anInheritedObserversUnsatisfiedParameterFailsTheStartRunAndFrozen() throws Exception {
+        var sources = withAVetoedPackage();
+        putType(sources, "Holder", "public interface Holder<H> {\n}");
+        putType(sources, "TextHolder", DEPENDENT + "public class TextHolder implements Holder<String> {\n}");
+        putType(sources, "Pung", "public class Pung {\n}");
+        putType(sources, "IntegerHolderListenerBase", """
+                public abstract class IntegerHolderListenerBase {
+                    void on(@jakarta.enterprise.event.Observes Pung pung, Holder<Integer> holder) {
+                    }
+                }""");
+        putType(sources, "InheritedIntegerHolderListener", DEPENDENT
+                + "public class InheritedIntegerHolderListener extends IntegerHolderListenerBase {\n}");
+
+        var refusals = startRefusalsRunAndFrozen(sources);
+        for (var refusal : refusals) {
+            assertTrue(refusal.contains("unsatisfied dependency for parameter arg1 of type vi.types.Holder"
+                    + "<java.lang.Integer>"), refusal);
+        }
+    }
+
+    /**
+     * Compiles {@code sources} and lists {@link BeanTypeRecorder} as their extension: the start refuses the
+     * deployment with a {@code DeploymentException}, with the extension run at start, and after the build froze it.
+     *
+     * @return the two messages, extensions run then frozen
+     */
+    private List<String> startRefusalsRunAndFrozen(Map<String, String> sources) throws Exception {
+        var result = compile(sources);
+        registerExtension(result, BeanTypeRecorder.class);
+        String run;
+        try (var loader = loader(result)) {
+            run = assertThrows(DeploymentException.class,
+                    VaubanContainer.builder().classLoader(loader).scanClasspath()::build, "the container started")
+                    .getMessage();
+            var outcome = VaubanContainer.builder().classLoader(loader).scanClasspath()
+                    .freezeExtensions(result.classes());
+            assertTrue(outcome.frozen(), outcome.reason());
+        }
+        try (var loader = loader(result)) {
+            var builder = VaubanContainer.builder().classLoader(loader).scanClasspath();
+            var frozen = assertThrows(DeploymentException.class, builder::build, "the frozen container started");
+            return List.of(run, frozen.getMessage());
+        }
+    }
+
+    /**
      * {@link #withAVetoedPackage()}, with the bean {@code Gadget}, the abstract {@code AbstractGadgetSetter<T>} and
      * its bean {@code GadgetSetterOfAbstract extends AbstractGadgetSetter<Gadget>}, which supplies the class of what
      * the inherited initializer got.

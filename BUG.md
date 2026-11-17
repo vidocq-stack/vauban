@@ -1203,7 +1203,7 @@ suspected cause, status. Updated on every investigation.
 ## BUG-20261117-26 — The start does not check an inherited observer's parameters
 
 - **Date**: 2026-11-17
-- **Status**: OPEN
+- **Status**: FIXED on `fix/vauban-bug-stack` (lane `stack/l3-container`)
 - **Module**: `vauban-core` (`VaubanContainer.validateObserverParameters`, `observerMethodNamed`)
 - **Symptom**: `IntegerHolderListenerBase` declares `void on(@Observes Pung pung, Holder<Integer> holder)`, and the
   bean `InheritedIntegerHolderListener` extends it; no bean is a `Holder<Integer>`. The start passes; the call fails
@@ -1211,7 +1211,7 @@ suspected cause, status. Updated on every investigation.
 - **Repro**: `AssignabilityRulesReproductionTest#anInheritedObserversUnsatisfiedParameterFailsTheStart` in
   `vauban-core`, disabled; red when enabled, on fix round 1 of BUG-20261117-16 (`vauban-b16-red.log`, "Red run 9":
   nothing thrown).
-- **Cause** (by reading): `observerMethodNamed` reads the methods the bean class declares, `getDeclaredMethods()`; an
+- **Cause** (proved): `observerMethodNamed` reads the methods the bean class declares, `getDeclaredMethods()`; an
   inherited observer is not there, and its parameters are not checked. When they are, the check has to resolve the
   type variables the subclass gives, `Holder<X>` as `Holder<String>`, as the call does
   (`EventDispatcher.resolveObserverParamType`): `requiredTypeOf` does not
@@ -1220,6 +1220,23 @@ suspected cause, status. Updated on every investigation.
   `void on(@Observes E e, T t)`. The inherited observer keeps `T`, an injection point of a type variable on a class
   that may be a bean (CDI 4.1, 5.2.3), but the definition validation reads the class that declares the observer,
   which is none (BUG-20261117-16 scopes the check so), and this check does not see the inherited observer.
+- **Fix**: `VaubanContainer.validateObserverParameters` finds the observer the bean class declares or, failing that,
+  the one its nearest superclass declares, and reads each parameter as the bean class gives its superclasses' type
+  variables (`ManagedBean.buildTypeVariableMapping` and `resolveType`, what the call reads). A parameter the bean class
+  leaves a type variable is a definition error, `Injection point has type variable type T:
+  <bean class>.on observer param 1`; any other is resolved as an injection point, and the messages name the resolved
+  type, `Holder<java.lang.Integer>`.
+- **Who sees the change**: a deployment whose bean inherits an observer with an unsatisfied or ambiguous parameter
+  now fails at start with a `DeploymentException`, extensions run or frozen, where the first event failed; one whose
+  bean passes its own type variable on to an inherited observer's parameter fails with a `DefinitionException`. The
+  processor checks no observer parameter for a bean, inherited or not, and does not warn of either.
+- **Verification**: red on the main code of 833e994e (`stack-l3-red.log`, "BUG-20261117-26 red":
+  `#anInheritedObserversUnsatisfiedParameterFailsTheStart` and
+  `#anInheritedObserversParameterItsBeanClassLeavesATypeVariableIsADefinitionError` threw nothing; "BUG-20261117-26
+  red: vauban-processor":
+  `VetoedInterceptorCompileTimeTest#anInheritedObserversUnsatisfiedParameterFailsTheStartRunAndFrozen` started). Green: `stack-l3-green.log`, "BUG-20261117-26 fix" (vauban-core 1624 tests, 16 skipped;
+  vauban-processor 384, 16 skipped), `#anInheritedObserversParameterOfItsTypeVariableResolvesAsTheSubclassGivesIt`
+  still green now that the check runs, and the whole reactor, `stack-l3-b26-full.log`.
 - **Found by**: the review of fix round 1 of BUG-20261117-16, which suspected `requiredTypeOf`; the repro showed the
   check never reaches it.
 

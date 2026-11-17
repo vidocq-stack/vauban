@@ -317,6 +317,21 @@ class AssignabilityRulesReproductionTest {
     public static class GadgetListenerOfAbstract extends AbstractGadgetListener<Gadget> {
     }
 
+    public static class Pist {
+    }
+
+    /** Not a bean: vetoed, with an observer of its type variable, which its subclass leaves a type variable. */
+    @jakarta.enterprise.inject.Vetoed
+    public static class VetoedTypeVariableListener<T> {
+        void on(@Observes Pist pist, T value) {
+            RECEIVED.add(value);
+        }
+    }
+
+    @Dependent
+    public static class GenericListenerOfVetoed<T> extends VetoedTypeVariableListener<T> {
+    }
+
     /** Not a bean: an {@code InjectionTarget} injects its field. */
     public static class FooOfIntegerClient {
         @Inject
@@ -996,14 +1011,33 @@ class AssignabilityRulesReproductionTest {
      * inherited one is not there: the start passes, and the call fails at the first event (BUG-20261117-26).
      */
     @Test
-    @Disabled("BUG-20261117-26: the start does not check an inherited observer's parameters")
     @DisplayName("an inherited observer's unsatisfied parameter fails the start")
     void anInheritedObserversUnsatisfiedParameterFailsTheStart() {
         var builder = VaubanContainer.builder().addBeanClass(TextHolder.class)
                 .addBeanClass(InheritedIntegerHolderListener.class);
 
         var refused = assertThrows(DeploymentException.class, builder::build, "the parameter resolved");
-        assertTrue(refused.getMessage().contains("unsatisfied dependency for parameter arg1"), refused::getMessage);
+        assertTrue(refused.getMessage().contains("unsatisfied dependency for parameter arg1 of type "
+                + Holder.class.getName() + "<java.lang.Integer>"), refused::getMessage);
+    }
+
+    /**
+     * An observer a bean inherits keeps its parameter of a type variable when the bean class passes its own type
+     * variable on, {@code GenericListenerOfVetoed<T> extends VetoedTypeVariableListener<T>}: an injection point of a
+     * type variable on a class that may be a bean, a definition error (CDI 4.1, 5.2.3). The definition validation
+     * reads the class that declares the observer, which is no bean, and the start's check of the observer's
+     * parameters did not see the inherited observer (BUG-20261117-26).
+     */
+    @Test
+    @DisplayName("an inherited observer's parameter its bean class leaves a type variable is a definition error")
+    void anInheritedObserversParameterItsBeanClassLeavesATypeVariableIsADefinitionError() {
+        var builder = VaubanContainer.builder().addBeanClass(Gadget.class)
+                .addBeanClass(VetoedTypeVariableListener.class).addBeanClass(GenericListenerOfVetoed.class);
+
+        var refused = assertThrows(DefinitionException.class, builder::build, "the container started");
+        assertTrue(refused.getMessage().contains(
+                TYPE_VARIABLE_PARAMETER + GenericListenerOfVetoed.class.getName() + ".on observer param 1"),
+                refused::getMessage);
     }
 
     /**
