@@ -133,6 +133,80 @@ class ClassChecksumsTest {
         }
     }
 
+    /**
+     * The supertypes as the class declares them count where they carry type arguments, which the extensions see
+     * (BUG-20261117-22); a class without any keeps the checksum it had before the index read them, the one of a model
+     * built from the raw names alone, so the record of a build by an earlier Vauban stays valid for it.
+     */
+    @Test
+    @DisplayName("the generic supertypes count where they carry type arguments")
+    void genericSupertypesCount() {
+        var supplier = DotName.of("java.util.function.Supplier");
+        var raw = new TypeInfo.ClassType(supplier);
+        var ofA = new TypeInfo.ParameterizedType(supplier, List.of(new TypeInfo.ClassType(A)));
+        var ofB = new TypeInfo.ParameterizedType(supplier, List.of(new TypeInfo.ClassType(B)));
+
+        assertEquals(ClassChecksums.ofModel(implementing(supplier, null)),
+                ClassChecksums.ofModel(implementing(supplier, raw)));
+        assertNotEquals(ClassChecksums.ofModel(implementing(supplier, raw)),
+                ClassChecksums.ofModel(implementing(supplier, ofA)));
+        assertNotEquals(ClassChecksums.ofModel(implementing(supplier, ofA)),
+                ClassChecksums.ofModel(implementing(supplier, ofB)));
+        var extendingBOfA = new ClassInfo(A, B, List.of(), 1, List.of(), List.of(), List.of(),
+                ClassInfo.ClassKind.CLASS, "A", List.of(), true, new TypeInfo.ParameterizedType(B,
+                        List.of(new TypeInfo.ClassType(A))), null);
+        assertNotEquals(ClassChecksums.ofModel(new ClassInfo(A, B, List.of(), 1, List.of(), List.of(), List.of(),
+                ClassInfo.ClassKind.CLASS, "A", List.of(), true)), ClassChecksums.ofModel(extendingBOfA));
+    }
+
+    /**
+     * The checksum of a class whose supertypes carry no type arguments is the one an earlier Vauban wrote in the
+     * frozen record: {@code 374142584L} is what {@code ClassChecksums.ofModel} gave this model on 455067f5, the
+     * commit before the index read the generic supertypes (BUG-20261117-22). The scan of a class that names a generic
+     * class raw gives the checksum of its model without generic supertypes.
+     */
+    @Test
+    @DisplayName("a class whose supertypes carry no type arguments keeps the checksum an earlier Vauban wrote")
+    void aClassWithRawSupertypesKeepsItsChecksum() throws IOException {
+        var t = new TypeInfo.TypeVariable("T", List.of());
+        var items = new FieldInfo("items", new TypeInfo.ParameterizedType(DotName.of("java.util.List"), List.of(t)),
+                2, List.of());
+        var serializable = DotName.of("java.io.Serializable");
+        var comparable = DotName.of("java.lang.Comparable");
+        var rawSupertypes = new ClassInfo(A, B, List.of(serializable, comparable), 1, List.of(items), List.of(),
+                List.of(), ClassInfo.ClassKind.CLASS, "A", List.of(t), true);
+        var declaredRaw = new ClassInfo(A, B, List.of(serializable, comparable), 1, List.of(items), List.of(),
+                List.of(), ClassInfo.ClassKind.CLASS, "A", List.of(t), true, new TypeInfo.ClassType(B),
+                List.of(new TypeInfo.ClassType(serializable), new TypeInfo.ClassType(comparable)));
+        var scanned = ClassFileScanner.scan(nestedClass(RawFixture.class));
+        var scannedWithoutGenericSupertypes = new ClassInfo(scanned.name(), scanned.superName(), scanned.interfaces(),
+                scanned.accessFlags(), scanned.fields(), scanned.methods(), scanned.annotations(), scanned.kind(),
+                scanned.simpleName(), scanned.typeParameters(), scanned.genericMembers());
+
+        assertEquals(374142584L, ClassChecksums.ofModel(rawSupertypes));
+        assertEquals(374142584L, ClassChecksums.ofModel(declaredRaw));
+        assertEquals(ClassChecksums.ofModel(scannedWithoutGenericSupertypes), ClassChecksums.ofModel(scanned));
+    }
+
+    /** Names {@code ArrayList} and {@code Comparable} raw. */
+    @SuppressWarnings("rawtypes")
+    abstract static class RawFixture extends java.util.ArrayList implements Comparable {
+        private static final long serialVersionUID = 1L;
+    }
+
+    private static byte[] nestedClass(Class<?> type) throws IOException {
+        var name = type.getName();
+        try (var in = type.getResourceAsStream(name.substring(name.lastIndexOf('.') + 1) + ".class")) {
+            return in.readAllBytes();
+        }
+    }
+
+    /** {@code a.A implements} the interface {@code name}, declared {@code declared}, raw when {@code null}. */
+    private static ClassInfo implementing(DotName name, TypeInfo declared) {
+        return new ClassInfo(A, DotName.of("java.lang.Object"), List.of(name), 1, List.of(), List.of(), List.of(),
+                ClassInfo.ClassKind.CLASS, "A", List.of(), true, null, declared == null ? null : List.of(declared));
+    }
+
     @Test
     @DisplayName("a parameter counts by its type, not by its name, which jlink strips")
     void aParameterCountsByItsType() {

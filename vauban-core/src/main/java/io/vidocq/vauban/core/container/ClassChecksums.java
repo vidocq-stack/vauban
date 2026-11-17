@@ -141,6 +141,19 @@ final class ClassChecksums {
             string(type.simpleName());
             list(type.typeParameters(), this::type);
             text.append(type.genericMembers() ? 'g' : 'e');
+            // The supertypes as the class declares them, which the extensions see (BUG-20261117-22), count where they
+            // differ from the raw ones: a class without a type argument there keeps the checksum it had before the
+            // index read them, and with it the record of a build by an earlier Vauban.
+            if (hasTypeArguments(type)) {
+                text.append('S');
+                type(type.genericSuperclass());
+                list(type.genericInterfaces(), this::type);
+            }
+        }
+
+        private static boolean hasTypeArguments(ClassInfo type) {
+            return type.genericSuperclass() instanceof TypeInfo.ParameterizedType
+                    || type.genericInterfaces().stream().anyMatch(TypeInfo.ParameterizedType.class::isInstance);
         }
 
         private void field(FieldInfo field) {

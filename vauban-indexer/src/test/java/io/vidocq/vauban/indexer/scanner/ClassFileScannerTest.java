@@ -577,4 +577,131 @@ class ClassFileScannerTest {
             assertEquals(new ParameterizedType(LIST, List.of(STRING)), ctor.parameters().get(1).type());
         }
     }
+
+    // --- BUG-20261117-22: the supertypes read from the class signature ---
+
+    @SuppressWarnings("java:S2326") // the declared type parameters are what the tests read
+    static class Base<B> {
+    }
+
+    static class Extending extends Base<List<String>> {
+    }
+
+    @SuppressWarnings("java:S2326") // the declared type parameters are what the tests read
+    interface Pair<K, V> {
+    }
+
+    interface Archive extends Pair<String, Long>, Comparable<List<String>> {
+    }
+
+    @SuppressWarnings("java:S2326") // the declared type parameters are what the tests read
+    abstract static class Ranked<R extends Number & Comparable<R>> implements Comparable<R> {
+    }
+
+    abstract static class Shapes implements Pair<Map<? extends Number, ? super Integer>, int[][]> {
+    }
+
+    @SuppressWarnings({"rawtypes", "java:S2057"}) // the raw superclass is what the test reads
+    static class Raw extends java.util.ArrayList {
+    }
+
+    @Nested
+    @DisplayName("generic supertypes (BUG-20261117-22)")
+    class GenericSupertypes {
+
+        private static final DotName PAIR = DotName.of(Pair.class.getName());
+        private static final TypeInfo LIST_OF_STRING = new ParameterizedType(DotName.of("java.util.List"),
+                List.of(new ClassType(DotName.of("java.lang.String"))));
+        private static final DotName RUNNABLE = DotName.of("java.lang.Runnable");
+
+        @Test
+        @DisplayName("a superclass keeps its type arguments")
+        void superclass() throws IOException {
+            var info = scan(Extending.class);
+            assertEquals(new ParameterizedType(DotName.of(Base.class.getName()), List.of(LIST_OF_STRING)),
+                    info.genericSuperclass());
+            assertEquals(DotName.of(Base.class.getName()), info.superName());
+        }
+
+        @Test
+        @DisplayName("interfaces keep their type arguments and their order")
+        void interfaces() throws IOException {
+            assertEquals(List.of(new ParameterizedType(PAIR, List.of(new ClassType(DotName.of("java.lang.String")),
+                            new ClassType(DotName.of("java.lang.Long")))),
+                    new ParameterizedType(DotName.of("java.lang.Comparable"), List.of(LIST_OF_STRING))),
+                    scan(Archive.class).genericInterfaces());
+        }
+
+        @Test
+        @DisplayName("a type variable of the class keeps the bounds it declares")
+        void typeVariable() throws IOException {
+            var r = new TypeVariable("R", List.of(new ClassType(DotName.of("java.lang.Number")),
+                    new ParameterizedType(DotName.of("java.lang.Comparable"), List.of(new TypeVariable("R",
+                            List.of())))));
+            assertEquals(List.of(new ParameterizedType(DotName.of("java.lang.Comparable"), List.of(r))),
+                    scan(Ranked.class).genericInterfaces());
+        }
+
+        @Test
+        @DisplayName("wildcard, nested and array type arguments")
+        void wildcardsAndArrays() throws IOException {
+            var map = new ParameterizedType(DotName.of("java.util.Map"), List.of(
+                    new WildcardType(new ClassType(DotName.of("java.lang.Number")), null),
+                    new WildcardType(null, new ClassType(DotName.of("java.lang.Integer")))));
+            assertEquals(List.of(new ParameterizedType(PAIR, List.of(map,
+                            new ArrayType(new PrimitiveType(PrimitiveType.Kind.INT), 2)))),
+                    scan(Shapes.class).genericInterfaces());
+        }
+
+        @Test
+        @DisplayName("a raw supertype, and a class without a signature, keep the raw names")
+        void rawSupertypes() throws IOException {
+            assertEquals(new ClassType(DotName.of("java.util.ArrayList")), scan(Raw.class).genericSuperclass());
+            assertEquals(new ClassType(DotName.of("java.lang.Object")), scan(SimpleClass.class).genericSuperclass());
+            assertEquals(List.of(new ClassType(DotName.of(SimpleInterface.class.getName()))),
+                    scan(ImplementingClass.class).genericInterfaces());
+        }
+
+        @Test
+        @DisplayName("a class signature that does not parse leaves the supertypes raw")
+        void malformedSignature() {
+            var info = ClassFileScanner.scan(withSignature("<T:"));
+            assertEquals(new ClassType(DotName.of("java.lang.Object")), info.genericSuperclass());
+            assertEquals(List.of(new ClassType(RUNNABLE)), info.genericInterfaces());
+        }
+
+        @Test
+        @DisplayName("a class signature that names other interfaces than the class file leaves them raw")
+        void signatureWithoutTheInterfaces() {
+            var info = ClassFileScanner.scan(withSignature("Ljava/lang/Object;"));
+            assertEquals(List.of(new ClassType(RUNNABLE)), info.genericInterfaces());
+        }
+
+        /**
+         * A class file without a superclass, as only {@code java.lang.Object}'s is, whose signature names one: the
+         * scan does not fail on a generic superclass without a superclass, and leaves the supertypes raw.
+         */
+        @Test
+        @DisplayName("a class file without a superclass has no generic superclass, whatever its signature says")
+        void noSuperclassWithASignature() {
+            var info = ClassFileScanner.scan(withSignature("java.lang.Object",
+                    "Ljava/lang/Object;Ljava/lang/Runnable;"));
+            assertAll(() -> assertNull(info.superName(), "guard: the class file names no superclass"),
+                    () -> assertNull(info.genericSuperclass()),
+                    () -> assertEquals(List.of(new ClassType(RUNNABLE)), info.genericInterfaces()));
+        }
+
+        /** {@code app.Broken implements Runnable}, whose class signature is {@code signature}. */
+        private static byte[] withSignature(String signature) {
+            return withSignature("app.Broken", signature);
+        }
+
+        /** {@code name implements Runnable}, whose class signature is {@code signature}. */
+        private static byte[] withSignature(String name, String signature) {
+            return java.lang.classfile.ClassFile.of().build(java.lang.constant.ClassDesc.of(name),
+                    builder -> builder.withInterfaceSymbols(java.lang.constant.ClassDesc.of(RUNNABLE.value()))
+                            .with(java.lang.classfile.attribute.SignatureAttribute.of(
+                                    builder.constantPool().utf8Entry(signature))));
+        }
+    }
 }

@@ -148,6 +148,24 @@ class SyntheticMetadataWriteTest {
                         .toList());
     }
 
+    /**
+     * {@code ?}, which the index records without bounds, as the class files and reflection read it, reads back the same
+     * from the metadata; so does {@code ? extends java.lang.Object}, the same wildcard (BUG-20261117-34). The boot read
+     * {@code Object} as the upper bound of both, where the container at start had none for a type it read from the
+     * index.
+     */
+    @Test
+    void anUnboundedWildcardReadsBackWithoutBounds() {
+        var listOfAny = new TypeInfo.ParameterizedType(DotName.of("java.util.List"),
+                List.of(new TypeInfo.WildcardType(null, null)));
+
+        assertEquals("java.util.List<?>", ObservedTypeNotation.write(listOfAny));
+        assertEquals(listOfAny, new SyntheticObserverDescriptor("java.util.List<?>", null, null, null, 0, false)
+                .eventTypeInfo());
+        assertEquals(listOfAny, new SyntheticObserverDescriptor("java.util.List<? extends java.lang.Object>", null,
+                null, null, 0, false).eventTypeInfo());
+    }
+
     @Test
     void aMalformedObservedTypeIsRefused() {
         for (var name : List.of("java.util.List<java.lang.String", "java.util.List<>", "(N)[]", "[Ljava.lang.String",

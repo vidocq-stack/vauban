@@ -46,6 +46,8 @@ import java.util.List;
  */
 final class LangModelTypeMapper {
 
+    private static final TypeInfo OBJECT = new TypeInfo.ClassType(DotName.of("java.lang.Object"));
+
     private LangModelTypeMapper() {}
 
     static TypeInfo toIndexType(Type type) {
@@ -75,14 +77,24 @@ final class LangModelTypeMapper {
                 }
                 yield new TypeInfo.ArrayType(elem, 1);
             }
-            case WildcardType wt -> new TypeInfo.WildcardType(
-                    wt.upperBound() != null ? toIndexType(wt.upperBound()) : null,
-                    wt.lowerBound() != null ? toIndexType(wt.lowerBound()) : null);
+            case WildcardType wt -> wildcard(wt);
             case TypeVariable tv -> new TypeInfo.TypeVariable(
                     tv.name(),
                     tv.bounds().stream().map(LangModelTypeMapper::toIndexType).toList());
             default -> new TypeInfo.ClassType(DotName.of(type.toString()));
         };
+    }
+
+    /**
+     * {@code ? extends Object}, as the language model represents {@code ?} and as {@code Types.wildcardUnbounded()}
+     * gives it, is the wildcard without bounds the index holds for {@code ?}, as the class files and reflection read
+     * it: a type an extension takes from the language model maps back to the type the index holds
+     * (BUG-20261117-34).
+     */
+    private static TypeInfo wildcard(WildcardType wildcard) {
+        var upper = wildcard.upperBound() != null ? toIndexType(wildcard.upperBound()) : null;
+        var lower = wildcard.lowerBound() != null ? toIndexType(wildcard.lowerBound()) : null;
+        return new TypeInfo.WildcardType(OBJECT.equals(upper) && lower == null ? null : upper, lower);
     }
 
     private static TypeInfo.ClassType classTypeToIndex(ClassType ct) {

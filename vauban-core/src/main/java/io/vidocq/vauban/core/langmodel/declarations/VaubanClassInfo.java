@@ -82,12 +82,16 @@ public final class VaubanClassInfo implements jakarta.enterprise.lang.model.decl
         return bounds.stream().map(bound -> TypeMapper.map(bound, lookup)).toList();
     }
 
+    /**
+     * The superclass as the class declares it, with its type arguments: {@code Base<List<String>>}, a class only when
+     * the class names it raw (BUG-20261117-22). {@code null} for {@code java.lang.Object} and for an interface, as the
+     * language model asks, though the class file of an interface names {@code java.lang.Object} as its superclass
+     * (BUG-20261117-32).
+     */
     @Override
     public Type superClass() {
-        if (indexClass.superName() == null) {
-            return null;
-        }
-        return TypeMapper.map(new TypeInfo.ClassType(indexClass.superName()), lookup);
+        var superclass = indexClass.genericSuperclass();
+        return superclass == null || indexClass.isInterface() ? null : TypeMapper.map(superclass, lookup);
     }
 
     @Override
@@ -100,10 +104,14 @@ public final class VaubanClassInfo implements jakarta.enterprise.lang.model.decl
                 .orElse(null);
     }
 
+    /**
+     * The interfaces as the class declares them, in declaration order, with their type arguments:
+     * {@code Crud<Note, Long>}, a class only for an interface the class names raw (BUG-20261117-22).
+     */
     @Override
     public List<Type> superInterfaces() {
-        return indexClass.interfaces().stream()
-                .map(i -> TypeMapper.map(new TypeInfo.ClassType(i), lookup))
+        return indexClass.genericInterfaces().stream()
+                .map(i -> TypeMapper.map(i, lookup))
                 .toList();
     }
 

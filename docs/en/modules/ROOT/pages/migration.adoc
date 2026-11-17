@@ -92,6 +92,7 @@ What an application built on Vauban `{release-version}` may notice on the `{proj
 * **Disposers.** A producer's disposer runs once, no longer twice, and its qualified parameters resolve on their qualifiers. See xref:usage.adoc#producers-and-disposes[Producers and `@Disposes`].
 * **`beans.xml` discovery mode.** With `SeContainerInitializer` default discovery, an empty `beans.xml`, or one declaring `annotated`, now discovers only classes with a bean-defining annotation; it used to make every concrete class a bean. Declare `bean-discovery-mode="all"` to keep the old behaviour, or annotate the classes. See xref:se.adoc#bean-archives[Default discovery: bean archives].
 * **Injection failures propagate.** A failed field injection reaches the caller instead of leaving the field `null`. See xref:internals.adoc#boot-failures[Failures are reported, not swallowed].
+* **Supertypes keep their type arguments.** In an extension, `ClassInfo.superClass()` and `superInterfaces()` give a parameterized type for a supertype declared with type arguments, where they gave a class: `asClass()` on it now throws. Read its class with `asParameterizedType().genericClass()`, or use `superClassDeclaration()` and `superInterfacesDeclarations()`, which do not change. An interface's `superClass()` is `null` at start, as in the processor. A wildcard `?` has `java.lang.Object` as its `upperBound()`, where it had `null`: test `lowerBound()` first to tell `? super X` apart. See xref:concepts.adoc#language-model[Build Compatible Extensions].
 
 == Recommended strategy
 

@@ -25,6 +25,58 @@ suspected cause, status. Updated on every investigation.
 - **Found by**: the review of fix round 2 of BUG-20261117-27, from its build-side test, whose beans are precompiled
   for that reason.
 
+## BUG-20261117-47 — The container provides none of the bean metadata beans of CDI 4.1 §5.5.8
+
+- **Date**: 2026-11-17
+- **Status**: OPEN
+- **Module**: `vauban-core` (the container's built-in beans, `VaubanBeanManager`; `BeanInjector`)
+- **Symptom**: CDI 4.1, 5.5.8 "Bean metadata", in Part I.A, CDI Lite: "The container must provide beans allowing a
+  bean instance to obtain a `Bean` or `Interceptor` instance containing its metadata: a bean with scope `@Dependent`,
+  qualifier `@Default` and type `Bean` which can be injected into any bean instance; a bean with scope `@Dependent`,
+  qualifier `@Default` and type `Interceptor` which can be injected into any interceptor instance. Additionally, the
+  container must provide beans allowing interceptors to obtain information about the beans they intercept: a bean
+  with scope `@Dependent`, qualifier `@Intercepted` and type `Bean` which can be injected into any interceptor
+  instance." Only decorator metadata is CDI Full (16.4.2: `Decorator`, `@Decorated Bean`). Vauban provides none of
+  the three: a bean that injects `Bean<Itself>` fails when the container creates it, with
+  `UnsatisfiedResolutionException: No bean found for type: jakarta.enterprise.inject.spi.Bean`; an interceptor that
+  injects `Interceptor<Itself>` or `@Intercepted Bean<?>` fails with `CreationException: Failed to create
+  interceptor`, caused by the same for `jakarta.enterprise.inject.spi.Interceptor` or `Bean`.
+- **Repro**: three tests of `VetoedInterceptorCompileTimeTest` in `vauban-processor`, disabled (`NO_BEAN_METADATA`).
+  Each checks the processor, then a container started on classes compiled with the processor's validation off, its
+  extensions run at start, then frozen, and calls the bean:
+  - `aBeanGetsItsOwnBeanMetadata`: `vi.SelfAware` injects `Bean<SelfAware>` and answers its bean class;
+  - `anInterceptorGetsItsOwnInterceptorMetadata`: `vi.Introspector` injects `Interceptor<Introspector>` and wraps what
+    it intercepts in its own bean class;
+  - `anInterceptorGetsTheMetadataOfTheBeanItIntercepts`: `vi.Watcher` injects `@Intercepted Bean<?>` and wraps what it
+    intercepts in the class of that bean, as the repro of BUG-20261117-41 does.
+
+  Each run once, enabled, in `vauban-b22-red.log`; none of the three works:
+  - "Round 4: BUG-47 repros run once", on 02b24e3d (BUG-20261117-22):
+    - `Bean<SelfAware>`: the processor accepts it; at start and frozen, `UnsatisfiedResolutionException: No bean found
+      for type: jakarta.enterprise.inject.spi.Bean` when the bean is created;
+    - `Interceptor<Introspector>`: the processor refuses it (BUG-20261117-41, which does not see the interceptor); at
+      start and frozen, `CreationException: Failed to create interceptor: vi.Introspector`, caused by
+      `UnsatisfiedResolutionException: No bean found for type: jakarta.enterprise.inject.spi.Interceptor`;
+    - `@Intercepted Bean<?>`: refused in all three places (BUG-20261117-41), before anything is created;
+  - "Round 4: repro with the parked fix", on 02b24e3d with the parked fix of BUG-20261117-41: the processor accepts
+    all three; at start and frozen, the first two fail as above, and `@Intercepted Bean<?>` with `CreationException:
+    Failed to create interceptor: vi.Watcher`, caused by `No bean found for type: jakarta.enterprise.inject.spi.Bean`,
+    as "Fix round 2 red run 3" saw first.
+- **Cause**: no built-in bean of type `Bean` or `Interceptor` is registered. The container's built-in beans are
+  `BeanManager`, `Event`, `Instance`, `InjectionPoint` and `RequestContextController` (`VaubanBeanManager`), and
+  `BeanInjector` resolves a field of type `Bean` or `Interceptor` as any other, through `VaubanContainer.select`, which
+  finds no bean. The validator counts both types as built-in (`DeploymentValidator.isBuiltInType`), so nothing fails
+  before the creation.
+- **Impact**: any bean or interceptor written to the spec that injects its metadata, or the bean it intercepts, fails
+  when the container creates it: at its first use, not at start.
+- **Not caught by the TCK**: the CDI Lite TCK run (774 tests) passes. In the CDI TCK 4.1.0, the test that injects these
+  beans, `tests.full.implementation.builtin.metadata.BuiltinMetadataBeanTest`, is in the CDI Full part, which the
+  runner leaves out, as it checks the decorator metadata too (`@Decorated`); the Lite tests of
+  `builtin.metadata.broken` expect a definition error, and pass.
+- **Fix order**: this one first, the three beans; then BUG-20261117-41, which needs them.
+- **Found by**: the review of BUG-20261117-41 (BUG-20261117-22, round 4), against CDI 4.1, 5.5.8; the failure was first
+  seen in "Fix round 2 red run 3".
+
 ## BUG-20261117-45 — The start checks invoker lookups without the synthetic beans of frozen or compiled extensions
 
 - **Date**: 2026-11-17
@@ -56,6 +108,85 @@ suspected cause, status. Updated on every investigation.
   and `BeanManager`, and looks the others up among the deployment's beans, which do not hold the built-in ones. It
   was so before BUG-20261117-27, which counted classes.
 - **Found by**: the review of BUG-20261117-27.
+
+## BUG-20261117-41 — An interceptor that injects `@Intercepted Bean<?>` is refused
+
+- **Date**: 2026-11-17
+- **Status**: OPEN. To fix after BUG-20261117-47; a fix of its first two causes is parked on the local branch
+  `fix/intercepted-bean-metadata`.
+- **Module**: `vauban-core` (`bean.validation.DeploymentValidator`, which the processor runs too)
+- **Symptom**: an interceptor that injects the bean it intercepts, `@Inject @Intercepted Bean<?> intercepted`, or the
+  same type written `Bean<? extends Object>`, is refused as a definition error, everywhere: "Illegal injection of
+  built-in metadata type with type variable or raw type: field Watcher.intercepted of type
+  ParameterizedType[rawType=jakarta.enterprise.inject.spi.Bean, typeArguments=[WildcardType[upperBound=null,
+  lowerBound=null]]]". The container refuses it at start and frozen (`DefinitionException`); the processor reports it
+  as an error, and the compilation fails. CDI 4.1, 5.5.8, in CDI Lite, lets any interceptor inject it.
+- **Repro**:
+  `VetoedInterceptorCompileTimeTest#anInterceptorThatInjectsTheBeanItInterceptsDeploysInTheProcessorAtStartAndFrozen`
+  in `vauban-processor`, disabled, for `?` and for `? extends Object`. It checks each place apart: what the processor
+  reports, and that a container started on classes compiled with the processor's validation off, its extensions run
+  at start, then frozen, answers `Watcher(vi.WatchedService: hello)` from `vi.WatchedService`. The container then
+  creates the interceptor, which reads `intercepted.getBeanClass()`: the test stays red until BUG-20261117-47 and this
+  one are both fixed. The parked branch adds the row of a wildcard without bounds to
+  `DeploymentValidatorReflectionChecksTest#interceptedBeanMetadata` in `vauban-core`.
+
+  Red, in `vauban-b22-red.log`, both forms refused in all three places, on both commits:
+  - 455067f5, the base of BUG-20261117-22 ("Fix round 2 red run 2", and "Fix round 2 red run 5" with the final
+    tests): the processor read `?` as `(null, null)` and `? extends Object` as `(Object, null)`, and refused both;
+    the start and frozen refused both;
+  - 63cce2fc, BUG-20261117-22 with BUG-20261117-34 ("Fix round 2 red run 1", and "Fix round 2 red run 4" with the
+    final tests): the processor read both as `(null, null)`, and all three places refused both.
+
+  The row of `DeploymentValidatorReflectionChecksTest` is red in runs 4 and 5. "Fix round 2 red run 3", on 63cce2fc
+  with the first cause fixed only: the start and frozen deploy both forms, the processor still refuses both, and
+  creating the interceptor fails (third cause). Runs 1 to 5 predate the call to `vi.WatchedService`: every place
+  refused before anything was created, which the call does not change ("Round 4: BUG-47 repros run once", on
+  02b24e3d, with the call). "Round 4: repro with the parked fix", on 02b24e3d with the parked fix: the processor
+  accepts both forms; at start and frozen, `CreationException: Failed to create interceptor: vi.Watcher`, caused by
+  `UnsatisfiedResolutionException: No bean found for type: jakarta.enterprise.inject.spi.Bean`.
+- **Cause**: three.
+  - In `DeploymentValidator.isIllegalMetadataInjection`, the wildcard of `@Intercepted Bean<X>` is legal with an upper
+    bound `Object` only (`lowerBound != null || !isObjectType(upperBound)`, and `isObjectType(null)` is false). The
+    index records `?` and `? extends Object` without bounds: the bytecode scan and the reflective reading always did,
+    and the compiler's elements do since BUG-20261117-34. So the container never deployed such an interceptor.
+  - `@Intercepted Bean<X>` is legal in an interceptor only, and the validator tells an interceptor by loading its class
+    (`DeploymentClasses.load`) to read `@Interceptor`. The processor cannot load a class it compiles: it takes every
+    interceptor for a plain bean, and refuses `@Intercepted Bean<X>` whatever `X`. So it refused
+    `Bean<? extends Object>`, which it read as `(Object, null)`, before BUG-20261117-34 as well: BUG-20261117-34
+    changes the bound the message prints, not the verdict. `Interceptor<X>` in an interceptor meets the same.
+  - Past the check, the container provides no `@Intercepted Bean`: BUG-20261117-47.
+- **Fix order**: BUG-20261117-47 first, which provides the bean; then this one, to accept `Bean<?>` and
+  `Bean<? extends Object>`, starting from the parked branch.
+- **Parked**: the local branch `fix/intercepted-bean-metadata`, a WIP commit on top of BUG-20261117-22. It carries
+  both fixes in `DeploymentValidator`: a wildcard with no lower bound, and no upper bound or `Object`, is `?`; the
+  validator reads `@Interceptor` from the index first, which holds the classes the processor compiles, and loads the
+  class only when the index does not hold it, as its proxyability checks do (`@Interceptor` is not `@Inherited`, so
+  both give the same answer for a class the index holds). With them, the unit row and the test, enabled. That test
+  predates the call to `vi.WatchedService`: it checks that the container deploys and serves `vi.LoggedService`,
+  without creating the interceptor. Its code is that of the "Fix round 2 full build" and "Fix round 2 TCK" runs
+  (3329b5be): green, CDI Lite TCK 774/774.
+- **Other readers of a wildcard's bounds**, outside the language model, checked for the same assumption (that `?`
+  has the upper bound `Object`): none has it. They read a missing bound as `Object` or as no constraint, test the kind
+  only, or read another type:
+  - `AssignabilityRules`: `isUnbounded` takes both forms; `wildcardAdmits` and `isAssignableToWildcard` read a missing
+    bound as no constraint, and a bean's wildcard argument as `Object` (a legal bean type has none anyway);
+  - `EventDispatcher` (`withinWildcard` skips a missing or `Object` upper bound, `resolveObservedType` reads a missing
+    one as `Object`), `VaubanObserverMethod` and `VaubanSyntheticObserverBuilder` (a missing upper bound is
+    `Object`);
+  - `InjectionPointInfo`, `IndexCreationPlans`, `TypeRef` and the indexer's `ComponentCollector`: descriptors and
+    erasures, a wildcard is `Object` or its upper bound;
+  - `ClassValidator`, `IndexClassValidator` and `BeanDiscovery`: the kind only, or both bounds walked null-safe for a
+    type variable; `BeanDiscovery.asReflected` keeps the bounds as they are, and `DeploymentValidator`'s own
+    `typeArgMatchesBeanClass` (`Bean<X>`, `Interceptor<X>`) matches a class type only;
+  - `ClassChecksums` writes the bounds as they are: every index producer gives the same form, so the build's and the
+    start's checksums agree;
+  - `SyntheticComponentRegistrar.wildcardName` and the processor's `AnnotationArtefacts.sourceName`: names, `?` for a
+    wildcard without bounds (BUG-20261117-34);
+  - `EnhancementApplier` reads no bound: it goes through `LangModelTypeMapper`. The processor's
+    `ParameterizedSupertypes` gives `(null, null)` for both forms, as `BeanDiscovery` does for the reflective types;
+  - `TypeHierarchyResolver`, `ReflectionValidator`, `ManagedBean`, `VaubanBeanManager`, `EventImpl` and
+    `DisposerInvoker` read `java.lang.reflect.WildcardType`, whose `?` always has the upper bound `Object`.
+- **Found by**: the review of 63cce2fc (BUG-20261117-22), by reading.
 
 ## BUG-20261117-39 — The start checks an invoker's argument lookups before the synthetic beans exist
 
@@ -103,6 +234,124 @@ suspected cause, status. Updated on every investigation.
   CDI 4.1, "Configuring lookups", asks for a contextual reference for the target bean and the bean type that declares
   the target method.
 - **Found by**: the work on BUG-20261117-27, testing that the qualifiers still apply.
+
+## BUG-20261117-34 — The language model gives `?` no bound, and the processor gives `? extends Object` one
+
+- **Date**: 2026-11-17
+- **Status**: FIXED on `fix/langmodel-generic-supertypes`, with BUG-20261117-22
+- **Module**: `vauban-processor` (`apt.ElementScanner`), `vauban-core` (`langmodel.types.TypeMapper`,
+  `langmodel.types.VaubanWildcardType`, `extensions.LangModelTypeMapper`, `extensions.ObservedTypeNotation`)
+- **Symptom**: the language model (`jakarta.enterprise.lang-model` 4.1.0, `WildcardType`) says: "`?`: unbounded, has
+  an implicit upper bound of `java.lang.Object`. Note that `?` is equivalent to `? extends Object` and is represented
+  as such. Therefore, either `upperBound()` or `lowerBound()` always returns non-`null`." For `class Wild implements
+  Holder<List<?>>, Labelled<List<? extends Object>>`, with fields, a parameter and a return type of the same two
+  shapes, an extension saw, through `types.ofClass("vi.types.Wild").declaration()`:
+  - at start and frozen, `upperBound=null, lowerBound=null` for all six: no bound at all;
+  - in the processor, the same for `?`, and `upperBound=CLASS java.lang.Object` for `? extends Object`: the build and
+    the start disagree, on the supertypes as on the fields, the parameters and the return types.
+
+  Neither `?` equalled `Types.wildcardUnbounded()`, which builds `? extends Object`.
+- **Repro**:
+  - `VetoedInterceptorCompileTimeTest#anExtensionSeesAnUnboundedWildcardAsExtendingObjectInTheProcessorAtStartAndFrozen`
+    in `vauban-processor`, three ways, the `Wild` above;
+  - `ElementScannerTypeParametersTest#extendsObjectIsTheUnboundedWildcard`, and `Generic.Wild` in `#genericSupertypes`:
+    the processor's index against the bytecode scan's, supertypes and member types;
+  - `LangModelTypeValueSemanticsTest#mapsTheUnboundedWildcardAsExtendingObject`,
+    `ExtensionBuildersEdgeCasesTest#theUnboundedWildcardMapsBackToAWildcardWithoutBounds` and
+    `SyntheticMetadataWriteTest#anUnboundedWildcardReadsBackWithoutBounds` in `vauban-core`.
+
+  Red on 0360a032 (the first commit of BUG-20261117-22, which brought the supertypes into the language model):
+  `vauban-b22-red.log`, "Fix round 1 red run 6", every one of them but the notation test, with the outcome above;
+  "Fix round 1 red run 7", the notation test, on the main code of 0360a032 (the round's main changes set aside):
+  `java.util.List<?>` read back as `WildcardType[upperBound=ClassType[name=java.lang.Object]]`.
+- **Cause**: the index records `?` without bounds, and `? extends Object` the same: the bytecode scan drops the
+  `Object` bound (`ClassTypeParameters`), and so does the reflective reading (`TypeInfoUtils`). `ElementScanner` kept
+  the `Object` the compiler gives `? extends Object` as an upper bound. `TypeMapper` mapped the wildcard without bounds
+  to a language model wildcard without bounds. Back the other way, `LangModelTypeMapper` kept `Object` as an upper
+  bound, and the metadata reader of the processor's synthetic observers (`ObservedTypeNotation`) read `?` with it.
+- **Fix**: the index keeps one form, without bounds; the language model shows it as the spec says.
+  - `ElementScanner` drops an `Object` upper bound, as the bytecode scan does.
+  - `TypeMapper` gives a wildcard without bounds `java.lang.Object` as its upper bound.
+    `VaubanWildcardType.toString()` names `? extends Object` `?`, as reflection does.
+  - `LangModelTypeMapper` maps `? extends Object` back to the wildcard without bounds.
+  - `ObservedTypeNotation` reads `?`, and `? extends java.lang.Object`, as that wildcard.
+- **Who sees the change**:
+  - every type the language model maps from the index: the arguments of the supertypes, the types of the fields, the
+    parameters and the return types, the bounds of the type parameters, the bean types of `BeanInfo.types()`, the types
+    of the injection points, the observed event types. Their `?` has `upperBound()` `java.lang.Object`, where it was
+    `null`, and equals `Types.wildcardUnbounded()`; its `toString()` stays `?`. `Types.wildcardUnbounded()` itself now
+    names `?`, where it named `? extends java.lang.Object`;
+  - the processor's index, wherever the source writes `? extends Object`: a field, a parameter, a return type, a
+    supertype, a producer's type, an injection point. It is now the start's;
+  - a type an extension hands back from the language model, a synthetic bean's or observer's type, or a type an
+    enhancement reads back from a field or a parameter: `? extends Object` is the index's wildcard without bounds,
+    where it kept `Object`; a synthetic observer of `List<?>` reads back the same from the processor's metadata;
+  - the built-in metadata check gives the same verdicts (BUG-20261117-41, open);
+  - `SyntheticComponentRegistrar.wildcardName` writes `?` for the `Types.wildcardUnbounded()` of a type an extension
+    builds, as reflection's `getTypeName()` does, where it wrote `? extends java.lang.Object`;
+  - `AnnotationArtefacts.sourceName` writes `?` for `? extends java.lang.Object` in the sources the processor
+    generates.
+
+  The assignability rules treat both forms alike (`AssignabilityRules.isUnbounded`, `wildcardAdmits`), so no
+  resolution changes. That no test of the build and no TCK outcome changed holds for the tests only: a verdict that
+  reads the form could change. The check of built-in metadata reads it, and gives the same verdicts; BUG-20261117-41
+  lists the other readers of a wildcard's bounds, none of which reads the form.
+- **Not covered**: the language model TCK (`cdi-tck-lang-model` 4.1.0, `AnnotatedTypes.wildcardMethod`) checks
+  `upperBound()` `java.lang.Object` for `List<?>` and `List<? extends Object>`. `vauban-tck-runner` declares the
+  artifact, but none of the 774 tests it runs calls `LangModelVerifier`, so the TCK did not catch this.
+- **Verification**: green in `vauban-b22-dev.log`, "Fix round 1 dev run 5". The full build and the TCKs are those of
+  BUG-20261117-22: `vauban-b22-build.log`, "Fix round 4 full build", and `vauban-b22-tck.log`, "Fix round 3 TCK".
+- **Found by**: the review of 0360a032 (BUG-20261117-22), by reading.
+
+## BUG-20261117-33 — A type variable the language model reaches through a type has no bound
+
+- **Date**: 2026-11-17
+- **Status**: OPEN
+- **Module**: `vauban-core` (`langmodel.types.TypeMapper`), as it maps the index's `TypeInfo.TypeVariable`
+- **Symptom**: `TypeVariable.bounds()` is empty for a type variable declared without a bound, when the language model
+  reaches it through a type: the argument of a supertype (`Supplier<T>` above `Supplying<T>`), the type of a field, a
+  parameter or a return, a bean type. The API says "never `null` or empty"; the same `T` has
+  `[java.lang.Object]` through `ClassInfo.typeParameters()`.
+- **Repro**: `BceClassSupertypesTest#aTypeVariableOfASupertypeHasItsBound` in `vauban-core`, disabled; red when
+  enabled (`vauban-b22-red.log`, "BUG-33 red run 5", on 455067f5 with the fix of BUG-20261117-22, which this bug is
+  not part of): `typeParameters() [java.lang.Object]`, `superInterfaces() []`.
+- **Cause**: the index leaves out the implicit `java.lang.Object` bound of every type variable, and gives a type
+  variable met again inside its own bounds, or one of an enclosing class or method, no bound at all, so that the model
+  stays finite. `VaubanClassInfo.typeParameters()` puts `Object` back for a type parameter that declares no bound;
+  `TypeMapper` does not.
+- **Impact on Mansart**: `VaubanTypeVariable.equals` compares the bounds, so the `T` of `typeParameters()`
+  (`[java.lang.Object]`) does not equal the `T` of a supertype's argument (`[]`). A substitution keyed on the
+  `TypeVariable` objects, from the type parameters of a repository's supertype to the arguments it gets, misses; one
+  keyed on `name()` works.
+- **Fix** (not done): `TypeMapper` cannot put `Object` back by itself: a variable the index left without bounds may
+  have bounds that are not `Object` (the `T` inside `Comparable<T>` of `T extends Comparable<T>`). It needs the type
+  parameters of the declaring class or method at hand. It changes what an extension sees of the bean types too, so it
+  is a change of its own.
+- **Found by**: the tests of BUG-20261117-22.
+
+## BUG-20261117-32 — An interface's `ClassInfo.superClass()` is `Object` at start and `null` in the processor
+
+- **Date**: 2026-11-17
+- **Status**: FIXED on `fix/langmodel-generic-supertypes`
+- **Module**: `vauban-core` (`langmodel.declarations.VaubanClassInfo`)
+- **Symptom**: for an interface, `superClass()` answers `CLASS java.lang.Object` at start and frozen, and `null` in
+  the processor: the same extension sees two answers for one class. The language model says `null`: "Returns `null`
+  if this class does not have a superclass; that is, if this class is `java.lang.Object` or an interface".
+- **Repro**: `BceClassSupertypesTest#anInterfaceHasNoSuperclass` in `vauban-core`, an interface and an annotation type,
+  at start: red on the main code of 455067f5 (`vauban-b22-red.log`, "red run 4": `superClass=CLASS
+  java.lang.Object` for both). Three ways, `vi.types.Probe` and `vi.types.Archive` of
+  `VetoedInterceptorCompileTimeTest#anExtensionSeesTheGenericSupertypesOfAClassInTheProcessorAtStartAndFrozen`:
+  `superClass=null` in the processor, `superClass=CLASS java.lang.Object` at start and frozen (red runs 3 and 4).
+- **Cause**: the class file of an interface names `java/lang/Object` as its superclass (JVMS 4.1), which
+  `ClassFileScanner` records as `superName`; the compiler gives an interface no superclass (`TypeKind.NONE`), which
+  `ElementScanner` records as `null`; `superClass()` mapped `superName`.
+- **Fix**: `VaubanClassInfo.superClass()` answers `null` for an interface and an annotation type. The index keeps
+  `superName` as each scan reads it, for the bean discovery and the rest. `superClassDeclaration()` was `null` both
+  ways already (the index holds no `java.lang.Object`).
+- **Who sees the change**: an extension the container runs at start, or that the build freezes, now gets `null` for an
+  interface, as an extension the processor runs already did.
+- **Verification**: green in `vauban-b22-dev.log` ("dev run 1", "dev run 2"), and as BUG-20261117-22.
+- **Found by**: the three-way test of BUG-20261117-22.
 
 ## BUG-20261117-30 — The start refuses an inherited initializer's parameter of a type variable
 
@@ -393,6 +642,103 @@ suspected cause, status. Updated on every investigation.
   Foy's `FoyWebExtensionTest`, 11/11, on Foy's origin/main 412ca8b and on its checkout 6c873b1, with Vauban installed
   from the commit (`vauban-b03-build.log`, "Foy FoyWebExtensionTest on").
 - **Found by**: `pr-validate` of vauban#325, downstream `Vidocq/foy`.
+
+## BUG-20261117-22 — The language model gives a class's supertypes raw
+
+- **Date**: 2026-11-17
+- **Status**: FIXED on `fix/langmodel-generic-supertypes`
+- **Module**: `vauban-indexer` (`model.ClassInfo`, `scanner.ClassFileScanner`, `scanner.ClassTypeParameters`),
+  `vauban-processor` (`apt.ElementScanner`), `vauban-core` (`langmodel.declarations.VaubanClassInfo`,
+  `container.ClassChecksums`)
+- **Symptom**: `ClassInfo.superClass()` and `superInterfaces()` answer a `CLASS`, raw, for every supertype, in the
+  processor, at start and frozen. What Mansart saw, through `types.ofClass(name).declaration()` in an `@Synthesis`
+  method, on snapshot 455067f5:
+  - `RoutedNoteRepository extends BasicRepository<RoutedNote, Long>` gives `superInterfaces=[CLASS:…BasicRepository]`
+    where CDI expects `PARAMETERIZED_TYPE` with `[RoutedNote, Long]`;
+  - `RoutedNoteArchive extends CrudRepository<ArchivedNote, Long>, Labelled<List<String>>` gives two `CLASS` entries.
+
+  The language model (`jakarta.enterprise.lang-model` 4.1.0, `ClassInfo`) asks for types, which carry their type
+  arguments: `superClass()` "Returns the direct superclass type of this class. Returns `null` if this class does not
+  have a superclass; that is, if this class is `java.lang.Object` or an interface"; `superInterfaces()` "Returns a list
+  of direct superinterface types of this class. Returns an empty list if this class has no direct superinterface."
+  Mansart's extension gives the synthetic bean of each repository interface the parameterized supertypes of the
+  interface, so that `@Inject BasicRepository<RoutedNote, Long>` resolves: since BUG-20261117-16 a raw bean type no
+  longer satisfies a parameterized injection point (CDI 4.1, 5.2.4). **Mansart carries a documented reflective
+  fallback until this fix (MANSART-068, mansart#109).**
+- **Repro**: in Vauban alone, `interface Probe extends Supplier<String>`, and an `@Synthesis` method that records
+  `types.ofClass("…Probe").declaration().superInterfaces()`: one `CLASS java.util.function.Supplier`, where the
+  language model wants one `PARAMETERIZED_TYPE`, `Supplier<String>`. The tests:
+  - `BceClassSupertypesTest#supertypesKeepTheirTypeArguments` in `vauban-core`, at start: `Probe`, a superclass with
+    arguments (`Extending extends Base<List<String>>`), Mansart's shape with local types (`Archive extends
+    Crud<Note, Long>, Labelled<List<String>>`, in that order), a type variable (`Supplying<T> implements Supplier<T>`,
+    a `TYPE_VARIABLE` named `T`), wildcards inside an argument (`Holder<Map<? extends Number, ? super Integer>>`:
+    Java allows no wildcard as an argument of a supertype itself, JLS 8.1.4), an array argument
+    (`Labelled<int[][]>`), a raw supertype (`Raw extends ArrayList`, a `CLASS`), `Object` (`Plain`), an enum
+    (`Enum<Level>`), and `Supplying` again through `ParameterizedType.genericClass().declaration()`;
+  - `VetoedInterceptorCompileTimeTest#anExtensionSeesTheGenericSupertypesOfAClassInTheProcessorAtStartAndFrozen` in
+    `vauban-processor`, the same cases three ways (the processor, the container at start, the build that freezes the
+    extensions), through `seenThreeWays`; the interfaces and the enum come in through `ScannedClasses`, as no
+    annotation brings them into the index;
+  - `ClassFileScannerTest$GenericSupertypes`, `ClassInfoTest` (`vauban-indexer`), the generic supertypes of
+    `ElementScannerTypeParametersTest` (the processor's scan equals the bytecode scan) and `ClassChecksumsTest`.
+
+  Red on 455067f5: `vauban-b22-red.log`, "red run 3" (the first expectations) and "red run 4" (the final ones, on the
+  main code of 455067f5 with the fix set aside): every supertype is a `CLASS` in the core test and in the processor, at
+  start and frozen. Runs 1 and 2 of that log did not reach the tests (a `test` phase the reactor cannot build, then a
+  test that did not compile). The other tests use the new model and do not compile on 455067f5. After the review, on
+  0360a032 ("Fix round 1 red run 6"): `ClassInfoTest#aGenericSuperclassWithoutASuperclassIsRefused` is red, nothing
+  thrown. `ClassFileScannerTest$GenericSupertypes#noSuperclassWithASignature` and
+  `ClassChecksumsTest#aClassWithRawSupertypesKeepsItsChecksum` pass there (red runs 7 and 6 of the round): they pin
+  what does not change, they are not red.
+- **Cause**: the index model kept the names of a class's supertypes only. `ClassFileScanner` read the class's
+  `Signature` attribute for its type parameters only (VAU-BCE-007), `ElementScanner` the compiler's
+  `TypeElement.getSuperclass()` and `getInterfaces()` for their names only, and `VaubanClassInfo.superClass()` and
+  `superInterfaces()` wrapped each name in a `ClassType`.
+- **Fix**: `indexer.model.ClassInfo` gains two components, `genericSuperclass` and `genericInterfaces`, the supertypes
+  as the class declares them, in the index's types: the interfaces as `Class.getGenericInterfaces()` gives them, the
+  superclass that `superName` names (for an interface, the `java.lang.Object` its class file names, where
+  `Class.getGenericSuperclass()` gives `null`). Additive: every earlier constructor stays and gives the raw
+  supertypes, `ClassType`s of `superName` and `interfaces`, which is also what `null` gives to the new canonical
+  constructor. Each new component says how the class declares a supertype the class file names, so a list of generic
+  interfaces that does not line up with `interfaces` is refused, and so is a generic superclass without a
+  `superName`. `ClassFileScanner` reads them from the class signature through the
+  Class-File API (`ClassTypeParameters.supertypes`), its type variables resolved against the class's type parameters
+  as for the type parameters and the members, the signature parsed once for all three; no signature, one that does
+  not parse, one that names another number of interfaces than the class file, or a class file without a superclass
+  leaves them raw. `ElementScanner` reads them from `getSuperclass()` and
+  `getInterfaces()`, its type variables through the same `TypeParameterReader` as the type parameters, so the
+  processor and the bytecode scan give the same model (`ElementScannerTypeParametersTest`). `VaubanClassInfo`
+  maps them: `superClass()` and `superInterfaces()`. `ClassType.declaration()` and
+  `ParameterizedType.genericClass().declaration()` already went through the same code (`VaubanClassType.declaration()`,
+  then `VaubanClassInfo`), and so do `BeanInfo.declaringClass()` and `ClassConfig.info()`.
+  `superClassDeclaration()` and `superInterfacesDeclarations()` do not change, nor do the bean types, the resolution
+  or the assignability: nothing but the language model and the fingerprint reads the new components.
+- **Persistence**: the index is not persisted. The container indexes the class files of the bean classes at each
+  start (`ClassFileScanner`), the processor indexes the compiler's elements at each compilation, `vauban:generate`
+  the class files; no jar, frozen record or generated class holds a `ClassInfo`. What the frozen record keeps is the
+  fingerprint of the deployment, a checksum of each bean class's model (`ClassChecksums`,
+  `META-INF/vauban-frozen-extensions.properties`). The generic supertypes count there only where they carry type
+  arguments: a class whose supertypes are raw keeps the checksum it had, so the record a build by an earlier Vauban
+  wrote stays valid for it (`ClassChecksumsTest#aClassWithRawSupertypesKeepsItsChecksum` pins `374142584L`, what
+  `ClassChecksums.ofModel` gave its model on 455067f5: `vauban-b22-dev.log`, "Fix round 1, golden checksum"); a class
+  with a parameterized supertype gets another checksum, the start refuses that
+  record as written for another deployment and runs the extensions, as for any refused record (a debug note), and they
+  see the generic supertypes. An application built with an earlier Vauban starts on this one either way.
+- **Not covered**: a class the index does not hold, as jakarta.data's `CrudRepository` in a dependency jar, or
+  `java.util.function.Supplier` itself, gets an empty stub from `VaubanClassType.declaration()` (VAU-BCE-001):
+  superclass `Object`, no interfaces, no type parameters. The processor describes such a class already when the
+  compilation sees it, on its class path too (`VaubanProcessor.unindexedResolver`, VAU-BCE-008), now with its generic
+  supertypes: for a class such as `CrudRepository`, the processor and the start already disagree. That is
+  BUG-20261117-31's to fix, separate. An interface's `superClass()` was `Object` at start and `null` in the
+  processor: BUG-20261117-32, fixed with this one. A wildcard had no bound at start and frozen, and `? extends Object`
+  had `Object` in the processor: BUG-20261117-34, fixed with this one. An interceptor's `@Intercepted Bean<?>` is
+  refused, before this fix as after: BUG-20261117-41, open; past that check, the container provides no bean metadata
+  bean: BUG-20261117-47, open. A type variable reached through a supertype has no bound: BUG-20261117-33, open.
+- **Verification**: red as above; green, the same tests (`vauban-b22-dev.log`, "dev run 1" for the core and the
+  three-way tests, "dev run 2" and "dev run 3" for the others; "Fix round 1 dev run 5" after the review). The full
+  build of the commit, `vauban-b22-build.log`, "Fix round 4 full build"; the CDI Lite TCK and the AtInject TCK,
+  `vauban-b22-tck.log`, "Fix round 3 TCK", on the same main code (round 4 changed tests and text only).
+- **Found by**: Mansart's probe of its repositories' supertypes (MANSART-068, mansart#109).
 
 ## BUG-20261117-21 — A producer of an inner class of a generic class has the raw types above it in its descriptor
 

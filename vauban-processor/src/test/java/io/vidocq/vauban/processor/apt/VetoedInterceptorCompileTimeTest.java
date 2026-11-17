@@ -35,12 +35,15 @@ import jakarta.enterprise.inject.build.compatible.spi.InterceptorInfo;
 import jakarta.enterprise.inject.build.compatible.spi.ObserverInfo;
 import jakarta.enterprise.inject.build.compatible.spi.Registration;
 import jakarta.enterprise.inject.build.compatible.spi.ScannedClasses;
+import jakarta.enterprise.inject.build.compatible.spi.Synthesis;
+import jakarta.enterprise.inject.build.compatible.spi.Types;
 import jakarta.enterprise.inject.spi.Bean;
 import jakarta.enterprise.inject.spi.DefinitionException;
 import jakarta.enterprise.inject.spi.DeploymentException;
 import jakarta.enterprise.inject.spi.PassivationCapable;
 import jakarta.enterprise.lang.model.declarations.ClassInfo;
 import jakarta.enterprise.lang.model.types.Type;
+import jakarta.enterprise.lang.model.types.WildcardType;
 import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -67,6 +70,7 @@ import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 import static org.junit.jupiter.api.Assertions.assertAll;
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
@@ -83,7 +87,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * runs gets from {@code @Registration} the interceptors and the observers the compilation compiles, as the container
  * gives them at start and frozen (BUG-20261117-02, BUG-20261117-05), and from {@code @Enhancement} the subtypes of
  * its types (BUG-20261117-07). A bean has the types a class the compilation compiles brings it, for the extensions and
- * for the injection points the build resolves, as at start (BUG-20261117-03).
+ * for the injection points the build resolves, as at start (BUG-20261117-03). An extension sees the supertypes a class
+ * declares, with their type arguments, the same three ways (BUG-20261117-22).
  */
 @DisplayName("A vetoed interceptor is woven into nothing the build generates (BUG-20261116-12, BUG-20261117-01)")
 class VetoedInterceptorCompileTimeTest {
@@ -146,6 +151,27 @@ class VetoedInterceptorCompileTimeTest {
                 public class Inner<I> implements Holder<O> {
                 }
             }""";
+    /** The classes of {@code vi.types} whose supertypes {@link SupertypeRecorder} records (BUG-20261117-22). */
+    private static final List<String> SUPERTYPE_PROBES = List.of("Probe", "Extending", "Archive", "Supplying", "Shapes",
+            "Raw", "Plain", "Level");
+    private static final String SUPPLYING = "Supplying";
+    private static final String THROUGH_GENERIC_CLASS = "through genericClass() ";
+    private static final String OBJECT_SUPERCLASS = "superClass=CLASS java.lang.Object";
+    /** What {@link SupertypeRecorder} records of an interface, which has no superclass (BUG-20261117-32). */
+    private static final String NO_SUPERCLASS = "superClass=null";
+    private static final String NO_SUPERINTERFACE = "superInterfaces=[]";
+    /** The class of {@code vi.types} whose wildcards {@link WildcardRecorder} records (BUG-20261117-34). */
+    private static final String WILD = "Wild";
+    private static final String EQUALS_UNBOUNDED = ", equals Types.wildcardUnbounded()";
+    private static final String ECHO = "echo";
+    /** The bean metadata of the bean an interceptor intercepts, without its type argument (BUG-20261117-41). */
+    private static final String INTERCEPTED_BEAN =
+            "@jakarta.enterprise.inject.Intercepted jakarta.enterprise.inject.spi.Bean";
+    private static final String WATCHED_SERVICE = "vi.WatchedService";
+    /** What {@code vi.WatchedService} answers when {@code vi.Watcher}, which reads the bean it intercepts, does. */
+    private static final String WATCHED_HELLO = "Watcher(vi.WatchedService: hello)";
+    /** Why the repros of the bean metadata of CDI 4.1, 5.5.8, are disabled. */
+    private static final String NO_BEAN_METADATA = "BUG-20261117-47: the container provides no bean metadata bean";
 
     @TempDir
     Path workDir;
@@ -1672,7 +1698,7 @@ class VetoedInterceptorCompileTimeTest {
                 Map.entry(HOLDER, HOLDER_SOURCE),
                 Map.entry("Pair", "public interface Pair<A, C> {\n}"),
                 Map.entry("Outer", "public class Outer {\n    public interface Inner<I> {\n    }\n}"),
-                Map.entry("Wild", "public interface Wild extends Pair<java.util.List<? extends Number>,"
+                Map.entry(WILD, "public interface Wild extends Pair<java.util.List<? extends Number>,"
                         + " java.util.List<? super Integer>>, Holder<java.util.Map<?, int[][]>> {\n}"),
                 Map.entry("Base", "public interface Base<B> extends Holder<B> {\n}"),
                 Map.entry("Shelf", "public abstract class Shelf<S> implements Holder<java.util.List<S>> {\n}"),
@@ -1782,9 +1808,11 @@ class VetoedInterceptorCompileTimeTest {
                         .map(BeanTypeRecorder::nameOf).collect(Collectors.joining(", ", "<", ">"));
             }
             if (type.isWildcardType()) {
+                // ? extends Object is ?, as reflection names it (reflectedName) and as the language model gives ?
                 var wildcard = type.asWildcardType();
-                if (wildcard.upperBound() != null) {
-                    return "? extends " + nameOf(wildcard.upperBound());
+                var upperBound = wildcard.upperBound() == null ? "java.lang.Object" : nameOf(wildcard.upperBound());
+                if (!upperBound.equals("java.lang.Object")) {
+                    return "? extends " + upperBound;
                 }
                 return wildcard.lowerBound() != null ? "? super " + nameOf(wildcard.lowerBound()) : "?";
             }
@@ -1892,6 +1920,338 @@ class VetoedInterceptorCompileTimeTest {
         assertFalse(beans.contains("vi.hidden"), beans);
         assertFalse(result.success(), "the injection point has no bean");
         assertTrue(result.mentions("Unsatisfied dependency"), () -> String.join("\n", result.messages()));
+    }
+
+    /**
+     * Records, in {@code @Synthesis}, the supertypes of each class {@link #SUPERTYPE_PROBES} names, as the language
+     * model gives them through {@code Types.ofClass(name).declaration()}, and those of {@code vi.types.Supplying}
+     * through the generic class of a {@code Supplying<String>}. It adds the interfaces and the enum, which no
+     * annotation brings into the index: the container indexes a class an extension adds, and the processor describes
+     * one the compilation compiles.
+     */
+    public static class SupertypeRecorder implements BuildCompatibleExtension {
+
+        static final List<String> SEEN = new CopyOnWriteArrayList<>();
+
+        @Discovery
+        public void discovery(ScannedClasses classes) {
+            List.of("Probe", "Archive", "Level").forEach(name -> classes.add(TYPES + name));
+        }
+
+        @Synthesis
+        public void supertypes(Types types) {
+            for (var probe : SUPERTYPE_PROBES) {
+                SEEN.add(supertypesOf(types.ofClass(TYPES + probe).declaration()));
+            }
+            var supplying = types.parameterized(types.ofClass(TYPES + SUPPLYING),
+                    types.ofClass(String.class.getName()));
+            SEEN.add(THROUGH_GENERIC_CLASS + supertypesOf(supplying.genericClass().declaration()));
+        }
+
+        private static String supertypesOf(ClassInfo type) {
+            var superClass = type.superClass();
+            return type.name() + ": superClass=" + (superClass == null ? "null" : described(superClass))
+                    + "; superInterfaces=" + type.superInterfaces().stream().map(SupertypeRecorder::described)
+                            .collect(Collectors.joining(", ", "[", "]"));
+        }
+
+        /** A type with its kind, and for a parameterized type the kinds of its arguments. */
+        private static String described(Type type) {
+            var described = type.kind() + " " + BeanTypeRecorder.nameOf(type);
+            return type.isParameterizedType() ? described + " of " + type.asParameterizedType().typeArguments()
+                    .stream().map(argument -> argument.kind().name()).collect(Collectors.joining(", ")) : described;
+        }
+    }
+
+    /**
+     * An extension sees the supertypes a class declares, with their type arguments, in the processor, at start and
+     * frozen: a superclass, two superinterfaces in declaration order (Mansart's repository shape), a type variable,
+     * wildcards inside an argument, an array argument, an enum's {@code Enum<E>}. A supertype the class names raw stays
+     * a class, and so
+     * does {@code Object}. The language model gave every supertype raw (BUG-20261117-22). An interface has no
+     * superclass: the processor gave none, the container {@code Object} (BUG-20261117-32). The interfaces and the enum
+     * come in through {@code ScannedClasses}, as Mansart's repositories do.
+     */
+    @Test
+    @DisplayName("an extension sees the generic supertypes of a class in the processor, at start and frozen")
+    void anExtensionSeesTheGenericSupertypesOfAClassInTheProcessorAtStartAndFrozen() throws Exception {
+        var sources = withAVetoedPackage();
+        putType(sources, "Probe", "public interface Probe extends java.util.function.Supplier<String> {\n}");
+        putType(sources, "Base", "public class Base<B> {\n}");
+        putType(sources, "Extending", DEPENDENT + "public class Extending extends Base<java.util.List<String>> {\n}");
+        putType(sources, "Crud", "public interface Crud<E, K> {\n}");
+        putType(sources, "Labelled", "public interface Labelled<L> {\n}");
+        putType(sources, "Note", "public class Note {\n}");
+        putType(sources, "Archive", "public interface Archive extends Crud<Note, Long>,"
+                + " Labelled<java.util.List<String>> {\n}");
+        putType(sources, SUPPLYING, DEPENDENT + """
+                public class Supplying<T> implements java.util.function.Supplier<T> {
+                    @Override
+                    public T get() {
+                        return null;
+                    }
+                }""");
+        putType(sources, HOLDER, HOLDER_SOURCE);
+        putType(sources, "Shapes", DEPENDENT + "public class Shapes implements"
+                + " Holder<java.util.Map<? extends Number, ? super Integer>>, Labelled<int[][]> {\n}");
+        putType(sources, "Raw", DEPENDENT + "@SuppressWarnings(\"rawtypes\")\n"
+                + "public class Raw extends java.util.ArrayList {\n}");
+        putType(sources, "Plain", DEPENDENT + "public class Plain {\n}");
+        putType(sources, "Level", "public enum Level {\n    LOW\n}");
+        var supplying = TYPES + "Supplying: " + OBJECT_SUPERCLASS
+                + "; superInterfaces=[PARAMETERIZED_TYPE java.util.function.Supplier<T> of TYPE_VARIABLE]";
+        var expected = sorted(List.of(
+                TYPES + "Probe: " + NO_SUPERCLASS + "; superInterfaces=[PARAMETERIZED_TYPE"
+                        + " java.util.function.Supplier<java.lang.String> of CLASS]",
+                TYPES + "Extending: superClass=PARAMETERIZED_TYPE vi.types.Base<java.util.List<java.lang.String>>"
+                        + " of PARAMETERIZED_TYPE; " + NO_SUPERINTERFACE,
+                TYPES + "Archive: " + NO_SUPERCLASS + "; superInterfaces=[PARAMETERIZED_TYPE"
+                        + " vi.types.Crud<vi.types.Note, java.lang.Long> of CLASS, CLASS, PARAMETERIZED_TYPE"
+                        + " vi.types.Labelled<java.util.List<java.lang.String>> of PARAMETERIZED_TYPE]",
+                supplying,
+                TYPES + "Shapes: " + OBJECT_SUPERCLASS + "; superInterfaces=[PARAMETERIZED_TYPE vi.types.Holder"
+                        + "<java.util.Map<? extends java.lang.Number, ? super java.lang.Integer>>"
+                        + " of PARAMETERIZED_TYPE, PARAMETERIZED_TYPE vi.types.Labelled<int[][]> of ARRAY]",
+                TYPES + "Raw: superClass=CLASS java.util.ArrayList; " + NO_SUPERINTERFACE,
+                TYPES + "Plain: " + OBJECT_SUPERCLASS + "; " + NO_SUPERINTERFACE,
+                TYPES + "Level: superClass=PARAMETERIZED_TYPE java.lang.Enum<vi.types.Level> of CLASS; "
+                        + NO_SUPERINTERFACE,
+                THROUGH_GENERIC_CLASS + supplying));
+
+        var seen = seenThreeWays(sources, SupertypeRecorder.class, SupertypeRecorder.SEEN);
+
+        seen.assertEachIs(expected);
+    }
+
+    /**
+     * Records, in {@code @Synthesis}, each wildcard of {@code vi.types.Wild} as the language model gives it, with both
+     * its bounds: in the arguments of its superinterfaces, of the types of its fields, and of its method's return and
+     * parameter types, and whether it equals {@code Types.wildcardUnbounded()}.
+     */
+    public static class WildcardRecorder implements BuildCompatibleExtension {
+
+        static final List<String> SEEN = new CopyOnWriteArrayList<>();
+
+        @Synthesis
+        public void wildcards(Types types) {
+            var wild = types.ofClass(TYPES + WILD).declaration();
+            var unbounded = types.wildcardUnbounded();
+            for (var superInterface : wild.superInterfaces()) {
+                recordWildcard("superinterface " + superInterface.asParameterizedType().genericClass().declaration()
+                        .simpleName(), superInterface, unbounded);
+            }
+            wild.fields().forEach(field -> recordWildcard("field " + field.name(), field.type(), unbounded));
+            for (var method : wild.methods()) {
+                if (method.name().equals(ECHO)) {
+                    recordWildcard("return of " + ECHO, method.returnType(), unbounded);
+                    recordWildcard("parameter of " + ECHO, method.parameters().getFirst().type(), unbounded);
+                }
+            }
+        }
+
+        private static void recordWildcard(String where, Type type, Type unbounded) {
+            var wildcard = wildcardIn(type);
+            SEEN.add(where + ": upperBound=" + bound(wildcard.upperBound()) + ", lowerBound="
+                    + bound(wildcard.lowerBound()) + (wildcard.equals(unbounded) ? EQUALS_UNBOUNDED : ""));
+        }
+
+        /** The first wildcard of {@code type}, a parameterized type, searched through its first type arguments. */
+        private static WildcardType wildcardIn(Type type) {
+            var argument = type.asParameterizedType().typeArguments().getFirst();
+            return argument.isWildcardType() ? argument.asWildcardType() : wildcardIn(argument);
+        }
+
+        private static String bound(Type bound) {
+            return bound == null ? "null" : bound.kind() + " " + BeanTypeRecorder.nameOf(bound);
+        }
+    }
+
+    /**
+     * An extension sees {@code ?} as {@code ? extends Object}, as the language model asks: "{@code ?} is equivalent to
+     * {@code ? extends Object} and is represented as such. Therefore, either {@code upperBound()} or
+     * {@code lowerBound()} always returns non-{@code null}." The same in the processor, at start and frozen, whether
+     * the source writes {@code ?} or {@code ? extends Object}, in a supertype's argument as in the type of a field, a
+     * parameter or a return. Both had no bound at start and frozen, and the processor gave {@code Object} to the
+     * second only (BUG-20261117-34).
+     */
+    @Test
+    @DisplayName("an extension sees ? and ? extends Object as ? extends Object in the processor, at start and frozen")
+    void anExtensionSeesAnUnboundedWildcardAsExtendingObjectInTheProcessorAtStartAndFrozen() throws Exception {
+        var sources = withAVetoedPackage();
+        putType(sources, HOLDER, HOLDER_SOURCE);
+        putType(sources, "Labelled", "public interface Labelled<L> {\n}");
+        putType(sources, WILD, DEPENDENT + """
+                public class Wild implements Holder<java.util.List<?>>, Labelled<java.util.List<? extends Object>> {
+                    public java.util.List<?> unbounded;
+                    public java.util.List<? extends Object> extendsObject;
+                    public java.util.List<? super Integer> superInteger;
+
+                    public java.util.List<? extends Object> echo(java.util.List<?> list) {
+                        return list;
+                    }
+                }""");
+        var extendsObject = ": upperBound=CLASS java.lang.Object, lowerBound=null" + EQUALS_UNBOUNDED;
+        var expected = sorted(List.of("superinterface Holder" + extendsObject,
+                "superinterface Labelled" + extendsObject, "field unbounded" + extendsObject,
+                "field extendsObject" + extendsObject,
+                "field superInteger: upperBound=null, lowerBound=CLASS java.lang.Integer",
+                "return of echo" + extendsObject, "parameter of echo" + extendsObject));
+
+        var seen = seenThreeWays(sources, WildcardRecorder.class, WildcardRecorder.SEEN);
+
+        seen.assertEachIs(expected);
+    }
+
+    /**
+     * An interceptor may inject the bean it intercepts as {@code @Intercepted Bean<?>}, which the source may write
+     * {@code Bean<? extends Object>}, the same type: the processor should report nothing of either, and the container
+     * deploy both and give the interceptor that bean, its extensions run at start as frozen. All three refuse both
+     * (BUG-20261117-41, open): the check of built-in metadata reads the wildcard without bounds the index gives both
+     * forms (BUG-20261117-34) as a bounded one, and the processor, which cannot load a class it compiles, does not see
+     * the interceptor. Past the check, the container provides no bean metadata (BUG-20261117-47).
+     */
+    @Disabled("BUG-20261117-41: @Intercepted Bean<?> is refused; BUG-20261117-47: no bean metadata bean")
+    @ParameterizedTest(name = "@Intercepted Bean<{0}>")
+    @ValueSource(strings = {"?", "? extends Object"})
+    @DisplayName("an interceptor that injects @Intercepted Bean<?> deploys in the processor, at start and frozen")
+    void anInterceptorThatInjectsTheBeanItInterceptsDeploysInTheProcessorAtStartAndFrozen(String argument)
+            throws Exception {
+        assertEachPlaceServes(withAWatcher(argument), WATCHED_SERVICE, WATCHED_HELLO);
+    }
+
+    /**
+     * A bean may inject its own metadata, {@code Bean<Itself>} (CDI 4.1, 5.5.8 "Bean metadata", in CDI Lite): the
+     * processor reports nothing of it, and the container gives it, its extensions run at start as frozen
+     * (BUG-20261117-47).
+     */
+    @Disabled(NO_BEAN_METADATA)
+    @Test
+    @DisplayName("a bean gets its own Bean metadata in the processor, at start and frozen")
+    void aBeanGetsItsOwnBeanMetadata() throws Exception {
+        var sources = Map.of("vi/SelfAware.java", """
+                package vi;
+                @jakarta.enterprise.context.Dependent
+                public class SelfAware implements java.util.function.Supplier<String> {
+                    @jakarta.inject.Inject
+                    jakarta.enterprise.inject.spi.Bean<SelfAware> metadata;
+
+                    @Override
+                    public String get() {
+                        return metadata.getBeanClass().getName();
+                    }
+                }
+                """);
+
+        assertEachPlaceServes(sources, "vi.SelfAware", "vi.SelfAware");
+    }
+
+    /**
+     * An interceptor may inject its own metadata, {@code Interceptor<Itself>} (CDI 4.1, 5.5.8): the processor reports
+     * nothing of it, and the container gives it, its extensions run at start as frozen (BUG-20261117-47; in the
+     * processor, BUG-20261117-41 too).
+     */
+    @Disabled(NO_BEAN_METADATA)
+    @Test
+    @DisplayName("an interceptor gets its own Interceptor metadata in the processor, at start and frozen")
+    void anInterceptorGetsItsOwnInterceptorMetadata() throws Exception {
+        var sources = new LinkedHashMap<String, String>();
+        putMetadataInterceptor(sources, "Introspector", "Introspected",
+                "jakarta.enterprise.inject.spi.Interceptor<Introspector>");
+
+        assertEachPlaceServes(sources, "vi.IntrospectedService", "Introspector(vi.Introspector: hello)");
+    }
+
+    /**
+     * An interceptor may inject the bean it intercepts, {@code @Intercepted Bean<?>} (CDI 4.1, 5.5.8), and read its
+     * class when it intercepts a call (BUG-20261117-47; BUG-20261117-41 too, which refuses the injection point).
+     */
+    @Disabled(NO_BEAN_METADATA)
+    @Test
+    @DisplayName("an interceptor gets the metadata of the bean it intercepts in the processor, at start and frozen")
+    void anInterceptorGetsTheMetadataOfTheBeanItIntercepts() throws Exception {
+        var sources = new LinkedHashMap<String, String>();
+        putMetadataInterceptor(sources, "Watcher", "Watched", INTERCEPTED_BEAN + "<?>");
+
+        assertEachPlaceServes(sources, WATCHED_SERVICE, WATCHED_HELLO);
+    }
+
+    /** {@link #withAVetoedPackage()}, with {@code vi.Watcher}, which injects {@code @Intercepted Bean<argument>}. */
+    private static Map<String, String> withAWatcher(String argument) {
+        var sources = withAVetoedPackage();
+        putMetadataInterceptor(sources, "Watcher", "Watched", INTERCEPTED_BEAN + "<" + argument + ">");
+        return sources;
+    }
+
+    /**
+     * Adds to {@code sources} the binding {@code vi.binding}, the interceptor {@code vi.name} for it, which injects a
+     * {@code metadata} of type {@code type} and wraps what it intercepts in {@code name(<the bean class of metadata>:
+     * ...)}, and {@code vi.bindingService}, a bean bound to it.
+     */
+    private static void putMetadataInterceptor(Map<String, String> sources, String name, String binding, String type) {
+        sources.put("vi/" + binding + JAVA, binding(binding));
+        sources.put("vi/" + name + JAVA, """
+                package vi;
+                @%s
+                @jakarta.interceptor.Interceptor
+                @jakarta.annotation.Priority(jakarta.interceptor.Interceptor.Priority.APPLICATION)
+                public class %s {
+                    @jakarta.inject.Inject
+                    %s metadata;
+
+                    @jakarta.interceptor.AroundInvoke
+                    Object wrap(jakarta.interceptor.InvocationContext invocation) throws Exception {
+                        return "%s(" + metadata.getBeanClass().getName() + ": " + invocation.proceed() + ")";
+                    }
+                }
+                """.formatted(binding, name, type, name));
+        sources.put("vi/" + binding + "Service" + JAVA, boundBean(binding + "Service", binding));
+    }
+
+    /** What the processor printed of built-in metadata, as an error or as a warning. */
+    private static List<String> metadataMessages(ProcessorCompiler.Result result) {
+        return result.messages().stream().filter(message -> message.contains("built-in metadata")).toList();
+    }
+
+    /**
+     * Checks each place on {@code sources}: the processor reports nothing of built-in metadata and compiles them, and
+     * a container started on them, its extensions run at start, then frozen, answers {@code expected} from
+     * {@code beanClass}. The container starts on classes compiled with the processor's validation off, so that each
+     * place gives its own verdict.
+     */
+    private void assertEachPlaceServes(Map<String, String> sources, String beanClass, String expected)
+            throws IOException {
+        var validated = ProcessorCompiler.compile(workDir.resolve("validated"), sources);
+        var unvalidated = ProcessorCompiler.compile(workDir.resolve("unvalidated"), sources,
+                List.of("-Avauban.validation=false"));
+        assertTrue(unvalidated.success(), () -> "compilation failed: " + unvalidated.messages());
+        registerExtension(unvalidated, RegistrationRecorder.class);
+
+        assertAll(() -> assertEquals(List.of(), metadataMessages(validated), "what the processor reports"),
+                () -> assertTrue(validated.success(), () -> "compilation failed: " + validated.messages()),
+                () -> assertServes(unvalidated, false, beanClass, expected),
+                () -> assertServes(unvalidated, true, beanClass, expected));
+    }
+
+    /** Checks what {@code beanClass} answers in a container started on {@code result}, frozen first or not. */
+    private void assertServes(ProcessorCompiler.Result result, boolean frozen, String beanClass, String expected) {
+        var place = frozen ? "frozen" : "at start, run";
+        assertEquals(expected, assertDoesNotThrow(() -> startedAnswer(result, frozen, beanClass), place), place);
+    }
+
+    /** What {@code beanClass} answers in a container started on {@code result}, frozen first or not. */
+    private Object startedAnswer(ProcessorCompiler.Result result, boolean frozen, String beanClass) throws Exception {
+        if (frozen) {
+            try (var loader = loader(result)) {
+                var outcome = VaubanContainer.builder().classLoader(loader).scanClasspath()
+                        .freezeExtensions(result.classes());
+                assertTrue(outcome.frozen(), outcome.reason());
+            }
+        }
+        try (var loader = loader(result); var container = VaubanContainer.builder().classLoader(loader)
+                .scanClasspath().build()) {
+            assertEquals(frozen, container.extensionsAtStart().frozen(), container.extensionsAtStart().note());
+            return hello(container, loader.loadClass(beanClass));
+        }
     }
 
     // ---- helpers ----

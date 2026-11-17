@@ -88,16 +88,23 @@ public final class ElementScanner {
         // extending a superclass that does not exist.
         var name = DotName.of(elements.getBinaryName(typeElement).toString());
 
-        // Superclass
+        // Superclass, and as the class declares it, with its type arguments, as the bytecode scan reads it from the
+        // class signature (BUG-20261117-22)
+        var typeParameters = new TypeParameterReader(typeElement);
         DotName superName = null;
+        TypeInfo genericSuperclass = null;
         var superMirror = typeElement.getSuperclass();
         if (superMirror.getKind() != TypeKind.NONE) {
             superName = typeMirrorToDotName(superMirror);
+            genericSuperclass = typeParameters.supertype(superMirror);
         }
 
-        // Interfaces
+        // Interfaces, and as the class declares them
         var interfaces = typeElement.getInterfaces().stream()
                 .map(this::typeMirrorToDotName)
+                .toList();
+        var genericInterfaces = typeElement.getInterfaces().stream()
+                .map(typeParameters::supertype)
                 .toList();
 
         // Access flags
@@ -131,7 +138,8 @@ public final class ElementScanner {
         };
 
         return new ClassInfo(name, superName, interfaces, accessFlags, fields, methods, annotations, kind,
-                typeElement.getSimpleName().toString(), new TypeParameterReader(typeElement).typeParameters());
+                typeElement.getSimpleName().toString(), typeParameters.typeParameters(), false, genericSuperclass,
+                genericInterfaces);
     }
 
     /**
@@ -162,6 +170,14 @@ public final class ElementScanner {
 
         List<TypeInfo.TypeVariable> typeParameters() {
             return declared.stream().map(this::typeVariable).toList();
+        }
+
+        /**
+         * A superclass or an interface as the class declares it, its type variables read as those of
+         * {@link #typeParameters()}, as the bytecode scan reads the class signature.
+         */
+        TypeInfo supertype(TypeMirror supertype) {
+            return typeMirrorToTypeInfo(supertype, this::reference);
         }
 
         private TypeInfo.TypeVariable typeVariable(TypeParameterElement parameter) {
@@ -318,7 +334,9 @@ public final class ElementScanner {
             case TYPEVAR -> typeVariables.apply((javax.lang.model.type.TypeVariable) mirror);
             case WILDCARD -> {
                 var wt = (javax.lang.model.type.WildcardType) mirror;
-                TypeInfo upper = wt.getExtendsBound() != null
+                // ? extends Object is ?, which the index records without bounds, as the bytecode scan and
+                // reflection read both (BUG-20261117-34).
+                TypeInfo upper = wt.getExtendsBound() != null && !isJavaLangObject(wt.getExtendsBound())
                         ? typeMirrorToTypeInfo(wt.getExtendsBound(), typeVariables) : null;
                 TypeInfo lower = wt.getSuperBound() != null
                         ? typeMirrorToTypeInfo(wt.getSuperBound(), typeVariables) : null;

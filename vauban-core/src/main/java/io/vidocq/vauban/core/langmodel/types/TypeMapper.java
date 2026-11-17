@@ -21,6 +21,7 @@ package io.vidocq.vauban.core.langmodel.types;
 
 import io.vidocq.vauban.core.langmodel.IndexLookup;
 import io.vidocq.vauban.core.types.TypeInfoUtils;
+import io.vidocq.vauban.indexer.model.DotName;
 import io.vidocq.vauban.indexer.model.TypeInfo;
 import jakarta.enterprise.lang.model.types.Type;
 
@@ -31,6 +32,8 @@ import jakarta.enterprise.lang.model.types.Type;
  * matching the CDI spec's recursive component type model.
  */
 public final class TypeMapper {
+
+    private static final TypeInfo OBJECT = new TypeInfo.ClassType(DotName.of("java.lang.Object"));
 
     private TypeMapper() {
     }
@@ -57,10 +60,19 @@ public final class TypeMapper {
             case TypeInfo.TypeVariable(var name, var bounds) -> new VaubanTypeVariable(
                     name,
                     bounds.stream().map(t -> map(t, lookup)).toList());
-            case TypeInfo.WildcardType(var upperBound, var lowerBound) -> new VaubanWildcardType(
-                    upperBound != null ? map(upperBound, lookup) : null,
-                    lowerBound != null ? map(lowerBound, lookup) : null);
+            case TypeInfo.WildcardType(var upperBound, var lowerBound) -> wildcard(upperBound, lowerBound, lookup);
         };
+    }
+
+    /**
+     * A wildcard of the language model, where "{@code ?} is equivalent to {@code ? extends Object} and is represented
+     * as such": the index records {@code ?} without bounds, as the class files and reflection read it, and the
+     * language model gives it {@code java.lang.Object} as its upper bound (BUG-20261117-34).
+     */
+    private static Type wildcard(TypeInfo upperBound, TypeInfo lowerBound, IndexLookup lookup) {
+        var upper = upperBound == null && lowerBound == null ? OBJECT : upperBound;
+        return new VaubanWildcardType(upper != null ? map(upper, lookup) : null,
+                lowerBound != null ? map(lowerBound, lookup) : null);
     }
 
     /**

@@ -61,12 +61,14 @@ public record VaubanWildcardType(Type upperBound, Type lowerBound) implements Wi
         return List.of();
     }
 
+    /** {@code ?} for {@code ? extends Object}, as the language model represents {@code ?}, as reflection names it. */
     @Override
     public String toString() {
         if (lowerBound != null) {
             return "? super " + lowerBound;
         }
-        if (upperBound != null) {
+        if (upperBound != null && !(upperBound instanceof VaubanClassType type
+                && type.dotName().value().equals("java.lang.Object"))) {
             return "? extends " + upperBound;
         }
         return "?";

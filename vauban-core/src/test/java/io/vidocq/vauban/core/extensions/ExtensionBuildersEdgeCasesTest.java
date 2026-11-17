@@ -24,6 +24,7 @@ import io.vidocq.vauban.core.langmodel.declarations.VaubanClassInfo;
 import io.vidocq.vauban.core.langmodel.types.VaubanArrayType;
 import io.vidocq.vauban.core.langmodel.types.VaubanClassType;
 import io.vidocq.vauban.core.langmodel.types.VaubanPrimitiveType;
+import io.vidocq.vauban.core.langmodel.types.VaubanWildcardType;
 import io.vidocq.vauban.indexer.IndexBuilder;
 import io.vidocq.vauban.indexer.model.ClassInfo;
 import io.vidocq.vauban.indexer.model.DotName;
@@ -81,5 +82,23 @@ class ExtensionBuildersEdgeCasesTest {
                 LangModelTypeMapper.toIndexType(intMatrix));
         assertEquals(new TypeInfo.ArrayType(new TypeInfo.ClassType(DotName.of("java.lang.String")), 1),
                 LangModelTypeMapper.toIndexType(strings));
+    }
+
+    /**
+     * {@code ? extends Object}, as the language model represents {@code ?} and as {@code Types.wildcardUnbounded()}
+     * gives it, is the wildcard without bounds in the index, as the class files and reflection read it: a type an
+     * extension takes from the language model maps back to the type the index holds (BUG-20261117-34).
+     */
+    @Test
+    void theUnboundedWildcardMapsBackToAWildcardWithoutBounds() {
+        var number = new TypeInfo.ClassType(DotName.of("java.lang.Number"));
+        var numberType = new VaubanClassType(number.name(), null);
+
+        assertEquals(new TypeInfo.WildcardType(null, null), LangModelTypeMapper.toIndexType(
+                new VaubanWildcardType(new VaubanClassType(DotName.of("java.lang.Object"), null), null)));
+        assertEquals(new TypeInfo.WildcardType(number, null),
+                LangModelTypeMapper.toIndexType(new VaubanWildcardType(numberType, null)));
+        assertEquals(new TypeInfo.WildcardType(null, number),
+                LangModelTypeMapper.toIndexType(new VaubanWildcardType(null, numberType)));
     }
 }

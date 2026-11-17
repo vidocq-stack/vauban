@@ -38,6 +38,9 @@ import java.util.*;
 
 public final class ClassFileScanner {
 
+    /** No generic supertype: {@link ClassInfo} names the supertypes of the class file raw. */
+    private static final ClassTypeParameters.Supertypes RAW = new ClassTypeParameters.Supertypes(null, null);
+
     private ClassFileScanner() {}
 
     public static ClassInfo scan(byte[] classBytes) {
@@ -59,9 +62,9 @@ public final class ClassFileScanner {
         var methods = new ArrayList<MethodInfo>();
         var annotations = new ArrayList<AnnotationInfo>();
         String simpleName = null;
-        List<TypeVariable> typeParameters = List.of();
         // Read first: the fields and methods resolve their type variables against the class's.
-        var classParameters = classTypeParameters(cm);
+        var signature = classSignature(cm);
+        var classParameters = signature.map(ClassSignature::typeParameters).orElse(List.of());
 
         for (var element : cm) {
             switch (element) {
@@ -70,7 +73,6 @@ public final class ClassFileScanner {
                 case RuntimeVisibleAnnotationsAttribute rvaa ->
                         rvaa.annotations().forEach(a -> annotations.add(buildAnnotationInfo(a)));
                 case InnerClassesAttribute ica -> simpleName = innerSimpleName(cm, ica);
-                case SignatureAttribute sa -> typeParameters = typeParameters(sa);
                 default -> {
                     // other class elements carry nothing the index records
                 }
@@ -78,19 +80,27 @@ public final class ClassFileScanner {
         }
 
         var kind = determineKind(cm, superName);
+        List<TypeVariable> typeParameters = signature.map(ClassTypeParameters::of).orElse(List.of());
+        // The supertypes as the class declares them, with their type arguments (BUG-20261117-22), or raw, as the
+        // class file names them, when the signature does not name as many interfaces, or the class file no superclass.
+        var supertypes = signature.map(ClassTypeParameters::supertypes)
+                .filter(declared -> superName != null && declared.interfaces().size() == interfaces.size())
+                .orElse(RAW);
         return new ClassInfo(name, superName, interfaces, accessFlags, fields, methods, annotations, kind, simpleName,
-                typeParameters, true);
+                typeParameters, true, supertypes.superclass(), supertypes.interfaces());
     }
 
     /**
-     * The type parameters the class signature declares. A signature that does not parse names no type parameter:
-     * the JVM itself only reads it on demand, through reflection, so a malformed one must not fail the scan.
+     * The class's {@code Signature} attribute, parsed once for the type parameters, the supertypes and the types of
+     * the members. Empty when the class has none, or when it does not parse: the JVM itself only reads it on demand,
+     * through reflection, so a malformed one must not fail the scan; the class then declares no type parameter, and
+     * the index names its supertypes raw.
      */
-    private static List<TypeVariable> typeParameters(SignatureAttribute attribute) {
+    private static Optional<ClassSignature> classSignature(ClassModel cm) {
         try {
-            return ClassTypeParameters.of(attribute.asClassSignature());
+            return cm.findAttribute(Attributes.signature()).map(SignatureAttribute::asClassSignature);
         } catch (IllegalArgumentException _) {
-            return List.of();
+            return Optional.empty();
         }
     }
 
@@ -124,17 +134,6 @@ public final class ClassFileScanner {
         }
 
         return ClassKind.CLASS;
-    }
-
-    /** The type parameters of the class signature, or none when it has none or it does not parse. */
-    private static List<Signature.TypeParam> classTypeParameters(ClassModel cm) {
-        try {
-            return cm.findAttribute(Attributes.signature())
-                    .map(sa -> sa.asClassSignature().typeParameters())
-                    .orElse(List.of());
-        } catch (IllegalArgumentException _) {
-            return List.of();
-        }
     }
 
     /**

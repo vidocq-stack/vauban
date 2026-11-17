@@ -113,4 +113,34 @@ class LangModelTypeValueSemanticsTest {
         assertEquals("? super java.lang.Number", lower.toString());
         assertNull(lower.upperBound());
     }
+
+    /**
+     * The index records {@code ?} without bounds; the language model represents it as {@code ? extends Object}, so
+     * that "either {@code upperBound()} or {@code lowerBound()} always returns non-{@code null}", and names it
+     * {@code ?}, as reflection does (BUG-20261117-34).
+     */
+    @Test
+    void mapsTheUnboundedWildcardAsExtendingObject() {
+        var object = new VaubanClassType(DotName.of("java.lang.Object"), null);
+
+        var unbounded = assertInstanceOf(VaubanWildcardType.class,
+                TypeMapper.map(new TypeInfo.WildcardType(null, null), null));
+
+        assertEquals(object, unbounded.upperBound());
+        assertNull(unbounded.lowerBound());
+        assertEquals(new VaubanWildcardType(object, null), unbounded);
+        assertEquals("?", unbounded.toString());
+    }
+
+    /** A wildcard names its bound unless it is {@code Object}, whatever kind of type the bound is (BUG-20261117-34). */
+    @Test
+    void aWildcardNamesItsBoundButObject() {
+        var object = new VaubanClassType(DotName.of("java.lang.Object"), null);
+        var variable = new VaubanTypeVariable(NAME_T, List.of());
+
+        assertEquals("? extends java.lang.Number", new VaubanWildcardType(NUMBER, null).toString());
+        assertEquals("? extends T", new VaubanWildcardType(variable, null).toString());
+        assertEquals("? super T", new VaubanWildcardType(null, variable).toString());
+        assertEquals("?", new VaubanWildcardType(object, null).toString());
+    }
 }

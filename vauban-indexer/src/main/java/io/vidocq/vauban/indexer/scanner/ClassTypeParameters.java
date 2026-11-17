@@ -59,6 +59,19 @@ final class ClassTypeParameters {
         return reader.declared.keySet().stream().map(reader::typeVariable).toList();
     }
 
+    /** The superclass and the interfaces a class signature declares, with their type arguments. */
+    record Supertypes(TypeInfo superclass, List<TypeInfo> interfaces) {}
+
+    /**
+     * The superclass and the interfaces the signature declares, in declaration order, their type variables resolved
+     * against the class's type parameters, as {@link #of} reads them (BUG-20261117-22).
+     */
+    static Supertypes supertypes(ClassSignature signature) {
+        var reader = new ClassTypeParameters(signature.typeParameters(), List.of());
+        return new Supertypes(reader.type(signature.superclassSignature()),
+                signature.superinterfaceSignatures().stream().map(reader::type).toList());
+    }
+
     /**
      * The type a field's {@code Signature} declares, its type variables resolved against the class's type
      * parameters (VAU-PERF-007).

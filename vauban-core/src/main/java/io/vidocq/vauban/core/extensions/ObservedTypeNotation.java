@@ -150,11 +150,12 @@ final class ObservedTypeNotation {
             return notation.substring(start, position);
         }
 
+        /** {@code ?} and {@code ? extends Object} read as the wildcard without bounds the index holds for both. */
         private TypeInfo wildcard() {
             position++;
-            if (skip(EXTENDS)) return new TypeInfo.WildcardType(type(false), null);
             if (skip(SUPER)) return new TypeInfo.WildcardType(null, type(false));
-            return new TypeInfo.WildcardType(OBJECT, null);
+            var upperBound = skip(EXTENDS) ? type(false) : null;
+            return new TypeInfo.WildcardType(OBJECT.equals(upperBound) ? null : upperBound, null);
         }
 
         private TypeInfo typeVariable() {
