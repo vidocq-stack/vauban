@@ -481,6 +481,122 @@ suspected cause, status. Updated on every investigation.
   That would also name the supertypes (BUG-20261117-31, "Who sees the change").
 - **Found by**: the review of BUG-20261117-31 (62e80eaf), with its `GeneratedSupertypeProbe`.
 
+## BUG-20261117-49 — A client proxy generated from a class file skips a method that has a compiler bridge
+
+- **Date**: 2026-11-17
+- **Status**: FIXED on `fix/client-proxy-bridge`
+- **Module**: `vauban-core` (`codegen.ClassTypeView`, `proxy.ForwardedMethods`, `proxy.ProducerProxyEligibility`), and
+  through them `vauban-maven-plugin` (`vauban:generate`, the dependency enhancer)
+- **Symptom**: a normal-scoped bean whose client proxy is generated from its class file, at run time or by
+  `vauban:generate`: a call to a method javac pairs with a bridge runs on the proxy itself, neither on the contextual
+  instance nor through its interceptors. The proxy instance has run no constructor body and no `@PostConstruct`, so
+  the call reads `null` fields. Three shapes: `String get()` of a bean that implements `Supplier<String>`, declared or
+  inherited; a covariant override, `String name()` over `CharSequence name()`; a public method a public class inherits
+  from a package-private one. Typed by the bean or by its supertype alike. Found by Dirac's DRC-011 probe:
+  `get() through Supplier: ran on app.Svc_ClientProxy; count=0` (`dirac-drc011-dev.log:3927-3928`).
+- **Repro**: `BridgeMethodClientProxyTest` in `vauban-core`, a real container start whose bean classes are added with
+  `addBeanClass` and compiled without the processor, so the test checks that each proxy is announced as generated at
+  run time. Five `@ApplicationScoped` beans, state set in `@PostConstruct`, each called through the bean type and the
+  supertype: `OwnSupplier`, `InheritedSupplier`, `VisiblyInheritedSupplier` (through a package-private superclass),
+  `CovariantName`, and `CovariantValue` (`Integer value()` over `Number value()`), the control. Red on 455067f5: four of
+  five, the control passes. `ClientProxyInheritanceCrossCheckTest.aMethodNextToItsBridgeIsForwarded` in
+  `vauban-processor`: the source and co-located shapes forward `get()` and `name()`, the run-time shape nothing;
+  `aFinalMethodNextToItsBridgeIsJudged`: `ProducerProxyEligibility` of `public final String get()` next to its bridge
+  says `ELIGIBLE` from the class file, `FINAL_VIRTUALS` from the source.
+- **Cause** (proved by the red runs): `ForwardedMethods.select` (`ForwardedMethods.java:93` on 455067f5) recorded a
+  method's override key, its name and erased parameter types, before it asked whether the method can be proxied, which
+  refuses a bridge. `ClassTypeView` lists a class's methods in `BeanMembers.STABLE_ORDER`: name, parameter types,
+  return type descriptor, declaring class. The bridge `Object get()` sorts before `String get()`
+  (`Ljava/lang/Object;` before `Ljava/lang/String;`), `CharSequence name()` before `String name()`: the bridge took the
+  key, was refused, and the method it stands for, met next, counted as already met, as did every declaration above
+  it. The proxy forwarded no `get()`, and the call ran the inherited body on the proxy instance. When the real method
+  sorts first, `Integer value()` before its bridge `Number value()`, the proxy was right. A visibility bridge, javac's
+  copy of an inherited public method in the public subclass, takes the key whatever the order, as the walk meets the
+  subclass first. The red diagnostic names it: "the run-time walk meets [bridge java.lang.Object OwnSupplier.get(),
+  java.lang.String OwnSupplier.get()], the proxy … forwards [void init(), boolean equals(), int hashCode(),
+  java.lang.String toString()] ==> expected: <instance> but was: <null>". The processor walks the language model,
+  which has no bridge: the build-time proxy was right. `ProducerProxyEligibility.methodsVerdict`
+  (`ProducerProxyEligibility.java:145` on 455067f5) had the same flaw.
+- **Fix**: the walks over a class file follow the processor's rules. `ClassTypeView` keys a method by its signature as
+  a member of the class the walk starts from, as the processor's `memberSignatureKey` does through `Types.asMemberOf`:
+  the type variables of each generic superclass take the arguments the subclass gives them, enclosing types included;
+  a superclass extended raw is seen erased (JLS 4.8); a generic signature reflection cannot read falls back to the
+  erased key. `ForwardedMethods.select` and `ProducerProxyEligibility` pass a bridge by, as the language model has
+  none. The bridges used to tell the walk that `echo(T)` of `Base<T>` is overridden by `echo(String)` in
+  `Child extends Base<String>`; the member key now does. The two paths agree because both walks take the same
+  declarations (no bridge), most derived first, under the same key; `ClientProxyInheritanceCrossCheckTest` compares
+  the source, co-located and run-time shapes of every fixture, and `ClassTypeViewOverrideKeyTest` pins the keys.
+- **Deployments on the run-time path** (read on Vauban 455067f5 and Vidocq 053f4e8d). The container first asks the
+  generated component providers for a proxy (`InterceptorBeanWrapper.java:462-463`); without one, it generates it
+  (`:474-476`, `RuntimeClientProxyGenerator.java:98` walks with `ForwardedMethods.select`). A bean whose proxied type
+  is an interface goes to `interfaceProxy` instead (`:303-304`, `:339-366`): the build-time interface proxy of
+  `@ClientProxies`, else a `java.lang.reflect.Proxy`, which dispatches each interface method and walks no class: not
+  affected.
+  - **Class-based beans compiled without the processor**: a jar on the class path, a class added at start. Every
+    normal-scoped one.
+  - **Synthetic beans not in `@ClientProxies`**: the bean class is the implementation class the extension names
+    (`SyntheticBeanConverter.java:80-82`, `ManagedBean.java:89`). An interface takes `java.lang.reflect.Proxy`, not
+    affected; a class is generated at run time, affected, unless that class already has a processor proxy under the
+    same name (the container looks the proxy up by its class name, `InterceptorBeanWrapper.java:462-463`).
+    `@ClientProxies` takes interfaces only.
+  - **Build compatible extensions run at start**: no proxy of their own; a class an extension adds or makes
+    normal-scoped at start, where the processor did not see it so, has no build-time proxy. Class-based beans, and
+    synthetic beans as above.
+  - **`vidocq:dev`**: not by default. It compiles with an out-of-process `mvn process-classes`
+    (`RecompileRunner.java:71`), processors included, and recompiles an IDE build that skipped them
+    (`VidocqDevMojo.java:396-397`): the application's beans have build-time proxies. It takes the run-time path for a
+    dependency compiled without the processor while `vidocq:generate`'s stamp is stale
+    (`VidocqBootstrap.java:337-339`), and for synthetic beans of a class. `vidocq:generate` runs the processor
+    (`DependencyCodegen`): not affected.
+  - **Arquillian runners**: every one builds the container from the archive's classes. A class the processor never
+    compiled, every class of a TCK jar among them, takes the run-time path, class-based or synthetic; a class of an
+    application test compiled with `vauban-processor` gets its build-time proxy from its `_VaubanComponents`, found
+    through `ServiceLoader` (`ComponentProviders.java:60-66`). `vauban-tck-runner`
+    (`VaubanDeployableContainer.java:105-115`, `addBeanClass`), and its copy in `mansart-data-tck`
+    (`VaubanDeployableContainer.java:105-111`); `vidocq-runtime-arquillian` (`VidocqEmbeddedContainer.java:117-189`,
+    then `VidocqBootstrap.java:353-363`), used by the runtime's `vidocq-runtime-tck-*` runners; the brick runners that
+    build a `VaubanContainer` themselves: Cyrano and Heisenberg (`VaubanTckBootstrap.java:92-94`, `:89-92`), Dirac
+    (`VaubanDiracTckBootstrap.java:63-66`), Cervantes (`CervantesJwtDeployableContainer.java:151-160`), Humboldt
+    (`HumboldtDeployableContainer.java:124-143`), Kerckhoffs (`KerckhoffsDeployableContainer.java:268-272`), and Grimm
+    through `VidocqBootstrap` (`GrimmDeployableContainer.java:111`). Cassini, Knock, Foy and Ibarra boot through
+    their test harnesses, not read further.
+  - **`SeContainerInitializer`**: `VaubanSeContainerInitializer.java:133-157` scans packages or bean archives and adds
+    the classes given to it; a class compiled without the processor takes the run-time path. Class-based beans, and
+    synthetic beans as above.
+  - **Tests that add bean classes**: `VaubanContainerBuilder.addBeanClass` (`VaubanContainerBuilder.java:181`).
+    vauban-core's own tests are compiled without the processor: every proxy there is generated at run time.
+  - **At build, through the same generator**: `vauban:generate` writes these proxies into the build output
+    (`VaubanGenerator.java:406`, `:597`, `:883`, eligibility at `:578`), and so does the dependency enhancer
+    (`DependencyEnhancer.java:87`, eligibility at `:136`). Such an archive keeps the faulty proxies until it is
+    processed again.
+- **Not covered**: two other bridge shapes, seen while proving this one, have entries of their own:
+  BUG-20261118-16 (the run-time intercepted subclass) and BUG-20261118-17 (a bridge that calls a superclass method
+  of another descriptor).
+- **Observable change**: `ProducerProxyEligibility` now judges a `final` method next to its bridge, which is not
+  final, as the processor does: `FINAL_VIRTUALS`. `vauban:generate` and the dependency enhancer warn and write no
+  producer proxy for such a type (`VaubanGenerator.java:578`, `DependencyEnhancer.java:136`), where they wrote one
+  that could not override the method. At start, a normal-scoped producer of such a type whose package Vauban cannot
+  define into fails the deployment with a `DeploymentException` (`InterceptorBeanWrapper.java:506-508`), where the
+  start succeeded and the first call either threw `UnproxyableResolutionException` or ran on the proxy. Pinned by
+  `ProducerProxyAndProviderGenerationTest.aFinalMethodNextToItsBridgeGetsNoProducerProxy` and
+  `ClientProxyInheritanceCrossCheckTest.aFinalMethodNextToItsBridgeIsJudged`.
+- **Verification**: logs in `session-swap/`. Red: `vauban-b49-red.log`, "Red run 1" (`BridgeMethodClientProxyTest`,
+  4 of 5 red), "Red run 2" and "Red run 3" (`ClientProxyInheritanceCrossCheckTest`), and "Red run 6", the final tests on
+  the main code of 455067f5 with the fix set aside: `BridgeMethodClientProxyTest` 4 of 5, `ClassTypeViewOverrideKeyTest`
+  3 of 5, `ClientProxyInheritanceCrossCheckTest` 2 of 35. Green: "Green run 5" in the same log, 89 tests of
+  `vauban-core` and 38 of `vauban-processor`; `vauban-b49-dev.log`, "Dev run 2", the key test with a generic signature
+  that names a missing class (6 of 6); the full build of the commit, `vauban-b49-build.log`, "Full build of the commit
+  tree, run 5", `-Pquality clean install`, 2600 tests, 0 failures, 14 skipped; the CDI Lite core TCK, 774 of 774, and
+  the AtInject TCK, 1 of 1, `vauban-b49-tck.log`, "CDI Lite core TCK and AtInject TCK again", vauban-core resolved
+  from the private repository the full build installed (`dependency:build-classpath` in the same log).
+- **Verification, review round 1** (rebased on 81fab2cb): `stack-bug49-red.log`, "Red run S2", the new cases on the
+  main code of 81fab2cb with the fix set aside: the bridge cases with a package-private method of another package
+  and an interface default with a covariant return, the producer shapes, both placements of the walk, and the
+  plugin's `FINAL_VIRTUALS` warning all red; the multi-level generic and generic interface default cases pass there,
+  as the bridges' keys did that work before. Green: "Red run S1" in the same log, which ran with the fix (its
+  set-aside step failed), and the module and full builds in `stack-bug49-dev.log` and `stack-bug49-build.log`.
+- **Found by**: Dirac's DRC-011 probe (`dirac-drc011-dev.log`).
+
 ## BUG-20261117-48 — The processor cannot build an invoker for a bean class compiled in the same build
 
 - **Date**: 2026-11-17

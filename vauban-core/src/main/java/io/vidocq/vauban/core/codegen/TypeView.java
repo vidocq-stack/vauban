@@ -85,8 +85,8 @@ public interface TypeView {
         }
 
         /**
-         * A method a compiler generated, a bridge among them: a bridge stands for the method it calls and overrides
-         * like it.
+         * A method a compiler generated, a bridge among them: a bridge stands for the method it calls, so the walks
+         * over the members of a type pass it by, as the language model has none (BUG-20261117-49).
          */
         boolean isBridge();
 
@@ -94,8 +94,9 @@ public interface TypeView {
         boolean isProxyLinkConstructor();
 
         /**
-         * Name and erased parameter types, as the type the walk started from sees the member: two members with the
-         * same key override one another. A bridge has the key of the signature it stands for.
+         * Name and erased parameter types, as the type the walk started from sees the member, in every model: two
+         * members with the same key override one another, so {@code echo(T)} of {@code Base<T>} has the key of the
+         * {@code echo(String)} of {@code Child extends Base<String>}, without the bridge {@code echo(Object)}.
          */
         String overrideKey();
 

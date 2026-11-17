@@ -74,8 +74,13 @@ public final class RuntimeClientProxyGenerator {
      * @param proxyBinaryName the binary name of the generated proxy (producer's package)
      */
     public static GeneratedProxy generateProducerProxyAt(Class<?> producedType, String proxyBinaryName) {
-        ClientProxyShape shape = shapeOf(producedType, false);
+        ClientProxyShape shape = producerShapeAt(producedType, proxyBinaryName);
         return new GeneratedProxy(proxyBinaryName, ClientProxyEmitter.emitAt(shape, proxyBinaryName));
+    }
+
+    /** The shape {@link #generateProducerProxyAt} emits: the walk placed where {@code proxyBinaryName} lives. */
+    public static ClientProxyShape producerShapeAt(Class<?> producedType, String proxyBinaryName) {
+        return shapeAt(producedType, false, placementOf(producedType, proxyBinaryName));
     }
 
     /**
@@ -94,8 +99,26 @@ public final class RuntimeClientProxyGenerator {
      */
     public static ClientProxyShape shapeOf(Class<?> beanClass, boolean colocated) {
         // The proxy is generated in the bean's package (the suffix carries no dot).
+        return shapeAt(beanClass, colocated, ForwardedMethods.Placement.TYPE_PACKAGE);
+    }
+
+    /**
+     * Where a producer's proxy named {@code proxyBinaryName} lives relative to {@code producedType}: in its package,
+     * or in another one, where the walk forwards public methods only, as the processor's does. Stated rather than
+     * left to {@link ProducerProxyEligibility}, which keeps a type with other overridable methods away from it.
+     */
+    static ForwardedMethods.Placement placementOf(Class<?> producedType, String proxyBinaryName) {
+        int dot = proxyBinaryName.lastIndexOf('.');
+        var proxyPackage = dot < 0 ? "" : proxyBinaryName.substring(0, dot);
+        return proxyPackage.equals(producedType.getPackageName())
+                ? ForwardedMethods.Placement.TYPE_PACKAGE : ForwardedMethods.Placement.OTHER_PACKAGE;
+    }
+
+    /** The shape of a proxy of {@code beanClass} placed as {@code placement} says. */
+    private static ClientProxyShape shapeAt(Class<?> beanClass, boolean colocated,
+            ForwardedMethods.Placement placement) {
         var type = ClassTypeView.of(beanClass);
-        var selection = ForwardedMethods.select(type, ForwardedMethods.Placement.TYPE_PACKAGE);
+        var selection = ForwardedMethods.select(type, placement);
         var proxiedSeen = new java.util.HashSet<>(selection.keys());
         var methods = new ArrayList<ProxyMethodShape>();
         for (var forward : selection.forwards()) {
@@ -117,7 +140,7 @@ public final class RuntimeClientProxyGenerator {
                 typeRefs(superCtor.getParameterTypes()),
                 methods,
                 typeRefs(superCtor.getExceptionTypes()),
-                ForwardedMethods.exposesWriteReplace(type, ForwardedMethods.Placement.TYPE_PACKAGE)
+                ForwardedMethods.exposesWriteReplace(type, placement)
                         || inheritsInterfaceWriteReplace(beanClass));
     }
 

@@ -609,9 +609,9 @@ class ClientProxyInheritanceCrossCheckTest {
         return runtimeShape(RuntimeClientProxyGenerator.shapeOf(fixture));
     }
 
-    /** The run-time shape of a proxy placed in a producer's package: public interfaces only. */
+    /** The run-time shape of a proxy placed in a producer's package, another one: public methods only. */
     private static Set<String> runtimeProducerShape(Class<?> fixture) {
-        return runtimeShape(RuntimeClientProxyGenerator.shapeOf(fixture, false));
+        return runtimeShape(RuntimeClientProxyGenerator.producerShapeAt(fixture, "proxycrosscheck.Producer_Proxy"));
     }
 
     private static Set<String> runtimeShape(ClientProxyShape shape) {
@@ -1024,6 +1024,163 @@ class ClientProxyInheritanceCrossCheckTest {
         assertEquals(clock, runtimeProducerShape(java.time.Clock.class), "run-time producer shape of Clock");
         assertEquals(clock, shapeFromElementsIn(java.time.Clock.class, "proxycrosscheck"),
                 "source producer shape of Clock");
+    }
+
+    // ---- Compiler bridges (BUG-20261117-49): the language model has none, a class file has them ----
+
+    /** Implements {@code Supplier<String>}: javac adds the bridge {@code Object get()}. */
+    public static class OwnSupplier implements java.util.function.Supplier<String> {
+        @Override
+        public String get() { return "own"; }
+    }
+
+    /** Inherits {@code get()} and its bridge. */
+    public static class InheritedSupplier extends OwnSupplier {
+    }
+
+    /** Not public, and declares {@code get()}: javac gives a public subclass its own bridge {@code String get()}. */
+    static class HiddenSupplier extends OwnSupplier {
+        @Override
+        public String get() { return "hidden"; }
+    }
+
+    public static class VisiblyInheritedSupplier extends HiddenSupplier {
+    }
+
+    public static class NamedBase {
+        public CharSequence name() { return "base"; }
+    }
+
+    /** A covariant override: javac adds the bridge {@code CharSequence name()}. */
+    public static class CovariantName extends NamedBase {
+        @Override
+        public String name() { return "covariant"; }
+    }
+
+    public static class NumberBase {
+        public Number value() { return 0; }
+    }
+
+    /** A covariant override, whose bridge is {@code Number value()}. */
+    public static class CovariantValue extends NumberBase {
+        @Override
+        public Integer value() { return 1; }
+    }
+
+    /** A final {@code get()}, next to its bridge, which is not final. */
+    public static class FinalSupplier implements java.util.function.Supplier<String> {
+        @Override
+        public final String get() { return "final"; }
+    }
+
+    public static class PickBase<T> {
+        public T pick(T value) { return value; }
+    }
+
+    public static class PickMid<X> extends PickBase<X> {
+    }
+
+    /** Overrides {@code pick(T)} two levels up as {@code pick(String)}: javac adds the bridge {@code pick(Object)}. */
+    public static class PickLeaf extends PickMid<String> {
+        @Override
+        public String pick(String value) { return "leaf " + value; }
+    }
+
+    public interface Labeled {
+        default CharSequence label() { return "default"; }
+    }
+
+    /** Overrides an interface default with a covariant return: javac adds the bridge {@code CharSequence label()}. */
+    public static class StringLabel implements Labeled {
+        @Override
+        public String label() { return "string"; }
+    }
+
+    public interface Echo<T> {
+        default String echo(T value) { return "default " + value; }
+    }
+
+    /** Overrides a generic interface default: javac adds the bridge {@code echo(Object)}. */
+    public static class StringEcho implements Echo<String> {
+        @Override
+        public String echo(String value) { return "string " + value; }
+    }
+
+    /** Its {@code String get()} overrides no package-private {@code get()} of another package, only its bridge's. */
+    public static class ForeignGetSupplier
+            extends io.vidocq.vauban.processor.fixture.colocated.ForeignPackagePrivateGetBase
+            implements java.util.function.Supplier<String> {
+        @Override
+        public String get() { return "supplier"; }
+    }
+
+    @Test
+    @DisplayName("a method next to its compiler bridge is forwarded by its own descriptor, on every path")
+    void aMethodNextToItsBridgeIsForwarded() throws Exception {
+        var get = "java.lang.String get()";
+        var expected = Map.of(OwnSupplier.class, get,
+                InheritedSupplier.class, get,
+                VisiblyInheritedSupplier.class, get,
+                CovariantName.class, "java.lang.String name()",
+                CovariantValue.class, "java.lang.Integer value()",
+                PickLeaf.class, "java.lang.String pick(java.lang.String)",
+                StringLabel.class, "java.lang.String label()",
+                StringEcho.class, "java.lang.String echo(java.lang.String)",
+                ForeignGetSupplier.class, get);
+        var checks = new java.util.ArrayList<org.junit.jupiter.api.function.Executable>();
+        for (var fixture : expected.entrySet()) {
+            var type = fixture.getKey();
+            var name = type.getSimpleName();
+            var source = capture(type, (element, env) ->
+                    withReturnTypes(ClientProxyShapeFromElements.from(element, env.elements(), env.types())));
+            var colocated = capture(type, (element, env) ->
+                    withReturnTypes(ClientProxyShapeFromElements.fromColocated(element, env.elements(), env.types())));
+            var runTime = withReturnTypes(RuntimeClientProxyGenerator.shapeOf(type));
+            checks.add(() -> assertEquals(fixture.getValue(), source, "source shape of " + name));
+            checks.add(() -> assertEquals(fixture.getValue(), colocated, "co-located shape of " + name));
+            checks.add(() -> assertEquals(fixture.getValue(), runTime, "run-time shape of " + name));
+        }
+        org.junit.jupiter.api.Assertions.assertAll(checks);
+    }
+
+    @Test
+    @DisplayName("a producer's proxy in another package forwards the method next to its bridge, on both paths")
+    void aProducerProxyForwardsTheMethodNextToItsBridge() throws Exception {
+        // The processor places such a proxy with ForwardedMethods.Placement.OTHER_PACKAGE.
+        var expected = Map.of(OwnSupplier.class, Set.of("get()"),
+                CovariantName.class, Set.of("name()"),
+                PickLeaf.class, Set.of("pick(java.lang.String)"),
+                StringLabel.class, Set.of("label()"),
+                ForeignGetSupplier.class, Set.of("get()"));
+        var checks = new java.util.ArrayList<org.junit.jupiter.api.function.Executable>();
+        for (var fixture : expected.entrySet()) {
+            var type = fixture.getKey();
+            var name = type.getSimpleName();
+            var source = shapeFromElementsIn(type, "proxycrosscheck");
+            var runTime = runtimeProducerShape(type);
+            checks.add(() -> assertEquals(fixture.getValue(), source, "source producer shape of " + name));
+            checks.add(() -> assertEquals(fixture.getValue(), runTime, "run-time producer shape of " + name));
+        }
+        org.junit.jupiter.api.Assertions.assertAll(checks);
+    }
+
+    @Test
+    @DisplayName("a final method next to its compiler bridge makes the produced type ineligible, on both paths")
+    void aFinalMethodNextToItsBridgeIsJudged() throws Exception {
+        assertEquals("FINAL_VIRTUALS", eligibilityFromElements(FinalSupplier.class), "source path");
+        assertEquals(ProducerProxyEligibility.Reason.FINAL_VIRTUALS, ProducerProxyEligibility.of(FinalSupplier.class),
+                "bytecode path");
+    }
+
+    /** {@code shape}'s methods as {@code <return type> <name>(<parameters>)}, the methods of Object left out. */
+    private static String withReturnTypes(ClientProxyShape shape) {
+        return shape.methods().stream()
+                .filter(m -> !OBJECT_METHODS.contains(m.name() + "(" + m.params().stream().map(Object::toString)
+                        .collect(Collectors.joining(",")) + ")"))
+                .map(m -> m.returnType() + " " + m.name() + "(" + m.params().stream().map(Object::toString)
+                        .collect(Collectors.joining(",")) + ")")
+                .sorted()
+                .collect(Collectors.joining(";"));
     }
 
     /** The Elements/Types pair handed to the callback. */

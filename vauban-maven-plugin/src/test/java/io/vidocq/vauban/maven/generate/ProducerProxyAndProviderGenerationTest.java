@@ -32,6 +32,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import io.vidocq.vauban.maven.enhance.fixture.Widget;
 import io.vidocq.vauban.maven.generate.abstractmeter.Meter;
 import io.vidocq.vauban.maven.generate.abstractproduced.Instruments;
+import io.vidocq.vauban.maven.generate.finalproduced.Readings;
+import io.vidocq.vauban.maven.generate.finalreading.Reading;
 import io.vidocq.vauban.maven.generate.paths.Gadget;
 import io.vidocq.vauban.maven.generate.paths.Hidden;
 import io.vidocq.vauban.maven.generate.paths.Workshop;
@@ -150,6 +152,28 @@ class ProducerProxyAndProviderGenerationTest {
                     assertEquals("MWh", forwarded.unit());
                 }
             }
+        }
+    }
+
+    /**
+     * BUG-20261117-49: a {@code final} method next to its compiler bridge makes the produced type unproxyable, as the
+     * processor judges it. The plugin used to see the bridge, which is not final, and write a proxy that could not
+     * override {@code get()}: a call ran on the proxy itself.
+     */
+    @Test
+    void aFinalMethodNextToItsBridgeGetsNoProducerProxy() throws Exception {
+        var classes = copyPackage(Readings.class, tmp.resolve("classes"));
+        var output = tmp.resolve("output");
+
+        var result = VaubanGenerator.generate(new VaubanGenerator.Config(List.of(), classes, output, withoutHidden()));
+
+        var expected = "Producer of " + Reading.class.getName() + " is not build-time proxyable (FINAL_VIRTUALS)";
+        assertTrue(result.warnings().stream().anyMatch(warning -> warning.startsWith(expected)),
+                "expected a warning starting with '" + expected + "' in " + result.warnings());
+        try (Stream<Path> files = Files.walk(output)) {
+            var proxies = files.map(file -> file.getFileName().toString())
+                    .filter(name -> name.startsWith("Reading$$")).toList();
+            assertEquals(List.of(), proxies);
         }
     }
 

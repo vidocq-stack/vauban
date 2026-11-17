@@ -129,11 +129,12 @@ public final class ProducerProxyEligibility {
     /**
      * Every overridable method the proxy would forward (walking the hierarchy, as the bytecode
      * shape does) must be public; a non-static final method makes the type unproxyable (§3.10).
-     * Walking upwards, the most derived override of a signature decides: the method it overrides is
-     * not the one the proxy forwards. A bridge marks the signature it stands for as overridden. The
-     * worst obstacle is the verdict, whatever the order the model lists the methods in: a final
-     * method, then a package-private one, then a protected one. An abstract method is judged like any
-     * other: the proxy must override it, so from another package it must be public too.
+     * Walking upwards, the most derived override of a signature as a member of the type decides: the
+     * method it overrides is not the one the proxy forwards. A bridge takes no part, as in the language
+     * model, which has none: a final method next to its bridge, which is not final, is judged
+     * (BUG-20261117-49). The worst obstacle is the verdict, whatever the order the model lists the
+     * methods in: a final method, then a package-private one, then a protected one. An abstract method
+     * is judged like any other: the proxy must override it, so from another package it must be public too.
      */
     private static Reason methodsVerdict(TypeView type) {
         var seen = new HashSet<String>();
@@ -141,14 +142,19 @@ public final class ProducerProxyEligibility {
         // Object's methods are public, final or never forwarded: they judge nothing.
         for (TypeView c = type; c != null && !c.isObject(); c = c.superclass()) {
             for (var m : c.methods()) {
-                // A private or static method overrides nothing; a signature already met is overridden.
-                if (m.is(Flag.STATIC) || m.is(Flag.PRIVATE) || !seen.add(m.overrideKey()) || !isForwarded(m)) {
+                // A signature already met is overridden.
+                if (overridesNothing(m) || !seen.add(m.overrideKey()) || !isForwarded(m)) {
                     continue;
                 }
                 verdict = worse(verdict, methodVerdict(m));
             }
         }
         return verdict;
+    }
+
+    /** A bridge, which stands for a method the walk judges, or a private or static method, which overrides nothing. */
+    private static boolean overridesNothing(TypeView.Member m) {
+        return m.isBridge() || m.is(Flag.STATIC) || m.is(Flag.PRIVATE);
     }
 
     private static Reason methodVerdict(TypeView.Member m) {

@@ -36,7 +36,9 @@ import java.util.Set;
  *
  * <p>The walk goes from the proxied type up to {@code java.lang.Object}, included: {@code toString()},
  * {@code hashCode()} and {@code equals(Object)} reach the contextual instance too. The most derived declaration of
- * a signature decides, whether the proxy forwards it or not: the declaration it overrides is never forwarded.
+ * a signature as a member of the proxied type ({@link TypeView.Member#overrideKey}) decides, whether the proxy
+ * forwards it or not: the declaration it overrides is never forwarded. A bridge takes no part, as in the language
+ * model, which has none: the method it stands for decides (BUG-20261117-49).
  */
 public final class ForwardedMethods {
 
@@ -79,8 +81,8 @@ public final class ForwardedMethods {
      * What the walk found.
      *
      * @param forwards the methods the proxy forwards, in the order the model lists them, class by class upwards
-     * @param keys     the override key of every method met, forwarded or not: a default method with one of them is
-     *                 a class method's, not the interface's
+     * @param keys     the override key of every method met but a bridge, forwarded or not: a default method with one
+     *                 of them is a class method's, not the interface's
      */
     public record Selection(List<Forward> forwards, Set<String> keys) {}
 
@@ -90,7 +92,10 @@ public final class ForwardedMethods {
         var forwards = new ArrayList<Forward>();
         for (TypeView c = type; c != null; c = c.superclass()) {
             for (var m : c.methods()) {
-                if (keys.add(m.overrideKey()) && isProxyable(m) && isForwarded(type, c, m, placement)) {
+                // A bridge listed first took the key of the method it stands for, which was then left out, and a
+                // call ran on the proxy instance (BUG-20261117-49).
+                if (!m.isBridge() && keys.add(m.overrideKey()) && isProxyable(m)
+                        && isForwarded(type, c, m, placement)) {
                     forwards.add(new Forward(c, m, placement == Placement.TYPE_PACKAGE
                             && !m.is(Flag.PUBLIC) && !c.isSamePackage(type)));
                 }

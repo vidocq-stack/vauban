@@ -389,6 +389,15 @@ jars — bytecode parity for the producer case, #42 Stage 1.6). The interface ca
 source renderer (`InterfaceProxySourceRenderer`, `implements` rather than `extends`). The
 APT-source-first rule keeps them aligned; residual drift is tracked in
 link:{repo-vauban}/src/branch/main/BUG.md[BUG.md] (VAU-PRX-002).
+
+Both kinds of front-end choose the forwarded methods with one walk, `ForwardedMethods`: the processor over the
+language model, the bytecode front-ends over the loaded class. A class file holds the bridges javac adds, `Object get()`
+beside `String get()` in a `Supplier<String>`, a covariant override, the copy of a public method a public class
+inherits from a package-private one; the language model has none. The walk over a class file passes them by, and
+keys each method by its signature as a member of the proxied class, the type variables of its generic superclasses
+resolved, as the processor does: both forward the same methods, and `ProducerProxyEligibility` judges the same ones.
+A bridge used to stand in for its method, which the proxy then left to run on itself
+(BUG-20261117-49). [.tag-new]#NEW#
 ====
 
 == Case by case: from your source to a running proxy
