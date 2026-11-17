@@ -47,13 +47,15 @@ final class InterceptorDiscovery {
 
     /**
      * Discovers all interceptors in the index.
-     * An interceptor is a class annotated with {@code @jakarta.interceptor.Interceptor}.
+     * An interceptor is a class annotated with {@code @jakarta.interceptor.Interceptor}, unless it is vetoed: CDI 4.1
+     * ignores a class annotated {@code @Vetoed}, or a class of a package annotated {@code @Vetoed}, altogether, so
+     * such a class is no interceptor, as it is no bean (BUG-20261116-12).
      */
     List<InterceptorDescriptor> discoverInterceptors() {
         var interceptors = new ArrayList<InterceptorDescriptor>();
 
         for (var classInfo : host.index.getKnownClasses()) {
-            if (isInterceptorClass(classInfo)) {
+            if (!host.isVetoed(classInfo) && isInterceptorClass(classInfo)) {
                 addInterceptor(classInfo, interceptors);
             }
         }

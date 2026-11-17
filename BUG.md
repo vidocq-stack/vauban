@@ -5,27 +5,64 @@ suspected cause, status. Updated on every investigation.
 
 ---
 
+## BUG-20261117-01 — A package-level `@Vetoed` is ignored in a compiled application
+
+- **Date**: 2026-11-17
+- **Status**: OPEN
+- **Module**: `vauban-processor` (`VaubanProcessor`, the index it builds), `vauban-core` (`ContainerScanner`)
+- **Symptom**: in an application compiled with the annotation processor, the classes of a package whose
+  `package-info.java` carries `@Vetoed` are beans, and an interceptor among them intercepts. CDI 4.1 ignores them
+  altogether. A deployment that hands the container the `package-info` class itself, as the CDI TCK runner does,
+  skips them.
+- **Repro**: `VetoedInterceptorCompileTimeTest#aVetoedPackageHoldsNoBeanAndNoInterceptor` in `vauban-processor`,
+  disabled until the fix: `vi.quiet.QuietBean` is a bean, and `vi.quiet.QuietLogger` intercepts `vi.LoggedService`.
+- **Cause**: `BeanDiscovery.isVetoed` reads a package's `@Vetoed` on the `package-info` class of the index. The
+  processor indexes types only, never a package, so it lists the classes of a vetoed package in `vauban-beans.list`,
+  and the container of a compiled application indexes what that list names. The class path scanner leaves
+  `package-info` out as well, as an interface and, in a jar, by name (`ContainerScanner.tryAddArchiveClass`,
+  `scanJarEntries`): a `beans.xml` archive no Vauban build step handled loses the package's `@Vetoed` too. That second
+  path was read in the code, not run; `vauban:generate` was not checked.
+- **Found by**: BUG-20261116-12, whose tests cover a class of a vetoed package.
+
 ## BUG-20261116-12 — A `@Vetoed` interceptor still intercepts
 
 - **Date**: 2026-11-17
-- **Status**: OPEN, waiting for a ruling: the fix spans the runtime and the annotation processor
-- **Module**: `vauban-core` (`InterceptorDiscovery`), `vauban-processor` (`VaubanProcessor`, `InterceptedArtefacts`)
-- **Symptom**: an interceptor class annotated `@Vetoed` is no bean, as it should be, but it still intercepts the
-  beans its binding names: the container creates it by itself, outside the bean path.
-- **Repro**: `BuiltInInjectableReferenceTest#aVetoedInterceptorInterceptsNothing` in `vauban-core`, disabled until
-  the fix: `VetoedAnnouncer` fires its `Ping` on `Shouter.shout()`.
-- **Cause**: `BeanDiscovery` skips a vetoed class or a class of a vetoed package, `InterceptorDiscovery` does not:
-  it makes an interceptor of any class annotated `@Interceptor`. CDI 4.1 ignores a vetoed type altogether, an
-  interceptor included. The annotation processor discovers interceptors on its own, to generate the `$$Intercepted`
-  subclasses at build, so a fix in `InterceptorDiscovery` alone would leave the build weaving an interceptor the
-  container no longer knows.
+- **Status**: FIXED on `fix/vetoed-interceptor`
+- **Module**: `vauban-core` (`InterceptorDiscovery`)
+- **Symptom**: an interceptor class annotated `@Vetoed`, or a class of a package annotated `@Vetoed`, is no bean, as
+  it should be, but it still intercepts the beans its binding names, and an extension's `@Registration` sees it as an
+  interceptor. In a deployment whose classes the container indexes itself: classes added with `addBeanClass`, a
+  `beans.xml` archive no Vauban build step handled, a class an extension scans; with its extensions run at start or
+  frozen at build.
+- **Repro**: `BuiltInInjectableReferenceTest#aVetoedInterceptorInterceptsNothing` (`VetoedAnnouncer` fires its `Ping`
+  on `Shouter.shout()`), and `VetoedInterceptorTest` (a vetoed class and a class of a vetoed package, extensions run
+  at start and frozen at build), in `vauban-core`.
+- **Cause**: `BeanDiscovery` skips a vetoed class or a class of a vetoed package, `InterceptorDiscovery` did not:
+  it made an interceptor of any class annotated `@Interceptor`. CDI 4.1 ignores a vetoed type altogether, an
+  interceptor included. The first reading also blamed the annotation processor, thought to discover interceptors on
+  its own to weave the `$$Intercepted` subclasses. It does not: the processor and `vauban:generate` weave a bean by
+  its bindings, and the subclass calls the chain the container resolves at run time. The processor discovers
+  interceptors only for its extensions' `@Registration`, through `BeanDiscovery`, as the freezing of the extensions
+  does; `vauban:generate` discovers none. A compiled application was not affected: the processor lists no vetoed
+  class in `vauban-beans.list`, the classes its container indexes.
+- **Fix**: `InterceptorDiscovery.discoverInterceptors` skips what `BeanDiscovery.isVetoed` skips. The build tools
+  need no change of their own. The container still creates an interceptor by itself, outside the bean path, when its
+  creation as a bean fails, and so creates the `@ActivateRequestContext` interceptor, which has no bean: an
+  instrumented run of the core tests and of the CDI Lite TCK found no other case. The test of BUG-20261116-07 for an
+  interceptor's `@Loud Event<Ping>` constructor parameter moved from the vetoed interceptor onto one whose creation
+  as a bean fails once (`anInterceptorCreatedByTheContainerKeepsItsEventQualifiers`), which fails if that parameter
+  loses its qualifier.
+- **Verification**: the three tests red before (`[shouted]`, and `overseer(vetoed(package(call)))` with the extensions
+  run at start and frozen at build), green after. `VetoedInterceptorCompileTimeTest#theSubclassOfABoundBeanCallsNoVetoedInterceptor`
+  in `vauban-processor` passes before and after. The reactor `-o -Pquality install`, the CDI Lite TCK (774/774) and
+  the AtInject TCK green on the branch.
 - **Found by**: the review of BUG-20261116-07, which looked for an application interceptor with no bean: a vetoed one
   is the only one.
 
 ## BUG-20261116-11 — Overloaded producer methods collide: the deployment fails
 
 - **Date**: 2026-11-17
-- **Status**: FIXED on `feat/session-survives-swap`
+- **Status**: FIXED in vauban#320
 - **Module**: `vauban-core` (`BeanId`, `BeanDiscovery.buildProducerMethodBean`, and the producer method lookups of
   `VaubanContainer`, `ManagedBean`, `DisposerInvoker`, `CodegenCoverage`)
 - **Symptom**: a class with two producer methods of one name, `@Produces Spoon make()` and
@@ -47,7 +84,7 @@ suspected cause, status. Updated on every investigation.
 ## BUG-20261116-10 — A `Provider` injection point has no bean for `getInjectableReference`
 
 - **Date**: 2026-11-17
-- **Status**: FIXED on `feat/session-survives-swap`
+- **Status**: FIXED in vauban#320
 - **Module**: `vauban-core` (`VaubanBeanManager.getBuiltInBeans`)
 - **Symptom**: `BeanManager.getInjectableReference` for a `Provider<Shelf>` injection point throws
   `UnsatisfiedResolutionException: No bean for injection point`, and `getBeans` of a `Provider<X>` type finds no
@@ -63,7 +100,7 @@ suspected cause, status. Updated on every investigation.
 ## BUG-20261116-09 — `Instance.select` drops a parameterized type
 
 - **Date**: 2026-11-16
-- **Status**: FIXED on `feat/session-survives-swap`
+- **Status**: FIXED in vauban#320
 - **Module**: `vauban-core` (`InstanceImpl.select(TypeLiteral, Annotation...)`, `InstanceImpl.select(Annotation...)`)
 - **Symptom**: `BeanManager.createInstance().select(new TypeLiteral<Supplier<String>>() { })`, or the same `select` on
   an injected `Instance`, throws `ClassCastException: ParameterizedTypeImpl cannot be cast to Class`, though
@@ -83,7 +120,7 @@ suspected cause, status. Updated on every investigation.
 ## BUG-20261116-08 — The injection points of a class that declares a producer can belong to the producer
 
 - **Date**: 2026-11-16
-- **Status**: FIXED on `feat/session-survives-swap`
+- **Status**: FIXED in vauban#320
 - **Module**: `vauban-core` (`VaubanContainer.findBeanForInstance`)
 - **Symptom**: when the producer method, producer field or synthetic bean a class declares comes before the class's
   own managed bean in the container's registry, the injection of an instance of that class takes the producer as the
@@ -104,7 +141,7 @@ suspected cause, status. Updated on every investigation.
 ## BUG-20261116-07 — `getInjectableReference` drops the type and the qualifiers of a built-in `Event` or `Instance`
 
 - **Date**: 2026-11-16
-- **Status**: FIXED on `feat/session-survives-swap`
+- **Status**: FIXED in vauban#320
 - **Module**: `vauban-core` (`VaubanBeanManager.getInjectableReference` and `getReference`,
   `VaubanContainer.injectedBuiltIn` and `lookedUpBuiltIn`, `InstanceImpl.get`, `EventDispatcher.observerArguments`,
   `InterceptorBeanWrapper.interceptorConstructorArg`)

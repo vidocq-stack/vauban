@@ -49,7 +49,6 @@ import jakarta.interceptor.Interceptor;
 import jakarta.interceptor.InterceptorBinding;
 import jakarta.interceptor.InvocationContext;
 import org.junit.jupiter.api.AfterEach;
-import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
@@ -68,6 +67,7 @@ import java.lang.annotation.Target;
 import java.lang.reflect.Member;
 import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -98,11 +98,14 @@ class BuiltInInjectableReferenceTest {
             .addBeanClass(Witness.class)
             .addBeanClass(VetoedAnnouncer.class)
             .addBeanClass(Shouter.class)
+            .addBeanClass(ReluctantAnnouncer.class)
+            .addBeanClass(Mutterer.class)
             .build();
 
     @AfterEach
     void close() {
         container.close();
+        ReluctantAnnouncer.REFUSALS.set(0);
     }
 
     @Test
@@ -257,21 +260,24 @@ class BuiltInInjectableReferenceTest {
     }
 
     /**
-     * An interceptor with no bean is created by the container itself, outside the bean path. A vetoed one is the only
-     * such interceptor an application has, as long as BUG-20261116-12 lets it intercept: when that bug is fixed, this
-     * test needs another interceptor with no bean.
+     * The container creates an interceptor by itself, outside the bean path, when its creation as a bean fails, as
+     * {@link ReluctantAnnouncer}'s does once. A vetoed interceptor no longer comes this way: it intercepts nothing
+     * (BUG-20261116-12). The interceptor of {@code @ActivateRequestContext}, which has no bean, does, but it takes no
+     * constructor parameter.
      */
     @Test
-    @DisplayName("an interceptor with no bean keeps the qualifiers of its @Loud Event<Ping> constructor parameter")
-    void anInterceptorWithNoBeanKeepsItsEventQualifiers() {
-        assertEquals("shouted", container.select(Shouter.class).shout());
+    @DisplayName("an interceptor the container creates by itself keeps the qualifiers of its @Loud Event<Ping> constructor parameter")
+    void anInterceptorCreatedByTheContainerKeepsItsEventQualifiers() {
+        ReluctantAnnouncer.REFUSALS.set(1);
 
-        assertEquals(List.of("shouted"), container.select(Recorder.class).loudPings());
+        assertEquals("muttered", container.select(Mutterer.class).mutter());
+
+        assertEquals(0, ReluctantAnnouncer.REFUSALS.get(), "its creation as a bean was refused");
+        assertEquals(List.of("muttered"), container.select(Recorder.class).loudPings());
     }
 
     @Test
-    @Disabled("BUG-20261116-12: a @Vetoed interceptor still intercepts; the annotation processor weaves it as well")
-    @DisplayName("a vetoed interceptor intercepts nothing")
+    @DisplayName("a vetoed interceptor intercepts nothing (BUG-20261116-12)")
     void aVetoedInterceptorInterceptsNothing() {
         assertEquals("shouted", container.select(Shouter.class).shout());
 
@@ -412,7 +418,7 @@ class BuiltInInjectableReferenceTest {
     public @interface Announced {
     }
 
-    /** {@link Announcer}, vetoed: an interceptor with no bean, which the container creates by itself. */
+    /** {@link Announcer}, vetoed: it intercepts nothing (BUG-20261116-12). */
     @Vetoed
     @Shouted
     @Interceptor
@@ -446,6 +452,49 @@ class BuiltInInjectableReferenceTest {
 
         public String shout() {
             return "shouted";
+        }
+    }
+
+    /**
+     * {@link Announcer}, whose constructor refuses {@link #REFUSALS} calls: the container's creation of it as a bean
+     * fails, and the container then creates it by itself.
+     */
+    @Muttered
+    @Interceptor
+    @Priority(Interceptor.Priority.APPLICATION)
+    public static class ReluctantAnnouncer {
+
+        /** How many more times the constructor refuses to build an instance. */
+        static final AtomicInteger REFUSALS = new AtomicInteger();
+
+        private final Event<Ping> pings;
+
+        @Inject
+        public ReluctantAnnouncer(@Loud Event<Ping> pings) {
+            InterceptorInstanceCreationTest.refuseOnce(REFUSALS);
+            this.pings = pings;
+        }
+
+        @AroundInvoke
+        Object announce(InvocationContext invocation) throws Exception {
+            pings.fire(new Ping("muttered"));
+            return invocation.proceed();
+        }
+    }
+
+    @InterceptorBinding
+    @Retention(RetentionPolicy.RUNTIME)
+    @Target({ElementType.TYPE, ElementType.METHOD})
+    public @interface Muttered {
+    }
+
+    /** A bean whose calls {@link ReluctantAnnouncer} intercepts. */
+    @Muttered
+    @Dependent
+    public static class Mutterer {
+
+        public String mutter() {
+            return "muttered";
         }
     }
 

@@ -66,7 +66,7 @@ An _observer_ is a `@Observes` or `@ObservesAsync` method that reacts to an appl
 
 == Interceptor
 
-An _interceptor_ wraps a method invocation (`@AroundInvoke`) or constructor (`@AroundConstruct`). Interceptor chains are resolved at compile time and run by the bean's `$$Intercepted` subclass.
+An _interceptor_ wraps a method invocation (`@AroundInvoke`) or constructor (`@AroundConstruct`). The build generates an `$$Intercepted` subclass for a bean with an interceptor binding, and that subclass runs the interceptor chain the container resolves for the bean.
 
 == BeanManager
 
